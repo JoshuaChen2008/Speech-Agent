@@ -65,19 +65,21 @@ function plainButton (act, icon, label, extraClass) {
   return button
 }
 
+/* 与产品条一致：quiet 只有图标，attention 才带出说明文字。
+   完整的 label / detail 放到右侧 meta 栏，供核对而不冒充产品外观。 */
 function buildStatus (view) {
   const status = el('div', 'status')
   status.dataset.tone = view.status.tone
+  status.dataset.emphasis = view.status.emphasis
   status.setAttribute('role', 'status')
+  status.setAttribute('aria-label', view.status.ariaLabel)
 
   const icon = iconEl(view.status.icon, 'status-icon')
   if (SPIN[view.status.icon]) icon.dataset.spin = SPIN[view.status.icon]
   status.appendChild(icon)
 
-  const text = el('div', 'status-text')
-  text.appendChild(el('span', 'status-label', view.status.label))
-  text.appendChild(el('span', 'status-detail', view.status.detail))
-  status.appendChild(text)
+  status.appendChild(el('span', 'status-message',
+    view.status.emphasis === 'attention' ? view.status.message : ''))
   return status
 }
 
@@ -203,6 +205,8 @@ function renderMatrix () {
     const tag = el('span', 'width-tag' + (width > TOOLBAR_BUDGET ? ' over' : ''), width + ' px')
     meta.appendChild(document.createTextNode('条宽 '))
     meta.appendChild(tag)
+    meta.appendChild(el('div', null,
+      '状态：' + view.status.label + ' · ' + view.status.detail + '（' + view.status.emphasis + '）'))
     meta.appendChild(el('div', null,
       '来源：' + view.sources.map((s) => s.label + ' ' + s.stateLabel).join('，')))
     meta.appendChild(el('div', null, '模型：' + view.model.label))

@@ -71,7 +71,7 @@
 /* --------------------------------------------------------------------------
    状态区：图标 + 状态名 + 作用对象
    -------------------------------------------------------------------------- */
-/* 状态区是唯一允许被压缩的部分：空间不够时副行先打省略号 */
+/* 状态区是唯一允许被压缩的部分：空间不够时说明文字先打省略号 */
 .status {
   display: flex;
   align-items: center;
@@ -83,6 +83,30 @@
   color: var(--tone);
   flex: none;
 }
+
+/* quiet（idle / starting / listening / paused / stopping）：只留图标。
+   形状 + 色调两个通道足够区分，工具条保持极简，少遮字幕。
+   完整语义仍在 .status 的 aria-label 里，辅助技术读得到。 */
+.status[data-emphasis="quiet"] .status-message { display: none; }
+
+/* attention（unavailable / recovering / error）：带出一行说明。
+   这三个状态的信息量压不进一个图标 —— 用户需要知道缺什么、在恢复什么、为什么失败。 */
+.status-message {
+  font-size: var(--fs-label);
+  color: var(--tone);
+  line-height: 1.25;
+  min-width: 0;
+  /* 上限是防御性的：后端的真实错误文案可能远长于样例，
+     没有上限的话一条长消息就能把条撑出窗口。
+     超出部分打省略号，完整文案在 title 和字幕卡的说明条里。 */
+  max-width: 160px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status-message:empty { display: none; }
+
+/* 预览页仍要看到完整的 label / detail，产品条不用 */
 .status-text {
   display: flex;
   flex-direction: column;
@@ -104,6 +128,23 @@
   text-overflow: ellipsis;
 }
 .status-detail:empty { display: none; }
+
+/* --------------------------------------------------------------------------
+   拖动握把
+   -------------------------------------------------------------------------- */
+.grip {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 30px;
+  flex: none;
+  color: var(--text-toolbar);
+  opacity: 0.45;
+  cursor: grab;
+  transition: opacity var(--dur-instant);
+}
+.grip:hover { opacity: 0.9; }
+.bar.dragging .grip { cursor: grabbing; opacity: 0.9; }
 
 /* 过渡态转圈：只给 starting / recovering */
 .status-icon[data-spin="cw"]  { animation: phase-spin var(--dur-spin) linear infinite; }

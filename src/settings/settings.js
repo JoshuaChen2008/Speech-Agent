@@ -71,11 +71,31 @@ opacity.addEventListener('input', () => {
   window.shell.setConfig({ opacity: Number(opacity.value) })
 })
 
+const toolbarOpacity = document.getElementById('toolbarOpacity')
+const toolbarOpacityVal = document.getElementById('toolbarOpacityVal')
+toolbarOpacity.addEventListener('input', () => {
+  toolbarOpacityVal.textContent = Number(toolbarOpacity.value).toFixed(2)
+  window.shell.setConfig({ toolbarOpacity: Number(toolbarOpacity.value) })
+})
+
 const radius = document.getElementById('radius')
 const radiusVal = document.getElementById('radiusVal')
 radius.addEventListener('input', () => {
   radiusVal.textContent = radius.value + ' px'
   window.shell.setConfig({ radius: Number(radius.value) })
+})
+
+// 背景颜色。null 表示跟随深浅主题，和「选了一个恰好等于默认值的颜色」是两回事，
+// 所以复位要显式写回 null，不能靠比较色值猜。
+const barColor = document.getElementById('barColor')
+const barColorVal = document.getElementById('barColorVal')
+const barColorReset = document.getElementById('barColorReset')
+
+barColor.addEventListener('input', () => {
+  window.shell.setConfig({ barColor: barColor.value })
+})
+barColorReset.addEventListener('click', () => {
+  window.shell.setConfig({ barColor: null })
 })
 
 // --------------------------------------------------------------------------
@@ -101,8 +121,15 @@ function reflect (c) {
   setToggle('loopback', c.loopback)
   opacity.value = c.opacity
   opacityVal.textContent = Number(c.opacity).toFixed(2)
+  toolbarOpacity.value = c.toolbarOpacity
+  toolbarOpacityVal.textContent = Number(c.toolbarOpacity).toFixed(2)
   radius.value = c.radius
   radiusVal.textContent = c.radius + ' px'
+
+  const custom = typeof c.barColor === 'string' && c.barColor.length > 0
+  if (custom) barColor.value = c.barColor
+  barColorVal.textContent = custom ? c.barColor : '跟随主题'
+  barColorReset.disabled = !custom
   // 设置窗自身也跟随主题
   document.documentElement.dataset.theme =
     c.theme === 'auto' ? (c.systemDark ? 'dark' : 'light') : c.theme

@@ -6,6 +6,7 @@
    状态归并和行数预算都在 ../ui/shared/caption-reducer.js，本文件只做 DOM 落地。 */
 
 const { createState, applyEvent, selectLines, computeLineBudget } = window.CaptionReducer
+const { applyAppearance } = window.Appearance
 
 const wrap = document.getElementById('wrap')
 const card = document.getElementById('captionCard')
@@ -151,13 +152,8 @@ if (typeof ResizeObserver === 'function') {
 // 配置
 // --------------------------------------------------------------------------
 function applyConfig (c) {
-  const s = document.documentElement.style
-  s.setProperty('--fs', c.fontSize + 'px')
-  s.setProperty('--radius', c.radius + 'px')
-  s.setProperty('--bar-alpha', String(c.opacity))
+  applyAppearance(document.documentElement, c)
   cfg = { bilingual: !!c.bilingual, maxLines: c.maxLines }
-  document.documentElement.dataset.theme =
-    c.theme === 'auto' ? (c.systemDark ? 'dark' : 'light') : c.theme
   render()
 }
 async function initConfig () {

@@ -16,6 +16,8 @@
       这里只留容器，避免 DOM 里出现一份和 runtime-view.js 平行的状态真相。
     -->
     <div class="bar toolbar" id="toolbar">
+      <!-- 拖动握把：条上其余位置几乎全是按钮，没有它就没有可靠的抓取目标 -->
+      <div class="grip" id="grip" title="拖动工具条" aria-hidden="true"></div>
       <div class="status" id="status" role="status"></div>
       <i class="sep"></i>
       <div class="bar-group" id="commands"></div>
@@ -25,6 +27,7 @@
   </div>
 
   <script src="../ui/shared/icons.js"></script>
+  <script src="../ui/shared/appearance.js"></script>
   <script src="../ui/shared/runtime-view.js"></script>
   <script src="../ui/shared/fixtures.generated.js"></script>
   <script src="toolbar.js"></script>

@@ -9,12 +9,14 @@ const fs = require('node:fs')
 
 const DEFAULTS = {
   // 显示与字幕
-  fontSize: 30,        // px：小 24 / 中 30 / 大 38
-  opacity: 0.86,       // 背景不透明度 0.70–1.00
-  radius: 10,          // 圆角 px 6–16
-  theme: 'auto',       // light | auto | dark
-  bilingual: true,     // 双语译文
-  maxLines: 2,         // 最多显示行数
+  fontSize: 30,          // px：小 24 / 中 30 / 大 38
+  opacity: 0.86,         // 字幕卡背景不透明度 0–1.00（0 = 全透明，只剩文字）
+  toolbarOpacity: 0.82,  // 工具条背景不透明度 0–1.00，与字幕卡各自独立
+  barColor: null,        // 字幕卡与工具条的底色 '#rrggbb'；null = 跟随深浅主题
+  radius: 10,            // 圆角 px 6–16
+  theme: 'auto',         // light | auto | dark
+  bilingual: true,       // 双语译文
+  maxLines: 2,           // 当前句的行数上限；实际行数还受整卡高度预算约束
   // 音频源
   mic: true,           // 麦克风（我）
   loopback: false,     // 系统声回环（对方）

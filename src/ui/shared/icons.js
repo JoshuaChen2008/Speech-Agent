@@ -37,6 +37,13 @@
     model: '<path d="M21 8v8a2 2 0 0 1-1 1.73l-7 4a2 2 0 0 1-2 0l-7-4A2 2 0 0 1 3 16V8a2 2 0 0 1 1-1.73l7-4a2 2 0 0 1 2 0l7 4A2 2 0 0 1 21 8z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
     permission: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.9 12.1 8.1-8.1"/><path d="m17 6 2 2"/><path d="m14.8 8.2 2 2"/>',
 
+    /* 拖动握把。锁定后工具条脱离停靠、可自由拖动，需要一个明确的抓取目标 ——
+       条上其余位置几乎全是按钮，只靠内边距根本点不中。 */
+    grip: '<g fill="currentColor" stroke="none">' +
+          '<circle cx="9" cy="5.5" r="1.45"/><circle cx="15" cy="5.5" r="1.45"/>' +
+          '<circle cx="9" cy="12" r="1.45"/><circle cx="15" cy="12" r="1.45"/>' +
+          '<circle cx="9" cy="18.5" r="1.45"/><circle cx="15" cy="18.5" r="1.45"/></g>',
+
     /* ---- 工具条既有 ---- */
     history: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
     lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',

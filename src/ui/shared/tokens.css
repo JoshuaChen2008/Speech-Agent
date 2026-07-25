@@ -79,11 +79,12 @@
    §3 表面与文字（主题相关）
    -------------------------------------------------------------------------- */
 :root {
-  /* 字幕卡：底色三元组与不透明度分开，因为不透明度是用户可调项 */
+  /* 字幕卡与工具条：底色三元组与不透明度分开。
+     颜色是用户可调项（config.barColor，留空则跟随主题）；
+     两个不透明度各有一个滑杆，都可以一路调到 0（全透明）。 */
   --bar-bg: var(--c-ink-900);
-
-  /* 工具条 */
-  --surface-toolbar: rgba(var(--c-ink-950), 0.82);
+  --toolbar-bg: var(--c-ink-950);
+  --surface-toolbar: rgba(var(--toolbar-bg), var(--toolbar-alpha));
 
   /* 设置窗：整页近乎透明，让 DWM acrylic 透上来 */
   --surface-settings: rgba(var(--c-white), 0.04);
@@ -110,11 +111,15 @@
 
   /* 控件圆钮（开关 / 滑杆）：拟物件，两个主题都保持白色，故不随主题切换 */
   --thumb-face: rgb(var(--c-white));
+
+  /* 图标光晕。工具条未锁定时不画底色，光晕是图标唯一的对比度来源，
+     必须在白底文档和深色视频上都成立，所以随主题翻转明暗。 */
+  --icon-halo: drop-shadow(0 1px 2px rgba(var(--c-black), 0.8));
 }
 
 :root[data-theme="light"] {
   --bar-bg: var(--c-paper-50);
-  --surface-toolbar: rgba(var(--c-paper-0), 0.9);
+  --toolbar-bg: var(--c-paper-0);
   --surface-settings: rgba(var(--c-black), 0.04);
   --fg: var(--c-slate-text);
 
@@ -142,6 +147,9 @@
   --tone-wash-live:   rgba(var(--c-red-deep), 0.12);
   --tone-wash-warn:   rgba(var(--c-amber-deep), 0.12);
   --tone-wash-danger: rgba(var(--c-red-darkest), 0.12);
+
+  /* 浅色主题下图标是深色的，光晕要反过来打亮 */
+  --icon-halo: drop-shadow(0 1px 2px rgba(var(--c-white), 0.95));
 }
 
 /* --------------------------------------------------------------------------
@@ -241,10 +249,14 @@
    变量名属于 UI ↔ 配置的既有约定，重命名需同时改 caption.js（共同评审）。
    -------------------------------------------------------------------------- */
 :root {
-  --fs: 30px;          /* config.fontSize · 24 / 30 / 38 */
-  --radius: 10px;      /* config.radius   · 6–16 */
-  --bar-alpha: 0.86;   /* config.opacity  · 0.70–1.00 */
+  --fs: 30px;              /* config.fontSize      · 24 / 30 / 38 */
+  --radius: 10px;          /* config.radius        · 6–16 */
+  --bar-alpha: 0.86;       /* config.opacity        · 0–1，0 即全透明 */
+  --toolbar-alpha: 0.82;   /* config.toolbarOpacity · 0–1，与字幕卡各自独立 */
 }
+
+/* config.barColor 非空时，renderer 会把 --bar-bg 和 --toolbar-bg 一起覆盖成
+   同一个三元组（两者共享色相，只有 alpha 不同）。留空则由上面的主题默认值决定。 */
 
 /* config.maxLines 不再作为 CSS 变量下发。它现在的含义是「当前句的行数上限」，
    由 caption.js 传给 computeLineBudget()，实际行数还要受整卡高度预算约束。

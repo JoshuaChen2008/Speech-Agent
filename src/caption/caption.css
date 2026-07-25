@@ -42,12 +42,11 @@ html, body {
 }
 .caption-card.dragging { cursor: grabbing; }
 
-/* 锁定态：加一圈提示描边 + 底部提示文字 */
+/* 锁定态：不再改描边颜色 —— 锁定的颜色信号只保留在工具条的锁图标上，
+   字幕卡外观保持不变，免得钉住后卡片自己变得突兀。
+   非颜色通道由底部那行提示文字承担（brief §4.1 要求状态不能只靠颜色）。 */
 .wrap[data-locked="on"] .caption-card {
   cursor: default;
-  box-shadow:
-    inset 0 0 0 1px var(--ring-locked),
-    var(--shadow-card);
 }
 
 /* 工具条“洞”：透明占位，覆盖工具条停靠的右上角区域。
@@ -137,12 +136,15 @@ html, body {
   bottom: 8px;
   font-size: var(--fs-micro);
   font-weight: var(--fw-medium);
-  color: var(--state-locked-hint);
+  /* 中性色而非琥珀：锁定的颜色信号只留给工具条锁图标一处，
+     这行文字提供的是「文案」这个通道，不该再叠一层配色。 */
+  color: var(--text-caption);
+  text-shadow: var(--text-shadow-caption);
   opacity: 0;
   transition: opacity var(--dur-base) var(--ease);
   pointer-events: none;
 }
-.wrap[data-locked="on"] .lock-hint { opacity: 1; }
+.wrap[data-locked="on"] .lock-hint { opacity: 0.55; }
 
 /* --------------------------------------------------------------------------
    动效降级：常驻置顶窗，reduced-motion 下光标停在可见态而不是闪烁

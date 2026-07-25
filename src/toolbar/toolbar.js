@@ -10,6 +10,7 @@
 
 const { installSprite, iconMarkup } = window.Icons
 const { buildRuntimeView } = window.RuntimeView
+const { applyAppearance } = window.Appearance
 
 /* 壳层 API。缺失时降级成空操作：既让本页能在纯浏览器里做视觉核对，
    也让 preload 万一没挂上时工具条仍然渲染得出来，而不是留一个空白窗难以排查。
@@ -24,6 +25,7 @@ const bridge = window.shell || {
 
 const wrap = document.getElementById('wrap')
 const toolbar = document.getElementById('toolbar')
+const grip = document.getElementById('grip')
 const statusHost = document.getElementById('status')
 const commandHost = document.getElementById('commands')
 const windowControlHost = document.getElementById('windowControls')
@@ -35,6 +37,7 @@ let ignoring = null
 let lastX = 0, lastY = 0
 
 installSprite(document)
+grip.innerHTML = iconMarkup('grip')
 
 // ---------------------------------------------------------------------------
 // 运行状态来源
@@ -111,18 +114,29 @@ function commandButton (spec, extraClass) {
 /** 过渡态才转圈；listening 是可能持续两小时的稳态，不给无限动画。 */
 const SPIN = { spinner: 'cw', recover: 'ccw' }
 
+/**
+ * 状态区。
+ * quiet 只渲染图标 —— 形状加色调足够区分状态，条保持极简，少遮字幕。
+ * attention 才带出一行说明，因为 unavailable / recovering / error 的信息量
+ * 压不进一个图标。文字取自后端，不在这里编。
+ *
+ * 图标是装饰性的（aria-hidden），语义全部挂在 .status 的 aria-label 上，
+ * 所以 quiet 模式下屏幕阅读器读到的信息没有任何缩水。
+ */
 function renderStatus (view) {
   statusHost.textContent = ''
   statusHost.dataset.tone = view.status.tone
+  statusHost.dataset.emphasis = view.status.emphasis
+  statusHost.setAttribute('aria-label', view.status.ariaLabel)
 
   const icon = iconEl(view.status.icon, 'status-icon')
   if (SPIN[view.status.icon]) icon.dataset.spin = SPIN[view.status.icon]
   statusHost.appendChild(icon)
 
-  const text = el('div', 'status-text')
-  text.appendChild(el('span', 'status-label', view.status.label))
-  text.appendChild(el('span', 'status-detail', view.status.detail))
-  statusHost.appendChild(text)
+  const message = el('span', 'status-message',
+    view.status.emphasis === 'attention' ? view.status.message : '')
+  message.title = view.status.ariaLabel
+  statusHost.appendChild(message)
 
   if (IS_DEMO) {
     const tag = el('span', 'demo-tag', '演示')
@@ -142,7 +156,8 @@ function renderCommands (view) {
       act: view.nextAction.action,
       icon: view.nextAction.icon,
       label: view.nextAction.label,
-      /* 412px 宽度方案下文字降级成 tooltip，只留带色块的图标 */
+      /* 文字降级成 tooltip，只留带 tone 底色的图标 —— 它仍是一排中性图标键里
+         唯一带色块的那个，不至于沉没 */
       showLabel: false,
       ariaLabel: view.nextAction.label + '：' + view.nextAction.message,
       disabled: false,
@@ -183,8 +198,8 @@ function render () {
   renderStatus(view)
   renderCommands(view)
   renderWindowControls()
-  /* idle 之外的一切状态都值得被看见：会话在跑、或者有事要处理 */
-  wrap.dataset.live = view.phase === 'idle' ? 'off' : 'on'
+  /* 需要用户介入时条不允许隐身（带着说明和下一步出口，必须看得见） */
+  wrap.dataset.attention = view.status.emphasis === 'attention' ? 'on' : 'off'
 }
 
 // ---------------------------------------------------------------------------
@@ -252,8 +267,7 @@ bridge.onLock((on) => {
 })
 
 function applyConfig (c) {
-  document.documentElement.dataset.theme =
-    c.theme === 'auto' ? (c.systemDark ? 'dark' : 'light') : c.theme
+  applyAppearance(document.documentElement, c)
 }
 async function initConfig () {
   try { applyConfig(await bridge.getConfig()) } catch { /* noop */ }

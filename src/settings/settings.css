@@ -165,6 +165,37 @@ h1 { font-size: var(--fs-title); font-weight: var(--fw-bold); margin: 14px 0 4px
 .toggle.on { background: var(--accent-solid); }
 .toggle.on::after { transform: translateX(17px); }
 
+/* 一行里放多个控件（颜色 + 复位） */
+.field {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+input[type="color"] {
+  width: 40px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid rgba(var(--fg), 0.22);
+  border-radius: var(--radius-button);
+  background: transparent;
+  cursor: pointer;
+}
+input[type="color"]::-webkit-color-swatch-wrapper { padding: 3px; }
+input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 4px; }
+
+.link-btn {
+  border: 0;
+  background: transparent;
+  color: rgb(var(--text-accent));
+  font-family: inherit;
+  font-size: var(--fs-hint);
+  padding: 4px 6px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+.link-btn:hover { background: rgba(var(--fg), 0.08); }
+.link-btn[disabled] { opacity: 0.4; cursor: default; background: transparent; }
+
 /* range */
 input[type="range"] {
   -webkit-appearance: none;

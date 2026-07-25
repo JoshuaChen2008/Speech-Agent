@@ -76,9 +76,18 @@
 | `recovering` | 回转箭头（逆时针转） | 恢复中 | warn | 暂停（禁用） |
 | `error` | 三角叹号 | 出错 | danger | 开始（禁用） |
 
+**安静 / 需注意两档**（`status.emphasis`）：
+
+- `quiet`（`idle` `starting` `listening` `paused` `stopping`）——工具条**只渲染图标**。形状加色调足够区分，条收窄到 287–319，尽量不遮字幕。
+- `attention`（`unavailable` `recovering` `error`）——额外带出一行说明（`status.message`，取自 `limitations` / `lastError`）。这三个状态的信息量压不进一个图标：用户需要知道缺什么、在恢复什么、为什么失败。
+- 两档的 `aria-label` 完全一致。图标是装饰性的，语义挂在 `.status` 的 `aria-label` 上，所以 `quiet` 下辅助技术读到的信息没有缩水。
+
+**常态融入背景**：未锁定且未交互时工具条不画任何表面——没有底色、描边和阴影，只剩图标，靠 `--icon-halo` 保证在白底文档和深色视频上都可读。悬停、键盘聚焦、拖动中、锁定后、或处于 `attention` 时表面浮现。
+
 规则：
 
 - **形状 > 文案 > 颜色。** tone 只是冗余通道；把颜色全部去掉后，图标形状加文案仍能区分全部 8 个 phase。
+- **锁定只由工具条锁图标表达**：图标形状在开锁/闭锁间切换 + 变色 + `aria-pressed`。字幕卡不再改描边，卡片底部的「已钉住」提示用中性色，只提供文案通道，不叠第二处配色。
 - **主按钮由 capabilities 决定，不按 phase 硬编码**：依次取 `canPause / canResume / canStart` 第一个为真者；全假时按 phase 摆出对应意图的禁用态。
 - **禁用理由和下一步只能取自后端**：`capabilities.limitations[].message` 优先，其次 `lastError.message`；两者都没有才退到泛化文案。`nextAction` 是 4 值闭集，UI 只做翻译不做决策。
 - **状态区第二行必须说明作用对象**：`listening` 列出 active 来源，`recovering` 列出正在恢复的来源，满足「显示正在恢复哪个组件」。
