@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "sampleRate": 16000,
+  "bitsPerSample": 16,
+  "channels": 1,
+  "cases": [
+    {
+      "id": "zh-roadmap",
+      "category": "zh",
+      "voice": "Microsoft Huihui Desktop",
+      "reference": "我们下周一起复盘产品路线图。",
+      "text": "我们下周一起复盘产品路线图。"
+    },
+    {
+      "id": "en-onboarding",
+      "category": "en",
+      "voice": "Microsoft Zira Desktop",
+      "reference": "The onboarding drop-off is mostly on step three.",
+      "text": "The onboarding drop-off is mostly on step three."
+    },
+    {
+      "id": "zh-en-code-switch",
+      "category": "code-switch",
+      "reference": "我们下周 review 一下 roadmap，然后看 A B test。",
+      "ssml": "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"zh-CN\"><voice name=\"Microsoft Huihui Desktop\">我们下周</voice><break time=\"150ms\"/><voice name=\"Microsoft Zira Desktop\">review</voice><voice name=\"Microsoft Huihui Desktop\">一下</voice><voice name=\"Microsoft Zira Desktop\">roadmap</voice><voice name=\"Microsoft Huihui Desktop\">，然后看</voice><voice name=\"Microsoft Zira Desktop\">A B test</voice><voice name=\"Microsoft Huihui Desktop\">。</voice></speak>"
+    },
+    {
+      "id": "zh-date-itn",
+      "category": "itn",
+      "voice": "Microsoft Huihui Desktop",
+      "reference": "会议安排在二零二六年七月二十五日下午三点半。",
+      "text": "会议安排在二零二六年七月二十五日下午三点半。"
+    }
+  ]
+}

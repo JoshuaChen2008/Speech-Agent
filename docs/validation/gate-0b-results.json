@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "gate": "0B",
+  "executedAt": "2026-07-25",
+  "result": "fail",
+  "summary": "No tested realtime/refinement combination satisfies every frozen Gate 0B criterion.",
+  "evidence": {
+    "cliObservations": "gate-0b-cli-observations.json",
+    "controlledMetrics": "gate-0b-controlled-metrics.json",
+    "reproduce": "../../scripts/gate-0b/README.md",
+    "note": "The tracked CLI observations are path-free; raw local logs are ignored and linked per run by rawOutputSha256."
+  },
+  "criteria": {
+    "punctuationPresent": { "target": true, "result": "pass", "evidence": "X-ASR 480ms emitted commas on official code-switch samples and the controlled code-switch case." },
+    "codeSwitchDoesNotCrash": { "target": true, "result": "pass", "evidence": "All X-ASR candidates exited successfully; X-ASR 480ms preserved the controlled Chinese/English content." },
+    "realtimeRtf": { "target": "< 0.35 per official sample", "result": "pass-only-x-asr-480-and-small-bilingual" },
+    "firstPartialLatency": { "target": "P95 < 1000 ms from detected speech onset", "result": "fail-x-asr-480" },
+    "refinementBenefit": { "target": "macro CER delta > 0 with no unreported regression", "result": "fail" }
+  },
+  "environment": {
+    "os": "Windows 11 23H2 build 22631.5768",
+    "cpu": "Intel Core Ultra 9 185H",
+    "node": "22.22.2",
+    "electron": "43.2.0",
+    "sherpaOnnxCli": { "version": "1.13.4", "gitSha1": "14280725", "gitDate": "2026-07-07" },
+    "sherpaOnnxNode": "1.13.4",
+    "provider": "cpu",
+    "numThreads": 3
+  },
+  "archives": [
+    {
+      "id": "cli",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/sherpa-onnx-v1.13.4-win-x64-shared-MD-Release.tar.bz2",
+      "bytes": 20034576,
+      "sha256": "d4dacc8be5afe03f22ade4d50cfd587c03a625eaca8c41f2d99a24d3db463eab"
+    },
+    {
+      "id": "x-asr-480ms",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2",
+      "bytes": 133895136,
+      "sha256": "fa5f63d618e5a01526e275a358bb7772e403f84808a4769fba52cffd8160bf74"
+    },
+    {
+      "id": "x-asr-160ms",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-x-asr-160ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2",
+      "bytes": 133898007,
+      "sha256": "8a6fca056e1a342546edd78be4d50274e2c01898e7b8ae8fc336f6410319c399"
+    },
+    {
+      "id": "sense-voice",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2",
+      "bytes": 165783878,
+      "sha256": "7305f7905bfcf77fa0b39388a313f3da35c68d971661a65475b56fb2162c8e63"
+    },
+    {
+      "id": "small-bilingual",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16.tar.bz2",
+      "bytes": 458187351,
+      "sha256": "2b7c63322b32e5e0f2526043a1103366119ca58dd615cd7105a37c01db9553d7",
+      "note": "The archive contains float/int8 and multiple chunk variants; the selected top-level int8 model files total about 50 MB."
+    }
+  ],
+  "controlledCorpus": {
+    "generator": "Windows SAPI with fixed text/SSML",
+    "format": { "sampleRate": 16000, "bitsPerSample": 16, "channels": 1 },
+    "cases": [
+      { "id": "zh-roadmap", "durationSeconds": 3.895, "sha256": "1971223a71ebbd178ffba7d5a69d75e9cda0220f39dd6ec0cb1c9e4bd9823dcb" },
+      { "id": "en-onboarding", "durationSeconds": 3.545, "sha256": "a76b9d22db9496103991e1501f8b6c94942705ad7fed29d9a30bb03334140dcf" },
+      { "id": "zh-en-code-switch", "durationSeconds": 8.56, "sha256": "cf741c91fae04e20ae92193065a24248a1f6ecd20a179c3deaf3d69bc9a6febc" },
+      { "id": "zh-date-itn", "durationSeconds": 5.385, "sha256": "b832754fc14550b0c44327870fbb409a3f75e7e275ad413dfcb21951c0199d75" }
+    ]
+  },
+  "realtimeCandidates": [
+    {
+      "id": "x-asr-480ms",
+      "officialSampleRtf": [0.18, 0.25, 0.26, 0.19],
+      "officialSampleRtfPass": true,
+      "controlledSampleRtf": [0.29, 0.29, 0.17, 0.24],
+      "controlledFinalMacroCer": 0,
+      "punctuationObserved": true,
+      "controlled40msStreaming": [
+        { "id": "zh-roadmap", "latencyP50Ms": 1024.116, "latencyP95Ms": 1024.279, "processingRtfP95": 0.074593 },
+        { "id": "en-onboarding", "latencyP50Ms": 567.711, "latencyP95Ms": 574.333, "processingRtfP95": 0.080189 },
+        { "id": "zh-en-code-switch", "latencyP50Ms": 1023.363, "latencyP95Ms": 1034.481, "processingRtfP95": 0.084988 },
+        { "id": "zh-date-itn", "latencyP50Ms": 1005.924, "latencyP95Ms": 1012.446, "processingRtfP95": 0.081241 }
+      ],
+      "controlled20msCodeSwitch": { "latencyP50Ms": 1019.585, "latencyP95Ms": 1021.016, "processingRtfP95": 0.089287 },
+      "result": "fail-first-partial-latency"
+    },
+    {
+      "id": "x-asr-160ms",
+      "officialSampleRtf": [0.44, 0.63, 0.65, 0.48],
+      "officialSampleRtfPass": false,
+      "controlled40msCodeSwitch": { "latencyP50Ms": 691.274, "latencyP95Ms": 699.555, "processingRtfP95": 0.186179, "finalText": "我们下周 review 一下 roadmap 然后看 A B test" },
+      "result": "fail-official-rtf-and-quality"
+    },
+    {
+      "id": "small-bilingual",
+      "officialSampleRtf": [0.12, 0.16, 0.16, 0.12, 0.082, 0.18],
+      "officialSampleRtfPass": true,
+      "controlledCliRtf": 0.036,
+      "controlled40msCodeSwitch": { "latencyP50Ms": 318.133, "latencyP95Ms": 325.644, "processingRtfP95": 0.039565, "finalText": "我下周一然后" },
+      "punctuationObserved": false,
+      "result": "fail-content-quality-and-punctuation"
+    }
+  ],
+  "refinement": {
+    "id": "sense-voice-zh-en-ja-ko-yue-int8-2025-09-09",
+    "controlledAggregateRtf": 0.07,
+    "xAsrMacroCer": 0,
+    "senseVoiceMacroCer": 0.008928571428571428,
+    "macroCerDelta": -0.008928571428571428,
+    "improvedCases": 0,
+    "regressedCases": 1,
+    "xAsrMacroPunctuationF1": 0.16666666666666666,
+    "senseVoiceMacroPunctuationF1": 0,
+    "codeSwitchRegression": { "xAsr": "roadmap", "senseVoice": "ROADMP" },
+    "languageTagObservedForAllControlledCases": "<|yue|>",
+    "result": "fail-no-measurable-benefit"
+  },
+  "decision": {
+    "approvedProfiles": [],
+    "approvedRefinement": false,
+    "closestCandidate": "x-asr-480ms",
+    "action": "Keep model-backed capabilities unavailable until a candidate passes the frozen latency and refinement criteria; do not relax the gate implicitly."
+  },
+  "limitations": [
+    "Controlled accuracy uses deterministic SAPI voices, not a multi-speaker noisy meeting corpus.",
+    "First-partial latency uses five paced runs per 40 ms case and a -45 dBFS speech-onset detector on one development machine.",
+    "The official CLI archive contains no sherpa-onnx-microphone.exe, so microphone latency was measured with the matching v1.13.4 Node N-API binding.",
+    "CLI success validates model selection only; Electron utility-process integration remains a later backend gate."
+  ]
+}

@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "zh-roadmap",
+      "category": "zh",
+      "reference": "我们下周一起复盘产品路线图。",
+      "xAsr": {
+        "text": "我们下周一起复盘产品路线图",
+        "cer": 0,
+        "wer": null,
+        "punctuation": {
+          "referenceCount": 1,
+          "hypothesisCount": 0,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        }
+      },
+      "senseVoice": {
+        "text": "我们下周一起复盘产品路线图",
+        "cer": 0,
+        "wer": null,
+        "punctuation": {
+          "referenceCount": 1,
+          "hypothesisCount": 0,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        }
+      },
+      "refinementCerDelta": 0
+    },
+    {
+      "id": "en-onboarding",
+      "category": "en",
+      "reference": "The onboarding drop-off is mostly on step three.",
+      "xAsr": {
+        "text": "The onboarding drop off is mostly on step three",
+        "cer": 0,
+        "wer": 0,
+        "punctuation": {
+          "referenceCount": 1,
+          "hypothesisCount": 0,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        }
+      },
+      "senseVoice": {
+        "text": "THE ONBOARDING DROP OFF IS MOSTLY ON STEP THREE",
+        "cer": 0,
+        "wer": 0,
+        "punctuation": {
+          "referenceCount": 1,
+          "hypothesisCount": 0,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        }
+      },
+      "refinementCerDelta": 0
+    },
+    {
+      "id": "zh-en-code-switch",
+      "category": "code-switch",
+      "reference": "我们下周 review 一下 roadmap，然后看 A B test。",
+      "xAsr": {
+        "text": "我们下周 review 一下 roadmap， 然后看 A B test",
+        "cer": 0,
+        "wer": null,
+        "punctuation": {
+          "referenceCount": 2,
+          "hypothesisCount": 1,
+          "precision": 1,
+          "recall": 0.5,
+          "f1": 0.6666666666666666
+        }
+      },
+      "senseVoice": {
+        "text": "我们下周 REVIEW 一下 ROADMP 然后看 A B TEST",
+        "cer": 0.03571428571428571,
+        "wer": null,
+        "punctuation": {
+          "referenceCount": 2,
+          "hypothesisCount": 0,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        }
+      },
+      "refinementCerDelta": -0.03571428571428571
+    },
+    {
+      "id": "zh-date-itn",
+      "category": "itn",
+      "reference": "会议安排在二零二六年七月二十五日下午三点半。",
+      "xAsr": {
+        "text": "会议安排在二零二六年七月二十五日下午三点半",
+        "cer": 0,
+        "wer": null,
+        "punctuation": {
+          "referenceCount": 1,
+          "hypothesisCount": 0,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        }
+      },
+      "senseVoice": {
+        "text": "会议安排在二零二六年七月二十五日下午三点半",
+        "cer": 0,
+        "wer": null,
+        "punctuation": {
+          "referenceCount": 1,
+          "hypothesisCount": 0,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        }
+      },
+      "refinementCerDelta": 0
+    }
+  ],
+  "aggregate": {
+    "xAsrMacroCer": 0,
+    "senseVoiceMacroCer": 0.008928571428571428,
+    "refinementMacroCerDelta": -0.008928571428571428,
+    "refinementImprovedCases": 0,
+    "refinementRegressedCases": 1,
+    "xAsrMacroPunctuationF1": 0.16666666666666666,
+    "senseVoiceMacroPunctuationF1": 0
+  }
+}

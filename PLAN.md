@@ -47,8 +47,8 @@
 | ASR 引擎 | **sherpa-onnx v1.13.4**（2026-07-07） | 2026-07-25 复核：仍是 latest |
 | 接入方式 | **`sherpa-onnx-node` 1.13.4** + `sherpa-onnx-win-x64` 1.13.4（N-API 预编译） | 复核一致，未安装 |
 | 硬件后端 | **CPU**（不上 CUDA） | 定 |
-| 一遍流式模型 | **x-asr-480ms-…-zh-en-punct-int8-2026-06-05** | **待 Gate 0B 实测验证** |
-| 二遍精修模型 | **sense-voice-zh-en-ja-ko-yue-int8-2025-09-09** | 待验证 |
+| 一遍流式模型 | **x-asr-480ms-…-zh-en-punct-int8-2026-06-05** | **Gate 0B 未通过：首 partial P95 略高于 1s；尚未批准** |
+| 二遍精修模型 | **sense-voice-zh-en-ja-ko-yue-int8-2025-09-09** | **Gate 0B 未通过：受控语料无净收益；尚未批准** |
 | VAD | **silero_vad.onnx**（0.6 MB） | 定 |
 | 外壳 | **Electron 43.2.0** | 复核：已是 latest，不动 |
 | 构建工具链 | **不引入**（vanilla + JSDoc `@ts-check`） | 见 §6.1 |
@@ -65,7 +65,7 @@
 
 **v1.13.4**（2026-07-07）。三条分发渠道版本一致：
 
-- Release 二进制：`sherpa-onnx-v1.13.4-win-x64-shared-MD-Release.tar.bz2` — 20.0 MB，含 `sherpa-onnx-microphone.exe` 等 CLI，**Gate 0B 用它做选型验证**
+- Release 二进制：`sherpa-onnx-v1.13.4-win-x64-shared-MD-Release.tar.bz2` — 20.0 MB，含在线/离线 WAV 测试 CLI，但**不含** `sherpa-onnx-microphone.exe`；Gate 0B 用 CLI 测 RTF、用同版本 Node N-API 测首 partial
 - Node 绑定：`sherpa-onnx-node@1.13.4` + `sherpa-onnx-win-x64@1.13.4`
 - C# 绑定（若走 WPF 路线）：NuGet `org.k2fsa.sherpa.onnx` 1.13.4
 
@@ -387,26 +387,22 @@ v1 明确只承诺 **OpenAI-compatible chat completions**。使用 `fetch` + 独
 | Gate | 内容 | 验收标准 |
 |---|---|---|
 | **0A 契约（完成）** | 固化 `RuntimeSnapshot / CaptionEvent / CommandResult / Capabilities` v1 和样例 fixtures；见 `src/contracts/` | validator 测试覆盖 idle、启动、监听、暂停、恢复、错误、精修、翻译；UI 接线留给视觉工作流 |
-| **0B 模型** | X-ASR CLI + SenseVoice 实测 | 带标点；中英混说不崩；RTF < 0.35；首字延迟 < 1s；精修有可量化收益 |
+| **0B 模型（实测完成，未通过）** | X-ASR 480/160、small-bilingual、SenseVoice 的 CLI + N-API 实测；见 `docs/validation/gate-0b.md` | 480ms 首字延迟失败；160ms RTF 失败；small-bilingual 质量/标点失败；SenseVoice 无精修净收益 |
 | **0C 音频拓扑** | 隐藏 audio host 的麦克风/回环与用户手势 spike | 16k mono wav 无爆音；隐藏窗方案可用，或明确采用工具条发起采集的回退 |
 | **0D 产品入口** | 确定会议/个人听写的首启预设 | 不再用一个隐藏默认值替用户决定 mic/loopback；UI 文案与默认配置一致 |
 
-Gate 0B 参考 PowerShell 步骤：
+Gate 0B 的固定复现入口：
 
 ```powershell
-curl.exe -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/sherpa-onnx-v1.13.4-win-x64-shared-MD-Release.tar.bz2
-tar.exe -xf sherpa-onnx-v1.13.4-win-x64-shared-MD-Release.tar.bz2
+node scripts/gate-0b/run-cli-suite.js `
+  --asset-root models/gate-0b `
+  --raw-dir models/gate-0b/runs/cli-raw `
+  --output docs/validation/gate-0b-cli-observations.json
 
-curl.exe -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2
-tar.exe -xf sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2
-
-$modelDir = Resolve-Path '.\sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05'
-& '.\bin\sherpa-onnx-microphone.exe' `
-  --tokens="$modelDir\tokens.txt" `
-  --encoder="$modelDir\encoder.int8.onnx" `
-  --decoder="$modelDir\decoder.onnx" `
-  --joiner="$modelDir\joiner.int8.onnx" `
-  --num-threads=3
+node scripts/gate-0b/evaluate-transcripts.js `
+  --corpus scripts/gate-0b/corpus.json `
+  --observations docs/validation/gate-0b-cli-observations.json `
+  --output docs/validation/gate-0b-controlled-metrics.json
 ```
 
 模型任一指标不达标 → 换 `160ms` 或退到 `small-bilingual` 重跑；UI 只根据新的 Capabilities 改可用档位，不直接绑定模型名。
