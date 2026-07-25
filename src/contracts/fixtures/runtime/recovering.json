@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "revision": 8,
+  "sessionId": "session-01",
+  "phase": "recovering",
+  "capabilities": {
+    "schemaVersion": 1,
+    "canStart": false,
+    "canPause": false,
+    "canResume": false,
+    "canStop": false,
+    "canRetry": false,
+    "canRefine": true,
+    "canTranslate": true,
+    "availableProfiles": ["fast", "balanced"],
+    "availableSourceIds": ["mic", "loopback"],
+    "translationTargets": ["en", "zh-CN"],
+    "limitations": [
+      {
+        "capability": "retry",
+        "code": "AUTO_RECOVERY_IN_PROGRESS",
+        "message": "正在重新连接系统音频",
+        "nextAction": null
+      }
+    ]
+  },
+  "sources": [
+    { "id": "mic", "label": "麦克风", "state": "active", "level": 0.12 },
+    { "id": "loopback", "label": "系统音频", "state": "recovering", "level": 0 }
+  ],
+  "model": { "state": "ready", "profile": "balanced", "progress": 1 },
+  "lastError": {
+    "scope": "audio",
+    "code": "LOOPBACK_TRACK_ENDED",
+    "message": "系统音频已中断，正在尝试恢复",
+    "recoverable": true,
+    "nextAction": null
+  }
+}

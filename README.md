@@ -29,6 +29,7 @@ npm start
 - **Electron 壳层**：窗口、拖动、穿透、最小权限 preload、IPC 校验和会话状态机。
 - **运行后端**：audio host、实时/精修 ASR workers、模型、会话、凭据和 AI provider。
 - 三层只通过 `RuntimeSnapshot / CaptionEvent / CommandResult / Capabilities` 协作；UI 不读取模型、存储或密钥实现。
+- Gate 0A 的 v1 字段、运行时校验器和模拟数据已固化在 [`src/contracts/`](src/contracts/README.md)，现有 UI 尚未接线。
 
 视觉模型的文件白名单、状态 fixtures 和交接要求见 [docs/ui-design-brief.md](docs/ui-design-brief.md)；后端职责、状态机和数据流见 [docs/runtime-architecture.md](docs/runtime-architecture.md)。
 
@@ -39,6 +40,7 @@ src/
   main.js              当前主进程骨架：三窗管理 + 停靠 + 手动拖动 + 锁定/录制协调
   config.js            配置存储：内存 + 持久化 userData/config.json
   preload.js           当前共享 API；B1 将拆成按窗口最小权限 preload
+  contracts/           Gate 0A：v1 契约、运行时校验器与跨层 JSON fixtures
   caption/             字幕窗
     index.html · caption.css · caption.js     命中测试 + 拖动 + 锁定穿透 + 配置 + 假字幕流
   toolbar/             工具条窗

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "code": "AI_PROVIDER_NOT_CONFIGURED",
+  "message": "需要先配置翻译服务",
+  "recoverable": true,
+  "nextAction": "open-settings"
+}

@@ -382,11 +382,11 @@ v1 明确只承诺 **OpenAI-compatible chat completions**。使用 `fetch` + 独
 
 不再把全部工作串成一个 Phase 0→7 队列。完成共享 Gate 0 后，视觉/UI 和运行后端用同一套 fixtures 并行开发，在 Integration Gate 汇合。
 
-### 7.1 共享 Gate 0（尚未执行）
+### 7.1 共享 Gate 0（执行中）
 
 | Gate | 内容 | 验收标准 |
 |---|---|---|
-| **0A 契约** | 固化 `RuntimeSnapshot / CaptionEvent / CommandResult / Capabilities` v1 和样例 fixtures | UI 可完全用 fake adapter 演示启动、监听、暂停、错误、精修、翻译 |
+| **0A 契约（完成）** | 固化 `RuntimeSnapshot / CaptionEvent / CommandResult / Capabilities` v1 和样例 fixtures；见 `src/contracts/` | validator 测试覆盖 idle、启动、监听、暂停、恢复、错误、精修、翻译；UI 接线留给视觉工作流 |
 | **0B 模型** | X-ASR CLI + SenseVoice 实测 | 带标点；中英混说不崩；RTF < 0.35；首字延迟 < 1s；精修有可量化收益 |
 | **0C 音频拓扑** | 隐藏 audio host 的麦克风/回环与用户手势 spike | 16k mono wav 无爆音；隐藏窗方案可用，或明确采用工具条发起采集的回退 |
 | **0D 产品入口** | 确定会议/个人听写的首启预设 | 不再用一个隐藏默认值替用户决定 mic/loopback；UI 文案与默认配置一致 |

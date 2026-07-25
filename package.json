@@ -4,7 +4,8 @@
   "description": "Win11 实时字幕 Agent · 骨架（透明字幕条 + 工具栏 + 点击穿透，未接 ASR）",
   "main": "src/main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "test": "node --test --experimental-test-isolation=none"
   },
   "author": "",
   "license": "MIT",

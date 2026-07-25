@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "revision": 2,
+  "sessionId": null,
+  "phase": "idle",
+  "capabilities": {
+    "schemaVersion": 1,
+    "canStart": true,
+    "canPause": false,
+    "canResume": false,
+    "canStop": false,
+    "canRetry": false,
+    "canRefine": true,
+    "canTranslate": true,
+    "availableProfiles": ["fast", "balanced"],
+    "availableSourceIds": ["mic", "loopback"],
+    "translationTargets": ["en", "zh-CN"],
+    "limitations": []
+  },
+  "sources": [
+    { "id": "mic", "label": "麦克风", "state": "inactive", "level": 0 },
+    { "id": "loopback", "label": "系统音频", "state": "inactive", "level": 0 }
+  ],
+  "model": { "state": "ready", "profile": "balanced", "progress": 1 },
+  "lastError": null
+}

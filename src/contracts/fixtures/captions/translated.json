@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "session-01",
+  "sourceId": "loopback",
+  "segmentId": "segment-17",
+  "sequence": 93,
+  "revision": 4,
+  "kind": "translated",
+  "t0": 12.34,
+  "t1": 15.02,
+  "text": "我们下周一起 review 一下 roadmap。",
+  "translation": {
+    "language": "en",
+    "text": "Let's review the roadmap together next week.",
+    "basedOnRevision": 3
+  }
+}

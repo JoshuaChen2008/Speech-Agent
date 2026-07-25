@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "code": "MODEL_NOT_READY",
+  "message": "需要先安装均衡模型",
+  "recoverable": true,
+  "nextAction": "open-model-manager"
+}

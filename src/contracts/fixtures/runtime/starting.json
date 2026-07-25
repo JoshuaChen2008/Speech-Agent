@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "revision": 3,
+  "sessionId": "session-01",
+  "phase": "starting",
+  "capabilities": {
+    "schemaVersion": 1,
+    "canStart": false,
+    "canPause": false,
+    "canResume": false,
+    "canStop": false,
+    "canRetry": false,
+    "canRefine": true,
+    "canTranslate": true,
+    "availableProfiles": ["fast", "balanced"],
+    "availableSourceIds": ["mic", "loopback"],
+    "translationTargets": ["en", "zh-CN"],
+    "limitations": [
+      {
+        "capability": "start",
+        "code": "COMMAND_BUSY",
+        "message": "正在启动音频和识别服务",
+        "nextAction": null
+      }
+    ]
+  },
+  "sources": [
+    { "id": "mic", "label": "麦克风", "state": "starting", "level": 0 },
+    { "id": "loopback", "label": "系统音频", "state": "starting", "level": 0 }
+  ],
+  "model": { "state": "ready", "profile": "balanced", "progress": 1 },
+  "lastError": null
+}

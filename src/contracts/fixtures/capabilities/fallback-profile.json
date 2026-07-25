@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "canStart": true,
+  "canPause": false,
+  "canResume": false,
+  "canStop": false,
+  "canRetry": false,
+  "canRefine": false,
+  "canTranslate": false,
+  "availableProfiles": ["balanced"],
+  "availableSourceIds": ["mic", "loopback"],
+  "translationTargets": [],
+  "limitations": [
+    {
+      "capability": "refine",
+      "code": "REFINEMENT_MODEL_NOT_READY",
+      "message": "当前安装未包含精修模型",
+      "nextAction": "open-model-manager"
+    },
+    {
+      "capability": "translate",
+      "code": "AI_PROVIDER_NOT_CONFIGURED",
+      "message": "需要先配置翻译服务",
+      "nextAction": "open-settings"
+    }
+  ]
+}

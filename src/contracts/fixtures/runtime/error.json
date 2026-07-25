@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "revision": 9,
+  "sessionId": "session-01",
+  "phase": "error",
+  "capabilities": {
+    "schemaVersion": 1,
+    "canStart": false,
+    "canPause": false,
+    "canResume": false,
+    "canStop": true,
+    "canRetry": true,
+    "canRefine": true,
+    "canTranslate": true,
+    "availableProfiles": ["fast", "balanced"],
+    "availableSourceIds": ["mic", "loopback"],
+    "translationTargets": ["en", "zh-CN"],
+    "limitations": []
+  },
+  "sources": [
+    { "id": "mic", "label": "麦克风", "state": "error", "level": 0 },
+    { "id": "loopback", "label": "系统音频", "state": "error", "level": 0 }
+  ],
+  "model": { "state": "ready", "profile": "balanced", "progress": 1 },
+  "lastError": {
+    "scope": "audio",
+    "code": "MEDIA_PERMISSION_DENIED",
+    "message": "没有麦克风或系统音频权限",
+    "recoverable": true,
+    "nextAction": "request-permission"
+  }
+}

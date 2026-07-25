@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "revision": 1,
+  "sessionId": null,
+  "phase": "unavailable",
+  "capabilities": {
+    "schemaVersion": 1,
+    "canStart": false,
+    "canPause": false,
+    "canResume": false,
+    "canStop": false,
+    "canRetry": false,
+    "canRefine": false,
+    "canTranslate": false,
+    "availableProfiles": [],
+    "availableSourceIds": [],
+    "translationTargets": [],
+    "limitations": [
+      {
+        "capability": "start",
+        "code": "MODEL_NOT_READY",
+        "message": "需要先安装语音识别模型",
+        "nextAction": "open-model-manager"
+      },
+      {
+        "capability": "refine",
+        "code": "REFINEMENT_MODEL_NOT_READY",
+        "message": "精修模型尚未安装",
+        "nextAction": "open-model-manager"
+      },
+      {
+        "capability": "translate",
+        "code": "AI_PROVIDER_NOT_CONFIGURED",
+        "message": "需要先配置翻译服务",
+        "nextAction": "open-settings"
+      }
+    ]
+  },
+  "sources": [
+    { "id": "mic", "label": "麦克风", "state": "unavailable", "level": 0 },
+    { "id": "loopback", "label": "系统音频", "state": "unavailable", "level": 0 }
+  ],
+  "model": { "state": "missing", "profile": null, "progress": null },
+  "lastError": null
+}

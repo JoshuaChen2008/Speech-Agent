@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "canStart": false,
+  "canPause": false,
+  "canResume": false,
+  "canStop": false,
+  "canRetry": false,
+  "canRefine": false,
+  "canTranslate": false,
+  "availableProfiles": [],
+  "availableSourceIds": [],
+  "translationTargets": [],
+  "limitations": [
+    {
+      "capability": "start",
+      "code": "MODEL_NOT_READY",
+      "message": "需要先安装语音识别模型",
+      "nextAction": "open-model-manager"
+    }
+  ]
+}

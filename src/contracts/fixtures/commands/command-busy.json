@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "code": "COMMAND_BUSY",
+  "message": "运行时正在迁移状态，请稍后重试",
+  "recoverable": true,
+  "nextAction": "retry"
+}

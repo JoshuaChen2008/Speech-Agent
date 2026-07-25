@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "session-01",
+  "sourceId": "loopback",
+  "segmentId": "segment-17",
+  "sequence": 92,
+  "revision": 3,
+  "kind": "refined",
+  "t0": 12.34,
+  "t1": 15.02,
+  "text": "我们下周一起 review 一下 roadmap。",
+  "translation": null
+}

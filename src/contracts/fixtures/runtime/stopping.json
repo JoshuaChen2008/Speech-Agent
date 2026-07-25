@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "revision": 7,
+  "sessionId": "session-01",
+  "phase": "stopping",
+  "capabilities": {
+    "schemaVersion": 1,
+    "canStart": false,
+    "canPause": false,
+    "canResume": false,
+    "canStop": false,
+    "canRetry": false,
+    "canRefine": true,
+    "canTranslate": true,
+    "availableProfiles": ["fast", "balanced"],
+    "availableSourceIds": ["mic", "loopback"],
+    "translationTargets": ["en", "zh-CN"],
+    "limitations": [
+      {
+        "capability": "stop",
+        "code": "COMMAND_BUSY",
+        "message": "正在停止采集并写入会话",
+        "nextAction": null
+      }
+    ]
+  },
+  "sources": [
+    { "id": "mic", "label": "麦克风", "state": "paused", "level": 0 },
+    { "id": "loopback", "label": "系统音频", "state": "paused", "level": 0 }
+  ],
+  "model": { "state": "ready", "profile": "balanced", "progress": 1 },
+  "lastError": null
+}
