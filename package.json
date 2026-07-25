@@ -1,0 +1,14 @@
+{
+  "name": "live-subtitle-agent",
+  "version": "0.1.0",
+  "description": "Win11 实时字幕 Agent · 骨架（透明字幕条 + 工具栏 + 点击穿透，未接 ASR）",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^43.2.0"
+  }
+}

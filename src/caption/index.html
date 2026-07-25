@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline';">
+  <link rel="stylesheet" href="caption.css">
+  <title>Live Subtitle</title>
+</head>
+<body>
+  <div class="wrap" id="wrap" data-locked="off">
+    <div class="caption-card" id="captionCard">
+      <!-- 工具条“洞”：此区域字幕窗放行穿透，让下面/上面的工具条窗接管事件 -->
+      <div class="tb-hole" id="tbHole" aria-hidden="true"></div>
+      <div class="captions" id="captions">
+        <p class="line final">欢迎使用 Live Subtitle Agent</p>
+      </div>
+      <span class="lock-hint" aria-hidden="true">已钉住 · Ctrl+Alt+L 解锁</span>
+    </div>
+  </div>
+  <script src="caption.js"></script>
+</body>
+</html>

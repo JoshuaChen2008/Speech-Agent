@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline';">
+  <link rel="stylesheet" href="settings.css">
+  <title>设置</title>
+</head>
+<body>
+  <!-- 顶栏（可拖 + 关闭） -->
+  <header class="titlebar">
+    <div class="tb-title">Live Subtitle Agent · 设置</div>
+    <button class="tb-close" id="close" title="关闭" aria-label="关闭">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+    </button>
+  </header>
+
+  <div class="layout">
+    <!-- 左侧导航 -->
+    <nav class="nav">
+      <button class="nav-item active" data-pane="display">显示与字幕</button>
+      <button class="nav-item" data-pane="audio">音频源</button>
+      <button class="nav-item" data-pane="asr">语音识别</button>
+      <button class="nav-item" data-pane="about">关于</button>
+    </nav>
+
+    <!-- 右侧内容 -->
+    <main class="content">
+      <!-- 显示与字幕 -->
+      <section class="pane active" data-pane="display">
+        <h1>显示与字幕</h1>
+        <p class="sub">调整字幕条的外观，改动实时生效。</p>
+
+        <div class="group">
+          <div class="row">
+            <div class="label">字号</div>
+            <div class="seg" data-seg="fontsize">
+              <button data-val="24">小</button>
+              <button class="on" data-val="30">中</button>
+              <button data-val="38">大</button>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="label">主题</div>
+            <div class="seg" data-seg="theme">
+              <button data-val="light">浅色</button>
+              <button class="on" data-val="auto">自动</button>
+              <button data-val="dark">深色</button>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="label">背景不透明度 <span class="hint" id="opacityVal">0.86</span></div>
+            <input type="range" id="opacity" min="0.70" max="1.00" step="0.01" value="0.86">
+          </div>
+
+          <div class="row">
+            <div class="label">圆角 <span class="hint" id="radiusVal">10 px</span></div>
+            <input type="range" id="radius" min="6" max="16" step="1" value="10">
+          </div>
+
+          <div class="row">
+            <div class="label">显示双语译文</div>
+            <button class="toggle on" data-toggle="bilingual" aria-label="显示双语译文"></button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 音频源 -->
+      <section class="pane" data-pane="audio">
+        <h1>音频源</h1>
+        <p class="sub">选择要听写的声音来源。</p>
+        <div class="group">
+          <div class="row">
+            <div class="label">麦克风（我）</div>
+            <button class="toggle on" data-toggle="mic" aria-label="麦克风"></button>
+          </div>
+          <div class="row">
+            <div class="label">系统声回环（对方）</div>
+            <button class="toggle" data-toggle="loopback" aria-label="系统声"></button>
+          </div>
+        </div>
+        <p class="note">当前为演示骨架；正式版本会根据设备能力显示可用音频源。</p>
+      </section>
+
+      <!-- 语音识别 -->
+      <section class="pane" data-pane="asr">
+        <h1>语音识别</h1>
+        <p class="sub">本地离线语音识别。</p>
+        <div class="group">
+          <div class="row">
+            <div class="label">字幕延迟</div>
+            <div class="seg" data-seg="latency">
+              <button data-val="160">极速</button>
+              <button class="on" data-val="480">均衡</button>
+              <button data-val="960">精准</button>
+            </div>
+          </div>
+        </div>
+        <p class="note">当前档位为演示占位；正式选项由已安装模型的能力决定。</p>
+      </section>
+
+      <!-- 关于 -->
+      <section class="pane" data-pane="about">
+        <h1>关于</h1>
+        <p class="sub">Live Subtitle Agent · 骨架 v0.1.0</p>
+        <p class="note">透明字幕条 + 工具栏 + 点击穿透已就绪，ASR 尚未接入。</p>
+      </section>
+    </main>
+  </div>
+
+  <script src="settings.js"></script>
+</body>
+</html>

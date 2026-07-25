@@ -1,0 +1,102 @@
+/* ==========================================================================
+   工具条窗：仅一条工具条。窗口四周留白给阴影。
+   ========================================================================== */
+
+:root { --tb-margin: 16px; }        /* 与 main.js 的 TB_MARGIN 对应 */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  cursor: default;
+  -webkit-font-smoothing: antialiased;
+  font-family: "Segoe UI Variable", "Segoe UI", -apple-system, system-ui,
+               "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  user-select: none;
+}
+
+.wrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 9px;
+  border-radius: 12px;
+  background: rgba(18, 22, 28, 0.82);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.07),
+    0 6px 18px rgba(0, 0, 0, 0.34);
+  cursor: grab;
+
+  /* 不用时自动变淡；鼠标靠近（悬停）才提亮 */
+  opacity: 0.35;
+  transition: opacity 0.22s ease;
+}
+.toolbar:hover,
+.toolbar.dragging { opacity: 1; }
+.toolbar.dragging { cursor: grabbing; }
+/* 录制中 / 锁定态：保持可见，别让暂停/解锁键太淡找不到 */
+.wrap[data-state="recording"] .toolbar,
+.wrap[data-locked="on"] .toolbar { opacity: 0.75; }
+.wrap[data-state="recording"] .toolbar:hover,
+.wrap[data-locked="on"] .toolbar:hover { opacity: 1; }
+
+:root[data-theme="light"] .toolbar {
+  background: rgba(252, 252, 254, 0.9);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.06),
+    0 6px 18px rgba(0, 0, 0, 0.16);
+}
+
+.rec-dot {
+  width: 8px; height: 8px;
+  margin: 0 5px 0 3px;
+  border-radius: 50%;
+  background: #ff5b5b;
+  flex: none;
+  display: none;
+}
+.wrap[data-state="recording"] .rec-dot { display: block; animation: recpulse 1.6s ease-in-out infinite; }
+@keyframes recpulse { 0%, 100% { transform: scale(1); opacity: 1 } 50% { transform: scale(0.7); opacity: 0.5 } }
+
+.tb {
+  width: 30px; height: 30px;
+  display: grid; place-items: center;
+  padding: 0; border: 0; border-radius: 7px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.tb:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+.tb:active { background: rgba(255, 255, 255, 0.18); }
+.tb svg { width: 18px; height: 18px; display: block; }
+.tb-danger:hover { background: rgba(232, 76, 76, 0.85); color: #fff; }
+
+:root[data-theme="light"] .tb { color: rgba(20, 32, 44, 0.72); }
+:root[data-theme="light"] .tb:hover { background: rgba(0, 0, 0, 0.08); color: #14202c; }
+
+.sep { width: 1px; height: 14px; margin: 0 5px; background: rgba(255, 255, 255, 0.20); }
+:root[data-theme="light"] .sep { background: rgba(0, 0, 0, 0.15); }
+
+/* play / pause 互斥 */
+.tb .ic-pause { display: none; }
+.wrap[data-state="recording"] .tb[data-act="toggle"] .ic-play  { display: none; }
+.wrap[data-state="recording"] .tb[data-act="toggle"] .ic-pause { display: block; }
+.wrap[data-state="recording"] .tb[data-act="toggle"] { color: #ff6b6b; }
+
+/* lock / unlock 互斥；锁定态高亮 */
+.tb .ic-lock { display: none; }
+.wrap[data-locked="on"] .tb[data-act="lock"] .ic-unlock { display: none; }
+.wrap[data-locked="on"] .tb[data-act="lock"] .ic-lock   { display: block; }
+.wrap[data-locked="on"] .tb[data-act="lock"] { color: #ffd166; }

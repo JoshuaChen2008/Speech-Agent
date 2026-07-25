@@ -1,0 +1,185 @@
+/* ==========================================================================
+   设置窗（矩形面板 + Win11 真·亚克力）
+   背景由 DWM backgroundMaterial:'acrylic' 提供，页面自身保持半透明即可。
+   ========================================================================== */
+
+:root {
+  --fg: 235, 238, 242;
+  --fg-dim: 235, 238, 242;
+  --accent: 64, 132, 255;
+  --panel: 255, 255, 255;
+}
+:root[data-theme="light"] {
+  --fg: 20, 26, 34;
+  --panel: 0, 0, 0;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  /* 让亚克力透出来：整页近乎透明，只铺一层极淡的底 */
+  background: rgba(var(--panel), 0.04);
+  color: rgb(var(--fg));
+  font-family: "Segoe UI Variable", "Segoe UI", -apple-system, system-ui,
+               "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+/* 顶栏（手动拖动，不用 app-region —— 避免亚克力窗拖动闪烁） */
+.titlebar {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 0 18px;
+  cursor: grab;
+}
+.titlebar.dragging { cursor: grabbing; }
+.tb-title { font-size: 12.5px; font-weight: 600; opacity: 0.75; pointer-events: none; }
+.tb-close {
+  width: 32px; height: 32px;
+  display: grid; place-items: center;
+  border: 0; border-radius: 7px;
+  background: transparent;
+  color: rgb(var(--fg));
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.tb-close svg { width: 17px; height: 17px; }
+.tb-close:hover { background: rgba(232, 76, 76, 0.85); color: #fff; }
+
+/* 布局 */
+.layout {
+  display: flex;
+  height: calc(100% - 44px);
+}
+
+/* 左导航 */
+.nav {
+  width: 176px;
+  flex: none;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-right: 1px solid rgba(var(--fg), 0.08);
+}
+.nav-item {
+  -webkit-app-region: no-drag;
+  text-align: left;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgb(var(--fg));
+  font-size: 13.5px;
+  cursor: pointer;
+  opacity: 0.72;
+  transition: background 0.15s, opacity 0.15s;
+}
+.nav-item:hover { background: rgba(var(--fg), 0.06); opacity: 1; }
+.nav-item.active {
+  background: rgba(var(--accent), 0.16);
+  color: rgb(var(--accent));
+  opacity: 1;
+  font-weight: 600;
+}
+:root[data-theme="dark"] .nav-item.active { color: #cfe0ff; }
+
+/* 内容 */
+.content {
+  flex: 1;
+  padding: 8px 30px 30px;
+  overflow-y: auto;
+}
+.pane { display: none; animation: fade 0.18s ease; }
+.pane.active { display: block; }
+@keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+h1 { font-size: 21px; font-weight: 700; margin: 14px 0 4px; }
+.sub { font-size: 12.5px; opacity: 0.6; margin: 0 0 20px; }
+.note { font-size: 12px; opacity: 0.5; margin-top: 18px; line-height: 1.6; }
+
+.group {
+  border-radius: 12px;
+  background: rgba(var(--fg), 0.05);
+  padding: 4px 16px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 15px 0;
+  border-bottom: 1px solid rgba(var(--fg), 0.07);
+}
+.row:last-child { border-bottom: 0; }
+.label { font-size: 13.5px; }
+.hint { font-size: 12px; opacity: 0.5; margin-left: 6px; font-variant-numeric: tabular-nums; }
+
+/* 分段控件 */
+.seg {
+  display: inline-flex;
+  background: rgba(var(--fg), 0.08);
+  border-radius: 8px;
+  padding: 2px;
+}
+.seg button {
+  border: 0;
+  background: transparent;
+  color: rgb(var(--fg));
+  font-size: 12.5px;
+  padding: 5px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: background 0.15s, opacity 0.15s;
+}
+.seg button.on {
+  background: rgb(var(--accent));
+  color: #fff;
+  opacity: 1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* iOS 风 toggle */
+.toggle {
+  width: 42px; height: 25px;
+  border: 0; border-radius: 13px;
+  background: rgba(var(--fg), 0.22);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 19px; height: 19px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s;
+}
+.toggle.on { background: rgb(var(--accent)); }
+.toggle.on::after { transform: translateX(17px); }
+
+/* range */
+input[type="range"] {
+  -webkit-appearance: none;
+  width: 200px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(var(--fg), 0.22);
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}

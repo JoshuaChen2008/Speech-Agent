@@ -1,0 +1,120 @@
+/* ==========================================================================
+   字幕窗：仅字幕卡片。窗口四周留白给阴影；卡片居中。
+   ========================================================================== */
+
+:root {
+  --radius: 10px;
+  --fs: 30px;
+  --bar-bg: 14, 32, 44;
+  --bar-alpha: 0.86;
+  --max-lines: 2;
+  --margin: 20px;                   /* 与 main.js 的 MARGIN 对应 */
+}
+:root[data-theme="light"] { --bar-bg: 248, 249, 251; }
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  cursor: default;
+  -webkit-font-smoothing: antialiased;
+  font-family: "Segoe UI Variable", "Segoe UI", -apple-system, system-ui,
+               "Microsoft YaHei UI", "PingFang SC", sans-serif;
+}
+
+.wrap {
+  position: absolute;
+  inset: 0;
+  padding: var(--margin);
+  user-select: none;
+}
+
+.caption-card {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 20px 28px 22px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  border-radius: var(--radius);
+  background: rgba(var(--bar-bg), var(--bar-alpha));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.35);
+  cursor: grab;
+}
+.caption-card.dragging { cursor: grabbing; }
+:root[data-theme="light"] .caption-card {
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+/* 锁定态：加一圈提示描边 + 底部提示文字 */
+.wrap[data-locked="on"] .caption-card {
+  cursor: default;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 209, 102, 0.55),
+    0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+/* 工具条“洞”：透明占位，覆盖工具条停靠的右上角区域。
+   需可被 elementFromPoint 命中（故不设 pointer-events:none）并置于最上。 */
+.tb-hole {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 250px;
+  height: 56px;
+  z-index: 10;
+  background: transparent;
+}
+/* 锁定态无洞（整窗都穿透） */
+.wrap[data-locked="on"] .tb-hole { display: none; }
+
+.line {
+  margin: 0;
+  font-size: var(--fs);
+  font-weight: 700;
+  line-height: 1.35;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  letter-spacing: 0.01em;
+  display: -webkit-box;
+  -webkit-line-clamp: var(--max-lines);
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+:root[data-theme="light"] .line { color: #14202c; text-shadow: 0 1px 2px rgba(255, 255, 255, 0.4); }
+
+.line.partial { color: rgba(255, 255, 255, 0.60); }
+:root[data-theme="light"] .line.partial { color: rgba(20, 32, 44, 0.55); }
+.line.partial::after {
+  content: '';
+  display: inline-block;
+  width: 2px; height: 0.95em;
+  margin-left: 3px;
+  vertical-align: -0.12em;
+  background: currentColor;
+  animation: caret 1s steps(1) infinite;
+}
+@keyframes caret { 0%, 49% { opacity: 1 } 50%, 100% { opacity: 0 } }
+.line.prev { font-size: calc(var(--fs) * 0.72); opacity: 0.62; margin-bottom: 6px; }
+
+.lock-hint {
+  position: absolute;
+  right: 14px;
+  bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 209, 102, 0.85);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+.wrap[data-locked="on"] .lock-hint { opacity: 1; }
