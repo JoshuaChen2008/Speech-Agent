@@ -201,7 +201,7 @@ Chromium 的 `backdrop-filter` 只模糊「页面内部」在它后面的内容�
 
 **为什么不放字幕窗**：字幕窗是常驻置顶的合成热点且 `focusable: false`，把音频栈塞进去会让「采集失败」和「字幕闪烁」耦合成同一类故障；独立宿主窗崩了可以静默重启，字幕不受影响。
 
-**已知风险**：`getDisplayMedia` 需要用户手势，隐藏窗没有。解法候选是主进程用 `hostWin.webContents.executeJavaScript(code, true)`（第二参 `userGesture = true`）触发采集。**这条提升为 Gate 0 验证项**；不通就退回「在工具条窗采集」（▷ 点击天然带手势），再把拿到的 track 交给 audio host 处理。
+**Gate 0C 已验证**：主进程用 `hostWin.webContents.executeJavaScript(code, true)`（第二参 `userGesture = true`）触发时，隐藏窗的 display handler 实际收到 `request.userGesture: true`，并完成麦克风/回环双路 48k→16k Worklet 采集；见 `docs/validation/gate-0c.md`。当前批准隐藏 audio host。若未来打包版回归，工具条点击回退必须重新实测，并由工具条持有 stream/Worklet、向后端传 PCM；不能未经验证就假定 `MediaStreamTrack` 可跨 renderer 转移。
 
 ### 4.2 音频帧走 MessageChannelMain，绕开主进程
 
@@ -234,10 +234,13 @@ Chromium 的 `backdrop-filter` 只模糊「页面内部」在它后面的内容�
 主进程一次性装好回环处理器：
 
 ```js
-session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
-  callback({ video: request.video, audio: 'loopback' })
+session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+  const sources = await desktopCapturer.getSources({ types: ['screen'] })
+  callback({ video: sources[0], audio: 'loopback' })
 })
 ```
+
+> Electron 43 的 `request` 只有 `frame / securityOrigin / videoRequested / audioRequested / userGesture` 等字段，**没有** `request.video`；视频源必须由 `desktopCapturer` 显式选择。
 
 > Electron 43 复核：`audio` 接受 `'loopback'` 或 `'loopbackWithMute'`（均 Windows only）。**字幕场景必须用 `'loopback'`** —— `loopbackWithMute` 会把系统声静音，用户就听不见会议了。
 
@@ -388,7 +391,7 @@ v1 明确只承诺 **OpenAI-compatible chat completions**。使用 `fetch` + 独
 |---|---|---|
 | **0A 契约（完成）** | 固化 `RuntimeSnapshot / CaptionEvent / CommandResult / Capabilities` v1 和样例 fixtures；见 `src/contracts/` | validator 测试覆盖 idle、启动、监听、暂停、恢复、错误、精修、翻译；UI 接线留给视觉工作流 |
 | **0B 模型（实测完成，未通过）** | X-ASR 480/160、small-bilingual、SenseVoice 的 CLI + N-API 实测；见 `docs/validation/gate-0b.md` | 480ms 首字延迟失败；160ms RTF 失败；small-bilingual 质量/标点失败；SenseVoice 无精修净收益 |
-| **0C 音频拓扑** | 隐藏 audio host 的麦克风/回环与用户手势 spike | 16k mono wav 无爆音；隐藏窗方案可用，或明确采用工具条发起采集的回退 |
+| **0C 音频拓扑（完成）** | 隐藏 audio host 的麦克风/回环、用户手势、AudioWorklet 48k→16k 实测；见 `docs/validation/gate-0c.md` | 回环挑战音命中、物理麦克风非静音、确定性 audioinput 探针通过；三路 16k mono PCM16 无削波/帧缺口/大跳变，批准 hidden audio host |
 | **0D 产品入口** | 确定会议/个人听写的首启预设 | 不再用一个隐藏默认值替用户决定 mic/loopback；UI 文案与默认配置一致 |
 
 Gate 0B 的固定复现入口：

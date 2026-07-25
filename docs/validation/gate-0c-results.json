@@ -1,0 +1,1061 @@
+{
+  "schemaVersion": 1,
+  "gate": "0C",
+  "runId": "gate-0c-2026-07-25T16-44-59-724Z",
+  "executedAt": "2026-07-25T16:45:14.567Z",
+  "result": "pass",
+  "environment": {
+    "platform": "win32",
+    "osRelease": "10.0.22631",
+    "osVersion": "Windows 11 Home",
+    "electron": "43.2.0",
+    "chromium": "150.0.7871.129",
+    "node": "24.18.0"
+  },
+  "testSignal": {
+    "id": "independent-player-sine-v1",
+    "frequencyHz": 997,
+    "amplitude": 0.12,
+    "startDelayMs": 350,
+    "durationMs": 1000,
+    "fadeMs": 40
+  },
+  "window": {
+    "showConfigured": false,
+    "backgroundThrottling": false,
+    "visibility": [
+      {
+        "stage": "ready",
+        "visible": false,
+        "detail": null
+      },
+      {
+        "stage": "before-user-gesture-trigger",
+        "visible": false,
+        "detail": null
+      },
+      {
+        "stage": "loopback:first-pcm",
+        "visible": false,
+        "detail": {
+          "sequence": 0
+        }
+      },
+      {
+        "stage": "mic:first-pcm",
+        "visible": false,
+        "detail": {
+          "sequence": 0
+        }
+      },
+      {
+        "stage": "mic-probe:first-pcm",
+        "visible": false,
+        "detail": {
+          "sequence": 0
+        }
+      },
+      {
+        "stage": "after-no-gesture-probe",
+        "visible": false,
+        "detail": null
+      },
+      {
+        "stage": "complete",
+        "visible": false,
+        "detail": null
+      }
+    ]
+  },
+  "permissions": {
+    "microphoneBefore": "granted",
+    "screenBefore": "granted",
+    "checks": [
+      {
+        "permission": "media",
+        "origin": "",
+        "allowed": false,
+        "mediaType": "video"
+      },
+      {
+        "permission": "media",
+        "origin": "",
+        "allowed": false,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "web-app-installation",
+        "origin": "",
+        "allowed": false,
+        "mediaType": null
+      },
+      {
+        "permission": "geolocation",
+        "origin": "",
+        "allowed": false,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "",
+        "allowed": false,
+        "mediaType": "video"
+      },
+      {
+        "permission": "media",
+        "origin": "",
+        "allowed": false,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "web-app-installation",
+        "origin": "",
+        "allowed": false,
+        "mediaType": null
+      },
+      {
+        "permission": "geolocation",
+        "origin": "",
+        "allowed": false,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "speaker-selection",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": "video"
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "speaker-selection",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": "video"
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "speaker-selection",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "speaker-selection",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "speaker-selection",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "speaker-selection",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": "video"
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "speaker-selection",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": "video"
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "speaker-selection",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "speaker-selection",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": false,
+        "mediaType": "audio"
+      },
+      {
+        "permission": "speaker-selection",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": null
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaType": null
+      }
+    ],
+    "requests": [
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaTypes": []
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaTypes": [
+          "audio"
+        ]
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaTypes": [
+          "audio"
+        ]
+      },
+      {
+        "permission": "media",
+        "origin": "file://",
+        "allowed": true,
+        "mediaTypes": []
+      }
+    ]
+  },
+  "hiddenGestureControl": {
+    "status": "resolved",
+    "activation": {
+      "isActive": false,
+      "hasBeenActive": true
+    },
+    "stream": {
+      "audioTrackCount": 1,
+      "videoTrackCountBeforeStop": 1,
+      "audioReadyStateAfterVideoStop": "live"
+    }
+  },
+  "displayRequests": [
+    {
+      "securityOrigin": "file://",
+      "videoRequested": true,
+      "audioRequested": true,
+      "userGesture": true,
+      "frameMatchedHost": true,
+      "hostVisible": false,
+      "callbackAudio": "loopback",
+      "callbackVideoSourceType": "screen",
+      "error": null,
+      "availableScreenSourceCount": 2
+    },
+    {
+      "securityOrigin": "file://",
+      "videoRequested": true,
+      "audioRequested": true,
+      "userGesture": false,
+      "frameMatchedHost": true,
+      "hostVisible": false,
+      "callbackAudio": "loopback",
+      "callbackVideoSourceType": "screen",
+      "error": null,
+      "availableScreenSourceCount": 2
+    }
+  ],
+  "capture": {
+    "activationAtInvocation": {
+      "isActive": true,
+      "hasBeenActive": true
+    },
+    "loopback": {
+      "status": "ok",
+      "stream": {
+        "audioTrackCount": 1,
+        "videoTrackCountBeforeStop": 1,
+        "audioReadyStateAfterVideoStop": "live",
+        "track": {
+          "kind": "audio",
+          "enabled": true,
+          "muted": false,
+          "readyState": "live",
+          "labelSha256": "c14d8013d802d47e23bdcf2b828c2b1c10f7434314683a9a88b5d6e6c2eeec81",
+          "settings": {
+            "autoGainControl": false,
+            "channelCount": 2,
+            "echoCancellation": false,
+            "latency": 0.01,
+            "noiseSuppression": false,
+            "sampleRate": 48000,
+            "sampleSize": 16
+          }
+        }
+      },
+      "capture": {
+        "playback": {
+          "sourceId": "loopback",
+          "frequencyHz": 997,
+          "amplitude": 0.12,
+          "startDelayMs": 350,
+          "durationMs": 1000,
+          "fadeMs": 40,
+          "outputSampleRate": 48000,
+          "output": {
+            "requested": "default",
+            "selected": "default"
+          },
+          "mainObservedAudible": false
+        },
+        "pipeline": {
+          "inputAudioContextSampleRate": 48000,
+          "outputSampleRate": 16000,
+          "frameSamples": 1600,
+          "frameCount": 27,
+          "firstSequence": 1,
+          "fullFrameCount": 26,
+          "tailFrameSamples": 22,
+          "sequenceGapCount": 0,
+          "timestampRegressionCount": 0,
+          "sampleCount": 41622,
+          "wallElapsedSeconds": 2.6016,
+          "audioContextElapsedSeconds": 2.6
+        },
+        "saved": {
+          "artifact": {
+            "file": "loopback.wav",
+            "bytes": 83288,
+            "sha256": "367d4edc6e0b848a19022e7d3c01ec61eeeea7cbaf7f0635a628ea5d15d276f1"
+          },
+          "format": {
+            "audioFormat": 1,
+            "channels": 1,
+            "sampleRate": 16000,
+            "bitsPerSample": 16,
+            "byteRate": 32000,
+            "blockAlign": 2,
+            "dataBytes": 83244,
+            "sampleCount": 41622
+          },
+          "inputPreClampOverRangeCount": 0,
+          "pipeline": {
+            "inputAudioContextSampleRate": 48000,
+            "outputSampleRate": 16000,
+            "frameSamples": 1600,
+            "frameCount": 27,
+            "firstSequence": 1,
+            "fullFrameCount": 26,
+            "tailFrameSamples": 22,
+            "sequenceGapCount": 0,
+            "timestampRegressionCount": 0,
+            "sampleCount": 41622,
+            "wallElapsedSeconds": 2.6016,
+            "audioContextElapsedSeconds": 2.6
+          },
+          "analysis": {
+            "sampleCount": 41622,
+            "durationSeconds": 2.601375,
+            "peak": 0.552704,
+            "rms": 0.128527,
+            "rmsDbfs": -17.820137,
+            "dcOffset": -0.000009,
+            "acRms": 0.128527,
+            "acRmsDbfs": -17.820137,
+            "nonSilentRatio": 0.365816,
+            "clippingCount": 0,
+            "clippedRatio": 0,
+            "preClampOverRangeCount": 0,
+            "longestFullScaleRun": 0,
+            "nonFiniteCount": 0,
+            "maxAdjacentDelta": 0.230255,
+            "maxFrameBoundaryDelta": 0.139709,
+            "probe": {
+              "expectedFrequencyHz": 997,
+              "observedFrequencyHz": 997,
+              "frequencyErrorHz": 0,
+              "amplitude": 0.219468,
+              "snrDb": 7.432104,
+              "windowMode": "scheduled",
+              "analysisWindowStartSeconds": 0.25,
+              "analysisWindowDurationSeconds": 1.2
+            }
+          },
+          "checks": {
+            "clockCoverageRatio": 0.999914,
+            "pipelinePass": true,
+            "noClipping": true,
+            "noLargeDiscontinuity": true,
+            "signalPresent": true,
+            "probeDetected": true,
+            "probeRequired": true,
+            "pass": true,
+            "formatPass": true
+          }
+        }
+      }
+    },
+    "mic": {
+      "status": "ok",
+      "selection": "physical-preferred",
+      "enumeratedAudioInputCount": 10,
+      "failedCandidateCount": 0,
+      "stream": {
+        "audioTrackCount": 1,
+        "track": {
+          "kind": "audio",
+          "enabled": true,
+          "muted": false,
+          "readyState": "live",
+          "labelSha256": "db4656d4fe384e9e3964f739825a852e86a929509d4bc6b91f67356941ea311f",
+          "settings": {
+            "autoGainControl": false,
+            "channelCount": 2,
+            "echoCancellation": false,
+            "latency": 0.01,
+            "noiseSuppression": false,
+            "sampleRate": 48000,
+            "sampleSize": 16
+          }
+        }
+      },
+      "capture": {
+        "playback": {
+          "sourceId": "mic",
+          "frequencyHz": 997,
+          "amplitude": 0.12,
+          "startDelayMs": 350,
+          "durationMs": 1000,
+          "fadeMs": 40,
+          "outputSampleRate": 48000,
+          "output": {
+            "requested": "physical-speaker",
+            "selected": "physical-speaker-preferred",
+            "labelSha256": "fca7cdffa871f12500fc6c66db26815c9e193e40b03cb70f6ce9dc983f14ac6d",
+            "enumeratedAudioOutputCount": 8
+          },
+          "mainObservedAudible": false
+        },
+        "pipeline": {
+          "inputAudioContextSampleRate": 48000,
+          "outputSampleRate": 16000,
+          "frameSamples": 1600,
+          "frameCount": 27,
+          "firstSequence": 1,
+          "fullFrameCount": 26,
+          "tailFrameSamples": 22,
+          "sequenceGapCount": 0,
+          "timestampRegressionCount": 0,
+          "sampleCount": 41622,
+          "wallElapsedSeconds": 2.6005,
+          "audioContextElapsedSeconds": 2.6
+        },
+        "saved": {
+          "artifact": {
+            "file": "mic.wav",
+            "bytes": 83288,
+            "sha256": "0f4b6151666c92ce95a406300c25259a18b364a4b730b45ce88b9a0238d7b434"
+          },
+          "format": {
+            "audioFormat": 1,
+            "channels": 1,
+            "sampleRate": 16000,
+            "bitsPerSample": 16,
+            "byteRate": 32000,
+            "blockAlign": 2,
+            "dataBytes": 83244,
+            "sampleCount": 41622
+          },
+          "inputPreClampOverRangeCount": 0,
+          "pipeline": {
+            "inputAudioContextSampleRate": 48000,
+            "outputSampleRate": 16000,
+            "frameSamples": 1600,
+            "frameCount": 27,
+            "firstSequence": 1,
+            "fullFrameCount": 26,
+            "tailFrameSamples": 22,
+            "sequenceGapCount": 0,
+            "timestampRegressionCount": 0,
+            "sampleCount": 41622,
+            "wallElapsedSeconds": 2.6005,
+            "audioContextElapsedSeconds": 2.6
+          },
+          "analysis": {
+            "sampleCount": 41622,
+            "durationSeconds": 2.601375,
+            "peak": 0.146606,
+            "rms": 0.027818,
+            "rmsDbfs": -31.113401,
+            "dcOffset": 0.000015,
+            "acRms": 0.027818,
+            "acRmsDbfs": -31.113402,
+            "nonSilentRatio": 0.652924,
+            "clippingCount": 0,
+            "clippedRatio": 0,
+            "preClampOverRangeCount": 0,
+            "longestFullScaleRun": 0,
+            "nonFiniteCount": 0,
+            "maxAdjacentDelta": 0.25235,
+            "maxFrameBoundaryDelta": 0.130554,
+            "probe": {
+              "expectedFrequencyHz": 997,
+              "observedFrequencyHz": 1045,
+              "frequencyErrorHz": 48,
+              "amplitude": 0.000291,
+              "snrDb": -39.541541,
+              "windowMode": "scheduled",
+              "analysisWindowStartSeconds": 0.25,
+              "analysisWindowDurationSeconds": 1.2
+            }
+          },
+          "checks": {
+            "clockCoverageRatio": 1.000336,
+            "pipelinePass": true,
+            "noClipping": true,
+            "noLargeDiscontinuity": true,
+            "signalPresent": true,
+            "probeDetected": false,
+            "probeRequired": false,
+            "pass": true,
+            "formatPass": true
+          }
+        }
+      }
+    },
+    "micProbe": {
+      "status": "ok",
+      "selection": "virtual-cable",
+      "enumeratedAudioInputCount": 10,
+      "failedCandidateCount": 0,
+      "stream": {
+        "audioTrackCount": 1,
+        "track": {
+          "kind": "audio",
+          "enabled": true,
+          "muted": false,
+          "readyState": "live",
+          "labelSha256": "7e9b30224d95fd589549029163b056fb57efa7cd0a91b9af21a63d209849fa78",
+          "settings": {
+            "autoGainControl": false,
+            "channelCount": 2,
+            "echoCancellation": false,
+            "latency": 0.01,
+            "noiseSuppression": false,
+            "sampleRate": 44100,
+            "sampleSize": 16
+          }
+        }
+      },
+      "capture": {
+        "playback": {
+          "sourceId": "mic-probe",
+          "frequencyHz": 997,
+          "amplitude": 0.12,
+          "startDelayMs": 350,
+          "durationMs": 1000,
+          "fadeMs": 40,
+          "outputSampleRate": 48000,
+          "output": {
+            "requested": "virtual-cable",
+            "selected": "virtual-cable",
+            "labelSha256": "255f7a1f998cb4b10ec07eea908c013e7b2fdfbb730f5393499e41efb52225bd",
+            "enumeratedAudioOutputCount": 8
+          },
+          "mainObservedAudible": false
+        },
+        "pipeline": {
+          "inputAudioContextSampleRate": 48000,
+          "outputSampleRate": 16000,
+          "frameSamples": 1600,
+          "frameCount": 27,
+          "firstSequence": 1,
+          "fullFrameCount": 26,
+          "tailFrameSamples": 22,
+          "sequenceGapCount": 0,
+          "timestampRegressionCount": 0,
+          "sampleCount": 41622,
+          "wallElapsedSeconds": 2.5999,
+          "audioContextElapsedSeconds": 2.6
+        },
+        "saved": {
+          "artifact": {
+            "file": "mic-probe.wav",
+            "bytes": 83288,
+            "sha256": "64cb4db0510511ded78f0c89776958ffaa205609dcbd0b56f6149eaf95805a21"
+          },
+          "format": {
+            "audioFormat": 1,
+            "channels": 1,
+            "sampleRate": 16000,
+            "bitsPerSample": 16,
+            "byteRate": 32000,
+            "blockAlign": 2,
+            "dataBytes": 83244,
+            "sampleCount": 41622
+          },
+          "inputPreClampOverRangeCount": 0,
+          "pipeline": {
+            "inputAudioContextSampleRate": 48000,
+            "outputSampleRate": 16000,
+            "frameSamples": 1600,
+            "frameCount": 27,
+            "firstSequence": 1,
+            "fullFrameCount": 26,
+            "tailFrameSamples": 22,
+            "sequenceGapCount": 0,
+            "timestampRegressionCount": 0,
+            "sampleCount": 41622,
+            "wallElapsedSeconds": 2.5999,
+            "audioContextElapsedSeconds": 2.6
+          },
+          "analysis": {
+            "sampleCount": 41622,
+            "durationSeconds": 2.601375,
+            "peak": 0.119934,
+            "rms": 0.051106,
+            "rmsDbfs": -25.830484,
+            "dcOffset": -0.000001,
+            "acRms": 0.051106,
+            "acRmsDbfs": -25.830484,
+            "nonSilentRatio": 0.382898,
+            "clippingCount": 0,
+            "clippedRatio": 0,
+            "preClampOverRangeCount": 0,
+            "longestFullScaleRun": 0,
+            "nonFiniteCount": 0,
+            "maxAdjacentDelta": 0.04776,
+            "maxFrameBoundaryDelta": 0.046478,
+            "probe": {
+              "expectedFrequencyHz": 997,
+              "observedFrequencyHz": 997,
+              "frequencyErrorHz": 0,
+              "amplitude": 0.067711,
+              "snrDb": 1.86683,
+              "windowMode": "scheduled",
+              "analysisWindowStartSeconds": 0.25,
+              "analysisWindowDurationSeconds": 1.2
+            }
+          },
+          "checks": {
+            "clockCoverageRatio": 1.000567,
+            "pipelinePass": true,
+            "noClipping": true,
+            "noLargeDiscontinuity": true,
+            "signalPresent": true,
+            "probeDetected": true,
+            "probeRequired": true,
+            "pass": true,
+            "formatPass": true
+          }
+        }
+      }
+    }
+  },
+  "artifacts": {
+    "loopback": {
+      "artifact": {
+        "file": "loopback.wav",
+        "bytes": 83288,
+        "sha256": "367d4edc6e0b848a19022e7d3c01ec61eeeea7cbaf7f0635a628ea5d15d276f1"
+      },
+      "format": {
+        "audioFormat": 1,
+        "channels": 1,
+        "sampleRate": 16000,
+        "bitsPerSample": 16,
+        "byteRate": 32000,
+        "blockAlign": 2,
+        "dataBytes": 83244,
+        "sampleCount": 41622
+      },
+      "inputPreClampOverRangeCount": 0,
+      "pipeline": {
+        "inputAudioContextSampleRate": 48000,
+        "outputSampleRate": 16000,
+        "frameSamples": 1600,
+        "frameCount": 27,
+        "firstSequence": 1,
+        "fullFrameCount": 26,
+        "tailFrameSamples": 22,
+        "sequenceGapCount": 0,
+        "timestampRegressionCount": 0,
+        "sampleCount": 41622,
+        "wallElapsedSeconds": 2.6016,
+        "audioContextElapsedSeconds": 2.6
+      },
+      "analysis": {
+        "sampleCount": 41622,
+        "durationSeconds": 2.601375,
+        "peak": 0.552704,
+        "rms": 0.128527,
+        "rmsDbfs": -17.820137,
+        "dcOffset": -0.000009,
+        "acRms": 0.128527,
+        "acRmsDbfs": -17.820137,
+        "nonSilentRatio": 0.365816,
+        "clippingCount": 0,
+        "clippedRatio": 0,
+        "preClampOverRangeCount": 0,
+        "longestFullScaleRun": 0,
+        "nonFiniteCount": 0,
+        "maxAdjacentDelta": 0.230255,
+        "maxFrameBoundaryDelta": 0.139709,
+        "probe": {
+          "expectedFrequencyHz": 997,
+          "observedFrequencyHz": 997,
+          "frequencyErrorHz": 0,
+          "amplitude": 0.219468,
+          "snrDb": 7.432104,
+          "windowMode": "scheduled",
+          "analysisWindowStartSeconds": 0.25,
+          "analysisWindowDurationSeconds": 1.2
+        }
+      },
+      "checks": {
+        "clockCoverageRatio": 0.999914,
+        "pipelinePass": true,
+        "noClipping": true,
+        "noLargeDiscontinuity": true,
+        "signalPresent": true,
+        "probeDetected": true,
+        "probeRequired": true,
+        "pass": true,
+        "formatPass": true
+      }
+    },
+    "mic": {
+      "artifact": {
+        "file": "mic.wav",
+        "bytes": 83288,
+        "sha256": "0f4b6151666c92ce95a406300c25259a18b364a4b730b45ce88b9a0238d7b434"
+      },
+      "format": {
+        "audioFormat": 1,
+        "channels": 1,
+        "sampleRate": 16000,
+        "bitsPerSample": 16,
+        "byteRate": 32000,
+        "blockAlign": 2,
+        "dataBytes": 83244,
+        "sampleCount": 41622
+      },
+      "inputPreClampOverRangeCount": 0,
+      "pipeline": {
+        "inputAudioContextSampleRate": 48000,
+        "outputSampleRate": 16000,
+        "frameSamples": 1600,
+        "frameCount": 27,
+        "firstSequence": 1,
+        "fullFrameCount": 26,
+        "tailFrameSamples": 22,
+        "sequenceGapCount": 0,
+        "timestampRegressionCount": 0,
+        "sampleCount": 41622,
+        "wallElapsedSeconds": 2.6005,
+        "audioContextElapsedSeconds": 2.6
+      },
+      "analysis": {
+        "sampleCount": 41622,
+        "durationSeconds": 2.601375,
+        "peak": 0.146606,
+        "rms": 0.027818,
+        "rmsDbfs": -31.113401,
+        "dcOffset": 0.000015,
+        "acRms": 0.027818,
+        "acRmsDbfs": -31.113402,
+        "nonSilentRatio": 0.652924,
+        "clippingCount": 0,
+        "clippedRatio": 0,
+        "preClampOverRangeCount": 0,
+        "longestFullScaleRun": 0,
+        "nonFiniteCount": 0,
+        "maxAdjacentDelta": 0.25235,
+        "maxFrameBoundaryDelta": 0.130554,
+        "probe": {
+          "expectedFrequencyHz": 997,
+          "observedFrequencyHz": 1045,
+          "frequencyErrorHz": 48,
+          "amplitude": 0.000291,
+          "snrDb": -39.541541,
+          "windowMode": "scheduled",
+          "analysisWindowStartSeconds": 0.25,
+          "analysisWindowDurationSeconds": 1.2
+        }
+      },
+      "checks": {
+        "clockCoverageRatio": 1.000336,
+        "pipelinePass": true,
+        "noClipping": true,
+        "noLargeDiscontinuity": true,
+        "signalPresent": true,
+        "probeDetected": false,
+        "probeRequired": false,
+        "pass": true,
+        "formatPass": true
+      }
+    },
+    "mic-probe": {
+      "artifact": {
+        "file": "mic-probe.wav",
+        "bytes": 83288,
+        "sha256": "64cb4db0510511ded78f0c89776958ffaa205609dcbd0b56f6149eaf95805a21"
+      },
+      "format": {
+        "audioFormat": 1,
+        "channels": 1,
+        "sampleRate": 16000,
+        "bitsPerSample": 16,
+        "byteRate": 32000,
+        "blockAlign": 2,
+        "dataBytes": 83244,
+        "sampleCount": 41622
+      },
+      "inputPreClampOverRangeCount": 0,
+      "pipeline": {
+        "inputAudioContextSampleRate": 48000,
+        "outputSampleRate": 16000,
+        "frameSamples": 1600,
+        "frameCount": 27,
+        "firstSequence": 1,
+        "fullFrameCount": 26,
+        "tailFrameSamples": 22,
+        "sequenceGapCount": 0,
+        "timestampRegressionCount": 0,
+        "sampleCount": 41622,
+        "wallElapsedSeconds": 2.5999,
+        "audioContextElapsedSeconds": 2.6
+      },
+      "analysis": {
+        "sampleCount": 41622,
+        "durationSeconds": 2.601375,
+        "peak": 0.119934,
+        "rms": 0.051106,
+        "rmsDbfs": -25.830484,
+        "dcOffset": -0.000001,
+        "acRms": 0.051106,
+        "acRmsDbfs": -25.830484,
+        "nonSilentRatio": 0.382898,
+        "clippingCount": 0,
+        "clippedRatio": 0,
+        "preClampOverRangeCount": 0,
+        "longestFullScaleRun": 0,
+        "nonFiniteCount": 0,
+        "maxAdjacentDelta": 0.04776,
+        "maxFrameBoundaryDelta": 0.046478,
+        "probe": {
+          "expectedFrequencyHz": 997,
+          "observedFrequencyHz": 997,
+          "frequencyErrorHz": 0,
+          "amplitude": 0.067711,
+          "snrDb": 1.86683,
+          "windowMode": "scheduled",
+          "analysisWindowStartSeconds": 0.25,
+          "analysisWindowDurationSeconds": 1.2
+        }
+      },
+      "checks": {
+        "clockCoverageRatio": 1.000567,
+        "pipelinePass": true,
+        "noClipping": true,
+        "noLargeDiscontinuity": true,
+        "signalPresent": true,
+        "probeDetected": true,
+        "probeRequired": true,
+        "pass": true,
+        "formatPass": true
+      }
+    }
+  },
+  "decision": {
+    "hiddenThroughout": true,
+    "requiredVisibilityStagesPresent": true,
+    "displayRequestPass": true,
+    "hiddenSchemePass": true,
+    "loopbackPass": true,
+    "physicalMicrophonePass": true,
+    "deterministicMicrophoneProbePass": true,
+    "microphonePass": true,
+    "artifactHashesIndependent": true,
+    "selectedTopology": "hidden-audio-host",
+    "captureInitiator": "main-execute-javascript-user-gesture",
+    "toolbarFallbackTested": false,
+    "note": "The display handler observed a real userGesture on the hidden host and the independent-player loopback WAV passed format, signal, clipping, and continuity checks."
+  },
+  "privacy": {
+    "rawWavCommitted": false,
+    "absolutePathsCommitted": false,
+    "deviceLabelsCommitted": false,
+    "note": "Short raw captures stay in the ignored artifact directory; only hashes, track-label hashes, settings, and signal metrics are reported."
+  }
+}
