@@ -1,18 +1,8 @@
 /* ==========================================================================
    设置窗（矩形面板 + Win11 真·亚克力）
    背景由 DWM backgroundMaterial:'acrylic' 提供，页面自身保持半透明即可。
+   视觉 token 来自 ../ui/shared/tokens.css。
    ========================================================================== */
-
-:root {
-  --fg: 235, 238, 242;
-  --fg-dim: 235, 238, 242;
-  --accent: 64, 132, 255;
-  --panel: 255, 255, 255;
-}
-:root[data-theme="light"] {
-  --fg: 20, 26, 34;
-  --panel: 0, 0, 0;
-}
 
 * { box-sizing: border-box; }
 
@@ -20,10 +10,9 @@ html, body {
   margin: 0;
   height: 100%;
   /* 让亚克力透出来：整页近乎透明，只铺一层极淡的底 */
-  background: rgba(var(--panel), 0.04);
+  background: var(--surface-settings);
   color: rgb(var(--fg));
-  font-family: "Segoe UI Variable", "Segoe UI", -apple-system, system-ui,
-               "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
   user-select: none;
 }
@@ -38,18 +27,24 @@ html, body {
   cursor: grab;
 }
 .titlebar.dragging { cursor: grabbing; }
-.tb-title { font-size: 12.5px; font-weight: 600; opacity: 0.75; pointer-events: none; }
+.tb-title {
+  font-size: var(--fs-label);
+  font-weight: var(--fw-medium);
+  opacity: 0.75;
+  pointer-events: none;
+}
 .tb-close {
   width: 32px; height: 32px;
   display: grid; place-items: center;
-  border: 0; border-radius: 7px;
+  border: 0;
+  border-radius: var(--radius-button);
   background: transparent;
   color: rgb(var(--fg));
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--dur-instant);
 }
 .tb-close svg { width: 17px; height: 17px; }
-.tb-close:hover { background: rgba(232, 76, 76, 0.85); color: #fff; }
+.tb-close:hover { background: var(--danger-solid); color: var(--on-danger); }
 
 /* 布局 */
 .layout {
@@ -68,26 +63,24 @@ html, body {
   border-right: 1px solid rgba(var(--fg), 0.08);
 }
 .nav-item {
-  -webkit-app-region: no-drag;
   text-align: left;
   padding: 9px 12px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: rgb(var(--fg));
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   cursor: pointer;
   opacity: 0.72;
-  transition: background 0.15s, opacity 0.15s;
+  transition: background var(--dur-instant), opacity var(--dur-instant);
 }
 .nav-item:hover { background: rgba(var(--fg), 0.06); opacity: 1; }
 .nav-item.active {
-  background: rgba(var(--accent), 0.16);
-  color: rgb(var(--accent));
+  background: var(--accent-wash);
+  color: rgb(var(--text-accent));
   opacity: 1;
-  font-weight: 600;
+  font-weight: var(--fw-medium);
 }
-:root[data-theme="dark"] .nav-item.active { color: #cfe0ff; }
 
 /* 内容 */
 .content {
@@ -95,16 +88,16 @@ html, body {
   padding: 8px 30px 30px;
   overflow-y: auto;
 }
-.pane { display: none; animation: fade 0.18s ease; }
+.pane { display: none; animation: fade var(--dur-fast) var(--ease); }
 .pane.active { display: block; }
 @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
-h1 { font-size: 21px; font-weight: 700; margin: 14px 0 4px; }
-.sub { font-size: 12.5px; opacity: 0.6; margin: 0 0 20px; }
-.note { font-size: 12px; opacity: 0.5; margin-top: 18px; line-height: 1.6; }
+h1 { font-size: var(--fs-title); font-weight: var(--fw-bold); margin: 14px 0 4px; }
+.sub { font-size: var(--fs-label); opacity: 0.6; margin: 0 0 20px; }
+.note { font-size: var(--fs-hint); opacity: 0.5; margin-top: 18px; line-height: 1.6; }
 
 .group {
-  border-radius: 12px;
+  border-radius: var(--radius-bar);
   background: rgba(var(--fg), 0.05);
   padding: 4px 16px;
 }
@@ -117,32 +110,37 @@ h1 { font-size: 21px; font-weight: 700; margin: 14px 0 4px; }
   border-bottom: 1px solid rgba(var(--fg), 0.07);
 }
 .row:last-child { border-bottom: 0; }
-.label { font-size: 13.5px; }
-.hint { font-size: 12px; opacity: 0.5; margin-left: 6px; font-variant-numeric: tabular-nums; }
+.label { font-size: var(--fs-body); }
+.hint {
+  font-size: var(--fs-hint);
+  opacity: 0.5;
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+}
 
 /* 分段控件 */
 .seg {
   display: inline-flex;
   background: rgba(var(--fg), 0.08);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   padding: 2px;
 }
 .seg button {
   border: 0;
   background: transparent;
   color: rgb(var(--fg));
-  font-size: 12.5px;
+  font-size: var(--fs-label);
   padding: 5px 14px;
-  border-radius: 6px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
   opacity: 0.7;
-  transition: background 0.15s, opacity 0.15s;
+  transition: background var(--dur-instant), opacity var(--dur-instant);
 }
 .seg button.on {
-  background: rgb(var(--accent));
-  color: #fff;
+  background: var(--accent-solid);
+  color: var(--on-accent);
   opacity: 1;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-pill);
 }
 
 /* iOS 风 toggle */
@@ -152,7 +150,7 @@ h1 { font-size: 21px; font-weight: 700; margin: 14px 0 4px; }
   background: rgba(var(--fg), 0.22);
   position: relative;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background var(--dur-base);
 }
 .toggle::after {
   content: '';
@@ -160,11 +158,11 @@ h1 { font-size: 21px; font-weight: 700; margin: 14px 0 4px; }
   top: 3px; left: 3px;
   width: 19px; height: 19px;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-  transition: transform 0.2s;
+  background: var(--thumb-face);
+  box-shadow: var(--shadow-thumb);
+  transition: transform var(--dur-base);
 }
-.toggle.on { background: rgb(var(--accent)); }
+.toggle.on { background: var(--accent-solid); }
 .toggle.on::after { transform: translateX(17px); }
 
 /* range */
@@ -180,6 +178,16 @@ input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 16px; height: 16px;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  background: var(--thumb-face);
+  box-shadow: var(--shadow-thumb);
+}
+
+/* --------------------------------------------------------------------------
+   高对比度：开关/分段控件靠底色区分状态，强制色下会失去差异，补形状编码
+   -------------------------------------------------------------------------- */
+@media (forced-colors: active) {
+  .group, .seg, .toggle { border: 1px solid CanvasText; }
+  .seg button.on { border: 2px solid Highlight; }
+  .toggle.on::after { background: Highlight; }
+  .nav-item.active { border: 1px solid Highlight; }
 }

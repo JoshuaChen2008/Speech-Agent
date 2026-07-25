@@ -1,0 +1,264 @@
+/* ==========================================================================
+   运行状态组件 · 8 个 phase 的视觉编码
+   --------------------------------------------------------------------------
+   这些类被预览页和（V2 后半）真工具条共用，配合 runtime-view.js 产出的视图模型。
+   依赖 tokens.css。
+
+   编码原则：形状 > 文案 > 颜色。
+   `[data-tone]` 只提供冗余的颜色通道；把颜色全部拿掉后，icon 形状加 label
+   文案仍然可以区分全部 8 个 phase。所以不允许出现「只靠 tone 区分」的状态。
+
+   动效克制：只有 starting / recovering 这两个**过渡态**转圈，用来表达
+   「系统还在动，不是卡死了」。listening 是可能持续两小时的稳态，
+   刻意不给图标做无限动画 —— 常驻置顶窗的合成开销要留给字幕。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   图标基元
+   -------------------------------------------------------------------------- */
+.icon {
+  width: 18px;
+  height: 18px;
+  display: block;
+  flex: none;
+}
+.icon-sm { width: 15px; height: 15px; }
+
+/* --------------------------------------------------------------------------
+   色调轴
+   -------------------------------------------------------------------------- */
+[data-tone="neutral"] { --tone: var(--tone-neutral); --tone-wash: transparent; }
+[data-tone="busy"]    { --tone: var(--tone-busy);    --tone-wash: var(--tone-wash-busy); }
+[data-tone="live"]    { --tone: var(--tone-live);    --tone-wash: var(--tone-wash-live); }
+[data-tone="warn"]    { --tone: var(--tone-warn);    --tone-wash: var(--tone-wash-warn); }
+[data-tone="danger"]  { --tone: var(--tone-danger);  --tone-wash: var(--tone-wash-danger); }
+
+/* --------------------------------------------------------------------------
+   条状容器
+   工具条窗的自动变淡、拖动光标等窗口专属行为留在 toolbar.css；
+   这里只有「一条悬浮控件条长什么样」，好让预览页和真工具条共用同一个表面。
+   V2 后半真工具条改用 .bar 后，toolbar.css 里重复的 .sep 要删掉。
+   -------------------------------------------------------------------------- */
+.bar {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;          /* 宁可截断状态文字，也绝不换行成两层条 */
+  max-width: 100%;
+  gap: 2px;
+  padding: 5px 9px 5px 11px;
+  border-radius: var(--radius-bar);
+  background: var(--surface-toolbar);
+  box-shadow:
+    inset 0 0 0 1px var(--hairline),
+    var(--shadow-bar);
+}
+/* 按钮组永不压缩：真实音频源标签可能比样例长，挤压必须落在状态副行上，
+   不能让「重试 / 下一步」这些出口被压没。 */
+.bar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 5px;
+  background: var(--tint-sep);
+  flex: none;
+}
+
+/* --------------------------------------------------------------------------
+   状态区：图标 + 状态名 + 作用对象
+   -------------------------------------------------------------------------- */
+/* 状态区是唯一允许被压缩的部分：空间不够时副行先打省略号 */
+.status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.status-icon {
+  color: var(--tone);
+  flex: none;
+}
+.status-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+.status-label {
+  font-size: var(--fs-label);
+  font-weight: var(--fw-medium);
+  color: var(--tone);
+  white-space: nowrap;
+}
+.status-detail {
+  font-size: var(--fs-micro);
+  color: var(--text-toolbar);
+  opacity: 0.66;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status-detail:empty { display: none; }
+
+/* 过渡态转圈：只给 starting / recovering */
+.status-icon[data-spin="cw"]  { animation: phase-spin var(--dur-spin) linear infinite; }
+.status-icon[data-spin="ccw"] { animation: phase-spin var(--dur-spin-slow) linear infinite reverse; }
+@keyframes phase-spin { to { transform: rotate(360deg); } }
+
+/* --------------------------------------------------------------------------
+   命令按钮
+   主按钮承载 start / pause / resume；次按钮承载 stop / retry；
+   nextAction 按钮带文字，因为它是「出事了该点哪」的唯一出口，不能只有图标。
+   -------------------------------------------------------------------------- */
+.act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-button);
+  background: transparent;
+  color: var(--text-toolbar);
+  font-family: inherit;
+  font-size: var(--fs-label);
+  cursor: pointer;
+  transition: background var(--dur-instant), color var(--dur-instant), opacity var(--dur-instant);
+}
+.act:hover:not(:disabled) { background: var(--tint-hover); color: var(--text-toolbar-hover); }
+.act:active:not(:disabled) { background: var(--tint-active); }
+
+/* 禁用：降透明度 + 禁用光标。理由靠 title / aria-label 传达（来自 limitations），
+   不靠颜色，也不靠用户猜。 */
+.act:disabled {
+  opacity: 0.34;
+  cursor: not-allowed;
+}
+
+/* 主按钮在 listening 时染成 live 色，和状态区呼应 */
+.act[data-act="pause"] { color: var(--tone-live); }
+.act[data-act="resume"] { color: var(--tone-warn); }
+
+/* 带文字的按钮（nextAction） */
+.act-text {
+  padding: 0 11px;
+  gap: 6px;
+  background: var(--tone-wash);
+  color: var(--tone);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+.act-text:hover:not(:disabled) {
+  background: var(--tone);
+  color: var(--on-accent);
+}
+
+/* 只有图标的下一步按钮（窄工具条用）。保留 tone 底色，
+   这样它在一排中性图标键里仍然是唯一带色块的那个，不至于沉没。
+   文字降级成 tooltip / aria-label。 */
+.act-cta {
+  min-width: 34px;
+  padding: 0 8px;
+  background: var(--tone-wash);
+  color: var(--tone);
+}
+.act-cta:hover:not(:disabled) { background: var(--tone); color: var(--on-accent); }
+
+.act-danger:hover:not(:disabled) { background: var(--danger-solid); color: var(--on-danger); }
+
+/* --------------------------------------------------------------------------
+   说明条：贴在字幕卡里，解释「为什么现在没有字幕」
+   刻意不含交互控件 —— 字幕窗是 focusable:false，按钮放这里键盘够不到。
+   可执行的下一步一律由工具条承载。
+   -------------------------------------------------------------------------- */
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 18px;
+  border-radius: var(--radius-bar);
+  background: var(--tone-wash);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.notice-icon {
+  color: var(--tone);
+  margin-top: 1px;
+}
+.notice-body { min-width: 0; }
+.notice-title {
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  color: var(--tone);
+  margin: 0 0 3px;
+}
+.notice-message {
+  font-size: var(--fs-label);
+  color: var(--text-caption);
+  opacity: 0.82;
+  margin: 0;
+  line-height: 1.5;
+}
+.notice-detail {
+  font-size: var(--fs-hint);
+  color: var(--text-caption);
+  opacity: 0.5;
+  margin: 4px 0 0;
+}
+.notice-detail:empty { display: none; }
+
+/* --------------------------------------------------------------------------
+   音频源标记
+   注意：不做电平条。PLAN §3.1 已明确删除音量/声浪指示，这里不把它偷偷加回来；
+   level 字段只在预览页的检查面板里以数字呈现，供开发核对。
+   -------------------------------------------------------------------------- */
+.src-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--tone-wash);
+  font-size: var(--fs-micro);
+  color: var(--tone);
+  white-space: nowrap;
+}
+.src-chip[data-tone="neutral"] {
+  background: var(--tint-hover);
+  color: var(--text-toolbar);
+}
+/* 状态点是冗余通道；chip 里的文字才是主编码 */
+.src-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+/* inactive / unavailable 用空心点，形状上就和「在跑」的状态分开 */
+.src-chip[data-tone="neutral"] .src-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
+/* --------------------------------------------------------------------------
+   动效降级：转圈停在静止角度，状态仍由 icon 形状 + 文案传达
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .status-icon[data-spin] { animation: none; }
+}
+
+/* --------------------------------------------------------------------------
+   高对比度：tone 全部塌成系统色，改用形状和边框承载差异
+   -------------------------------------------------------------------------- */
+@media (forced-colors: active) {
+  .notice { border: 1px solid CanvasText; }
+  .src-chip { border: 1px solid CanvasText; }
+  .act-text { border: 1px solid CanvasText; }
+  .act:disabled { opacity: 1; color: GrayText; }
+}

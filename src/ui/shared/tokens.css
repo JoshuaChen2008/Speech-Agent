@@ -1,0 +1,288 @@
+/* ==========================================================================
+   Live Subtitle Agent · 共享设计 token
+   --------------------------------------------------------------------------
+   三个 renderer（字幕窗 / 工具条窗 / 设置窗）的唯一视觉真相。
+   组件 CSS 只消费本文件的语义 token，不再各自硬编码色值、圆角、阴影和时长。
+
+   分层：
+     §1 调色板 --c-*   原始值，只允许被本文件的语义层引用
+     §2+ 语义层        组件唯一可用的层
+
+   主题约定：:root 是深色默认，:root[data-theme="light"] 覆盖为浅色。
+   data-theme 由各窗 JS 依据 config.theme / systemDark 写入，UI 不自行判断。
+
+   新增 phase 语义色、状态样式一律加在本文件，不要散回三套组件 CSS。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   §1 调色板（原始值）
+   RGB 三元组形式，便于 rgba() 复合出不同透明度。
+
+   约定：需要在组件里再复合透明度的语义 token 保持三元组，用法 rgb()/rgba()；
+   其余语义 token 一律是可直接赋值的完整颜色。当前的三元组只有三个：
+   --bar-bg（字幕卡底，透明度由用户配置）、--fg（设置窗正文，派生大量底纹）、
+   --text-accent（强调文字）。
+   -------------------------------------------------------------------------- */
+:root {
+  --c-ink-900:    14, 32, 44;      /* 字幕卡底 */
+  --c-ink-950:    18, 22, 28;      /* 工具条底（更冷更深，与字幕卡拉开层次） */
+  --c-ink-text:   20, 32, 44;      /* 浅色主题下的正文墨色 */
+  --c-slate-text: 20, 26, 34;      /* 浅色主题下设置窗的正文墨色 */
+  --c-paper-50:  248, 249, 251;    /* 浅色主题字幕卡底 */
+  --c-paper-0:   252, 252, 254;    /* 浅色主题工具条底 */
+
+  --c-white:     255, 255, 255;
+  --c-black:       0,   0,   0;
+  --c-fog:       235, 238, 242;    /* 深色主题下设置窗正文 */
+
+  --c-accent:     64, 132, 255;    /* 强调 · 蓝 */
+  --c-accent-lit: 207, 224, 255;   /* 深色主题下的强调文字（#cfe0ff） */
+  --c-amber:     255, 209, 102;    /* 锁定 · 琥珀 */
+  --c-red:       255,  91,  91;    /* 录制指示 */
+  --c-red-soft:  255, 107, 107;    /* 录制中的图标 */
+  --c-red-hard:  232,  76,  76;    /* 破坏性操作 */
+
+  /* 浅色主题的深色变体。亮色系在近白面板上对比度不足，必须换值而不是调透明度：
+     #ffd166 on #fafbfc ≈ 1.6:1，远低于 4.5:1。下面几个都 ≥ 4.5:1。 */
+  --c-accent-deep:  37,  99, 201;  /* #2563c9 */
+  --c-amber-deep:  138,  97,   0;  /* #8a6100 */
+  --c-red-deep:    198,  40,  40;  /* #c62828 */
+  --c-red-darkest: 154,  24,  24;  /* #9a1818 */
+}
+
+/* --------------------------------------------------------------------------
+   §2 字体与字阶
+   -------------------------------------------------------------------------- */
+:root {
+  --font-ui: "Segoe UI Variable", "Segoe UI", -apple-system, system-ui,
+             "Microsoft YaHei UI", "PingFang SC", sans-serif;
+
+  /* 字幕：三档由用户选择，实际值见 §8 运行时变量 */
+  --fs-caption-ratio-prev: 0.72;   /* previous / translation 行相对当前行的比例 */
+  --line-gap: 4px;                 /* previous 与 translation 的外边距，计入行数预算 */
+  --lh-caption: 1.35;
+  --ls-caption: 0.01em;
+  --fw-caption: 700;
+
+  /* 设置窗字阶 */
+  --fs-title: 21px;
+  --fs-body: 13.5px;
+  --fs-label: 12.5px;
+  --fs-hint: 12px;
+  --fs-micro: 11px;
+
+  --fw-medium: 600;
+  --fw-bold: 700;
+}
+
+/* --------------------------------------------------------------------------
+   §3 表面与文字（主题相关）
+   -------------------------------------------------------------------------- */
+:root {
+  /* 字幕卡：底色三元组与不透明度分开，因为不透明度是用户可调项 */
+  --bar-bg: var(--c-ink-900);
+
+  /* 工具条 */
+  --surface-toolbar: rgba(var(--c-ink-950), 0.82);
+
+  /* 设置窗：整页近乎透明，让 DWM acrylic 透上来 */
+  --surface-settings: rgba(var(--c-white), 0.04);
+  --fg: var(--c-fog);
+
+  /* 文字 */
+  --text-caption: rgb(var(--c-white));
+  --text-caption-partial: rgba(var(--c-white), 0.60);
+  --text-shadow-caption: 0 1px 3px rgba(var(--c-black), 0.5);
+  --text-toolbar: rgba(var(--c-white), 0.82);
+  --text-toolbar-hover: rgb(var(--c-white));
+
+  /* 交互底纹（hover / active / 轨道 / 分隔线） */
+  --tint-hover:  rgba(var(--c-white), 0.12);
+  --tint-active: rgba(var(--c-white), 0.18);
+  --tint-sep:    rgba(var(--c-white), 0.20);
+
+  /* 描边 */
+  --hairline: rgba(var(--c-white), 0.06);
+  --ring-locked: rgba(var(--c-amber), 0.55);
+
+  /* 强调文字：浅底用纯强调色，深底用提亮版以保证对比度 */
+  --text-accent: var(--c-accent-lit);
+
+  /* 控件圆钮（开关 / 滑杆）：拟物件，两个主题都保持白色，故不随主题切换 */
+  --thumb-face: rgb(var(--c-white));
+}
+
+:root[data-theme="light"] {
+  --bar-bg: var(--c-paper-50);
+  --surface-toolbar: rgba(var(--c-paper-0), 0.9);
+  --surface-settings: rgba(var(--c-black), 0.04);
+  --fg: var(--c-slate-text);
+
+  --text-caption: rgb(var(--c-ink-text));
+  --text-caption-partial: rgba(var(--c-ink-text), 0.55);
+  --text-shadow-caption: 0 1px 2px rgba(var(--c-white), 0.4);
+  --text-toolbar: rgba(var(--c-ink-text), 0.72);
+  --text-toolbar-hover: rgb(var(--c-ink-text));
+
+  --tint-hover:  rgba(var(--c-black), 0.08);
+  --tint-active: rgba(var(--c-black), 0.12);
+  --tint-sep:    rgba(var(--c-black), 0.15);
+
+  --hairline: rgba(var(--c-black), 0.06);
+
+  --text-accent: var(--c-accent);
+
+  /* 色调轴换成深色变体，见 §1 的对比度说明 */
+  --tone-busy:   rgb(var(--c-accent-deep));
+  --tone-live:   rgb(var(--c-red-deep));
+  --tone-warn:   rgb(var(--c-amber-deep));
+  --tone-danger: rgb(var(--c-red-darkest));
+
+  --tone-wash-busy:   rgba(var(--c-accent-deep), 0.12);
+  --tone-wash-live:   rgba(var(--c-red-deep), 0.12);
+  --tone-wash-warn:   rgba(var(--c-amber-deep), 0.12);
+  --tone-wash-danger: rgba(var(--c-red-darkest), 0.12);
+}
+
+/* --------------------------------------------------------------------------
+   §4 状态语义色
+   注意：颜色永远是冗余通道。任何状态都必须同时有形状 / 文案 / ARIA 编码，
+   不允许出现「只有颜色变了」的状态（见 docs/ui-design-brief.md §4.1）。
+   -------------------------------------------------------------------------- */
+:root {
+  --state-locked: rgb(var(--c-amber));
+  --state-locked-hint: rgba(var(--c-amber), 0.85);
+  --state-recording: rgb(var(--c-red));
+  --state-recording-icon: rgb(var(--c-red-soft));
+
+  --danger-solid: rgba(var(--c-red-hard), 0.85);
+  --on-danger: rgb(var(--c-white));
+
+  --accent-solid: rgb(var(--c-accent));
+  --accent-wash: rgba(var(--c-accent), 0.16);
+  --on-accent: rgb(var(--c-white));
+
+  /* --------------------------------------------------------------------
+     phase 色调轴。runtime-view.js 为每个 phase / source state / model state
+     产出一个 tone，DOM 层落成 [data-tone]。五档覆盖全部 8 个 phase：
+       neutral 无事发生 · busy 系统在忙 · live 正在采集
+       warn    降级但会话还在 · danger 需要用户介入
+     颜色永远是冗余通道 —— 去掉颜色后 icon 形状和文案仍可区分全部状态。
+     -------------------------------------------------------------------- */
+  --tone-neutral: var(--text-toolbar);
+  --tone-busy:    rgb(var(--c-accent));
+  --tone-live:    rgb(var(--c-red));
+  --tone-warn:    rgb(var(--c-amber));
+  --tone-danger:  rgb(var(--c-red-soft));
+
+  /* 同色调的极淡底纹，用于说明条 */
+  --tone-wash-busy:   rgba(var(--c-accent), 0.14);
+  --tone-wash-live:   rgba(var(--c-red), 0.14);
+  --tone-wash-warn:   rgba(var(--c-amber), 0.14);
+  --tone-wash-danger: rgba(var(--c-red-soft), 0.14);
+}
+
+/* --------------------------------------------------------------------------
+   §5 形状
+   --radius 是字幕卡专用且由用户配置（6–16px），见 §8。
+   -------------------------------------------------------------------------- */
+:root {
+  --radius-bar: 12px;       /* 工具条 / 设置窗分组卡 */
+  --radius-control: 8px;    /* 导航项、分段控件外壳 */
+  --radius-button: 7px;     /* 图标按钮 */
+  --radius-pill: 6px;       /* 分段控件内的选中块 */
+}
+
+/* --------------------------------------------------------------------------
+   §6 高度与阴影
+   -------------------------------------------------------------------------- */
+:root {
+  --shadow-card: 0 8px 24px rgba(var(--c-black), 0.35);   /* 字幕卡 */
+  --shadow-bar:  0 6px 18px rgba(var(--c-black), 0.34);   /* 工具条 */
+  --shadow-thumb: 0 1px 3px rgba(var(--c-black), 0.3);    /* 滑块 / 开关圆钮 */
+  --shadow-pill:  0 1px 3px rgba(var(--c-black), 0.2);    /* 分段控件选中块 */
+}
+:root[data-theme="light"] {
+  --shadow-card: 0 8px 24px rgba(var(--c-black), 0.18);
+  --shadow-bar:  0 6px 18px rgba(var(--c-black), 0.16);
+}
+
+/* --------------------------------------------------------------------------
+   §7 动效
+   常驻置顶窗的动效必须节制：无持续大面积 backdrop-filter，
+   reduced-motion 下所有过渡归零、所有无限动画由组件各自转为静态。
+   -------------------------------------------------------------------------- */
+:root {
+  --dur-instant: 0.15s;   /* 按钮 hover / 导航切换 */
+  --dur-fast:    0.18s;   /* pane 淡入 */
+  --dur-base:    0.2s;    /* 开关滑动 / 提示淡入 */
+  --dur-slow:    0.22s;   /* 工具条整体明暗 */
+  --ease: ease;
+
+  --dur-caret: 1s;        /* partial 光标闪烁 */
+  --dur-pulse: 1.6s;      /* 录制脉冲 */
+  --dur-spin: 0.9s;       /* starting 转圈 */
+  --dur-spin-slow: 1.6s;  /* recovering 回转 */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-instant: 0.01ms;
+    --dur-fast:    0.01ms;
+    --dur-base:    0.01ms;
+    --dur-slow:    0.01ms;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   §8 字幕运行时变量
+   由 caption.js 的 applyConfig() 以内联样式写到 :root，会覆盖这里的默认值。
+   默认值与 src/config.js 的 DEFAULTS 保持一致，用于配置到达前的首帧。
+   变量名属于 UI ↔ 配置的既有约定，重命名需同时改 caption.js（共同评审）。
+   -------------------------------------------------------------------------- */
+:root {
+  --fs: 30px;          /* config.fontSize · 24 / 30 / 38 */
+  --radius: 10px;      /* config.radius   · 6–16 */
+  --bar-alpha: 0.86;   /* config.opacity  · 0.70–1.00 */
+}
+
+/* config.maxLines 不再作为 CSS 变量下发。它现在的含义是「当前句的行数上限」，
+   由 caption.js 传给 computeLineBudget()，实际行数还要受整卡高度预算约束。
+   每个槽位最终的 clamp 值以 --n 写在元素自身上，见 caption.css。 */
+
+/* --------------------------------------------------------------------------
+   §9 layout contract 镜像
+   ⚠ 真相在 src/main.js（MARGIN / TB_MARGIN / INSET / CAP_* / TB_*）。
+   这里是只读镜像，改这里不会移动窗口。消除这份双重真相是 B1 的待办
+   （见 docs/subtitle-window.md §3 与 §10.1）；在那之前两处必须同步修改。
+   -------------------------------------------------------------------------- */
+:root {
+  --margin: 20px;      /* main.js MARGIN    · 字幕窗内卡片四周留白 */
+  --tb-margin: 16px;   /* main.js TB_MARGIN · 工具条窗内条四周留白 */
+}
+
+/* --------------------------------------------------------------------------
+   §10 焦点可见基线
+   零特异性（:where）声明，组件可直接覆盖而不必比拼选择器权重。
+   -------------------------------------------------------------------------- */
+:root {
+  --focus-color: rgb(var(--c-accent));
+  --focus-width: 2px;
+  --focus-offset: 2px;
+}
+
+:where(button, a[href], input, select, textarea, [tabindex]):focus-visible {
+  outline: var(--focus-width) solid var(--focus-color);
+  outline-offset: var(--focus-offset);
+}
+
+/* --------------------------------------------------------------------------
+   §11 高对比度（forced-colors）基线
+   系统会强制接管颜色，半透明面板会塌成不透明系统色。这里只保证
+   「边界仍然可见、焦点仍然可见」，具体组件的补边在各自 CSS 里。
+   -------------------------------------------------------------------------- */
+@media (forced-colors: active) {
+  :root {
+    --focus-color: Highlight;
+  }
+}

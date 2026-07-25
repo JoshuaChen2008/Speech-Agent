@@ -40,6 +40,8 @@ src/
   main.js              当前主进程骨架：三窗管理 + 停靠 + 手动拖动 + 锁定/录制协调
   config.js            配置存储：内存 + 持久化 userData/config.json
   preload.js           当前共享 API；B1 将拆成按窗口最小权限 preload
+  ui/shared/
+    tokens.css         三窗共享的 design token：色彩/字阶/形状/阴影/动效 + 主题切换
   contracts/           Gate 0A：v1 契约、运行时校验器与跨层 JSON fixtures
   caption/             字幕窗
     index.html · caption.css · caption.js     命中测试 + 拖动 + 锁定穿透 + 配置 + 假字幕流

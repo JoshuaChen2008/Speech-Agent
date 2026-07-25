@@ -26,7 +26,7 @@
 | `src/toolbar/toolbar.css` | 工具条布局、视觉状态和动效 |
 | `src/settings/settings.html` | 设置、历史、首启等正常窗口的信息架构 |
 | `src/settings/settings.css` | 设置窗口、组件和主题 |
-| 未来的 `src/ui/shared/` | design tokens、共享组件样式和纯展示 helpers |
+| `src/ui/shared/tokens.css` | design token 单一真相（见 §2.4）；未来的共享组件样式和纯展示 helpers 同放 `src/ui/shared/` |
 | `docs/ui-design-brief.md` | 视觉规范和交接说明 |
 
 ### 2.2 需要共同评审
@@ -39,7 +39,54 @@
 | BrowserWindow 宽高、边距、工具条 overlap rect | 同时影响 CSS、窗口停靠和命中测试，必须更新共享 layout contract |
 | 新的按钮、设置或状态 | 可能需要新增 Command、Capability 或错误类型，先提出 contract request |
 
-### 2.3 视觉模型禁止修改
+### 2.3 design token 层（V1 已落地）
+
+`src/ui/shared/tokens.css` 是三个 renderer 的唯一视觉真相，由三份 HTML 在各自组件样式**之前**引入：
+
+```html
+<link rel="stylesheet" href="../ui/shared/tokens.css">
+```
+
+分层与约定：
+
+- `§1 --c-*` 是调色板原始值，只允许被同文件的语义层引用，组件里不得出现。
+- `§2–§7` 是语义层：字体字阶、表面与文字、状态色、形状、阴影、动效时长。组件只消费这一层。
+- 主题在 token 层切换：`:root` 是深色默认，`:root[data-theme="light"]` 覆盖。**组件 CSS 里不应再出现 `[data-theme]` 分支**；工具条和设置窗已完全去除，字幕窗仅保留结构性规则。
+- 需要在组件里再复合透明度的 token 保持 RGB 三元组（当前只有 `--bar-bg` / `--fg` / `--text-accent`），其余是可直接赋值的完整颜色。
+- `§8` 是字幕运行时变量 `--fs / --radius / --bar-alpha / --max-lines`。这四个名字由 `caption.js` 的 `applyConfig()` 以内联样式写入 `:root`，是 UI ↔ 配置的既有约定，**重命名需连同 `caption.js` 一起提共同评审**。这里的默认值与 `src/config.js` 的 `DEFAULTS` 对齐，只用于配置到达前的首帧。
+- `§9` 是 `main.js` 尺寸常量的**只读镜像**（`--margin` / `--tb-margin`）。改这里不会移动窗口；消除双重真相是 B1 待办，在那之前两处必须同步改。
+- `§10/§11` 是 `:focus-visible` 与 `forced-colors` 基线，用零特异性 `:where()` 声明，组件可直接覆盖。
+
+新增 phase 语义色、状态样式一律加在 token 层，不要散回三套组件 CSS。
+
+### 2.5 运行状态表达（V2 已定稿）
+
+决策集中在 `src/ui/shared/runtime-view.js`（`RuntimeSnapshot` → 纯视图模型），
+视觉落在 `src/ui/shared/phases.css`，可在 `src/ui/preview/` 逐 fixture 核对。
+**DOM 层不允许再出现按 phase 分支的逻辑** —— 一旦出现就说明决策漏在了渲染层。
+
+| phase | 图标形状 | 文案 | tone | 主按钮 |
+|---|---|---|---|---|
+| `unavailable` | 斜杠圆 | 不可用 | neutral | 开始（禁用） |
+| `idle` | 待机符 | 待命 | neutral | 开始 |
+| `starting` | 缺口弧（顺时针转） | 启动中 | busy | 暂停（禁用） |
+| `listening` | 声波五竖 | 监听中 | live | 暂停 |
+| `paused` | 双竖条 | 已暂停 | warn | 继续 |
+| `stopping` | 方框 | 结束中 | busy | 暂停（禁用） |
+| `recovering` | 回转箭头（逆时针转） | 恢复中 | warn | 暂停（禁用） |
+| `error` | 三角叹号 | 出错 | danger | 开始（禁用） |
+
+规则：
+
+- **形状 > 文案 > 颜色。** tone 只是冗余通道；把颜色全部去掉后，图标形状加文案仍能区分全部 8 个 phase。
+- **主按钮由 capabilities 决定，不按 phase 硬编码**：依次取 `canPause / canResume / canStart` 第一个为真者；全假时按 phase 摆出对应意图的禁用态。
+- **禁用理由和下一步只能取自后端**：`capabilities.limitations[].message` 优先，其次 `lastError.message`；两者都没有才退到泛化文案。`nextAction` 是 4 值闭集，UI 只做翻译不做决策。
+- **状态区第二行必须说明作用对象**：`listening` 列出 active 来源，`recovering` 列出正在恢复的来源，满足「显示正在恢复哪个组件」。
+- **动效只给过渡态**：仅 `starting` / `recovering` 转圈。`listening` 可能持续两小时，刻意不给图标无限动画。
+- **`aria-pressed` 只给锁定按钮**。主按钮的可及名称在「开始 / 暂停 / 继续」间切换，再叠 pressed 语义会让屏幕阅读器读出两份互相矛盾的状态。这是对 §4.2 原文的修订。
+- **说明条不放交互控件**：字幕窗 `focusable: false`，那里的按钮键盘够不到。可执行的下一步一律由工具条承载。
+
+### 2.6 视觉模型禁止修改
 
 - `src/main.js` 及未来 `src/main/` 下的窗口、IPC、状态机和服务。
 - `src/preload.js` 及未来按窗口拆分的 preload。

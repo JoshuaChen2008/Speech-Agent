@@ -1,0 +1,251 @@
+/* ==========================================================================
+   预览页自身的外壳。
+   刻意做成朴素的开发工具样子，避免和产品 UI 混淆 ——
+   页面里唯一「产品」的东西是舞台上的工具条和字幕卡。
+   ========================================================================== */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--page-bg);
+  color: rgb(var(--fg));
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+:root { --page-bg: #14171c; --page-panel: rgba(255, 255, 255, 0.04); }
+:root[data-theme="light"] { --page-bg: #eef0f4; --page-panel: rgba(0, 0, 0, 0.03); }
+
+code {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.92em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(var(--fg), 0.09);
+}
+
+/* ---- 页头 ---- */
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 28px 32px 20px;
+  border-bottom: 1px solid rgba(var(--fg), 0.1);
+}
+h1 { font-size: var(--fs-title); font-weight: var(--fw-bold); margin: 0 0 6px; }
+.page-sub { font-size: var(--fs-label); opacity: 0.6; margin: 0; max-width: 60ch; line-height: 1.55; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 10px; }
+.ctl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-hint);
+  opacity: 0.8;
+}
+.ctl select {
+  font-family: inherit;
+  font-size: var(--fs-hint);
+  padding: 5px 8px;
+  border: 1px solid rgba(var(--fg), 0.2);
+  border-radius: var(--radius-button);
+  background: var(--page-panel);
+  color: rgb(var(--fg));
+}
+.ctl-check { cursor: pointer; }
+
+/* ---- 目录 ---- */
+.toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 12px 32px;
+  border-bottom: 1px solid rgba(var(--fg), 0.1);
+  font-size: var(--fs-hint);
+}
+.toc a { color: rgb(var(--text-accent)); text-decoration: none; }
+.toc a:hover { text-decoration: underline; }
+
+main { padding: 8px 32px 80px; }
+section { margin-top: 40px; }
+h2 { font-size: 16px; font-weight: var(--fw-medium); margin: 0 0 6px; }
+.sec-note {
+  font-size: var(--fs-hint);
+  opacity: 0.62;
+  margin: 0 0 20px;
+  max-width: 78ch;
+  line-height: 1.6;
+}
+
+/* ---- 1 · 状态矩阵 ---- */
+.matrix { display: flex; flex-direction: column; gap: 14px; }
+.case {
+  display: grid;
+  grid-template-columns: 132px 1fr 260px;
+  gap: 20px;
+  align-items: center;
+  padding: 16px 18px;
+  border-radius: 10px;
+  background: var(--page-panel);
+  border: 1px solid rgba(var(--fg), 0.08);
+}
+.case-name { font-size: var(--fs-label); font-weight: var(--fw-medium); }
+.case-phase { font-size: var(--fs-micro); opacity: 0.5; margin-top: 2px; }
+.case-stage { display: flex; align-items: center; overflow-x: auto; padding: 4px 0; }
+
+.case-meta {
+  font-size: var(--fs-micro);
+  opacity: 0.62;
+  line-height: 1.7;
+  font-variant-numeric: tabular-nums;
+}
+.case-meta b { font-weight: var(--fw-medium); opacity: 0.9; }
+.width-tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(var(--fg), 0.1);
+  font-variant-numeric: tabular-nums;
+}
+.width-tag.over { background: var(--tone-wash-danger); color: var(--tone-danger); }
+
+/* ---- 舞台（承载真实尺寸的覆盖层组件）---- */
+.stage-list { display: flex; flex-direction: column; gap: 18px; }
+.stage-row {
+  padding: 16px 18px;
+  border-radius: 10px;
+  background: var(--page-panel);
+  border: 1px solid rgba(var(--fg), 0.08);
+}
+.stage-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: var(--fs-label);
+}
+.stage-head .tag { font-size: var(--fs-micro); opacity: 0.55; font-variant-numeric: tabular-nums; }
+.verdict {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
+.verdict.ok { background: var(--tone-wash-busy); color: var(--tone-busy); }
+.verdict.bad { background: var(--tone-wash-danger); color: var(--tone-danger); }
+
+/* 背景模拟：验证覆盖层在不同桌面上的可读性 */
+.stage {
+  position: relative;
+  width: 920px;
+  padding: 20px;              /* = main.js MARGIN，让卡片位置与真实窗口一致 */
+  border-radius: 8px;
+  overflow: hidden;
+}
+.stage[data-bg="flat"]  { background: #5a6270; }
+.stage[data-bg="doc"]   { background: #ffffff; }
+.stage[data-bg="video"] { background: #0a0d12; }
+.stage[data-bg="desk"] {
+  background:
+    radial-gradient(circle at 18% 22%, #4a6fa5 0 26%, transparent 26.5%),
+    radial-gradient(circle at 72% 68%, #b0653f 0 22%, transparent 22.5%),
+    linear-gradient(118deg, #1f2a36 0%, #6d7f92 42%, #f2ede4 62%, #33404f 100%);
+}
+
+/* ---- 字幕卡（真实尺寸复刻）---- */
+.cap-card {
+  position: relative;
+  width: 880px;
+  height: 150px;
+  padding: 20px 28px 22px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  border-radius: var(--radius);
+  background: rgba(var(--bar-bg), var(--bar-alpha));
+  box-shadow: inset 0 0 0 1px var(--hairline), var(--shadow-card);
+  overflow: hidden;
+}
+/* 正文可用高度的上沿。越过它的内容在真实窗口里会被窗口边缘裁掉。 */
+.cap-card::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  top: 20px;
+  border-top: 1px dashed rgba(255, 92, 92, 0.75);
+  pointer-events: none;
+  z-index: 2;
+}
+.cap-lines { display: flex; flex-direction: column; }
+.cap-line {
+  margin: 0;
+  font-size: var(--fs);
+  font-weight: var(--fw-caption);
+  line-height: var(--lh-caption);
+  letter-spacing: var(--ls-caption);
+  color: var(--text-caption);
+  text-shadow: var(--text-shadow-caption);
+  word-break: break-word;
+}
+.cap-line.prev {
+  font-size: calc(var(--fs) * var(--fs-caption-ratio-prev));
+  opacity: 0.62;
+  margin-bottom: 6px;
+}
+.cap-line.tr {
+  font-size: calc(var(--fs) * var(--fs-caption-ratio-prev));
+  opacity: 0.78;
+  margin-top: 4px;
+}
+.cap-line.partial::after {
+  content: '';
+  display: inline-block;
+  width: 2px; height: 0.95em;
+  margin-left: 3px;
+  vertical-align: -0.12em;
+  background: currentColor;
+  animation: caret var(--dur-caret) steps(1) infinite;
+}
+@keyframes caret { 0%, 49% { opacity: 1 } 50%, 100% { opacity: 0 } }
+
+.cap-idle {
+  font-size: var(--fs-body);
+  color: var(--text-caption);
+  opacity: 0.45;
+}
+
+/* ---- 4 · CommandResult ---- */
+.cmd-list { display: flex; flex-direction: column; gap: 12px; }
+.cmd-row {
+  display: grid;
+  grid-template-columns: 168px 1fr;
+  gap: 20px;
+  align-items: center;
+  padding: 14px 18px;
+  border-radius: 10px;
+  background: var(--page-panel);
+  border: 1px solid rgba(var(--fg), 0.08);
+}
+.cmd-code { font-size: var(--fs-micro); opacity: 0.62; line-height: 1.6; }
+.cmd-feedback {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-control);
+  background: var(--tone-wash);
+  color: var(--tone);
+  font-size: var(--fs-label);
+}
+.cmd-feedback .msg { color: rgb(var(--fg)); opacity: 0.85; }
+
+/* ---- reduced-motion 模拟开关（真实验收仍以系统设置为准）---- */
+.sim-reduced *, .sim-reduced *::before, .sim-reduced *::after {
+  animation: none !important;
+  transition: none !important;
+}

@@ -5,7 +5,8 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test --experimental-test-isolation=none"
+    "test": "node --test --experimental-test-isolation=none",
+    "preview:fixtures": "node scripts/build-preview-fixtures.js"
   },
   "author": "",
   "license": "MIT",

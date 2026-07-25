@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;">
+  <link rel="stylesheet" href="../shared/tokens.css">
+  <link rel="stylesheet" href="../shared/phases.css">
+  <link rel="stylesheet" href="preview.css">
+  <title>Live Subtitle Agent · 状态预览</title>
+</head>
+<body>
+  <header class="page-head">
+    <div>
+      <h1>运行状态预览</h1>
+      <p class="page-sub">
+        数据全部来自 <code>src/contracts/fixtures/</code>，写出前已用契约校验。
+        这是开发工具，不是产品界面。
+      </p>
+    </div>
+    <div class="controls" id="controls">
+      <label class="ctl">主题
+        <select id="ctl-theme">
+          <option value="dark">深色</option>
+          <option value="light">浅色</option>
+        </select>
+      </label>
+      <label class="ctl">字号
+        <select id="ctl-fs">
+          <option value="24">24 小</option>
+          <option value="30" selected>30 中</option>
+          <option value="38">38 大</option>
+        </select>
+      </label>
+      <label class="ctl">背景
+        <select id="ctl-bg">
+          <option value="desk">复杂桌面</option>
+          <option value="doc">白底文档</option>
+          <option value="video">深色视频</option>
+          <option value="flat">纯色</option>
+        </select>
+      </label>
+      <label class="ctl ctl-check">
+        <input type="checkbox" id="ctl-bilingual" checked> 双语
+      </label>
+      <label class="ctl ctl-check">
+        <input type="checkbox" id="ctl-motion"> 模拟 reduced-motion
+      </label>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <a href="#sec-runtime">1 · 运行状态矩阵</a>
+    <a href="#sec-caption">2 · 字幕卡（状态驱动）</a>
+    <a href="#sec-type">3 · 字幕排版包线</a>
+    <a href="#sec-command">4 · CommandResult 反馈</a>
+  </nav>
+
+  <main>
+    <section id="sec-runtime">
+      <h2>1 · 运行状态矩阵</h2>
+      <p class="sec-note">
+        9 个 fixture 覆盖全部 8 个 phase（<code>resumed</code> 是二次进入
+        <code>listening</code>）。工具条按内容自然宽度渲染 —— 右侧列出实测宽度，
+        用于向壳层提 layout contract。
+      </p>
+      <div class="matrix" id="matrix"></div>
+    </section>
+
+    <section id="sec-caption">
+      <h2>2 · 字幕卡（状态驱动）</h2>
+      <p class="sec-note">
+        真实尺寸 880 × 150（窗口 920 × 190 减去 20 边距），不缩放。
+        有字幕时显示字幕，无字幕的 phase 显示说明条。说明条内不放按钮 ——
+        字幕窗 <code>focusable: false</code>，那里的按钮键盘够不到。
+      </p>
+      <div class="stage-list" id="captionStates"></div>
+    </section>
+
+    <section id="sec-type">
+      <h2>3 · 字幕排版包线</h2>
+      <p class="sec-note">
+        同一张 880 × 150 卡片，逐档压测。<strong>红色虚线是正文可用高度的上沿</strong>；
+        内容自下而上堆叠，越过虚线的部分在真实窗口里会被窗口边缘裁掉。
+        <br>
+        这里的行**不加** <code>line-clamp</code>，量的是「这一档排版天然想占多高」——
+        正是用来推导行数预算的数字。真实字幕窗会按预算裁行，不会让它这样溢出。
+      </p>
+      <div class="stage-list" id="typeCases"></div>
+    </section>
+
+    <section id="sec-command">
+      <h2>4 · CommandResult 反馈</h2>
+      <p class="sec-note">
+        用户点击只是发出意图。四种回执各自对应一种反馈：成功、可恢复失败（带下一步）、
+        忙、能力未配置。<code>nextAction</code> 是 4 值闭集，UI 只做翻译不做决策。
+      </p>
+      <div class="cmd-list" id="commandCases"></div>
+    </section>
+  </main>
+
+  <script src="../shared/icons.js"></script>
+  <script src="../shared/runtime-view.js"></script>
+  <script src="../shared/fixtures.generated.js"></script>
+  <script src="preview.js"></script>
+</body>
+</html>

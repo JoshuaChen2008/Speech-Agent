@@ -1,8 +1,9 @@
 /* ==========================================================================
-   工具条窗：仅一条工具条。窗口四周留白给阴影。
+   工具条窗：窗口专属行为。
+   条本身的表面（底色、圆角、阴影、内距）和状态组件都来自 ../ui/shared/phases.css，
+   色值/时长来自 tokens.css。本文件只保留「它是一个悬浮窗」才需要的东西：
+   自动变淡、拖动光标、窗内定位。
    ========================================================================== */
-
-:root { --tb-margin: 16px; }        /* 与 main.js 的 TB_MARGIN 对应 */
 
 * { box-sizing: border-box; }
 
@@ -13,90 +14,64 @@ html, body {
   overflow: hidden;
   cursor: default;
   -webkit-font-smoothing: antialiased;
-  font-family: "Segoe UI Variable", "Segoe UI", -apple-system, system-ui,
-               "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  font-family: var(--font-ui);
   user-select: none;
 }
 
+/* 条在窗内**右对齐**。
+   main.js 的 dock() 按 `窗口右沿 − TB_MARGIN` 反推停靠位置，右对齐后
+   这个假设与实际渲染恒等，条本身多宽都不影响停靠精度。
+   窗口按最坏情况（error 态）固定，条自适应，多出来的透明区域逐像素穿透。 */
 .wrap {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
+  padding: 0 var(--tb-margin);
 }
 
 .toolbar {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 5px 9px;
-  border-radius: 12px;
-  background: rgba(18, 22, 28, 0.82);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.07),
-    0 6px 18px rgba(0, 0, 0, 0.34);
   cursor: grab;
 
   /* 不用时自动变淡；鼠标靠近（悬停）才提亮 */
   opacity: 0.35;
-  transition: opacity 0.22s ease;
+  transition: opacity var(--dur-slow) var(--ease);
 }
 .toolbar:hover,
+.toolbar:focus-within,
 .toolbar.dragging { opacity: 1; }
 .toolbar.dragging { cursor: grabbing; }
-/* 录制中 / 锁定态：保持可见，别让暂停/解锁键太淡找不到 */
-.wrap[data-state="recording"] .toolbar,
+
+/* 会话进行中 / 锁定态：保持可见，别让暂停、解锁和错误出口太淡找不到。
+   data-live 由 toolbar.js 依据 RuntimeSnapshot 的 phase 设置，不是本地布尔。 */
+.wrap[data-live="on"] .toolbar,
 .wrap[data-locked="on"] .toolbar { opacity: 0.75; }
-.wrap[data-state="recording"] .toolbar:hover,
+.wrap[data-live="on"] .toolbar:hover,
 .wrap[data-locked="on"] .toolbar:hover { opacity: 1; }
 
-:root[data-theme="light"] .toolbar {
-  background: rgba(252, 252, 254, 0.9);
-  box-shadow:
-    inset 0 0 0 1px rgba(0, 0, 0, 0.06),
-    0 6px 18px rgba(0, 0, 0, 0.16);
+/* 锁定态：锁图标高亮。形状本身也从「开锁」换成「闭锁」，不只靠颜色。 */
+.wrap[data-locked="on"] .act[data-act="lock"] { color: var(--state-locked); }
+
+/* 骨架阶段标记。B1 接入真 RuntimeSnapshot 后 data-demo 消失，本规则自动失效。
+   见 docs/subtitle-window.md §8：未实现功能必须标注，不能让用户以为已生效。 */
+.demo-tag {
+  align-self: center;
+  margin-left: 2px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--tint-hover);
+  color: var(--text-toolbar);
+  font-size: var(--fs-micro);
+  opacity: 0.75;
+  white-space: nowrap;
 }
 
-.rec-dot {
-  width: 8px; height: 8px;
-  margin: 0 5px 0 3px;
-  border-radius: 50%;
-  background: #ff5b5b;
-  flex: none;
-  display: none;
+/* --------------------------------------------------------------------------
+   高对比度：补一圈实边保住轮廓，并取消自动变淡
+   -------------------------------------------------------------------------- */
+@media (forced-colors: active) {
+  .toolbar { border: 1px solid CanvasText; opacity: 1; }
+  .wrap[data-live="on"] .toolbar,
+  .wrap[data-locked="on"] .toolbar { opacity: 1; }
 }
-.wrap[data-state="recording"] .rec-dot { display: block; animation: recpulse 1.6s ease-in-out infinite; }
-@keyframes recpulse { 0%, 100% { transform: scale(1); opacity: 1 } 50% { transform: scale(0.7); opacity: 0.5 } }
-
-.tb {
-  width: 30px; height: 30px;
-  display: grid; place-items: center;
-  padding: 0; border: 0; border-radius: 7px;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.82);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-.tb:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
-.tb:active { background: rgba(255, 255, 255, 0.18); }
-.tb svg { width: 18px; height: 18px; display: block; }
-.tb-danger:hover { background: rgba(232, 76, 76, 0.85); color: #fff; }
-
-:root[data-theme="light"] .tb { color: rgba(20, 32, 44, 0.72); }
-:root[data-theme="light"] .tb:hover { background: rgba(0, 0, 0, 0.08); color: #14202c; }
-
-.sep { width: 1px; height: 14px; margin: 0 5px; background: rgba(255, 255, 255, 0.20); }
-:root[data-theme="light"] .sep { background: rgba(0, 0, 0, 0.15); }
-
-/* play / pause 互斥 */
-.tb .ic-pause { display: none; }
-.wrap[data-state="recording"] .tb[data-act="toggle"] .ic-play  { display: none; }
-.wrap[data-state="recording"] .tb[data-act="toggle"] .ic-pause { display: block; }
-.wrap[data-state="recording"] .tb[data-act="toggle"] { color: #ff6b6b; }
-
-/* lock / unlock 互斥；锁定态高亮 */
-.tb .ic-lock { display: none; }
-.wrap[data-locked="on"] .tb[data-act="lock"] .ic-unlock { display: none; }
-.wrap[data-locked="on"] .tb[data-act="lock"] .ic-lock   { display: block; }
-.wrap[data-locked="on"] .tb[data-act="lock"] { color: #ffd166; }

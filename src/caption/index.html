@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline';">
+  <link rel="stylesheet" href="../ui/shared/tokens.css">
   <link rel="stylesheet" href="caption.css">
   <title>Live Subtitle</title>
 </head>
@@ -12,12 +13,25 @@
     <div class="caption-card" id="captionCard">
       <!-- 工具条“洞”：此区域字幕窗放行穿透，让下面/上面的工具条窗接管事件 -->
       <div class="tb-hole" id="tbHole" aria-hidden="true"></div>
-      <div class="captions" id="captions">
-        <p class="line final">欢迎使用 Live Subtitle Agent</p>
+
+      <!--
+        固定槽位：partial 更新只改 textContent，永不重建 DOM。
+        整块对辅助技术隐藏 —— partial 每秒刷新十几次，逐帧播报会让屏幕阅读器无法使用。
+        定稿文本另行送进下面的 live region。
+      -->
+      <div class="captions" id="captions" aria-hidden="true">
+        <p class="line prev" id="linePrev"></p>
+        <p class="line current" id="lineCurrent">欢迎使用 Live Subtitle Agent</p>
+        <p class="line tr" id="lineTranslation"></p>
       </div>
+
+      <!-- 只接收 final / refined / translated，不接收 partial -->
+      <p class="sr-only" id="liveRegion" aria-live="polite" aria-atomic="true"></p>
+
       <span class="lock-hint" aria-hidden="true">已钉住 · Ctrl+Alt+L 解锁</span>
     </div>
   </div>
+  <script src="../ui/shared/caption-reducer.js"></script>
   <script src="caption.js"></script>
 </body>
 </html>

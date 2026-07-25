@@ -1,16 +1,10 @@
 /* ==========================================================================
    字幕窗：仅字幕卡片。窗口四周留白给阴影；卡片居中。
-   ========================================================================== */
+   视觉 token 来自 ../ui/shared/tokens.css，本文件不再自行定义色值/圆角/时长。
 
-:root {
-  --radius: 10px;
-  --fs: 30px;
-  --bar-bg: 14, 32, 44;
-  --bar-alpha: 0.86;
-  --max-lines: 2;
-  --margin: 20px;                   /* 与 main.js 的 MARGIN 对应 */
-}
-:root[data-theme="light"] { --bar-bg: 248, 249, 251; }
+   行数由 caption.js 按**整卡总高度预算**分配（见 ui/shared/caption-reducer.js），
+   以 --n 写到每个槽位上。这里不给每行各自一个 maxLines —— 那正是会叠出溢出的写法。
+   ========================================================================== */
 
 * { box-sizing: border-box; }
 
@@ -21,8 +15,7 @@ html, body {
   overflow: hidden;
   cursor: default;
   -webkit-font-smoothing: antialiased;
-  font-family: "Segoe UI Variable", "Segoe UI", -apple-system, system-ui,
-               "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  font-family: var(--font-ui);
 }
 
 .wrap {
@@ -36,34 +29,31 @@ html, body {
   position: relative;
   width: 100%;
   height: 100%;
-  padding: 20px 28px 22px;
+  /* 上下对称。正文可用高度 = 150 − 20 − 20 = 110px，与预算计算一致。 */
+  padding: 20px 28px;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   border-radius: var(--radius);
   background: rgba(var(--bar-bg), var(--bar-alpha));
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
-    0 8px 24px rgba(0, 0, 0, 0.35);
+    inset 0 0 0 1px var(--hairline),
+    var(--shadow-card);
   cursor: grab;
 }
 .caption-card.dragging { cursor: grabbing; }
-:root[data-theme="light"] .caption-card {
-  box-shadow:
-    inset 0 0 0 1px rgba(0, 0, 0, 0.06),
-    0 8px 24px rgba(0, 0, 0, 0.18);
-}
 
 /* 锁定态：加一圈提示描边 + 底部提示文字 */
 .wrap[data-locked="on"] .caption-card {
   cursor: default;
   box-shadow:
-    inset 0 0 0 1px rgba(255, 209, 102, 0.55),
-    0 8px 24px rgba(0, 0, 0, 0.35);
+    inset 0 0 0 1px var(--ring-locked),
+    var(--shadow-card);
 }
 
 /* 工具条“洞”：透明占位，覆盖工具条停靠的右上角区域。
-   需可被 elementFromPoint 命中（故不设 pointer-events:none）并置于最上。 */
+   需可被 elementFromPoint 命中（故不设 pointer-events:none）并置于最上。
+   ⚠ 250 × 56 是硬编码，应由主进程下发的 overlap rect 驱动
+   （见 docs/subtitle-window.md §3）。 */
 .tb-hole {
   position: absolute;
   top: 0;
@@ -76,24 +66,48 @@ html, body {
 /* 锁定态无洞（整窗都穿透） */
 .wrap[data-locked="on"] .tb-hole { display: none; }
 
+/* 正文区：撑满卡片内容盒，字幕自下而上堆叠。
+   caption.js 用它的 clientHeight 当预算，所以这里不能加额外内边距。 */
+.captions {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
 .line {
   margin: 0;
   font-size: var(--fs);
-  font-weight: 700;
-  line-height: 1.35;
-  color: #fff;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
-  letter-spacing: 0.01em;
+  font-weight: var(--fw-caption);
+  line-height: var(--lh-caption);
+  color: var(--text-caption);
+  text-shadow: var(--text-shadow-caption);
+  letter-spacing: var(--ls-caption);
   display: -webkit-box;
-  -webkit-line-clamp: var(--max-lines);
+  -webkit-line-clamp: var(--n, 1);
   -webkit-box-orient: vertical;
   overflow: hidden;
   word-break: break-word;
 }
-:root[data-theme="light"] .line { color: #14202c; text-shadow: 0 1px 2px rgba(255, 255, 255, 0.4); }
+/* 预算分不到行的槽位。UA 的 [hidden] 规则拗不过上面的 display，得显式写。 */
+.line[hidden] { display: none; }
 
-.line.partial { color: rgba(255, 255, 255, 0.60); }
-:root[data-theme="light"] .line.partial { color: rgba(20, 32, 44, 0.55); }
+.line.prev,
+.line.tr {
+  font-size: calc(var(--fs) * var(--fs-caption-ratio-prev));
+}
+.line.prev {
+  opacity: 0.62;
+  margin-bottom: var(--line-gap);
+}
+.line.tr {
+  opacity: 0.78;
+  margin-top: var(--line-gap);
+}
+
+/* partial 才画光标；final / refined / translated 都是定稿，不该继续显示“输入中” */
+.line.partial { color: var(--text-caption-partial); }
 .line.partial::after {
   content: '';
   display: inline-block;
@@ -101,20 +115,46 @@ html, body {
   margin-left: 3px;
   vertical-align: -0.12em;
   background: currentColor;
-  animation: caret 1s steps(1) infinite;
+  animation: caret var(--dur-caret) steps(1) infinite;
 }
 @keyframes caret { 0%, 49% { opacity: 1 } 50%, 100% { opacity: 0 } }
-.line.prev { font-size: calc(var(--fs) * 0.72); opacity: 0.62; margin-bottom: 6px; }
+
+/* 只给辅助技术的定稿播报区 */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 
 .lock-hint {
   position: absolute;
   right: 14px;
   bottom: 8px;
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(255, 209, 102, 0.85);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-medium);
+  color: var(--state-locked-hint);
   opacity: 0;
-  transition: opacity 0.2s ease;
+  transition: opacity var(--dur-base) var(--ease);
   pointer-events: none;
 }
 .wrap[data-locked="on"] .lock-hint { opacity: 1; }
+
+/* --------------------------------------------------------------------------
+   动效降级：常驻置顶窗，reduced-motion 下光标停在可见态而不是闪烁
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .line.partial::after { animation: none; }
+}
+
+/* --------------------------------------------------------------------------
+   高对比度：半透明卡会塌成不透明系统色，补一圈实边保住卡片轮廓
+   -------------------------------------------------------------------------- */
+@media (forced-colors: active) {
+  .caption-card { border: 1px solid CanvasText; }
+  .wrap[data-locked="on"] .caption-card { border-style: dashed; }
+}
