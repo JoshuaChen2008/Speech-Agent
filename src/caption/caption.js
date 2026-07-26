@@ -23,12 +23,12 @@ const liveRegion = document.getElementById('liveRegion')
 const bridge = window.shell || {
   mouseThrough () {}, dragStart () {}, dragEnd () {},
   resizeStart () {}, resizeEnd () {},
-  onLock () {}, onRec () {}, onConfig () {},
+  onLock () {}, onConfig () {}, onCaption () {},
+  getLock () { return Promise.reject(new Error('no shell')) },
   getConfig () { return Promise.reject(new Error('no shell')) }
 }
 
 let locked = false
-let recording = false
 let dragging = false
 let resizing = false
 let ignoring = null
@@ -140,11 +140,25 @@ window.addEventListener('blur', endGesture)
 // --------------------------------------------------------------------------
 // 锁定：主进程已把本窗设为恒穿透；这里只更新视觉
 // --------------------------------------------------------------------------
-bridge.onLock((on) => {
-  locked = on
-  wrap.dataset.locked = on ? 'on' : 'off'
-  if (!on) { ignoring = null; applyHit(lastX, lastY) }
-})
+let lockRevision = 0
+
+function applyLockState (on) {
+  locked = !!on
+  wrap.dataset.locked = locked ? 'on' : 'off'
+  if (!locked) { ignoring = null; applyHit(lastX, lastY) }
+}
+
+async function initLock () {
+  bridge.onLock((on) => {
+    lockRevision += 1
+    applyLockState(on)
+  })
+  const requestedAt = lockRevision
+  try {
+    const on = await bridge.getLock()
+    if (lockRevision === requestedAt) applyLockState(on)
+  } catch { /* browser preview */ }
+}
 
 // --------------------------------------------------------------------------
 // 渲染：固定槽位 + 总高度预算
@@ -215,84 +229,8 @@ async function initConfig () {
   bridge.onConfig(applyConfig)
 }
 initConfig()
+initLock()
 
-// --------------------------------------------------------------------------
-// 假字幕流 —— 产出真正形状的 CaptionEvent，好让 reducer 和预算跑在真链路上。
-// B2 接入真 ASR 时只需换掉事件来源，render / reducer 不动。
-// --------------------------------------------------------------------------
-const SCRIPT = [
-  { text: '欢迎使用 Live Subtitle Agent 实时字幕', tr: 'Welcome to Live Subtitle Agent.' },
-  { text: '我们下周先对齐一下 roadmap，再排 A/B test。', tr: "Let's align on the roadmap next week, then schedule the A/B test." },
-  { text: 'The onboarding drop-off is mostly on step three.', tr: '新用户流失主要发生在第三步。' },
-  { text: '新用户流失主要集中在第三步，需要拉转化漏斗数据。', tr: 'Most churn happens at step three; we need funnel data.' },
-  { text: 'Can we ship a shorter version this sprint?', tr: '这个 sprint 能先发一个精简版吗？' },
-  { text: '好，我先同步给设计，明天给结论。', tr: "I'll sync with design and come back tomorrow." }
-]
-
-const FAKE_SESSION = 'preview-session'
-let scriptIndex = 0
-let segmentIndex = 0
-let sequence = 0
-let elapsed = 0
-let charTimer = null
-let lineTimer = null
-
-function emit (kind, revision, text, translation) {
-  sequence += 1
-  ingest({
-    schemaVersion: 1,
-    sessionId: FAKE_SESSION,
-    sourceId: 'loopback',
-    segmentId: 'segment-' + segmentIndex,
-    sequence,
-    revision,
-    kind,
-    t0: elapsed,
-    t1: elapsed + 2.4,
-    text,
-    translation: translation
-      ? { language: 'en', text: translation, basedOnRevision: revision - 1 }
-      : null
-  })
-}
-
-function typeLine (entry, done) {
-  let n = 0
-  let revision = 0
-  clearInterval(charTimer)
-  charTimer = setInterval(() => {
-    n += 1
-    revision += 1
-    emit('partial', revision, entry.text.slice(0, n))
-    if (n >= entry.text.length) {
-      clearInterval(charTimer)
-      emit('final', revision + 1, entry.text)
-      /* 译文晚到：验证它不会把已定稿的正文回滚 */
-      lineTimer = setTimeout(() => {
-        emit('translated', revision + 2, entry.text, entry.tr)
-        lineTimer = setTimeout(done, 700)
-      }, 400)
-    }
-  }, 55)
-}
-
-function nextLine () {
-  const entry = SCRIPT[scriptIndex % SCRIPT.length]
-  scriptIndex += 1
-  segmentIndex += 1
-  elapsed += 3.1
-  typeLine(entry, () => { if (recording) nextLine() })
-}
-
-function startFakeStream () { stopFakeStream(); nextLine() }
-function stopFakeStream () {
-  clearInterval(charTimer)
-  clearTimeout(lineTimer)
-  charTimer = lineTimer = null
-}
-
-bridge.onRec((on) => {
-  recording = on
-  if (on) startFakeStream()
-  else stopFakeStream()
-})
+// CaptionEvent 的唯一来源是主进程 SessionCoordinator。B1 的 fake adapter 与
+// B2 的真实 worker 都走同一通道，renderer 不再自造“看起来成功”的字幕。
+bridge.onCaption(ingest)

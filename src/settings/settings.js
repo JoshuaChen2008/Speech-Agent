@@ -1,22 +1,29 @@
 'use strict'
 
-/* 设置窗：所有控件与主进程配置双向绑定。
-   改动 → setConfig → 主进程写盘并广播 → 字幕条实时生效。 */
-
 let cfg = null
+let runtimeSnapshot = null
+let pendingPatch = {}
+let patchTimer = null
 
-// 关闭
+const status = document.getElementById('settingsStatus')
+const onboarding = document.getElementById('onboarding')
+const presetButtons = [...document.querySelectorAll('.preset-card')]
+const asrNote = document.getElementById('asrNote')
+
+function showStatus (message) {
+  status.textContent = message || ''
+}
+
 document.getElementById('close').addEventListener('click', () => window.shell.closeSettings())
 
-// 顶栏手动拖动（绕开 app-region 在亚克力窗上的拖动闪烁）
 const titlebar = document.querySelector('.titlebar')
 let dragging = false
-titlebar.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || e.target.closest('button')) return
+titlebar.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0 || event.target.closest('button')) return
   dragging = true
   titlebar.classList.add('dragging')
   window.shell.dragStart()
-  try { titlebar.setPointerCapture(e.pointerId) } catch { /* noop */ }
+  try { titlebar.setPointerCapture(event.pointerId) } catch { /* noop */ }
 })
 function endDrag () {
   if (!dragging) return
@@ -25,119 +32,170 @@ function endDrag () {
   window.shell.dragEnd()
 }
 window.addEventListener('pointerup', endDrag)
+window.addEventListener('pointercancel', endDrag)
+titlebar.addEventListener('lostpointercapture', endDrag)
 window.addEventListener('blur', endDrag)
 
-// 左导航切换
 const navItems = [...document.querySelectorAll('.nav-item')]
 const panes = [...document.querySelectorAll('.pane')]
-navItems.forEach((it) => {
-  it.addEventListener('click', () => {
-    navItems.forEach((n) => n.classList.toggle('active', n === it))
-    panes.forEach((p) => p.classList.toggle('active', p.dataset.pane === it.dataset.pane))
+navItems.forEach((item) => {
+  item.addEventListener('click', () => {
+    navItems.forEach((node) => node.classList.toggle('active', node === item))
+    panes.forEach((pane) => pane.classList.toggle('active', pane.dataset.pane === item.dataset.pane))
   })
 })
 
-// 配置键 ← → 控件
+async function savePatch (patch) {
+  try {
+    const result = await window.shell.setConfig(patch)
+    if (!result.ok) {
+      showStatus(result.message)
+      reflect(await window.shell.getConfig())
+      return false
+    }
+    showStatus('')
+    return true
+  } catch {
+    showStatus('设置未保存')
+    try { reflect(await window.shell.getConfig()) } catch { /* noop */ }
+    return false
+  }
+}
+
+function queuePatch (patch) {
+  pendingPatch = { ...pendingPatch, ...patch }
+  clearTimeout(patchTimer)
+  patchTimer = setTimeout(flushPatch, 120)
+}
+
+function flushPatch () {
+  clearTimeout(patchTimer)
+  patchTimer = null
+  const patch = pendingPatch
+  pendingPatch = {}
+  if (Object.keys(patch).length > 0) void savePatch(patch)
+}
+
 const SEG_KEY = { fontsize: 'fontSize', theme: 'theme', latency: 'latency' }
-const NUM_SEG = { fontsize: true, latency: true }   // 值需转数字
-
-// 分段控件
+const NUM_SEG = { fontsize: true, latency: true }
 document.querySelectorAll('.seg').forEach((seg) => {
-  seg.addEventListener('click', (e) => {
-    const btn = e.target.closest('button')
-    if (!btn) return
-    ;[...seg.children].forEach((b) => b.classList.toggle('on', b === btn))
+  seg.addEventListener('click', (event) => {
+    const button = event.target.closest('button')
+    if (!button || button.disabled) return
     const key = SEG_KEY[seg.dataset.seg]
-    let val = btn.dataset.val
-    if (NUM_SEG[seg.dataset.seg]) val = Number(val)
-    window.shell.setConfig({ [key]: val })
+    let value = button.dataset.val
+    if (NUM_SEG[seg.dataset.seg]) value = Number(value)
+    void savePatch({ [key]: value })
   })
 })
 
-// toggle
-document.querySelectorAll('.toggle').forEach((t) => {
-  t.addEventListener('click', () => {
-    const on = !t.classList.contains('on')
-    t.classList.toggle('on', on)
-    window.shell.setConfig({ [t.dataset.toggle]: on })
+document.querySelectorAll('.toggle').forEach((toggle) => {
+  toggle.addEventListener('click', () => {
+    void savePatch({ [toggle.dataset.toggle]: !toggle.classList.contains('on') })
   })
 })
 
-// 滑杆（input 回显，change 落库；拖动过程也实时生效 → 用 input 直接写）
 const opacity = document.getElementById('opacity')
 const opacityVal = document.getElementById('opacityVal')
 opacity.addEventListener('input', () => {
   opacityVal.textContent = Number(opacity.value).toFixed(2)
-  window.shell.setConfig({ opacity: Number(opacity.value) })
+  queuePatch({ opacity: Number(opacity.value) })
 })
 
 const toolbarOpacity = document.getElementById('toolbarOpacity')
 const toolbarOpacityVal = document.getElementById('toolbarOpacityVal')
 toolbarOpacity.addEventListener('input', () => {
   toolbarOpacityVal.textContent = Number(toolbarOpacity.value).toFixed(2)
-  window.shell.setConfig({ toolbarOpacity: Number(toolbarOpacity.value) })
+  queuePatch({ toolbarOpacity: Number(toolbarOpacity.value) })
 })
 
 const radius = document.getElementById('radius')
 const radiusVal = document.getElementById('radiusVal')
 radius.addEventListener('input', () => {
   radiusVal.textContent = radius.value + ' px'
-  window.shell.setConfig({ radius: Number(radius.value) })
+  queuePatch({ radius: Number(radius.value) })
 })
 
-// 背景颜色。null 表示跟随深浅主题，和「选了一个恰好等于默认值的颜色」是两回事，
-// 所以复位要显式写回 null，不能靠比较色值猜。
 const barColor = document.getElementById('barColor')
 const barColorVal = document.getElementById('barColorVal')
 const barColorReset = document.getElementById('barColorReset')
+barColor.addEventListener('input', () => queuePatch({ barColor: barColor.value }))
+barColorReset.addEventListener('click', () => { void savePatch({ barColor: null }) })
 
-barColor.addEventListener('input', () => {
-  window.shell.setConfig({ barColor: barColor.value })
-})
-barColorReset.addEventListener('click', () => {
-  window.shell.setConfig({ barColor: null })
+presetButtons.forEach((button) => {
+  button.addEventListener('click', async () => {
+    presetButtons.forEach((item) => { item.disabled = true })
+    showStatus('正在保存场景…')
+    try {
+      const result = await window.shell.selectPreset(button.dataset.preset)
+      if (!result.ok) {
+        showStatus(result.message)
+        presetButtons.forEach((item) => { item.disabled = false })
+      } else {
+        showStatus('')
+      }
+    } catch {
+      showStatus('场景未保存')
+      presetButtons.forEach((item) => { item.disabled = false })
+    }
+  })
 })
 
-// --------------------------------------------------------------------------
-// 用配置回填所有控件
-// --------------------------------------------------------------------------
 function setSeg (segName, value) {
   const seg = document.querySelector(`.seg[data-seg="${segName}"]`)
   if (!seg) return
-  ;[...seg.children].forEach((b) => b.classList.toggle('on', String(b.dataset.val) === String(value)))
+  ;[...seg.children].forEach((button) => button.classList.toggle('on', String(button.dataset.val) === String(value)))
 }
+
 function setToggle (name, on) {
-  const t = document.querySelector(`.toggle[data-toggle="${name}"]`)
-  if (t) t.classList.toggle('on', !!on)
+  const toggle = document.querySelector(`.toggle[data-toggle="${name}"]`)
+  if (toggle) toggle.classList.toggle('on', !!on)
 }
 
-function reflect (c) {
-  cfg = c
-  setSeg('fontsize', c.fontSize)
-  setSeg('theme', c.theme)
-  setSeg('latency', c.latency)
-  setToggle('bilingual', c.bilingual)
-  setToggle('mic', c.mic)
-  setToggle('loopback', c.loopback)
-  opacity.value = c.opacity
-  opacityVal.textContent = Number(c.opacity).toFixed(2)
-  toolbarOpacity.value = c.toolbarOpacity
-  toolbarOpacityVal.textContent = Number(c.toolbarOpacity).toFixed(2)
-  radius.value = c.radius
-  radiusVal.textContent = c.radius + ' px'
-
-  const custom = typeof c.barColor === 'string' && c.barColor.length > 0
-  if (custom) barColor.value = c.barColor
-  barColorVal.textContent = custom ? c.barColor : '跟随主题'
+function reflect (next) {
+  cfg = next
+  onboarding.hidden = !!next.onboardingCompleted
+  if (next.onboardingCompleted) presetButtons.forEach((button) => { button.disabled = false })
+  setSeg('fontsize', next.fontSize)
+  setSeg('theme', next.theme)
+  setSeg('latency', next.latency)
+  setToggle('bilingual', next.bilingual)
+  setToggle('mic', next.mic)
+  setToggle('loopback', next.loopback)
+  opacity.value = next.opacity
+  opacityVal.textContent = Number(next.opacity).toFixed(2)
+  toolbarOpacity.value = next.toolbarOpacity
+  toolbarOpacityVal.textContent = Number(next.toolbarOpacity).toFixed(2)
+  radius.value = next.radius
+  radiusVal.textContent = next.radius + ' px'
+  const custom = typeof next.barColor === 'string' && next.barColor.length > 0
+  if (custom) barColor.value = next.barColor
+  barColorVal.textContent = custom ? next.barColor : '跟随主题'
   barColorReset.disabled = !custom
-  // 设置窗自身也跟随主题
   document.documentElement.dataset.theme =
-    c.theme === 'auto' ? (c.systemDark ? 'dark' : 'light') : c.theme
+    next.theme === 'auto' ? (next.systemDark ? 'dark' : 'light') : next.theme
+}
+
+const PROFILE_BY_LATENCY = { 160: 'fast', 480: 'balanced', 960: 'accurate' }
+function reflectRuntime (snapshot) {
+  if (!snapshot || (runtimeSnapshot && snapshot.revision < runtimeSnapshot.revision)) return
+  runtimeSnapshot = snapshot
+  const profiles = snapshot.capabilities.availableProfiles
+  const buttons = document.querySelectorAll('.seg[data-seg="latency"] button')
+  buttons.forEach((button) => {
+    button.disabled = !profiles.includes(PROFILE_BY_LATENCY[button.dataset.val])
+  })
+  asrNote.textContent = profiles.length === 0
+    ? 'Gate 0B 尚未通过，当前没有可用识别档位。'
+    : '开发开关已启用均衡档；这不代表 Gate 0B 已通过。'
 }
 
 async function init () {
-  try { reflect(await window.shell.getConfig()) } catch { /* noop */ }
-  // 其他窗口改了配置也同步过来
   window.shell.onConfig(reflect)
+  window.shell.onSnapshot(reflectRuntime)
+  try { reflect(await window.shell.getConfig()) } catch { /* noop */ }
+  try { reflectRuntime(await window.shell.getSnapshot()) } catch { /* noop */ }
 }
+
+window.addEventListener('beforeunload', flushPatch)
 init()

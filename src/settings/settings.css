@@ -33,6 +33,14 @@ html, body {
   opacity: 0.75;
   pointer-events: none;
 }
+.settings-status {
+  flex: 1;
+  padding: 0 12px;
+  text-align: right;
+  font-size: var(--fs-hint);
+  color: var(--tone-danger);
+  pointer-events: none;
+}
 .tb-close {
   width: 32px; height: 32px;
   display: grid; place-items: center;
@@ -51,6 +59,46 @@ html, body {
   display: flex;
   height: calc(100% - 44px);
 }
+
+.onboarding {
+  position: fixed;
+  z-index: 20;
+  inset: 44px 0 0;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: rgba(var(--fg), 0.12);
+}
+.onboarding[hidden] { display: none; }
+.onboarding-panel { width: min(620px, 100%); }
+.onboarding-panel h1 { margin-top: 4px; }
+.onboarding-step {
+  margin: 0;
+  color: rgb(var(--text-accent));
+  font-size: var(--fs-label);
+  font-weight: var(--fw-medium);
+}
+.preset-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.preset-card {
+  min-height: 132px;
+  padding: 20px;
+  border: 1px solid rgba(var(--fg), 0.16);
+  border-radius: var(--radius-bar);
+  background: rgba(var(--fg), 0.06);
+  color: rgb(var(--fg));
+  text-align: left;
+  cursor: pointer;
+}
+.preset-card:hover { border-color: rgb(var(--text-accent)); background: var(--accent-wash); }
+.preset-card:disabled { opacity: 0.5; cursor: wait; }
+.preset-card strong, .preset-card span { display: block; }
+.preset-card strong { margin-bottom: 9px; font-size: var(--fs-body); }
+.preset-card span, .onboarding-note { font-size: var(--fs-label); line-height: 1.55; opacity: 0.68; }
+.onboarding-note { margin: 18px 0 0; }
 
 /* 左导航 */
 .nav {
@@ -142,6 +190,7 @@ h1 { font-size: var(--fs-title); font-weight: var(--fw-bold); margin: 14px 0 4px
   opacity: 1;
   box-shadow: var(--shadow-pill);
 }
+.seg button:disabled { opacity: 0.35; cursor: not-allowed; }
 
 /* iOS 风 toggle */
 .toggle {
@@ -220,5 +269,5 @@ input[type="range"]::-webkit-slider-thumb {
   .group, .seg, .toggle { border: 1px solid CanvasText; }
   .seg button.on { border: 2px solid Highlight; }
   .toggle.on::after { background: Highlight; }
-  .nav-item.active { border: 1px solid Highlight; }
+  .nav-item.active, .preset-card:hover { border: 1px solid Highlight; }
 }

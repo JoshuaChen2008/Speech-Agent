@@ -12,10 +12,30 @@
   <!-- 顶栏（可拖 + 关闭） -->
   <header class="titlebar">
     <div class="tb-title">Live Subtitle Agent · 设置</div>
+    <div class="settings-status" id="settingsStatus" role="status" aria-live="polite"></div>
     <button class="tb-close" id="close" title="关闭" aria-label="关闭">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
     </button>
   </header>
+
+  <section class="onboarding" id="onboarding" aria-labelledby="onboardingTitle">
+    <div class="onboarding-panel">
+      <p class="onboarding-step">首次设置</p>
+      <h1 id="onboardingTitle">你主要想听哪一种声音？</h1>
+      <p class="sub">先选一个起点，之后仍可在“音频源”中调整。</p>
+      <div class="preset-grid">
+        <button class="preset-card" data-preset="meeting">
+          <strong>会议字幕</strong>
+          <span>默认监听系统音频，适合线上会议与视频。</span>
+        </button>
+        <button class="preset-card" data-preset="dictation">
+          <strong>个人听写</strong>
+          <span>默认监听麦克风，适合口述记录与写作。</span>
+        </button>
+      </div>
+      <p class="onboarding-note">选择前不会启用麦克风或系统音频。Gate 0B 尚未通过时，模型仍会保持不可用。</p>
+    </div>
+  </section>
 
   <div class="layout">
     <!-- 左侧导航 -->
@@ -115,7 +135,7 @@
             </div>
           </div>
         </div>
-        <p class="note">当前档位为演示占位；正式选项由已安装模型的能力决定。</p>
+        <p class="note" id="asrNote">正在读取模型能力。</p>
       </section>
 
       <!-- 关于 -->

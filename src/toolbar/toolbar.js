@@ -18,9 +18,12 @@ const { applyAppearance } = window.Appearance
    顶层 const 同名会直接 SyntaxError，整个 renderer 白屏。 */
 const bridge = window.shell || {
   mouseThrough () {}, dragStart () {}, dragEnd () {},
-  recToggle () {}, lockToggle () {}, action () {},
-  onRec () {}, onLock () {}, onConfig () {},
-  getConfig () { return Promise.reject(new Error('no shell')) }
+  lockToggle () {}, action () {},
+  onLock () {}, onConfig () {}, onSnapshot () {},
+  command () { return Promise.reject(new Error('no shell')) },
+  getLock () { return Promise.reject(new Error('no shell')) },
+  getConfig () { return Promise.reject(new Error('no shell')) },
+  getSnapshot () { return Promise.reject(new Error('no shell')) }
 }
 
 const wrap = document.getElementById('wrap')
@@ -31,10 +34,12 @@ const commandHost = document.getElementById('commands')
 const windowControlHost = document.getElementById('windowControls')
 
 let locked = false
-let recording = false
 let dragging = false
 let ignoring = null
 let lastX = 0, lastY = 0
+let snapshot = window.FIXTURES.runtime.unavailable
+let commandPending = false
+let commandFailure = null
 
 installSprite(document)
 grip.innerHTML = iconMarkup('grip')
@@ -42,31 +47,40 @@ grip.innerHTML = iconMarkup('grip')
 // ---------------------------------------------------------------------------
 // 运行状态来源
 //
-// 骨架阶段壳层还没有 SessionCoordinator，只有一个 rec 布尔，产不出 RuntimeSnapshot。
-// 这里退而用契约样例驱动渲染，并在条上打「演示」标记 —— 不能让这些
-// “监听中 / 模型就绪”被当成真的（docs/subtitle-window.md §8）。
-//
-// B1 落地后：把 currentSnapshot() 换成 shell 推来的真快照，删掉 IS_DEMO，
-// 本文件其余部分不用动。
+// 订阅先于 get，随后用 revision 去重，避免 renderer reload 时的 get/on 竞态。
 // ---------------------------------------------------------------------------
-const DEMO_SNAPSHOTS = window.FIXTURES.runtime
-const IS_DEMO = true
-
 function currentSnapshot () {
-  return recording ? DEMO_SNAPSHOTS.listening : DEMO_SNAPSHOTS.idle
+  return snapshot
 }
 
-/** 骨架阶段壳层真正能执行的意图。其余一律禁用并说明，不做无声失败的按钮。 */
+async function runCommand (name) {
+  if (commandPending) return
+  commandPending = true
+  commandFailure = null
+  render()
+  try {
+    const result = await bridge.command(name)
+    if (!result.ok) commandFailure = result
+  } catch {
+    commandFailure = { message: '命令未送达' }
+  } finally {
+    commandPending = false
+    render()
+  }
+}
+
 const SUPPORTED = {
-  start: () => bridge.recToggle(),
-  pause: () => bridge.recToggle(),
-  resume: () => bridge.recToggle(),
+  start: () => runCommand('start'),
+  pause: () => runCommand('pause'),
+  resume: () => runCommand('resume'),
+  stop: () => runCommand('stop'),
+  retry: () => runCommand('retry'),
   'open-settings': () => bridge.action('settings'),
   lock: () => bridge.lockToggle(),
   settings: () => bridge.action('settings'),
   close: () => bridge.action('close')
 }
-const UNSUPPORTED_REASON = '骨架阶段尚未接入，B1 之后可用'
+const UNSUPPORTED_REASON = '功能尚未接入'
 
 // ---------------------------------------------------------------------------
 // DOM 小工具
@@ -99,8 +113,11 @@ function commandButton (spec, extraClass) {
   if (spec.label && spec.showLabel) button.appendChild(el('span', null, spec.label))
 
   const supported = !!SUPPORTED[spec.act]
-  const disabled = spec.disabled || !supported
-  const reason = spec.disabled ? spec.reason : (supported ? null : UNSUPPORTED_REASON)
+  const runtimeCommand = ['start', 'pause', 'resume', 'stop', 'retry'].includes(spec.act)
+  const disabled = spec.disabled || !supported || (runtimeCommand && commandPending)
+  const reason = commandPending && runtimeCommand
+    ? '命令处理中'
+    : (spec.disabled ? spec.reason : (supported ? null : UNSUPPORTED_REASON))
 
   button.disabled = disabled
   button.setAttribute('aria-label', reason ? spec.ariaLabel + '（' + reason + '）' : spec.ariaLabel)
@@ -138,10 +155,12 @@ function renderStatus (view) {
   message.title = view.status.ariaLabel
   statusHost.appendChild(message)
 
-  if (IS_DEMO) {
-    const tag = el('span', 'demo-tag', '演示')
-    tag.title = '骨架阶段：运行状态取自契约样例，尚未接入真实音频与识别'
-    statusHost.appendChild(tag)
+  if (commandFailure) {
+    const message = statusHost.querySelector('.status-message')
+    message.textContent = commandFailure.message
+    message.title = commandFailure.message
+    statusHost.dataset.tone = 'danger'
+    statusHost.dataset.emphasis = 'attention'
   }
 }
 
@@ -199,7 +218,8 @@ function render () {
   renderCommands(view)
   renderWindowControls()
   /* 需要用户介入时条不允许隐身（带着说明和下一步出口，必须看得见） */
-  wrap.dataset.attention = view.status.emphasis === 'attention' ? 'on' : 'off'
+  wrap.dataset.attention = (commandFailure || view.status.emphasis === 'attention') ? 'on' : 'off'
+  toolbar.setAttribute('aria-busy', String(commandPending))
 }
 
 // ---------------------------------------------------------------------------
@@ -243,6 +263,8 @@ function endDrag () {
   applyHit(lastX, lastY)
 }
 window.addEventListener('pointerup', endDrag)
+window.addEventListener('pointercancel', endDrag)
+toolbar.addEventListener('lostpointercapture', endDrag)
 window.addEventListener('blur', endDrag)
 
 // ---------------------------------------------------------------------------
@@ -259,12 +281,38 @@ toolbar.addEventListener('click', (e) => {
 // ---------------------------------------------------------------------------
 // 状态同步
 // ---------------------------------------------------------------------------
-bridge.onRec((on) => { recording = on; render() })
-bridge.onLock((on) => {
-  locked = on
-  wrap.dataset.locked = on ? 'on' : 'off'
+let lockRevision = 0
+
+function applyLockState (on) {
+  locked = !!on
+  wrap.dataset.locked = locked ? 'on' : 'off'
   render()
-})
+}
+
+async function initLock () {
+  bridge.onLock((on) => {
+    lockRevision += 1
+    applyLockState(on)
+  })
+  const requestedAt = lockRevision
+  try {
+    const on = await bridge.getLock()
+    if (lockRevision === requestedAt) applyLockState(on)
+  } catch { /* browser preview */ }
+}
+
+function acceptSnapshot (next) {
+  if (!next || typeof next.revision !== 'number') return
+  if (snapshot && next.revision < snapshot.revision) return
+  snapshot = next
+  commandFailure = null
+  render()
+}
+
+async function initRuntime () {
+  bridge.onSnapshot(acceptSnapshot)
+  try { acceptSnapshot(await bridge.getSnapshot()) } catch { /* browser preview */ }
+}
 
 function applyConfig (c) {
   applyAppearance(document.documentElement, c)
@@ -275,4 +323,6 @@ async function initConfig () {
 }
 
 render()
+initLock()
 initConfig()
+initRuntime()

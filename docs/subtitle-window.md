@@ -1,6 +1,6 @@
 # 字幕与工具条窗口规范
 
-> 状态：Rev.3 · 2026-07-25  
+> 状态：Rev.3 · 2026-07-26
 > 本文只描述当前 Electron 窗口壳、交互不变量和视觉验收边界。具体视觉方案由 [ui-design-brief.md](ui-design-brief.md) 管理；运行状态和数据来自 [runtime-architecture.md](runtime-architecture.md)。
 
 ## 1. 当前结构
@@ -13,7 +13,7 @@
 ├─ toolbarWin   透明、可交互、常驻置顶
 └─ settingsWin  正常可聚焦、Win11 acrylic
 
-运行窗口
+B2 计划中的运行窗口（尚未实现）
 └─ audioHostWin 隐藏，只做采集和 AudioWorklet，不属于 UI
 ```
 
@@ -210,8 +210,8 @@ renderer 在可拖区域发出 `dragStart(role)` 意图，主进程通过全局�
 ## 10. 当前待办
 
 1. 用 layout contract 消除 JS/CSS 尺寸双重真相。
-2. 为拖动增加 pointercancel/lostpointercapture 和主进程兜底清理。
-3. 把字幕改为稳定节点 + CaptionEvent reducer。
-4. 工具条从布尔状态升级为完整 RuntimeSnapshot。
-5. 设置页由静态控件改为 Capabilities 驱动。
-6. 视觉模型基于 `ui-design-brief.md` 提交新版方案和状态矩阵。
+2. B1 已完成 pointercancel/lostpointercapture、blur/destroyed 与主进程拖动/缩放互斥清理。
+3. B1 已把字幕接到稳定节点 + CaptionEvent reducer，并移除 renderer 假流。
+4. B1 已把工具条升级为完整 RuntimeSnapshot + CommandResult。
+5. B1 已让设置页识别 Capabilities；默认 Gate 0B profile 为空，开发 profile 只能由显式开关启用。
+6. 视觉/UI 的 V1–V2 方案和状态矩阵已交付；历史、资源管理与权限入口跟随 B2–B4。

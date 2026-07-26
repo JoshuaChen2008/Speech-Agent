@@ -236,18 +236,18 @@ UI 规则：
 - UI 不把“麦克风 / 系统音频”包装成已完成真实 diarization。
 - 视觉效果不得造成持续大面积 backdrop-filter、无限动画或高频 DOM 重建。
 
-## 6. 当前未结的 contract request
+## 6. Contract request 状态
 
 > 提出方：视觉/UI 层 · 2026-07-26 · 对应 V1–V3 已交付的部分
-> 状态：全部**未实现**。B 类随各自后端阶段自然到位；A 类不补，对应的 UI 会一直空转。
+> 状态：B1 已关闭 A1–A3 以及 stop/retry；A4 和后续阶段入口仍未实现。
 
-### 6.1 A 类 · 阻塞型（UI 已完整实现，正在用样例数据空转）
+### 6.1 A 类 · 阻塞型
 
-| # | 需要 | UI 现状 | 落地后 UI 要改什么 |
+| # | 需要 | B1 落地状态 | UI 结果 |
 |---|---|---|---|
-| **A1** | `onSnapshot(cb)` + `getSnapshot()`，推送 `RuntimeSnapshot` | `toolbar.js` 从 `fixtures.generated.js` 取样例，用 `rec` 布尔在 `idle`/`listening` 间二选一，条上打「演示」标记 | 删 `IS_DEMO`、把 `currentSnapshot()` 换成快照变量。其余不动 |
-| **A2** | `command(name)` → `Promise<CommandResult>`，覆盖 `start / pause / resume / stop / retry` | `recToggle()` 是无回执的布尔翻转，**三个语义不同的意图全映射到同一个 toggle** | 把 `SUPPORTED` 映射改成 `command()`，并消费回执渲染 pending / 失败 |
-| **A3** | `onCaption(cb)`，推送 `CaptionEvent` | `caption.js` 自造假流，但产出的已是真形状的 `CaptionEvent` | 删掉假流，把 `ingest()` 挂到通道上。reducer / 行数预算 / live region 全不动 |
+| **A1** | `onSnapshot(cb)` + `getSnapshot()`，推送 `RuntimeSnapshot` | **完成** | toolbar 订阅优先、再读取当前快照，并按 revision 拒绝旧值；已删除 `rec`/演示状态 |
+| **A2** | `command(name)` → `Promise<CommandResult>`，覆盖 `start / pause / resume / stop / retry` | **完成** | 五种意图独立映射；pending、失败和恢复均消费真实回执，不做乐观更新 |
+| **A3** | `onCaption(cb)`，推送 `CaptionEvent` | **完成** | caption 只消费 coordinator 事件；fake/未来 real adapter 共用同一入口，reducer 保持不变 |
 
 关于 A2 的两点：
 
@@ -260,17 +260,17 @@ UI 规则：
 
 > 本表「对应后端阶段」列里的 B1/B3/B4 指 PLAN §7.3 的后端阶段，不是请求编号。
 
-以下按钮已渲染成禁用态，`title` / `aria-label` 写明「骨架阶段尚未接入，B1 之后可用」——不做无声失败的按钮。
+未接入入口继续渲染成禁用态并说明原因，不做无声失败按钮；B1 的 stop/retry 已启用。
 
-| 入口 | 需要 | 对应后端阶段 |
-|---|---|---|
-| `stop` | stop 命令 | B1 |
-| `retry` | retry 命令 | B1 |
-| `history` | 可聚焦的历史窗 + JSONL 读取 | B3 |
-| `open-model-manager` | 资源管理页 | B4 |
-| `request-permission` | 权限请求入口 | Gate 0C / B2 |
+| 入口 | 需要 | 对应后端阶段 | 状态 |
+|---|---|---|---|
+| `stop` | stop 命令 | B1 | **完成** |
+| `retry` | retry 命令 | B1 | **完成** |
+| `history` | 可聚焦的历史窗 + JSONL 读取 | B3 | 未实现 |
+| `open-model-manager` | 资源管理页 | B4 | 未实现 |
+| `request-permission` | 权限请求入口 | Gate 0C / B2 | 未实现 |
 
-四个 `nextAction` 值里只有 `open-settings` 是通的。
+四个 `nextAction` 值里 `retry` 与 `open-settings` 已接通；`open-model-manager` 与 `request-permission` 等待后续阶段。
 
 ### 6.3 C 类 · UI 对后端的隐含期待
 
@@ -284,9 +284,9 @@ UI 规则：
 | C4 | 同一 `segmentId` 的 `revision` 随文本单调递增 | reducer 按 `(revision, sequence)` 字典序判新，旧事件一律丢弃。**复用 revision 发不同文本，新文本会被静默丢掉** |
 | C5 | `sources[].label` 是最终展示文案 | 直接进 UI。PLAN §5.2 提到用户可别名为「我 / 对方」，但目前没有别名配置键，label 完全由后端决定 |
 
-### 6.4 建议顺序
+### 6.4 后续顺序
 
-**A1 → A3 → A2。** A1 让工具条脱离演示模式（改动量最小、收益最大），A3 让字幕脱离假流，A2 补齐命令回执的完整反馈。B 类跟随各自后端阶段。
+先用 A4 layout contract 消除窗口尺寸双重真相；其余 B 类入口跟随 B2–B4 后端阶段，不在 renderer 内先行伪造能力。
 
 ## 7. 每次视觉交接必须包含
 

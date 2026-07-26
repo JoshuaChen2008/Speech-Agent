@@ -1,13 +1,13 @@
 # Live Subtitle Agent · Win11 实时字幕技术规划
 
-> **Rev.3 · 2026-07-25**。初版调研 2026-07-23（版本号、模型名、体积经 GitHub Release API / npm registry / 下载解包核实）。
+> **Rev.3 · 2026-07-26**。初版调研 2026-07-23（版本号、模型名、体积经 GitHub Release API / npm registry / 下载解包核实）。
 > 本次修订：把视觉/UI、Electron 壳层与运行后端拆成独立工作流；补充跨进程契约、会话状态机、双 worker、事件式 JSONL、权限边界和并行验收路线。视觉设计可交给擅长 UI 的模型独立完成，但不得越过运行契约。
 
 ---
 
 ## 0. 现状盘点
 
-初版 PLAN 把 UI 排在 ASR 之后，实际开发顺序反了过来 —— **壳已完成，芯尚未开始**。
+初版 PLAN 把 UI 排在 ASR 之后；目前 Gate 0A/0C/0D、视觉 V1–V2 和 B1 应用骨架已完成，真实音频/ASR 链路从 B2 开始。
 
 | 已完成（骨架） | 未开始 |
 |---|---|
@@ -15,9 +15,9 @@
 | 锁定穿透、逐像素命中测试、主进程手动拖动 | **ASR worker**（0 行，`sherpa-onnx-node` 未安装） |
 | 配置持久化（`userData/config.json`）+ 三窗实时联动 | 历史面板（`src/toolbar/toolbar.js` 的 `history` 分支仍是 TODO） |
 | 亚克力设置窗（显示 / 音频源 / 语音识别 / 关于 四个 pane） | 模型下载与资源管理、AI 层、打包分发 |
-| 假字幕流（`src/caption/caption.js` 的 `SCRIPT`） | `node_modules` 目前只有 electron，**零业务依赖** |
+| B1 `SessionCoordinator`、状态机、per-window preload 与 contract-valid fake adapter | B2 真实 audio host、ASR worker 与模型接入 |
 
-**当前首要阻塞是 §7.1 的共享 Gate 0 从未执行。** 模型质量和隐藏窗系统声采集都是后续架构的地基；视觉/UI 可以在契约 fixtures 完成后并行推进，不需要等待真实 ASR。
+**当前首要阻塞是 Gate 0B 尚无候选通过原门槛。** 默认 Capabilities 继续保持空 profile；B2 可以先围绕已通过的 Gate 0C 音频拓扑推进，但真实模型只有重新验证通过后才能进入默认路径。
 
 ### 0.1 三层职责与协作边界
 
@@ -425,21 +425,20 @@ node scripts/gate-0b/evaluate-transcripts.js `
 
 | 阶段 | 内容 | 验收标准 |
 |---|---|---|
-| **B1 应用骨架** | `SessionCoordinator`、状态机、per-window preload、contract validation | renderer 重载后快照一致；越权 IPC 和非法配置被拒绝 |
+| **B1 应用骨架（完成）** | `SessionCoordinator`、状态机、per-window preload、contract validation、fake adapter | renderer 重载后快照一致；越权 IPC 和非法配置被拒绝；57 项自动测试与默认/dev Electron smoke 通过 |
 | **B2 实时链路** | audio host、MessagePort、双路 realtime worker、VAD/背压 | 真 partial/final 替掉假流；拖动不掉帧；队列深度和丢帧可观测 |
 | **B3 精修与会话** | refine worker、事件式 JSONL、恢复与导出 | 精修不阻塞实时流；坏尾行可恢复；SRT 时间轴稳定 |
 | **B4 资源与 AI** | ModelManager、CredentialStore、AiGateway | 下载可续传/校验/原子安装；key 不进 renderer；AI 失败不影响本地字幕 |
 | **B5 分发** | electron-builder、NSIS、首启资源检查 | 干净机器安装可用；native module 正确 unpack；模型缺失可恢复 |
 
-> 视觉/UI 层已交付 V1–V2，并留下一份**未结的 contract request 清单**：见 [docs/ui-design-brief.md §6](docs/ui-design-brief.md)。
-> 其中 A 类（`RuntimeSnapshot` 推送、命令回执、`CaptionEvent` 推送）属于 B1/B2，不补则工具条和字幕会一直跑在契约样例与假流上；
-> C 类是 UI 对后端的隐含期待，违反时的症状是「界面上东西不见了」而不是报错，B1 实现 SessionCoordinator 时值得先过一遍。
+> 视觉/UI 层已交付 V1–V2；B1 已关闭 [docs/ui-design-brief.md §6](docs/ui-design-brief.md) 的 A1–A3 和 stop/retry 请求。A4 layout contract、历史、资源管理和权限入口仍按后续阶段推进。
+> C 类是 UI 对后端的持续契约约束，违反时的症状是「界面上东西不见了」而不是报错；B1 的 coordinator 与 fake adapter 已遵守这些约束。
 
 ### 7.4 Integration Gates
 
 | Gate | 汇合内容 | 验收标准 |
 |---|---|---|
-| **I1 Contract** | UI fake adapter ↔ 后端 contract fixtures | 同一 fixture 在 reducer、IPC 校验和 worker 测试中复用 |
+| **I1 Contract（完成）** | UI fake adapter ↔ 后端 contract fixtures | coordinator、fake adapter、renderer reducer 和 IPC 共享 v1 validator；默认/dev smoke 均通过 |
 | **I2 Live Caption** | 音频 → realtime ASR → SessionCoordinator → 字幕 UI | P50/P95 延迟、CPU、内存、队列深度达标 |
 | **I3 Durable Session** | final/refined/translation → JSONL → 历史/导出 | 连续 2 小时不卡；崩溃恢复不丢已 final 的段落 |
 | **I4 Packaged App** | 首启、下载、权限、ASR、AI、退出清理 | 在干净 Win11 机器完成完整用户旅程 |
