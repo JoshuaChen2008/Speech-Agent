@@ -392,7 +392,7 @@ v1 明确只承诺 **OpenAI-compatible chat completions**。使用 `fetch` + 独
 | Gate | 内容 | 验收标准 |
 |---|---|---|
 | **0A 契约（完成）** | 固化 `RuntimeSnapshot / CaptionEvent / CommandResult / Capabilities` v1 和样例 fixtures；见 `src/contracts/` | validator 测试覆盖 idle、启动、监听、暂停、恢复、错误、精修、翻译；UI 接线留给视觉工作流 |
-| **0B 模型（实测完成，未通过）** | X-ASR 480/160、small-bilingual、SenseVoice 的 CLI + N-API 实测；见 `docs/validation/gate-0b.md` | 480ms 首字延迟失败；160ms RTF 失败；small-bilingual 质量/标点失败；SenseVoice 无精修净收益。**M2 复测（2026-07-26，`docs/validation/gate-0b-m2-sweep.md`）：两候选失败被证实为架构/算力性——480ms 首 partial 需 960–980ms 音频输入（线程无关），160ms RTF 最优 t=4 仍 0.47–0.50（t≥6 混合架构反噬）；调参路线封闭，残余选项待产品拍板** |
+| **0B 模型（实测完成，未通过）** | X-ASR 480/160、small-bilingual、SenseVoice 的 CLI + N-API 实测；见 `docs/validation/gate-0b.md` | 480ms 首字延迟失败；160ms RTF 失败；small-bilingual 质量/标点失败；SenseVoice 无精修净收益。**M2 复测（2026-07-26，`docs/validation/gate-0b-m2-sweep.md`）：两候选失败被证实为架构/算力性——480ms 首 partial 需 960–980ms 音频输入（线程无关），160ms RTF 最优 t=4 仍 0.47–0.50（t≥6 混合架构反噬）；调参路线封闭，残余选项待产品拍板。M3 精修评估（2026-07-27，`docs/validation/gate-0b-m3-refinement.md`）：离线 X-ASR int8 全面胜出 SenseVoice（CER 零退化、标点 F1 1.000、RTF 0.027），建议进入正式 re-judgment** |
 | **0C 音频拓扑（完成）** | 隐藏 audio host 的麦克风/回环、用户手势、AudioWorklet 48k→16k 实测；见 `docs/validation/gate-0c.md` | 回环挑战音命中、物理麦克风非静音、确定性 audioinput 探针通过；三路 16k mono PCM16 无削波/帧缺口/大跳变，批准 hidden audio host |
 | **0D 产品入口（完成）** | 首启提供「会议字幕 / 个人听写」双预设 | 2026-07-26 拍板：会议默认系统音频、听写默认麦克风；新安装在选择前两路都不暗中启用 |
 
