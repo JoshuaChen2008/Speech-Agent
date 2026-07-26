@@ -70,6 +70,9 @@ html, body {
   background: rgba(var(--fg), 0.12);
 }
 .onboarding[hidden] { display: none; }
+/* 首启期间整页只留顶栏 + 引导面板：整页近乎透明（真亚克力），洗层压不住
+   下层文字，必须直接隐藏主布局，否则两层内容叠加不可读。 */
+.onboarding:not([hidden]) ~ .layout { visibility: hidden; }
 .onboarding-panel { width: min(620px, 100%); }
 .onboarding-panel h1 { margin-top: 4px; }
 .onboarding-step {
