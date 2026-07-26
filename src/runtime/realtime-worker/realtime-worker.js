@@ -3,31 +3,19 @@
 /* realtime worker（utilityProcess 入口，B2.3；模型轨 M4 后接真实 recognizer）。
    接线职责：B2.2 credit 协议（ready → 初始授信 → 窗口式回授带 consumed
    确认）+ 帧路由到 WorkerCore + 事件/指标经 parentPort 低频上报。
-   推理与分段逻辑全部在 worker-core.js（可脱离 Electron 测试）。
+   推理/分段及精修响应状态机分别在 worker-core.js、refinement-controller.js
+   （均可脱离 Electron 测试）。
    默认 recognizer profile 仍是 'null'（只验证结构，不产文本）；configure
    携带 recognizer 选项时才注册真实 sherpa adapter——模型在回 'configured'
    前同步载入，宿主的 configure 超时因此覆盖模型载入。 */
 
 const { WorkerCore } = require('./worker-core')
+const { RefinementController } = require('./refinement-controller')
 
 const state = {
   port: null,
   core: null,
-  paused: false,
-  /* B3 精修：请求方一侧的有界队列与序号权威。上限 3——积压即跳过
-     （段保持 final），绝不反压实时。 */
-  refine: {
-    enabled: false,
-    accepting: true,
-    port: null,
-    nextRequestId: 1,
-    pending: new Map(),
-    maxPending: 3,
-    skipped: 0,
-    failed: 0,
-    emptyResults: 0,
-    bufferedWhilePaused: []
-  },
+  refine: null,
   config: {
     sessionId: null,
     sourceIds: [],
@@ -48,6 +36,13 @@ const state = {
   sampleTypeObserved: null
 }
 
+/* B3 精修：请求方一侧的有界队列与响应状态机。上限 3——积压即跳过
+   （段保持 final），绝不反压实时；CaptionEvent 序号仍由 WorkerCore 分配。 */
+state.refine = new RefinementController({
+  emitRefined: (info, text) => state.core ? state.core.emitRefined(info, text) : null,
+  publish
+})
+
 function grantCredits (sourceId, count, consumed = 0) {
   if (!state.port || count <= 0) return
   try {
@@ -67,72 +62,11 @@ function reportStats () {
       badSampleTypeFrames: state.badSampleTypeFrames,
       sampleTypeObserved: state.sampleTypeObserved,
       refine: state.refine.enabled
-        ? {
-            pending: state.refine.pending.size,
-            skipped: state.refine.skipped,
-            failed: state.refine.failed,
-            emptyResults: state.refine.emptyResults
-          }
+        ? state.refine.metrics()
         : null,
       sources: state.core ? state.core.metrics() : {}
     }
   })
-}
-
-/* ---- B3 精修请求/响应（realtime worker 是 CaptionEvent 的唯一序号权威） ---- */
-
-function requestRefinement (info) {
-  const refine = state.refine
-  if (!refine.accepting || !refine.port || refine.pending.size >= refine.maxPending) {
-    refine.skipped += 1
-    return
-  }
-  let sampleCount = 0
-  for (const chunk of info.chunks) sampleCount += chunk.length
-  const samples = new Float32Array(sampleCount)
-  let offset = 0
-  for (const chunk of info.chunks) { samples.set(chunk, offset); offset += chunk.length }
-  const requestId = refine.nextRequestId++
-  refine.pending.set(requestId, {
-    sourceId: info.sourceId,
-    segmentId: info.segmentId,
-    baseRevision: info.baseRevision,
-    t0: info.t0,
-    t1: info.t1
-  })
-  try {
-    refine.port.postMessage({ type: 'refine', requestId, sampleCount, samples })
-  } catch {
-    refine.pending.delete(requestId)
-    refine.skipped += 1
-  }
-}
-
-function onRefineMessage (message) {
-  const refine = state.refine
-  if (message?.type === 'refined') {
-    const info = refine.pending.get(message.requestId)
-    refine.pending.delete(message.requestId)
-    if (!info || !state.core) return
-    const text = typeof message.text === 'string' ? message.text.trim() : ''
-    if (text.length === 0) {
-      refine.emptyResults += 1
-      return
-    }
-    const event = state.core.emitRefined(info, text)
-    if (!event) return
-    /* 暂停期缓冲：paused 相位的 caption 会被 coordinator 拒收，恢复后补发。 */
-    if (state.paused) refine.bufferedWhilePaused.push(event)
-    else publish({ type: 'caption', event })
-  } else if (message?.type === 'refine-failed') {
-    refine.pending.delete(message.requestId)
-    refine.failed += 1
-  }
-}
-
-function flushBufferedRefined () {
-  for (const event of state.refine.bufferedWhilePaused) publish({ type: 'caption', event })
-  state.refine.bufferedWhilePaused = []
 }
 
 function onPortMessage (message) {
@@ -153,12 +87,11 @@ function onPortMessage (message) {
     /* 停止路径：end 收束的段不再发起精修（响应必然晚于收尾，白解码；
        直接保持 final 并计入 skipped）；更早的在途请求作废——晚到响应因
        pending 查不到而被忽略。暂停期缓冲的精修补发（stopping 仍接受）。 */
-    state.refine.accepting = false
-    if (state.core) {
-      for (const event of state.core.flush()) publish({ type: 'caption', event })
-    }
-    flushBufferedRefined()
-    state.refine.pending.clear()
+    state.refine.end(() => {
+      if (state.core) {
+        for (const event of state.core.flush()) publish({ type: 'caption', event })
+      }
+    })
     reportStats()
     return
   }
@@ -166,7 +99,7 @@ function onPortMessage (message) {
   const sourceId = String(message.sourceId || '')
   if (!state.config.sourceIds.includes(sourceId)) return
   /* 暂停：不向 recognizer 送帧（v1 语义），但帧仍按「送达即消费」回授 credit。 */
-  if (state.paused) {
+  if (state.refine.paused) {
     const pausedDebt = (state.creditDebt.get(sourceId) || 0) + 1
     if (pausedDebt >= state.config.creditBatch) {
       grantCredits(sourceId, pausedDebt, pausedDebt)
@@ -270,7 +203,7 @@ process.parentPort.on('message', (event) => {
         vadOptions: config.vadOptions,
         vadFactory,
         preRollLimit,
-        onSegmentFinalized: state.refine.enabled ? requestRefinement : undefined,
+        onSegmentFinalized: state.refine.enabled ? (info) => state.refine.request(info) : undefined,
         attempt: config.attempt,
         sequenceBases: config.sequenceBases
       })
@@ -282,34 +215,20 @@ process.parentPort.on('message', (event) => {
     if (event.ports && event.ports[0]) attachPort(event.ports[0])
   } else if (message?.type === 'refine-port') {
     if (event.ports && event.ports[0]) {
-      if (state.refine.port) { try { state.refine.port.close() } catch { /* already closed */ } }
-      const port = event.ports[0]
-      state.refine.port = port
-      port.on('message', (portEvent) => onRefineMessage(portEvent.data))
-      /* 对端死亡（refine worker 退出）：立刻置空并作废在途——后续段直接
-         计入 skipped，不再复制音频发进死端口。 */
-      port.on('close', () => {
-        if (state.refine.port === port) {
-          state.refine.port = null
-          state.refine.pending.clear()
-        }
-      })
-      port.start()
+      state.refine.attachPort(event.ports[0])
     }
   } else if (message?.type === 'pause') {
     /* v1 暂停语义：flush 当前段为定稿，之后不再向 recognizer 送帧。 */
-    if (!state.paused && state.core) {
-      state.paused = true
+    if (!state.refine.paused && state.core) {
+      state.refine.pause()
       for (const captionEvent of state.core.flush()) publish({ type: 'caption', event: captionEvent })
     }
     publish({ type: 'paused' })
   } else if (message?.type === 'resume') {
-    state.paused = false
-    if (state.core) state.core.reanchor()
-    /* 先 ack 后补发：coordinator 收到 ack 才回 listening 相位，缓冲的精修
-       必须落在 listening 里才会被接受（与 pause 的「定稿先于 ack」对称）。 */
-    publish({ type: 'resumed' })
-    flushBufferedRefined()
+    state.refine.resume(() => {
+      if (state.core) state.core.reanchor()
+      publish({ type: 'resumed' })
+    })
   } else if (message?.type === 'report') {
     reportStats()
   }
