@@ -8,10 +8,14 @@ const test = require('node:test')
 
 const {
   APPROVED_REALTIME_MODEL,
+  APPROVED_REFINEMENT_MODEL,
   MODEL_DIR_ENV,
+  REFINE_MODEL_DIR_ENV,
+  REFINEMENT_REQUIRED_FILES,
   REQUIRED_FILES,
   VAD_MODEL_ENV,
   resolveApprovedRealtimeModel,
+  resolveApprovedRefinementModel,
   resolveSileroVadModel
 } = require('../../src/main/services/model-resolver')
 
@@ -69,6 +73,33 @@ test('an invalid explicit directory falls through to the next candidates', (t) =
     repoRoot: path.join(root, 'repo')
   })
   assert.equal(resolved.modelDir, installed)
+})
+
+test('refinement resolver requires the offline four-file set and carries decision constants', (t) => {
+  const root = makeTempRoot(t)
+  const incomplete = path.join(root, 'incomplete')
+  writeModelFiles(incomplete, REFINEMENT_REQUIRED_FILES.slice(0, 2))
+  assert.equal(resolveApprovedRefinementModel({
+    env: { [REFINE_MODEL_DIR_ENV]: incomplete },
+    userDataDir: null,
+    repoRoot: path.join(root, 'repo')
+  }), null)
+
+  const repoModel = path.join(root, 'repo', 'models', 'gate-0b', 'extracted', 'x-asr-offline', APPROVED_REFINEMENT_MODEL.directoryName)
+  writeModelFiles(repoModel, REFINEMENT_REQUIRED_FILES)
+  const resolved = resolveApprovedRefinementModel({ env: {}, userDataDir: null, repoRoot: path.join(root, 'repo') })
+  assert.equal(resolved.modelDir, repoModel)
+  assert.equal(resolved.id, 'x-asr-offline')
+  assert.equal(resolved.kind, 'sherpa-offline-transducer')
+  assert.equal(resolved.numThreads, 3)
+  assert.ok(Object.isFrozen(resolved))
+
+  const installed = path.join(root, 'user-data', 'models', APPROVED_REFINEMENT_MODEL.id, APPROVED_REFINEMENT_MODEL.directoryName)
+  writeModelFiles(installed, REFINEMENT_REQUIRED_FILES)
+  assert.equal(
+    resolveApprovedRefinementModel({ env: {}, userDataDir: path.join(root, 'user-data'), repoRoot: path.join(root, 'repo') }).modelDir,
+    installed
+  )
 })
 
 test('silero VAD resolver walks env, userData, then repo layout and fails closed', (t) => {

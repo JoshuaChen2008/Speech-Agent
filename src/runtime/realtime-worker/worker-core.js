@@ -26,6 +26,9 @@ class SourcePipeline {
     this.adapter = options.adapter
     this.vad = options.vad
     this.preRollLimit = options.preRollLimit === undefined ? 4 : options.preRollLimit
+    /* B3：段定稿后把整段音频交给精修请求方（realtime-worker 决定是否发给
+       refine worker）。null = 不保留段音频（结构模式零额外内存）。 */
+    this.onSegmentFinalized = options.onSegmentFinalized || null
     /* 恢复游标（B2.0 契约）：replacement worker 的 sequence 从游标续增，
        segmentId 以 attempt 命名空间隔离，旧游标才不会拒绝新事件。 */
     this.sequence = options.sequenceBase || 0
@@ -41,7 +44,29 @@ class SourcePipeline {
       segmentsDetected: 0,
       forcedSegmentEnds: 0,
       captionsEmitted: 0,
+      refinedEmitted: 0,
       peakRms: 0
+    }
+  }
+
+  /** 段收束的共同出口：发 final（有文本才发）并上交段音频。 */
+  finalizeSegment (events, t1) {
+    const segment = this.segment
+    this.segment = null
+    const finalText = this.adapter.endSegment()
+    if (typeof finalText !== 'string' || finalText.trim().length === 0) return
+    events.push(this.emitFor(segment, 'final', finalText, t1))
+    if (this.onSegmentFinalized && segment.chunks.length > 0) {
+      const info = {
+        sourceId: this.sourceId,
+        segmentId: segment.id,
+        baseRevision: segment.revision,
+        t0: segment.t0,
+        t1: Math.max(t1, segment.t0),
+        chunks: segment.chunks
+      }
+      segment.chunks = []
+      try { this.onSegmentFinalized(info) } catch { /* requester failures stay isolated */ }
     }
   }
 
@@ -49,22 +74,47 @@ class SourcePipeline {
     return frame.timestampSeconds + (frame.sampleCount / SAMPLE_RATE)
   }
 
-  emit (kind, text, t1) {
+  emitFor (segment, kind, text, t1) {
     this.sequence += 1
-    this.segment.revision += 1
+    segment.revision += 1
     this.metricsState.captionsEmitted += 1
     return {
       schemaVersion: 1,
       sessionId: this.sessionId,
       sourceId: this.sourceId,
-      segmentId: this.segment.id,
+      segmentId: segment.id,
       sequence: this.sequence,
-      revision: this.segment.revision,
+      revision: segment.revision,
       kind,
-      t0: this.segment.t0,
+      t0: segment.t0,
       /* 夹逼防契约违约：生产端时间戳回退（如采集重启）时 t1 不得小于 t0，
          否则事件在 host 边界被静默丢弃、整段字幕消失。 */
-      t1: Math.max(t1, this.segment.t0),
+      t1: Math.max(t1, segment.t0),
+      text,
+      translation: null
+    }
+  }
+
+  emit (kind, text, t1) {
+    return this.emitFor(this.segment, kind, text, t1)
+  }
+
+  /** 精修结果的脱段发射：段已收束，sequence 继续从本管线权威分配，
+      revision 严格接在 final 之后——coordinator 的单调校验因此天然通过。 */
+  emitRefined (info, text) {
+    this.sequence += 1
+    this.metricsState.captionsEmitted += 1
+    this.metricsState.refinedEmitted += 1
+    return {
+      schemaVersion: 1,
+      sessionId: this.sessionId,
+      sourceId: this.sourceId,
+      segmentId: info.segmentId,
+      sequence: this.sequence,
+      revision: info.baseRevision + 1,
+      kind: 'refined',
+      t0: info.t0,
+      t1: Math.max(info.t1, info.t0),
       text,
       translation: null
     }
@@ -102,10 +152,14 @@ class SourcePipeline {
           id: `${this.segmentPrefix}-${this.sourceId}-${this.sequence + 1}`,
           revision: 0,
           t0: opening[0].timestampSeconds,
-          lastText: null
+          lastText: null,
+          /* 精修需要整段音频；无请求方时不保留（结构模式零额外内存）。
+             上限随段而弃：段最长 30s ≈ 1.92MB。 */
+          chunks: []
         }
         for (const buffered of opening) {
           this.adapter.acceptFrame(buffered.samples, buffered.timestampSeconds)
+          if (this.onSegmentFinalized) this.segment.chunks.push(buffered.samples)
         }
         this.maybeEmitPartial(events, this.frameEndSeconds(frame))
       } else if (verdict.voiced) {
@@ -119,14 +173,10 @@ class SourcePipeline {
     }
 
     this.adapter.acceptFrame(frame.samples, frame.timestampSeconds)
+    if (this.onSegmentFinalized) this.segment.chunks.push(frame.samples)
     if (verdict.event === 'speech-end') {
       if (verdict.forced) this.metricsState.forcedSegmentEnds += 1
-      const finalText = this.adapter.endSegment()
-      /* 契约的非空判定用 trim：纯空白 final 会在 host 边界被拒，这里同标准。 */
-      if (typeof finalText === 'string' && finalText.trim().length > 0) {
-        events.push(this.emit('final', finalText, this.frameEndSeconds(frame)))
-      }
-      this.segment = null
+      this.finalizeSegment(events, this.frameEndSeconds(frame))
       return events
     }
     this.maybeEmitPartial(events, this.frameEndSeconds(frame))
@@ -145,11 +195,7 @@ class SourcePipeline {
   flush (timestampSeconds) {
     const events = []
     if (this.segment) {
-      const finalText = this.adapter.endSegment()
-      if (typeof finalText === 'string' && finalText.trim().length > 0) {
-        events.push(this.emit('final', finalText, Math.max(timestampSeconds, this.segment.t0)))
-      }
-      this.segment = null
+      this.finalizeSegment(events, Math.max(timestampSeconds, this.segment.t0))
     }
     this.vad.reset()
     this.preRoll = []
@@ -174,7 +220,8 @@ class WorkerCore {
    *   vadOptions?: *,
    *   vadFactory?: (sourceId: string) => *,
    *   adapterFactory?: (sourceId: string) => *,
-   *   preRollLimit?: number
+   *   preRollLimit?: number,
+   *   onSegmentFinalized?: (info: *) => void
    * }} options
    */
   constructor (options) {
@@ -208,6 +255,7 @@ class WorkerCore {
         adapter: adapterFactory(sourceId),
         vad: vadFactory(sourceId),
         preRollLimit: options.preRollLimit,
+        onSegmentFinalized: options.onSegmentFinalized,
         attempt,
         sequenceBase
       }))
@@ -234,6 +282,13 @@ class WorkerCore {
   /** 暂停恢复后重新锚定帧序号：暂停期跳过的帧不算传输缺口（哨兵指标不被污染）。 */
   reanchor () {
     for (const pipeline of this.sources.values()) pipeline.expectedFrameSequence = null
+  }
+
+  /** 精修结果发射（sequence/revision 由对应管线权威分配）；未知 source 返回 null。 */
+  emitRefined (info, text) {
+    const pipeline = this.sources.get(info?.sourceId)
+    if (!pipeline || typeof text !== 'string' || text.length === 0) return null
+    return pipeline.emitRefined(info, text)
   }
 
   metrics () {

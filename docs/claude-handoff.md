@@ -425,6 +425,8 @@ npm run preview:fixtures
 > 状态更新（模型轨，2026-07-27）：`sherpa-onnx-node`/`sherpa-onnx-win-x64` 已装为依赖；`src/runtime/realtime-worker/sherpa-recognizer.js` 实现真实 recognizer adapter 并经 worker configure 注册（共享 OnlineRecognizer、per-segment stream、0.4s 尾静音冲刷）；`src/main/services/model-resolver.js` 解析本机模型（缺失 fail closed）；`src/main.js` 组合根默认接真实链路（模型就位 → 发布 fast profile → 真字幕）。实机 smoke `scripts/i2-live-caption-smoke.js` PASS：语料外放 → 回环 → 6 partial + 4 final，拼接 CER 0.071。下文「recognizer adapter 只有 null」等描述作为交接时历史保留。
 >
 > 状态更新（VAD 轨，2026-07-27）：silero VAD 已替换 EnergyVad 占位——`silero-vad.js` 同接口包装、经 configure 的 vad 选项注入，997Hz 纯音拒识实测通过；收句静音实测定为 1.0s（0.5s 切段时流式模型缺右上下文丢字且不出标点，1.0s 下整句成段 CER 0）；VAD 模型缺失回退 EnergyVad 并警告。silero 后的 smoke：1 条整句定稿、CER 0（energy 对比：4 条碎片、CER 0.071）。EnergyVad 保留用于结构测试与降级路径。
+>
+> 状态更新（B3.2 refine worker，2026-07-27）：二遍精修已落地——`src/runtime/refine-worker/`（独立 utility process 载离线 X-ASR，纯文本服务）；realtime worker 保持 CaptionEvent 唯一序号权威（段定稿→整段音频经 worker↔worker 端口→文本回来→base+1 revision 发 refined）；请求方有界队列（>3 跳过）、配置失败/退出只降级、暂停缓冲 resume 后补发；coordinator 依 `runtimeOptions.refinementAvailable` 发布 canRefine。实机 smoke：final 无标点 → refined 全标点、双 CER 0。
 
 > 状态更新（B2.1）：`src/runtime/audio-host/` 已存在——Gate 0C 拓扑的产品化控制器、专用 preload/非持久化 session、AudioWorklet 48k→16k、有界诊断采集与指标（`scripts/audio-host-smoke.js` 实机 PASS：静音与 997Hz 信号两种情形，宿主全程隐藏、0 gap）。
 >
@@ -466,6 +468,7 @@ B2 前必须补回归测试，并明确 recovery cursor contract：保持同一 
 
 - ~~当前 adapter 只有命令方法和 `onCaption`，没有正式的 `onError/onExit/onHealth`。B2 worker 在会话进行中自行崩溃时，尚无主动让 coordinator 进入 recovering/error 的入口。~~（已关闭，见上）
 - malformed/stale CaptionEvent 当前只返回 `false` 并静默丢弃，没有拒绝原因日志、计数或指标；B2 排查 sequence/revision 问题会很困难。
+- （B3.2 追加）`canRefine` 是启动时判定：精修模型就位即发布为真，refine worker 中途退出只降级（console 告警 + 无 refined 事件），capability 不回写。运行时能力观测（capability 随 worker 健康态更新）是后续议题。
 - toolbar 对失败 `CommandResult` 当前主要显示 `message`；如果失败没有同步带来新 snapshot，其中的 `code/recoverable/nextAction` 可能没有形成可执行出口。
 - fake adapter 会发 translated，而 capability 仍是 false；它只用于 reducer 展示，测试和文档必须避免把它写成真实翻译能力。
 

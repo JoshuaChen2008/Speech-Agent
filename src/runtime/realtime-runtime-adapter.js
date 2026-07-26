@@ -18,6 +18,7 @@
 
 const { AudioHostController } = require('./audio-host/audio-host-controller')
 const { RealtimeWorkerHost } = require('./realtime-worker/worker-host')
+const { RefineWorkerHost } = require('./refine-worker/worker-host')
 
 const DEFAULT_PROFILE_MAP = Object.freeze({ fast: 'null', balanced: 'null', accurate: 'null' })
 
@@ -39,6 +40,12 @@ class RealtimeRuntimeAdapter {
     this.recognizer = options.recognizer || null
     /* 真实 VAD 选项（{kind:'silero', modelPath}），null = EnergyVad 兜底。 */
     this.vad = options.vad || null
+    /* 精修模型选项（{kind:'sherpa-offline-transducer', modelDir, numThreads}），
+       null = 无二遍精修。精修是增强路径：refine worker 起不来或中途退出都
+       只降级（无 refined 事件），绝不影响实时字幕。 */
+    this.refinement = options.refinement || null
+    this.refineWorkerFactory = options.refineWorkerFactory || (() => new RefineWorkerHost({ electron: this.electron }))
+    this.onDegraded = options.onDegraded || ((message) => console.warn(`[runtime] ${message}`))
     this.hostFactory = options.hostFactory || (() => new AudioHostController({ electron: this.electron }))
     this.workerFactory = options.workerFactory || (() => new RealtimeWorkerHost({ electron: this.electron }))
     this.captionHandler = null
@@ -85,11 +92,14 @@ class RealtimeRuntimeAdapter {
     }
     throwIfAborted(context.signal)
 
+    const useRefinement = recognizerProfile !== 'null' && !!this.refinement
     const session = {
       sessionId: context.sessionId,
       sourceIds: [...context.sourceIds],
       host: this.hostFactory(),
       worker: this.workerFactory(),
+      refineWorker: useRefinement ? this.refineWorkerFactory() : null,
+      refineReady: false,
       unsubscribers: [],
       stopping: false
     }
@@ -106,6 +116,20 @@ class RealtimeRuntimeAdapter {
           recoverable: true
         })
       }))
+      if (session.refineWorker) {
+        /* 精修退出 ≠ 会话故障：实时字幕继续，仅降级并留警告。宿主对象
+           就地收殓（进程已退，dispose 只清理监听与占位）。 */
+        session.unsubscribers.push(session.refineWorker.onExit(({ code }) => {
+          /* refineReady 门：configure 期间的崩溃由 refineStart 的失败路径
+             统一告警，这里只管「配置成功后」的中途退出，避免双重告警。 */
+          if (this.session === session && !session.stopping && session.refineWorker && session.refineReady) {
+            const refineWorker = session.refineWorker
+            session.refineWorker = null
+            try { refineWorker.dispose() } catch { /* best effort */ }
+            this.onDegraded(`refine worker exited (${code}); captions continue without refinement`)
+          }
+        }))
+      }
       session.unsubscribers.push(session.host.onControl((message) => {
         if (message.type === 'track-ended') {
           this.fault(session, {
@@ -125,7 +149,9 @@ class RealtimeRuntimeAdapter {
       }))
 
       const resume = context.resume || null
-      await session.worker.start({
+      /* realtime 与 refine worker 并行配置（各自同步载模型，串行会翻倍
+         start 时长）；精修配置失败只降级，不失败会话。 */
+      const workerStart = session.worker.start({
         sessionId: session.sessionId,
         sourceIds: session.sourceIds,
         recognizerProfile,
@@ -133,11 +159,28 @@ class RealtimeRuntimeAdapter {
            原生模块（构造性保证，不依赖组合方自觉）。 */
         recognizer: recognizerProfile !== 'null' && this.recognizer ? this.recognizer : undefined,
         vad: recognizerProfile !== 'null' && this.vad ? this.vad : undefined,
+        refinement: session.refineWorker !== null,
         vadOptions: this.vadOptions,
         attempt: resume ? resume.attempt : 0,
         sequenceBases: resume ? resume.sourceSequences : {}
       })
+      const refineStart = session.refineWorker
+        ? session.refineWorker.start({ model: this.refinement }).then(() => true, (error) => {
+            this.onDegraded(`refinement unavailable for this session: ${String(error?.message || error).slice(0, 160)}`)
+            return false
+          })
+        : Promise.resolve(false)
+      const [, refineReady] = await Promise.all([workerStart, refineStart])
       throwIfAborted(context.signal)
+      session.refineReady = refineReady
+      if (refineReady && session.refineWorker) {
+        const refineChannel = new this.electron.MessageChannelMain()
+        session.worker.attachRefinePort(refineChannel.port1)
+        session.refineWorker.attachPort(refineChannel.port2)
+      } else if (session.refineWorker) {
+        session.refineWorker.dispose()
+        session.refineWorker = null
+      }
 
       const channel = new this.electron.MessageChannelMain()
       session.worker.attachPort(channel.port2)
@@ -203,6 +246,10 @@ class RealtimeRuntimeAdapter {
     session.unsubscribers = []
     try { session.host.dispose() } catch { /* best effort */ }
     try { session.worker.dispose() } catch { /* best effort */ }
+    if (session.refineWorker) {
+      try { session.refineWorker.dispose() } catch { /* best effort */ }
+      session.refineWorker = null
+    }
   }
 
   dispose () {

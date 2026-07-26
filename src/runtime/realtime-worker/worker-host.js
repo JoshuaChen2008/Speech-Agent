@@ -109,6 +109,12 @@ class RealtimeWorkerHost {
     this.child.postMessage({ type: 'pcm-port' }, [port])
   }
 
+  /** 把精修 MessagePortMain 转移给 worker（B3：与 refine worker 直连）。 */
+  attachRefinePort (port) {
+    if (!this.child) throw new Error('worker is not running')
+    this.child.postMessage({ type: 'refine-port' }, [port])
+  }
+
   requestStats () {
     if (this.child) this.child.postMessage({ type: 'report' })
   }

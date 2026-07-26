@@ -20,7 +20,7 @@ const path = require('node:path')
 const { app, BrowserWindow } = require('electron')
 const { SessionCoordinator } = require('../src/main/session/session-coordinator')
 const { RealtimeRuntimeAdapter } = require('../src/runtime/realtime-runtime-adapter')
-const { resolveApprovedRealtimeModel, resolveSileroVadModel } = require('../src/main/services/model-resolver')
+const { resolveApprovedRealtimeModel, resolveApprovedRefinementModel, resolveSileroVadModel } = require('../src/main/services/model-resolver')
 const { characterErrorRate } = require('./gate-0b/metrics')
 
 const WAV_PATH = path.join(__dirname, '..', 'models', 'gate-0b', 'corpus', 'zh-en-code-switch.wav')
@@ -111,6 +111,7 @@ async function main () {
     const model = resolveApprovedRealtimeModel({ userDataDir: app.getPath('userData') })
     if (!model) throw new Error('approved realtime model not found on this machine')
     const vadModel = resolveSileroVadModel({ userDataDir: app.getPath('userData') })
+    const refineModel = resolveApprovedRefinementModel({ userDataDir: app.getPath('userData') })
     const wave = readPcm16MonoWav(WAV_PATH)
 
     coordinator = new SessionCoordinator({
@@ -118,6 +119,9 @@ async function main () {
         profileMap: { [model.profile]: model.id },
         recognizer: { kind: model.kind, modelDir: model.modelDir, numThreads: model.numThreads, modelType: model.modelType },
         vad: vadModel || undefined,
+        refinement: refineModel
+          ? { kind: refineModel.kind, modelDir: refineModel.modelDir, numThreads: refineModel.numThreads }
+          : undefined,
         workerFactory: () => {
           const { RealtimeWorkerHost } = require('../src/runtime/realtime-worker/worker-host')
           const worker = new RealtimeWorkerHost()
@@ -149,9 +153,27 @@ async function main () {
 
     const finals = captions.filter((event) => event.kind === 'final')
     const partials = captions.filter((event) => event.kind === 'partial')
+    const refined = captions.filter((event) => event.kind === 'refined')
     const joinedFinalText = finals.map((event) => event.text).join(' ')
+    const joinedRefinedText = refined.map((event) => event.text).join(' ')
     const cer = finals.length > 0 ? characterErrorRate(REFERENCE, joinedFinalText) : null
+    const refinedCer = refined.length > 0 ? characterErrorRate(REFERENCE, joinedRefinedText) : null
     const peakRms = workers.at(-1)?.lastStats?.sources?.loopback?.peakRms ?? null
+
+    /* 精修断言（B3）：精修模型就位时必须有 refined 到达、内容达标且带标点
+       （第一遍 160ms 短句几乎不出标点，标点恢复正是精修的存在理由）。 */
+    if (refineModel) {
+      if (finals.length > 0 && refined.length === 0) failures.push('refinement model active but no refined caption arrived')
+      if (refined.length > 0) {
+        if (refinedCer > CER_LIMIT) failures.push(`refined CER ${refinedCer} exceeds ${CER_LIMIT}`)
+        if (!/[，。,.？?！!]/.test(joinedRefinedText)) failures.push(`refined text carries no punctuation: ${joinedRefinedText}`)
+        for (const event of refined) {
+          const final = finals.find((item) => item.segmentId === event.segmentId)
+          if (!final) failures.push(`refined for unknown segment ${event.segmentId}`)
+          else if (event.revision <= final.revision) failures.push(`refined revision ${event.revision} not above final ${final.revision}`)
+        }
+      }
+    }
 
     let result
     if (finals.length > 0 && partials.length > 0 && cer !== null && cer <= CER_LIMIT && failures.length === 0) {
@@ -172,17 +194,20 @@ async function main () {
       environment: { electron: process.versions.electron, node: process.versions.node },
       model: { id: model.id, profile: model.profile, numThreads: model.numThreads },
       vad: vadModel ? 'silero' : 'energy-fallback',
+      refinement: refineModel ? refineModel.id : null,
       playback: { durationSeconds: wave.durationSeconds, outputSampleRate: playback.outputSampleRate },
       result,
       failures,
       phases,
-      counts: { captions: captions.length, partials: partials.length, finals: finals.length },
+      counts: { captions: captions.length, partials: partials.length, finals: finals.length, refined: refined.length },
       joinedFinalText,
+      joinedRefinedText,
       cer,
+      refinedCer,
       loopbackPeakRms: peakRms
     }
     fs.writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n')
-    process.stdout.write(JSON.stringify({ result, cer, finals: finals.length, partials: partials.length, peakRms, joinedFinalText }) + '\n')
+    process.stdout.write(JSON.stringify({ result, cer, refinedCer, finals: finals.length, refined: refined.length, joinedRefinedText }) + '\n')
     await coordinator.dispose()
     app.exit(result === 'pass' ? 0 : (result === 'inconclusive-no-audio' ? 2 : 1))
   } catch (error) {

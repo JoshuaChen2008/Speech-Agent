@@ -17,7 +17,7 @@ const {
   isRoleAllowed
 } = require('./main/ipc/access-policy')
 const { resolveRuntimeOptions } = require('./main/runtime-options')
-const { resolveApprovedRealtimeModel, resolveSileroVadModel } = require('./main/services/model-resolver')
+const { resolveApprovedRealtimeModel, resolveApprovedRefinementModel, resolveSileroVadModel } = require('./main/services/model-resolver')
 const { FakeRuntimeAdapter } = require('./main/session/fake-runtime-adapter')
 const { RealtimeRuntimeAdapter } = require('./runtime/realtime-runtime-adapter')
 const { SessionCoordinator, failure, success } = require('./main/session/session-coordinator')
@@ -371,12 +371,20 @@ function createCoordinator () {
   let runtimeOptions = devOptions
   let transitionTimeoutMs
   if (realModel) {
-    console.warn(`[runtime] approved realtime model ready: ${realModel.id} (${realModel.profile})`)
+    console.log(`[runtime] approved realtime model ready: ${realModel.id} (${realModel.profile})`)
     /* silero VAD 缺失时诚实降级到 EnergyVad（字幕仍真实，分段质量下降），
        并留下可排查的警告。 */
     const vadModel = resolveSileroVadModel({ userDataDir: app.getPath('userData') })
     if (!vadModel) {
       console.warn('[runtime] silero VAD model missing; falling back to the energy placeholder (degraded segmentation)')
+    }
+    /* B3 精修：模型就位才开二遍（canRefine 随之发布）；缺失只关精修，
+       实时字幕不受影响。 */
+    const refineModel = resolveApprovedRefinementModel({ userDataDir: app.getPath('userData') })
+    if (refineModel) {
+      console.log(`[runtime] refinement model ready: ${refineModel.id}`)
+    } else {
+      console.warn('[runtime] refinement model missing; captions stay first-pass only')
     }
     adapterFactory = () => new RealtimeRuntimeAdapter({
       profileMap: { [realModel.profile]: realModel.id },
@@ -386,10 +394,14 @@ function createCoordinator () {
         numThreads: realModel.numThreads,
         modelType: realModel.modelType
       },
-      vad: vadModel || undefined
+      vad: vadModel || undefined,
+      refinement: refineModel
+        ? { kind: refineModel.kind, modelDir: refineModel.modelDir, numThreads: refineModel.numThreads }
+        : undefined
     })
     runtimeOptions = {
-      modelOverride: { id: realModel.id, profile: realModel.profile, developmentOnly: false }
+      modelOverride: { id: realModel.id, profile: realModel.profile, developmentOnly: false },
+      refinementAvailable: !!refineModel
     }
     /* start 包含 worker 内同步模型载入（秒级）；默认 5s 迁移超时会误判。 */
     transitionTimeoutMs = 30000

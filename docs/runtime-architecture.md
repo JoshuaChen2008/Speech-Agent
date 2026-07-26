@@ -61,12 +61,15 @@
 - 模型轨现状（2026-07-27，Gate 0B 改判后）：`sherpa-recognizer.js` 实现真实 adapter——OnlineRecognizer 按 modelDir+numThreads 模块级共享（encoder 只载入一次），stream per-segment，endSegment 喂 0.4s 静音尾 + `inputFinished` 冲刷 lookahead 后废弃 stream；configure 携带 recognizer 选项时先同步载入模型再回 `configured`（宿主 configure 超时对真实模型放宽到 30s），null profile 不 require 原生模块。主进程 `model-resolver.js` 解析已批准模型（env → userData → 仓库开发布局，四件套缺一即 null → fail closed）。
 - VAD 现状（2026-07-27）：`silero-vad.js` 以 EnergyVad 同接口包装 sherpa 的 silero 检测器，经 worker configure 的 vad 选项注入（与 recognizer 同闸门：null profile 绝不携带，结构 worker 不加载任何原生模块）；`isDetected` 翻转映射 speech-start/end，起点滞后由段前缓冲（silero 下放宽到 6 帧）补偿，段前缓冲的 voiced 判定用极低能量门限（0.004）且静音清空，防止上一句尾音串段。模型供应链：`silero_vad.onnx`，643,854 bytes，SHA256 `9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6`，来源 `https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx`（忽略目录 `models/vad/`，不入库）。**收句静音 1.0s 是实测决定**：0.5s 切段时流式模型缺右上下文——丢字（「一下」→「一」）且短段几乎不出标点；1.0s 桥接词间停顿后整句成段、受控语料 CER 0（代价：定稿出现在停顿 1s 后，partial 不受影响）。边界披露：超过 1.0s 的句中停顿仍会切段，仍可能触发短段丢字模式；桥接证据来自词间停顿 0.7–0.9s 的 SAPI 受控语料，真实语音的停顿分布留待语料扩展复核（gate 记录中的既有义务）。997Hz 纯音拒识实测通过（能量占位会误报）。VAD 模型缺失时回退 `EnergyVad` 并在控制台警告——字幕仍真实，但分段降级（对音量敏感、纯音误报）。超长段仍由包装层强制收束兜底（30s）。
 
-`refine-worker`：
+`refine-worker`（B3.2 已落地：`src/runtime/refine-worker/`）：
 
-- 只加载 SenseVoice OfflineRecognizer。
-- 输入 `{sessionId, segmentId, sourceId, audio, baseRevision}`。
-- 返回 refined CaptionEvent；必须比 baseRevision 大。
-- 队列有最大长度、最大等待时间和降级策略，不能反压实时 worker。
+- 只加载改判批准的离线 X-ASR OfflineRecognizer（t=3，M3 同配置；SenseVoice 已被改判替换）。
+- 纯文本服务：经主进程建立的 worker↔worker MessagePort 收 `{requestId, sampleCount, samples}`，同步解码后回 `{requestId, text}`——CaptionEvent 的组装与 sequence/revision 分配都留在 realtime worker（单一序号权威，精修晚到不会与实时流打架）。
+- 有界队列在请求方（realtime worker）：在途精修 >3 即跳过（段保持 final），绝不反压实时。
+- configure 失败或中途退出只降级（console 告警 + 无 refined），不故障会话；实时字幕不受影响。
+- 暂停期到达的精修结果在 worker 内缓冲，resume ack 之后补发（paused 相位的 caption 会被 coordinator 拒收）。
+- 停止路径的取舍（有意为之并披露）：end 收束的段不再发起精修（响应必然晚于收尾，保持 final 并计入 skipped）；更早的在途精修若在 end 处理后返回也被作废。会话最末的少量段可能只有第一遍定稿。
+- `canRefine` 是启动时判定（精修模型就位即为真）；精修 worker 中途降级不回写 capability——运行时能力观测是后续议题（见 handoff §12.4）。
 
 `TranscriptStore`：
 

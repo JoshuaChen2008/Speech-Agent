@@ -20,6 +20,7 @@ function fakeWorker () {
     exited: null,
     async start (config) { worker.calls.push(['start', config]) },
     attachPort (port) { worker.calls.push(['attachPort', port]) },
+    attachRefinePort (port) { worker.calls.push(['attachRefinePort', port]) },
     async pause () { worker.calls.push(['pause']) },
     async resume () { worker.calls.push(['resume']) },
     async waitForEnd () { worker.calls.push(['waitForEnd']); return true },
@@ -47,16 +48,38 @@ function fakeHost () {
   return host
 }
 
+function fakeRefineWorker () {
+  const refine = {
+    calls: [],
+    exitListeners: new Set(),
+    disposed: false,
+    failStart: false,
+    async start (config) {
+      refine.calls.push(['start', config])
+      if (refine.failStart) throw new Error('refine model load failed')
+    },
+    attachPort (port) { refine.calls.push(['attachPort', port]) },
+    onExit (listener) { refine.exitListeners.add(listener); return () => refine.exitListeners.delete(listener) },
+    emitExit (code) { for (const listener of refine.exitListeners) listener({ code }) },
+    dispose () { refine.disposed = true }
+  }
+  return refine
+}
+
 function makeAdapterWith (extraOptions = {}) {
   const worker = fakeWorker()
   const host = fakeHost()
+  const refineWorker = fakeRefineWorker()
+  const degraded = []
   const adapter = new RealtimeRuntimeAdapter({
     electron: { MessageChannelMain: function () { this.port1 = { id: 'p1' }; this.port2 = { id: 'p2' } } },
     workerFactory: () => worker,
     hostFactory: () => host,
+    refineWorkerFactory: () => refineWorker,
+    onDegraded: (message) => degraded.push(message),
     ...extraOptions
   })
-  return { adapter, worker, host }
+  return { adapter, worker, host, refineWorker, degraded }
 }
 
 function makeAdapter () {
@@ -90,6 +113,46 @@ test('recognizer options reach the worker only for non-null profile mappings', a
   assert.equal(structuralStart.recognizerProfile, 'null')
   assert.equal(structuralStart.recognizer, undefined)
   assert.equal(structuralStart.vad, undefined)
+  structural.adapter.dispose()
+})
+
+const REFINEMENT = { kind: 'sherpa-offline-transducer', modelDir: 'refine-dir', numThreads: 3 }
+
+test('refinement worker wires only for real profiles and degrades without failing the session', async () => {
+  /* 正常接线：refine 配置 + 双端口 + worker 声明 refinement。 */
+  const wired = makeAdapterWith({ profileMap: { fast: 'x-asr-160ms' }, recognizer: { kind: 'sherpa-online-transducer', modelDir: 'm', numThreads: 4 }, refinement: REFINEMENT })
+  await wired.adapter.start({ sessionId: 'session-1', sourceIds: ['mic'], profile: 'fast' })
+  assert.deepEqual(wired.refineWorker.calls.find(([name]) => name === 'start')[1], { model: REFINEMENT })
+  assert.equal(wired.worker.calls.find(([name]) => name === 'start')[1].refinement, true)
+  const refinePort = wired.worker.calls.find(([name]) => name === 'attachRefinePort')[1]
+  const refineSide = wired.refineWorker.calls.find(([name]) => name === 'attachPort')[1]
+  assert.equal(refinePort.id, 'p1')
+  assert.equal(refineSide.id, 'p2')
+  /* 精修中途退出：降级而非会话故障。 */
+  const faults = []
+  wired.adapter.onError((event) => faults.push(event))
+  wired.refineWorker.emitExit(9)
+  assert.equal(faults.length, 0, 'refine exit must not fault the session')
+  assert.equal(wired.degraded.length, 1)
+  await wired.adapter.stop()
+  assert.equal(wired.refineWorker.disposed, true)
+  wired.adapter.dispose()
+
+  /* 精修配置失败：会话照常启动，refine 丢弃并告警。 */
+  const failing = makeAdapterWith({ profileMap: { fast: 'x-asr-160ms' }, recognizer: { kind: 'sherpa-online-transducer', modelDir: 'm', numThreads: 4 }, refinement: REFINEMENT })
+  failing.refineWorker.failStart = true
+  await failing.adapter.start({ sessionId: 'session-2', sourceIds: ['mic'], profile: 'fast' })
+  assert.equal(failing.degraded.length, 1)
+  assert.equal(failing.refineWorker.disposed, true)
+  assert.equal(failing.worker.calls.some(([name]) => name === 'attachRefinePort'), false)
+  await failing.adapter.stop()
+  failing.adapter.dispose()
+
+  /* 结构模式：null profile 不 fork 精修。 */
+  const structural = makeAdapterWith({ refinement: REFINEMENT })
+  await structural.adapter.start(START_CONTEXT)
+  assert.equal(structural.refineWorker.calls.length, 0)
+  assert.equal(structural.worker.calls.find(([name]) => name === 'start')[1].refinement, false)
   structural.adapter.dispose()
 })
 

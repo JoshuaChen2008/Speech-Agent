@@ -72,6 +72,58 @@ function resolveApprovedRealtimeModel (options = {}) {
   return null
 }
 
+const REFINE_MODEL_DIR_ENV = 'LIVE_SUBTITLE_REFINE_MODEL_DIR'
+
+const APPROVED_REFINEMENT_MODEL = Object.freeze({
+  id: 'x-asr-offline',
+  kind: 'sherpa-offline-transducer',
+  /* numThreads=3 与 M3 评估/改判证据同配置（RTF 0.027），不是可调偏好。 */
+  numThreads: 3,
+  directoryName: 'sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03'
+})
+
+const REFINEMENT_REQUIRED_FILES = Object.freeze([
+  'tokens.txt',
+  'encoder-epoch-99-avg-1.int8.onnx',
+  'decoder-epoch-99-avg-1.onnx',
+  'joiner-epoch-99-avg-1.int8.onnx'
+])
+
+function hasFiles (directory, files) {
+  try {
+    return files.every((name) => fs.statSync(path.join(directory, name)).isFile())
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 改判批准的离线精修模型解析（env → userData → 仓库开发布局）。
+ * 找不到返回 null——精修保持关闭（canRefine=false），实时字幕不受影响。
+ * @param {{ env?: *, userDataDir?: string | null, repoRoot?: string }} [options]
+ * @returns {{ id: string, kind: string, numThreads: number, modelDir: string } | null}
+ */
+function resolveApprovedRefinementModel (options = {}) {
+  const env = options.env || process.env
+  const repoRoot = options.repoRoot || path.join(__dirname, '..', '..', '..')
+  const model = APPROVED_REFINEMENT_MODEL
+  const candidates = []
+  const explicit = env[REFINE_MODEL_DIR_ENV]
+  if (typeof explicit === 'string' && explicit.length > 0) candidates.push(explicit)
+  if (typeof options.userDataDir === 'string' && options.userDataDir.length > 0) {
+    candidates.push(path.join(options.userDataDir, 'models', model.id, model.directoryName))
+    candidates.push(path.join(options.userDataDir, 'models', model.id))
+  }
+  candidates.push(path.join(repoRoot, 'models', 'gate-0b', 'extracted', 'x-asr-offline', model.directoryName))
+
+  for (const candidate of candidates) {
+    if (hasFiles(candidate, REFINEMENT_REQUIRED_FILES)) {
+      return Object.freeze({ id: model.id, kind: model.kind, numThreads: model.numThreads, modelDir: candidate })
+    }
+  }
+  return null
+}
+
 const VAD_MODEL_ENV = 'LIVE_SUBTITLE_VAD_MODEL'
 const VAD_MODEL_FILE = 'silero_vad.onnx'
 
@@ -103,9 +155,13 @@ function resolveSileroVadModel (options = {}) {
 
 module.exports = {
   APPROVED_REALTIME_MODEL,
+  APPROVED_REFINEMENT_MODEL,
   MODEL_DIR_ENV,
+  REFINE_MODEL_DIR_ENV,
+  REFINEMENT_REQUIRED_FILES,
   REQUIRED_FILES,
   VAD_MODEL_ENV,
   resolveApprovedRealtimeModel,
+  resolveApprovedRefinementModel,
   resolveSileroVadModel
 }

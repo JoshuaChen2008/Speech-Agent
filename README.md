@@ -1,6 +1,6 @@
 # Live Subtitle Agent
 
-Win11 实时字幕 Agent。当前已完成 **B1 应用骨架 + B2 实时链路主干**：透明字幕条、工具栏、点击穿透、亚克力设置窗、首启双预设、权威会话状态机、隐藏采集窗（回环/麦克风）、realtime worker，以及 Gate 0B 改判批准的 **160ms 真实模型**——本机模型就位时启动即可出真字幕。
+Win11 实时字幕 Agent。当前已完成 **B1 应用骨架 + B2 实时链路 + B3 两遍精修**：透明字幕条、工具栏、点击穿透、亚克力设置窗、首启双预设、权威会话状态机、隐藏采集窗（回环/麦克风）、realtime worker、Gate 0B 改判批准的 **160ms 真实模型 + silero VAD + 离线精修**——本机模型就位时,启动即出真字幕,说完一句约 1 秒后字幕自动变准并补全标点。
 
 ## 运行
 
@@ -73,7 +73,7 @@ src/
 
 ## 下一步
 
-见 [PLAN.md](PLAN.md)（Rev.3）：Gate 0A/0B（改判）/0C/0D、B1、B2.0–B2.3、真实模型与 silero VAD 接线均已完成（实机 smoke：语料外放 → 回环 → 真字幕，整句成段、CER 0）；接下来是 B3 精修 worker 与历史 UI、双路并发 soak、I2 完整指标验收。
+见 [PLAN.md](PLAN.md)（Rev.3）：Gate 0A/0B（改判）/0C/0D、B1、B2、B3 两遍精修均已完成（实机 smoke：外放语料 → 回环 → 第一遍整句 CER 0 → refined 自动补标点 CER 0）；接下来是历史面板 UI、双路并发 soak、I2 完整指标验收,之后 B4 资源管理与 B5 分发。
 
 - 窗口壳和交互不变量：[docs/subtitle-window.md](docs/subtitle-window.md)
 - 视觉/UI 模型交接：[docs/ui-design-brief.md](docs/ui-design-brief.md)

@@ -640,7 +640,9 @@ class SessionCoordinator {
       capabilities: {
         schemaVersion: 1,
         ...controls,
-        canRefine: false,
+        /* B3：精修可用性由主进程解析结果决定（模型就位才为真）；
+           翻译仍未实现。 */
+        canRefine: this.runtimeOptions.refinementAvailable === true,
         canTranslate: false,
         availableProfiles: profiles,
         availableSourceIds: [...activeSourceIds],
