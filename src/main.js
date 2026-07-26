@@ -18,6 +18,7 @@ const {
 } = require('./main/ipc/access-policy')
 const { resolveRuntimeOptions } = require('./main/runtime-options')
 const { FakeRuntimeAdapter } = require('./main/session/fake-runtime-adapter')
+const { RealtimeRuntimeAdapter } = require('./runtime/realtime-runtime-adapter')
 const { SessionCoordinator, failure, success } = require('./main/session/session-coordinator')
 
 /** @type {BrowserWindow | null} */ let captionWin = null
@@ -349,8 +350,15 @@ function applyLock (on) {
 function createCoordinator () {
   const runtimeOptions = resolveRuntimeOptions()
   if (runtimeOptions.warning) console.warn(`[runtime] ${runtimeOptions.warning}`)
+  /* I2.1 结构模式（显式 dev 开关，默认关闭）：真实采集窗 + realtime worker，
+     recognizer 为 null——状态机/背压/恢复全真，但不产任何字幕文本。
+     仍需 LIVE_SUBTITLE_DEV_MODEL 才能 start；Gate 0B 姿态不变。 */
+  const structuralRuntime = process.env.LIVE_SUBTITLE_DEV_RUNTIME === 'structural'
+  if (structuralRuntime) {
+    console.warn('[runtime] structural runtime enabled: real capture and worker, null recognizer, no captions')
+  }
   coordinator = new SessionCoordinator({
-    adapterFactory: () => new FakeRuntimeAdapter(),
+    adapterFactory: () => structuralRuntime ? new RealtimeRuntimeAdapter() : new FakeRuntimeAdapter(),
     runtimeOptions,
     configuration: config.get(),
     onListenerError: (error) => logError('runtime.listener', error)

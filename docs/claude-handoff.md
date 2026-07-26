@@ -404,6 +404,12 @@ npm start
 $env:LIVE_SUBTITLE_DEV_MODEL='x-asr-480ms'
 npm start
 
+# I2.1 结构模式：真实采集窗 + realtime worker（null recognizer，零字幕）
+# 状态机/背压/恢复全真；仍需 DEV_MODEL 才能 start，Gate 0B 姿态不变
+$env:LIVE_SUBTITLE_DEV_MODEL='x-asr-480ms'
+$env:LIVE_SUBTITLE_DEV_RUNTIME='structural'
+npm start
+
 # 重新生成 UI fixture bundle
 npm run preview:fixtures
 ```
@@ -435,7 +441,9 @@ B2/I2 必须增加 canonical caption state 读取或原子订阅快照，不能�
 
 ### 12.3 Adapter replacement 后 Caption 游标会失配（已于 B2.0 关闭）
 
-> 状态更新：start context 现携带恢复游标 `resume: { attempt, sourceSequences }`；replacement adapter 以 attempt 为 segment 命名空间、sequence 从游标续增，回归测试覆盖 pause/start 两类超时后的字幕续流。以下为交接时的原始描述。
+> 状态更新：start context 现携带恢复游标 `resume: { attempt, sourceSequences }`；replacement adapter 以 attempt 为 segment 命名空间、sequence 从游标续增，回归测试覆盖 pause/start 两类超时后的字幕续流。
+>
+> I2.1 追加：本症状曾经由 fault-retry 新路径短暂回归——同 adapter（attempt 不变）每次 start fork 全新 worker，本地 ordinal 命名会跨代冲突。关闭方式：worker 的 segmentId 改用【开段时的续增 sequence】构造（`seg[-a{attempt}]-{sourceId}-{seq}`），跨代天然唯一；回归测试断言 gen2 事件全被接受且 gen1 定稿段不可回改。以下为交接时的原始描述。
 
 当前 timeout/retry 路径可以隔离旧 adapter 并创建 replacement adapter，但恢复同一 `sessionId` 时存在字幕游标缺口：
 
@@ -446,9 +454,11 @@ B2/I2 必须增加 canonical caption state 读取或原子订阅快照，不能�
 
 B2 前必须补回归测试，并明确 recovery cursor contract：保持同一 session 时，要么把 source/segment 游标传给 replacement adapter，要么由 coordinator 统一分配 canonical sequence/segment id；不能简单清空去重 map 后让旧事件重新混入。
 
-### 12.4 运行时故障与可观测性仍不完整
+### 12.4 运行时故障与可观测性仍不完整（onError 已于 I2.1 关闭）
 
-- 当前 adapter 只有命令方法和 `onCaption`，没有正式的 `onError/onExit/onHealth`。B2 worker 在会话进行中自行崩溃时，尚无主动让 coordinator 进入 recovering/error 的入口。
+> 状态更新（I2.1，2026-07-27）：adapter 接口新增可选 `onError`——coordinator 在 listening/paused 时接受 adapter 自报故障进入可重试 error（busy 迁移与已隔离 adapter 的迟到故障被忽略，字段白名单清洗）。`RealtimeRuntimeAdapter` 把 worker 退出 / track-ended / host-gone 映射为结构化故障；实机 smoke 验证了 worker 击杀 → error → retry → listening 的完整恢复。worker 边界的非法 caption 丢弃已计数（`droppedCaptionCount`）。coordinator `acceptCaption` 的 malformed/stale 静默丢弃仍无计数/日志（下一条仍有效）。
+
+- ~~当前 adapter 只有命令方法和 `onCaption`，没有正式的 `onError/onExit/onHealth`。B2 worker 在会话进行中自行崩溃时，尚无主动让 coordinator 进入 recovering/error 的入口。~~（已关闭，见上）
 - malformed/stale CaptionEvent 当前只返回 `false` 并静默丢弃，没有拒绝原因日志、计数或指标；B2 排查 sequence/revision 问题会很困难。
 - toolbar 对失败 `CommandResult` 当前主要显示 `message`；如果失败没有同步带来新 snapshot，其中的 `code/recoverable/nextAction` 可能没有形成可执行出口。
 - fake adapter 会发 translated，而 capability 仍是 false；它只用于 reducer 展示，测试和文档必须避免把它写成真实翻译能力。

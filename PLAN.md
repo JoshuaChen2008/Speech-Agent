@@ -445,7 +445,7 @@ node scripts/gate-0b/evaluate-transcripts.js `
 | Gate | 汇合内容 | 验收标准 |
 |---|---|---|
 | **I1 Contract（完成）** | UI fake adapter ↔ 后端 contract fixtures | coordinator、fake adapter、renderer reducer 和 IPC 共享 v1 validator；默认/dev smoke 均通过 |
-| **I2 Live Caption** | 音频 → realtime ASR → SessionCoordinator → 字幕 UI | P50/P95 延迟、CPU、内存、队列深度达标 |
+| **I2 Live Caption** | 音频 → realtime ASR → SessionCoordinator → 字幕 UI | P50/P95 延迟、CPU、内存、队列深度达标。**I2.1 结构接线已完成（2026-07-27）**：`RealtimeRuntimeAdapter` 实现 B1 冻结接口组合 host/worker/port，coordinator 新增 adapter `onError` 故障入口（§12.4 关闭）；实机 smoke 全相位通过（含 worker 击杀→error→retry→listening 恢复），null recognizer 零字幕。完整 I2 PASS 仍以模型批准为前提 |
 | **I3 Durable Session** | final/refined/translation → JSONL → 历史/导出 | 连续 2 小时不卡；崩溃恢复不丢已 final 的段落 |
 | **I4 Packaged App** | 首启、下载、权限、ASR、AI、退出清理 | 在干净 Win11 机器完成完整用户旅程 |
 

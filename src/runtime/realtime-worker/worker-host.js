@@ -108,6 +108,62 @@ class RealtimeWorkerHost {
     if (this.child) this.child.postMessage({ type: 'report' })
   }
 
+  /**
+   * v1 暂停语义透传：worker 先 flush 当前段（final 经有序的 parentPort 先于
+   * ack 到达并在 listening 相位被接受），再回 ack——await ack 保证 coordinator
+   * 发布 paused 快照时定稿已交付，不会被 paused 相位拒收。
+   * 死 worker 时抛错，让 coordinator 的迁移失败路径接管（不静默"成功"）。
+   */
+  pause () {
+    return this.transact('pause', 'paused')
+  }
+
+  resume () {
+    return this.transact('resume', 'resumed')
+  }
+
+  transact (type, ack, timeoutMs = 2000) {
+    const child = this.child
+    if (!child) return Promise.reject(new Error(`worker is not running (${type})`))
+    return new Promise((resolve, reject) => {
+      const onMessage = (message) => {
+        if (message?.type === ack) { cleanup(); resolve() }
+      }
+      const onExit = (code) => { cleanup(); reject(new Error(`worker exited during ${type} (code ${code})`)) }
+      const timer = setTimeout(() => { cleanup(); reject(new Error(`worker ${type} timed out`)) }, timeoutMs)
+      const cleanup = () => {
+        clearTimeout(timer)
+        child.removeListener('message', onMessage)
+        child.removeListener('exit', onExit)
+      }
+      child.on('message', onMessage)
+      child.once('exit', onExit)
+      child.postMessage({ type })
+    })
+  }
+
+  /** stop 收尾的确定性信号：worker 处理完 'end'（flush 完毕）会上报
+      endReceived=true 的 stats；等它（带上限）而不是猜一个 sleep。 */
+  waitForEnd (timeoutMs = 800) {
+    if (this.lastStats?.endReceived) return Promise.resolve(true)
+    const child = this.child
+    if (!child) return Promise.resolve(false)
+    return new Promise((resolve) => {
+      const onMessage = (message) => {
+        if (message?.type === 'stats' && message.stats?.endReceived) { cleanup(); resolve(true) }
+      }
+      const onExit = () => { cleanup(); resolve(false) }
+      const timer = setTimeout(() => { cleanup(); resolve(false) }, timeoutMs)
+      const cleanup = () => {
+        clearTimeout(timer)
+        child.removeListener('message', onMessage)
+        child.removeListener('exit', onExit)
+      }
+      child.on('message', onMessage)
+      child.once('exit', onExit)
+    })
+  }
+
   kill () {
     if (this.child) {
       try { this.child.kill() } catch { /* already exited */ }

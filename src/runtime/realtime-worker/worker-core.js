@@ -26,7 +26,10 @@ class SourcePipeline {
     this.adapter = options.adapter
     this.vad = options.vad
     this.preRollLimit = options.preRollLimit === undefined ? 4 : options.preRollLimit
-    this.sequence = 0
+    /* 恢复游标（B2.0 契约）：replacement worker 的 sequence 从游标续增，
+       segmentId 以 attempt 命名空间隔离，旧游标才不会拒绝新事件。 */
+    this.sequence = options.sequenceBase || 0
+    this.segmentPrefix = options.attempt > 0 ? `seg-a${options.attempt}` : 'seg'
     this.segmentOrdinal = 0
     this.segment = null
     this.preRoll = []
@@ -92,7 +95,11 @@ class SourcePipeline {
         const opening = [...this.preRoll, frame]
         this.preRoll = []
         this.segment = {
-          id: `seg-${this.sourceId}-${this.segmentOrdinal}`,
+          /* segmentId 用【开段时的续增 sequence】而非本地 ordinal：sequence 从
+             恢复游标续增，跨 worker 世代天然唯一——fault-retry（同 adapter、
+             attempt 不变）fork 的新 worker 不会与上一代的 segmentId 冲突，
+             已定稿段永远不可能被新段回改（§12.3 回归的关闭点）。 */
+          id: `${this.segmentPrefix}-${this.sourceId}-${this.sequence + 1}`,
           revision: 0,
           t0: opening[0].timestampSeconds,
           lastText: null
@@ -176,17 +183,29 @@ class WorkerCore {
     if (!Array.isArray(options.sourceIds) || options.sourceIds.length === 0) {
       throw new TypeError('sourceIds are required')
     }
+    const attempt = options.attempt === undefined ? 0 : options.attempt
+    if (!Number.isInteger(attempt) || attempt < 0) throw new TypeError('attempt must be a non-negative integer')
+    const sequenceBases = options.sequenceBases || {}
+    if (typeof sequenceBases !== 'object' || Array.isArray(sequenceBases)) {
+      throw new TypeError('sequenceBases must be an object')
+    }
     const profile = options.recognizerProfile === undefined ? 'null' : options.recognizerProfile
     const adapterFactory = options.adapterFactory || (() => createRecognizerAdapter(profile))
     this.sources = new Map()
     for (const sourceId of options.sourceIds) {
       if (this.sources.has(sourceId)) throw new TypeError(`duplicate sourceId: ${sourceId}`)
+      const sequenceBase = sequenceBases[sourceId] || 0
+      if (!Number.isInteger(sequenceBase) || sequenceBase < 0) {
+        throw new TypeError(`sequenceBases.${sourceId} must be a non-negative integer`)
+      }
       this.sources.set(sourceId, new SourcePipeline({
         sessionId: options.sessionId,
         sourceId,
         adapter: adapterFactory(sourceId),
         vad: new EnergyVad(options.vadOptions),
-        preRollLimit: options.preRollLimit
+        preRollLimit: options.preRollLimit,
+        attempt,
+        sequenceBase
       }))
     }
   }
@@ -206,6 +225,11 @@ class WorkerCore {
     const events = []
     for (const pipeline of this.sources.values()) events.push(...pipeline.flush(timestampSeconds))
     return events
+  }
+
+  /** 暂停恢复后重新锚定帧序号：暂停期跳过的帧不算传输缺口（哨兵指标不被污染）。 */
+  reanchor () {
+    for (const pipeline of this.sources.values()) pipeline.expectedFrameSequence = null
   }
 
   metrics () {

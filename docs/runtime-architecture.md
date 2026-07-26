@@ -215,7 +215,7 @@ realtime/refine worker
 ## 8. 生命周期与恢复
 
 - audio host 崩溃：关闭旧 port，RuntimeSnapshot → recovering，按上限重建；不能无提示无限重试权限请求。
-- realtime worker 崩溃：停止送帧或进入有界暂存，清理旧 stream 后重新建 port。
+- realtime worker 崩溃：停止送帧或进入有界暂存，清理旧 stream 后重新建 port。I2.1 落地：`RealtimeRuntimeAdapter` 把 worker 退出/track-ended/host-gone 经 adapter `onError` 上报，coordinator 进入可重试 error，retry 走 stop+start 重建全链路（fresh host+worker）。
 - refine worker 崩溃：实时字幕继续；未完成 segment 标记 refinement unavailable，可稍后重试。
 - 可见 renderer 重载：读取完整 snapshot 和当前 caption state，不依赖历史广播。
 - 系统睡眠/唤醒：重建 media tracks，校正单调时间基准并记录 session gap。

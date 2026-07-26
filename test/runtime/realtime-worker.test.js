@@ -294,6 +294,33 @@ test('worker host cleans up the child on configure failure and rejects fast on e
   assert.equal(child3.killed, true)
 })
 
+test('worker core honors the recovery cursor: sequence base and attempt namespace', () => {
+  const core = new WorkerCore({
+    sessionId: 'session-1',
+    sourceIds: ['mic'],
+    adapterFactory: () => scriptedAdapter(),
+    vadOptions: { threshold: 0.05, voicedFramesToStart: 1, silentFramesToEnd: 2 },
+    attempt: 1,
+    sequenceBases: { mic: 9 }
+  })
+  const events = []
+  events.push(...core.ingestFrame(frame('mic', 0, 0.3)))
+  events.push(...core.ingestFrame(frame('mic', 1, 0)))
+  events.push(...core.ingestFrame(frame('mic', 2, 0)))
+
+  assert.ok(events.length >= 2)
+  assert.ok(events.every((event) => event.sequence > 9), 'sequence 必须从游标之上续增')
+  assert.equal(events[0].sequence, 10)
+  assert.ok(events.every((event) => event.segmentId.startsWith('seg-a1-mic-')), 'segmentId 以 attempt 命名空间隔离')
+
+  assert.throws(() => new WorkerCore({
+    sessionId: 's', sourceIds: ['mic'], attempt: -1
+  }), /attempt/)
+  assert.throws(() => new WorkerCore({
+    sessionId: 's', sourceIds: ['mic'], sequenceBases: { mic: 1.5 }
+  }), /sequenceBases/)
+})
+
 test('worker core events pass the real SessionCoordinator acceptCaption gate', async (t) => {
   const adapter = new FakeRuntimeAdapter({ autoEmit: false })
   const coordinator = new SessionCoordinator({

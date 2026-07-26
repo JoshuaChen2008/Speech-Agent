@@ -12,11 +12,14 @@ const { WorkerCore } = require('./worker-core')
 const state = {
   port: null,
   core: null,
+  paused: false,
   config: {
     sessionId: null,
     sourceIds: [],
     recognizerProfile: 'null',
     vadOptions: undefined,
+    attempt: 0,
+    sequenceBases: {},
     initialCredits: 25,
     creditBatch: 10
   },
@@ -77,6 +80,17 @@ function onPortMessage (message) {
   if (message?.type !== 'frame' || !state.core) return
   const sourceId = String(message.sourceId || '')
   if (!state.config.sourceIds.includes(sourceId)) return
+  /* 暂停：不向 recognizer 送帧（v1 语义），但帧仍按「送达即消费」回授 credit。 */
+  if (state.paused) {
+    const pausedDebt = (state.creditDebt.get(sourceId) || 0) + 1
+    if (pausedDebt >= state.config.creditBatch) {
+      grantCredits(sourceId, pausedDebt, pausedDebt)
+      state.creditDebt.set(sourceId, 0)
+    } else {
+      state.creditDebt.set(sourceId, pausedDebt)
+    }
+    return
+  }
 
   /* 反序列化类型回退时按底层字节重建；重建不了才计入坏帧。
      sampleTypeObserved 记录首个观测类型，坏帧类型覆盖记录（排查用）。 */
@@ -137,6 +151,10 @@ process.parentPort.on('message', (event) => {
     if (Array.isArray(message.sourceIds)) config.sourceIds = message.sourceIds.map(String)
     if (typeof message.recognizerProfile === 'string') config.recognizerProfile = message.recognizerProfile
     if (message.vadOptions && typeof message.vadOptions === 'object') config.vadOptions = message.vadOptions
+    if (Number.isInteger(message.attempt) && message.attempt >= 0) config.attempt = message.attempt
+    if (message.sequenceBases && typeof message.sequenceBases === 'object' && !Array.isArray(message.sequenceBases)) {
+      config.sequenceBases = message.sequenceBases
+    }
     for (const key of ['initialCredits', 'creditBatch']) {
       if (Number.isInteger(message[key]) && message[key] > 0) config[key] = message[key]
     }
@@ -145,7 +163,9 @@ process.parentPort.on('message', (event) => {
         sessionId: config.sessionId,
         sourceIds: config.sourceIds,
         recognizerProfile: config.recognizerProfile,
-        vadOptions: config.vadOptions
+        vadOptions: config.vadOptions,
+        attempt: config.attempt,
+        sequenceBases: config.sequenceBases
       })
       publish({ type: 'configured' })
     } catch (error) {
@@ -153,6 +173,17 @@ process.parentPort.on('message', (event) => {
     }
   } else if (message?.type === 'pcm-port') {
     if (event.ports && event.ports[0]) attachPort(event.ports[0])
+  } else if (message?.type === 'pause') {
+    /* v1 暂停语义：flush 当前段为定稿，之后不再向 recognizer 送帧。 */
+    if (!state.paused && state.core) {
+      state.paused = true
+      for (const captionEvent of state.core.flush()) publish({ type: 'caption', event: captionEvent })
+    }
+    publish({ type: 'paused' })
+  } else if (message?.type === 'resume') {
+    state.paused = false
+    if (state.core) state.core.reanchor()
+    publish({ type: 'resumed' })
   } else if (message?.type === 'report') {
     reportStats()
   }

@@ -483,7 +483,43 @@ class SessionCoordinator {
     if (!adapter || typeof adapter.onCaption !== 'function') {
       throw new TypeError('adapter.onCaption is required')
     }
-    return adapter.onCaption((event) => this.acceptCaption(event))
+    const unsubscribers = [adapter.onCaption((event) => this.acceptCaption(event))]
+    /* B2 缺口关闭（handoff §12.4）：adapter 可选提供 onError——worker/host
+       在会话进行中自行崩溃时主动把 coordinator 推入 error（retry 走既有
+       replacement/cursor 恢复路径）。 */
+    if (typeof adapter.onError === 'function') {
+      unsubscribers.push(adapter.onError((event) => this.acceptAdapterFault(adapter, event)))
+    }
+    return () => { for (const unsubscribe of unsubscribers) unsubscribe() }
+  }
+
+  /**
+   * 会话进行中（listening/paused）的 adapter 自报故障。
+   * 迁移中（busy）的故障由该迁移自己的失败/超时路径处理；
+   * 已隔离的旧 adapter 的迟到故障忽略。
+   */
+  acceptAdapterFault (adapter, event) {
+    if (this.disposed || adapter !== this.adapter) return false
+    if (this.busy || !['listening', 'paused'].includes(this.snapshot.phase)) return false
+    const code = typeof event?.code === 'string' && /^[A-Z][A-Z0-9_]{2,63}$/.test(event.code)
+      ? event.code
+      : 'RUNTIME_FAULT'
+    const message = typeof event?.message === 'string' && event.message.trim().length > 0
+      ? event.message.trim().slice(0, 120)
+      : '运行服务中断'
+    const recoverable = event?.recoverable !== false
+    const scope = ['audio', 'model', 'worker', 'translation', 'system'].includes(event?.scope)
+      ? event.scope
+      : 'worker'
+    const error = {
+      scope,
+      code,
+      message,
+      recoverable,
+      nextAction: recoverable ? 'retry' : null
+    }
+    this.publish(this.buildSnapshot('error', this.snapshot.sessionId, 'error', error))
+    return true
   }
 
   quarantineAdapter (adapter) {
