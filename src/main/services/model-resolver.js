@@ -72,9 +72,40 @@ function resolveApprovedRealtimeModel (options = {}) {
   return null
 }
 
+const VAD_MODEL_ENV = 'LIVE_SUBTITLE_VAD_MODEL'
+const VAD_MODEL_FILE = 'silero_vad.onnx'
+
+/**
+ * silero VAD 模型解析（与 realtime 模型同序：env → userData → 仓库开发布局）。
+ * 找不到返回 null——调用方回退 EnergyVad 并警告，不阻塞字幕，但分段质量
+ * 降级（能量占位对音量敏感、纯音也当人声）。
+ * @param {{ env?: *, userDataDir?: string | null, repoRoot?: string }} [options]
+ * @returns {{ kind: string, modelPath: string } | null}
+ */
+function resolveSileroVadModel (options = {}) {
+  const env = options.env || process.env
+  const repoRoot = options.repoRoot || path.join(__dirname, '..', '..', '..')
+  const candidates = []
+  const explicit = env[VAD_MODEL_ENV]
+  if (typeof explicit === 'string' && explicit.length > 0) candidates.push(explicit)
+  if (typeof options.userDataDir === 'string' && options.userDataDir.length > 0) {
+    candidates.push(path.join(options.userDataDir, 'models', 'silero-vad', VAD_MODEL_FILE))
+  }
+  candidates.push(path.join(repoRoot, 'models', 'vad', VAD_MODEL_FILE))
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.statSync(candidate).isFile()) return Object.freeze({ kind: 'silero', modelPath: candidate })
+    } catch { /* try next */ }
+  }
+  return null
+}
+
 module.exports = {
   APPROVED_REALTIME_MODEL,
   MODEL_DIR_ENV,
   REQUIRED_FILES,
-  resolveApprovedRealtimeModel
+  VAD_MODEL_ENV,
+  resolveApprovedRealtimeModel,
+  resolveSileroVadModel
 }

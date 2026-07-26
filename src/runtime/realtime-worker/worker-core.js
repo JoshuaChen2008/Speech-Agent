@@ -172,6 +172,7 @@ class WorkerCore {
    *   sourceIds: string[],
    *   recognizerProfile?: string,
    *   vadOptions?: *,
+   *   vadFactory?: (sourceId: string) => *,
    *   adapterFactory?: (sourceId: string) => *,
    *   preRollLimit?: number
    * }} options
@@ -191,6 +192,9 @@ class WorkerCore {
     }
     const profile = options.recognizerProfile === undefined ? 'null' : options.recognizerProfile
     const adapterFactory = options.adapterFactory || (() => createRecognizerAdapter(profile))
+    /* VAD 可注入（silero 真实实现经 vadFactory 进来）；默认保持 EnergyVad
+       —— 结构测试与无 VAD 模型时的诚实降级路径。 */
+    const vadFactory = options.vadFactory || (() => new EnergyVad(options.vadOptions))
     this.sources = new Map()
     for (const sourceId of options.sourceIds) {
       if (this.sources.has(sourceId)) throw new TypeError(`duplicate sourceId: ${sourceId}`)
@@ -202,7 +206,7 @@ class WorkerCore {
         sessionId: options.sessionId,
         sourceId,
         adapter: adapterFactory(sourceId),
-        vad: new EnergyVad(options.vadOptions),
+        vad: vadFactory(sourceId),
         preRollLimit: options.preRollLimit,
         attempt,
         sequenceBase

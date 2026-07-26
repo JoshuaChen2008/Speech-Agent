@@ -166,11 +166,23 @@ process.parentPort.on('message', (event) => {
         const { registerSherpaRecognizer } = require('./sherpa-recognizer')
         registerSherpaRecognizer(config.recognizerProfile, message.recognizer)
       }
+      /* 真实 VAD（silero）：有选项才 require 原生实现；否则 EnergyVad 兜底。
+         段前缓冲放宽到 6 帧（600ms）补偿 silero 的起点判定滞后。 */
+      let vadFactory
+      let preRollLimit
+      if (message.vad && typeof message.vad === 'object') {
+        const { SileroVad } = require('./silero-vad')
+        const vadConfig = message.vad
+        vadFactory = () => new SileroVad(vadConfig)
+        preRollLimit = 6
+      }
       state.core = new WorkerCore({
         sessionId: config.sessionId,
         sourceIds: config.sourceIds,
         recognizerProfile: config.recognizerProfile,
         vadOptions: config.vadOptions,
+        vadFactory,
+        preRollLimit,
         attempt: config.attempt,
         sequenceBases: config.sequenceBases
       })

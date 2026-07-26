@@ -72,21 +72,24 @@ const START_CONTEXT = {
 
 test('recognizer options reach the worker only for non-null profile mappings', async () => {
   const recognizer = { kind: 'sherpa-online-transducer', modelDir: 'model-dir', numThreads: 4, modelType: 'zipformer2' }
+  const vad = { kind: 'silero', modelPath: 'vad-model' }
 
-  const real = makeAdapterWith({ profileMap: { fast: 'x-asr-160ms' }, recognizer })
+  const real = makeAdapterWith({ profileMap: { fast: 'x-asr-160ms' }, recognizer, vad })
   await real.adapter.start({ sessionId: 'session-1', sourceIds: ['mic'], profile: 'fast' })
   const realStart = real.worker.calls.find(([name]) => name === 'start')[1]
   assert.equal(realStart.recognizerProfile, 'x-asr-160ms')
   assert.deepEqual(realStart.recognizer, recognizer)
+  assert.deepEqual(realStart.vad, vad)
   real.adapter.dispose()
 
-  /* 结构模式：即使注入了 recognizer 选项，null profile 也不得携带它——
-     结构 worker 不加载原生模块。 */
-  const structural = makeAdapterWith({ recognizer })
+  /* 结构模式：即使注入了 recognizer/vad 选项，null profile 也不得携带——
+     结构 worker 不加载任何原生模块。 */
+  const structural = makeAdapterWith({ recognizer, vad })
   await structural.adapter.start(START_CONTEXT)
   const structuralStart = structural.worker.calls.find(([name]) => name === 'start')[1]
   assert.equal(structuralStart.recognizerProfile, 'null')
   assert.equal(structuralStart.recognizer, undefined)
+  assert.equal(structuralStart.vad, undefined)
   structural.adapter.dispose()
 })
 

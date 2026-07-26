@@ -73,7 +73,7 @@ src/
 
 ## 下一步
 
-见 [PLAN.md](PLAN.md)（Rev.3）：Gate 0A/0B（改判）/0C/0D、B1、B2.0–B2.3 与真实模型接线已完成（实机 smoke：语料外放 → 回环 → 真字幕，CER 0.071）；接下来是 silero VAD 替换 EnergyVad 占位、B3 精修 worker 与历史 UI、I2 完整指标验收。
+见 [PLAN.md](PLAN.md)（Rev.3）：Gate 0A/0B（改判）/0C/0D、B1、B2.0–B2.3、真实模型与 silero VAD 接线均已完成（实机 smoke：语料外放 → 回环 → 真字幕，整句成段、CER 0）；接下来是 B3 精修 worker 与历史 UI、双路并发 soak、I2 完整指标验收。
 
 - 窗口壳和交互不变量：[docs/subtitle-window.md](docs/subtitle-window.md)
 - 视觉/UI 模型交接：[docs/ui-design-brief.md](docs/ui-design-brief.md)
@@ -83,7 +83,7 @@ src/
 
 - 亚克力设置窗依赖 Win11（Build 22000+）；旧系统会回退为普通窗口。
 - `transparent` 窗口开 DevTools 时透明会临时失效，属 Electron 已知限制。
-- 识别 profile 由 Capabilities/会话状态约束：本机模型就位才发布 `fast`，缺失即不可用，不伪装。当前 VAD 是能量阈值占位（EnergyVad）：分段粒度偏碎、固定阈值对系统音量敏感（音量过低可能漏出字），silero 替换在计划内。
+- 识别 profile 由 Capabilities/会话状态约束：本机模型就位才发布 `fast`，缺失即不可用，不伪装。VAD 已是 silero 真实人声检测（整句成段、纯音/噪声拒识）；silero 模型缺失时回退能量占位并在控制台警告（字幕仍真实，分段降级）。定稿出现在说话停顿约 1 秒后，这是实测定的收句参数（更短会丢字）。
 
 ## 关键技术决策
 

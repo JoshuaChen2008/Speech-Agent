@@ -422,7 +422,9 @@ npm run preview:fixtures
 
 ### 12.1 B2 还不存在（B2.1 已部分关闭）
 
-> 状态更新（模型轨，2026-07-27）：`sherpa-onnx-node`/`sherpa-onnx-win-x64` 已装为依赖；`src/runtime/realtime-worker/sherpa-recognizer.js` 实现真实 recognizer adapter 并经 worker configure 注册（共享 OnlineRecognizer、per-segment stream、0.4s 尾静音冲刷）；`src/main/services/model-resolver.js` 解析本机模型（缺失 fail closed）；`src/main.js` 组合根默认接真实链路（模型就位 → 发布 fast profile → 真字幕）。实机 smoke `scripts/i2-live-caption-smoke.js` PASS：语料外放 → 回环 → 6 partial + 4 final，拼接 CER 0.071。下文「recognizer adapter 只有 null」等描述作为交接时历史保留；EnergyVad 占位与 silero 替换的说明仍有效。
+> 状态更新（模型轨，2026-07-27）：`sherpa-onnx-node`/`sherpa-onnx-win-x64` 已装为依赖；`src/runtime/realtime-worker/sherpa-recognizer.js` 实现真实 recognizer adapter 并经 worker configure 注册（共享 OnlineRecognizer、per-segment stream、0.4s 尾静音冲刷）；`src/main/services/model-resolver.js` 解析本机模型（缺失 fail closed）；`src/main.js` 组合根默认接真实链路（模型就位 → 发布 fast profile → 真字幕）。实机 smoke `scripts/i2-live-caption-smoke.js` PASS：语料外放 → 回环 → 6 partial + 4 final，拼接 CER 0.071。下文「recognizer adapter 只有 null」等描述作为交接时历史保留。
+>
+> 状态更新（VAD 轨，2026-07-27）：silero VAD 已替换 EnergyVad 占位——`silero-vad.js` 同接口包装、经 configure 的 vad 选项注入，997Hz 纯音拒识实测通过；收句静音实测定为 1.0s（0.5s 切段时流式模型缺右上下文丢字且不出标点，1.0s 下整句成段 CER 0）；VAD 模型缺失回退 EnergyVad 并警告。silero 后的 smoke：1 条整句定稿、CER 0（energy 对比：4 条碎片、CER 0.071）。EnergyVad 保留用于结构测试与降级路径。
 
 > 状态更新（B2.1）：`src/runtime/audio-host/` 已存在——Gate 0C 拓扑的产品化控制器、专用 preload/非持久化 session、AudioWorklet 48k→16k、有界诊断采集与指标（`scripts/audio-host-smoke.js` 实机 PASS：静音与 997Hz 信号两种情形，宿主全程隐藏、0 gap）。
 >

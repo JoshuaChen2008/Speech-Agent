@@ -13,12 +13,12 @@
 |---|---|
 | 三窗架构（字幕 / 工具条 / 设置）、停靠与脱离 | 历史面板（`src/toolbar/toolbar.js` 的 `history` 分支仍是 TODO） |
 | 锁定穿透、逐像素命中测试、主进程手动拖动 | refine worker（二遍精修，模型已批准未接线） |
-| 配置持久化（`userData/config.json`）+ 三窗实时联动 | silero VAD（EnergyVad 占位仍在服役） |
-| 亚克力设置窗（显示 / 音频源 / 语音识别 / 关于 四个 pane） | 模型下载与资源管理、AI 层、打包分发 |
-| B1 `SessionCoordinator`、状态机、per-window preload 与 contract-valid fake adapter | 双路（mic+loopback）并发 soak 与 I2 完整指标 |
-| B2 audio host、PCM 直通/背压、realtime worker、**真实 160ms 模型**（`sherpa-onnx-node` 已安装） | |
+| 配置持久化（`userData/config.json`）+ 三窗实时联动 | 模型下载与资源管理、AI 层、打包分发 |
+| 亚克力设置窗（显示 / 音频源 / 语音识别 / 关于 四个 pane） | 双路（mic+loopback）并发 soak 与 I2 完整指标 |
+| B1 `SessionCoordinator`、状态机、per-window preload 与 contract-valid fake adapter | |
+| B2 audio host、PCM 直通/背压、realtime worker、**真实 160ms 模型 + silero VAD**（`sherpa-onnx-node` 已安装） | |
 
-**Gate 0B 已于 2026-07-27 正式改判通过**（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修，门槛重设留档于 `docs/validation/gate-0b.md` 改判节），**真实模型已接入 realtime worker**（sherpa recognizer adapter + model-resolver + 组合根接线；实机 smoke：语料外放 → 回环 → 真字幕 CER 0.071，`scripts/i2-live-caption-smoke.js`）。当前主线：silero VAD 替换 EnergyVad 占位（分段偏碎、固定阈值对系统音量敏感）、B3 精修 worker、I2 完整指标验收；弱机与打包版仍需 B5/I4 复测后才发布 profile。
+**Gate 0B 已于 2026-07-27 正式改判通过**（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修，门槛重设留档于 `docs/validation/gate-0b.md` 改判节），**真实模型 + silero VAD 均已接入 realtime worker**（sherpa recognizer adapter、silero 分段、model-resolver、组合根接线；实机 smoke `scripts/i2-live-caption-smoke.js`：语料外放 → 回环 → 真字幕 **CER 0**、整句成段）。当前主线：B3 精修 worker（模型已批准）、历史 UI、双路并发 soak 与 I2 完整指标验收；弱机与打包版仍需 B5/I4 复测后才发布 profile。
 
 ### 0.1 三层职责与协作边界
 
@@ -433,7 +433,7 @@ node scripts/gate-0b/evaluate-transcripts.js `
 | **B2.1 audio host 产品化（完成）** | Gate 0C 拓扑提取到 `src/runtime/audio-host/`：非持久化 session、最小权限 handler、专用 preload、AudioWorklet 48k→16k 1600 samples/100ms、有界诊断采集与指标落盘（`scripts/audio-host-smoke.js`） | 纯逻辑（resampler/assembler/metrics/policy）自动测试；实机 smoke 静音与 997Hz 信号两种情形 PASS（宿主全程隐藏、userGesture、0 gap、时钟覆盖 1.0）；未接 SessionCoordinator |
 | **B2.2 PCM 直通与背压（完成）** | `MessageChannelMain` 直通：host → port → `pcm-sink` utility process；credit 背压（ready 握手 + 窗口式授信）、`FrameFlow` 有界队列（maxQueueMs 丢旧保新）、低频指标控制通道、`replacePort` 中途换消费端 | 实机 smoke 三模式 PASS：normal 40/40/40 帧 0 丢 0 缺口；slow 队列峰值恰好压在预算上、29 丢帧且 sink 观察到对应缺口；crash-replace 消费端 exit(13) 后替换 sink 无缝续流。PCM 不经主进程 JS；帧用结构化克隆（transferable 被桥丢弃，见 §4.2 修正） |
 | **B2.3 realtime worker 骨架（完成）** | `src/runtime/realtime-worker/`：per-source 管线（帧→VAD 分段→recognizer adapter→contract-valid partial/final）、可替换 adapter 注册表（默认 `null`——Gate 0B 未过绝不产文本）、EnergyVad 占位（silero 随模型轨替换）、utilityProcess 入口沿用 B2.2 credit 协议、main 侧 `RealtimeWorkerHost`（边界契约校验） | 纯逻辑单测覆盖 VAD/分段/双源/缺口指标/坏帧；worker 事件全量通过真实 `SessionCoordinator.acceptCaption` 门（集成测试）；实机 smoke 传输与零字幕不变量 PASS，VAD 实音分段因系统静音判 inconclusive（有声复跑即补） |
-| **B2 实时链路** | audio host、MessagePort、双路 realtime worker、VAD/背压 | 真 partial/final 替掉假流；拖动不掉帧；队列深度和丢帧可观测。**模型轨已落地（2026-07-27）**：`sherpa-recognizer.js`（共享 OnlineRecognizer、per-segment stream、0.4s 尾静音冲刷）经 configure 注册；`model-resolver.js` 解析本机模型（env/userData/仓库布局，缺失 fail closed）；组合根默认接真实链路。实机 smoke `i2-live-caption-smoke.js` PASS（语料外放→回环→真字幕 CER 0.071）。剩余：silero VAD（EnergyVad 分段偏碎且固定阈值随系统音量漂移）、双路并发 soak、拖动/掉帧指标 |
+| **B2 实时链路** | audio host、MessagePort、双路 realtime worker、VAD/背压 | 真 partial/final 替掉假流；拖动不掉帧；队列深度和丢帧可观测。**模型轨已落地（2026-07-27）**：`sherpa-recognizer.js`（共享 OnlineRecognizer、per-segment stream、0.4s 尾静音冲刷）经 configure 注册；`model-resolver.js` 解析本机模型（env/userData/仓库布局，缺失 fail closed）；组合根默认接真实链路。**silero VAD 已替换 EnergyVad（2026-07-27）**：`silero-vad.js` 包装为同接口经 vadFactory 注入，997Hz 纯音拒识实测通过（能量占位做不到）；收句静音实测定为 1.0s——0.5s 切段时流式模型缺右上下文丢字（「一下」→「一」）且几乎不出标点，1.0s 下整句成段 CER 0。VAD 模型缺失时回退 EnergyVad 并警告。实机 smoke `i2-live-caption-smoke.js` PASS（silero：1 条整句定稿、CER 0；对比 energy：4 条碎片、CER 0.071）。剩余：双路并发 soak、拖动/掉帧指标 |
 | **B3 精修与会话** | refine worker、事件式 JSONL、恢复与导出 | 精修不阻塞实时流；坏尾行可恢复；SRT 时间轴稳定。**B3.1 已落地（2026-07-27）**：append-only JSONL 事件档（Windows-safe 文件名、排他创建防混档）、坏尾行/坏中间行区分恢复、按 revision 折叠、txt/md/srt 导出（毫秒进位正确、换行注入压平），main 接线为会话自动开/封档。剩余：refine worker、历史 UI |
 | **B4 资源与 AI** | ModelManager、CredentialStore、AiGateway | 下载可续传/校验/原子安装；key 不进 renderer；AI 失败不影响本地字幕 |
 | **B5 分发** | electron-builder、NSIS、首启资源检查 | 干净机器安装可用；native module 正确 unpack；模型缺失可恢复 |

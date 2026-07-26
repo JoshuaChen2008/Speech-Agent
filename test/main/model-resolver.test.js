@@ -10,7 +10,9 @@ const {
   APPROVED_REALTIME_MODEL,
   MODEL_DIR_ENV,
   REQUIRED_FILES,
-  resolveApprovedRealtimeModel
+  VAD_MODEL_ENV,
+  resolveApprovedRealtimeModel,
+  resolveSileroVadModel
 } = require('../../src/main/services/model-resolver')
 
 function makeTempRoot (t) {
@@ -67,6 +69,38 @@ test('an invalid explicit directory falls through to the next candidates', (t) =
     repoRoot: path.join(root, 'repo')
   })
   assert.equal(resolved.modelDir, installed)
+})
+
+test('silero VAD resolver walks env, userData, then repo layout and fails closed', (t) => {
+  const root = makeTempRoot(t)
+  assert.equal(resolveSileroVadModel({
+    env: {},
+    userDataDir: path.join(root, 'user-data'),
+    repoRoot: path.join(root, 'repo')
+  }), null)
+
+  const repoModel = path.join(root, 'repo', 'models', 'vad', 'silero_vad.onnx')
+  fs.mkdirSync(path.dirname(repoModel), { recursive: true })
+  fs.writeFileSync(repoModel, 'stub')
+  const fromRepo = resolveSileroVadModel({ env: {}, userDataDir: null, repoRoot: path.join(root, 'repo') })
+  assert.equal(fromRepo.kind, 'silero')
+  assert.equal(fromRepo.modelPath, repoModel)
+  assert.ok(Object.isFrozen(fromRepo))
+
+  const installed = path.join(root, 'user-data', 'models', 'silero-vad', 'silero_vad.onnx')
+  fs.mkdirSync(path.dirname(installed), { recursive: true })
+  fs.writeFileSync(installed, 'stub')
+  assert.equal(
+    resolveSileroVadModel({ env: {}, userDataDir: path.join(root, 'user-data'), repoRoot: path.join(root, 'repo') }).modelPath,
+    installed
+  )
+
+  const explicit = path.join(root, 'explicit.onnx')
+  fs.writeFileSync(explicit, 'stub')
+  assert.equal(
+    resolveSileroVadModel({ env: { [VAD_MODEL_ENV]: explicit }, userDataDir: path.join(root, 'user-data'), repoRoot: path.join(root, 'repo') }).modelPath,
+    explicit
+  )
 })
 
 test('userData flat layout and repo development layout are both accepted, in that order', (t) => {

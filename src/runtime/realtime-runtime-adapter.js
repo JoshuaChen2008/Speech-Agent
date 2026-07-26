@@ -37,6 +37,8 @@ class RealtimeRuntimeAdapter {
     this.vadOptions = options.vadOptions
     /* 真实模型选项（{kind, modelDir, numThreads, modelType}），null = 结构模式。 */
     this.recognizer = options.recognizer || null
+    /* 真实 VAD 选项（{kind:'silero', modelPath}），null = EnergyVad 兜底。 */
+    this.vad = options.vad || null
     this.hostFactory = options.hostFactory || (() => new AudioHostController({ electron: this.electron }))
     this.workerFactory = options.workerFactory || (() => new RealtimeWorkerHost({ electron: this.electron }))
     this.captionHandler = null
@@ -127,8 +129,10 @@ class RealtimeRuntimeAdapter {
         sessionId: session.sessionId,
         sourceIds: session.sourceIds,
         recognizerProfile,
-        /* null profile 绝不携带模型选项：结构模式的 worker 不加载原生模块。 */
+        /* null profile 绝不携带模型/VAD 选项：结构模式的 worker 不加载任何
+           原生模块（构造性保证，不依赖组合方自觉）。 */
         recognizer: recognizerProfile !== 'null' && this.recognizer ? this.recognizer : undefined,
+        vad: recognizerProfile !== 'null' && this.vad ? this.vad : undefined,
         vadOptions: this.vadOptions,
         attempt: resume ? resume.attempt : 0,
         sequenceBases: resume ? resume.sourceSequences : {}

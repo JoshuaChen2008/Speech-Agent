@@ -20,7 +20,7 @@ const path = require('node:path')
 const { app, BrowserWindow } = require('electron')
 const { SessionCoordinator } = require('../src/main/session/session-coordinator')
 const { RealtimeRuntimeAdapter } = require('../src/runtime/realtime-runtime-adapter')
-const { resolveApprovedRealtimeModel } = require('../src/main/services/model-resolver')
+const { resolveApprovedRealtimeModel, resolveSileroVadModel } = require('../src/main/services/model-resolver')
 const { characterErrorRate } = require('./gate-0b/metrics')
 
 const WAV_PATH = path.join(__dirname, '..', 'models', 'gate-0b', 'corpus', 'zh-en-code-switch.wav')
@@ -110,12 +110,14 @@ async function main () {
   try {
     const model = resolveApprovedRealtimeModel({ userDataDir: app.getPath('userData') })
     if (!model) throw new Error('approved realtime model not found on this machine')
+    const vadModel = resolveSileroVadModel({ userDataDir: app.getPath('userData') })
     const wave = readPcm16MonoWav(WAV_PATH)
 
     coordinator = new SessionCoordinator({
       adapterFactory: () => new RealtimeRuntimeAdapter({
         profileMap: { [model.profile]: model.id },
         recognizer: { kind: model.kind, modelDir: model.modelDir, numThreads: model.numThreads, modelType: model.modelType },
+        vad: vadModel || undefined,
         workerFactory: () => {
           const { RealtimeWorkerHost } = require('../src/runtime/realtime-worker/worker-host')
           const worker = new RealtimeWorkerHost()
@@ -138,8 +140,8 @@ async function main () {
     await delay(800)
 
     const playback = await playWave(wave)
-    /* 尾静音窗口：VAD 收段 + 模型冲刷 + 事件到达。 */
-    await delay(2500)
+    /* 尾静音窗口：VAD 收段（silero 默认 1.0s 收句）+ 模型冲刷 + 事件到达。 */
+    await delay(3200)
 
     const stopped = await coordinator.command('stop')
     expect(stopped.ok === true, `stop failed: ${stopped.code}`)
@@ -169,6 +171,7 @@ async function main () {
       executedAt: new Date().toISOString(),
       environment: { electron: process.versions.electron, node: process.versions.node },
       model: { id: model.id, profile: model.profile, numThreads: model.numThreads },
+      vad: vadModel ? 'silero' : 'energy-fallback',
       playback: { durationSeconds: wave.durationSeconds, outputSampleRate: playback.outputSampleRate },
       result,
       failures,

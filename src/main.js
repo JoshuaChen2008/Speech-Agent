@@ -17,7 +17,7 @@ const {
   isRoleAllowed
 } = require('./main/ipc/access-policy')
 const { resolveRuntimeOptions } = require('./main/runtime-options')
-const { resolveApprovedRealtimeModel } = require('./main/services/model-resolver')
+const { resolveApprovedRealtimeModel, resolveSileroVadModel } = require('./main/services/model-resolver')
 const { FakeRuntimeAdapter } = require('./main/session/fake-runtime-adapter')
 const { RealtimeRuntimeAdapter } = require('./runtime/realtime-runtime-adapter')
 const { SessionCoordinator, failure, success } = require('./main/session/session-coordinator')
@@ -372,6 +372,12 @@ function createCoordinator () {
   let transitionTimeoutMs
   if (realModel) {
     console.warn(`[runtime] approved realtime model ready: ${realModel.id} (${realModel.profile})`)
+    /* silero VAD 缺失时诚实降级到 EnergyVad（字幕仍真实，分段质量下降），
+       并留下可排查的警告。 */
+    const vadModel = resolveSileroVadModel({ userDataDir: app.getPath('userData') })
+    if (!vadModel) {
+      console.warn('[runtime] silero VAD model missing; falling back to the energy placeholder (degraded segmentation)')
+    }
     adapterFactory = () => new RealtimeRuntimeAdapter({
       profileMap: { [realModel.profile]: realModel.id },
       recognizer: {
@@ -379,7 +385,8 @@ function createCoordinator () {
         modelDir: realModel.modelDir,
         numThreads: realModel.numThreads,
         modelType: realModel.modelType
-      }
+      },
+      vad: vadModel || undefined
     })
     runtimeOptions = {
       modelOverride: { id: realModel.id, profile: realModel.profile, developmentOnly: false }
