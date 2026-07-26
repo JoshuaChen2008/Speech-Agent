@@ -5,9 +5,19 @@
 const { randomUUID } = require('node:crypto')
 const {
   assertCaptionEvent,
+  assertCaptionState,
   assertCommandResult,
   assertRuntimeSnapshot
 } = require('../../contracts')
+/* canonical caption state 只服务 renderer 恢复显示，不是会话史（那是 B3 的
+   JSONL）。折叠必须与 renderer 逐事件一致，否则 reload 前后视图会分叉——
+   所以这里直接复用同一份纯逻辑折叠实现（caption-reducer 无 DOM 依赖），
+   窗口、修订规则、会话切换语义由构造保证相同，而不是靠两套代码手工对齐。
+   该文件因此成为 UI 与壳层共享，改动需双侧评审。 */
+const {
+  applyEvent: foldCaptionEvent,
+  createState: createCaptionFoldState
+} = require('../../ui/shared/caption-reducer')
 
 const COMMANDS = Object.freeze(['start', 'pause', 'resume', 'stop', 'retry'])
 const SOURCE_DEFINITIONS = Object.freeze([
@@ -78,6 +88,9 @@ class SessionCoordinator {
     this.segmentSources = new Map()
     this.issuedSessionIds = new Set()
     this.pendingCaptions = []
+    this.adapterEpoch = 0
+    this.captionStateRevision = 0
+    this.captionFold = createCaptionFoldState()
     this.onListenerError = options.onListenerError || (() => {})
     this.sessionSourceIds = []
     this.busy = false
@@ -119,6 +132,19 @@ class SessionCoordinator {
 
   getSnapshot () {
     return clone(this.snapshot)
+  }
+
+  /**
+   * 已广播字幕折叠出的权威状态。caption renderer 在 reload/bootstrap 时
+   * 先订阅增量事件，再读取本状态水合，最后重放订阅期间缓冲的事件。
+   */
+  getCaptionState () {
+    return clone(assertCaptionState({
+      schemaVersion: 1,
+      revision: this.captionStateRevision,
+      sessionId: this.captionFold.sessionId,
+      segments: this.captionFold.segments
+    }))
   }
 
   onSnapshot (listener) {
@@ -190,6 +216,7 @@ class SessionCoordinator {
         sessionId,
         sourceIds: [...this.sessionSourceIds],
         profile: this.runtimeOptions.modelOverride.profile,
+        resume: this.captionCursor(),
         signal: transition.controller.signal
       })
       if (!this.isTransitionCurrent(transition)) return failure('COORDINATOR_CLOSED', '会话服务已关闭', false)
@@ -285,6 +312,7 @@ class SessionCoordinator {
         sessionId,
         sourceIds: [...this.sessionSourceIds],
         profile: this.runtimeOptions.modelOverride.profile,
+        resume: this.captionCursor(),
         signal: transition.controller.signal
       })
       if (!this.isTransitionCurrent(transition)) return failure('COORDINATOR_CLOSED', '会话服务已关闭', false)
@@ -340,6 +368,32 @@ class SessionCoordinator {
     }
     this.issuedSessionIds.add(sessionId)
     return sessionId
+  }
+
+  /**
+   * Recovery cursor for the same-session adapter (re)start contract:
+   * replacement adapters must emit sequences strictly above these values
+   * and must namespace new segment ids by `attempt`, so the retained
+   * dedup maps keep rejecting the quarantined adapter's stale events
+   * without also rejecting the replacement's fresh ones.
+   */
+  captionCursor () {
+    return {
+      attempt: this.adapterEpoch,
+      sourceSequences: Object.fromEntries(this.sourceSequences)
+    }
+  }
+
+  resetCaptionState () {
+    this.captionStateRevision += 1
+    this.captionFold = createCaptionFoldState()
+  }
+
+  foldCaptionState (event) {
+    /* 与 renderer 完全相同的折叠：惰性会话切换、修订不开新段、
+       KEEP_SEGMENTS 窗口淘汰，全部来自共享实现。 */
+    foldCaptionEvent(this.captionFold, clone(event))
+    this.captionStateRevision += 1
   }
 
   beginTransition (operation) {
@@ -442,6 +496,7 @@ class SessionCoordinator {
     try {
       this.adapter = this.createAdapter()
       this.unsubscribeAdapter = this.bindAdapter(this.adapter)
+      this.adapterEpoch += 1
     } catch (error) {
       this.adapter = null
       this.reportListenerError(error)
@@ -585,6 +640,9 @@ class SessionCoordinator {
   }
 
   notifyCaption (event) {
+    /* 折叠发生在广播出口：canonical state 精确等于订阅者见过的内容，
+       被丢弃的 pending 缓冲不会在 reload 后凭空出现在字幕窗里。 */
+    this.foldCaptionState(event)
     for (const listener of this.captionListeners) {
       try { listener(clone(event)) } catch (error) { this.reportListenerError(error) }
     }
@@ -623,6 +681,7 @@ class SessionCoordinator {
     this.busy = false
     if (transition) transition.controller.abort()
     this.pendingCaptions = []
+    this.resetCaptionState()
     this.unsubscribeAdapter()
     this.snapshotListeners.clear()
     this.captionListeners.clear()

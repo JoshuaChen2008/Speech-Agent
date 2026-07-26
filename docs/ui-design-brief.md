@@ -26,7 +26,7 @@
 | `src/toolbar/toolbar.css` | 工具条布局、视觉状态和动效 |
 | `src/settings/settings.html` | 设置、历史、首启等正常窗口的信息架构 |
 | `src/settings/settings.css` | 设置窗口、组件和主题 |
-| `src/ui/shared/tokens.css` | design token 单一真相（见 §2.3）；未来的共享组件样式和纯展示 helpers 同放 `src/ui/shared/` |
+| `src/ui/shared/tokens.css` | design token 单一真相（见 §2.3）；未来的共享组件样式和纯展示 helpers 同放 `src/ui/shared/`。⚠ 例外：`caption-reducer.js` 见 §2.2 |
 | `docs/ui-design-brief.md` | 视觉规范和交接说明 |
 
 ### 2.2 需要共同评审
@@ -34,6 +34,7 @@
 | 路径/内容 | 原因 |
 |---|---|
 | `src/caption/caption.js` | 只允许 caption reducer、DOM 渲染、ARIA 和纯展示逻辑；不接 sherpa 原始结果 |
+| `src/ui/shared/caption-reducer.js` | B2.0 起 `createState/applyEvent/KEEP_SEGMENTS` 被主进程 canonical CaptionState 折叠复用（单一折叠真相），窗口/修订/会话切换语义改动会静默改变壳层行为；`selectLines/computeLineBudget` 属视觉决策但同文件，一并共同评审 |
 | `src/toolbar/toolbar.js` | 只允许把用户意图交给 `toolbarApi`，并根据 RuntimeSnapshot 渲染 |
 | `src/settings/settings.js` | 只允许表单/view-model 逻辑；运行配置必须等待 CommandResult |
 | BrowserWindow 宽高、边距、工具条 overlap rect | 同时影响 CSS、窗口停靠和命中测试，必须更新共享 layout contract |
@@ -247,7 +248,7 @@ UI 规则：
 |---|---|---|---|
 | **A1** | `onSnapshot(cb)` + `getSnapshot()`，推送 `RuntimeSnapshot` | **完成** | toolbar 订阅优先、再读取当前快照，并按 revision 拒绝旧值；已删除 `rec`/演示状态 |
 | **A2** | `command(name)` → `Promise<CommandResult>`，覆盖 `start / pause / resume / stop / retry` | **完成** | 五种意图独立映射；pending、失败和恢复均消费真实回执，不做乐观更新 |
-| **A3** | `onCaption(cb)`，推送 `CaptionEvent` | **完成** | caption 只消费 coordinator 事件；fake/未来 real adapter 共用同一入口，reducer 保持不变 |
+| **A3** | `onCaption(cb)`，推送 `CaptionEvent` | **完成** | caption 只消费 coordinator 事件；fake/未来 real adapter 共用同一入口。B2.0 追加 caption 独占的 `getCaptionState()`：reload 时先订阅（缓冲）、再水合、后重放，恢复与实时视图逐字段一致。⚠ `caption-reducer.js` 的 `createState/applyEvent/KEEP_SEGMENTS` 自 B2.0 起被主进程折叠复用，属 UI 与壳层共享的单一真相，改动需双侧评审 |
 
 关于 A2 的两点：
 

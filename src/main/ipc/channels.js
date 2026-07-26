@@ -18,5 +18,6 @@ module.exports = Object.freeze({
   RUNTIME_GET: 'runtime:get-snapshot',
   RUNTIME_COMMAND: 'runtime:command',
   RUNTIME_CHANGED: 'runtime:snapshot',
-  CAPTION_EVENT: 'runtime:caption'
+  CAPTION_EVENT: 'runtime:caption',
+  CAPTION_STATE_GET: 'runtime:get-caption-state'
 })

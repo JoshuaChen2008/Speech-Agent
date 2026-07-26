@@ -440,6 +440,10 @@ ipcMain.handle(CHANNELS.RUNTIME_GET, (event) => {
   requireSender(event, CHANNELS.RUNTIME_GET)
   return coordinator.getSnapshot()
 })
+ipcMain.handle(CHANNELS.CAPTION_STATE_GET, (event) => {
+  requireSender(event, CHANNELS.CAPTION_STATE_GET)
+  return coordinator.getCaptionState()
+})
 ipcMain.handle(CHANNELS.RUNTIME_COMMAND, async (event, name) => {
   requireSender(event, CHANNELS.RUNTIME_COMMAND)
   try {

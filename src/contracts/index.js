@@ -5,5 +5,6 @@ module.exports = {
   ...require('./capabilities'),
   ...require('./runtime-snapshot'),
   ...require('./caption-event'),
+  ...require('./caption-state'),
   ...require('./command-result')
 }

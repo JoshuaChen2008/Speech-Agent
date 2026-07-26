@@ -5,7 +5,7 @@
 /* 字幕窗：命中测试 + 拖动（role=caption）+ 锁定穿透 + 配置应用 + CaptionEvent 渲染。
    状态归并和行数预算都在 ../ui/shared/caption-reducer.js，本文件只做 DOM 落地。 */
 
-const { createState, applyEvent, selectLines, computeLineBudget } = window.CaptionReducer
+const { createState, hydrateState, applyEvent, selectLines, computeLineBudget } = window.CaptionReducer
 const { applyAppearance } = window.Appearance
 
 const wrap = document.getElementById('wrap')
@@ -25,7 +25,8 @@ const bridge = window.shell || {
   resizeStart () {}, resizeEnd () {},
   onLock () {}, onConfig () {}, onCaption () {},
   getLock () { return Promise.reject(new Error('no shell')) },
-  getConfig () { return Promise.reject(new Error('no shell')) }
+  getConfig () { return Promise.reject(new Error('no shell')) },
+  getCaptionState () { return Promise.reject(new Error('no shell')) }
 }
 
 let locked = false
@@ -211,6 +212,32 @@ function ingest (event) {
   }
 }
 
+/* Bootstrap 恢复：先订阅（此间事件全部缓冲），再读取主进程 canonical
+   CaptionState 水合，最后把缓冲的事件重放进 reducer —— 已折叠进状态的
+   事件会被单调判定丢弃，晚到的照常应用，两条路径必然收敛。
+   重放不做无障碍播报：那是恢复历史，不是新说的话。 */
+let bootstrapped = false
+let bufferedEvents = []
+
+function onCaptionEvent (event) {
+  if (!bootstrapped) {
+    bufferedEvents.push(event)
+    return
+  }
+  ingest(event)
+}
+
+async function initCaptions () {
+  try {
+    state = hydrateState(await bridge.getCaptionState())
+  } catch { /* browser preview：保持空状态 */ }
+  bootstrapped = true
+  const replay = bufferedEvents
+  bufferedEvents = []
+  for (const event of replay) state = applyEvent(state, event)
+  render()
+}
+
 /* 卡片尺寸随 DPI / 主题字体变化时重算预算 */
 if (typeof ResizeObserver === 'function') {
   new ResizeObserver(render).observe(captions)
@@ -233,4 +260,6 @@ initLock()
 
 // CaptionEvent 的唯一来源是主进程 SessionCoordinator。B1 的 fake adapter 与
 // B2 的真实 worker 都走同一通道，renderer 不再自造“看起来成功”的字幕。
-bridge.onCaption(ingest)
+// 订阅必须先于 getCaptionState，否则两者之间到达的事件会永久丢失。
+bridge.onCaption(onCaptionEvent)
+initCaptions()

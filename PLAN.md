@@ -425,7 +425,8 @@ node scripts/gate-0b/evaluate-transcripts.js `
 
 | 阶段 | 内容 | 验收标准 |
 |---|---|---|
-| **B1 应用骨架（完成）** | `SessionCoordinator`、状态机、per-window preload、contract validation、fake adapter | renderer 重载后快照一致；越权 IPC 和非法配置被拒绝；57 项自动测试与默认/dev Electron smoke 通过 |
+| **B1 应用骨架（完成）** | `SessionCoordinator`、状态机、per-window preload、contract validation、fake adapter | renderer 重载后快照一致；越权 IPC 和非法配置被拒绝；自动测试与默认/dev Electron smoke 通过 |
+| **B2.0 恢复缺口（完成）** | canonical `CaptionState`（与 renderer 共用同一折叠实现）、caption 角色独占 `getCaptionState()`、订阅-水合-重放 bootstrap、replacement adapter 恢复游标（`resume: {attempt, sourceSequences}`） | reload 水合与实时流逐字段一致（含双路交错与窗口外迟到修订的 property 回归）；replacement 后首条字幕被接受并到达订阅者；stop/新会话/dispose 保留与清空语义有回归覆盖 |
 | **B2 实时链路** | audio host、MessagePort、双路 realtime worker、VAD/背压 | 真 partial/final 替掉假流；拖动不掉帧；队列深度和丢帧可观测 |
 | **B3 精修与会话** | refine worker、事件式 JSONL、恢复与导出 | 精修不阻塞实时流；坏尾行可恢复；SRT 时间轴稳定 |
 | **B4 资源与 AI** | ModelManager、CredentialStore、AiGateway | 下载可续传/校验/原子安装；key 不进 renderer；AI 失败不影响本地字幕 |

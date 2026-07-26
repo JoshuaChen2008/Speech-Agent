@@ -82,7 +82,7 @@ f6eaa6d  chore: establish project baseline
 | Gate 0C 音频拓扑 | 完成 / PASS | 批准当前开发机上的 hidden audio host 拓扑 |
 | Gate 0D 产品入口 | 完成 | 首启双预设；选择前两路音频均关闭 |
 | 视觉 V1–V2 | 完成 | token、状态矩阵、稳定字幕 DOM、caption reducer、工具条和预览页 |
-| B1 应用骨架 | 已提交 / 有恢复缺口 | ConfigStore、SessionCoordinator、fake adapter、per-window preload、IPC 已接线；caption bootstrap 与 replacement cursor 待 B2.0 |
+| B1 应用骨架 | 已提交 / 恢复缺口已关闭 | ConfigStore、SessionCoordinator、fake adapter、per-window preload、IPC 已接线；caption bootstrap 与 replacement cursor 已由 B2.0 关闭 |
 | I1 Contract | 现有路径已接通 | UI/fake adapter/coordinator/IPC 共用 v1 契约；renderer reload 的 caption state 尚未形成完整闭环 |
 | B2 实时链路 | 未实现 | Gate 0C spike 尚未产品化；没有 audio host/ASR utility process |
 | B3 精修/会话 | 未实现 | 没有 refine worker、JSONL、恢复、导出 |
@@ -392,6 +392,8 @@ npm test
 
 当前自动测试尚未覆盖：caption bootstrap/reload、replacement adapter 恢复后的首条字幕、caption reducer/runtime-view 的独立单测、DOM/ARIA、真实 Electron IPC sender/main-frame、preload 暴露面、BrowserWindow 生命周期，以及可复现的 Electron smoke 脚本。PLAN 记录的 default/dev smoke 是人工验证，不是仓库内可重跑的自动证据。
 
+> 状态更新（B2.0）：恢复算法层——水合+重放收敛、replacement adapter 首条字幕、迟到修订的窗口一致性、pending flush/丢弃与 pause/error/stop 保留语义——已由 `test/main/caption-recovery.test.js`、`test/ui/caption-reducer.test.js`、`test/contracts/caption-state.test.js` 覆盖。`src/caption/caption.js` 的订阅→水合接线本身仍无 DOM/Electron harness（订阅先于 getCaptionState 的顺序约束只由注释和人工 smoke 保护），DOM/ARIA、真实 Electron IPC sender、preload 暴露面与自动 smoke 亦未覆盖。
+
 常用命令：
 
 ```powershell
@@ -418,13 +420,17 @@ npm run preview:fixtures
 - `sherpa-onnx-node` 未作为项目依赖安装。
 - Gate 0C spike 的 PASS 不能替代 I2 Live Caption。
 
-### 12.2 Caption renderer reload 恢复不完整
+### 12.2 Caption renderer reload 恢复不完整（已于 B2.0 关闭）
+
+> 状态更新：coordinator 现在在广播出口折叠 canonical `CaptionState`，caption 角色独占 `runtime:get-caption-state`；renderer 采用订阅-水合-重放 bootstrap。见 `src/contracts/caption-state.js` 与 `test/main/caption-recovery.test.js`。以下为交接时的原始描述。
 
 toolbar/settings 可以重新读取完整 RuntimeSnapshot；caption 当前只有 `onCaption(cb)`，没有 `getCaptionState()` 或原子 subscribe+current-state。renderer 在会话中途重载时，可能在下一条事件到来前为空，也无法恢复已经定稿但不再更新的段落。
 
 B2/I2 必须增加 canonical caption state 读取或原子订阅快照，不能依赖“刚好又广播一次”。
 
-### 12.3 Adapter replacement 后 Caption 游标会失配
+### 12.3 Adapter replacement 后 Caption 游标会失配（已于 B2.0 关闭）
+
+> 状态更新：start context 现携带恢复游标 `resume: { attempt, sourceSequences }`；replacement adapter 以 attempt 为 segment 命名空间、sequence 从游标续增，回归测试覆盖 pause/start 两类超时后的字幕续流。以下为交接时的原始描述。
 
 当前 timeout/retry 路径可以隔离旧 adapter 并创建 replacement adapter，但恢复同一 `sessionId` 时存在字幕游标缺口：
 

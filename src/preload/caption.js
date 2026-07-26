@@ -14,5 +14,6 @@ contextBridge.exposeInMainWorld('shell', {
   onLock: (callback) => subscribe(CHANNELS.LOCK_CHANGED, callback),
   getConfig: () => ipcRenderer.invoke(CHANNELS.CONFIG_GET),
   onConfig: (callback) => subscribe(CHANNELS.CONFIG_CHANGED, callback),
-  onCaption: (callback) => subscribe(CHANNELS.CAPTION_EVENT, callback)
+  onCaption: (callback) => subscribe(CHANNELS.CAPTION_EVENT, callback),
+  getCaptionState: () => ipcRenderer.invoke(CHANNELS.CAPTION_STATE_GET)
 })

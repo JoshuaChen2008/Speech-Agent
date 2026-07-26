@@ -40,6 +40,7 @@ class FakeRuntimeAdapter {
     this.paused = false
     this.scriptIndex = 0
     this.segmentIndex = 0
+    this.segmentPrefix = 'segment'
     this.sequence = 0
     this.elapsed = 0
     this.characterTimer = null
@@ -72,6 +73,15 @@ class FakeRuntimeAdapter {
       this.segmentIndex = 0
       this.sequence = 0
       this.elapsed = 0
+    }
+    const resume = context.resume || null
+    if (resume) {
+      /* Recovery cursor contract: a replacement adapter joining an existing
+         session namespaces its segment ids by attempt and continues source
+         sequences strictly above the coordinator's last accepted values. */
+      this.segmentPrefix = resume.attempt > 0 ? `segment-r${resume.attempt}` : 'segment'
+      const cursor = resume.sourceSequences[this.context.sourceIds[0]] || 0
+      this.sequence = Math.max(this.sequence, cursor)
     }
     if (this.autoEmit) this.nextLine()
   }
@@ -120,6 +130,23 @@ class FakeRuntimeAdapter {
       throw new TypeError('at least one sourceId is required')
     }
     if (context.profile !== 'balanced') throw new TypeError('fake adapter only supports balanced')
+    if (context.resume === undefined || context.resume === null) return
+    const resume = context.resume
+    if (typeof resume !== 'object' || Array.isArray(resume)) {
+      throw new TypeError('resume must be an object')
+    }
+    if (!Number.isInteger(resume.attempt) || resume.attempt < 0) {
+      throw new TypeError('resume.attempt must be a non-negative integer')
+    }
+    if (resume.sourceSequences === null || typeof resume.sourceSequences !== 'object' ||
+        Array.isArray(resume.sourceSequences)) {
+      throw new TypeError('resume.sourceSequences must be an object')
+    }
+    for (const [sourceId, sequence] of Object.entries(resume.sourceSequences)) {
+      if (!Number.isInteger(sequence) || sequence < 0) {
+        throw new TypeError(`resume.sourceSequences.${sourceId} must be a non-negative integer`)
+      }
+    }
   }
 
   stopTimers () {
@@ -137,7 +164,7 @@ class FakeRuntimeAdapter {
       schemaVersion: 1,
       sessionId: this.context.sessionId,
       sourceId,
-      segmentId: `segment-${this.segmentIndex}`,
+      segmentId: `${this.segmentPrefix}-${this.segmentIndex}`,
       sequence: this.sequence,
       revision,
       kind,

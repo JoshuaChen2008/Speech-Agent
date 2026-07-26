@@ -17,7 +17,8 @@ const ROLE_ACCESS = Object.freeze({
   [CHANNELS.CONFIG_UPDATE]: Object.freeze(['settings']),
   [CHANNELS.PRESET_SELECT]: Object.freeze(['settings']),
   [CHANNELS.RUNTIME_GET]: Object.freeze(['toolbar', 'settings']),
-  [CHANNELS.RUNTIME_COMMAND]: Object.freeze(['toolbar'])
+  [CHANNELS.RUNTIME_COMMAND]: Object.freeze(['toolbar']),
+  [CHANNELS.CAPTION_STATE_GET]: Object.freeze(['caption'])
 })
 
 const RENDERER_CONFIG_KEYS = Object.freeze([

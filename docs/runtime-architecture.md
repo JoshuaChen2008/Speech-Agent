@@ -35,6 +35,7 @@
 - 维护权威会话状态机和递增 snapshot revision。
 - 启停 audio host、realtime worker 和 refine worker。
 - 归并 CaptionEvent，拒绝过期 sequence/revision。
+- 在广播出口把已交付事件折叠为 canonical `CaptionState`（B2.0），供 caption renderer reload 水合；折叠与 renderer 共用同一份纯逻辑实现和窗口，视图一致由构造保证。pause/error/stop 保留，新会话第一条广播字幕才清空。
 - 把 canonical events 交给 TranscriptStore、AiGateway 和可见 UI。
 - 监听 worker `exit`、track ended、权限错误和设备变化。
 
@@ -186,7 +187,8 @@ realtime/refine worker
 - 时间轴使用从 session start 起算的单调时间；墙钟只存 session metadata。
 - 未识别字段可以忽略，缺少必需字段必须拒绝并记录。
 - renderer 不能收到原始 Error、Electron event、API Key、模型路径或 Node 对象。
-- 初次订阅使用“先建立订阅，再请求完整快照”或原子 subscribe+snapshot，避免 get/on 竞态。
+- 初次订阅使用“先建立订阅，再请求完整快照”或原子 subscribe+snapshot，避免 get/on 竞态。caption renderer 的落地即 `onCaption`（缓冲）→ `getCaptionState()` 水合 → 重放缓冲事件。
+- 同会话更换 adapter/worker 时，coordinator 通过 start context 的恢复游标 `resume: { attempt, sourceSequences }` 交接：replacement 必须以 `attempt` 为 segment id 命名空间生成新段，且各 source 的 sequence 严格大于游标值；不得清空去重 map 让旧事件重新混入。
 
 ## 7. 配置边界
 

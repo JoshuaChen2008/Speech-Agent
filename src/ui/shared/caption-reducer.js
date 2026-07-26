@@ -25,6 +25,42 @@
     return { sessionId: null, segments: [] }
   }
 
+  /**
+   * 从主进程 CaptionState 水合 reducer 状态（reload/bootstrap 恢复用）。
+   * canonical segment 字段与本地 segment 一一对应；只保留最近
+   * KEEP_SEGMENTS 段。水合后照常 applyEvent —— 已折叠进状态的事件
+   * 会因 revision/sequence 不更新而被单调判定自然丢弃。
+   * @param {*} canonical 已通过 assertCaptionState 的主进程状态
+   */
+  function hydrateState (canonical) {
+    const state = createState()
+    if (!canonical || typeof canonical !== 'object') return state
+    if (typeof canonical.sessionId !== 'string' || canonical.sessionId.length === 0) return state
+    const segments = Array.isArray(canonical.segments) ? canonical.segments : []
+    state.sessionId = canonical.sessionId
+    for (const segment of segments.slice(-KEEP_SEGMENTS)) {
+      state.segments.push({
+        segmentId: segment.segmentId,
+        sourceId: segment.sourceId,
+        sequence: segment.sequence,
+        kind: segment.kind,
+        text: segment.text,
+        textRevision: segment.textRevision,
+        translation: segment.translation
+          ? {
+              language: segment.translation.language,
+              text: segment.translation.text,
+              basedOnRevision: segment.translation.basedOnRevision
+            }
+          : null,
+        translationRevision: segment.translationRevision,
+        t0: segment.t0,
+        t1: segment.t1
+      })
+    }
+    return state
+  }
+
   function findSegment (state, segmentId) {
     for (let i = state.segments.length - 1; i >= 0; i -= 1) {
       if (state.segments[i].segmentId === segmentId) return state.segments[i]
@@ -46,6 +82,11 @@
 
     let segment = findSegment(state, event.segmentId)
     if (!segment) {
+      /* refined/translated 是对既有段的修订（basedOnRevision 必然指向更早的
+         正文版本），不能开新段：目标段已被淘汰出窗口时直接忽略。主进程
+         foldCaptionState 用同一规则，保证 reload 前后的显示视图严格一致，
+         也避免老句子被迟到修订复活成当前行。 */
+      if (event.kind === 'refined' || event.kind === 'translated') return state
       segment = {
         segmentId: event.segmentId,
         sourceId: event.sourceId,
@@ -151,7 +192,7 @@
     return plan
   }
 
-  const api = { KEEP_SEGMENTS, createState, applyEvent, selectLines, computeLineBudget }
+  const api = { KEEP_SEGMENTS, createState, hydrateState, applyEvent, selectLines, computeLineBudget }
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api
   else root.CaptionReducer = api
