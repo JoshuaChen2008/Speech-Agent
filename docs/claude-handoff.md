@@ -412,10 +412,11 @@ npm run preview:fixtures
 
 ## 12. 明确未完成与已知缺口
 
-### 12.1 B2 还不存在
+### 12.1 B2 还不存在（B2.1 已部分关闭）
 
-- 产品目录中没有 `src/runtime/audio-host/`。
-- 没有 `MessageChannelMain` PCM 直通。
+> 状态更新（B2.1）：`src/runtime/audio-host/` 已存在——Gate 0C 拓扑的产品化控制器、专用 preload/非持久化 session、AudioWorklet 48k→16k、有界诊断采集与指标（`scripts/audio-host-smoke.js` 实机 PASS：静音与 997Hz 信号两种情形，宿主全程隐藏、0 gap）。以下仍成立：
+
+- 没有 `MessageChannelMain` PCM 直通（audio host 尚未接入 SessionCoordinator，B2.1 只有有界诊断）。
 - 没有 realtime ASR utility process、VAD、双 recognizer、背压或队列指标。
 - `sherpa-onnx-node` 未作为项目依赖安装。
 - Gate 0C spike 的 PASS 不能替代 I2 Live Caption。

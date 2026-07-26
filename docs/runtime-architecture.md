@@ -41,13 +41,14 @@
 
 ### 2.2 运行后端
 
-`audio-host`：
+`audio-host`（B2.1 已产品化到 `src/runtime/audio-host/`，MessagePort 直通待 B2.2）：
 
 - 通过 Web Media API 获取麦克风和系统音频。
 - AudioWorklet 重采样为 16kHz mono Float32。
 - 每帧附带 `sessionId/sourceId/sequence/monotonicTimestamp/sampleCount`。
 - 通过 transferable MessagePort 把 PCM 直接发送给 realtime worker。
 - 汇报 source state、队列指标和 track ended，不负责 UI。
+- B2.1 现状：非持久化 session、最小权限 handler、显式屏幕源 + `audio:'loopback'`、专用 preload、有界诊断采集与 WAV/指标落盘；纯策略在 `policy.js`/`pcm-metrics.js` 有单测，实机验证走 `scripts/audio-host-smoke.js`。
 
 `realtime-asr-worker`：
 
