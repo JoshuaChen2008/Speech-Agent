@@ -392,7 +392,7 @@ v1 明确只承诺 **OpenAI-compatible chat completions**。使用 `fetch` + 独
 | **0A 契约（完成）** | 固化 `RuntimeSnapshot / CaptionEvent / CommandResult / Capabilities` v1 和样例 fixtures；见 `src/contracts/` | validator 测试覆盖 idle、启动、监听、暂停、恢复、错误、精修、翻译；UI 接线留给视觉工作流 |
 | **0B 模型（实测完成，未通过）** | X-ASR 480/160、small-bilingual、SenseVoice 的 CLI + N-API 实测；见 `docs/validation/gate-0b.md` | 480ms 首字延迟失败；160ms RTF 失败；small-bilingual 质量/标点失败；SenseVoice 无精修净收益 |
 | **0C 音频拓扑（完成）** | 隐藏 audio host 的麦克风/回环、用户手势、AudioWorklet 48k→16k 实测；见 `docs/validation/gate-0c.md` | 回环挑战音命中、物理麦克风非静音、确定性 audioinput 探针通过；三路 16k mono PCM16 无削波/帧缺口/大跳变，批准 hidden audio host |
-| **0D 产品入口** | 确定会议/个人听写的首启预设 | 不再用一个隐藏默认值替用户决定 mic/loopback；UI 文案与默认配置一致 |
+| **0D 产品入口（完成）** | 首启提供「会议字幕 / 个人听写」双预设 | 2026-07-26 拍板：会议默认系统音频、听写默认麦克风；新安装在选择前两路都不暗中启用 |
 
 Gate 0B 的固定复现入口：
 
@@ -448,11 +448,13 @@ node scripts/gate-0b/evaluate-transcripts.js `
 
 ## 8. 待拍板
 
-### 8.1 主场景是「听会议」还是「记自己说话」？
+### 8.1 主场景是「听会议」还是「记自己说话」？（已拍板）
 
-`src/config.js` 目前默认 `mic: true, loopback: false`，暗示麦克风优先；但产品也强调会议系统声。不要继续用隐藏默认值替用户做产品选择。
+旧骨架曾默认 `mic: true, loopback: false`，暗示麦克风优先；但产品也强调会议系统声。Gate 0D 已移除这个隐藏默认值，新安装和旧配置迁移都必须先完成显式选择。
 
-**建议：首启提供「会议字幕」和「个人听写」两个预设。** 会议预设默认系统音频开启、麦克风可选；个人听写默认只开麦克风。配置保存实际 `sourceId`，UI 别名可显示为「我 / 对方」。
+**决定：首启提供「会议字幕」和「个人听写」两个预设。** 会议预设默认系统音频开启、麦克风关闭但可后续开启；个人听写默认只开麦克风。配置保存实际 `sourceId`，UI 别名可显示为「我 / 对方」。在用户完成选择前，`mic / loopback` 都为 false，不再用隐藏默认值替用户做产品决定。
+
+Gate 0B 继续坚持原门槛。默认 `Capabilities.availableProfiles = []`；只有显式设置 `LIVE_SUBTITLE_DEV_MODEL=x-asr-480ms` 时，B1 fake adapter 才发布开发期 `balanced` profile。这个开关不改变 Gate 结论，也不得进入生产默认配置。
 
 ### 8.2 接受首启下载 ~400MB 吗？
 

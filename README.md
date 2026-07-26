@@ -9,6 +9,15 @@ npm install
 npm start
 ```
 
+Gate 0B 尚未通过，因此默认启动不会把任何 ASR profile 标记为可用。仅在开发 B1 状态流时，可显式启用 480ms 候选的 fake runtime 映射：
+
+```powershell
+$env:LIVE_SUBTITLE_DEV_MODEL='x-asr-480ms'
+npm start
+```
+
+该开关只用于开发期应用骨架验证，不代表模型已通过 Gate 0B。
+
 ## 已实现（骨架）
 
 - **双窗架构**：字幕窗 + 工具条窗两个独立透明窗（穿透是整窗属性，锁定态要「字幕穿透 + 工具条可控」只能拆窗）
