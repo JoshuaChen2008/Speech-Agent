@@ -22,6 +22,7 @@ const liveRegion = document.getElementById('liveRegion')
    顶层 const 同名会直接 SyntaxError，整个 renderer 白屏。 */
 const bridge = window.shell || {
   mouseThrough () {}, dragStart () {}, dragEnd () {},
+  resizeStart () {}, resizeEnd () {},
   onLock () {}, onRec () {}, onConfig () {},
   getConfig () { return Promise.reject(new Error('no shell')) }
 }
@@ -29,22 +30,51 @@ const bridge = window.shell || {
 let locked = false
 let recording = false
 let dragging = false
+let resizing = false
 let ignoring = null
 let lastX = 0, lastY = 0
 
+// --------------------------------------------------------------------------
+// 边缘拉伸
+// 卡片内侧 8px 是拉伸带，其余是拖动区。锁定后整窗恒穿透，两者都不生效。
+// --------------------------------------------------------------------------
+const EDGE = 8
+const RESIZE_CURSOR = {
+  n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize',
+  ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize'
+}
+
+/** 指针落在卡片哪条边上；不在拉伸带内返回空串。 */
+function edgeAt (x, y) {
+  if (locked) return ''
+  const r = card.getBoundingClientRect()
+  if (x < r.left || x > r.right || y < r.top || y > r.bottom) return ''
+
+  let edge = ''
+  if (y - r.top <= EDGE) edge += 'n'
+  else if (r.bottom - y <= EDGE) edge += 's'
+  if (x - r.left <= EDGE) edge += 'w'
+  else if (r.right - x <= EDGE) edge += 'e'
+  return edge
+}
+
 /** 字幕状态与影响排版的配置。默认值与 src/config.js 的 DEFAULTS 对齐。 */
 let state = createState()
-let cfg = { bilingual: true, maxLines: 2 }
+let cfg = { bilingual: true, maxLines: 4 }
 
 // --------------------------------------------------------------------------
 // 命中测试：指针在卡片上 → 实心；否则穿透。锁定态由主进程恒穿透，这里不干预。
 // --------------------------------------------------------------------------
 function applyHit (x, y) {
-  if (dragging || locked) return
+  if (dragging || resizing || locked) return
   const el = document.elementFromPoint(x, y)
-  // 工具条“洞”内放行穿透，让工具条窗接管；洞外的卡片才算实心
+  // 工具条“洞”内放行穿透，让工具条窗接管；洞外的卡片才算实心。
+  // 但拉伸带优先于洞 —— 否则洞盖住的右上角就再也拉不动了。
+  // 洞是从卡片右上角起算的一大片，而工具条实际停靠时内缩 12px，
+  // 所以 8px 的拉伸带落在工具条按钮之外，两者不会抢事件。
   const overHole = !!(el && el.closest('.tb-hole'))
-  const solid = !overHole && !!(el && el.closest('.caption-card'))
+  const onEdge = edgeAt(x, y) !== ''
+  const solid = (onEdge || !overHole) && !!(el && el.closest('.caption-card'))
   const next = !solid
   if (next !== ignoring) {
     ignoring = next
@@ -57,7 +87,14 @@ document.addEventListener('mousemove', (e) => {
   lastX = e.clientX; lastY = e.clientY
   if (hitQueued) return
   hitQueued = true
-  requestAnimationFrame(() => { hitQueued = false; applyHit(lastX, lastY) })
+  requestAnimationFrame(() => {
+    hitQueued = false
+    applyHit(lastX, lastY)
+    if (!dragging && !resizing) {
+      const edge = edgeAt(lastX, lastY)
+      card.style.cursor = edge ? RESIZE_CURSOR[edge] : ''
+    }
+  })
 })
 
 bridge.mouseThrough(true)
@@ -68,20 +105,37 @@ ignoring = true
 // --------------------------------------------------------------------------
 card.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || locked) return
-  dragging = true
-  card.classList.add('dragging')
-  bridge.dragStart('caption')
+  const edge = edgeAt(e.clientX, e.clientY)
+  if (edge) {
+    resizing = true
+    bridge.resizeStart(edge)
+  } else {
+    dragging = true
+    card.classList.add('dragging')
+    bridge.dragStart('caption')
+  }
   try { card.setPointerCapture(e.pointerId) } catch { /* noop */ }
 })
-function endDrag () {
-  if (!dragging) return
-  dragging = false
-  card.classList.remove('dragging')
-  bridge.dragEnd()
+
+/* pointerup / pointercancel / lostpointercapture / blur 全都要收尾 ——
+   主进程那边是 8ms 定时器，漏掉任何一条取消路径都会让窗口继续跟着光标跑。 */
+function endGesture () {
+  if (resizing) {
+    resizing = false
+    bridge.resizeEnd()
+  }
+  if (dragging) {
+    dragging = false
+    card.classList.remove('dragging')
+    bridge.dragEnd()
+  }
+  card.style.cursor = ''
   applyHit(lastX, lastY)
 }
-window.addEventListener('pointerup', endDrag)
-window.addEventListener('blur', endDrag)
+window.addEventListener('pointerup', endGesture)
+window.addEventListener('pointercancel', endGesture)
+card.addEventListener('lostpointercapture', endGesture)
+window.addEventListener('blur', endGesture)
 
 // --------------------------------------------------------------------------
 // 锁定：主进程已把本窗设为恒穿透；这里只更新视觉

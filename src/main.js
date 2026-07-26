@@ -15,8 +15,13 @@ let recording = false
 const MARGIN = 20          // 字幕窗内卡片四周留白（给阴影）
 const TB_MARGIN = 16       // 工具条窗内条四周留白
 const INSET = 12           // 工具条距卡片右上角内缩
-const CAP_W = 880 + MARGIN * 2
+const CAP_W = 880 + MARGIN * 2      // 默认值；用户拉伸后由 config 覆盖
 const CAP_H = 150 + MARGIN * 2
+
+// 字幕窗尺寸上下限（DIP，含窗口留白）。
+// 高 140 刚好容得下 38px 单行 + 上下留白；420 约为 38px 六行。
+// 宽上限还会再被当前屏幕工作区封顶，见 captionLimits()。
+const CAP_LIMITS = { minW: 480, maxW: 1600, minH: 140, maxH: 420 }
 // 工具条内容宽按最坏情况固定：error 态（图标 + 说明文字 + 开始/停止/重试/下一步）。
 // 常态（idle / listening / paused …）只有 287–319，条自适应收窄，
 // 多出来的区域全透明并逐像素穿透，所以窗口宽不等于遮挡宽。
@@ -70,13 +75,35 @@ function makeOverlay (w, h, x, y, file, focusable = true) {
   return win
 }
 
+function clamp (value, min, max) {
+  return Math.min(max, Math.max(min, Math.round(value)))
+}
+
+/** 尺寸上限还要受当前屏幕工作区约束，免得拉出屏幕外。 */
+function captionLimits (win) {
+  const display = win && !win.isDestroyed()
+    ? screen.getDisplayMatching(win.getBounds())
+    : screen.getPrimaryDisplay()
+  const area = display.workAreaSize
+  return {
+    minW: CAP_LIMITS.minW,
+    maxW: Math.min(CAP_LIMITS.maxW, area.width),
+    minH: CAP_LIMITS.minH,
+    maxH: Math.min(CAP_LIMITS.maxH, area.height)
+  }
+}
+
 function createWindows () {
   const { workAreaSize } = screen.getPrimaryDisplay()
-  const cx = Math.round((workAreaSize.width - CAP_W) / 2)
+  const saved = config.get()
+  const capW = clamp(saved.captionWidth || CAP_W, CAP_LIMITS.minW, Math.min(CAP_LIMITS.maxW, workAreaSize.width))
+  const capH = clamp(saved.captionHeight || CAP_H, CAP_LIMITS.minH, Math.min(CAP_LIMITS.maxH, workAreaSize.height))
+  const cx = Math.round((workAreaSize.width - capW) / 2)
   const cy = 72
 
   // 字幕窗 focusable:false → 点击它不会把它抬到工具条之上，z 序稳定
-  captionWin = makeOverlay(CAP_W, CAP_H, cx, cy, path.join(__dirname, 'caption', 'index.html'), false)
+  captionWin = makeOverlay(capW, capH, cx, cy, path.join(__dirname, 'caption', 'index.html'), false)
+  captionWin.setResizable(true)
   toolbarWin = makeOverlay(TB_W, TB_H, cx, cy, path.join(__dirname, 'toolbar', 'index.html'), true)
 
   captionWin.webContents.on('console-message', (e) => console.log('[caption]', e.message))
@@ -88,7 +115,7 @@ function createWindows () {
   // 两窗都显示后再兜底提一次，让工具条尽量在最上（配合字幕卡“洞”双保险）
   setTimeout(raiseToolbar, 300)
 
-  captionWin.on('closed', () => { captionWin = null })
+  captionWin.on('closed', () => { stopResize(); captionWin = null })
   toolbarWin.on('closed', () => { toolbarWin = null })
 }
 
@@ -106,9 +133,9 @@ function dock () {
   toolbarWin.moveTop()   // 停靠后保持在字幕窗之上
 }
 
-// 各窗的“目标尺寸”（DIP）—— 拖动/停靠时恒定命令，杜绝漂移
+// 各窗的“目标尺寸”（DIP）—— 拖动/停靠时恒定命令，杜绝漂移。
+// 字幕窗尺寸现在由用户拉伸决定，所以读实时 bounds；否则一拖就被重置回默认值。
 function intendedSize (win) {
-  if (win === captionWin) return { width: CAP_W, height: CAP_H }
   if (win === toolbarWin) return { width: TB_W, height: TB_H }
   const b = win.getBounds()
   return { width: b.width, height: b.height }
@@ -179,10 +206,82 @@ ipcMain.on('win-drag:end', () => {
 })
 
 // ---------------------------------------------------------------------------
+// 手动拉伸（只有字幕窗可拉）
+//   透明无边框窗在 Windows 上没有可用的原生拉伸边，路子与拖动一致：
+//   渲染层判定贴边并发出意图，主进程轮询光标改 bounds。
+//   被拖的那条边跟着光标走，对面那条边钉住不动。
+// ---------------------------------------------------------------------------
+let resizeState = null
+
+function resizeTick () {
+  if (!resizeState) return
+  const { win, edge, start, origin, limits } = resizeState
+  if (win && !win.isDestroyed()) {
+    const p = screen.getCursorScreenPoint()
+    const dx = p.x - origin.x
+    const dy = p.y - origin.y
+
+    let width = start.width
+    let height = start.height
+    if (edge.includes('e')) width = start.width + dx
+    if (edge.includes('w')) width = start.width - dx
+    if (edge.includes('s')) height = start.height + dy
+    if (edge.includes('n')) height = start.height - dy
+
+    width = clamp(width, limits.minW, limits.maxW)
+    height = clamp(height, limits.minH, limits.maxH)
+
+    // 钉住对面那条边：夹紧之后也要用夹紧后的尺寸反推原点，否则到达上下限时窗口会漂移
+    const x = edge.includes('w') ? start.x + (start.width - width) : start.x
+    const y = edge.includes('n') ? start.y + (start.height - height) : start.y
+
+    win.setBounds({ x, y, width, height })
+    dock()
+  }
+  resizeState.timer = setTimeout(resizeTick, 8)
+}
+
+function stopResize () {
+  if (!resizeState) return
+  if (resizeState.timer) clearTimeout(resizeState.timer)
+  const { win } = resizeState
+  resizeState = null
+  if (win && !win.isDestroyed()) {
+    const b = win.getBounds()
+    config.set({ captionWidth: b.width, captionHeight: b.height })
+    broadcastConfig()
+  }
+}
+
+ipcMain.on('win-resize:start', (e, edge) => {
+  const sender = BrowserWindow.fromWebContents(e.sender)
+  // 只有字幕窗可拉伸；工具条宽度由内容决定，设置窗是普通窗
+  if (!sender || sender !== captionWin || sender.isDestroyed()) return
+  if (locked) return
+  if (!/^[nsew]{1,2}$/.test(edge)) return
+
+  stopResize()
+  resizeState = {
+    win: sender,
+    edge,
+    start: sender.getBounds(),
+    origin: screen.getCursorScreenPoint(),
+    limits: captionLimits(sender),
+    timer: null
+  }
+  resizeTick()
+})
+
+ipcMain.on('win-resize:end', stopResize)
+
+// ---------------------------------------------------------------------------
 // 锁定
 // ---------------------------------------------------------------------------
 function applyLock (on) {
   locked = on
+  // 锁定意味着字幕卡钉死且恒穿透，进行中的拉伸必须立刻收尾，
+  // 否则 8ms 定时器会继续按旧意图改 bounds
+  if (on) stopResize()
   if (captionWin && !captionWin.isDestroyed()) {
     if (on) captionWin.setIgnoreMouseEvents(true, { forward: true })   // 钉住 + 穿透
     // 解锁时由字幕窗自身命中测试恢复交互

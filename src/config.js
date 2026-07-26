@@ -14,9 +14,14 @@ const DEFAULTS = {
   toolbarOpacity: 0.82,  // 工具条背景不透明度 0–1.00，与字幕卡各自独立
   barColor: null,        // 字幕卡与工具条的底色 '#rrggbb'；null = 跟随深浅主题
   radius: 10,            // 圆角 px 6–16
+  // 字幕窗尺寸（DIP，含窗口留白）。用户拉伸后持久化；上下限见 main.js CAP_LIMITS。
+  captionWidth: 920,
+  captionHeight: 190,
   theme: 'auto',         // light | auto | dark
   bilingual: true,       // 双语译文
-  maxLines: 2,           // 当前句的行数上限；实际行数还受整卡高度预算约束
+  // 当前句的行数上限。实际行数由整卡高度预算决定，窗口越高分到越多行；
+  // 这个值只是用户能设的天花板。窗口可拉伸后原来的 2 会让高度失去意义，故放到 4。
+  maxLines: 4,
   // 音频源
   mic: true,           // 麦克风（我）
   loopback: false,     // 系统声回环（对方）
