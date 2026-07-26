@@ -1,6 +1,6 @@
 # Live Subtitle Agent · 视觉/UI 模型交接说明
 
-> 状态：Rev.1 · 2026-07-25  
+> 状态：Rev.2 · 2026-07-26  
 > 目的：让擅长视觉设计的模型可以独立改进界面，同时不接触音频、ASR、模型、存储和安全实现。
 
 ## 1. 核心原则
@@ -26,7 +26,7 @@
 | `src/toolbar/toolbar.css` | 工具条布局、视觉状态和动效 |
 | `src/settings/settings.html` | 设置、历史、首启等正常窗口的信息架构 |
 | `src/settings/settings.css` | 设置窗口、组件和主题 |
-| `src/ui/shared/tokens.css` | design token 单一真相（见 §2.4）；未来的共享组件样式和纯展示 helpers 同放 `src/ui/shared/` |
+| `src/ui/shared/tokens.css` | design token 单一真相（见 §2.3）；未来的共享组件样式和纯展示 helpers 同放 `src/ui/shared/` |
 | `docs/ui-design-brief.md` | 视觉规范和交接说明 |
 
 ### 2.2 需要共同评审
@@ -52,14 +52,15 @@
 - `§1 --c-*` 是调色板原始值，只允许被同文件的语义层引用，组件里不得出现。
 - `§2–§7` 是语义层：字体字阶、表面与文字、状态色、形状、阴影、动效时长。组件只消费这一层。
 - 主题在 token 层切换：`:root` 是深色默认，`:root[data-theme="light"]` 覆盖。**组件 CSS 里不应再出现 `[data-theme]` 分支**；工具条和设置窗已完全去除，字幕窗仅保留结构性规则。
-- 需要在组件里再复合透明度的 token 保持 RGB 三元组（当前只有 `--bar-bg` / `--fg` / `--text-accent`），其余是可直接赋值的完整颜色。
-- `§8` 是字幕运行时变量 `--fs / --radius / --bar-alpha / --max-lines`。这四个名字由 `caption.js` 的 `applyConfig()` 以内联样式写入 `:root`，是 UI ↔ 配置的既有约定，**重命名需连同 `caption.js` 一起提共同评审**。这里的默认值与 `src/config.js` 的 `DEFAULTS` 对齐，只用于配置到达前的首帧。
+- 需要在组件里再复合透明度的 token 保持 RGB 三元组（当前是 `--bar-bg` / `--toolbar-bg` / `--fg` / `--text-accent`），其余是可直接赋值的完整颜色。
+- `§8` 是外观运行时变量 `--fs / --radius / --bar-alpha / --toolbar-alpha`，外加自定义底色时才写入的 `--bar-bg` / `--toolbar-bg`。统一由 `src/ui/shared/appearance.js` 的 `applyAppearance()` 以内联样式写到 `:root` —— 字幕窗和工具条窗共用同一份映射，避免「留空要回退到主题默认」这类细节在两边走岔。默认值与 `src/config.js` 的 `DEFAULTS` 对齐，只用于配置到达前的首帧。
+- 行数不再走 CSS 变量：`config.maxLines` 现在是「当前句行数上限」，实际行数由整卡高度预算算出，逐槽位以 `--n` 写在元素自身上。见 `caption-reducer.js` 的 `computeLineBudget()`。
 - `§9` 是 `main.js` 尺寸常量的**只读镜像**（`--margin` / `--tb-margin`）。改这里不会移动窗口；消除双重真相是 B1 待办，在那之前两处必须同步改。
 - `§10/§11` 是 `:focus-visible` 与 `forced-colors` 基线，用零特异性 `:where()` 声明，组件可直接覆盖。
 
 新增 phase 语义色、状态样式一律加在 token 层，不要散回三套组件 CSS。
 
-### 2.5 运行状态表达（V2 已定稿）
+### 2.4 运行状态表达（V2 已定稿）
 
 决策集中在 `src/ui/shared/runtime-view.js`（`RuntimeSnapshot` → 纯视图模型），
 视觉落在 `src/ui/shared/phases.css`，可在 `src/ui/preview/` 逐 fixture 核对。
@@ -95,7 +96,7 @@
 - **`aria-pressed` 只给锁定按钮**。主按钮的可及名称在「开始 / 暂停 / 继续」间切换，再叠 pressed 语义会让屏幕阅读器读出两份互相矛盾的状态。这是对 §4.2 原文的修订。
 - **说明条不放交互控件**：字幕窗 `focusable: false`，那里的按钮键盘够不到。可执行的下一步一律由工具条承载。
 
-### 2.6 视觉模型禁止修改
+### 2.5 视觉模型禁止修改
 
 - `src/main.js` 及未来 `src/main/` 下的窗口、IPC、状态机和服务。
 - `src/preload.js` 及未来按窗口拆分的 preload。
@@ -108,7 +109,9 @@
 
 ## 3. UI 唯一依赖的运行契约
 
-字段名在 Gate 0A 固化；下列示例表达 UI 需要的信息，不代表 renderer 可以自行生成。
+字段名已在 Gate 0A 固化于 `src/contracts/`。**下面是节选示例，不是完整字段表**；权威形状以 `src/contracts/*.js` 的校验函数和 `src/contracts/fixtures/` 为准，本节仅说明 UI 依赖其中的哪些信息。
+
+实际契约比下例丰富得多，UI 重度依赖的几个字段在示例里没体现：`sessionId`、`capabilities.limitations[]`（禁用理由与下一步的唯一来源）、`model.progress`、`lastError.recoverable`。
 
 ### 3.1 RuntimeSnapshot
 
@@ -202,7 +205,7 @@ UI 规则：
 
 - `starting/stopping/recovering` 时禁止重复提交冲突命令。
 - `error` 提供可执行的下一步，而不是只变红。
-- 开始/暂停、锁定/解锁的 `aria-label`、`aria-pressed` 随状态更新。
+- 主按钮的可及名称随状态在「开始 / 暂停 / 继续」之间切换；`aria-pressed` 只给锁定按钮。修订理由见 §2.4。
 - 支持键盘、`:focus-visible` 和 `prefers-reduced-motion`。
 - 可以重新设计常态透明度，但关键操作在复杂背景上仍需可发现。
 
@@ -233,16 +236,68 @@ UI 规则：
 - UI 不把“麦克风 / 系统音频”包装成已完成真实 diarization。
 - 视觉效果不得造成持续大面积 backdrop-filter、无限动画或高频 DOM 重建。
 
-## 6. 每次视觉交接必须包含
+## 6. 当前未结的 contract request
+
+> 提出方：视觉/UI 层 · 2026-07-26 · 对应 V1–V3 已交付的部分
+> 状态：全部**未实现**。B 类随各自后端阶段自然到位；A 类不补，对应的 UI 会一直空转。
+
+### 6.1 A 类 · 阻塞型（UI 已完整实现，正在用样例数据空转）
+
+| # | 需要 | UI 现状 | 落地后 UI 要改什么 |
+|---|---|---|---|
+| **A1** | `onSnapshot(cb)` + `getSnapshot()`，推送 `RuntimeSnapshot` | `toolbar.js` 从 `fixtures.generated.js` 取样例，用 `rec` 布尔在 `idle`/`listening` 间二选一，条上打「演示」标记 | 删 `IS_DEMO`、把 `currentSnapshot()` 换成快照变量。其余不动 |
+| **A2** | `command(name)` → `Promise<CommandResult>`，覆盖 `start / pause / resume / stop / retry` | `recToggle()` 是无回执的布尔翻转，**三个语义不同的意图全映射到同一个 toggle** | 把 `SUPPORTED` 映射改成 `command()`，并消费回执渲染 pending / 失败 |
+| **A3** | `onCaption(cb)`，推送 `CaptionEvent` | `caption.js` 自造假流，但产出的已是真形状的 `CaptionEvent` | 删掉假流，把 `ingest()` 挂到通道上。reducer / 行数预算 / live region 全不动 |
+
+关于 A2 的两点：
+
+- `resume ≠ start`。有真会话状态后，把两者压成同一个 toggle 会产生错误的状态迁移。
+- UI **刻意不做乐观更新**（§8 要求任何"看起来已成功"都能追溯到后端）。所以在回执到位前，点击的表现是"看起来没反应"——这是设计使然，不是 bug。
+
+**A4（半个请求）**：`onOverlap(cb)` 推送工具条实际停靠矩形（字幕窗 CSS px）。目前 `caption.css` 的 `.tb-hole` 硬编码 `584 × 64`，按最坏情况多盖。需要后端加一条只读通道，但驱动方是 UI。见 [subtitle-window.md §3](subtitle-window.md)。
+
+### 6.2 B 类 · 已实现但没有对应能力的入口
+
+> 本表「对应后端阶段」列里的 B1/B3/B4 指 PLAN §7.3 的后端阶段，不是请求编号。
+
+以下按钮已渲染成禁用态，`title` / `aria-label` 写明「骨架阶段尚未接入，B1 之后可用」——不做无声失败的按钮。
+
+| 入口 | 需要 | 对应后端阶段 |
+|---|---|---|
+| `stop` | stop 命令 | B1 |
+| `retry` | retry 命令 | B1 |
+| `history` | 可聚焦的历史窗 + JSONL 读取 | B3 |
+| `open-model-manager` | 资源管理页 | B4 |
+| `request-permission` | 权限请求入口 | Gate 0C / B2 |
+
+四个 `nextAction` 值里只有 `open-settings` 是通的。
+
+### 6.3 C 类 · UI 对后端的隐含期待
+
+**这五条不满足时的症状是「东西不见了」而不是报错**，所以必须写下来。
+
+| # | 期待 | 违反后的表现 |
+|---|---|---|
+| C1 | `capabilities.limitations[].message` 是可直接展示的完整句子 | UI 原样渲染、不做 code → 文案映射。只发 code 的话按钮会禁用但**说不出原因** |
+| C2 | `nextAction` 保持 4 值闭集（`retry` / `open-settings` / `open-model-manager` / `request-permission`） | `runtime-view.js` 查表命不中返回 `null`，**按钮直接消失且不报错**。用户在错误态会失去唯一出口 |
+| C3 | `lastError.message` 与 `limitations[].message` 写成短句 | 工具条内联说明有 **160px 上限**（约 12 个汉字），超出打省略号 |
+| C4 | 同一 `segmentId` 的 `revision` 随文本单调递增 | reducer 按 `(revision, sequence)` 字典序判新，旧事件一律丢弃。**复用 revision 发不同文本，新文本会被静默丢掉** |
+| C5 | `sources[].label` 是最终展示文案 | 直接进 UI。PLAN §5.2 提到用户可别名为「我 / 对方」，但目前没有别名配置键，label 完全由后端决定 |
+
+### 6.4 建议顺序
+
+**A1 → A3 → A2。** A1 让工具条脱离演示模式（改动量最小、收益最大），A3 让字幕脱离假流，A2 补齐命令回执的完整反馈。B 类跟随各自后端阶段。
+
+## 7. 每次视觉交接必须包含
 
 1. 修改过的 UI 文件列表。
 2. 覆盖的 RuntimeSnapshot/CaptionEvent fixtures 列表。
 3. 状态矩阵截图或说明：idle、starting、listening、paused、recovering、error。
 4. 深浅色、高对比度、键盘 focus、reduced motion 检查结果。
-5. 需要壳层/后端新增的 contract requests；没有则明确写“无”。
+5. 需要壳层/后端新增的 contract requests；没有则明确写“无”。当前未结的见 §6。
 6. 若改变窗口尺寸或工具条位置，给出新的 layout contract 数值和理由，等待壳层所有者确认后再合并。
 
-## 7. 验收底线
+## 8. 验收底线
 
 - 视觉模型只看本文件和 contract fixtures，就能完成 UI，不必阅读 ASR 实现。
 - 后端替换模型、provider 或存储实现时，UI 不需要改 DOM/CSS。

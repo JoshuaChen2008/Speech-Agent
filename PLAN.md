@@ -431,6 +431,10 @@ node scripts/gate-0b/evaluate-transcripts.js `
 | **B4 资源与 AI** | ModelManager、CredentialStore、AiGateway | 下载可续传/校验/原子安装；key 不进 renderer；AI 失败不影响本地字幕 |
 | **B5 分发** | electron-builder、NSIS、首启资源检查 | 干净机器安装可用；native module 正确 unpack；模型缺失可恢复 |
 
+> 视觉/UI 层已交付 V1–V2，并留下一份**未结的 contract request 清单**：见 [docs/ui-design-brief.md §6](docs/ui-design-brief.md)。
+> 其中 A 类（`RuntimeSnapshot` 推送、命令回执、`CaptionEvent` 推送）属于 B1/B2，不补则工具条和字幕会一直跑在契约样例与假流上；
+> C 类是 UI 对后端的隐含期待，违反时的症状是「界面上东西不见了」而不是报错，B1 实现 SessionCoordinator 时值得先过一遍。
+
 ### 7.4 Integration Gates
 
 | Gate | 汇合内容 | 验收标准 |
