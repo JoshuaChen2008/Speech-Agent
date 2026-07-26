@@ -50,13 +50,14 @@
 - 汇报 source state、队列指标和 track ended，不负责 UI。
 - B2.1 现状：非持久化 session、最小权限 handler、显式屏幕源 + `audio:'loopback'`、专用 preload、有界诊断采集与 WAV/指标落盘；纯策略在 `policy.js`/`pcm-metrics.js` 有单测，实机验证走 `scripts/audio-host-smoke.js`。
 
-`realtime-asr-worker`：
+`realtime-asr-worker`（B2.3 骨架已落地：`src/runtime/realtime-worker/`）：
 
 - 每个 source 独立 OnlineRecognizer/VAD/stream。
 - 维护有界 PCM 队列和分段 buffer。
 - 产生 partial/final CaptionEvent。
 - v1 以 VAD speech-end 为主要分段依据，recognizer endpoint 只处理超长句兜底。
 - 不加载 SenseVoice，不执行网络或 DOM 工作。
+- B2.3 现状：`worker-core.js` 纯逻辑管线（帧→VAD→adapter→contract-valid 事件，段前缓冲防句首截断）；recognizer 经 `recognizer-adapter.js` 注册表解析（默认 `null`——Gate 0B 未过不产任何文本）；`EnergyVad` 为占位，silero 随模型轨替换；`realtime-worker.js` 沿用 B2.2 credit 协议；`worker-host.js` 在主进程边界做契约校验后路由 caption/stats/exit。
 
 `refine-worker`：
 
@@ -161,7 +162,7 @@ B2.2 落地的流控协议（`src/runtime/audio-host/frame-flow.js` + `src/runti
 
 - 生产端在所有 source 注册完毕后于端口上宣告 `{type:'ready', sessionId, sourceIds}`；消费端此刻才逐源授予初始 credit（更早授信会在 source 注册前到达而被丢弃——不能依赖端口队列时序）。同一端口世代内按 `session:source` 去重初始授信；新端口世代重新授信。
 - 每发一帧消耗一个 credit；credit 用尽帧进入 `maxQueueMs` 限界队列，超预算丢最旧（保新弃旧，丢帧以 sequence 缺口对消费端可见）。
-- 消费端回授消息为 `{type:'credits', sourceId, count, consumed}`：`count` 是新授信，`consumed` 是自上次以来实际消费的帧数（显式确认，供在途损失核算）。
+- 消费端回授消息为 `{type:'credits', sourceId, count, consumed}`：`count` 是新授信，`consumed` 是自上次以来实际消费的帧数（显式确认，供在途损失核算）。帧一经送达即视为消费——字段畸形的帧同样回授 credit（流控不能被坏帧饿死）；未知 `sourceId` 的帧不回授（配置失配应当以流控饥饿显性化）。
 - 端口可中途替换（worker 重建，仅限采集已进入 capturing 阶段）：宿主关旧端口、作废旧 credit、把「已发送未确认」帧数计入 `lostInFlightFrames`（上界——发进死端口的帧不产生 sequence 缺口，只能在这里可观测），在新端口重发 ready；队列帧在新消费端授信后继续流动。
 - 实测限制：renderer DOM MessagePort → MessagePortMain 桥丢弃带 ArrayBuffer transferable 的消息，帧用结构化克隆发送（≈6.4KB/帧，可忽略）。
 

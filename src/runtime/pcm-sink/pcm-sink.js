@@ -104,25 +104,29 @@ function onPortMessage (message) {
     return
   }
   if (message?.type !== 'frame') return
-  /* 只统计 configure 声明过的 source；帧字段做最小校验，防伪造消息
-     撑爆 Map 或污染计数。 */
+  /* 只认 configure 声明过的 source：未知 sourceId 不回授 credit——那是
+     配置失配，应当以流控饥饿显性化，不能静默吞掉。 */
   const sourceId = String(message.sourceId || '')
   if (!state.config.sourceIds.includes(sourceId)) return
-  if (!Number.isInteger(message.sequence) || message.sequence < 0) return
-  if (!Number.isInteger(message.sampleCount) || message.sampleCount <= 0) return
   const stats = sourceStats(sourceId)
-  if (stats.firstSequence === null) stats.firstSequence = message.sequence
-  if (stats.lastSequence !== null && message.sequence > stats.lastSequence + 1) {
-    stats.sequenceGapCount += 1
-    stats.missedFrames += message.sequence - stats.lastSequence - 1
-  }
-  stats.lastSequence = message.sequence
-  stats.framesReceived += 1
-  stats.samplesReceived += message.sampleCount
-  state.totalFrames += 1
 
-  if (state.config.crashAfterFrames > 0 && state.totalFrames >= state.config.crashAfterFrames) {
-    process.exit(13)
+  /* canonical 语义：帧一经送达即视为消费——字段畸形的帧也回授 credit，
+     否则生产端流控被坏帧永久饿死；统计只收合法帧。realtime worker 同。 */
+  const fieldsValid = Number.isInteger(message.sequence) && message.sequence >= 0 &&
+    Number.isInteger(message.sampleCount) && message.sampleCount > 0
+  if (fieldsValid) {
+    if (stats.firstSequence === null) stats.firstSequence = message.sequence
+    if (stats.lastSequence !== null && message.sequence > stats.lastSequence + 1) {
+      stats.sequenceGapCount += 1
+      stats.missedFrames += message.sequence - stats.lastSequence - 1
+    }
+    stats.lastSequence = message.sequence
+    stats.framesReceived += 1
+    stats.samplesReceived += message.sampleCount
+    state.totalFrames += 1
+    if (state.config.crashAfterFrames > 0 && state.totalFrames >= state.config.crashAfterFrames) {
+      process.exit(13)
+    }
   }
   stats.creditDebt += 1
   if (state.config.consumeDelayMs === 0 && stats.creditDebt >= state.config.creditBatch) {

@@ -418,8 +418,10 @@ npm run preview:fixtures
 >
 > 状态更新（B2.2）：`MessageChannelMain` PCM 直通已落地——host → port → `pcm-sink` utility process，credit 背压（ready 握手）、`FrameFlow` 有界队列与丢帧/缺口指标、`replacePort` 中途换消费端（`scripts/pcm-transport-smoke.js` 三模式实机 PASS）。帧用结构化克隆：renderer→MessagePortMain 桥会丢弃带 ArrayBuffer transferable 的消息（PLAN §4.2 修正）。以下仍成立：
 
-- 没有 realtime ASR utility process、VAD、双 recognizer（`pcm-sink` 只是协议原型，B2.3 的 worker 取代它）。
-- audio host 尚未接入 SessionCoordinator。
+> 状态更新（B2.3）：realtime worker 骨架已落地（`src/runtime/realtime-worker/`）——per-source VAD 分段、可替换 recognizer adapter（默认 `null`，不产文本）、B2.2 credit 协议接线、`RealtimeWorkerHost` 主进程宿主；worker 事件经真实 `SessionCoordinator.acceptCaption` 门的集成测试通过。
+
+- recognizer adapter 只有 `null`：没有真实模型、没有 silero VAD（EnergyVad 是占位），模型轨通过基准后经 `registerRecognizerAdapter` 注册。
+- audio host / realtime worker 尚未接入 SessionCoordinator（I2 接线）。
 - `sherpa-onnx-node` 未作为项目依赖安装。
 - Gate 0C spike 的 PASS 不能替代 I2 Live Caption。
 
