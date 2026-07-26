@@ -185,9 +185,12 @@ function reflectRuntime (snapshot) {
   buttons.forEach((button) => {
     button.disabled = !profiles.includes(PROFILE_BY_LATENCY[button.dataset.val])
   })
+  /* 文案跟随快照，不硬编码 gate 状态：无档位时优先展示后端给出的
+     limitation 原句（如「模型未就绪」），有档位时按契约说明能力来源。 */
+  const limitation = snapshot.capabilities.limitations.find((item) => item.capability === 'start')
   asrNote.textContent = profiles.length === 0
-    ? 'Gate 0B 尚未通过，当前没有可用识别档位。'
-    : '开发开关已启用均衡档；这不代表 Gate 0B 已通过。'
+    ? (limitation ? limitation.message : '当前没有可用识别档位。')
+    : '识别档位由本机已就绪的模型决定，不可用的档位已停用。'
 }
 
 async function init () {

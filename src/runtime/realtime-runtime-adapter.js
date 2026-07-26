@@ -10,9 +10,11 @@
    PCM 不经过主进程；caption 从 worker 边界（已契约校验）直达 coordinator 的
    acceptCaption 路径。
 
-   Gate 0B 仍是 FAIL：recognizer profile 经 profileMap 显式映射，默认全部映射
-   到 'null'（消费帧、不产文本）。因此本 adapter 在模型批准前是【结构模式】——
-   状态机、采集、背压、恢复全真，但没有任何字幕文本，也绝不伪造。 */
+   recognizer profile 经 profileMap 显式映射，默认全部映射到 'null'（消费帧、
+   不产文本）——即【结构模式】：状态机、采集、背压、恢复全真，零字幕、绝不
+   伪造。Gate 0B 2026-07-27 改判后，主进程可注入 options.recognizer（模型
+   目录等，由 model-resolver 解析）并把批准 profile 映射到真实 recognizer
+   名；此时 worker configure 会同步载入模型再回执。 */
 
 const { AudioHostController } = require('./audio-host/audio-host-controller')
 const { RealtimeWorkerHost } = require('./realtime-worker/worker-host')
@@ -33,6 +35,8 @@ class RealtimeRuntimeAdapter {
     this.profileMap = options.profileMap || DEFAULT_PROFILE_MAP
     this.maxQueueMs = options.maxQueueMs || 2000
     this.vadOptions = options.vadOptions
+    /* 真实模型选项（{kind, modelDir, numThreads, modelType}），null = 结构模式。 */
+    this.recognizer = options.recognizer || null
     this.hostFactory = options.hostFactory || (() => new AudioHostController({ electron: this.electron }))
     this.workerFactory = options.workerFactory || (() => new RealtimeWorkerHost({ electron: this.electron }))
     this.captionHandler = null
@@ -123,6 +127,8 @@ class RealtimeRuntimeAdapter {
         sessionId: session.sessionId,
         sourceIds: session.sourceIds,
         recognizerProfile,
+        /* null profile 绝不携带模型选项：结构模式的 worker 不加载原生模块。 */
+        recognizer: recognizerProfile !== 'null' && this.recognizer ? this.recognizer : undefined,
         vadOptions: this.vadOptions,
         attempt: resume ? resume.attempt : 0,
         sequenceBases: resume ? resume.sourceSequences : {}

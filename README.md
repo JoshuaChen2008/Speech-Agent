@@ -1,22 +1,27 @@
 # Live Subtitle Agent
 
-Win11 实时字幕 Agent。当前已完成 **B1 应用骨架**：透明字幕条、工具栏、点击穿透、亚克力设置窗、首启双预设、权威会话状态机和 fake runtime 已接通；真实 ASR 仍待 B2 接入。
+Win11 实时字幕 Agent。当前已完成 **B1 应用骨架 + B2 实时链路主干**：透明字幕条、工具栏、点击穿透、亚克力设置窗、首启双预设、权威会话状态机、隐藏采集窗（回环/麦克风）、realtime worker，以及 Gate 0B 改判批准的 **160ms 真实模型**——本机模型就位时启动即可出真字幕。
 
 ## 运行
+
+仅支持 Windows x64：依赖 `sherpa-onnx-win-x64`（平台门控的 N-API 预编译包），其他平台 `npm install` 会以 EBADPLATFORM 失败。
 
 ```bash
 npm install
 npm start
 ```
 
-Gate 0B 已于 2026-07-27 正式改判通过（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修；门槛重设理由与适用条件留档于 [docs/validation/gate-0b.md](docs/validation/gate-0b.md) 改判节），但真实 recognizer 尚未接入 realtime worker，默认启动仍不发布任何 ASR profile。开发 B1 状态流时可显式启用 fake runtime 映射：
+Gate 0B 已于 2026-07-27 正式改判通过（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修；门槛重设理由与适用条件留档于 [docs/validation/gate-0b.md](docs/validation/gate-0b.md) 改判节），真实 recognizer 已接入 realtime worker：
+
+- **模型就位**（`LIVE_SUBTITLE_MODEL_DIR` 环境变量、`userData/models/x-asr-160ms/`，或仓库开发布局 `models/gate-0b/extracted/x-asr-160/`，见 `src/main/services/model-resolver.js`）→ 启动发布 `fast` profile，工具条开始录制即出**真字幕**。
+- **模型缺失** → capabilities 保持不可用（fail closed），不伪造。
+
+开发 B1 状态流仍可显式启用 fake runtime 映射（不加载真实模型，且会绕过真实模型路径）：
 
 ```powershell
 $env:LIVE_SUBTITLE_DEV_MODEL='x-asr-480ms'
 npm start
 ```
-
-该开关只用于开发期应用骨架验证，不加载真实模型。
 
 ## 已实现（骨架）
 
@@ -68,7 +73,7 @@ src/
 
 ## 下一步
 
-见 [PLAN.md](PLAN.md)（Rev.3）：Gate 0A/0B（改判）/0C/0D 与 B1 已完成，B2.0–B2.3 与 I2.1 结构接线已落地；当前主线是把改判批准的 160ms 模型接入 realtime worker 的 recognizer adapter，让真实字幕上屏。
+见 [PLAN.md](PLAN.md)（Rev.3）：Gate 0A/0B（改判）/0C/0D、B1、B2.0–B2.3 与真实模型接线已完成（实机 smoke：语料外放 → 回环 → 真字幕，CER 0.071）；接下来是 silero VAD 替换 EnergyVad 占位、B3 精修 worker 与历史 UI、I2 完整指标验收。
 
 - 窗口壳和交互不变量：[docs/subtitle-window.md](docs/subtitle-window.md)
 - 视觉/UI 模型交接：[docs/ui-design-brief.md](docs/ui-design-brief.md)
@@ -78,7 +83,7 @@ src/
 
 - 亚克力设置窗依赖 Win11（Build 22000+）；旧系统会回退为普通窗口。
 - `transparent` 窗口开 DevTools 时透明会临时失效，属 Electron 已知限制。
-- 音频源配置与识别 profile 已由 Capabilities/会话状态约束，但真实 recognizer 尚未接入；默认 profile 为空，模型批准（Gate 0B 改判）不等于集成完成，不会伪装可用。
+- 识别 profile 由 Capabilities/会话状态约束：本机模型就位才发布 `fast`，缺失即不可用，不伪装。当前 VAD 是能量阈值占位（EnergyVad）：分段粒度偏碎、固定阈值对系统音量敏感（音量过低可能漏出字），silero 替换在计划内。
 
 ## 关键技术决策
 

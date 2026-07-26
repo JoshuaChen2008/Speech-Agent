@@ -57,7 +57,8 @@
 - 产生 partial/final CaptionEvent。
 - v1 以 VAD speech-end 为主要分段依据，recognizer endpoint 只处理超长句兜底。
 - 不加载 SenseVoice，不执行网络或 DOM 工作。
-- B2.3 现状：`worker-core.js` 纯逻辑管线（帧→VAD→adapter→contract-valid 事件，段前缓冲防句首截断）；recognizer 经 `recognizer-adapter.js` 注册表解析（默认 `null`——Gate 0B 未过不产任何文本）；`EnergyVad` 为占位，silero 随模型轨替换；`realtime-worker.js` 沿用 B2.2 credit 协议；`worker-host.js` 在主进程边界做契约校验后路由 caption/stats/exit。
+- B2.3 现状：`worker-core.js` 纯逻辑管线（帧→VAD→adapter→contract-valid 事件，段前缓冲防句首截断）；recognizer 经 `recognizer-adapter.js` 注册表解析（默认 `null`，只验证结构不产文本）；`realtime-worker.js` 沿用 B2.2 credit 协议；`worker-host.js` 在主进程边界做契约校验后路由 caption/stats/exit。
+- 模型轨现状（2026-07-27，Gate 0B 改判后）：`sherpa-recognizer.js` 实现真实 adapter——OnlineRecognizer 按 modelDir+numThreads 模块级共享（encoder 只载入一次），stream per-segment，endSegment 喂 0.4s 静音尾 + `inputFinished` 冲刷 lookahead 后废弃 stream；configure 携带 recognizer 选项时先同步载入模型再回 `configured`（宿主 configure 超时对真实模型放宽到 30s），null profile 不 require 原生模块。主进程 `model-resolver.js` 解析已批准模型（env → userData → 仓库开发布局，四件套缺一即 null → fail closed）。`EnergyVad` 仍为占位：分段偏碎（0.5s 停顿即切、可能切字）且固定 RMS 阈值随系统音量漂移（音量过低可能漏出字），silero 替换是模型轨的下一优先。
 
 `refine-worker`：
 

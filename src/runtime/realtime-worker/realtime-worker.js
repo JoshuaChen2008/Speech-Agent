@@ -1,11 +1,12 @@
 'use strict'
 
-/* realtime worker（utilityProcess 入口，B2.3）。
+/* realtime worker（utilityProcess 入口，B2.3；模型轨 M4 后接真实 recognizer）。
    接线职责：B2.2 credit 协议（ready → 初始授信 → 窗口式回授带 consumed
    确认）+ 帧路由到 WorkerCore + 事件/指标经 parentPort 低频上报。
    推理与分段逻辑全部在 worker-core.js（可脱离 Electron 测试）。
-   Gate 0B 未通过：默认 recognizer profile 是 'null'，只验证结构，
-   不产出任何字幕文本。 */
+   默认 recognizer profile 仍是 'null'（只验证结构，不产文本）；configure
+   携带 recognizer 选项时才注册真实 sherpa adapter——模型在回 'configured'
+   前同步载入，宿主的 configure 超时因此覆盖模型载入。 */
 
 const { WorkerCore } = require('./worker-core')
 
@@ -159,6 +160,12 @@ process.parentPort.on('message', (event) => {
       if (Number.isInteger(message[key]) && message[key] > 0) config[key] = message[key]
     }
     try {
+      /* 真实模型：先注册（内部同步载入模型），后建 WorkerCore；失败走
+         configure-failed。null profile 不 require 原生模块。 */
+      if (config.recognizerProfile !== 'null' && message.recognizer && typeof message.recognizer === 'object') {
+        const { registerSherpaRecognizer } = require('./sherpa-recognizer')
+        registerSherpaRecognizer(config.recognizerProfile, message.recognizer)
+      }
       state.core = new WorkerCore({
         sessionId: config.sessionId,
         sourceIds: config.sourceIds,

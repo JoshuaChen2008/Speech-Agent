@@ -17,9 +17,11 @@
          本段（不发 final）。
      adapter.dispose(): void
 
-   Gate 0B 结论是 FAIL：默认注册表里只有 NullRecognizerAdapter——它消费帧
-   但永不产出文本。worker 因此可以完成 frame/VAD/queue 结构验证，而不伪造
-   任何"看起来成功"的字幕。真实模型 adapter 由模型验证轨在通过基准后注册。 */
+   默认注册表里只有 NullRecognizerAdapter——它消费帧但永不产出文本，
+   worker 因此可以完成 frame/VAD/queue 结构验证而不伪造任何字幕。
+   真实模型 adapter（sherpa-recognizer.js，Gate 0B 2026-07-27 改判批准）
+   在 worker configure 携带 recognizer 选项时经 registerRecognizerAdapter
+   注册；没有选项就保持 null——绝不隐式加载模型。 */
 
 class NullRecognizerAdapter {
   constructor () {

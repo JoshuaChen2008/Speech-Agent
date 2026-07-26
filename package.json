@@ -12,5 +12,9 @@
   "license": "MIT",
   "devDependencies": {
     "electron": "^43.2.0"
+  },
+  "dependencies": {
+    "sherpa-onnx-node": "^1.13.4",
+    "sherpa-onnx-win-x64": "^1.13.4"
   }
 }

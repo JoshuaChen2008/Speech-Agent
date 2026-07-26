@@ -9,15 +9,16 @@
 
 初版 PLAN 把 UI 排在 ASR 之后；目前 Gate 0A/0C/0D、视觉 V1–V2 和 B1 应用骨架已完成，真实音频/ASR 链路从 B2 开始。
 
-| 已完成（骨架） | 未开始 |
+| 已完成 | 未开始 |
 |---|---|
-| 三窗架构（字幕 / 工具条 / 设置）、停靠与脱离 | **音频链路**（0 行） |
-| 锁定穿透、逐像素命中测试、主进程手动拖动 | **ASR worker**（0 行，`sherpa-onnx-node` 未安装） |
-| 配置持久化（`userData/config.json`）+ 三窗实时联动 | 历史面板（`src/toolbar/toolbar.js` 的 `history` 分支仍是 TODO） |
+| 三窗架构（字幕 / 工具条 / 设置）、停靠与脱离 | 历史面板（`src/toolbar/toolbar.js` 的 `history` 分支仍是 TODO） |
+| 锁定穿透、逐像素命中测试、主进程手动拖动 | refine worker（二遍精修，模型已批准未接线） |
+| 配置持久化（`userData/config.json`）+ 三窗实时联动 | silero VAD（EnergyVad 占位仍在服役） |
 | 亚克力设置窗（显示 / 音频源 / 语音识别 / 关于 四个 pane） | 模型下载与资源管理、AI 层、打包分发 |
-| B1 `SessionCoordinator`、状态机、per-window preload 与 contract-valid fake adapter | B2 真实 audio host、ASR worker 与模型接入 |
+| B1 `SessionCoordinator`、状态机、per-window preload 与 contract-valid fake adapter | 双路（mic+loopback）并发 soak 与 I2 完整指标 |
+| B2 audio host、PCM 直通/背压、realtime worker、**真实 160ms 模型**（`sherpa-onnx-node` 已安装） | |
 
-**Gate 0B 已于 2026-07-27 正式改判通过**（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修，门槛重设留档于 `docs/validation/gate-0b.md` 改判节）。当前主线是把批准的模型接入 realtime worker 的 recognizer adapter，让真实字幕经 I2 链路上屏；弱机与打包版仍需 B5/I4 复测后才发布 profile。
+**Gate 0B 已于 2026-07-27 正式改判通过**（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修，门槛重设留档于 `docs/validation/gate-0b.md` 改判节），**真实模型已接入 realtime worker**（sherpa recognizer adapter + model-resolver + 组合根接线；实机 smoke：语料外放 → 回环 → 真字幕 CER 0.071，`scripts/i2-live-caption-smoke.js`）。当前主线：silero VAD 替换 EnergyVad 占位（分段偏碎、固定阈值对系统音量敏感）、B3 精修 worker、I2 完整指标验收；弱机与打包版仍需 B5/I4 复测后才发布 profile。
 
 ### 0.1 三层职责与协作边界
 
@@ -45,7 +46,7 @@
 | 项 | 选型 | 状态 |
 |---|---|---|
 | ASR 引擎 | **sherpa-onnx v1.13.4**（2026-07-07） | 2026-07-25 复核：仍是 latest |
-| 接入方式 | **`sherpa-onnx-node` 1.13.4** + `sherpa-onnx-win-x64` 1.13.4（N-API 预编译） | 复核一致，未安装 |
+| 接入方式 | **`sherpa-onnx-node` 1.13.4** + `sherpa-onnx-win-x64` 1.13.4（N-API 预编译） | 已安装为依赖（2026-07-27） |
 | 硬件后端 | **CPU**（不上 CUDA） | 定 |
 | 一遍流式模型 | **x-asr-160ms-…-zh-en-punct-int8-2026-06-05**（fast，numThreads=4） | **2026-07-27 改判批准**（重设 RTF 门槛留档；480ms 首 partial 架构性超线已封闭） |
 | 二遍精修模型 | **x-asr-zipformer-…-zh-en-punct-int8-2026-06-03**（离线同家族） | **2026-07-27 改判批准**（替换 SenseVoice：CER 零退化、标点 F1 1.0、RTF 0.027） |
@@ -432,7 +433,7 @@ node scripts/gate-0b/evaluate-transcripts.js `
 | **B2.1 audio host 产品化（完成）** | Gate 0C 拓扑提取到 `src/runtime/audio-host/`：非持久化 session、最小权限 handler、专用 preload、AudioWorklet 48k→16k 1600 samples/100ms、有界诊断采集与指标落盘（`scripts/audio-host-smoke.js`） | 纯逻辑（resampler/assembler/metrics/policy）自动测试；实机 smoke 静音与 997Hz 信号两种情形 PASS（宿主全程隐藏、userGesture、0 gap、时钟覆盖 1.0）；未接 SessionCoordinator |
 | **B2.2 PCM 直通与背压（完成）** | `MessageChannelMain` 直通：host → port → `pcm-sink` utility process；credit 背压（ready 握手 + 窗口式授信）、`FrameFlow` 有界队列（maxQueueMs 丢旧保新）、低频指标控制通道、`replacePort` 中途换消费端 | 实机 smoke 三模式 PASS：normal 40/40/40 帧 0 丢 0 缺口；slow 队列峰值恰好压在预算上、29 丢帧且 sink 观察到对应缺口；crash-replace 消费端 exit(13) 后替换 sink 无缝续流。PCM 不经主进程 JS；帧用结构化克隆（transferable 被桥丢弃，见 §4.2 修正） |
 | **B2.3 realtime worker 骨架（完成）** | `src/runtime/realtime-worker/`：per-source 管线（帧→VAD 分段→recognizer adapter→contract-valid partial/final）、可替换 adapter 注册表（默认 `null`——Gate 0B 未过绝不产文本）、EnergyVad 占位（silero 随模型轨替换）、utilityProcess 入口沿用 B2.2 credit 协议、main 侧 `RealtimeWorkerHost`（边界契约校验） | 纯逻辑单测覆盖 VAD/分段/双源/缺口指标/坏帧；worker 事件全量通过真实 `SessionCoordinator.acceptCaption` 门（集成测试）；实机 smoke 传输与零字幕不变量 PASS，VAD 实音分段因系统静音判 inconclusive（有声复跑即补） |
-| **B2 实时链路** | audio host、MessagePort、双路 realtime worker、VAD/背压 | 真 partial/final 替掉假流；拖动不掉帧；队列深度和丢帧可观测。剩余：真实模型 adapter（模型轨）、audio host/worker 接入 SessionCoordinator（I2） |
+| **B2 实时链路** | audio host、MessagePort、双路 realtime worker、VAD/背压 | 真 partial/final 替掉假流；拖动不掉帧；队列深度和丢帧可观测。**模型轨已落地（2026-07-27）**：`sherpa-recognizer.js`（共享 OnlineRecognizer、per-segment stream、0.4s 尾静音冲刷）经 configure 注册；`model-resolver.js` 解析本机模型（env/userData/仓库布局，缺失 fail closed）；组合根默认接真实链路。实机 smoke `i2-live-caption-smoke.js` PASS（语料外放→回环→真字幕 CER 0.071）。剩余：silero VAD（EnergyVad 分段偏碎且固定阈值随系统音量漂移）、双路并发 soak、拖动/掉帧指标 |
 | **B3 精修与会话** | refine worker、事件式 JSONL、恢复与导出 | 精修不阻塞实时流；坏尾行可恢复；SRT 时间轴稳定。**B3.1 已落地（2026-07-27）**：append-only JSONL 事件档（Windows-safe 文件名、排他创建防混档）、坏尾行/坏中间行区分恢复、按 revision 折叠、txt/md/srt 导出（毫秒进位正确、换行注入压平），main 接线为会话自动开/封档。剩余：refine worker、历史 UI |
 | **B4 资源与 AI** | ModelManager、CredentialStore、AiGateway | 下载可续传/校验/原子安装；key 不进 renderer；AI 失败不影响本地字幕 |
 | **B5 分发** | electron-builder、NSIS、首启资源检查 | 干净机器安装可用；native module 正确 unpack；模型缺失可恢复 |
@@ -445,7 +446,7 @@ node scripts/gate-0b/evaluate-transcripts.js `
 | Gate | 汇合内容 | 验收标准 |
 |---|---|---|
 | **I1 Contract（完成）** | UI fake adapter ↔ 后端 contract fixtures | coordinator、fake adapter、renderer reducer 和 IPC 共享 v1 validator；默认/dev smoke 均通过 |
-| **I2 Live Caption** | 音频 → realtime ASR → SessionCoordinator → 字幕 UI | P50/P95 延迟、CPU、内存、队列深度达标。**I2.1 结构接线已完成（2026-07-27）**：`RealtimeRuntimeAdapter` 实现 B1 冻结接口组合 host/worker/port，coordinator 新增 adapter `onError` 故障入口（§12.4 关闭）；实机 smoke 全相位通过（含 worker 击杀→error→retry→listening 恢复），null recognizer 零字幕。完整 I2 PASS 仍以模型批准为前提 |
+| **I2 Live Caption** | 音频 → realtime ASR → SessionCoordinator → 字幕 UI | P50/P95 延迟、CPU、内存、队列深度达标。**I2.1 结构接线已完成（2026-07-27）**：`RealtimeRuntimeAdapter` 实现 B1 冻结接口组合 host/worker/port，coordinator 新增 adapter `onError` 故障入口（§12.4 关闭）；实机 smoke 全相位通过（含 worker 击杀→error→retry→listening 恢复），null recognizer 零字幕。**I2.2 真字幕已通（2026-07-27）**：模型批准 + sherpa adapter 接线后，`i2-live-caption-smoke.js` 实机 PASS——受控语料外放 → loopback → 真实 160ms 模型 → 6 partial + 4 final 达 coordinator 订阅者，拼接 CER 0.071，全相位干净。完整 I2 PASS 仍需 P50/P95 延迟、CPU/内存、队列深度与拖动不掉帧的指标化验收 |
 | **I3 Durable Session** | final/refined/translation → JSONL → 历史/导出 | 连续 2 小时不卡；崩溃恢复不丢已 final 的段落 |
 | **I4 Packaged App** | 首启、下载、权限、ASR、AI、退出清理 | 在干净 Win11 机器完成完整用户旅程 |
 

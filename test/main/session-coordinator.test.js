@@ -48,7 +48,7 @@ function makeCoordinator (options = {}) {
   return { adapter, coordinator, replacementAdapters }
 }
 
-test('Gate 0B default remains unavailable with no profiles', async (t) => {
+test('no resolved model keeps the coordinator unavailable with no profiles', async (t) => {
   const { coordinator } = makeCoordinator({ runtimeOptions: NO_MODEL, configuration: MEETING })
   t.after(() => coordinator.dispose())
 
@@ -57,11 +57,11 @@ test('Gate 0B default remains unavailable with no profiles', async (t) => {
   assert.equal(snapshot.model.state, 'missing')
   assert.deepEqual(snapshot.capabilities.availableProfiles, [])
   assert.equal(snapshot.capabilities.canStart, false)
-  assert.equal(snapshot.capabilities.limitations[0].code, 'GATE_0B_NOT_PASSED')
+  assert.equal(snapshot.capabilities.limitations[0].code, 'MODEL_NOT_READY')
 
   const result = await coordinator.command('start')
   assert.equal(result.ok, false)
-  assert.equal(result.code, 'GATE_0B_NOT_PASSED')
+  assert.equal(result.code, 'MODEL_NOT_READY')
   assert.equal(coordinator.getSnapshot().revision, snapshot.revision)
 })
 

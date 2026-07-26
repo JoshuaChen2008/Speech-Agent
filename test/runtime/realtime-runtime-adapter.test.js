@@ -47,15 +47,20 @@ function fakeHost () {
   return host
 }
 
-function makeAdapter () {
+function makeAdapterWith (extraOptions = {}) {
   const worker = fakeWorker()
   const host = fakeHost()
   const adapter = new RealtimeRuntimeAdapter({
     electron: { MessageChannelMain: function () { this.port1 = { id: 'p1' }; this.port2 = { id: 'p2' } } },
     workerFactory: () => worker,
-    hostFactory: () => host
+    hostFactory: () => host,
+    ...extraOptions
   })
   return { adapter, worker, host }
+}
+
+function makeAdapter () {
+  return makeAdapterWith()
 }
 
 const START_CONTEXT = {
@@ -64,6 +69,26 @@ const START_CONTEXT = {
   profile: 'balanced',
   resume: { attempt: 2, sourceSequences: { mic: 9 } }
 }
+
+test('recognizer options reach the worker only for non-null profile mappings', async () => {
+  const recognizer = { kind: 'sherpa-online-transducer', modelDir: 'model-dir', numThreads: 4, modelType: 'zipformer2' }
+
+  const real = makeAdapterWith({ profileMap: { fast: 'x-asr-160ms' }, recognizer })
+  await real.adapter.start({ sessionId: 'session-1', sourceIds: ['mic'], profile: 'fast' })
+  const realStart = real.worker.calls.find(([name]) => name === 'start')[1]
+  assert.equal(realStart.recognizerProfile, 'x-asr-160ms')
+  assert.deepEqual(realStart.recognizer, recognizer)
+  real.adapter.dispose()
+
+  /* 结构模式：即使注入了 recognizer 选项，null profile 也不得携带它——
+     结构 worker 不加载原生模块。 */
+  const structural = makeAdapterWith({ recognizer })
+  await structural.adapter.start(START_CONTEXT)
+  const structuralStart = structural.worker.calls.find(([name]) => name === 'start')[1]
+  assert.equal(structuralStart.recognizerProfile, 'null')
+  assert.equal(structuralStart.recognizer, undefined)
+  structural.adapter.dispose()
+})
 
 test('start orchestrates worker-first wiring and maps the resume cursor', async () => {
   const { adapter, worker, host } = makeAdapter()

@@ -575,8 +575,9 @@ class SessionCoordinator {
         selected,
         limitation: {
           capability: 'start',
-          code: 'GATE_0B_NOT_PASSED',
-          message: '模型尚未达标',
+          /* 改判（M4）后语义：不再是「模型不达标」，而是「已批准模型未就位」。 */
+          code: 'MODEL_NOT_READY',
+          message: '模型未就绪',
           nextAction: 'open-model-manager'
         }
       }

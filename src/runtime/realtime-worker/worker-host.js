@@ -74,9 +74,14 @@ class RealtimeWorkerHost {
       if (this.child === child) this.child = null
       this.emit(this.exitListeners, { code })
     })
+    /* 真实 recognizer 的 configure 包含同步模型载入（int8 encoder 秒级），
+       超时相应放宽；结构/null 路径维持快失败。 */
+    const configureTimeoutMs = Number.isInteger(config?.configureTimeoutMs)
+      ? config.configureTimeoutMs
+      : (config?.recognizer ? 30000 : 5000)
     try {
       await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('worker configure timed out')), 5000)
+        const timer = setTimeout(() => reject(new Error('worker configure timed out')), configureTimeoutMs)
         const onExit = (code) => {
           clearTimeout(timer)
           reject(new Error(`worker exited before configuring (code ${code})`))

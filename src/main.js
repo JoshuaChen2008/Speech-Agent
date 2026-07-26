@@ -17,6 +17,7 @@ const {
   isRoleAllowed
 } = require('./main/ipc/access-policy')
 const { resolveRuntimeOptions } = require('./main/runtime-options')
+const { resolveApprovedRealtimeModel } = require('./main/services/model-resolver')
 const { FakeRuntimeAdapter } = require('./main/session/fake-runtime-adapter')
 const { RealtimeRuntimeAdapter } = require('./runtime/realtime-runtime-adapter')
 const { SessionCoordinator, failure, success } = require('./main/session/session-coordinator')
@@ -351,18 +352,47 @@ function applyLock (on) {
 }
 
 function createCoordinator () {
-  const runtimeOptions = resolveRuntimeOptions()
-  if (runtimeOptions.warning) console.warn(`[runtime] ${runtimeOptions.warning}`)
+  const devOptions = resolveRuntimeOptions()
+  if (devOptions.warning) console.warn(`[runtime] ${devOptions.warning}`)
   /* I2.1 结构模式（显式 dev 开关，默认关闭）：真实采集窗 + realtime worker，
      recognizer 为 null——状态机/背压/恢复全真，但不产任何字幕文本。
-     仍需 LIVE_SUBTITLE_DEV_MODEL 才能 start；Gate 0B 姿态不变。 */
+     仍需 LIVE_SUBTITLE_DEV_MODEL 才能 start。 */
   const structuralRuntime = process.env.LIVE_SUBTITLE_DEV_RUNTIME === 'structural'
   if (structuralRuntime) {
     console.warn('[runtime] structural runtime enabled: real capture and worker, null recognizer, no captions')
   }
+  /* 真实模型（Gate 0B 2026-07-27 改判批准的 fast/x-asr-160ms）：显式 dev
+     开关都未设且本机模型四件套就位时启用。找不到模型 → capabilities 维持
+     不可用（fail closed），与改判前行为一致。 */
+  const realModel = (!devOptions.modelOverride && !structuralRuntime)
+    ? resolveApprovedRealtimeModel({ userDataDir: app.getPath('userData') })
+    : null
+  let adapterFactory
+  let runtimeOptions = devOptions
+  let transitionTimeoutMs
+  if (realModel) {
+    console.warn(`[runtime] approved realtime model ready: ${realModel.id} (${realModel.profile})`)
+    adapterFactory = () => new RealtimeRuntimeAdapter({
+      profileMap: { [realModel.profile]: realModel.id },
+      recognizer: {
+        kind: realModel.kind,
+        modelDir: realModel.modelDir,
+        numThreads: realModel.numThreads,
+        modelType: realModel.modelType
+      }
+    })
+    runtimeOptions = {
+      modelOverride: { id: realModel.id, profile: realModel.profile, developmentOnly: false }
+    }
+    /* start 包含 worker 内同步模型载入（秒级）；默认 5s 迁移超时会误判。 */
+    transitionTimeoutMs = 30000
+  } else {
+    adapterFactory = () => structuralRuntime ? new RealtimeRuntimeAdapter() : new FakeRuntimeAdapter()
+  }
   coordinator = new SessionCoordinator({
-    adapterFactory: () => structuralRuntime ? new RealtimeRuntimeAdapter() : new FakeRuntimeAdapter(),
+    adapterFactory,
     runtimeOptions,
+    transitionTimeoutMs,
     configuration: config.get(),
     onListenerError: (error) => logError('runtime.listener', error)
   })
