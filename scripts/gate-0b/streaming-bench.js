@@ -8,7 +8,7 @@ const sherpa = require('sherpa-onnx-node')
 const { percentile } = require('./metrics')
 
 function parseArguments (argv) {
-  const result = { wavs: [], runs: 5, chunkMs: 40, pace: true, output: null, modelDir: null, modelType: 'zipformer2' }
+  const result = { wavs: [], runs: 5, chunkMs: 40, pace: true, output: null, modelDir: null, modelType: 'zipformer2', numThreads: 3 }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
     const value = argv[index + 1]
@@ -19,6 +19,7 @@ function parseArguments (argv) {
       case '--chunk-ms': result.chunkMs = Number(value); index += 1; break
       case '--output': result.output = value; index += 1; break
       case '--model-type': result.modelType = value; index += 1; break
+      case '--num-threads': result.numThreads = Number(value); index += 1; break
       case '--no-pace': result.pace = false; break
       default: throw new Error(`Unknown argument: ${arg}`)
     }
@@ -27,6 +28,10 @@ function parseArguments (argv) {
   if (result.wavs.length === 0) throw new Error('at least one --wav is required')
   if (!Number.isInteger(result.runs) || result.runs < 1) throw new Error('--runs must be a positive integer')
   if (!Number.isFinite(result.chunkMs) || result.chunkMs <= 0) throw new Error('--chunk-ms must be positive')
+  /* 测量方法学不变：线程数只是运行时候选配置，进入报告披露。 */
+  if (!Number.isInteger(result.numThreads) || result.numThreads < 1 || result.numThreads > 16) {
+    throw new Error('--num-threads must be an integer between 1 and 16')
+  }
   return result
 }
 
@@ -59,7 +64,7 @@ function findModelFile (modelDir, preferredName, fallbackPattern) {
   return path.join(modelDir, matches[0])
 }
 
-function createRecognizer (modelDir, modelType) {
+function createRecognizer (modelDir, modelType, numThreads) {
   return new sherpa.OnlineRecognizer({
     featConfig: { sampleRate: 16000, featureDim: 80 },
     modelConfig: {
@@ -69,7 +74,7 @@ function createRecognizer (modelDir, modelType) {
         joiner: findModelFile(modelDir, 'joiner.int8.onnx', /^joiner.*\.int8\.onnx$/)
       },
       tokens: path.join(modelDir, 'tokens.txt'),
-      numThreads: 3,
+      numThreads,
       provider: 'cpu',
       modelType
     },
@@ -134,7 +139,7 @@ async function main () {
   const options = parseArguments(process.argv.slice(2))
   const modelDir = path.resolve(options.modelDir)
   const modelLoadStarted = performance.now()
-  const recognizer = createRecognizer(modelDir, options.modelType)
+  const recognizer = createRecognizer(modelDir, options.modelType, options.numThreads)
   const modelLoadMs = performance.now() - modelLoadStarted
   const cases = []
 
@@ -174,7 +179,7 @@ async function main () {
     engineVersion: require('sherpa-onnx-node/package.json').version,
     model: path.basename(modelDir),
     modelType: options.modelType,
-    numThreads: 3,
+    numThreads: options.numThreads,
     chunkMs: options.chunkMs,
     paced: options.pace,
     runsPerCase: options.runs,

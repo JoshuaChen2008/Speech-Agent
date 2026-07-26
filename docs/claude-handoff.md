@@ -522,6 +522,8 @@ B2 前必须补回归测试，并明确 recovery cursor contract：保持同一 
 
 ### B2.4 模型验证并行轨
 
+> 状态更新（M2，2026-07-26）：本地两候选的参数扫描完成（`docs/validation/gate-0b-m2-sweep.md`），失败被证实为架构/算力性不可达（480ms 首 partial 的 980ms 音频下限；160ms RTF 最优 0.47），调参路线诚实封闭。残余选项（有意识重设门槛 / nemotron-3.5 453MB 实测 / 等上游）待产品拍板。精修候选切换到离线 X-ASR int8（131MB，M3）。
+
 - 优先查找/优化能真正过原门槛的候选。
 - 继续使用同一 corpus、RTF、first-partial、内容和标点标准全量复测。
 - 不准用 dev override 代替模型批准。
