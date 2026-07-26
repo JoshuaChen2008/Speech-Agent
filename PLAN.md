@@ -433,7 +433,7 @@ node scripts/gate-0b/evaluate-transcripts.js `
 | **B2.2 PCM 直通与背压（完成）** | `MessageChannelMain` 直通：host → port → `pcm-sink` utility process；credit 背压（ready 握手 + 窗口式授信）、`FrameFlow` 有界队列（maxQueueMs 丢旧保新）、低频指标控制通道、`replacePort` 中途换消费端 | 实机 smoke 三模式 PASS：normal 40/40/40 帧 0 丢 0 缺口；slow 队列峰值恰好压在预算上、29 丢帧且 sink 观察到对应缺口；crash-replace 消费端 exit(13) 后替换 sink 无缝续流。PCM 不经主进程 JS；帧用结构化克隆（transferable 被桥丢弃，见 §4.2 修正） |
 | **B2.3 realtime worker 骨架（完成）** | `src/runtime/realtime-worker/`：per-source 管线（帧→VAD 分段→recognizer adapter→contract-valid partial/final）、可替换 adapter 注册表（默认 `null`——Gate 0B 未过绝不产文本）、EnergyVad 占位（silero 随模型轨替换）、utilityProcess 入口沿用 B2.2 credit 协议、main 侧 `RealtimeWorkerHost`（边界契约校验） | 纯逻辑单测覆盖 VAD/分段/双源/缺口指标/坏帧；worker 事件全量通过真实 `SessionCoordinator.acceptCaption` 门（集成测试）；实机 smoke 传输与零字幕不变量 PASS，VAD 实音分段因系统静音判 inconclusive（有声复跑即补） |
 | **B2 实时链路** | audio host、MessagePort、双路 realtime worker、VAD/背压 | 真 partial/final 替掉假流；拖动不掉帧；队列深度和丢帧可观测。剩余：真实模型 adapter（模型轨）、audio host/worker 接入 SessionCoordinator（I2） |
-| **B3 精修与会话** | refine worker、事件式 JSONL、恢复与导出 | 精修不阻塞实时流；坏尾行可恢复；SRT 时间轴稳定 |
+| **B3 精修与会话** | refine worker、事件式 JSONL、恢复与导出 | 精修不阻塞实时流；坏尾行可恢复；SRT 时间轴稳定。**B3.1 已落地（2026-07-27）**：append-only JSONL 事件档（Windows-safe 文件名、排他创建防混档）、坏尾行/坏中间行区分恢复、按 revision 折叠、txt/md/srt 导出（毫秒进位正确、换行注入压平），main 接线为会话自动开/封档。剩余：refine worker、历史 UI |
 | **B4 资源与 AI** | ModelManager、CredentialStore、AiGateway | 下载可续传/校验/原子安装；key 不进 renderer；AI 失败不影响本地字幕 |
 | **B5 分发** | electron-builder、NSIS、首启资源检查 | 干净机器安装可用；native module 正确 unpack；模型缺失可恢复 |
 

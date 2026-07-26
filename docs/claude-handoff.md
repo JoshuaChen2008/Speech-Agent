@@ -85,7 +85,7 @@ f6eaa6d  chore: establish project baseline
 | B1 应用骨架 | 已提交 / 恢复缺口已关闭 | ConfigStore、SessionCoordinator、fake adapter、per-window preload、IPC 已接线；caption bootstrap 与 replacement cursor 已由 B2.0 关闭 |
 | I1 Contract | 现有路径已接通 | UI/fake adapter/coordinator/IPC 共用 v1 契约；renderer reload 的 caption state 尚未形成完整闭环 |
 | B2 实时链路 | 未实现 | Gate 0C spike 尚未产品化；没有 audio host/ASR utility process |
-| B3 精修/会话 | 未实现 | 没有 refine worker、JSONL、恢复、导出 |
+| B3 精修/会话 | B3.1 已落地 | JSONL 事件档 + 坏尾行恢复 + 折叠 + txt/md/srt 导出已接线（`src/main/services/transcript-store.js`）；refine worker 与历史 UI 未实现 |
 | B4 资源/AI | 未实现 | 没有 ModelManager、CredentialStore、AiGateway |
 | B5 分发 | 未实现 | 没有 electron-builder/NSIS/干净机验收 |
 

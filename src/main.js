@@ -20,6 +20,9 @@ const { resolveRuntimeOptions } = require('./main/runtime-options')
 const { FakeRuntimeAdapter } = require('./main/session/fake-runtime-adapter')
 const { RealtimeRuntimeAdapter } = require('./runtime/realtime-runtime-adapter')
 const { SessionCoordinator, failure, success } = require('./main/session/session-coordinator')
+const { TranscriptStore } = require('./main/services/transcript-store')
+
+/** @type {TranscriptStore | null} */ let transcriptStore = null
 
 /** @type {BrowserWindow | null} */ let captionWin = null
 /** @type {BrowserWindow | null} */ let toolbarWin = null
@@ -365,6 +368,32 @@ function createCoordinator () {
   })
   coordinator.onSnapshot(broadcastSnapshot)
   coordinator.onCaption((event) => send(captionWin, CHANNELS.CAPTION_EVENT, event))
+
+  /* B3.1：事件式 JSONL 转写档。会话出现即开档、回到无会话即封档；
+     只收定稿事件（final/refined/translated），partial 是显示态不入档。 */
+  transcriptStore = new TranscriptStore({
+    directory: path.join(app.getPath('userData'), 'sessions'),
+    onError: (error) => logError('transcript', error)
+  })
+  let transcriptSessionId = null
+  coordinator.onSnapshot((snapshot) => {
+    if (snapshot.sessionId && snapshot.sessionId !== transcriptSessionId) {
+      /* 开档成功才记账：失败时同会话的下一次 snapshot 天然构成重试，
+         整场定稿不会因一次磁盘抖动静默丢弃。 */
+      try {
+        transcriptStore.openSession(snapshot.sessionId)
+        transcriptSessionId = snapshot.sessionId
+      } catch (error) {
+        logError('transcript.open', error)
+      }
+    } else if (!snapshot.sessionId && transcriptSessionId) {
+      transcriptSessionId = null
+      transcriptStore.closeSession()
+    }
+  })
+  coordinator.onCaption((event) => {
+    if (event.kind !== 'partial') transcriptStore.append(event)
+  })
 }
 
 async function updateConfig (patch) {
@@ -481,6 +510,7 @@ app.on('will-quit', () => {
   stopDrag(null, true)
   stopResize(null, true)
   if (coordinator) coordinator.dispose()
+  if (transcriptStore) transcriptStore.dispose()
 })
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
