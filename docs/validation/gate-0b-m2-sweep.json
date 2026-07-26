@@ -1,0 +1,242 @@
+{
+  "schemaVersion": 1,
+  "kind": "gate-0b-m2-sweep-summary",
+  "sourceReport": "gate-0b-m2-sweep.md",
+  "reproduce": "../../scripts/gate-0b/README.md",
+  "note": "Raw sweep outputs stay in the ignored runs directory; this summary is path-free and linked by rawOutputSha256.",
+  "x160CliThreadSweep": {
+    "model": "sherpa-onnx-x-asr-160ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
+    "provider": "cpu",
+    "runs": [
+      {
+        "id": "x160-official-t3",
+        "numThreads": 3,
+        "sampleRtf": [
+          0.35,
+          0.49,
+          0.51,
+          0.38
+        ],
+        "maxRtf": 0.51,
+        "rawOutputSha256": "1fb47de80877c16674a4624cd64f550ad32eba8699c9cc3fb8ea4f05ba81ea41"
+      },
+      {
+        "id": "x160-controlled-t3",
+        "numThreads": 3,
+        "sampleRtf": [
+          0.51,
+          0.54,
+          0.32,
+          0.42
+        ],
+        "maxRtf": 0.54,
+        "rawOutputSha256": "75cf509c8373659cbbf29ae61feb0e8f9eb7a6532e491693cd7b24b66b483e75"
+      },
+      {
+        "id": "x160-official-t4",
+        "numThreads": 4,
+        "sampleRtf": [
+          0.32,
+          0.45,
+          0.47,
+          0.35
+        ],
+        "maxRtf": 0.47,
+        "rawOutputSha256": "0be049d7f780812b6b0b63d16340df2b846047072480dee569ba2b9b423a913a"
+      },
+      {
+        "id": "x160-controlled-t4",
+        "numThreads": 4,
+        "sampleRtf": [
+          0.48,
+          0.5,
+          0.31,
+          0.41
+        ],
+        "maxRtf": 0.5,
+        "rawOutputSha256": "eb099df9713474af5bc85a24c5664bb6fba51ecb2a374e6d9440b816cd9a10d8"
+      },
+      {
+        "id": "x160-official-t6",
+        "numThreads": 6,
+        "sampleRtf": [
+          0.35,
+          0.49,
+          0.52,
+          0.38
+        ],
+        "maxRtf": 0.52,
+        "rawOutputSha256": "e07100a05827295c3ae03fa06f158ccd66025dd2aa99219518df4fd968ee3ac9"
+      },
+      {
+        "id": "x160-controlled-t6",
+        "numThreads": 6,
+        "sampleRtf": [
+          0.54,
+          0.57,
+          0.35,
+          0.46
+        ],
+        "maxRtf": 0.57,
+        "rawOutputSha256": "7c422458642f6d99e7102d65e74713ebfb39afe6ccfbf9100f36ef059673607a"
+      },
+      {
+        "id": "x160-official-t8",
+        "numThreads": 8,
+        "sampleRtf": [
+          0.51,
+          0.71,
+          0.73,
+          0.55
+        ],
+        "maxRtf": 0.73,
+        "rawOutputSha256": "582392aaedfc59e7b540014a4bfa6c6ec9f2ce1f4c5c17e86c73e4b81da34807"
+      },
+      {
+        "id": "x160-controlled-t8",
+        "numThreads": 8,
+        "sampleRtf": [
+          0.87,
+          0.88,
+          0.56,
+          0.74
+        ],
+        "maxRtf": 0.88,
+        "rawOutputSha256": "44c7ffde8495ab350bb647fa7734e840208f8a9b91cf2d14950ab9b1c8e43768"
+      }
+    ]
+  },
+  "x480FirstPartialSweep": {
+    "model": "sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
+    "engine": "sherpa-onnx-node",
+    "engineVersion": "1.13.4",
+    "chunkMs": 40,
+    "paced": true,
+    "runsPerCase": 5,
+    "configs": [
+      {
+        "numThreads": 3,
+        "cases": [
+          {
+            "id": "zh-en-code-switch",
+            "firstPartialLatencyP50Ms": 1019.1684999999998,
+            "firstPartialLatencyP95Ms": 1028.0232000000033,
+            "audioNeededAfterSpeechOnsetMsMax": 980
+          },
+          {
+            "id": "zh-roadmap",
+            "firstPartialLatencyP50Ms": 1015.9789999999994,
+            "firstPartialLatencyP95Ms": 1022.6641000000018,
+            "audioNeededAfterSpeechOnsetMsMax": 980
+          },
+          {
+            "id": "zh-date-itn",
+            "firstPartialLatencyP50Ms": 995.108899999992,
+            "firstPartialLatencyP95Ms": 1006.1506999999983,
+            "audioNeededAfterSpeechOnsetMsMax": 960
+          },
+          {
+            "id": "en-onboarding",
+            "firstPartialLatencyP50Ms": 560.6751999999979,
+            "firstPartialLatencyP95Ms": 563.5527000000002,
+            "audioNeededAfterSpeechOnsetMsMax": 520
+          }
+        ]
+      },
+      {
+        "numThreads": 4,
+        "cases": [
+          {
+            "id": "zh-en-code-switch",
+            "firstPartialLatencyP50Ms": 1019.1906999999992,
+            "firstPartialLatencyP95Ms": 1020.4458999999988,
+            "audioNeededAfterSpeechOnsetMsMax": 980
+          },
+          {
+            "id": "zh-roadmap",
+            "firstPartialLatencyP50Ms": 1013.6458999999959,
+            "firstPartialLatencyP95Ms": 1019.8552000000054,
+            "audioNeededAfterSpeechOnsetMsMax": 980
+          },
+          {
+            "id": "zh-date-itn",
+            "firstPartialLatencyP50Ms": 991.5369999999966,
+            "firstPartialLatencyP95Ms": 995.8608000000095,
+            "audioNeededAfterSpeechOnsetMsMax": 960
+          },
+          {
+            "id": "en-onboarding",
+            "firstPartialLatencyP50Ms": 555.085699999996,
+            "firstPartialLatencyP95Ms": 569.0063000000082,
+            "audioNeededAfterSpeechOnsetMsMax": 520
+          }
+        ]
+      },
+      {
+        "numThreads": 6,
+        "cases": [
+          {
+            "id": "zh-en-code-switch",
+            "firstPartialLatencyP50Ms": 1016.828300000001,
+            "firstPartialLatencyP95Ms": 1025.8379000000023,
+            "audioNeededAfterSpeechOnsetMsMax": 980
+          },
+          {
+            "id": "zh-roadmap",
+            "firstPartialLatencyP50Ms": 1019.6546999999991,
+            "firstPartialLatencyP95Ms": 1026.936999999998,
+            "audioNeededAfterSpeechOnsetMsMax": 980
+          },
+          {
+            "id": "zh-date-itn",
+            "firstPartialLatencyP50Ms": 991.4845000000059,
+            "firstPartialLatencyP95Ms": 1010.1901999999973,
+            "audioNeededAfterSpeechOnsetMsMax": 960
+          },
+          {
+            "id": "en-onboarding",
+            "firstPartialLatencyP50Ms": 560.5782000000036,
+            "firstPartialLatencyP95Ms": 563.8179999999993,
+            "audioNeededAfterSpeechOnsetMsMax": 520
+          }
+        ]
+      }
+    ]
+  },
+  "x160FirstPartialBench": {
+    "measuredDuring": "M4 re-judgment (2026-07-27)",
+    "model": "sherpa-onnx-x-asr-160ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
+    "engine": "sherpa-onnx-node",
+    "engineVersion": "1.13.4",
+    "chunkMs": 40,
+    "paced": true,
+    "runsPerCase": 5,
+    "numThreads": 4,
+    "cases": [
+      {
+        "id": "zh-roadmap",
+        "firstPartialLatencyP50Ms": 848.0921999999991,
+        "firstPartialLatencyP95Ms": 855.7528999999995,
+        "audioNeededAfterSpeechOnsetMsMax": 820
+      },
+      {
+        "id": "en-onboarding",
+        "firstPartialLatencyP50Ms": 706.3353999999999,
+        "firstPartialLatencyP95Ms": 709.0234999999993,
+        "audioNeededAfterSpeechOnsetMsMax": 680
+      },
+      {
+        "id": "zh-en-code-switch",
+        "firstPartialLatencyP50Ms": 690.6803999999975,
+        "firstPartialLatencyP95Ms": 697.4774999999936,
+        "audioNeededAfterSpeechOnsetMsMax": 660
+      },
+      {
+        "id": "zh-date-itn",
+        "firstPartialLatencyP50Ms": 992.439200000008,
+        "firstPartialLatencyP95Ms": 1000.3025000000052,
+        "audioNeededAfterSpeechOnsetMsMax": 960
+      }
+    ]
+  }
+}

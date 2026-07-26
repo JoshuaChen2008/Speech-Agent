@@ -54,3 +54,26 @@ node scripts/gate-0b/evaluate-transcripts.js `
   --observations docs/validation/gate-0b-cli-observations.json `
   --output docs/validation/gate-0b-controlled-metrics.json
 ```
+
+## Reproduce the re-judgment evidence (M2/M3)
+
+The 2026-07-27 re-judgment in `gate-0b-results.json` is backed by two tracked, path-free evidence files. Regenerate the M2 sweep summary from the ignored raw sweep outputs:
+
+```powershell
+node scripts/gate-0b/summarize-m2-sweep.js `
+  --sweep-dir models/gate-0b/runs/m2-sweep `
+  --output docs/validation/gate-0b-m2-sweep.json
+```
+
+Regenerate the M3 offline-refinement evaluation (runs the offline CLI, so it needs the extracted `x-asr-offline` model and the M2 sweep file for the x160-t4 baseline):
+
+```powershell
+node scripts/gate-0b/m3-offline-refine.js `
+  --asset-root models/gate-0b `
+  --observations docs/validation/gate-0b-cli-observations.json `
+  --sweep models/gate-0b/runs/m2-sweep/x160-cli-threads.json `
+  --raw-dir models/gate-0b/runs/m3 `
+  --output docs/validation/gate-0b-m3-evaluation.json
+```
+
+`test/gate-0b/metrics.test.js` asserts that the re-judgment decision numbers equal these files, so a regeneration that changes results fails the suite instead of silently drifting.

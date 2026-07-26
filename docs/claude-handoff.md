@@ -128,12 +128,14 @@ node --test --experimental-test-isolation=none test/contracts/contracts.test.js
 
 ## 6. Gate 0B：模型实测已完成，但 Gate 未通过
 
+> 状态更新（M4，2026-07-27）：产品负责人正式改判——RTF 门槛在写明机器基线与理由后重设为 `<0.60`，批准 `x-asr-160ms`（fast profile，numThreads=4）与离线 X-ASR 精修（替换 SenseVoice）。`gate-0b-results.json` 现为 `approvedProfiles: ["fast"]`、`approvedRefinement: true`，判定与 tracked 证据（`gate-0b-m2-sweep.json` / `gate-0b-m3-evaluation.json`）由 `test/gate-0b/metrics.test.js` 强制一致。原判定、原门槛与下文描述作为历史保留；弱机/打包版仍需 B5/I4 复测后才发布 profile。
+
 - 提交：`c462708`
 - 报告：[`docs/validation/gate-0b.md`](validation/gate-0b.md)
 - 结构化结果：[`docs/validation/gate-0b-results.json`](validation/gate-0b-results.json)
 - 完整复现说明：[`scripts/gate-0b/README.md`](../scripts/gate-0b/README.md)
 
-当前硬结论：
+原判定硬结论（历史，已被上方 M4 改判取代）：
 
 ```text
 approvedProfiles: []

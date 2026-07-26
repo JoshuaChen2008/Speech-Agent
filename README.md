@@ -9,14 +9,14 @@ npm install
 npm start
 ```
 
-Gate 0B 尚未通过，因此默认启动不会把任何 ASR profile 标记为可用。仅在开发 B1 状态流时，可显式启用 480ms 候选的 fake runtime 映射：
+Gate 0B 已于 2026-07-27 正式改判通过（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修；门槛重设理由与适用条件留档于 [docs/validation/gate-0b.md](docs/validation/gate-0b.md) 改判节），但真实 recognizer 尚未接入 realtime worker，默认启动仍不发布任何 ASR profile。开发 B1 状态流时可显式启用 fake runtime 映射：
 
 ```powershell
 $env:LIVE_SUBTITLE_DEV_MODEL='x-asr-480ms'
 npm start
 ```
 
-该开关只用于开发期应用骨架验证，不代表模型已通过 Gate 0B。
+该开关只用于开发期应用骨架验证，不加载真实模型。
 
 ## 已实现（骨架）
 
@@ -68,7 +68,7 @@ src/
 
 ## 下一步
 
-见 [PLAN.md](PLAN.md)（Rev.3）：Gate 0A/0C/0D 与 B1 已完成；下一阶段推进 B2 音频/实时链路，并在独立验证轨道继续寻找真正通过 Gate 0B 的模型候选。
+见 [PLAN.md](PLAN.md)（Rev.3）：Gate 0A/0B（改判）/0C/0D 与 B1 已完成，B2.0–B2.3 与 I2.1 结构接线已落地；当前主线是把改判批准的 160ms 模型接入 realtime worker 的 recognizer adapter，让真实字幕上屏。
 
 - 窗口壳和交互不变量：[docs/subtitle-window.md](docs/subtitle-window.md)
 - 视觉/UI 模型交接：[docs/ui-design-brief.md](docs/ui-design-brief.md)
@@ -78,7 +78,7 @@ src/
 
 - 亚克力设置窗依赖 Win11（Build 22000+）；旧系统会回退为普通窗口。
 - `transparent` 窗口开 DevTools 时透明会临时失效，属 Electron 已知限制。
-- 音频源配置与识别 profile 已由 Capabilities/会话状态约束，但真实采集和 ASR 尚未接入；默认 profile 为空，不会把 Gate 0B 失败模型伪装成可用。
+- 音频源配置与识别 profile 已由 Capabilities/会话状态约束，但真实 recognizer 尚未接入；默认 profile 为空，模型批准（Gate 0B 改判）不等于集成完成，不会伪装可用。
 
 ## 关键技术决策
 

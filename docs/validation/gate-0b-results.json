@@ -2,8 +2,9 @@
   "schemaVersion": 1,
   "gate": "0B",
   "executedAt": "2026-07-25",
-  "result": "fail",
-  "summary": "No tested realtime/refinement combination satisfies every frozen Gate 0B criterion.",
+  "result": "pass-rejudged",
+  "originalResult": "fail",
+  "summary": "No tested combination satisfies every originally frozen criterion (see criteria); the explicit 2026-07-27 product re-judgment revises the realtime RTF gate on a documented machine baseline and approves x-asr-160ms realtime plus offline X-ASR refinement (see rejudgment).",
   "evidence": {
     "cliObservations": "gate-0b-cli-observations.json",
     "controlledMetrics": "gate-0b-controlled-metrics.json",
@@ -45,6 +46,13 @@
       "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-x-asr-160ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2",
       "bytes": 133898007,
       "sha256": "8a6fca056e1a342546edd78be4d50274e2c01898e7b8ae8fc336f6410319c399"
+    },
+    {
+      "id": "x-asr-offline",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03.tar.bz2",
+      "bytes": 136396739,
+      "sha256": "5d02c36d7b44e886b7c8f0d8e051f8713acab96c264bb6ef9e718be39a6a2224",
+      "note": "Offline non-streaming X-ASR transducer; refinement candidate evaluated in M3 and approved by the 2026-07-27 re-judgment."
     },
     {
       "id": "sense-voice",
@@ -118,11 +126,79 @@
     "languageTagObservedForAllControlledCases": "<|yue|>",
     "result": "fail-no-measurable-benefit"
   },
+  "rejudgment": {
+    "date": "2026-07-27",
+    "approvedBy": "product-owner",
+    "recordedIn": ["gate-0b.md", "gate-0b-m2-sweep.md", "gate-0b-m3-refinement.md"],
+    "context": "The M2 sweep proved both frozen failures are architectural, not tunable: x-asr-480ms needs 960-980 ms of audio before its first token on the Chinese/code-switch cases regardless of threads, and x-asr-160ms bottoms out at RTF 0.47 official / 0.50 controlled at numThreads=4. The product owner explicitly re-set the RTF gate instead of silently relaxing it.",
+    "realtime": {
+      "approvedCandidate": "x-asr-160ms",
+      "profile": "fast",
+      "runtimeConfig": { "numThreads": 4, "provider": "cpu" },
+      "revisedCriteria": {
+        "realtimeRtf": {
+          "original": "< 0.35 per official sample",
+          "revised": "< 0.60 per official sample on the approval machine baseline",
+          "rationale": "The 0.35 line was margin for weak machines plus dual-source capture plus refinement headroom. On the documented baseline (Intel Core Ultra 9 185H, 16 cores / 22 threads) the measured worst case is 0.50; dual-source concurrency uses 2x4 of 22 threads and the approved offline refinement adds only RTF 0.027. 0.60 keeps a measured margin on this baseline; weaker machines are NOT covered by this approval and must not receive the profile without their own benchmark."
+        },
+        "firstPartialLatency": {
+          "target": "P95 < 1000 ms from detected speech onset",
+          "result": "pass-with-marginal-case",
+          "evidence": "Full-corpus t=4 bench measured 2026-07-27 during this re-judgment (x160FirstPartialBench in gate-0b-m2-sweep.json): code-switch P95 697.5 ms, en-onboarding 709.0 ms, zh-roadmap 855.8 ms all pass; zh-date-itn P95 1000.3 ms (P50 992.4 ms) rides the frozen line because the utterance needs exactly 960 ms of audio before the first token in all 5 runs - the same utterance-dependent floor x-asr-480ms shows on this case. Not rounded to pass; recorded as a marginal case.",
+          "marginalCase": { "id": "zh-date-itn", "latencyP95Ms": 1000.3025000000052, "latencyP50Ms": 992.439200000008, "audioNeededAfterSpeechOnsetMs": 960 }
+        }
+      },
+      "evidence": {
+        "file": "gate-0b-m2-sweep.json",
+        "officialRunId": "x160-official-t4",
+        "officialMaxRtf": 0.47,
+        "controlledRunId": "x160-controlled-t4",
+        "controlledMaxRtf": 0.5,
+        "firstPartialBench": "x160FirstPartialBench",
+        "firstPartialLatencyP95MsByCase": {
+          "zh-roadmap": 855.7528999999995,
+          "en-onboarding": 709.0234999999993,
+          "zh-en-code-switch": 697.4774999999936,
+          "zh-date-itn": 1000.3025000000052
+        }
+      },
+      "knownLimitations": [
+        "x-asr-160ms emits little or no punctuation on the short controlled utterances (macro punctuation F1 0 on the controlled corpus at t=4); punctuation recovery is delegated to the approved refinement pass, so refinement must be enabled for final captions by default.",
+        "numThreads >= 6 regresses RTF on the hybrid P/E-core architecture and must not be used.",
+        "First-partial latency is utterance-dependent: openings that give the model little early phonetic evidence (zh-date-itn) sit at a ~960 ms audio floor, so occasional first-caption delays of ~1.0 s will occur; typical cases are ~0.7-0.86 s. x-asr-480ms hits the same floor on such cases while also being >= 980 ms on the common ones."
+      ]
+    },
+    "refinement": {
+      "approvedCandidate": "x-asr-offline",
+      "model": "sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03",
+      "replaces": "sense-voice-zh-en-ja-ko-yue-int8-2025-09-09",
+      "criteria": { "target": "no content regression and a measurable net benefit over the realtime baseline", "result": "pass", "evidence": "Zero content regression on both baselines (macro CER 0 -> 0, 0 regressed cases) and punctuation F1 restored from 0.1667 (x480) / 0.0 (x160-t4) to 1.0000; SenseVoice failed exactly these two criteria." },
+      "evidence": {
+        "file": "gate-0b-m3-evaluation.json",
+        "baselines": ["x480-controlled", "x160-controlled-t4"],
+        "aggregateRtf": 0.027,
+        "macroCerDelta": 0,
+        "regressedCases": 0,
+        "refinedMacroPunctuationF1": 1
+      },
+      "tradeoffs": [
+        "Japanese/Korean/Cantonese refinement capability is lost with SenseVoice; the product currently only promises zh/en.",
+        "Disk: ~168 MB extracted, replacing SenseVoice's ~230 MB (first-run download budget improves)."
+      ]
+    },
+    "standingConditions": [
+      "This approval is scoped to the documented machine baseline; packaged builds (B5/I4) must re-benchmark on target machines before publishing the fast profile there, and machines that fail stay at availableProfiles [].",
+      "The controlled corpus remains clean deterministic SAPI speech (4 cases); multi-speaker, far-field, noisy and real-accent corpus expansion stays an open obligation before widening quality claims.",
+      "The original 0.35 criterion stays recorded above; any further model or threshold change requires a new explicit product decision against the same frozen benchmark scripts."
+    ]
+  },
   "decision": {
-    "approvedProfiles": [],
-    "approvedRefinement": false,
-    "closestCandidate": "x-asr-480ms",
-    "action": "Keep model-backed capabilities unavailable until a candidate passes the frozen latency and refinement criteria; do not relax the gate implicitly."
+    "approvedProfiles": ["fast"],
+    "approvedRefinement": true,
+    "realtimeModel": "x-asr-160ms",
+    "refinementModel": "x-asr-offline",
+    "governedBy": "rejudgment",
+    "action": "Publish the fast profile only where the runtime matches the re-judgment machine baseline; keep every other profile unavailable and re-run the frozen benchmark before any further model or threshold change."
   },
   "limitations": [
     "Controlled accuracy uses deterministic SAPI voices, not a multi-speaker noisy meeting corpus.",

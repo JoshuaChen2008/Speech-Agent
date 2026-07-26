@@ -4,6 +4,18 @@
 > 运行时参数（线程数、chunk 尺寸）无法弥补。** Gate 0B 判定维持 FAIL，
 > `approvedProfiles` 维持空。本文档不放宽任何门槛，只封闭「调参能否救回」这个问题，
 > 并把残余选项交产品拍板。
+>
+> **状态更新（2026-07-27）**：产品负责人已按本文残余选项 1 正式改判——批准
+> `x-asr-160ms@t4`（fast profile）并重设 RTF 门槛，理由与适用条件见
+> [`gate-0b.md`](gate-0b.md) 改判节。本扫描的判定所需数字已提取为 tracked 的
+> [`gate-0b-m2-sweep.json`](gate-0b-m2-sweep.json)（`summarize-m2-sweep.js` 生成，
+> path-free，以 rawOutputSha256 回链忽略目录的原始输出）。
+>
+> 改判当日另补测了 x160@t4 的**全语料**首 partial（本文只测过 code-switch 一条；
+> 摘要中的 `x160FirstPartialBench`）：三条 697–856ms 通过，zh-date-itn P95
+> `1000.3ms` 骑线（该句 960ms 音频下限，与 480ms 同句一致）；已在改判记录中
+> 如实标记为边缘案例，未按通过处理。本文「首 partial ~700ms」的表述仅基于
+> code-switch 单条，以补测为准。
 
 ## 方法学
 

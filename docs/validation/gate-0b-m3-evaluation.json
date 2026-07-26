@@ -1,0 +1,284 @@
+{
+  "schemaVersion": 1,
+  "kind": "gate-0b-m3-offline-refinement",
+  "generatedAt": "2026-07-26T16:04:35.108Z",
+  "refinementCandidate": {
+    "runId": "x-asr-offline-controlled",
+    "model": "sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03",
+    "numThreads": 3,
+    "aggregateRtf": 0.027,
+    "elapsedSeconds": 0.578,
+    "durationSeconds": 21.385
+  },
+  "note": "evaluate-transcripts 的 senseVoice 字段在本报告中承载精修候选（离线 X-ASR）",
+  "evaluations": {
+    "x480-controlled": {
+      "schemaVersion": 1,
+      "cases": [
+        {
+          "id": "zh-roadmap",
+          "category": "zh",
+          "reference": "我们下周一起复盘产品路线图。",
+          "xAsr": {
+            "text": "我们下周一起复盘产品路线图",
+            "cer": 0,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            }
+          },
+          "senseVoice": {
+            "text": "我们下周一起复盘产品路线图。",
+            "cer": 0,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 1,
+              "precision": 1,
+              "recall": 1,
+              "f1": 1
+            }
+          },
+          "refinementCerDelta": 0
+        },
+        {
+          "id": "en-onboarding",
+          "category": "en",
+          "reference": "The onboarding drop-off is mostly on step three.",
+          "xAsr": {
+            "text": "The onboarding drop off is mostly on step three",
+            "cer": 0,
+            "wer": 0,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            }
+          },
+          "senseVoice": {
+            "text": "The onboarding drop-off is mostly on step three.",
+            "cer": 0,
+            "wer": 0,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 1,
+              "precision": 1,
+              "recall": 1,
+              "f1": 1
+            }
+          },
+          "refinementCerDelta": 0
+        },
+        {
+          "id": "zh-en-code-switch",
+          "category": "code-switch",
+          "reference": "我们下周 review 一下 roadmap，然后看 A B test。",
+          "xAsr": {
+            "text": "我们下周 review 一下 roadmap， 然后看 A B test",
+            "cer": 0,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 2,
+              "hypothesisCount": 1,
+              "precision": 1,
+              "recall": 0.5,
+              "f1": 0.6666666666666666
+            }
+          },
+          "senseVoice": {
+            "text": "我们下周 review 一下 roadmap， 然后看 A B test。",
+            "cer": 0,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 2,
+              "hypothesisCount": 2,
+              "precision": 1,
+              "recall": 1,
+              "f1": 1
+            }
+          },
+          "refinementCerDelta": 0
+        },
+        {
+          "id": "zh-date-itn",
+          "category": "itn",
+          "reference": "会议安排在二零二六年七月二十五日下午三点半。",
+          "xAsr": {
+            "text": "会议安排在二零二六年七月二十五日下午三点半",
+            "cer": 0,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            }
+          },
+          "senseVoice": {
+            "text": "会议安排在二零二六年七月二十五日下午三点半。",
+            "cer": 0,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 1,
+              "precision": 1,
+              "recall": 1,
+              "f1": 1
+            }
+          },
+          "refinementCerDelta": 0
+        }
+      ],
+      "aggregate": {
+        "xAsrMacroCer": 0,
+        "senseVoiceMacroCer": 0,
+        "refinementMacroCerDelta": 0,
+        "refinementImprovedCases": 0,
+        "refinementRegressedCases": 0,
+        "xAsrMacroPunctuationF1": 0.16666666666666666,
+        "senseVoiceMacroPunctuationF1": 1
+      }
+    },
+    "x160-controlled-t4": {
+      "schemaVersion": 1,
+      "cases": [
+        {
+          "id": "zh-roadmap",
+          "category": "zh",
+          "reference": "我们下周一起复盘产品路线图。",
+          "xAsr": {
+            "text": "我们下周一起复盘产品路线图",
+            "cer": 0,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            }
+          },
+          "senseVoice": {
+            "text": "我们下周一起复盘产品路线图。",
+            "cer": 0,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 1,
+              "precision": 1,
+              "recall": 1,
+              "f1": 1
+            }
+          },
+          "refinementCerDelta": 0
+        },
+        {
+          "id": "en-onboarding",
+          "category": "en",
+          "reference": "The onboarding drop-off is mostly on step three.",
+          "xAsr": {
+            "text": "The onboarding drop-off is mostly on step three",
+            "cer": 0,
+            "wer": 0,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            }
+          },
+          "senseVoice": {
+            "text": "The onboarding drop-off is mostly on step three.",
+            "cer": 0,
+            "wer": 0,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 1,
+              "precision": 1,
+              "recall": 1,
+              "f1": 1
+            }
+          },
+          "refinementCerDelta": 0
+        },
+        {
+          "id": "zh-en-code-switch",
+          "category": "code-switch",
+          "reference": "我们下周 review 一下 roadmap，然后看 A B test。",
+          "xAsr": {
+            "text": "我们下周 review 一下 roadmap 然后看 A B test",
+            "cer": 0,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 2,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            }
+          },
+          "senseVoice": {
+            "text": "我们下周 review 一下 roadmap， 然后看 A B test。",
+            "cer": 0,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 2,
+              "hypothesisCount": 2,
+              "precision": 1,
+              "recall": 1,
+              "f1": 1
+            }
+          },
+          "refinementCerDelta": 0
+        },
+        {
+          "id": "zh-date-itn",
+          "category": "itn",
+          "reference": "会议安排在二零二六年七月二十五日下午三点半。",
+          "xAsr": {
+            "text": "会议安排在二零二六年七月二十五日下午三点半",
+            "cer": 0,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            }
+          },
+          "senseVoice": {
+            "text": "会议安排在二零二六年七月二十五日下午三点半。",
+            "cer": 0,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 1,
+              "precision": 1,
+              "recall": 1,
+              "f1": 1
+            }
+          },
+          "refinementCerDelta": 0
+        }
+      ],
+      "aggregate": {
+        "xAsrMacroCer": 0,
+        "senseVoiceMacroCer": 0,
+        "refinementMacroCerDelta": 0,
+        "refinementImprovedCases": 0,
+        "refinementRegressedCases": 0,
+        "xAsrMacroPunctuationF1": 0,
+        "senseVoiceMacroPunctuationF1": 1
+      }
+    }
+  }
+}

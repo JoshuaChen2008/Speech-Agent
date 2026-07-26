@@ -4,6 +4,11 @@
 > 建议作为精修候选进入正式 re-judgment。** 本文档只提供证据与建议；
 > `gate-0b-results.json` 的 `approvedRefinement` 是受测试约束的冻结判定，
 > 翻转它属于正式 gate 决定，与 realtime 门槛的产品拍板一并进行。
+>
+> **状态更新（2026-07-27）**：re-judgment 已执行——产品负责人批准本候选替换
+> SenseVoice（`approvedRefinement: true`），决定与条件见 [`gate-0b.md`](gate-0b.md)
+> 改判节。本评估的结构化输出已进 tracked 的
+> [`gate-0b-m3-evaluation.json`](gate-0b-m3-evaluation.json)，与判定块由测试强制一致。
 
 ## 候选与来源
 

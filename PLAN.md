@@ -17,7 +17,7 @@
 | 亚克力设置窗（显示 / 音频源 / 语音识别 / 关于 四个 pane） | 模型下载与资源管理、AI 层、打包分发 |
 | B1 `SessionCoordinator`、状态机、per-window preload 与 contract-valid fake adapter | B2 真实 audio host、ASR worker 与模型接入 |
 
-**当前首要阻塞是 Gate 0B 尚无候选通过原门槛。** 默认 Capabilities 继续保持空 profile；B2 可以先围绕已通过的 Gate 0C 音频拓扑推进，但真实模型只有重新验证通过后才能进入默认路径。
+**Gate 0B 已于 2026-07-27 正式改判通过**（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修，门槛重设留档于 `docs/validation/gate-0b.md` 改判节）。当前主线是把批准的模型接入 realtime worker 的 recognizer adapter，让真实字幕经 I2 链路上屏；弱机与打包版仍需 B5/I4 复测后才发布 profile。
 
 ### 0.1 三层职责与协作边界
 
@@ -47,8 +47,8 @@
 | ASR 引擎 | **sherpa-onnx v1.13.4**（2026-07-07） | 2026-07-25 复核：仍是 latest |
 | 接入方式 | **`sherpa-onnx-node` 1.13.4** + `sherpa-onnx-win-x64` 1.13.4（N-API 预编译） | 复核一致，未安装 |
 | 硬件后端 | **CPU**（不上 CUDA） | 定 |
-| 一遍流式模型 | **x-asr-480ms-…-zh-en-punct-int8-2026-06-05** | **Gate 0B 未通过：首 partial P95 略高于 1s；尚未批准** |
-| 二遍精修模型 | **sense-voice-zh-en-ja-ko-yue-int8-2025-09-09** | **Gate 0B 未通过：受控语料无净收益；尚未批准** |
+| 一遍流式模型 | **x-asr-160ms-…-zh-en-punct-int8-2026-06-05**（fast，numThreads=4） | **2026-07-27 改判批准**（重设 RTF 门槛留档；480ms 首 partial 架构性超线已封闭） |
+| 二遍精修模型 | **x-asr-zipformer-…-zh-en-punct-int8-2026-06-03**（离线同家族） | **2026-07-27 改判批准**（替换 SenseVoice：CER 零退化、标点 F1 1.0、RTF 0.027） |
 | VAD | **silero_vad.onnx**（0.6 MB） | 定 |
 | 外壳 | **Electron 43.2.0** | 复核：已是 latest，不动 |
 | 构建工具链 | **不引入**（vanilla + JSDoc `@ts-check`） | 见 §6.1 |
@@ -392,7 +392,7 @@ v1 明确只承诺 **OpenAI-compatible chat completions**。使用 `fetch` + 独
 | Gate | 内容 | 验收标准 |
 |---|---|---|
 | **0A 契约（完成）** | 固化 `RuntimeSnapshot / CaptionEvent / CommandResult / Capabilities` v1 和样例 fixtures；见 `src/contracts/` | validator 测试覆盖 idle、启动、监听、暂停、恢复、错误、精修、翻译；UI 接线留给视觉工作流 |
-| **0B 模型（实测完成，未通过）** | X-ASR 480/160、small-bilingual、SenseVoice 的 CLI + N-API 实测；见 `docs/validation/gate-0b.md` | 480ms 首字延迟失败；160ms RTF 失败；small-bilingual 质量/标点失败；SenseVoice 无精修净收益。**M2 复测（2026-07-26，`docs/validation/gate-0b-m2-sweep.md`）：两候选失败被证实为架构/算力性——480ms 首 partial 需 960–980ms 音频输入（线程无关），160ms RTF 最优 t=4 仍 0.47–0.50（t≥6 混合架构反噬）；调参路线封闭，残余选项待产品拍板。M3 精修评估（2026-07-27，`docs/validation/gate-0b-m3-refinement.md`）：离线 X-ASR int8 全面胜出 SenseVoice（CER 零退化、标点 F1 1.000、RTF 0.027），建议进入正式 re-judgment** |
+| **0B 模型（2026-07-27 改判通过）** | X-ASR 480/160、small-bilingual、SenseVoice 的 CLI + N-API 实测；见 `docs/validation/gate-0b.md` | 原门槛下四候选全败（判定历史保留）。M2 复测证实两候选失败为架构/算力性、调参封闭；M3 评估给出全面胜出的精修替换。**2026-07-27 产品负责人正式改判：RTF 门槛在写明机器基线与理由后重设为 <0.60，批准 `x-asr-160ms`（fast，t=4，改判日全语料补测首 partial 0.70–0.86s、zh-date-itn 一句骑线 1000.3ms 如实留档为边缘案例）+ 离线 X-ASR 精修（CER 零退化、标点 F1 1.0）。判定与 tracked 证据（`gate-0b-m2-sweep.json`/`gate-0b-m3-evaluation.json`）由测试强制一致；弱机/打包版须 B5/I4 复测后发布** |
 | **0C 音频拓扑（完成）** | 隐藏 audio host 的麦克风/回环、用户手势、AudioWorklet 48k→16k 实测；见 `docs/validation/gate-0c.md` | 回环挑战音命中、物理麦克风非静音、确定性 audioinput 探针通过；三路 16k mono PCM16 无削波/帧缺口/大跳变，批准 hidden audio host |
 | **0D 产品入口（完成）** | 首启提供「会议字幕 / 个人听写」双预设 | 2026-07-26 拍板：会议默认系统音频、听写默认麦克风；新安装在选择前两路都不暗中启用 |
 
@@ -459,7 +459,7 @@ node scripts/gate-0b/evaluate-transcripts.js `
 
 **决定：首启提供「会议字幕」和「个人听写」两个预设。** 会议预设默认系统音频开启、麦克风关闭但可后续开启；个人听写默认只开麦克风。配置保存实际 `sourceId`，UI 别名可显示为「我 / 对方」。在用户完成选择前，`mic / loopback` 都为 false，不再用隐藏默认值替用户做产品决定。
 
-Gate 0B 继续坚持原门槛。默认 `Capabilities.availableProfiles = []`；只有显式设置 `LIVE_SUBTITLE_DEV_MODEL=x-asr-480ms` 时，B1 fake adapter 才发布开发期 `balanced` profile。这个开关不改变 Gate 结论，也不得进入生产默认配置。
+Gate 0B 原门槛于 2026-07-27 经正式改判重设（见 `docs/validation/gate-0b.md` 改判节）：批准机器基线上发布 `fast` profile（x-asr-160ms + 离线精修）。`LIVE_SUBTITLE_DEV_MODEL=x-asr-480ms` 仍是仅供 B1 fake adapter 的开发开关，不加载真实模型，也不得进入生产默认配置；真实 profile 的发布以模型文件实际就位 + 机器基线满足为条件。
 
 ### 8.2 接受首启下载 ~400MB 吗？
 
