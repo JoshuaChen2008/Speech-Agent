@@ -220,10 +220,15 @@ test('diagnostic evaluation passes clean pipelines and fails each broken axis', 
 test('preload inlines the exact channel names and never requires local modules', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'runtime', 'audio-host', 'preload.js'), 'utf8')
   /* 宿主窗运行在默认 Chromium sandbox 下，preload 不能 require 本地模块；
-     内联字符串必须与 channels.js 保持一致。 */
-  assert.ok(source.includes(`'${CHANNELS.SAVE_DIAGNOSTIC}'`))
-  assert.ok(source.includes(`'${CHANNELS.MARK}'`))
+     内联字符串必须与 channels.js 的【每一个】通道保持一致。 */
+  for (const value of Object.values(CHANNELS)) {
+    assert.ok(source.includes(`'${value}'`), `preload must inline channel '${value}'`)
+  }
   assert.ok(!/require\(['"]\.{1,2}\//.test(source), 'sandboxed preload must not require local modules')
+
+  /* host.js 内联的端口消息名同样必须与 channels.js 一致。 */
+  const hostSource = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'runtime', 'audio-host', 'host.js'), 'utf8')
+  assert.ok(hostSource.includes(`'${CHANNELS.PCM_PORT}'`), 'host.js must inline the PCM_PORT channel name')
 })
 
 test('audio host window keeps the Chromium sandbox enabled', () => {
@@ -338,6 +343,30 @@ test('dispose during host page load rejects cleanly without unhandled rejections
   } finally {
     process.removeListener('unhandledRejection', listener)
   }
+})
+
+test('diagnostics and continuous capture are mutually exclusive', async () => {
+  const controller = new AudioHostController({ electron: fakeElectron() })
+  controller.activeCapture = { options: { sessionId: 's-1', sourceIds: ['loopback'], maxQueueMs: 2000 }, phase: 'capturing' }
+  await assert.rejects(
+    controller.runDiagnosticCapture({ sessionId: 's-2', sourceIds: ['mic'], durationMs: 2000 }),
+    /busy/
+  )
+  await assert.rejects(
+    controller.startCapture({ sessionId: 's-3', sourceIds: ['mic'], port: { postMessage () {} } }),
+    /busy/
+  )
+})
+
+test('replacePort is rejected until capture start completes', () => {
+  const controller = new AudioHostController({ electron: fakeElectron() })
+  const port = { postMessage () {} }
+  assert.throws(() => controller.replacePort(port), /no active capture/)
+  controller.activeCapture = { options: { sessionId: 's-1' }, phase: 'starting' }
+  controller.hostWindow = { isDestroyed: () => false, webContents: { postMessage () {} } }
+  assert.throws(() => controller.replacePort(port), /before capture start completes/)
+  controller.activeCapture.phase = 'capturing'
+  assert.doesNotThrow(() => controller.replacePort(port))
 })
 
 test('a setup failure does not wedge the controller for later diagnostics', async () => {

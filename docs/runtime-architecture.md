@@ -155,7 +155,15 @@ audio-host AudioWorklet
           └─ realtime-asr-worker
 ```
 
-主进程不复制 PCM。每个 source 队列必须有最大毫秒数；超过阈值时按明确策略丢弃最旧帧或进入 error，不能无限积压。
+主进程不复制 PCM（帧不进主进程 JS 事件循环）。每个 source 队列必须有最大毫秒数；超过阈值时按明确策略丢弃最旧帧或进入 error，不能无限积压。
+
+B2.2 落地的流控协议（`src/runtime/audio-host/frame-flow.js` + `src/runtime/pcm-sink/pcm-sink.js`）：
+
+- 生产端在所有 source 注册完毕后于端口上宣告 `{type:'ready', sessionId, sourceIds}`；消费端此刻才逐源授予初始 credit（更早授信会在 source 注册前到达而被丢弃——不能依赖端口队列时序）。同一端口世代内按 `session:source` 去重初始授信；新端口世代重新授信。
+- 每发一帧消耗一个 credit；credit 用尽帧进入 `maxQueueMs` 限界队列，超预算丢最旧（保新弃旧，丢帧以 sequence 缺口对消费端可见）。
+- 消费端回授消息为 `{type:'credits', sourceId, count, consumed}`：`count` 是新授信，`consumed` 是自上次以来实际消费的帧数（显式确认，供在途损失核算）。
+- 端口可中途替换（worker 重建，仅限采集已进入 capturing 阶段）：宿主关旧端口、作废旧 credit、把「已发送未确认」帧数计入 `lostInFlightFrames`（上界——发进死端口的帧不产生 sequence 缺口，只能在这里可观测），在新端口重发 ready；队列帧在新消费端授信后继续流动。
+- 实测限制：renderer DOM MessagePort → MessagePortMain 桥丢弃带 ArrayBuffer transferable 的消息，帧用结构化克隆发送（≈6.4KB/帧，可忽略）。
 
 必须记录：
 

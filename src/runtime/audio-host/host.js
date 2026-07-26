@@ -1,15 +1,21 @@
 'use strict'
 
 /* 隐藏音频宿主 renderer：getDisplayMedia（回环）/ getUserMedia（麦克风）
-   → AudioWorklet 48k→16k mono → 定长帧。B2.1 只做有界诊断采集与指标上报；
-   连续 MessagePort 直通在 B2.2 接入。拓扑严格沿用 Gate 0C 批准版本：
-   - 回环必须同时请求 video+audio，拿到后立即停掉 video track；
+   → AudioWorklet 48k→16k mono → 定长帧。
+   两种模式：
+   - 有界诊断（B2.1）：采集 N 毫秒，指标与样本经 IPC 上报主进程。
+   - 连续直通（B2.2）：帧经 MessagePort 直达 realtime worker，credit 背压 +
+     有界队列（FrameFlow），主进程只收低频控制/指标，绝不经手 PCM。
+   拓扑严格沿用 Gate 0C 批准版本：
+   - 回环必须同时请求 video+audio，拿到流的瞬间停掉 video track；
    - 麦克风关闭 echoCancellation / noiseSuppression / autoGainControl；
    - 产品代码不包含任何机器特定的设备启发式，麦克风用系统默认设备。 */
 
 const TARGET_SAMPLE_RATE = 16000
 const FRAME_SAMPLES = 1600
 const UNPROCESSED_AUDIO = { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+const PCM_PORT_MESSAGE = 'audio-host:pcm-port'
+const { FrameFlow } = window.FrameFlowModule
 
 function delay (milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -49,59 +55,107 @@ async function stopVideoTracks (stream) {
   return videoTracks.length
 }
 
-/** 一路 stream → worklet → 帧收集 → 诊断上报。 */
-async function captureSource (stream, sessionId, sourceId, durationMs) {
+/** 在 user-gesture 窗口内立刻发起回环请求，video track 拿到即停（Gate 0C 硬不变量）。 */
+function beginLoopbackAcquisition () {
+  const promise = navigator.mediaDevices.getDisplayMedia({ video: true, audio: UNPROCESSED_AUDIO })
+    .then(async (stream) => ({ stream, videoTrackCount: await stopVideoTracks(stream) }))
+  promise.catch(() => {})
+  return promise
+}
+
+async function resolveLoopback (displayPromise) {
+  const { stream, videoTrackCount } = await displayPromise
+  const audioTrack = stream.getAudioTracks()[0]
+  if (!audioTrack) {
+    for (const item of stream.getTracks()) item.stop()
+    throw new Error('getDisplayMedia returned no loopback audio track')
+  }
+  if (audioTrack.readyState !== 'live') {
+    for (const item of stream.getTracks()) item.stop()
+    throw new Error('loopback audio track ended when the video track stopped')
+  }
+  return { stream, audioTrack, videoTrackCount }
+}
+
+async function acquireMicrophone () {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: UNPROCESSED_AUDIO })
+  const audioTrack = stream.getAudioTracks()[0]
+  if (!audioTrack) {
+    for (const item of stream.getTracks()) item.stop()
+    throw new Error('getUserMedia returned no microphone audio track')
+  }
+  return { stream, audioTrack }
+}
+
+/** stream → worklet 管线。onFrame 收 {sequence, timestampSeconds, samples}。 */
+async function createWorkletPipeline (stream, onFrame, onStopped) {
   const context = new AudioContext({ latencyHint: 'interactive' })
-  try {
-    await context.audioWorklet.addModule('capture-worklet.mjs')
-    await context.resume()
-    const mediaSource = context.createMediaStreamSource(stream)
-    const recorder = new AudioWorkletNode(context, 'live-subtitle-pcm-capture', {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      outputChannelCount: [1],
-      channelCount: 1,
-      channelCountMode: 'explicit',
-      channelInterpretation: 'speakers',
-      processorOptions: { targetSampleRate: TARGET_SAMPLE_RATE, frameSamples: FRAME_SAMPLES }
-    })
-    mediaSource.connect(recorder).connect(context.destination)
-
-    const frames = []
-    const frameReceiptMs = []
-    let recording = false
-    let firstFrameResolve
-    const firstFrame = new Promise((resolve) => { firstFrameResolve = resolve })
-    let stoppedResolve
-    const stopped = new Promise((resolve) => { stoppedResolve = resolve })
-    let firstFrameLatencyMs = null
-    const workletStarted = performance.now()
-    recorder.port.onmessage = (event) => {
-      const message = event.data
-      if (message?.type === 'frame') {
-        if (firstFrameLatencyMs === null) {
-          firstFrameLatencyMs = performance.now() - workletStarted
-          window.audioHost.mark(`${sourceId}:first-pcm`, { sequence: message.sequence })
-          firstFrameResolve(message)
-        }
-        if (recording) {
-          frames.push({ sequence: message.sequence, timestampSeconds: message.timestampSeconds, samples: message.samples })
-          frameReceiptMs.push(performance.now())
-        }
-      } else if (message?.type === 'stopped') stoppedResolve(message)
+  await context.audioWorklet.addModule('capture-worklet.mjs')
+  await context.resume()
+  const mediaSource = context.createMediaStreamSource(stream)
+  const recorder = new AudioWorkletNode(context, 'live-subtitle-pcm-capture', {
+    numberOfInputs: 1,
+    numberOfOutputs: 1,
+    outputChannelCount: [1],
+    channelCount: 1,
+    channelCountMode: 'explicit',
+    channelInterpretation: 'speakers',
+    processorOptions: { targetSampleRate: TARGET_SAMPLE_RATE, frameSamples: FRAME_SAMPLES }
+  })
+  mediaSource.connect(recorder).connect(context.destination)
+  recorder.port.onmessage = (event) => {
+    const message = event.data
+    if (message?.type === 'frame') onFrame(message)
+    else if (message?.type === 'stopped') onStopped(message)
+  }
+  return {
+    context,
+    stop: () => recorder.port.postMessage({ type: 'stop' }),
+    teardown: async () => {
+      mediaSource.disconnect()
+      recorder.disconnect()
+      await context.close().catch(() => {})
     }
+  }
+}
 
+// --------------------------------------------------------------------------
+// 模式一：有界诊断（B2.1）
+// --------------------------------------------------------------------------
+
+async function captureDiagnosticSource (stream, sessionId, sourceId, durationMs) {
+  const frames = []
+  const frameReceiptMs = []
+  let recording = false
+  let firstFrameResolve
+  const firstFrame = new Promise((resolve) => { firstFrameResolve = resolve })
+  let stoppedResolve
+  const stopped = new Promise((resolve) => { stoppedResolve = resolve })
+  let firstFrameLatencyMs = null
+  const workletStarted = performance.now()
+
+  const pipeline = await createWorkletPipeline(stream, (message) => {
+    if (firstFrameLatencyMs === null) {
+      firstFrameLatencyMs = performance.now() - workletStarted
+      window.audioHost.mark(`${sourceId}:first-pcm`, { sequence: message.sequence })
+      firstFrameResolve(message)
+    }
+    if (recording) {
+      frames.push({ sequence: message.sequence, timestampSeconds: message.timestampSeconds, samples: message.samples })
+      frameReceiptMs.push(performance.now())
+    }
+  }, (message) => stoppedResolve(message))
+
+  try {
     await Promise.race([firstFrame, delay(5000).then(() => { throw new Error(`${sourceId} first PCM timed out`) })])
     recording = true
     const captureStarted = performance.now()
-    const audioContextStarted = context.currentTime
+    const audioContextStarted = pipeline.context.currentTime
     await delay(durationMs)
-    recorder.port.postMessage({ type: 'stop' })
+    pipeline.stop()
     const stoppedResult = await Promise.race([stopped, delay(2000).then(() => { throw new Error('AudioWorklet stop timed out') })])
     const wallElapsedSeconds = (performance.now() - captureStarted) / 1000
-    const audioContextElapsedSeconds = context.currentTime - audioContextStarted
-    mediaSource.disconnect()
-    recorder.disconnect()
+    const audioContextElapsedSeconds = pipeline.context.currentTime - audioContextStarted
 
     if (frames.length === 0) throw new Error(`${sourceId} produced no AudioWorklet frames`)
     let sequenceGapCount = 0
@@ -117,8 +171,8 @@ async function captureSource (stream, sessionId, sourceId, durationMs) {
     let offset = 0
     for (const frame of frames) { samples.set(frame.samples, offset); offset += frame.samples.length }
     const frameLengths = frames.map((frame) => frame.samples.length)
-    const pipeline = {
-      inputAudioContextSampleRate: context.sampleRate,
+    const pipelineMetrics = {
+      inputAudioContextSampleRate: pipeline.context.sampleRate,
       inputSampleRate: stoppedResult.inputSampleRate,
       outputSampleRate: TARGET_SAMPLE_RATE,
       frameSamples: FRAME_SAMPLES,
@@ -134,60 +188,178 @@ async function captureSource (stream, sessionId, sourceId, durationMs) {
       wallElapsedSeconds: Number(wallElapsedSeconds.toFixed(6)),
       audioContextElapsedSeconds: Number(audioContextElapsedSeconds.toFixed(6))
     }
-    return await window.audioHost.saveDiagnostic({ sessionId, sourceId, samples, pipeline })
+    return await window.audioHost.saveDiagnostic({ sessionId, sourceId, samples, pipeline: pipelineMetrics })
   } finally {
-    await context.close().catch(() => {})
-  }
-}
-
-async function captureLoopback (displayPromise, sessionId, durationMs) {
-  const { stream, videoTrackCount } = await displayPromise
-  try {
-    const audioTrack = stream.getAudioTracks()[0]
-    if (!audioTrack) throw new Error('getDisplayMedia returned no loopback audio track')
-    if (audioTrack.readyState !== 'live') throw new Error('loopback audio track ended when the video track stopped')
-    const track = await trackEvidence(audioTrack)
-    const saved = await captureSource(stream, sessionId, 'loopback', durationMs)
-    return { status: 'ok', stream: { videoTrackCountBeforeStop: videoTrackCount, track }, saved }
-  } finally {
-    for (const item of stream.getTracks()) item.stop()
-  }
-}
-
-async function captureMicrophone (sessionId, durationMs) {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: UNPROCESSED_AUDIO })
-  try {
-    const audioTrack = stream.getAudioTracks()[0]
-    if (!audioTrack) throw new Error('getUserMedia returned no microphone audio track')
-    const track = await trackEvidence(audioTrack)
-    const saved = await captureSource(stream, sessionId, 'mic', durationMs)
-    return { status: 'ok', stream: { track }, saved }
-  } finally {
-    for (const item of stream.getTracks()) item.stop()
+    await pipeline.teardown()
   }
 }
 
 globalThis.runAudioHostDiagnostic = async function runAudioHostDiagnostic (options) {
   const { sessionId, sourceIds, durationMs } = options
-  /* 回环的 getDisplayMedia 必须在 user-gesture 窗口内立刻发起；
-     video track 必须在拿到流的瞬间停掉（Gate 0C 硬不变量），不能等到
-     轮到 loopback 采集时才停——sourceIds 顺序是调用方决定的。
-     立刻挂 catch 防 unhandledrejection；错误由 captureLoopback 消费。 */
-  const displayPromise = sourceIds.includes('loopback')
-    ? navigator.mediaDevices.getDisplayMedia({ video: true, audio: UNPROCESSED_AUDIO })
-        .then(async (stream) => ({ stream, videoTrackCount: await stopVideoTracks(stream) }))
-    : null
-  if (displayPromise) displayPromise.catch(() => {})
+  const displayPromise = sourceIds.includes('loopback') ? beginLoopbackAcquisition() : null
   const result = {}
   for (const sourceId of sourceIds) {
     window.audioHost.mark(`${sourceId}:capture-start`)
+    let stream = null
     try {
-      result[sourceId] = sourceId === 'loopback'
-        ? await captureLoopback(displayPromise, sessionId, durationMs)
-        : await captureMicrophone(sessionId, durationMs)
+      let evidence
+      if (sourceId === 'loopback') {
+        const loopback = await resolveLoopback(displayPromise)
+        stream = loopback.stream
+        evidence = { videoTrackCountBeforeStop: loopback.videoTrackCount, track: await trackEvidence(loopback.audioTrack) }
+      } else {
+        const microphone = await acquireMicrophone()
+        stream = microphone.stream
+        evidence = { track: await trackEvidence(microphone.audioTrack) }
+      }
+      const saved = await captureDiagnosticSource(stream, sessionId, sourceId, durationMs)
+      result[sourceId] = { status: 'ok', stream: evidence, saved }
     } catch (error) {
       result[sourceId] = { status: 'error', error: errorEvidence(error) }
+    } finally {
+      if (stream) for (const item of stream.getTracks()) item.stop()
     }
   }
   return result
+}
+
+// --------------------------------------------------------------------------
+// 模式二：连续 PCM 直通（B2.2）
+// --------------------------------------------------------------------------
+
+let pcmPort = null
+let activeCapture = null
+
+/* 主进程经 preload 转交 MessagePort。可在采集中途替换（worker 重建）：
+   send 闭包动态引用 pcmPort，队列中的帧自动走新端口；旧端口关闭，
+   旧 credit 作废（新消费端重新授信）。 */
+window.addEventListener('message', (event) => {
+  if (event.source !== window || event.data?.type !== PCM_PORT_MESSAGE) return
+  const port = event.ports && event.ports[0]
+  if (!port) return
+  const previous = pcmPort
+  pcmPort = port
+  port.onmessage = (portEvent) => {
+    const message = portEvent.data
+    if (message?.type !== 'credits') return
+    const source = activeCapture?.sources.get(message.sourceId)
+    if (!source) return
+    /* consumed 是消费端的显式确认，用于端口替换时的在途损失核算。 */
+    if (Number.isInteger(message.consumed) && message.consumed > 0) source.flow.acknowledge(message.consumed)
+    if (Number.isInteger(message.count) && message.count > 0) source.flow.grantCredits(message.count)
+  }
+  if (previous) {
+    if (activeCapture) for (const source of activeCapture.sources.values()) source.flow.markPortReplaced()
+    try { previous.close() } catch { /* already closed */ }
+  }
+  /* 采集中途换端口：向新消费端重新宣告 ready，让它授初始信用。
+     只有 startAudioCapture 已完成宣告后才由这里补发——否则会与
+     startAudioCapture 尾部的 ready 重复，把初始信用翻倍。 */
+  if (activeCapture && activeCapture.readyAnnounced) {
+    try {
+      port.postMessage({ type: 'ready', sessionId: activeCapture.sessionId, sourceIds: [...activeCapture.sources.keys()] })
+    } catch { /* port may already be gone */ }
+  }
+  window.audioHost.mark('pcm-port-attached', { replaced: !!previous })
+})
+
+globalThis.startAudioCapture = async function startAudioCapture (options) {
+  const { sessionId, sourceIds, maxQueueMs } = options
+  if (!pcmPort) throw new Error('pcm port is not attached')
+  if (activeCapture) throw new Error('capture is already running')
+  const displayPromise = sourceIds.includes('loopback') ? beginLoopbackAcquisition() : null
+
+  const capture = { sessionId, sources: new Map(), metricsTimer: null, stopping: false, readyAnnounced: false }
+  activeCapture = capture
+  try {
+    const evidence = {}
+    for (const sourceId of sourceIds) {
+      let stream
+      let audioTrack
+      if (sourceId === 'loopback') {
+        const loopback = await resolveLoopback(displayPromise)
+        stream = loopback.stream
+        audioTrack = loopback.audioTrack
+        evidence[sourceId] = { videoTrackCountBeforeStop: loopback.videoTrackCount, track: await trackEvidence(audioTrack) }
+      } else {
+        const microphone = await acquireMicrophone()
+        stream = microphone.stream
+        audioTrack = microphone.audioTrack
+        evidence[sourceId] = { track: await trackEvidence(audioTrack) }
+      }
+
+      const flow = new FrameFlow({
+        maxQueueMs,
+        sampleRate: TARGET_SAMPLE_RATE,
+        /* 不用 transfer list：renderer DOM MessagePort → MessagePortMain 桥
+           会静默丢弃带 ArrayBuffer transferable 的消息（实测：纯 JSON 的
+           ready/end 可达、带 [samples.buffer] 的帧全部丢失）。结构化克隆
+           1600×4B ≈ 6.4KB/帧、每路 10 帧/秒，拷贝成本可忽略。 */
+        send: (frame) => { pcmPort.postMessage(frame) }
+      })
+      const source = { stream, flow, pipeline: null, stopped: null }
+      capture.sources.set(sourceId, source)
+
+      audioTrack.addEventListener('ended', () => {
+        if (capture.stopping || activeCapture !== capture) return
+        window.audioHost.control({ type: 'track-ended', sessionId, sourceId })
+      })
+
+      let stoppedResolve
+      source.stopped = new Promise((resolve) => { stoppedResolve = resolve })
+      source.pipeline = await createWorkletPipeline(stream, (message) => {
+        flow.handleFrame({
+          type: 'frame',
+          sessionId,
+          sourceId,
+          sequence: message.sequence,
+          timestampSeconds: message.timestampSeconds,
+          captureTimeMs: performance.now(),
+          sampleCount: message.samples.length,
+          samples: message.samples
+        })
+      }, (message) => stoppedResolve(message))
+    }
+
+    capture.metricsTimer = setInterval(() => {
+      const sources = {}
+      for (const [sourceId, source] of capture.sources) sources[sourceId] = source.flow.metrics()
+      window.audioHost.control({ type: 'metrics', sessionId, sources })
+    }, 1000)
+    /* ready 握手：所有 source 注册完毕后才宣告，消费端此时授初始信用。
+       更早到达的 credit 会因找不到 source 被丢弃——不能依赖端口队列时序。 */
+    capture.readyAnnounced = true
+    pcmPort.postMessage({ type: 'ready', sessionId, sourceIds })
+    window.audioHost.mark('capture-started', { sourceIds })
+    return { sources: evidence }
+  } catch (error) {
+    activeCapture = null
+    clearInterval(capture.metricsTimer)
+    for (const source of capture.sources.values()) {
+      try { await source.pipeline?.teardown() } catch { /* best effort */ }
+      for (const item of source.stream.getTracks()) item.stop()
+    }
+    throw error
+  }
+}
+
+globalThis.stopAudioCapture = async function stopAudioCapture () {
+  const capture = activeCapture
+  if (!capture) return { stopped: false }
+  capture.stopping = true
+  clearInterval(capture.metricsTimer)
+  const metrics = {}
+  for (const [sourceId, source] of capture.sources) {
+    /* 停 worklet → flush 剩余帧（仍走 flow：有 credit 即发，无 credit 丢弃计数）。 */
+    source.pipeline.stop()
+    await Promise.race([source.stopped, delay(2000)])
+    const discarded = source.flow.discardQueued()
+    metrics[sourceId] = { ...source.flow.metrics(), discardedAtStop: discarded }
+    for (const item of source.stream.getTracks()) item.stop()
+    await source.pipeline.teardown()
+  }
+  activeCapture = null
+  try { pcmPort.postMessage({ type: 'end', sessionId: capture.sessionId, metrics }) } catch { /* port may be gone */ }
+  window.audioHost.control({ type: 'stopped', sessionId: capture.sessionId, sources: metrics })
+  return { stopped: true, metrics }
 }

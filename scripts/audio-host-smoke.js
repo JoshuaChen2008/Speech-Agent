@@ -31,6 +31,8 @@ async function main () {
   const options = parseArguments(process.argv.slice(2))
   const dumpDir = path.resolve(options.dumpDir)
   fs.mkdirSync(dumpDir, { recursive: true })
+  /* 宿主窗销毁后禁止 Electron 默认退出——报告写入在窗口关闭之后。 */
+  app.on('window-all-closed', () => {})
   app.setPath('userData', path.join(dumpDir, 'electron-user-data'))
   app.commandLine.appendSwitch('disable-renderer-backgrounding')
   await app.whenReady()

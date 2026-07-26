@@ -414,10 +414,12 @@ npm run preview:fixtures
 
 ### 12.1 B2 还不存在（B2.1 已部分关闭）
 
-> 状态更新（B2.1）：`src/runtime/audio-host/` 已存在——Gate 0C 拓扑的产品化控制器、专用 preload/非持久化 session、AudioWorklet 48k→16k、有界诊断采集与指标（`scripts/audio-host-smoke.js` 实机 PASS：静音与 997Hz 信号两种情形，宿主全程隐藏、0 gap）。以下仍成立：
+> 状态更新（B2.1）：`src/runtime/audio-host/` 已存在——Gate 0C 拓扑的产品化控制器、专用 preload/非持久化 session、AudioWorklet 48k→16k、有界诊断采集与指标（`scripts/audio-host-smoke.js` 实机 PASS：静音与 997Hz 信号两种情形，宿主全程隐藏、0 gap）。
+>
+> 状态更新（B2.2）：`MessageChannelMain` PCM 直通已落地——host → port → `pcm-sink` utility process，credit 背压（ready 握手）、`FrameFlow` 有界队列与丢帧/缺口指标、`replacePort` 中途换消费端（`scripts/pcm-transport-smoke.js` 三模式实机 PASS）。帧用结构化克隆：renderer→MessagePortMain 桥会丢弃带 ArrayBuffer transferable 的消息（PLAN §4.2 修正）。以下仍成立：
 
-- 没有 `MessageChannelMain` PCM 直通（audio host 尚未接入 SessionCoordinator，B2.1 只有有界诊断）。
-- 没有 realtime ASR utility process、VAD、双 recognizer、背压或队列指标。
+- 没有 realtime ASR utility process、VAD、双 recognizer（`pcm-sink` 只是协议原型，B2.3 的 worker 取代它）。
+- audio host 尚未接入 SessionCoordinator。
 - `sherpa-onnx-node` 未作为项目依赖安装。
 - Gate 0C spike 的 PASS 不能替代 I2 Live Caption。
 

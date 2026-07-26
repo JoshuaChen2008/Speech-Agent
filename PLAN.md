@@ -205,7 +205,9 @@ Chromium 的 `backdrop-filter` 只模糊「页面内部」在它后面的内容�
 
 ### 4.2 音频帧走 MessageChannelMain，绕开主进程
 
-`new MessageChannelMain()` → 一端 `webContents.postMessage` 给音频宿主窗，另一端随 `utilityProcess.fork` 的 `postMessage` 转移给 realtime worker。Float32Array 可 transfer，零拷贝。
+`new MessageChannelMain()` → 一端 `webContents.postMessage` 给音频宿主窗，另一端随 `utilityProcess.fork` 的 `postMessage` 转移给 realtime worker。
+
+> **B2.2 实测修正**：renderer DOM MessagePort → MessagePortMain 桥会**静默丢弃**带 ArrayBuffer transferable 的消息（纯 JSON 的控制消息可达，带 `[samples.buffer]` 的帧全部丢失）。帧改为结构化克隆发送：1600×4B ≈ 6.4KB/帧、每路 10 帧/秒，拷贝成本可忽略；「PCM 不经过主进程 JS 事件循环」的关键不变量不受影响。
 
 **为什么**：100ms 一帧、16k mono Float32 = 6.4 KB/帧/路，双路 128 KB/s 长流。让它穿过主进程等于把主进程变成音频中继 —— 而主进程正在以 **~120fps 轮询光标做拖动**（`src/main.js` 的 `dragTick`，8ms 定时器）。这两件事绝不能挤在同一个事件循环里。
 
@@ -427,7 +429,8 @@ node scripts/gate-0b/evaluate-transcripts.js `
 |---|---|---|
 | **B1 应用骨架（完成）** | `SessionCoordinator`、状态机、per-window preload、contract validation、fake adapter | renderer 重载后快照一致；越权 IPC 和非法配置被拒绝；自动测试与默认/dev Electron smoke 通过 |
 | **B2.0 恢复缺口（完成）** | canonical `CaptionState`（与 renderer 共用同一折叠实现）、caption 角色独占 `getCaptionState()`、订阅-水合-重放 bootstrap、replacement adapter 恢复游标（`resume: {attempt, sourceSequences}`） | reload 水合与实时流逐字段一致（含双路交错与窗口外迟到修订的 property 回归）；replacement 后首条字幕被接受并到达订阅者；stop/新会话/dispose 保留与清空语义有回归覆盖 |
-| **B2.1 audio host 产品化（完成）** | Gate 0C 拓扑提取到 `src/runtime/audio-host/`：非持久化 session、最小权限 handler、专用 preload、AudioWorklet 48k→16k 1600 samples/100ms、有界诊断采集与指标落盘（`scripts/audio-host-smoke.js`） | 纯逻辑（resampler/assembler/metrics/policy）自动测试；实机 smoke 静音与 997Hz 信号两种情形 PASS（宿主全程隐藏、userGesture、0 gap、时钟覆盖 1.0）；未接 SessionCoordinator，连续 PCM 直通待 B2.2 |
+| **B2.1 audio host 产品化（完成）** | Gate 0C 拓扑提取到 `src/runtime/audio-host/`：非持久化 session、最小权限 handler、专用 preload、AudioWorklet 48k→16k 1600 samples/100ms、有界诊断采集与指标落盘（`scripts/audio-host-smoke.js`） | 纯逻辑（resampler/assembler/metrics/policy）自动测试；实机 smoke 静音与 997Hz 信号两种情形 PASS（宿主全程隐藏、userGesture、0 gap、时钟覆盖 1.0）；未接 SessionCoordinator |
+| **B2.2 PCM 直通与背压（完成）** | `MessageChannelMain` 直通：host → port → `pcm-sink` utility process；credit 背压（ready 握手 + 窗口式授信）、`FrameFlow` 有界队列（maxQueueMs 丢旧保新）、低频指标控制通道、`replacePort` 中途换消费端 | 实机 smoke 三模式 PASS：normal 40/40/40 帧 0 丢 0 缺口；slow 队列峰值恰好压在预算上、29 丢帧且 sink 观察到对应缺口；crash-replace 消费端 exit(13) 后替换 sink 无缝续流。PCM 不经主进程 JS；帧用结构化克隆（transferable 被桥丢弃，见 §4.2 修正） |
 | **B2 实时链路** | audio host、MessagePort、双路 realtime worker、VAD/背压 | 真 partial/final 替掉假流；拖动不掉帧；队列深度和丢帧可观测 |
 | **B3 精修与会话** | refine worker、事件式 JSONL、恢复与导出 | 精修不阻塞实时流；坏尾行可恢复；SRT 时间轴稳定 |
 | **B4 资源与 AI** | ModelManager、CredentialStore、AiGateway | 下载可续传/校验/原子安装；key 不进 renderer；AI 失败不影响本地字幕 |

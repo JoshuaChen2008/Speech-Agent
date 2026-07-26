@@ -45,6 +45,9 @@ function validateDiagnosticOptions (options) {
   if (typeof options.sessionId !== 'string' || options.sessionId.trim().length === 0) {
     throw new TypeError('sessionId must be a non-empty string')
   }
+  if (options.sessionId.length > 128) {
+    throw new TypeError('sessionId must be at most 128 characters')
+  }
   if (!Array.isArray(options.sourceIds) || options.sourceIds.length === 0) {
     throw new TypeError('sourceIds must be a non-empty array')
   }
@@ -65,6 +68,63 @@ function validateDiagnosticOptions (options) {
   }
 }
 
+const MIN_QUEUE_MS = 250
+const MAX_QUEUE_MS = 10000
+const CONTROL_TYPES = Object.freeze(['track-ended', 'metrics', 'stopped'])
+const METRIC_KEYS = Object.freeze([
+  'capturedFrames', 'sentFrames', 'droppedFrames', 'creditStalls',
+  'maxQueuedMsObserved', 'queuedFrames', 'queuedMs', 'credits', 'discardedAtStop',
+  'acknowledgedFrames', 'lostInFlightFrames', 'portReplacements'
+])
+
+/** 连续采集（B2.2）参数校验：与诊断共享 sessionId/sourceIds 规则，外加队列预算。 */
+function validateCaptureOptions (options) {
+  if (!options || typeof options !== 'object') throw new TypeError('capture options are required')
+  const base = validateDiagnosticOptions({
+    sessionId: options.sessionId,
+    sourceIds: options.sourceIds,
+    durationMs: MIN_DIAGNOSTIC_MS
+  })
+  const maxQueueMs = options.maxQueueMs === undefined ? 2000 : options.maxQueueMs
+  if (!Number.isInteger(maxQueueMs) || maxQueueMs < MIN_QUEUE_MS || maxQueueMs > MAX_QUEUE_MS) {
+    throw new TypeError(`maxQueueMs must be an integer between ${MIN_QUEUE_MS} and ${MAX_QUEUE_MS}`)
+  }
+  return { sessionId: base.sessionId, sourceIds: base.sourceIds, maxQueueMs }
+}
+
+/**
+ * 宿主窗控制消息在 main 边界的白名单清洗：只保留已知 type、
+ * 截断字符串、指标只收有限数字。非法输入返回 null。
+ */
+function sanitizeControlMessage (payload) {
+  if (!payload || typeof payload !== 'object') return null
+  const type = payload.type
+  if (!CONTROL_TYPES.includes(type)) return null
+  const message = {
+    type,
+    sessionId: typeof payload.sessionId === 'string' ? scrubLocalPaths(payload.sessionId).slice(0, 128) : null
+  }
+  if (type === 'track-ended') {
+    if (!SOURCE_IDS.includes(payload.sourceId)) return null
+    message.sourceId = payload.sourceId
+    return message
+  }
+  const sources = {}
+  if (payload.sources && typeof payload.sources === 'object' && !Array.isArray(payload.sources)) {
+    for (const sourceId of SOURCE_IDS) {
+      const raw = payload.sources[sourceId]
+      if (!raw || typeof raw !== 'object') continue
+      const metrics = {}
+      for (const key of METRIC_KEYS) {
+        if (Number.isFinite(raw[key])) metrics[key] = raw[key]
+      }
+      sources[sourceId] = metrics
+    }
+  }
+  message.sources = sources
+  return message
+}
+
 /** 剥掉文本中的本机路径并限制长度。 */
 function scrubLocalPaths (text) {
   return String(text ?? '').replace(/[A-Za-z]:[\\/][^\s]+/g, '<local-path>').slice(0, 300)
@@ -79,14 +139,19 @@ function publicError (error) {
 }
 
 module.exports = {
+  CONTROL_TYPES,
   MAX_DIAGNOSTIC_MS,
+  MAX_QUEUE_MS,
   MIN_DIAGNOSTIC_MS,
+  MIN_QUEUE_MS,
   SOURCE_IDS,
   evaluateDisplayRequest,
   isPermissionAllowed,
   publicError,
+  sanitizeControlMessage,
   sanitizeOrigin,
   scrubLocalPaths,
   selectScreenSource,
+  validateCaptureOptions,
   validateDiagnosticOptions
 }

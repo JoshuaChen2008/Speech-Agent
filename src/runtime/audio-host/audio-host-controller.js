@@ -16,9 +16,11 @@ const {
   evaluateDisplayRequest,
   isPermissionAllowed,
   publicError,
+  sanitizeControlMessage,
   sanitizeOrigin,
   scrubLocalPaths,
   selectScreenSource,
+  validateCaptureOptions,
   validateDiagnosticOptions
 } = require('./policy')
 const {
@@ -58,7 +60,22 @@ class AudioHostController {
     this.partitionReady = false
     this.ipcRegistered = false
     this.activeDiagnostic = null
+    this.activeCapture = null
+    this.controlListeners = new Set()
     this.disposed = false
+  }
+
+  /** 低频控制事件（track-ended / metrics / stopped / host-gone）。 */
+  onControl (listener) {
+    if (typeof listener !== 'function') throw new TypeError('control listener must be a function')
+    this.controlListeners.add(listener)
+    return () => this.controlListeners.delete(listener)
+  }
+
+  emitControl (message) {
+    for (const listener of this.controlListeners) {
+      try { listener(message) } catch { /* observer failures stay isolated */ }
+    }
   }
 
   record (stage, detail = null) {
@@ -132,6 +149,18 @@ class AudioHostController {
       if (!this.isTrustedHostSender(event.sender)) return
       this.record('host-mark', { stage: scrubLocalPaths(payload?.stage || 'unknown').slice(0, 100) })
     })
+    ipcMain.on(CHANNELS.CONTROL, (event, payload) => {
+      if (!this.isTrustedHostSender(event.sender)) return
+      const message = sanitizeControlMessage(payload)
+      if (!message) return
+      /* 控制消息必须属于当前采集会话——宿主窗被替换或重载后的迟到消息丢弃。
+         两侧都用清洗后的形式对比，清洗不会误杀合法会话。 */
+      if (!this.activeCapture) return
+      const expected = scrubLocalPaths(this.activeCapture.options.sessionId).slice(0, 128)
+      if (message.sessionId !== expected) return
+      this.record('host-control', { type: message.type })
+      this.emitControl(message)
+    })
     this.ipcRegistered = true
   }
 
@@ -186,6 +215,12 @@ class AudioHostController {
       this.record('host-renderer-gone', { reason: details?.reason || null })
       const active = this.activeDiagnostic
       if (active) active.reject(new Error(`audio host renderer exited: ${details?.reason || 'unknown'}`))
+      if (this.activeCapture) {
+        const sessionId = this.activeCapture.options.sessionId
+        this.activeCapture = null
+        this.destroyHostWindow()
+        this.emitControl({ type: 'host-gone', sessionId, reason: String(details?.reason || 'unknown').slice(0, 64) })
+      }
     })
     return win
   }
@@ -196,7 +231,9 @@ class AudioHostController {
    */
   async runDiagnosticCapture (rawOptions = {}) {
     if (this.disposed) throw new Error('audio host controller is disposed')
-    if (this.activeDiagnostic) throw new Error('a diagnostic capture is already running')
+    /* 与连续采集互斥：否则诊断会覆盖 hostWindow 引用，把正在采集
+       麦克风/回环的隐藏窗孤儿化（失去控制句柄却仍在采集）。 */
+    if (this.activeDiagnostic || this.activeCapture) throw new Error('audio host is busy')
     const options = validateDiagnosticOptions(rawOptions)
     const dumpDir = rawOptions.dumpDir ? path.resolve(String(rawOptions.dumpDir)) : null
     if (dumpDir) fs.mkdirSync(dumpDir, { recursive: true })
@@ -250,6 +287,94 @@ class AudioHostController {
     }
   }
 
+  /**
+   * 连续 PCM 直通采集（B2.2）：把 MessagePort 交给宿主窗后启动采集。
+   * PCM 帧经该端口直达消费端（utility process），不经过主进程；
+   * 主进程只收低频控制/指标（onControl）。
+   * @param {*} rawOptions { sessionId, sourceIds, maxQueueMs?, port: MessagePortMain }
+   */
+  async startCapture (rawOptions = {}) {
+    if (this.disposed) throw new Error('audio host controller is disposed')
+    if (this.activeDiagnostic || this.activeCapture) throw new Error('audio host is busy')
+    const options = validateCaptureOptions(rawOptions)
+    const port = rawOptions.port
+    if (!port || typeof port.postMessage !== 'function') throw new TypeError('a MessagePortMain is required')
+
+    const capture = { options, phase: 'starting' }
+    this.activeCapture = capture
+    const window = () => {
+      /* 世代守卫：host-gone/dispose 清态后，旧调用的每一步都必须失效，
+         不能碰到后续新 capture 的窗口或状态。 */
+      if (this.disposed || this.activeCapture !== capture || !this.hostWindow) {
+        throw new Error('audio host capture superseded or disposed')
+      }
+      return this.hostWindow
+    }
+    try {
+      this.setupPartition()
+      this.registerIpc()
+      this.hostWindow = this.createHostWindow()
+      await withTimeout(window().loadFile(path.join(__dirname, 'host.html')), LOAD_TIMEOUT_MS, 'audio host page load')
+      window().webContents.postMessage(CHANNELS.PCM_PORT, { sessionId: options.sessionId }, [port])
+      const invocation = {
+        sessionId: options.sessionId,
+        sourceIds: options.sourceIds,
+        maxQueueMs: options.maxQueueMs
+      }
+      const evidence = await withTimeout(
+        window().webContents.executeJavaScript(
+          `globalThis.startAudioCapture(${JSON.stringify(invocation)})`, true),
+        15000,
+        'audio host capture start')
+      window()
+      capture.phase = 'capturing'
+      this.record('capture-started', { sourceIds: options.sourceIds })
+      return evidence
+    } catch (error) {
+      if (this.activeCapture === capture) {
+        this.activeCapture = null
+        this.destroyHostWindow()
+      }
+      throw error
+    }
+  }
+
+  /** 停止连续采集：flush worklet、上报最终指标、销毁宿主窗。 */
+  async stopCapture () {
+    const active = this.activeCapture
+    if (!active) return { stopped: false }
+    const win = this.hostWindow
+    try {
+      if (!win || win.isDestroyed()) return { stopped: false }
+      return await withTimeout(
+        win.webContents.executeJavaScript('globalThis.stopAudioCapture()', true),
+        8000,
+        'audio host capture stop')
+    } finally {
+      /* 只清理自己那一代的状态与窗口——host-gone 后的新 capture 不受影响。 */
+      if (this.activeCapture === active) this.activeCapture = null
+      if (this.hostWindow === win) this.destroyHostWindow()
+    }
+  }
+
+  /**
+   * 采集中途更换消费端端口（worker 重建后）。宿主 renderer 关闭旧端口、
+   * 作废旧 credit；队列中的帧在新消费端授信后继续流动。
+   */
+  replacePort (port) {
+    if (!this.activeCapture || !this.hostWindow || this.hostWindow.isDestroyed()) {
+      throw new Error('no active capture to replace the port for')
+    }
+    /* starting 阶段禁止替换：初始端口尚未送达/attach，先后顺序无法保证，
+       可能出现「替换端口先到、原端口后到反而当成最新」的错乱。 */
+    if (this.activeCapture.phase !== 'capturing') {
+      throw new Error('cannot replace the port before capture start completes')
+    }
+    if (!port || typeof port.postMessage !== 'function') throw new TypeError('a MessagePortMain is required')
+    this.hostWindow.webContents.postMessage(CHANNELS.PCM_PORT, { sessionId: this.activeCapture.options.sessionId }, [port])
+    this.record('pcm-port-replaced', null)
+  }
+
   destroyHostWindow () {
     if (this.hostWindow && !this.hostWindow.isDestroyed()) this.hostWindow.destroy()
     this.hostWindow = null
@@ -261,10 +386,13 @@ class AudioHostController {
     const active = this.activeDiagnostic
     if (active) active.reject(new Error('audio host controller disposed'))
     this.activeDiagnostic = null
+    this.activeCapture = null
+    this.controlListeners.clear()
     this.destroyHostWindow()
     if (this.ipcRegistered) {
       this.electron.ipcMain.removeHandler(CHANNELS.SAVE_DIAGNOSTIC)
       this.electron.ipcMain.removeAllListeners(CHANNELS.MARK)
+      this.electron.ipcMain.removeAllListeners(CHANNELS.CONTROL)
       this.ipcRegistered = false
     }
   }
