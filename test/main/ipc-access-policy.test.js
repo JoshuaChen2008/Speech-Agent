@@ -36,6 +36,14 @@ test('window roles cannot invoke one another privileged APIs', () => {
   assert.equal(isRoleAllowed(CHANNELS.RESIZE_START, 'settings'), false)
   assert.equal(isRoleAllowed(CHANNELS.SETTINGS_CLOSE, 'settings'), true)
   assert.equal(isRoleAllowed(CHANNELS.SETTINGS_CLOSE, 'toolbar'), false)
+  assert.equal(isRoleAllowed(CHANNELS.HISTORY_LIST, 'history'), true)
+  assert.equal(isRoleAllowed(CHANNELS.HISTORY_GET, 'history'), true)
+  assert.equal(isRoleAllowed(CHANNELS.HISTORY_EXPORT, 'history'), true)
+  assert.equal(isRoleAllowed(CHANNELS.HISTORY_CLOSE, 'history'), true)
+  assert.equal(isRoleAllowed(CHANNELS.HISTORY_LIST, 'toolbar'), false)
+  assert.equal(isRoleAllowed(CHANNELS.HISTORY_GET, 'settings'), false)
+  assert.equal(isRoleAllowed(CHANNELS.HISTORY_EXPORT, 'caption'), false)
+  assert.equal(isRoleAllowed(CHANNELS.HISTORY_CLOSE, 'toolbar'), false)
 })
 
 test('renderer config writes are whitelisted and capture changes are classified', () => {

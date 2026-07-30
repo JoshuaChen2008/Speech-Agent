@@ -14,6 +14,7 @@ const OPERATIONS = Object.freeze({
   RECOVER_STALE_SESSIONS: 'session:recover-stale',
   IMPORT_LEGACY_JSONL: 'legacy:import-jsonl',
   GET_SESSION: 'history:get-session',
+  LIST_SESSIONS: 'history:list-sessions',
   GET_STATS: 'storage:get-stats',
   SHUTDOWN: 'storage:shutdown'
 })

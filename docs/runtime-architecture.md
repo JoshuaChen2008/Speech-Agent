@@ -1,6 +1,6 @@
 # Live Subtitle + Agent · 运行后端与契约
 
-> 状态：Rev.3 · 2026-07-30
+> 状态：Rev.4 · 2026-07-31
 > 目的：定义可独立运行的字幕系统、后置 Agent 系统及 Electron 壳层的责任；视觉/UI 只消费本文对外发布的契约。
 > 功能与验收语义以 [`semantic-contract.md`](semantic-contract.md) 为准；目标数据层见
 > [`data-architecture.md`](data-architecture.md)。
@@ -21,7 +21,7 @@
 
 `WindowManager`：
 
-- 三个可见窗口与隐藏 audio host 的创建、销毁和恢复。
+- 四个可见窗口（字幕、工具条、设置、历史）与隐藏 audio host 的创建、销毁和恢复。
 - 字幕/工具条停靠、拖动、穿透、多显示器和 DPI。
 - 分别追踪 visible windows 与 runtime windows；不使用 `BrowserWindow.getAllWindows().length` 判断是否应重建 UI。
 - 关闭、睡眠唤醒和退出时协调 session flush 与 worker 清理。
@@ -74,22 +74,23 @@
 - 停止路径的取舍（有意为之并披露）：end 收束的段不再发起精修（响应必然晚于收尾，保持 final 并计入 skipped）；更早的在途精修若在 end 处理后返回也被作废。会话最末的少量段可能只有第一遍定稿。
 - `canRefine` 是启动时判定（精修模型就位即为真）；精修 worker 中途降级不回写 capability——运行时能力观测是后续议题（见 handoff §12.4）。
 
-`TranscriptStore`（B3.1 当前过渡实现）：
+`TranscriptStore`（B3.1 遗留格式实现，默认产品不再写入）：
 
-- 写 Windows-safe 文件名的 append-only JSONL 事件日志。
+- 能读取/生成 Windows-safe 文件名的 append-only JSONL 事件日志；仅服务旧数据迁移、显式格式兼容和恢复，不是默认 writer。
 - 处理坏尾行、flush、session close 和导出。
 - 按 `segmentId + revision` 折叠，不覆盖历史文件中的旧事件。
 
-`StorageGateway / storage-worker`（B3.3 进行中：DB0/DB1 基座、Gateway 恢复、Recorder/Coordinator barrier 已实现并通过独立组合；默认产品权威切换待完成）：
+`StorageGateway / storage-worker / HistoryService`（B3.3 实现完成/尚未实机验收）：
 
 - storage worker 是 SQLite 唯一所有者和写者；主进程与 renderer 不执行同步 SQL、不加载扩展。
-- 在同一短事务中追加字幕 `final/refined` 事实并更新当前 segment 投影；提供按会话和时间戳读取历史的异步 API。
+- 在同一短事务中追加字幕 `final/refined` 事实并更新当前 segment 投影；提供只列终态会话的稳定 keyset 分页、按会话/时间戳读取详情和 txt/md/srt 当前正文导出。
 - `starting` 必须先等 session open ACK 才启动采集；final/refined 先同步复制进 Gateway FIFO 再广播 UI；runtime flush 后必须等 caption/close ACK 才从 `stopping` 进入 idle。
 - Gateway 每代只持有一个 utility process；exit、timeout 或坏响应使结果变为 unknown，旧 generation 精确终止并确认退出后，才以同一业务幂等载荷重放队首。业务冲突不靠重启掩盖，队列恢复耗尽则熔断并保留会话。
 - Gateway 队列上限是触发停采集的高水位，不是丢字幕边界：越线的首条字幕写入受保护溢出槽，终态 close 另有独立的有界容量；Coordinator 只显示已被持久化边界接纳的事件，停釆集边界内迟到字幕先缓冲。若用户在 storage error 时选择 stop，必须先排空字幕 backlog、持久化边界缓冲，然后才能提交 close；`adapter.stop()` 返回是终止字幕 ingress 栅栏，该调用内冲刷出的 final/refined 仍接受，返回后的退役 generation 事件明确拒绝。全部 ACK 前禁止恢复采集或进入 idle。
 - A1 再冻结 Agent 可靠消费采用事务 outbox 还是 durable cursor；两者都必须以已提交字幕水位为边界。
 - FTS5 可按历史搜索需求后加；`sqlite-vec` 明确 Deferred，不进入 B3.3 schema 或加载路径。
-- SQLite 迁移验收后替代 JSONL 权威写入；JSONL 只保留为旧数据导入、导出和恢复格式，禁止长期双写。
+- 默认组合根已以 SQLite 替代 JSONL 权威写入；冷启动先收束 stale-active、再迁移旧档，运行期不构造 JSONL writer。JSONL 只保留为旧数据导入、显式格式兼容和恢复格式，禁止长期双写。
+- 历史 renderer 只得到列表/详情/格式选择能力；SQL、数据库路径、文件系统和导出目标路径均留在主进程/storage worker 边界。真实 BrowserWindow 与 I3/I4 仍须单独验收。
 - schema、表义、迁移与 DB0–DB6 门禁见 [`data-architecture.md`](data-architecture.md)、[ADR 0001](adr/0001-sqlite-authoritative-event-store.md) 和 [ADR 0002](adr/0002-separate-subtitle-and-agent-systems.md)。
 
 `ModelManager`：
@@ -266,7 +267,7 @@ realtime/refine worker
 3. 完成 `loopback` 会议字幕与 `mic` 个人听写两种单路路径；配置、UI 和 runtime 都拒绝双路并发，停止后才允许换源。
 4. SessionCoordinator 与可见 UI 接 fake/real CaptionEvent，同时验证 reload、自动存档、时间戳历史与导出。
 5. 独立 refine worker 和事件式 JSONL 过渡基线，验证 pause/resume、迟到修订和进程故障。
-6. B3.3 在已通过 DB0/DB1 的 storage worker 与 SQLite 字幕事件/投影基座上，接入产品网关、迁移和历史查询，完成 J10；适用的 J1/J2 切到 SQLite 后端重跑。
-7. ModelManager 与字幕 MVP 打包；完成两小时、设备/worker 故障、睡眠唤醒和干净机器验收。
+6. B3.3 已在 DB0/DB1 基座上接入产品网关、迁移、默认 SQLite-only 生命周期与历史查询/导出；J1/J2/J10 已有确定性联合证据，真实 Electron/I3/I4 继续作为独立门禁。
+7. 当前进入 ModelManager 与字幕 MVP 打包；完成两小时、设备/worker 故障、睡眠唤醒和干净机器验收。
 8. 字幕 MVP 通过后做 A1：`AgentRuntime` + Pi Core 隔离探针 + 项目自有插件宿主 + 凭据/可靠消费；再以第一方插件实现独立增强文本和会后结构化纪要，并通过 J3–J7/J13。
 9. 只有 X1 明确进入范围时才增加 FTS5/`sqlite-vec`，并执行 J11/DB4。

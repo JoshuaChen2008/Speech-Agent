@@ -3,6 +3,7 @@
 const {
   app,
   BrowserWindow,
+  dialog,
   globalShortcut,
   ipcMain,
   nativeTheme,
@@ -25,13 +26,16 @@ const {
   DEFAULT_SHUTDOWN_TIMEOUT_MS,
   SubtitleApplicationRuntime
 } = require('./main/services/subtitle-application-runtime')
+const { HistoryService } = require('./main/services/history-service')
 
 /** @type {SubtitleApplicationRuntime | null} */ let applicationRuntime = null
 
 /** @type {BrowserWindow | null} */ let captionWin = null
 /** @type {BrowserWindow | null} */ let toolbarWin = null
 /** @type {BrowserWindow | null} */ let settingsWin = null
+/** @type {BrowserWindow | null} */ let historyWin = null
 /** @type {SessionCoordinator | null} */ let coordinator = null
+/** @type {HistoryService | null} */ let historyService = null
 
 let quitBarrierComplete = false
 let quitBarrierPromise = null
@@ -68,7 +72,7 @@ function send (win, channel, value) {
 
 function broadcastConfig () {
   const value = payload()
-  for (const win of [captionWin, toolbarWin, settingsWin]) send(win, CHANNELS.CONFIG_CHANGED, value)
+  for (const win of [captionWin, toolbarWin, settingsWin, historyWin]) send(win, CHANNELS.CONFIG_CHANGED, value)
 }
 
 function broadcastSnapshot (snapshot) {
@@ -226,6 +230,42 @@ function openSettingsWindow () {
   settingsWin.once('ready-to-show', () => settingsWin.show())
   settingsWin.on('closed', () => { stopDrag(null, true); settingsWin = null })
   settingsWin.loadFile(path.join(__dirname, 'settings', 'settings.html'))
+}
+
+function openHistoryWindow () {
+  if (!historyService) return
+  if (historyWin && !historyWin.isDestroyed()) {
+    if (historyWin.isMinimized()) historyWin.restore()
+    historyWin.show()
+    historyWin.focus()
+    return
+  }
+  historyWin = new BrowserWindow({
+    width: 1060,
+    height: 720,
+    minWidth: 780,
+    minHeight: 520,
+    titleBarStyle: 'hidden',
+    backgroundMaterial: 'acrylic',
+    backgroundColor: '#00000000',
+    resizable: true,
+    maximizable: true,
+    minimizable: true,
+    skipTaskbar: false,
+    show: false,
+    webPreferences: {
+      preload: preloadPath('history'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  })
+  registerWindowRole(historyWin, 'history')
+  hardenContents(historyWin)
+  historyWin.webContents.on('console-message', (details) => console.log('[history]', details.message))
+  historyWin.once('ready-to-show', () => historyWin.show())
+  historyWin.on('closed', () => { stopDrag(null, true); historyWin = null })
+  historyWin.loadFile(path.join(__dirname, 'history', 'index.html'))
 }
 
 let dragState = null
@@ -486,10 +526,15 @@ ipcMain.handle(CHANNELS.LOCK_GET, (event) => {
 ipcMain.on(CHANNELS.TOOLBAR_ACTION, (event, action) => {
   requireSender(event, CHANNELS.TOOLBAR_ACTION)
   if (action === 'settings') openSettingsWindow()
+  else if (action === 'history') openHistoryWindow()
   else if (action === 'close') app.quit()
 })
 ipcMain.on(CHANNELS.SETTINGS_CLOSE, (event) => {
   const { win } = requireSender(event, CHANNELS.SETTINGS_CLOSE)
+  win.close()
+})
+ipcMain.on(CHANNELS.HISTORY_CLOSE, (event) => {
+  const { win } = requireSender(event, CHANNELS.HISTORY_CLOSE)
   win.close()
 })
 ipcMain.handle(CHANNELS.CONFIG_GET, (event) => {
@@ -522,6 +567,44 @@ ipcMain.handle(CHANNELS.RUNTIME_COMMAND, async (event, name) => {
   }
 })
 
+function publicHistoryError (error) {
+  const code = typeof error?.code === 'string' && /^[A-Z][A-Z0-9_]{2,63}$/.test(error.code)
+    ? error.code
+    : 'HISTORY_UNAVAILABLE'
+  const messages = {
+    INVALID_HISTORY_REQUEST: '历史记录请求无效',
+    INVALID_SESSION: '会话标识无效',
+    INVALID_EXPORT_FORMAT: '不支持这种导出格式',
+    SESSION_NOT_FOUND: '这条记录不存在或已移除',
+    SESSION_ACTIVE: '活动会话尚未进入历史记录'
+  }
+  return { code, message: messages[code] || '历史记录暂时不可用' }
+}
+
+async function invokeHistory (scope, operation) {
+  try {
+    if (!historyService) throw new Error('history service is not ready')
+    return { ok: true, value: await operation() }
+  } catch (error) {
+    const safe = publicHistoryError(error)
+    console.error(`[history.${scope}] ${safe.code}`)
+    return { ok: false, error: safe }
+  }
+}
+
+ipcMain.handle(CHANNELS.HISTORY_LIST, (event, input) => {
+  requireSender(event, CHANNELS.HISTORY_LIST)
+  return invokeHistory('list', () => historyService.listSessions(input))
+})
+ipcMain.handle(CHANNELS.HISTORY_GET, (event, sessionId) => {
+  requireSender(event, CHANNELS.HISTORY_GET)
+  return invokeHistory('get', () => historyService.getSession(sessionId))
+})
+ipcMain.handle(CHANNELS.HISTORY_EXPORT, (event, input) => {
+  const { win } = requireSender(event, CHANNELS.HISTORY_EXPORT)
+  return invokeHistory('export', () => historyService.exportSession(input, win))
+})
+
 nativeTheme.on('updated', broadcastConfig)
 
 async function bootstrapApplication () {
@@ -533,6 +616,12 @@ async function bootstrapApplication () {
   })
   const started = await applicationRuntime.start()
   coordinator = started.coordinator
+  historyService = new HistoryService({
+    gateway: applicationRuntime.gateway,
+    showSaveDialog: (ownerWindow, options) => ownerWindow
+      ? dialog.showSaveDialog(ownerWindow, options)
+      : dialog.showSaveDialog(options)
+  })
   if (started.recoveryReport.recoveredSessionCount > 0) {
     console.warn(`[subtitle.storage] recovered ${started.recoveryReport.recoveredSessionCount} interrupted session`)
   }

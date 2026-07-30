@@ -341,6 +341,10 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.GET_SESSION, { sessionId })
   }
 
+  listSessions (input) {
+    return this.enqueue(OPERATIONS.LIST_SESSIONS, input)
+  }
+
   getStats () {
     return this.enqueue(OPERATIONS.GET_STATS, {})
   }

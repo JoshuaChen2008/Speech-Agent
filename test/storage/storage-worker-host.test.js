@@ -306,3 +306,16 @@ test('stale-session recovery forwards only the startup timestamp', async () => {
   assert.deepEqual(await pending, { status: 'committed', recoveredSessionCount: 1 })
   await terminateQuietly(host)
 })
+
+test('history listing forwards the exact keyset payload without an idempotency key', async () => {
+  const { child, host } = await startReady()
+  const payload = { limit: 25, cursor: { startedAt: 1775000000000, sessionId: 'session-9' } }
+  const pending = host.listSessions(payload)
+  await nextTurn()
+  const request = requestFor(child, OPERATIONS.LIST_SESSIONS)
+  assert.deepEqual(request.payload, payload)
+  assert.equal(Object.hasOwn(request, 'idempotencyKey'), false)
+  child.emit('message', successResponse(request, { items: [], nextCursor: null }))
+  assert.deepEqual(await pending, { items: [], nextCursor: null })
+  await terminateQuietly(host)
+})

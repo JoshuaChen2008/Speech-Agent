@@ -28,6 +28,7 @@ function hostWith (overrides = {}) {
     async recoverStaleSessions () { return { status: 'none', recoveredSessionCount: 0 } },
     async importLegacyJsonl () { return { status: 'skipped' } },
     async getSessionTranscript (sessionId) { return { sessionId } },
+    async listSessions () { return { items: [], nextCursor: null } },
     async getStats () { return { sessions: 0 } },
     async shutdown () {},
     async terminateAndWait () {},
@@ -336,5 +337,43 @@ test('stale-session recovery is a retained startup write and safely replays an u
   assert.deepEqual(log, [
     [1, { recoveredAt: 1775000000000 }],
     [2, { recoveredAt: 1775000000000 }]
+  ])
+})
+
+test('history-list business rejections leave the FIFO healthy and its input is cloned', async (t) => {
+  const ready = deferred()
+  const log = []
+  const gateway = new StorageGateway({
+    databasePath: DATABASE_PATH,
+    hostFactory: () => hostWith({
+      async listSessions (input) {
+        await ready.promise
+        log.push(['list', input])
+        throw new StorageError('INVALID_SESSION')
+      },
+      async openSession (input) {
+        log.push(['open', input])
+        return { status: 'committed' }
+      }
+    })
+  })
+  t.after(() => gateway.terminate())
+
+  const input = { limit: 1, cursor: { startedAt: 1000, sessionId: 'terminal-z' } }
+  const listed = gateway.listSessions(input)
+  const opened = gateway.openSession({ sessionId: 'new-session', sourceId: 'mic', startedAt: 2000 })
+  const flushed = gateway.flush()
+  input.limit = 100
+  input.cursor.sessionId = 'mutated'
+  ready.resolve()
+
+  await assert.rejects(listed, (error) => error instanceof StorageError && error.code === 'INVALID_SESSION')
+  assert.deepEqual(await opened, { status: 'committed' })
+  await assert.doesNotReject(flushed,
+    'a rejected read must not reject a concurrent durable FIFO barrier')
+  assert.equal(gateway.faulted, false)
+  assert.deepEqual(log, [
+    ['list', { limit: 1, cursor: { startedAt: 1000, sessionId: 'terminal-z' } }],
+    ['open', { sessionId: 'new-session', sourceId: 'mic', startedAt: 2000 }]
   ])
 })

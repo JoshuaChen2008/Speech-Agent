@@ -235,3 +235,71 @@ test('cold-start recovery atomically marks stale active sessions interrupted', (
     (error) => error.code === 'INVALID_SESSION'
   )
 })
+
+test('history listing excludes active sessions and pages terminal sessions by a stable keyset', (t) => {
+  const store = tempStore(t)
+
+  assert.deepEqual(store.listSessions({ limit: 10, cursor: null }), {
+    items: [], nextCursor: null
+  })
+
+  store.openSession({ sessionId: 'terminal-a', sourceId: 'loopback', startedAt: 1000 })
+  store.closeSession({ sessionId: 'terminal-a', sourceId: 'loopback', endedAt: 1100, state: 'closed' })
+
+  store.openSession({ sessionId: 'terminal-z', sourceId: 'mic', startedAt: 1000 })
+  store.appendCaption(caption({
+    sessionId: 'terminal-z', sourceId: 'mic', segmentId: 'terminal-z-1', sequence: 1, revision: 1
+  }))
+  store.closeSession({ sessionId: 'terminal-z', sourceId: 'mic', endedAt: 1200, state: 'interrupted' })
+
+  store.openSession({ sessionId: 'terminal-new', sourceId: 'loopback', startedAt: 2000 })
+  store.appendCaption(caption({
+    sessionId: 'terminal-new', segmentId: 'terminal-new-1', sequence: 1, revision: 1
+  }))
+  store.appendCaption(caption({
+    sessionId: 'terminal-new', segmentId: 'terminal-new-2', sequence: 2, revision: 1
+  }))
+  store.closeSession({ sessionId: 'terminal-new', sourceId: 'loopback', endedAt: 2200, state: 'closed' })
+
+  store.openSession({ sessionId: 'still-active', sourceId: 'mic', startedAt: 3000 })
+
+  const firstPage = store.listSessions({ limit: 2, cursor: null })
+  assert.deepEqual(firstPage, {
+    items: [
+      {
+        sessionId: 'terminal-new', mode: 'meeting', sourceId: 'loopback',
+        startedAt: 2000, endedAt: 2200, state: 'closed', segmentCount: 2
+      },
+      {
+        sessionId: 'terminal-z', mode: 'dictation', sourceId: 'mic',
+        startedAt: 1000, endedAt: 1200, state: 'interrupted', segmentCount: 1
+      }
+    ],
+    nextCursor: { startedAt: 1000, sessionId: 'terminal-z' }
+  })
+  assert.equal(firstPage.items.some((item) => item.sessionId === 'still-active'), false)
+
+  assert.deepEqual(store.listSessions({ limit: 2, cursor: firstPage.nextCursor }), {
+    items: [{
+      sessionId: 'terminal-a', mode: 'meeting', sourceId: 'loopback',
+      startedAt: 1000, endedAt: 1100, state: 'closed', segmentCount: 0
+    }],
+    nextCursor: null
+  })
+})
+
+test('history listing fails closed for malformed pagination and over-privileged fields', (t) => {
+  const store = tempStore(t)
+  for (const input of [
+    { limit: 0, cursor: null },
+    { limit: 101, cursor: null },
+    { limit: 1.5, cursor: null },
+    { limit: 1, cursor: {} },
+    { limit: 1, cursor: { startedAt: -1, sessionId: 'session' } },
+    { limit: 1, cursor: { startedAt: 1000, sessionId: '', audioPath: 'C:\\private\\audio.wav' } },
+    { limit: 1, cursor: null, sql: 'DROP TABLE sessions' },
+    { limit: 1, cursor: null, audioPath: 'C:\\private\\audio.wav' }
+  ]) {
+    assert.throws(() => store.listSessions(input), (error) => error.code === 'INVALID_SESSION')
+  }
+})

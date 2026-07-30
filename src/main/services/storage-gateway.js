@@ -27,6 +27,11 @@ const DURABLE_WRITE_OPERATIONS = new Set([
   'recoverStaleSessions',
   'importLegacyJsonl'
 ])
+const READ_ONLY_OPERATIONS = new Set([
+  'getSessionTranscript',
+  'listSessions',
+  'getStats'
+])
 const TRANSPORT_CODES = new Set([
   'NOT_INITIALIZED',
   'STORAGE_WORKER_EXITED',
@@ -277,6 +282,10 @@ class StorageGateway {
     return this.enqueue('getSessionTranscript', sessionId)
   }
 
+  listSessions (input) {
+    return this.enqueue('listSessions', input)
+  }
+
   getStats () {
     return this.enqueue('getStats', null)
   }
@@ -289,6 +298,7 @@ class StorageGateway {
       case 'recoverStaleSessions': return host.recoverStaleSessions(item.payload)
       case 'importLegacyJsonl': return host.importLegacyJsonl(item.payload)
       case 'getSessionTranscript': return host.getSessionTranscript(item.payload)
+      case 'listSessions': return host.listSessions(item.payload)
       case 'getStats': return host.getStats()
       default: throw new TypeError(`unsupported gateway operation: ${item.operation}`)
     }
@@ -341,10 +351,13 @@ class StorageGateway {
       } catch (error) {
         if (this.stopped || this.queue[0] !== item) return
         if (!isTransportFailure(error)) {
-          if (item.operation === 'getSessionTranscript' || item.operation === 'getStats') {
+          if (READ_ONLY_OPERATIONS.has(item.operation)) {
             this.queue.shift()
             if (!item.reported) item.reject(error)
-            this.rejectFlushWaiters(error)
+            /* 查询的确定性业务拒绝只属于该查询 promise。flush 是持久化
+               FIFO 的排空屏障；只读失败既没有未知写入结果，也不能把并发
+               close/shutdown 误报为落盘失败。继续处理后续队列，待实际排空
+               后统一 resolve flush waiters。 */
             continue
           }
           /* 写命令的确定性拒绝表示事实序列存在程序/身份冲突。保留毒性队首

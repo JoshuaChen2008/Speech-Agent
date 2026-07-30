@@ -546,6 +546,59 @@ class SqliteSubtitleStore {
     }
   }
 
+  listSessions (input) {
+    this.assertOpen()
+    assertExactKeys(input, ['limit', 'cursor'], 'INVALID_SESSION')
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100) {
+      throw new StorageError('INVALID_SESSION')
+    }
+
+    let cursor = null
+    if (input.cursor !== null) {
+      assertExactKeys(input.cursor, ['startedAt', 'sessionId'], 'INVALID_SESSION')
+      cursor = {
+        startedAt: integerTimestamp(input.cursor.startedAt),
+        sessionId: sessionIdValue(input.cursor.sessionId)
+      }
+    }
+
+    const params = []
+    let afterCursor = ''
+    if (cursor) {
+      afterCursor = `
+        AND (s.started_at < ? OR (s.started_at = ? AND s.session_id < ?))
+      `
+      params.push(cursor.startedAt, cursor.startedAt, cursor.sessionId)
+    }
+    params.push(input.limit + 1)
+    const rows = this.database.prepare(`
+      SELECT s.session_id, s.mode, s.source_id, s.started_at, s.ended_at, s.state,
+             COUNT(seg.id) AS segment_count
+      FROM sessions AS s
+      LEFT JOIN segments AS seg ON seg.session_id = s.session_id
+      WHERE s.state IN ('closed', 'interrupted')
+      ${afterCursor}
+      GROUP BY s.session_id, s.mode, s.source_id, s.started_at, s.ended_at, s.state
+      ORDER BY s.started_at DESC, s.session_id DESC
+      LIMIT ?
+    `).all(...params)
+    const hasMore = rows.length > input.limit
+    const items = rows.slice(0, input.limit).map((row) => ({
+      sessionId: row.session_id,
+      mode: row.mode,
+      sourceId: row.source_id,
+      startedAt: Number(row.started_at),
+      endedAt: Number(row.ended_at),
+      state: row.state,
+      segmentCount: Number(row.segment_count)
+    }))
+    const last = items.at(-1)
+    return {
+      items,
+      nextCursor: hasMore ? { startedAt: last.startedAt, sessionId: last.sessionId } : null
+    }
+  }
+
   getStats () {
     this.assertOpen()
     return {

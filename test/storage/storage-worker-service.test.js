@@ -110,6 +110,15 @@ test('service composes protocol, real SQLite and subtitle semantics without SQL 
   assert.equal(service.handle(request(OPERATIONS.CLOSE_SESSION, closed, {
     idempotencyKey: makeCloseSessionKey(closed.sessionId)
   })).result.status, 'committed')
+  assert.deepEqual(service.handle(request(OPERATIONS.LIST_SESSIONS, {
+    limit: 10, cursor: null
+  })).result, {
+    items: [{
+      sessionId: 'session-1', mode: 'meeting', sourceId: 'loopback',
+      startedAt: 1000, endedAt: 2000, state: 'closed', segmentCount: 1
+    }],
+    nextCursor: null
+  })
   assert.equal(service.handle(request(OPERATIONS.SHUTDOWN)).ok, true)
   assert.equal(service.shuttingDown, true)
 })
@@ -140,6 +149,18 @@ test('malformed, overprivileged and mismatched requests fail safely without pois
   }))
   assert.equal(wrongKey.error.code, 'IDEMPOTENCY_KEY_MISMATCH')
   assert.equal(service.handle(request(OPERATIONS.GET_STATS)).result.sessions, 0)
+
+  for (const invalidPayload of [
+    { limit: 1, cursor: null, sql: `DROP TABLE sessions -- ${sentinel}` },
+    { limit: 1, cursor: null, audioPath: sentinel },
+    { limit: 0, cursor: null },
+    { limit: 1, cursor: { startedAt: 1, sessionId: 's', sql: sentinel } }
+  ]) {
+    const rejectedList = service.handle(request(OPERATIONS.LIST_SESSIONS, invalidPayload))
+    assert.equal(rejectedList.ok, false)
+    assert.ok(['INVALID_REQUEST', 'INVALID_SESSION'].includes(rejectedList.error.code))
+    assert.ok(!JSON.stringify(rejectedList).includes(sentinel))
+  }
 
   const overprivileged = service.handle(request(OPERATIONS.OPEN_SESSION, {
     ...opened,

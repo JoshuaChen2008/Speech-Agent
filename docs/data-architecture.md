@@ -1,6 +1,6 @@
 # 字幕系统持久化与 Agent 派生数据架构
 
-> 状态：SQLite 字幕存储与 Agent 插件宿主语义已接受；DB0 开发态、DB1 原子/幂等、Gateway 恢复及默认产品 SQLite-only 生命周期的确定性门禁已通过（2026-07-31）；真实产品 Electron 启动迁移、历史、I3/I4 与打包态资格尚未完成；向量检索 Deferred
+> 状态：SQLite 字幕存储与 Agent 插件宿主语义已接受；DB0 开发态、DB1 原子/幂等、Gateway 恢复、默认产品 SQLite-only 生命周期及历史复盘/导出的确定性门禁已通过（2026-07-31）；真实产品 Electron 启动迁移与历史窗口交互、I3/I4、打包态资格尚未完成；向量检索 Deferred
 >
 > 决策依据：[ADR 0001](adr/0001-sqlite-authoritative-event-store.md) / [ADR 0002](adr/0002-separate-subtitle-and-agent-systems.md) / [ADR 0003](adr/0003-project-owned-agent-plugin-host.md)
 >
@@ -171,8 +171,8 @@ B3.1 JSONL 是旧版过渡基线；默认组合根现已按下列顺序切到 SQ
 - 真实组合：Electron main 使用生产 `StorageWorkerHost`，经 utility process 的 `WorkerService` 串行调用真实 `SqliteSubtitleStore` 和文件 SQLite；loopback/mic 分开建会话并重开查询。
 - DB1 已验证：业务幂等键不依赖 `requestId`；同键同载荷去重，同键异载荷冲突；高 revision 更新投影，迟到低 revision 只保留事实；ghost refined、partial、translated、跨源/关闭后新事件均 fail closed；事件插入后或投影后故障会整事务回滚，commit 后丢回复再提交只保留一份事实。
 - Gateway 组合已验证：`starting` 先等 open ACK 才启动采集，final/refined 先进入持久化 FIFO 再广播 UI，close ACK 前保持 `stopping`；worker 空闲退出、提交前退出及 COMMIT 后 ACK 丢失均在旧 generation 完全退出后以同一载荷恢复，事实/投影不重复；pause/resume 保持同一会话，loopback/mic 顺序会话不串源，translated 不进入字幕事实。
-- DB6 局部已验证：schema 无 BLOB/音频列，RPC 拒绝 `audioPath/samples/sql` 等额外字段且错误不回显正文/路径；默认产品确定性旅程的两次冷启动、迁移、XOR 会话和退出均无 JSONL 双写或音频产物。完整 DB6 仍需历史导出、真实产品应用目录与 I4 检查。
-- 默认组合根已经 SQLite-only，并实现单实例锁、stale-active 收束和有界 `before-quit`；这仍不表示真实产品 Electron 启动迁移、历史 UI、I3/I4 或打包态已通过。
+- DB6 局部已验证：schema 无 BLOB/音频列，RPC 拒绝 `audioPath/samples/sql` 等额外字段且错误不回显正文/路径；默认产品两次冷启动/迁移/XOR 会话/退出以及历史 txt/md/srt 导出均无 JSONL 双写、音频字段/路径或音频产物。完整 DB6 仍需真实产品应用目录与 I4 检查。
+- 默认组合根已经 SQLite-only，并实现单实例锁、stale-active 收束、有界 `before-quit`、终态历史查询和主进程选择路径的安全导出；这仍不表示真实产品 Electron 启动迁移/历史窗口交互、I3/I4 或打包态已通过。
 
 ### 7.3 当前 DB2 实现证据
 
@@ -182,4 +182,4 @@ B3.1 JSONL 是旧版过渡基线；默认组合根现已按下列顺序切到 SQ
 - 迁移 RPC 只接受已解析的 `final/refined` 白名单载荷与文件名/SHA，拒绝 SQL、绝对路径、音频字段和 translated 字幕事实；原 JSONL 不改写。
 - 默认 `main.js` 通过 `SubtitleApplicationRuntime` 按 `worker ready → stale-active interrupted → JSONL migration → recorder/coordinator` 启动，只把 final/refined 写入 SQLite；退出先收束活动会话并等待存储 ACK，超时后只终止精确持有的 worker。
 - 产品生命周期联合 CI 围绕同一 userData 连续运行两次冷启动，验证旧档只读、SHA 幂等、mic/loopback XOR 新会话、partial 排除、refined 单投影、无 JSONL 双写/音频产物和零 active 遗留。
-- 状态仍是「实现完成/尚未产品验收」：真实 Electron utility process 的产品启动 import、弹窗/退出实机证据、历史 UI、I3/I4 与打包态尚未完成，因此不得声称完整 DB2/J10 发布门禁通过。
+- 状态仍是「实现完成/尚未产品验收」：确定性历史 UI 接线/服务联合证据已补齐，但真实 Electron utility process 的产品启动 import、BrowserWindow 交互、弹窗/退出实机证据、I3/I4 与打包态尚未完成，因此不得声称完整 DB2/J10 发布门禁通过。

@@ -1,6 +1,6 @@
 # 字幕与工具条窗口规范
 
-> 状态：Rev.3 · 2026-07-26
+> 状态：Rev.4 · 2026-07-31
 > 本文只描述当前 Electron 窗口壳、交互不变量和视觉验收边界。具体视觉方案由 [ui-design-brief.md](ui-design-brief.md) 管理；运行状态和数据来自 [runtime-architecture.md](runtime-architecture.md)。
 
 ## 1. 当前结构
@@ -11,22 +11,23 @@
 可见窗口
 ├─ captionWin   透明、不可聚焦、常驻置顶
 ├─ toolbarWin   透明、可交互、常驻置顶
-└─ settingsWin  正常可聚焦、Win11 acrylic
+├─ settingsWin  正常可聚焦、Win11 acrylic
+└─ historyWin   正常可聚焦/缩放、终态文本复盘与导出
 
-B2 计划中的运行窗口（尚未实现）
-└─ audioHostWin 隐藏，只做采集和 AudioWorklet，不属于 UI
+运行窗口
+└─ audioHostWin 隐藏，只做采集和 AudioWorklet，不属于可见 UI
 ```
 
 - 未锁定：工具条视觉上停靠在字幕卡右上角；拖字幕或工具条都会移动整个组合。
 - 已锁定：字幕窗恒穿透；工具条脱离并保持可交互，可用于暂停或解锁。
 - 解锁入口是工具条和 `Ctrl+Alt+L`，字幕窗内不再保留不可见 hotzone。
-- 历史、导出、模型资源和首启不展开在字幕透明窗内，使用设置窗或未来独立的正常窗口。
+- 历史与导出使用独立 `historyWin`；模型资源和首启也不展开在字幕透明窗内。
 
 ## 2. 职责边界
 
 视觉/UI 层负责：
 
-- 字幕、工具条和设置窗的 HTML/CSS。
+- 字幕、工具条、设置和历史窗的 HTML/CSS。
 - 运行状态的视觉表达、文案、键盘和无障碍。
 - CaptionEvent reducer 到稳定 DOM 的映射。
 
@@ -192,7 +193,7 @@ renderer 在可拖区域发出 `dragStart(role)` 意图，主进程通过全局�
 
 - 显示与字幕：只操作 appearancePreferences，可即时预览。
 - 音频/ASR/资源/AI：根据 Capabilities 生成或禁用控件，等待 CommandResult。
-- 历史：正常可聚焦，支持选择、搜索、导出和长列表回收。
+- 历史：正常可聚焦，已支持终态会话选择、keyset 分页、带时间戳正文和 txt/md/srt 导出；搜索与两小时详情 DOM 回收后置到对应阶段。
 - 首启：选择会议/个人听写预设，说明权限、模型下载和云端文本边界。
 - 未实现功能在骨架阶段必须标注“演示模式”或禁用，不能让用户误以为已生效。
 
@@ -214,4 +215,4 @@ renderer 在可拖区域发出 `dragStart(role)` 意图，主进程通过全局�
 3. B1 已把字幕接到稳定节点 + CaptionEvent reducer，并移除 renderer 假流。
 4. B1 已把工具条升级为完整 RuntimeSnapshot + CommandResult。
 5. B1 已让设置页识别 Capabilities；默认 Gate 0B profile 为空，开发 profile 只能由显式开关启用。
-6. 视觉/UI 的 V1–V2 方案和状态矩阵已交付；历史、资源管理与权限入口跟随 B2–B4。
+6. 视觉/UI 的 V1–V2 方案和状态矩阵已交付；历史入口与窗口已实现/尚未实机验收，资源管理与权限入口继续跟随 B4/发布阶段。

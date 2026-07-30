@@ -1,6 +1,6 @@
 # Live Subtitle Agent · 视觉/UI 模型交接说明
 
-> 状态：Rev.2 · 2026-07-26  
+> 状态：Rev.3 · 2026-07-31
 > 目的：让擅长视觉设计的模型可以独立改进界面，同时不接触音频、ASR、模型、存储和安全实现。
 
 ## 1. 核心原则
@@ -24,8 +24,10 @@
 | `src/caption/caption.css` | 字幕排版、主题、透明度、状态样式和动效 |
 | `src/toolbar/index.html` | 工具条控件结构、图标和可访问名称 |
 | `src/toolbar/toolbar.css` | 工具条布局、视觉状态和动效 |
-| `src/settings/settings.html` | 设置、历史、首启等正常窗口的信息架构 |
+| `src/settings/settings.html` | 设置与首启正常窗口的信息架构 |
 | `src/settings/settings.css` | 设置窗口、组件和主题 |
+| `src/history/index.html` | 历史会话、正文时间线和导出控件的语义结构 |
+| `src/history/history.css` | 历史窗口布局、主题、列表和时间线视觉 |
 | `src/ui/shared/tokens.css` | design token 单一真相（见 §2.3）；未来的共享组件样式和纯展示 helpers 同放 `src/ui/shared/`。⚠ 例外：`caption-reducer.js` 见 §2.2 |
 | `docs/ui-design-brief.md` | 视觉规范和交接说明 |
 
@@ -37,12 +39,13 @@
 | `src/ui/shared/caption-reducer.js` | B2.0 起 `createState/applyEvent/KEEP_SEGMENTS` 被主进程 canonical CaptionState 折叠复用（单一折叠真相），窗口/修订/会话切换语义改动会静默改变壳层行为；`selectLines/computeLineBudget` 属视觉决策但同文件，一并共同评审 |
 | `src/toolbar/toolbar.js` | 只允许把用户意图交给 `toolbarApi`，并根据 RuntimeSnapshot 渲染 |
 | `src/settings/settings.js` | 只允许表单/view-model 逻辑；运行配置必须等待 CommandResult |
+| `src/history/history.js` | 只允许历史列表/详情/导出交互和 DOM 渲染；终态过滤、投影和文件写由主进程/SQLite 决定 |
 | BrowserWindow 宽高、边距、工具条 overlap rect | 同时影响 CSS、窗口停靠和命中测试，必须更新共享 layout contract |
 | 新的按钮、设置或状态 | 可能需要新增 Command、Capability 或错误类型，先提出 contract request |
 
 ### 2.3 design token 层（V1 已落地）
 
-`src/ui/shared/tokens.css` 是三个 renderer 的唯一视觉真相，由三份 HTML 在各自组件样式**之前**引入：
+`src/ui/shared/tokens.css` 是四个可见 renderer 的唯一视觉真相，由四份 HTML 在各自组件样式**之前**引入：
 
 ```html
 <link rel="stylesheet" href="../ui/shared/tokens.css">
@@ -230,7 +233,7 @@ UI 规则：
 
 以下是不变量：
 
-- 三个可见窗口与隐藏 audio host 的职责不能通过 CSS/DOM 合并。
+- 四个可见 renderer（字幕、工具条、设置、历史）与隐藏 audio host 的职责不能通过 CSS/DOM 合并。
 - 字幕窗和工具条窗的点击穿透、停靠关系必须服从 layout contract。
 - UI 不持有 API Key，不读写模型或会话文件，不直接发网络请求。
 - UI 不出现 sherpa 文件名、ONNX 路径或 IPC channel；高级诊断页除外。
@@ -240,7 +243,7 @@ UI 规则：
 ## 6. Contract request 状态
 
 > 提出方：视觉/UI 层 · 2026-07-26 · 对应 V1–V3 已交付的部分
-> 状态：B1 已关闭 A1–A3 以及 stop/retry；A4 和后续阶段入口仍未实现。
+> 状态：B1 已关闭 A1–A3 以及 stop/retry；B3.3 已关闭 history；A4、资源管理与权限入口仍未实现。
 
 ### 6.1 A 类 · 阻塞型
 
@@ -267,7 +270,7 @@ UI 规则：
 |---|---|---|---|
 | `stop` | stop 命令 | B1 | **完成** |
 | `retry` | retry 命令 | B1 | **完成** |
-| `history` | 可聚焦的历史窗 + 只读会话/时间戳正文/导出 contract；搜索可后加 | B3.3 | 未实现 |
+| `history` | 可聚焦的历史窗 + 只读终态会话/时间戳正文/导出 contract；搜索可后加 | B3.3 | **实现完成/尚未实机验收** |
 | `open-model-manager` | 资源管理页 | B4 | 未实现 |
 | `request-permission` | 权限请求入口 | Gate 0C / B2 | 未实现 |
 
@@ -287,7 +290,7 @@ UI 规则：
 
 ### 6.4 后续顺序
 
-字幕 MVP 当前先完成 B3.3 历史与 B4 资源入口；A4 layout contract 可并行收口。Agent UI 等 A1/A2 契约冻结后再做，不在 renderer 内先行伪造能力。
+字幕 MVP 当前先完成 B4 ModelManager 资源入口，再做真实 Electron/I3/I4 验收；A4 layout contract 可并行收口。Agent UI 等 A1/A2 契约冻结后再做，不在 renderer 内先行伪造能力。
 
 ## 7. 每次视觉交接必须包含
 

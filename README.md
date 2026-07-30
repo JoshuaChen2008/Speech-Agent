@@ -2,7 +2,7 @@
 
 一个由两套能力协作组成的 Win11 桌面产品：**字幕系统**以互斥的 `loopback` 会议字幕或 `mic` 个人听写为输入，负责本地实时 ASR、字幕、自动保存和带时间戳历史；后置的 **Agent 系统**再消费已提交字幕，通过 Pi Agent Core 与第一方插件生成独立增强文本和会后结构化纪要。Agent 只生成内容，不执行外部操作；关闭或失败时，字幕系统仍独立完整工作。产品现在及未来都不保存原始音频。
 
-当前已完成 **B1 应用骨架 + B2 实时链路 + B3 两遍精修 + SQLite-only 默认持久化 + 来源 XOR 联合门禁**：透明字幕条、工具栏、点击穿透、亚克力设置窗、单选监听模式、权威会话状态机、隐藏采集窗（回环/麦克风）、realtime worker、Gate 0B 改判批准的 **160ms 真实模型 + silero VAD + 离线精修**。本机模型就位时，启动即出真字幕，说完一句约 1 秒后自动变准并补全标点。默认组合根会先收束崩溃遗留会话、幂等迁移旧 JSONL，再只写 SQLite，并在退出前等待字幕与会话终态落盘；该路径已通过确定性多模块联合 CI。历史查看、模型自动安装、真实产品 Electron 迁移/退出验收和可分发版本尚未闭环；Agent 系统尚未实现，向量检索已后置。
+当前已完成 **B1 应用骨架 + B2 实时链路 + B3 两遍精修 + SQLite-only 默认持久化 + 文本历史/导出 + 来源 XOR 联合门禁**：透明字幕条、工具栏、点击穿透、亚克力设置窗、单选监听模式、权威会话状态机、隐藏采集窗（回环/麦克风）、realtime worker、Gate 0B 改判批准的 **160ms 真实模型 + silero VAD + 离线精修**。本机模型就位时，启动即出真字幕，说完一句约 1 秒后自动变准并补全标点。默认组合根会先收束崩溃遗留会话、幂等迁移旧 JSONL，再只写 SQLite，并在退出前等待字幕与会话终态落盘；工具条可打开独立历史窗，按会话查看带时间戳的当前正文并导出 txt/md/srt。该路径已通过确定性多模块联合 CI，但真实 Electron 历史窗口、模型自动安装、产品迁移/退出验收和可分发版本尚未闭环；Agent 系统尚未实现，向量检索已后置。
 
 ## 运行
 
@@ -62,9 +62,10 @@ npm run test:ci          # CI 门禁：联合旅程 + 完整回归
 - **解锁两路**：工具条 🔒、`Ctrl+Alt+L` 全局快捷键（锁定态字幕卡不可点）
 - **设置 ↔ 字幕条实时联动**：字号 / 不透明度 / 圆角 / 主题 / 双语 改动即时生效，持久化到 `userData/config.json`
 - **设置窗**：独立第三窗，Win11 真·亚克力（`titleBarStyle:'hidden'` + `backgroundMaterial:'acrylic'`，`resizable:false` 防拖动误缩放）
+- **文本历史窗**：工具条“历史记录”打开独立可缩放窗口；只列出已结束/中断会话，显示相对时间与墙钟时间，读取 SQLite 当前正文投影并由主进程安全导出 txt/md/srt；没有录音或音频回放能力
 - **主题**：跟随系统深浅色（`nativeTheme`）
 - **Gate 0D 首启**：显式选择「会议字幕」或「个人听写」；选择前两路均关闭，一次会话只允许启用一路
-- **最小权限桥接**：caption / toolbar / settings 使用独立 preload，主进程按窗口角色和 main frame 校验 IPC
+- **最小权限桥接**：caption / toolbar / settings / history 使用独立 preload，主进程按窗口角色和 main frame 校验 IPC；history renderer 不能传 SQL、数据库路径或任意导出目标路径
 - **B1 fake adapter**：字幕只接收 `SessionCoordinator` 发布的 `CaptionEvent`，renderer 不再自造假流
 
 ## 规划边界
@@ -84,14 +85,14 @@ npm run test:ci          # CI 门禁：联合旅程 + 完整回归
 
 ```
 src/
-  main.js              主进程组合根：三窗管理、IPC 校验、配置与会话协调
+  main.js              主进程组合根：四窗管理、IPC 校验、配置与会话协调
   config.js            配置存储入口；实现位于 main/services/config-store.js
   main/
     ipc/               通道名与按窗口角色访问策略
     session/           SessionCoordinator、状态机与 fake runtime adapter
-  preload/             caption / toolbar / settings 三个最小权限桥
+  preload/             caption / toolbar / settings / history 四个最小权限桥
   ui/shared/
-    tokens.css         三窗共享的 design token：色彩/字阶/形状/阴影/动效 + 主题切换
+    tokens.css         四窗共享的 design token：色彩/字阶/形状/阴影/动效 + 主题切换
   contracts/           Gate 0A：v1 契约、运行时校验器与跨层 JSON fixtures
   caption/             字幕窗
     index.html · caption.css · caption.js     命中测试 + 拖动 + 锁定穿透 + CaptionEvent 渲染
@@ -99,11 +100,12 @@ src/
     index.html · toolbar.css · toolbar.js     命中测试 + 拖动 + 按钮 + 锁定/录制视觉
   settings/            设置窗
     settings.html · settings.css · settings.js  控件 ↔ 配置双向绑定
+  history/             终态会话列表、带时间戳文本复盘与 txt/md/srt 导出 UI
 ```
 
 ## 下一步
 
-见 [PLAN.md](PLAN.md)（Rev.6）：来源互斥 J4 与默认 SQLite-only 生命周期已完成确定性联合门禁；当前继续按 B3.3 历史 UI/导出 → ModelManager → 真实产品 smoke → 干净 Win11 分发闭环字幕 MVP。之后做 Pi Core/Electron 隔离探针、项目自有插件宿主、独立增强文本和会后结构化纪要；向量检索最后评估。任何能力都必须有跨模块用户旅程，不能只交单测。
+见 [PLAN.md](PLAN.md)（Rev.7）：来源互斥、默认 SQLite-only 生命周期和文本历史/导出已完成确定性联合门禁；当前按 ModelManager → 真实产品 smoke → I3 长稳 → 干净 Win11 分发闭环字幕 MVP。之后做 Pi Core/Electron 隔离探针、项目自有插件宿主、独立增强文本和会后结构化纪要；向量检索最后评估。任何能力都必须有跨模块用户旅程，不能只交单测。
 
 - 窗口壳和交互不变量：[docs/subtitle-window.md](docs/subtitle-window.md)
 - 视觉/UI 模型交接：[docs/ui-design-brief.md](docs/ui-design-brief.md)
