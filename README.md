@@ -35,9 +35,16 @@ npm run test:ci          # CI 门禁：联合旅程 + 完整回归
 真实设备验收必须把两个来源分开运行；报告只保存结构化指标，不保存现场音频：
 
 ```powershell
-.\node_modules\electron\dist\electron.exe scripts\i2-live-caption-smoke.js --source loopback --report .artifacts\i2-live\loopback.json
-.\node_modules\electron\dist\electron.exe scripts\i2-live-caption-smoke.js --source mic --listen-seconds 12 --report .artifacts\i2-live\mic.json
+.\scripts\run-electron-smoke.ps1 `
+  -EntryPoint scripts\i2-live-caption-smoke.js `
+  -EntryArguments @('--source', 'loopback', '--report', '.artifacts\i2-live\loopback.json')
+.\scripts\run-electron-smoke.ps1 `
+  -EntryPoint scripts\i2-live-caption-smoke.js `
+  -EntryArguments @('--source', 'mic', '--listen-seconds', '12', '--report', '.artifacts\i2-live\mic.json')
 ```
+
+本地 Electron smoke 必须经上述启动器隐藏启动、等待自然退出并保留 stdout/stderr；不要用
+`electron.exe --help` 探测运行时，也不要按进程名结束仍在验证中的 Electron。
 
 `mic` 运行时终端只显示 `promptId`，请朗读 `scripts/gate-0b/corpus.json` 中对应 case 的冻结 reference；终端和报告都不回显现场转写正文。当前已留档的 loopback schema v2 实机证据包含真实 ASR/精修、字幕时序、CPU/工作集、PCM 队列与缺口指标；物理 mic 仍是 I2 完整验收的待办。
 

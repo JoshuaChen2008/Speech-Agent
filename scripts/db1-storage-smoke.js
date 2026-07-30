@@ -188,7 +188,7 @@ async function main () {
     }) + '\n')
     app.exit(report.result === 'pass' ? 0 : 1)
   } catch (error) {
-    host.terminate()
+    await host.terminateAndWait(10000).catch(() => {})
     const report = {
       schemaVersion: 1,
       kind: 'db1-storage-worker-composition',

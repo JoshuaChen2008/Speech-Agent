@@ -80,10 +80,13 @@
 - 处理坏尾行、flush、session close 和导出。
 - 按 `segmentId + revision` 折叠，不覆盖历史文件中的旧事件。
 
-`StorageGateway / storage-worker`（B3.3 进行中：storage worker 的 DB0/DB1 基座已实现，产品网关与权威切换待完成）：
+`StorageGateway / storage-worker`（B3.3 进行中：DB0/DB1 基座、Gateway 恢复、Recorder/Coordinator barrier 已实现并通过独立组合；默认产品权威切换待完成）：
 
 - storage worker 是 SQLite 唯一所有者和写者；主进程与 renderer 不执行同步 SQL、不加载扩展。
 - 在同一短事务中追加字幕 `final/refined` 事实并更新当前 segment 投影；提供按会话和时间戳读取历史的异步 API。
+- `starting` 必须先等 session open ACK 才启动采集；final/refined 先同步复制进 Gateway FIFO 再广播 UI；runtime flush 后必须等 caption/close ACK 才从 `stopping` 进入 idle。
+- Gateway 每代只持有一个 utility process；exit、timeout 或坏响应使结果变为 unknown，旧 generation 精确终止并确认退出后，才以同一业务幂等载荷重放队首。业务冲突不靠重启掩盖，队列恢复耗尽则熔断并保留会话。
+- Gateway 队列上限是触发停采集的高水位，不是丢字幕边界：越线的首条字幕写入受保护溢出槽，终态 close 另有独立的有界容量；Coordinator 只显示已被持久化边界接纳的事件，停釆集边界内迟到字幕先缓冲。若用户在 storage error 时选择 stop，必须先排空字幕 backlog、持久化边界缓冲，然后才能提交 close；`adapter.stop()` 返回是终止字幕 ingress 栅栏，该调用内冲刷出的 final/refined 仍接受，返回后的退役 generation 事件明确拒绝。全部 ACK 前禁止恢复采集或进入 idle。
 - A1 再冻结 Agent 可靠消费采用事务 outbox 还是 durable cursor；两者都必须以已提交字幕水位为边界。
 - FTS5 可按历史搜索需求后加；`sqlite-vec` 明确 Deferred，不进入 B3.3 schema 或加载路径。
 - SQLite 迁移验收后替代 JSONL 权威写入；JSONL 只保留为旧数据导入、导出和恢复格式，禁止长期双写。

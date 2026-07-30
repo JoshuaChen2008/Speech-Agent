@@ -73,5 +73,26 @@ jobs:
           }
           node scripts/verify-db1-report.js .artifacts/db1-ci/report.json
 
+      - name: Run storage Gateway recovery and Coordinator barrier journey
+        shell: powershell
+        run: |
+          $gatewayDir = Join-Path $PWD '.artifacts/storage-gateway-ci'
+          New-Item -ItemType Directory -Force -Path $gatewayDir | Out-Null
+          $gatewayStdout = Join-Path $gatewayDir 'stdout.log'
+          $gatewayStderr = Join-Path $gatewayDir 'stderr.log'
+          $gatewayElectron = Join-Path $PWD 'node_modules/electron/dist/electron.exe'
+          $gatewayProcess = Start-Process -FilePath $gatewayElectron `
+            -ArgumentList @('scripts/storage-gateway-smoke.js','--report','.artifacts/storage-gateway-ci/report.json','--work-dir','.artifacts/storage-gateway-ci/work') `
+            -WorkingDirectory $PWD `
+            -RedirectStandardOutput $gatewayStdout `
+            -RedirectStandardError $gatewayStderr `
+            -WindowStyle Hidden -Wait -PassThru
+          Get-Content -Raw -ErrorAction SilentlyContinue $gatewayStdout
+          if ($gatewayProcess.ExitCode -ne 0) {
+            Get-Content -Raw -ErrorAction SilentlyContinue $gatewayStderr
+            throw "Storage Gateway Electron journey failed with exit code $($gatewayProcess.ExitCode)"
+          }
+          node scripts/verify-storage-gateway-report.js .artifacts/storage-gateway-ci/report.json
+
       - name: Run deterministic integration journeys and full regression suite
         run: npm run test:ci

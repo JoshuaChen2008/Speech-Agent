@@ -22,6 +22,8 @@ const SAFE_ERROR_MESSAGES = Object.freeze({
   NOT_INITIALIZED: 'Storage is not initialized.',
   ALREADY_INITIALIZED: 'Storage is already initialized.',
   SHUTTING_DOWN: 'Storage is shutting down.',
+  STORAGE_UNAVAILABLE: 'Storage is unavailable.',
+  STORAGE_QUEUE_FULL: 'Storage queue is full.',
   IDEMPOTENCY_KEY_MISMATCH: 'Storage idempotency key is invalid.',
   INVALID_SESSION: 'Session data is invalid.',
   SESSION_NOT_FOUND: 'Session was not found.',

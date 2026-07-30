@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "kind": "storage-gateway-coordinator-composition",
+  "executedAt": "2026-07-30T19:32:29.583Z",
+  "result": "pass",
+  "gateStatus": "pass",
+  "runtime": {
+    "electron": "43.2.0",
+    "node": "24.18.0",
+    "sqlite": "3.53.1"
+  },
+  "failedChecks": [],
+  "checks": {
+    "openBeforeCapture": true,
+    "persistenceEnqueuedBeforeUi": true,
+    "stopBarrierBeforeIdle": true,
+    "pauseResumeSameSession": true,
+    "idleWorkerExitRecovered": true,
+    "xorSessionsIsolated": true,
+    "partialAndTranslatedExcluded": true,
+    "databaseHealthy": true,
+    "beforeCommitReplay": true,
+    "afterCommitReplay": true,
+    "allGatewayShutdownsCompleted": true,
+    "noJsonlDualWrite": true,
+    "noAudioArtifacts": true
+  },
+  "metrics": {
+    "sessions": 2,
+    "captionEvents": 3,
+    "segments": 2,
+    "beforeCommitGenerations": 2,
+    "afterCommitGenerations": 2
+  },
+  "scope": {
+    "defaultProductAuthorityCutover": false,
+    "jsonlMigration": false,
+    "historyUi": false,
+    "beforeQuitProductWiring": false,
+    "packagedRuntime": false,
+    "db6FullGate": false
+  },
+  "privacy": {
+    "noBrowserWindowCreated": true,
+    "isolatedUserData": true,
+    "reportContainsTranscriptText": false,
+    "reportContainsAbsolutePath": false,
+    "persistedAudio": false
+  }
+}

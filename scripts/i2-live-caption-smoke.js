@@ -1,10 +1,10 @@
 'use strict'
 
 /* I2 真字幕实机 smoke（Gate 0B 改判后的模型接线验证）：
-     .\node_modules\electron\dist\electron.exe scripts\i2-live-caption-smoke.js `
-       --source loopback --report .artifacts\i2-live\loopback.json
-     .\node_modules\electron\dist\electron.exe scripts\i2-live-caption-smoke.js `
-       --source mic --listen-seconds 12 --report .artifacts\i2-live\mic.json
+     .\scripts\run-electron-smoke.ps1 -EntryPoint scripts\i2-live-caption-smoke.js `
+       -EntryArguments @('--source', 'loopback', '--report', '.artifacts\i2-live\loopback.json')
+     .\scripts\run-electron-smoke.ps1 -EntryPoint scripts\i2-live-caption-smoke.js `
+       -EntryArguments @('--source', 'mic', '--listen-seconds', '12', '--report', '.artifacts\i2-live\mic.json')
    链路（与 src/main.js 真实模型路径同构）：
      SessionCoordinator → RealtimeRuntimeAdapter（fast → x-asr-160ms，真实
      sherpa recognizer）→ AudioHostController（loopback）→ realtime worker

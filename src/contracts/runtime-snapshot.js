@@ -37,7 +37,7 @@ const SOURCE_STATES = Object.freeze([
   'error'
 ])
 const MODEL_STATES = Object.freeze(['missing', 'downloading', 'verifying', 'ready', 'error'])
-const ERROR_SCOPES = Object.freeze(['audio', 'model', 'worker', 'translation', 'system'])
+const ERROR_SCOPES = Object.freeze(['audio', 'model', 'worker', 'storage', 'translation', 'system'])
 
 function assertSource (source, path) {
   assertRecord(source, path)

@@ -94,6 +94,19 @@ class SessionCoordinator {
     this.captionStateRevision = 0
     this.captionFold = createCaptionFoldState()
     this.onListenerError = options.onListenerError || (() => {})
+    this.persistenceSink = options.persistenceSink || null
+    if (this.persistenceSink && (
+      typeof this.persistenceSink.openSession !== 'function' ||
+      typeof this.persistenceSink.acceptCaption !== 'function' ||
+      typeof this.persistenceSink.closeSession !== 'function' ||
+      typeof this.persistenceSink.retry !== 'function' ||
+      typeof this.persistenceSink.flush !== 'function'
+    )) {
+      throw new TypeError('persistenceSink must provide openSession, acceptCaption, closeSession, retry and flush')
+    }
+    this.persistenceFault = null
+    this.persistenceFaultTask = null
+    this.terminalCaptionIngressClosed = false
     this.sessionSourceIds = []
     this.busy = false
     this.disposed = false
@@ -194,8 +207,27 @@ class SessionCoordinator {
     this.segmentRevisions.clear()
     this.segmentSources.clear()
     this.pendingCaptions = []
+    this.persistenceFault = null
+    this.terminalCaptionIngressClosed = false
     this.publish(this.buildSnapshot('starting', sessionId, 'starting', null))
     try {
+      if (this.persistenceSink) {
+        try {
+          await this.persistenceSink.openSession({
+            sessionId,
+            sourceId: this.sessionSourceIds[0]
+          })
+        } catch (cause) {
+          if (!this.isTransitionCurrent(transition)) {
+            return failure('COORDINATOR_CLOSED', '会话服务已关闭', false)
+          }
+          this.pendingCaptions = []
+          this.persistenceFault = { mode: 'open', cause }
+          const error = this.persistenceError('OPEN')
+          this.publish(this.buildSnapshot('error', sessionId, 'error', error))
+          return failure(error.code, error.message, error.recoverable, error.nextAction)
+        }
+      }
       await this.invokeAdapter(transition, 'start', {
         sessionId,
         sourceIds: [...this.sessionSourceIds],
@@ -252,30 +284,31 @@ class SessionCoordinator {
 
   async stop () {
     if (!this.snapshot.capabilities.canStop) return failure('INVALID_STATE', '当前不能停止', true)
+    const terminalState = this.snapshot.phase === 'error' ? 'interrupted' : 'closed'
+    const sessionId = this.snapshot.sessionId
     if (!this.adapter) {
-      const sessionId = this.snapshot.sessionId
       this.publish(this.buildSnapshot('stopping', sessionId, 'inactive', null))
-      this.sessionSourceIds = []
-      this.sourceSequences.clear()
-      this.segmentRevisions.clear()
-      this.segmentSources.clear()
-      this.pendingCaptions = []
-      this.publish(this.buildRestingSnapshot())
-      return success()
+      this.terminalCaptionIngressClosed = true
+      const deferredCloseFailure = this.deferPersistenceCloseIfActiveFault(sessionId, terminalState)
+      if (deferredCloseFailure) return deferredCloseFailure
+      const persistenceFailure = await this.commitPersistenceClose(sessionId, terminalState)
+      if (persistenceFailure) return persistenceFailure
+      return this.completeStoppedSession()
     }
     const transition = this.beginTransition('stop')
-    const sessionId = this.snapshot.sessionId
     this.publish(this.buildSnapshot('stopping', sessionId, 'inactive', null))
     try {
       await this.invokeAdapter(transition, 'stop', { signal: transition.controller.signal })
       if (!this.isTransitionCurrent(transition)) return failure('COORDINATOR_CLOSED', '会话服务已关闭', false)
-      this.sessionSourceIds = []
-      this.sourceSequences.clear()
-      this.segmentRevisions.clear()
-      this.segmentSources.clear()
-      this.pendingCaptions = []
-      this.publish(this.buildRestingSnapshot())
-      return success()
+      /* adapter.stop() is the final caption flush boundary. Events emitted by
+         that call are accepted while it is pending; anything later belongs to
+         a retired runtime generation and must be rejected, never buffered. */
+      this.terminalCaptionIngressClosed = true
+      const deferredCloseFailure = this.deferPersistenceCloseIfActiveFault(sessionId, terminalState)
+      if (deferredCloseFailure) return deferredCloseFailure
+      const persistenceFailure = await this.commitPersistenceClose(sessionId, terminalState)
+      if (persistenceFailure) return persistenceFailure
+      return this.completeStoppedSession()
     } catch (cause) {
       if (!this.isTransitionCurrent(transition)) return failure('COORDINATOR_CLOSED', '会话服务已关闭', false)
       return this.enterAdapterErrorFrom('STOP', '停止', cause, transition)
@@ -286,6 +319,7 @@ class SessionCoordinator {
 
   async retry () {
     if (!this.snapshot.capabilities.canRetry) return failure('INVALID_STATE', '当前不能重试', true)
+    if (this.persistenceFault) return this.retryPersistence()
     const transition = this.beginTransition('retry')
     const sessionId = this.snapshot.sessionId
     this.pendingCaptions = []
@@ -314,10 +348,137 @@ class SessionCoordinator {
     }
   }
 
+  async retryPersistence () {
+    const fault = this.persistenceFault
+    const mode = fault.mode
+    const transition = this.beginTransition('retry-storage')
+    const sessionId = this.snapshot.sessionId
+    this.publish(this.buildSnapshot('recovering', sessionId, 'recovering', this.snapshot.lastError))
+    try {
+      try {
+        await this.persistenceSink.retry()
+      } catch (cause) {
+        if (!this.isTransitionCurrent(transition)) {
+          return failure('COORDINATOR_CLOSED', '会话服务已关闭', false)
+        }
+        this.persistenceFault = { mode, cause }
+        const error = this.persistenceError('RECOVERY')
+        this.publish(this.buildSnapshot('error', sessionId, 'error', error))
+        return failure(error.code, error.message, error.recoverable, error.nextAction)
+      }
+
+      if (!this.isTransitionCurrent(transition)) return failure('COORDINATOR_CLOSED', '会话服务已关闭', false)
+      this.persistenceFault = null
+      if (mode === 'close') return this.completeStoppedSession()
+
+      if (mode === 'stop') {
+        const bufferedFailure = await this.flushBufferedPersistence(sessionId)
+        if (bufferedFailure) {
+          const cause = this.persistenceFault?.cause || fault.cause
+          this.persistenceFault = { mode: 'stop', cause, terminalState: fault.terminalState }
+          return bufferedFailure
+        }
+        const closeFailure = await this.commitPersistenceClose(sessionId, fault.terminalState)
+        if (closeFailure) return closeFailure
+        return this.completeStoppedSession()
+      }
+
+      try {
+        if (mode === 'active') {
+          await this.invokeAdapter(transition, 'stop', { signal: transition.controller.signal })
+          const bufferedFailure = await this.flushBufferedPersistence(sessionId)
+          if (bufferedFailure) return bufferedFailure
+        }
+        await this.invokeAdapter(transition, 'start', {
+          sessionId,
+          sourceIds: [...this.sessionSourceIds],
+          profile: this.runtimeOptions.modelOverride.profile,
+          resume: this.captionCursor(),
+          signal: transition.controller.signal
+        })
+        if (!this.isTransitionCurrent(transition)) {
+          return failure('COORDINATOR_CLOSED', '会话服务已关闭', false)
+        }
+        this.publish(this.buildSnapshot('listening', sessionId, 'active', null))
+        this.flushPendingCaptions()
+        return success()
+      } catch (cause) {
+        if (!this.isTransitionCurrent(transition)) {
+          return failure('COORDINATOR_CLOSED', '会话服务已关闭', false)
+        }
+        this.pendingCaptions = []
+        const error = this.adapterError('RETRY', '重试', cause, transition)
+        this.publish(this.buildSnapshot('error', sessionId, 'error', error))
+        return failure(error.code, error.message, error.recoverable, error.nextAction)
+      }
+    } finally {
+      this.finishTransition(transition)
+    }
+  }
+
   enterAdapterErrorFrom (operation, label, cause, transition) {
     const error = this.adapterError(operation, label, cause, transition)
     this.publish(this.buildSnapshot('error', this.snapshot.sessionId, 'error', error))
     return failure(error.code, error.message, error.recoverable, error.nextAction)
+  }
+
+  deferPersistenceCloseIfActiveFault (sessionId, terminalState) {
+    if (!this.persistenceSink || this.persistenceFault?.mode !== 'active') return null
+    const cause = this.persistenceFault.cause
+    /* Do not enqueue terminal close while stopped-boundary captions are still
+       buffered. Recovery must drain retained writes, persist the buffer, and
+       only then submit close so SQLite ordering remains caption-before-close. */
+    this.persistenceFault = { mode: 'stop', cause, terminalState }
+    const error = this.persistenceError('CLOSE')
+    this.publish(this.buildSnapshot('error', sessionId, 'error', error))
+    return failure(error.code, error.message, error.recoverable, error.nextAction)
+  }
+
+  async commitPersistenceClose (sessionId, state) {
+    if (!this.persistenceSink) return null
+    try {
+      await this.persistenceSink.closeSession({
+        sessionId,
+        sourceId: this.sessionSourceIds[0],
+        state
+      })
+      this.persistenceFault = null
+      return null
+    } catch (cause) {
+      this.persistenceFault = { mode: 'close', cause }
+      const error = this.persistenceError('CLOSE')
+      this.publish(this.buildSnapshot('error', sessionId, 'error', error))
+      return failure(error.code, error.message, error.recoverable, error.nextAction)
+    }
+  }
+
+  async flushBufferedPersistence (sessionId) {
+    this.flushPendingCaptions()
+    if (this.persistenceFault?.mode === 'active') {
+      const error = this.persistenceError('RECOVERY')
+      this.publish(this.buildSnapshot('error', sessionId, 'error', error))
+      return failure(error.code, error.message, error.recoverable, error.nextAction)
+    }
+    try {
+      await this.persistenceSink.flush()
+      return null
+    } catch (cause) {
+      this.persistenceFault = { mode: 'active', cause }
+      const error = this.persistenceError('RECOVERY')
+      this.publish(this.buildSnapshot('error', sessionId, 'error', error))
+      return failure(error.code, error.message, error.recoverable, error.nextAction)
+    }
+  }
+
+  completeStoppedSession () {
+    this.persistenceFault = null
+    this.sessionSourceIds = []
+    this.sourceSequences.clear()
+    this.segmentRevisions.clear()
+    this.segmentSources.clear()
+    this.pendingCaptions = []
+    this.publish(this.buildRestingSnapshot())
+    return success()
   }
 
   adapterError (operation, label, cause, transition = null) {
@@ -338,6 +499,16 @@ class SessionCoordinator {
       message,
       recoverable,
       nextAction: recoverable ? 'retry' : null
+    }
+  }
+
+  persistenceError (operation) {
+    return {
+      scope: 'storage',
+      code: `STORAGE_${operation}_FAILED`,
+      message: '字幕保存服务暂时不可用',
+      recoverable: true,
+      nextAction: 'retry'
     }
   }
 
@@ -404,6 +575,9 @@ class SessionCoordinator {
     clearTimeout(transition.timeout)
     this.activeTransition = null
     this.busy = false
+    if (this.persistenceFault?.mode === 'active') {
+      queueMicrotask(() => this.maybeStopForPersistenceFault())
+    }
   }
 
   async invokeAdapter (transition, operation, argument) {
@@ -657,16 +831,75 @@ class SessionCoordinator {
   flushPendingCaptions () {
     const captions = this.pendingCaptions
     this.pendingCaptions = []
-    for (const event of captions) this.notifyCaption(event)
+    for (let index = 0; index < captions.length; index += 1) {
+      if (this.persistenceFault?.mode === 'active') {
+        this.pendingCaptions.push(...captions.slice(index))
+        break
+      }
+      if (!this.notifyCaption(captions[index])) {
+        this.pendingCaptions.push(...captions.slice(index))
+        break
+      }
+    }
   }
 
   notifyCaption (event) {
+    /* 持久化 sink 先同步复制并入 Gateway FIFO，再把事件广播给 UI；
+       SQLite I/O 异步执行，不阻塞 partial/字幕绘制。 */
+    if (this.persistenceSink) {
+      try {
+        const accepted = this.persistenceSink.acceptCaption(clone(event))
+        if (accepted && typeof accepted.then === 'function') {
+          Promise.resolve(accepted).catch((error) => this.acceptPersistenceFault(error))
+        }
+      } catch (error) {
+        this.acceptPersistenceFault(error)
+        /* Only an event retained by the durability boundary may become
+           visible. Other synchronous sink failures fail closed before UI. */
+        if (error?.storageRetained !== true) return false
+      }
+    }
     /* 折叠发生在广播出口：canonical state 精确等于订阅者见过的内容，
        被丢弃的 pending 缓冲不会在 reload 后凭空出现在字幕窗里。 */
     this.foldCaptionState(event)
     for (const listener of this.captionListeners) {
       try { listener(clone(event)) } catch (error) { this.reportListenerError(error) }
     }
+    return true
+  }
+
+  acceptPersistenceFault (cause) {
+    if (this.disposed || !this.persistenceSink || this.snapshot.sessionId === null) return false
+    if (!this.persistenceFault) this.persistenceFault = { mode: 'active', cause }
+    if (this.persistenceFault.mode !== 'active' || this.persistenceFaultTask) return true
+    this.maybeStopForPersistenceFault()
+    return true
+  }
+
+  maybeStopForPersistenceFault () {
+    if (this.disposed || this.busy || this.persistenceFaultTask ||
+        this.persistenceFault?.mode !== 'active' ||
+        !['listening', 'paused'].includes(this.snapshot.phase)) return
+
+    this.persistenceFaultTask = (async () => {
+      const sessionId = this.snapshot.sessionId
+      const transition = this.beginTransition('storage-fault')
+      this.publish(this.buildSnapshot('stopping', sessionId, 'inactive', null))
+      try {
+        await this.invokeAdapter(transition, 'stop', { signal: transition.controller.signal })
+      } catch (error) {
+        this.reportListenerError(error)
+        if (transition.timedOut) this.quarantineAdapter(transition.adapter)
+      } finally {
+        if (this.isTransitionCurrent(transition)) {
+          const error = this.persistenceError('APPEND')
+          this.publish(this.buildSnapshot('error', sessionId, 'error', error))
+        }
+        this.finishTransition(transition)
+      }
+    })().finally(() => {
+      this.persistenceFaultTask = null
+    })
   }
 
   acceptCaption (event) {
@@ -675,6 +908,7 @@ class SessionCoordinator {
     } catch {
       return false
     }
+    if (this.terminalCaptionIngressClosed) return false
     const pending = ['starting', 'recovering'].includes(this.snapshot.phase)
     if (!pending && !['listening', 'stopping'].includes(this.snapshot.phase)) return false
     if (event.sessionId !== this.snapshot.sessionId) return false
@@ -689,14 +923,18 @@ class SessionCoordinator {
     this.sourceSequences.set(event.sourceId, event.sequence)
     this.segmentRevisions.set(segmentKey, event.revision)
     this.segmentSources.set(segmentKey, event.sourceId)
-    if (pending) this.pendingCaptions.push(clone(event))
-    else this.notifyCaption(event)
+    if (pending || this.persistenceFault?.mode === 'active') {
+      this.pendingCaptions.push(clone(event))
+    } else if (!this.notifyCaption(event)) {
+      this.pendingCaptions.push(clone(event))
+    }
     return true
   }
 
   async dispose () {
     if (this.disposed) return
     this.disposed = true
+    this.terminalCaptionIngressClosed = true
     const transition = this.activeTransition
     this.activeTransition = null
     this.busy = false
