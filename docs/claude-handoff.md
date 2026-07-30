@@ -91,7 +91,7 @@ f6eaa6d  chore: establish project baseline
 | B1 应用骨架 | 已提交 / 恢复缺口已关闭 | ConfigStore、SessionCoordinator、fake adapter、per-window preload、IPC 已接线；caption bootstrap 与 replacement cursor 已由 B2.0 关闭 |
 | I1 Contract | 验收完成 | UI/adapter/coordinator/IPC 共用 v1 契约；renderer reload 的 caption state 已形成订阅/水合/重放闭环 |
 | B2 实时链路 | 实现完成 / 部分实机验收 | hidden audio host、PCM 直通、realtime worker、silero VAD 与真实 ASR 已产品化；loopback schema v2 实机通过，物理 mic 与完整性能门槛待补 |
-| B3 精修/会话 | B3.1/B3.2 已落地 | JSONL 过渡事件档、恢复/折叠/导出与独立离线精修 worker 已接线；B3.3 SQLite 与历史 UI 未实现 |
+| B3 精修/会话 | B3.1/B3.2 已落地；B3.3 进行中 | JSONL 过渡事件档、恢复/折叠/导出与独立离线精修 worker 已接线；SQLite DB0 开发态和 DB1 原子事实/投影基座已通过，产品网关、迁移、权威切换与历史 UI 未实现 |
 | B4 资源 | 未实现 | 没有 ModelManager、下载/校验/原子安装或模型管理 UI；Agent 资源不属于本轮 MVP |
 | B5 分发 | 未实现 | 没有 electron-builder/NSIS/干净机验收 |
 

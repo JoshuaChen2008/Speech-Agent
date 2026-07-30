@@ -58,7 +58,7 @@ function request (child, operation, requestId, payload = {}, timeoutMs = 15000) 
     }
     child.on('message', onMessage)
     child.once('exit', onExit)
-    child.postMessage({ version: PROTOCOL_VERSION, type: 'storage:request', requestId, operation, ...payload })
+    child.postMessage({ version: PROTOCOL_VERSION, type: 'storage:request', requestId, operation, payload })
   })
 }
 
@@ -86,7 +86,7 @@ async function main () {
     const qualification = await request(child, 'db0:qualify', 'db0-qualify-1', {
       databasePath: path.join(userData, 'data', 'speech-agent.sqlite3')
     })
-    await request(child, 'shutdown', 'db0-shutdown-1')
+    await request(child, 'storage:shutdown', 'db0-shutdown-1')
     const workerExitCode = await Promise.race([
       exited,
       new Promise((resolve) => setTimeout(() => resolve('timeout'), 5000))

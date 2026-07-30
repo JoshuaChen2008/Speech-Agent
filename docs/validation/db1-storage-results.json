@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "kind": "db1-storage-worker-composition",
+  "executedAt": "2026-07-30T19:09:51.509Z",
+  "result": "pass",
+  "gateStatus": "pass",
+  "runtime": {
+    "electron": "43.2.0",
+    "node": "24.18.0",
+    "sqlite": "3.53.1"
+  },
+  "failedChecks": [],
+  "checks": {
+    "initialized": true,
+    "openIdempotent": true,
+    "fifoProjection": true,
+    "eventIdempotent": true,
+    "divergentPayloadRejected": true,
+    "partialRejected": true,
+    "unsafeCaptionFieldsRejected": true,
+    "closeCommitted": true,
+    "retryAfterClose": true,
+    "newAfterCloseRejected": true,
+    "xorSessionsIsolated": true,
+    "realDatabaseCounts": true,
+    "databaseHealthy": true,
+    "workerNaturalExit": true
+  },
+  "metrics": {
+    "sessions": 2,
+    "activeSessions": 0,
+    "captionEvents": 4,
+    "segments": 2
+  },
+  "scope": {
+    "productAuthorityCutover": false,
+    "jsonlMigration": false,
+    "historyUi": false,
+    "workerAutoRecovery": false,
+    "packagedRuntime": false,
+    "db6FullGate": false
+  },
+  "privacy": {
+    "noBrowserWindowCreated": true,
+    "isolatedUserData": true,
+    "unsafeCaptionFieldsRejected": true,
+    "reportContainsTranscriptText": false,
+    "reportContainsAbsolutePath": false,
+    "persistedAudio": false
+  }
+}

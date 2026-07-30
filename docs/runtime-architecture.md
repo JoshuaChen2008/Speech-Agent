@@ -80,14 +80,14 @@
 - 处理坏尾行、flush、session close 和导出。
 - 按 `segmentId + revision` 折叠，不覆盖历史文件中的旧事件。
 
-`StorageGateway / storage-worker`（B3.3 已接受目标，尚未实现）：
+`StorageGateway / storage-worker`（B3.3 进行中：storage worker 的 DB0/DB1 基座已实现，产品网关与权威切换待完成）：
 
 - storage worker 是 SQLite 唯一所有者和写者；主进程与 renderer 不执行同步 SQL、不加载扩展。
 - 在同一短事务中追加字幕 `final/refined` 事实并更新当前 segment 投影；提供按会话和时间戳读取历史的异步 API。
 - A1 再冻结 Agent 可靠消费采用事务 outbox 还是 durable cursor；两者都必须以已提交字幕水位为边界。
 - FTS5 可按历史搜索需求后加；`sqlite-vec` 明确 Deferred，不进入 B3.3 schema 或加载路径。
 - SQLite 迁移验收后替代 JSONL 权威写入；JSONL 只保留为旧数据导入、导出和恢复格式，禁止长期双写。
-- schema、表义、迁移与 DB0–DB5 门禁见 [`data-architecture.md`](data-architecture.md)、[ADR 0001](adr/0001-sqlite-authoritative-event-store.md) 和 [ADR 0002](adr/0002-separate-subtitle-and-agent-systems.md)。
+- schema、表义、迁移与 DB0–DB6 门禁见 [`data-architecture.md`](data-architecture.md)、[ADR 0001](adr/0001-sqlite-authoritative-event-store.md) 和 [ADR 0002](adr/0002-separate-subtitle-and-agent-systems.md)。
 
 `ModelManager`：
 
@@ -263,7 +263,7 @@ realtime/refine worker
 3. 完成 `loopback` 会议字幕与 `mic` 个人听写两种单路路径；配置、UI 和 runtime 都拒绝双路并发，停止后才允许换源。
 4. SessionCoordinator 与可见 UI 接 fake/real CaptionEvent，同时验证 reload、自动存档、时间戳历史与导出。
 5. 独立 refine worker 和事件式 JSONL 过渡基线，验证 pause/resume、迟到修订和进程故障。
-6. B3.3 引入 storage worker、SQLite 字幕事件/投影/历史查询，完成 J10；适用的 J1/J2 切到 SQLite 后端重跑。
+6. B3.3 在已通过 DB0/DB1 的 storage worker 与 SQLite 字幕事件/投影基座上，接入产品网关、迁移和历史查询，完成 J10；适用的 J1/J2 切到 SQLite 后端重跑。
 7. ModelManager 与字幕 MVP 打包；完成两小时、设备/worker 故障、睡眠唤醒和干净机器验收。
 8. 字幕 MVP 通过后做 A1：`AgentRuntime` + Pi Core 隔离探针 + 项目自有插件宿主 + 凭据/可靠消费；再以第一方插件实现独立增强文本和会后结构化纪要，并通过 J3–J7/J13。
 9. 只有 X1 明确进入范围时才增加 FTS5/`sqlite-vec`，并执行 J11/DB4。

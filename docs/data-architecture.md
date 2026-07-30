@@ -1,6 +1,6 @@
 # 字幕系统持久化与 Agent 派生数据架构
 
-> 状态：SQLite 字幕存储与 Agent 插件宿主语义已接受；DB0 开发态资格已通过（2026-07-31），产品接线/迁移/历史及打包态资格尚未实现；向量检索 Deferred
+> 状态：SQLite 字幕存储与 Agent 插件宿主语义已接受；DB0 开发态与 DB1 原子/幂等门禁已通过（2026-07-31），产品接线/自动恢复/迁移/历史及打包态资格尚未实现；向量检索 Deferred
 >
 > 决策依据：[ADR 0001](adr/0001-sqlite-authoritative-event-store.md) / [ADR 0002](adr/0002-separate-subtitle-and-agent-systems.md) / [ADR 0003](adr/0003-project-owned-agent-plugin-host.md)
 >
@@ -163,3 +163,11 @@ B3.1 JSONL 是当前已实现基线；B3.3 迁移通过前，不得把 SQLite �
 - 已通过：Electron 43.2.0 utility process、内置 SQLite 3.53.1、WAL、`busy_timeout`、checksum migration、双连接提交可见性、会话来源不可变、事务回滚、事件/投影同事务提交、事件不可变触发器、checkpoint、重开与 `integrity_check`。
 - 隐私结构检查：仅有字幕/会话/迁移表，无 BLOB、音频或录音列；没有 Agent、FTS、vector 表。
 - 尚未通过：真实 ASAR/NSIS 打包路径，因此 DB0 总门禁为 **partial**，不能写成验收完成。
+
+### 7.2 当前 DB1 / DB6 局部证据
+
+- DB1 报告：[`validation/db1-storage-results.json`](validation/db1-storage-results.json)
+- 真实组合：Electron main 使用生产 `StorageWorkerHost`，经 utility process 的 `WorkerService` 串行调用真实 `SqliteSubtitleStore` 和文件 SQLite；loopback/mic 分开建会话并重开查询。
+- DB1 已验证：业务幂等键不依赖 `requestId`；同键同载荷去重，同键异载荷冲突；高 revision 更新投影，迟到低 revision 只保留事实；ghost refined、partial、translated、跨源/关闭后新事件均 fail closed；事件插入后或投影后故障会整事务回滚，commit 后丢回复再提交只保留一份事实。
+- DB6 局部已验证：schema 无 BLOB/音频列，RPC 拒绝 `audioPath/samples/sql` 等额外字段且错误不回显正文/路径；完整 DB6 仍需产品接线后的应用目录、迁移、导出、崩溃与 I4 检查。
+- 尚未表示：SQLite 已成为产品权威、JSONL 已迁移、历史 UI 已完成、storage worker 能自动重启，或打包态已通过。

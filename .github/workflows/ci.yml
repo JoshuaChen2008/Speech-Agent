@@ -52,5 +52,26 @@ jobs:
           }
           node scripts/verify-db0-report.js .artifacts/db0-ci/report.json
 
+      - name: Run DB1 production storage worker journey
+        shell: powershell
+        run: |
+          $db1Dir = Join-Path $PWD '.artifacts/db1-ci'
+          New-Item -ItemType Directory -Force -Path $db1Dir | Out-Null
+          $db1Stdout = Join-Path $db1Dir 'stdout.log'
+          $db1Stderr = Join-Path $db1Dir 'stderr.log'
+          $db1Electron = Join-Path $PWD 'node_modules/electron/dist/electron.exe'
+          $db1Process = Start-Process -FilePath $db1Electron `
+            -ArgumentList @('scripts/db1-storage-smoke.js','--report','.artifacts/db1-ci/report.json','--work-dir','.artifacts/db1-ci/work') `
+            -WorkingDirectory $PWD `
+            -RedirectStandardOutput $db1Stdout `
+            -RedirectStandardError $db1Stderr `
+            -WindowStyle Hidden -Wait -PassThru
+          Get-Content -Raw -ErrorAction SilentlyContinue $db1Stdout
+          if ($db1Process.ExitCode -ne 0) {
+            Get-Content -Raw -ErrorAction SilentlyContinue $db1Stderr
+            throw "DB1 Electron storage journey failed with exit code $($db1Process.ExitCode)"
+          }
+          node scripts/verify-db1-report.js .artifacts/db1-ci/report.json
+
       - name: Run deterministic integration journeys and full regression suite
         run: npm run test:ci
