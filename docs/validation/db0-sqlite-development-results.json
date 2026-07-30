@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "kind": "db0-sqlite-development-qualification",
+  "executedAt": "2026-07-30T18:50:23.302Z",
+  "result": "pass",
+  "gateStatus": "partial",
+  "development": {
+    "status": "pass",
+    "failedChecks": [],
+    "checks": {
+      "driverLoaded": true,
+      "schemaVersion": true,
+      "migrationCount": true,
+      "journalModeWal": true,
+      "busyTimeout": true,
+      "uncommittedInvisibleToReader": true,
+      "committedVisibleToReader": true,
+      "sessionIdentityImmutable": true,
+      "transactionRollback": true,
+      "eventProjectionAtomicCommit": true,
+      "captionEventsImmutable": true,
+      "subtitleOnlyTables": true,
+      "noAudioPersistenceSchema": true,
+      "integrity": true,
+      "reopenPreservesData": true,
+      "migrationIdempotent": true,
+      "integrityAfterReopen": true
+    },
+    "runtime": {
+      "electron": "43.2.0",
+      "node": "24.18.0",
+      "sqlite": "3.53.1"
+    },
+    "schema": {
+      "version": 1,
+      "migrationChecksums": [
+        "2fbb32fb2ca66ccb06ec8cb3a67d05b3513610e1a14a8da610f8fdd65cef1ab4"
+      ],
+      "tables": [
+        "caption_events",
+        "legacy_imports",
+        "schema_migrations",
+        "segments",
+        "sessions"
+      ],
+      "privacy": {
+        "containsAudioPersistenceSchema": false,
+        "forbiddenColumns": [],
+        "blobColumnCount": 0
+      }
+    }
+  },
+  "packaged": {
+    "status": "pending",
+    "gate": "B5/I4 packaged ASAR/NSIS qualification"
+  },
+  "process": {
+    "workerExitCode": 0,
+    "noBrowserWindowCreated": true,
+    "isolatedUserData": true,
+    "reportContainsTranscriptText": false,
+    "reportContainsAbsolutePath": false
+  }
+}

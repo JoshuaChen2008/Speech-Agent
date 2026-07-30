@@ -1,6 +1,6 @@
 # 字幕系统持久化与 Agent 派生数据架构
 
-> 状态：SQLite 字幕存储与 Agent 插件宿主语义已接受，尚未实现（2026-07-30）；向量检索 Deferred
+> 状态：SQLite 字幕存储与 Agent 插件宿主语义已接受；DB0 开发态资格已通过（2026-07-31），产品接线/迁移/历史及打包态资格尚未实现；向量检索 Deferred
 >
 > 决策依据：[ADR 0001](adr/0001-sqlite-authoritative-event-store.md) / [ADR 0002](adr/0002-separate-subtitle-and-agent-systems.md) / [ADR 0003](adr/0003-project-owned-agent-plugin-host.md)
 >
@@ -65,7 +65,7 @@ flowchart LR
 | `embedding worker`（Deferred） | 未来对指定正文修订生成 embedding | 不在字幕 MVP 或首版摘要中创建 |
 | renderer | 展示快照、字幕、历史和 Agent 派生产物 | 不访问数据库文件、不加载扩展、不自行折叠另一份权威正文 |
 
-SQLite 驱动放在 storage worker 内的适配器后。实现前先做 DB0 探针，验证 Electron 43 utility process 中的驱动、WAL、asar unpack 与打包路径；驱动可以替换，本文的数据语义不能随驱动改变。`sqlite-vec` 扩展加载不属于 DB0。
+SQLite 驱动放在 storage worker 内的适配器后。当前候选为 Electron/Node 内置 `node:sqlite`：Electron 43 utility process 的开发态探针已验证驱动加载、WAL、migration、事务隔离/回滚与重开恢复；它没有外置 native addon 或 `asarUnpack` 需求。真实 ASAR/NSIS 路径仍必须在 B5/I4 复跑，通过前 DB0 总门禁保持 partial。驱动可以替换，本文的数据语义不能随驱动改变。`sqlite-vec` 扩展加载不属于 DB0。
 
 ## 3. 数据权威与逻辑表
 
@@ -76,13 +76,13 @@ SQLite 驱动放在 storage worker 内的适配器后。实现前先做 DB0 探�
 | `schema_migrations` | 运维事实 | `version, checksum, applied_at` | 每次迁移只执行一次；checksum 不匹配必须 fail closed。 |
 | `sessions` | 权威会话数据 | `session_id, mode, source_id, started_at, ended_at, state` | 定义会话隔离边界；`source_id` 只能是 `loopback` 或 `mic` 且会话期间不可变；结束会话不删除其历史。 |
 | `caption_events` | **字幕权威不可变事实** | `event_order, event_id, session_id, source_id, segment_id, sequence, revision, kind, t0_ms, t1_ms, text, created_at` | 字幕 MVP 只持久化 `final/refined`；`event_id` 与 `(session_id, source_id, sequence)` 唯一，用于幂等。已提交行不得原地改写正文。 |
-| `segments` | 字幕物化投影 | `id, session_id, source_id, segment_id, text, text_revision, updated_event_order` | 每段的当前权威正文；仅更高有效修订可替换，历史/UI/导出从这里读取。可由事件重建。 |
+| `segments` | 字幕物化投影 | `id, session_id, source_id, segment_id, text, text_revision, t0_ms, t1_ms, first_event_order, updated_event_order` | 每段的当前权威正文；仅更高有效修订可替换，历史/UI/导出从这里读取。可由事件重建。 |
 | `agent_artifacts`（A1/A2） | 版本化派生产物 | `artifact_id, session_id, plugin_id, type, content_json, input_through_event_order, input_digest, provider, model, created_at` | 增强文本、翻译或会后纪要声明插件、类型、覆盖水位和输入 digest；不能伪装成字幕正文。纪要结构至少包含概要、结论、待办、风险。字段在 A1 探针后冻结。 |
 | `agent_jobs` / consumer cursor（A1） | 可靠消费状态 | 待 A1 探针冻结 | 必须能按字幕提交水位去重、恢复和取消；具体采用事务 outbox 还是 durable cursor 尚未决定。 |
 | `segments_fts`（可选） | **可重建索引** | `rowid -> segments.id, text` | 只有历史关键字搜索进入范围时才创建；不阻断 SQLite 历史。 |
 | `segment_embedding_state`（Deferred） | 派生版本元数据 | `segment_id, text_revision, model_id, dimensions, content_hash, indexed_at` | X1 前不创建。启用后只有 revision、模型和内容哈希都匹配当前正文时才可检索。 |
 | `segment_vectors`（Deferred） | **可重建索引** | `rowid -> segment_id, embedding` | X1 前不创建；启用后不得混放不同维度。 |
-| `legacy_imports` | 迁移审计 | `source_path, source_sha256, imported_at, event_count, result` | 保证同一 JSONL 不重复导入，并可核对迁移结果。 |
+| `legacy_imports` | 迁移审计 | `source_path, source_sha256, imported_at, event_count, segment_count, result` | 保证同一 JSONL 不重复导入，并可核对迁移结果。 |
 
 `event_order` 是数据库提交顺序，不取代 `sequence/revision` 的有效性判断；统一时间线展示仍按会话时间、来源与稳定的 tie-break 规则生成。
 
@@ -137,8 +137,8 @@ SQLite 驱动放在 storage worker 内的适配器后。实现前先做 DB0 探�
 B3.1 JSONL 是当前已实现基线；B3.3 迁移通过前，不得把 SQLite 写成已实现。迁移步骤：
 
 1. 在没有活动会话时创建数据库与 schema，先保留原 JSONL 不动。
-2. 逐文件解析并按现有 `segmentId + revision` 规则导入；坏尾行继续容忍并记录，坏中间行要求显式报告。
-3. 以文件 SHA256、事件数、折叠段数、当前正文 digest 和三种导出 digest 做前后核对。
+2. 逐文件解析并按现有 `segmentId + revision` 规则导入 `final/refined`；坏尾行继续容忍并记录，坏中间行要求显式报告。遗留 `translated` 只计入迁移报告并保留原 JSONL，不导入字幕 `caption_events`；未来由 Agent 迁移进入独立派生表。
+3. 以文件 SHA256、原文事件数、折叠段数、原文当前正文 digest 和 txt/md/srt **原文导出** digest 做前后核对；不要求旧双语导出与新字幕原文导出逐字节相等。
 4. 重跑导入必须命中 `legacy_imports` 幂等记录，不增加字幕事件、segment 或迁移副作用。
 5. 全部核对通过后，下一次会话只写 SQLite；旧 JSONL 保留为只读恢复材料，不再双写。
 6. 回滚只能切回迁移前备份或只读旧格式，不能合并两个写入分支。
@@ -156,3 +156,10 @@ B3.1 JSONL 是当前已实现基线；B3.3 迁移通过前，不得把 SQLite �
 | **DB6 无音频持久化** | schema、应用数据目录、日志、迁移、导出和 Agent 输入均无原始音频或音频路径 | J12 / I4 |
 
 任何 gate 只有局部测试时，只能标记“实现完成 / 尚未验收”。
+
+### 7.1 当前 DB0 证据
+
+- 开发态报告：[`validation/db0-sqlite-development-results.json`](validation/db0-sqlite-development-results.json)
+- 已通过：Electron 43.2.0 utility process、内置 SQLite 3.53.1、WAL、`busy_timeout`、checksum migration、双连接提交可见性、会话来源不可变、事务回滚、事件/投影同事务提交、事件不可变触发器、checkpoint、重开与 `integrity_check`。
+- 隐私结构检查：仅有字幕/会话/迁移表，无 BLOB、音频或录音列；没有 Agent、FTS、vector 表。
+- 尚未通过：真实 ASAR/NSIS 打包路径，因此 DB0 总门禁为 **partial**，不能写成验收完成。

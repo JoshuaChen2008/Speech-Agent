@@ -31,5 +31,26 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Qualify Electron SQLite storage worker composition
+        shell: powershell
+        run: |
+          $db0Dir = Join-Path $PWD '.artifacts/db0-ci'
+          New-Item -ItemType Directory -Force -Path $db0Dir | Out-Null
+          $db0Stdout = Join-Path $db0Dir 'stdout.log'
+          $db0Stderr = Join-Path $db0Dir 'stderr.log'
+          $db0Electron = Join-Path $PWD 'node_modules/electron/dist/electron.exe'
+          $db0Process = Start-Process -FilePath $db0Electron `
+            -ArgumentList @('scripts/db0-sqlite-smoke.js','--report','.artifacts/db0-ci/report.json','--work-dir','.artifacts/db0-ci/work') `
+            -WorkingDirectory $PWD `
+            -RedirectStandardOutput $db0Stdout `
+            -RedirectStandardError $db0Stderr `
+            -WindowStyle Hidden -Wait -PassThru
+          Get-Content -Raw -ErrorAction SilentlyContinue $db0Stdout
+          if ($db0Process.ExitCode -ne 0) {
+            Get-Content -Raw -ErrorAction SilentlyContinue $db0Stderr
+            throw "DB0 Electron qualification failed with exit code $($db0Process.ExitCode)"
+          }
+          node scripts/verify-db0-report.js .artifacts/db0-ci/report.json
+
       - name: Run deterministic integration journeys and full regression suite
         run: npm run test:ci

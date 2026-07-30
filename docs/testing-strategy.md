@@ -39,7 +39,7 @@ Hosted CI 不声称验证真实 WASAPI/回环、物理麦克风、DWM 窗口行�
 | J7 | Agent 超时、限流、断网、凭据失效或 Loop 失败；本地字幕、权威存储和历史必须继续 | A1/A2 PR 阻断 | 未实现；不阻断字幕 MVP |
 | J8 | 两小时字幕会话、数千段和历史滚动；CPU/内存/队列/SQLite WAL 有界 | I3 soak / 字幕发布门禁 | 未覆盖 |
 | J9 | 打包版首启、模型下载、权限、真字幕、自动保存、历史查看和退出清理；全程不需要 Agent | I4 干净 Win11 | 未覆盖 |
-| J10 | 旧 JSONL → SQLite：中断后重跑不重复，事件/当前正文/txt/md/srt digest 一致，切换后不双写 | B3.3 PR 阻断 + 迁移 fixture | 未实现 |
+| J10 | 旧 JSONL → SQLite：中断后重跑不重复，`final/refined` 事件、原文当前投影及 txt/md/srt 原文导出 digest 一致，切换后不双写；遗留 `translated` 只读保留并报告，不导入字幕事实 | B3.3 PR 阻断 + 迁移 fixture | 原文/遗留译文边界已冻结；DB0 开发态资格通过，DB2/J10 未实现 |
 | J11 | final/refined → 可选 FTS/embedding：旧向量立即失效，重建结果一致；`sqlite-vec` 缺失时 history 继续 | X1 启用时才阻断对应 PR/打包验收 | Deferred；不阻断 B3.3、字幕 MVP 或 A2 |
 | J12 | 隐私负证据：正常停止、崩溃恢复、诊断 smoke、迁移和导出后，SQLite、应用数据目录、日志、测试产物与 Agent 上下文均不存在现场采集 PCM/WAV、录音片段或音频路径 | 字幕 MVP PR schema/文件检查 + I2 diagnostic + I4 打包版数据目录检查；测试只可读取来源明确的静态合成语料 | 产品 diagnostic 明确拒绝 `dumpDir`，smoke/Gate 0C 当前 runner 仅指标，J1/J2/J4 检查文本持久化目录无音频文件；SQLite、崩溃与 I4 检查随对应阶段补齐 |
 | J13 | 内容型插件权限：真实 PluginHost 装载字幕上下文/增强文本/纪要插件；只允许读已提交正文、调用 ModelGateway、写 `agent_artifacts`；外部操作请求被拒绝且不影响字幕 | A1/A2 PR 阻断；契约 provider 替身 + 真实 SQLite/宿主 | 宿主与插件未实现 |
@@ -70,13 +70,13 @@ B3.3 开始，数据库联合测试必须使用临时目录中的真实 schema�
 - A1 选择 outbox 或 durable cursor 后，必须覆盖进程退出、重复领取、迟到 refined 和跨会话隔离；Agent 去重失败不得制造多个“当前”产物。
 - X1 之前不安装或加载 `sqlite-vec`，也不以 J11 阻断 SQLite 历史。
 - X1 启用后，refined 提交必须使旧 embedding 立即不可服务，且删除索引后可从 segments 重建。
-- 迁移测试必须覆盖坏尾行、坏中间行报告、重复文件、同秒同名会话和中途退出重跑。
+- 迁移测试必须覆盖坏尾行、坏中间行报告、重复文件、同秒同名会话、中途退出重跑，以及遗留 `translated` 被报告但不进入字幕事实/原文 digest。
 
 详细数据门禁 DB0–DB5 见 [`data-architecture.md`](data-architecture.md)，规范语义对应 SEM-F00、SEM-F07、SEM-F10、SEM-F11、SEM-F14–F16、SEM-T08–T10。
 
 ## 6. 当前 CI 基线
 
-`.github/workflows/ci.yml` 使用 Windows runner，因为项目依赖 Windows x64 的 sherpa-onnx 预编译包。workflow 使用锁文件安装依赖，先运行确定性联合旅程，再运行完整回归；权限仅为只读仓库内容，并对同一分支的新运行取消旧运行。
+`.github/workflows/ci.yml` 使用 Windows runner，因为项目依赖 Windows x64 的 sherpa-onnx 预编译包。workflow 使用锁文件安装依赖，先以隐藏、无窗口 Electron main 启动真实 storage utility process，对隔离 SQLite 文件执行 DB0 开发态组合资格并校验动态报告；随后运行确定性用户旅程和完整回归。权限仅为只读仓库内容，并对同一分支的新运行取消旧运行。打包态 DB0 仍属于 B5/I4，不由该开发态 CI 冒充。
 
 当前 J1/J2/J4/J5/J6/J12 的确定性基线位于 `test/integration/caption-session-journey.test.js`。它使用生产的会话协调器、配置存储、字幕 reducer、会话存档接线与导出逻辑；J1/J2 只在 ASR/设备边界注入契约合法的 CaptionEvent。J4 进一步构造真实 `RealtimeRuntimeAdapter → RealtimeWorkerHost + AudioHostController` 组合，只模拟 Electron utility process、隐藏宿主 renderer 与物理声卡边界；旅程先跑 loopback 会话、活动期拒绝切换、停止后再跑 mic 新会话，并断言两次单路选择分别到达 worker configure 与 audio-host capture、PCM 端口完成接线、两份历史不串源。J5/J6 在同一生产组合边界中执行暂停/恢复、迟到 refined、worker 退出、error/retry、新 worker 游标恢复和同一会话继续持久化。J12 同时检查持久化目录没有音频扩展名文件。现存 translated fixture 只证明向后兼容的折叠契约，不属于字幕 MVP 成功条件，也不证明 Agent 已实现。
 
