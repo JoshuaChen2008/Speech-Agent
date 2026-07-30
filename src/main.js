@@ -61,6 +61,29 @@ const CAP_LIMITS = Object.freeze({ minW: 480, maxW: 1600, minH: 140, maxH: 420 }
 const TB_W = 568 + TB_MARGIN * 2
 const TB_H = 40 + TB_MARGIN * 2
 const RESIZE_EDGES = Object.freeze(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'])
+const CHILD_SERVICE_LABELS = Object.freeze([
+  'Speech Agent realtime ASR',
+  'Speech Agent offline refinement',
+  'Speech Agent subtitle storage'
+])
+const CHILD_PROCESS_TYPES = Object.freeze([
+  'Utility',
+  'Zygote',
+  'Sandbox helper',
+  'GPU',
+  'Pepper Plugin',
+  'Pepper Plugin Broker',
+  'Unknown'
+])
+const CHILD_PROCESS_REASONS = Object.freeze([
+  'clean-exit',
+  'abnormal-exit',
+  'killed',
+  'crashed',
+  'oom',
+  'launch-failed',
+  'integrity-failure'
+])
 
 function logError (scope, error) {
   const message = error instanceof Error ? error.message : String(error)
@@ -82,6 +105,10 @@ function send (win, channel, value) {
 function broadcastConfig () {
   const value = payload()
   for (const win of [captionWin, toolbarWin, settingsWin, historyWin]) send(win, CHANNELS.CONFIG_CHANGED, value)
+}
+
+function diagnosticLabel (value, allowlist) {
+  return typeof value === 'string' && allowlist.includes(value) ? value : 'other'
 }
 
 function broadcastSnapshot (snapshot) {
@@ -745,7 +772,15 @@ if (!hasSingleInstanceLock) {
     primary.focus()
   })
   app.on('child-process-gone', (_event, details) => {
-    console.error(`[electron.child] type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`)
+    /* serviceName distinguishes our utilities; type distinguishes Chromium
+       roles such as GPU. Every string is selected from a fixed allow-list,
+       never scrubbed from an arbitrary Electron value, so a path-shaped name
+       cannot survive as text fragments in the log. */
+    const service = diagnosticLabel(details.serviceName, CHILD_SERVICE_LABELS)
+    const type = diagnosticLabel(details.type, CHILD_PROCESS_TYPES)
+    const reason = diagnosticLabel(details.reason, CHILD_PROCESS_REASONS)
+    const exitCode = Number.isInteger(details.exitCode) ? details.exitCode : 'unknown'
+    console.error(`[electron.child] service=${service} type=${type} reason=${reason} exitCode=${exitCode}`)
   })
   app.on('before-quit', beginQuitBarrier)
   app.on('will-quit', cleanupUiRuntime)

@@ -22,6 +22,7 @@ const {
 } = require('./protocol')
 
 const WORKER_PATH = path.join(__dirname, 'storage-worker.js')
+const SERVICE_NAME = 'Speech Agent subtitle storage'
 
 class StorageTransportError extends Error {
   constructor (code, message, options = {}) {
@@ -133,6 +134,7 @@ class StorageWorkerHost {
     this.startPromise = null
     this.shutdownPromise = null
     this.terminatePromise = null
+    this.onFatalError = typeof options.onFatalError === 'function' ? options.onFatalError : () => {}
   }
 
   stateError (code = 'HOST_NOT_READY') {
@@ -159,6 +161,13 @@ class StorageWorkerHost {
     const record = { child, promise: exitPromise }
     this.childExit = record
     this.exitPromise = exitPromise
+    /* A UtilityProcess V8 fatal emits `error` before `exit`. Consume the
+       EventEmitter error so it cannot escape into the Electron main process;
+       never retain Electron's diagnostic report or source location because it
+       may include user paths or transcript memory. */
+    child.on('error', () => {
+      try { this.onFatalError(Object.freeze({ role: 'subtitle-storage', type: 'FatalError' })) } catch { /* observer isolation */ }
+    })
     child.once('exit', (code) => {
       if (this.child === child) {
         const previousState = this.state
@@ -192,7 +201,7 @@ class StorageWorkerHost {
     let child
     try {
       child = this.electron.utilityProcess.fork(this.workerPath, [], {
-        serviceName: 'Speech Agent subtitle storage'
+        serviceName: SERVICE_NAME
       })
     } catch (cause) {
       this.state = 'failed'
@@ -438,6 +447,7 @@ class StorageWorkerHost {
 }
 
 module.exports = {
+  SERVICE_NAME,
   StorageTransportError,
   StorageWorkerHost,
   WORKER_PATH,

@@ -246,6 +246,8 @@ realtime/refine worker
 - audio host 崩溃：关闭旧 port，RuntimeSnapshot → recovering，按上限重建；不能无提示无限重试权限请求。
 - realtime worker 崩溃：停止送帧或进入有界暂存，清理旧 stream 后重新建 port。I2.1 落地：`RealtimeRuntimeAdapter` 把 worker 退出/track-ended/host-gone 经 adapter `onError` 上报，coordinator 进入可重试 error，retry 走 stop+start 重建全链路（fresh host+worker）。
 - refine worker 崩溃：实时字幕继续；未完成 segment 标记 refinement unavailable，可稍后重试。
+- realtime/refine worker 的正常停止通过窄 `shutdown` 消息释放端口、timer、recognizer/VAD 引用，再由宿主等待该 exact child 的 `exit`；优雅退出超时后可以 kill，但仍必须等同一 child 的退出确认。无法确认退出时 adapter 永久失效且 Coordinator 不允许 replacement 开始，避免两代 sherpa/ONNX native runtime 重叠。
+- 所有 UtilityProcess 都必须注册 `error` listener；fatal 诊断只发布固定角色和类型，不保存 Electron/V8 report、location、本地路径、字幕或 PCM。`serviceName` 用于主进程的角色级 `child-process-gone` 日志，不把原始 details 透给 renderer。
 - 可见 renderer 重载：读取完整 snapshot 和当前 caption state，不依赖历史广播。
 - 系统睡眠/唤醒：重建 media tracks，校正单调时间基准并记录 session gap。
 - 退出：停止接收命令 → 停 tracks → 处理/放弃实时队列 → 提交/报告字幕事务 → 有界 checkpoint → kill workers → 关闭窗口。Agent 未完成任务按 A1 的可靠消费协议保留，不能无限阻塞退出。

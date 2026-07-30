@@ -66,6 +66,30 @@ fake-ASR/开发 fixture/非 I4 三项限制。
 `render-process-gone`、`child-process-gone`、`unresponsive` 和主文档加载失败的
 角色级、无正文诊断，若再现可区分窗口/子进程。
 
+## 原生模型进程生命周期诊断
+
+针对截图暴露出的 native 风险，代码审计另外发现三项可独立修复的生命周期缺口：
+realtime/refine/storage UtilityProcess 没有全部接住 Electron 的 fatal `error`；
+realtime/refine 的退出路径在 `kill()` 后没有等待同一子进程的真实 `exit`；旧 worker
+尚未确认退出时，Coordinator 仍可能建立 replacement。现已补齐固定 `serviceName`、
+无路径/正文的 fatal 观测、worker 内部 `shutdown` 协议、强制终止后的 exact-exit
+屏障，以及 replacement 前的旧世代 retirement gate。audio host IPC 清理也改为只
+移除本实例注册的 listener，避免不同世代互相清监听。
+
+`scripts/native-model-lifecycle-smoke.js` 随后从已经通过 manifest/ready marker 审计的
+隔离安装目录解析三项资源；每轮并发加载 realtime ASR + silero VAD 与 offline
+refinement，并连接精修 MessagePort，但不创建 BrowserWindow、音频采集或 PCM port。
+三轮共 6 个真实 UtilityProcess 均在默认产品 deadline 内优雅 `exitCode=0`，两类
+worker 都在退出前响应 stats，fatal 与异常 child 事件均为 0。结构化结果见
+[native-model-lifecycle-results.json](native-model-lifecycle-results.json)，严格 verifier
+拒绝路径、字幕、音频引用和发布门禁越权。
+
+生命周期补丁后，完整产品壳又连续执行 3 次，均为四 renderer、0 crash event 并正常
+自退出；全量 CI 为 13/13 组合旅程、302/302 测试通过。这些证据降低了“批准模型包或
+当前 ABI 一加载就必崩”的可能性，也证明本次收束逻辑没有破坏产品旅程；它们仍不能
+证明截图中的 `0x80000003` 根因已经定位或修复。该弹窗若再现，需要同一时刻的新角色
+日志或 dump，且未经 GPU A/B 证据不永久禁用 GPU。
+
 ## 尚未关闭
 
 - 物理 mic I2、两小时 I3、干净 Win11 公网下载/权限/安装 I4；

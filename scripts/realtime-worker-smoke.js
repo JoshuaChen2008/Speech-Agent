@@ -165,7 +165,7 @@ async function main () {
       peakRms: workerStats?.peakRms ?? null
     }) + '\n')
     controller.dispose()
-    worker.dispose()
+    await worker.shutdown()
     app.exit(result === 'fail' ? 1 : (result === 'pass' ? 0 : 2))
   } catch (error) {
     console.error(error?.stack || error)
@@ -180,7 +180,7 @@ async function main () {
       }, null, 2) + '\n')
     } catch { /* best effort */ }
     controller.dispose()
-    worker.dispose()
+    await worker.dispose().catch(() => {})
     app.exit(1)
   }
 }

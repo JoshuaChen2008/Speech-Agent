@@ -19,6 +19,7 @@ const { assertRefinementOptions, loadOfflineRecognizer, refineSamples } = requir
 const state = {
   recognizer: null,
   port: null,
+  shuttingDown: false,
   stats: { refined: 0, failed: 0, emptyResults: 0, lastDecodeMs: null }
 }
 
@@ -54,9 +55,28 @@ function onPortMessage (message) {
   }
 }
 
+function shutdown () {
+  if (state.shuttingDown) return
+  state.shuttingDown = true
+  const port = state.port
+  state.port = null
+  if (port) {
+    try { port.close() } catch { /* already closed */ }
+  }
+  /* sherpa 的 JS wrapper 没有显式 destroy；释放最后一个 JS 引用后由
+     utility process 的正常 teardown 回收 native handle。 */
+  state.recognizer = null
+  publish({ type: 'stopped' })
+  setImmediate(() => process.exit(0))
+}
+
 process.parentPort.on('message', (event) => {
   const message = event.data
-  if (message?.type === 'configure') {
+  if (message?.type === 'shutdown') {
+    shutdown()
+  } else if (state.shuttingDown) {
+    return
+  } else if (message?.type === 'configure') {
     if (state.recognizer) {
       publish({ type: 'configure-failed', message: 'refine worker is already configured' })
       return

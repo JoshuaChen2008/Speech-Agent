@@ -27,13 +27,19 @@ function fakeWorker () {
     async pause () { worker.calls.push(['pause']) },
     async resume () { worker.calls.push(['resume']) },
     async waitForEnd () { worker.calls.push(['waitForEnd']); return true },
+    async shutdown () {
+      worker.calls.push(['shutdown'])
+      worker.disposed = true
+      return { graceful: true, reason: null, exitCode: 0 }
+    },
+    async terminateAndWait () { worker.calls.push(['terminateAndWait']); worker.disposed = true; return 0 },
     onCaption (listener) { worker.captionListeners.add(listener); return () => worker.captionListeners.delete(listener) },
     onStats (listener) { worker.statsListeners.add(listener); return () => worker.statsListeners.delete(listener) },
     onExit (listener) { worker.exitListeners.add(listener); return () => worker.exitListeners.delete(listener) },
     emitCaption (event) { for (const listener of worker.captionListeners) listener(event) },
     emitStats (stats) { worker.lastStats = stats; for (const listener of worker.statsListeners) listener(stats) },
     emitExit (code) { for (const listener of worker.exitListeners) listener({ code }) },
-    dispose () { worker.disposed = true }
+    async dispose () { worker.calls.push(['dispose']); worker.disposed = true }
   }
   return worker
 }
@@ -65,7 +71,13 @@ function fakeRefineWorker () {
     attachPort (port) { refine.calls.push(['attachPort', port]) },
     onExit (listener) { refine.exitListeners.add(listener); return () => refine.exitListeners.delete(listener) },
     emitExit (code) { for (const listener of refine.exitListeners) listener({ code }) },
-    dispose () { refine.disposed = true }
+    async shutdown () {
+      refine.calls.push(['shutdown'])
+      refine.disposed = true
+      return { graceful: true, reason: null, exitCode: 0 }
+    },
+    async terminateAndWait () { refine.calls.push(['terminateAndWait']); refine.disposed = true; return 0 },
+    async dispose () { refine.calls.push(['dispose']); refine.disposed = true }
   }
   return refine
 }

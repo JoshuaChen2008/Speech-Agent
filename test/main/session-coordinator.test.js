@@ -570,3 +570,37 @@ test('adapter factory cannot recycle a quarantined instance', async (t) => {
   assert.equal(coordinator.getSnapshot().capabilities.canRetry, false)
   assert.equal((await coordinator.command('stop')).ok, true)
 })
+
+test('replacement cannot start until the quarantined adapter confirms disposal', async (t) => {
+  let releaseRetirement
+  const retired = new FakeRuntimeAdapter({ autoEmit: false })
+  retired.start = async () => new Promise(() => {})
+  retired.stop = async () => {}
+  retired.dispose = () => new Promise((resolve) => { releaseRetirement = resolve })
+
+  const replacement = new FakeRuntimeAdapter({ autoEmit: false })
+  let replacementStarts = 0
+  const replacementStart = replacement.start.bind(replacement)
+  replacement.start = async (context) => {
+    replacementStarts += 1
+    return replacementStart(context)
+  }
+  const { coordinator } = makeCoordinator({
+    adapter: retired,
+    adapterFactory: () => replacement,
+    transitionTimeoutMs: 20
+  })
+  t.after(() => coordinator.dispose())
+
+  const first = await coordinator.command('start')
+  assert.equal(first.code, 'ADAPTER_START_TIMEOUT')
+  assert.equal(typeof releaseRetirement, 'function')
+
+  const retry = coordinator.command('retry')
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(replacementStarts, 0, 'new utility generation must wait for old adapter disposal')
+
+  releaseRetirement()
+  assert.equal((await retry).ok, true)
+  assert.equal(replacementStarts, 1)
+})

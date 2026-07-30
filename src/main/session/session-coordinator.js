@@ -112,6 +112,9 @@ class SessionCoordinator {
     this.disposed = false
     this.shuttingDown = false
     this.shutdownPromise = null
+    this.disposePromise = null
+    this.adapterCleanupPromises = new WeakMap()
+    this.adapterRetirementPromise = null
     this.transitionSequence = 0
     this.activeTransition = null
     this.revision = 0
@@ -552,7 +555,7 @@ class SessionCoordinator {
   adapterError (operation, label, cause, transition = null) {
     const timedOut = cause && cause.name === 'TransitionTimeoutError'
     if (timedOut && transition) this.quarantineAdapter(transition.adapter)
-    const recoverable = !timedOut || this.adapter !== null
+    const recoverable = this.adapter !== null
     return this.runtimeError(
       `ADAPTER_${operation}_${timedOut ? 'TIMEOUT' : 'FAILED'}`,
       `${label}${timedOut ? '超时' : '失败'}`,
@@ -680,7 +683,19 @@ class SessionCoordinator {
     }
 
     const adapter = transition.adapter
-    const work = Promise.resolve().then(() => adapter[operation](argument))
+    const retirement = this.adapterRetirementPromise
+    const work = Promise.resolve().then(async () => {
+      /* A replacement object may be installed synchronously for UI state, but
+         it cannot fork a new native generation until the quarantined adapter's
+         exact utility processes have confirmed exit. */
+      if (retirement) {
+        await retirement
+        if (!this.isTransitionCurrent(transition) || transition.controller.signal.aborted) {
+          throw new TransitionCancelledError()
+        }
+      }
+      return adapter[operation](argument)
+    })
     work.then(
       () => { if (!this.isTransitionCurrent(transition)) this.cleanupAdapter(adapter) },
       () => { if (!this.isTransitionCurrent(transition)) this.cleanupAdapter(adapter) }
@@ -764,26 +779,50 @@ class SessionCoordinator {
     this.unsubscribeAdapter()
     this.quarantinedAdapters.add(adapter)
     this.adapter = null
-    this.cleanupAdapter(adapter)
+    const retirement = this.cleanupAdapter(adapter)
+    let replacement = null
     if (!this.adapterFactory) return
     try {
-      this.adapter = this.createAdapter()
-      this.unsubscribeAdapter = this.bindAdapter(this.adapter)
+      replacement = this.createAdapter()
+      this.adapter = replacement
+      this.unsubscribeAdapter = this.bindAdapter(replacement)
       this.adapterEpoch += 1
     } catch (error) {
       this.adapter = null
       this.reportListenerError(error)
     }
+    const guarded = retirement.catch((error) => {
+      /* Never let a replacement start if the old native generation could not
+         be reaped. Retire the unused candidate and make retry unavailable. */
+      if (replacement && this.adapter === replacement) {
+        try { this.unsubscribeAdapter() } catch { /* best effort */ }
+        this.adapter = null
+        void this.cleanupAdapter(replacement).catch(() => {})
+      }
+      this.reportListenerError(error)
+      throw error
+    })
+    guarded.catch(() => {})
+    this.adapterRetirementPromise = guarded
   }
 
   cleanupAdapter (adapter) {
-    if (!adapter || adapter === this.adapter) return
-    try {
-      Promise.resolve(adapter.stop()).catch(() => {})
-    } catch { /* best effort */ }
-    try {
-      if (typeof adapter.dispose === 'function') adapter.dispose()
-    } catch { /* best effort */ }
+    if (!adapter) return Promise.resolve()
+    const existing = this.adapterCleanupPromises.get(adapter)
+    if (existing) return existing
+    const cleanup = (async () => {
+      let stopPromise = Promise.resolve()
+      try { stopPromise = Promise.resolve(adapter.stop()) } catch { /* force dispose below */ }
+      stopPromise.catch(() => {})
+      await Promise.race([
+        stopPromise,
+        new Promise((resolve) => setTimeout(resolve, Math.min(this.transitionTimeoutMs, 250)))
+      ])
+      if (typeof adapter.dispose === 'function') await adapter.dispose()
+    })()
+    cleanup.catch(() => {})
+    this.adapterCleanupPromises.set(adapter, cleanup)
+    return cleanup
   }
 
   selectedSourceIds () {
@@ -1086,9 +1125,14 @@ class SessionCoordinator {
     return failure('SHUTDOWN_STORAGE_STATE_INVALID', '字幕保存状态无法收束', false)
   }
 
-  async dispose () {
-    if (this.disposed) return
+  dispose () {
+    if (this.disposePromise) return this.disposePromise
     this.disposed = true
+    this.disposePromise = this.disposeCoordinator()
+    return this.disposePromise
+  }
+
+  async disposeCoordinator () {
     this.terminalCaptionIngressClosed = true
     const transition = this.activeTransition
     this.activeTransition = null
@@ -1100,17 +1144,13 @@ class SessionCoordinator {
     this.snapshotListeners.clear()
     this.captionListeners.clear()
     const adapters = new Set([this.adapter, ...this.quarantinedAdapters].filter(Boolean))
-    try {
-      await Promise.race([
-        Promise.allSettled([...adapters].map((adapter) => Promise.resolve(adapter.stop()))),
-        new Promise((resolve) => setTimeout(resolve, Math.min(this.transitionTimeoutMs, 250)))
-      ])
-    } catch { /* best effort */ }
-    for (const adapter of adapters) {
-      try { if (typeof adapter.dispose === 'function') adapter.dispose() } catch { /* best effort */ }
-    }
+    const tasks = [...adapters].map((adapter) => this.cleanupAdapter(adapter))
+    if (this.adapterRetirementPromise) tasks.unshift(this.adapterRetirementPromise)
+    const settlements = await Promise.allSettled(tasks)
     this.quarantinedAdapters.clear()
     this.adapter = null
+    const failed = settlements.find((result) => result.status === 'rejected')
+    if (failed) throw failed.reason
   }
 }
 

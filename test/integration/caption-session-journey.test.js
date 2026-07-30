@@ -83,9 +83,20 @@ function simulatedElectronRuntime () {
               type: 'stats',
               stats: { endReceived: false, badSampleTypeFrames: 0, sources: {} }
             }))
+          } else if (message?.type === 'shutdown') {
+            /* Match the real utility worker protocol: stopped is diagnostic,
+               while the exact exit event is the lifecycle completion barrier. */
+            setImmediate(() => {
+              child.emit('message', { type: 'stopped' })
+              child.emit('exit', 0)
+            })
           }
         }
-        child.kill = () => { child.killed = true }
+        child.kill = () => {
+          if (child.killed) return
+          child.killed = true
+          setImmediate(() => child.emit('exit', 0))
+        }
         children.push(child)
         return child
       }
@@ -94,7 +105,7 @@ function simulatedElectronRuntime () {
       handle () {},
       on () {},
       removeHandler () {},
-      removeAllListeners () {}
+      removeListener () {}
     },
     session: {
       fromPartition: () => ({

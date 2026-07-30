@@ -26,7 +26,7 @@ const { AudioHostController, coerceSamples } = require('../../src/runtime/audio-
 /* 假 electron：让 controller 生命周期与 IPC sender 校验可以脱离 Electron 测试。 */
 function fakeElectron (overrides = {}) {
   return {
-    ipcMain: { handle () {}, on () {}, removeHandler () {}, removeAllListeners () {} },
+    ipcMain: { handle () {}, on () {}, removeHandler () {}, removeListener () {} },
     session: {
       fromPartition: () => ({
         setPermissionCheckHandler () {},
@@ -219,6 +219,10 @@ test('audio host window keeps the Chromium sandbox enabled', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '..', '..', 'src', 'runtime', 'audio-host', 'audio-host-controller.js'), 'utf8')
   assert.ok(!/sandbox\s*:\s*false/.test(source), 'the media-privileged host renderer must keep the default sandbox')
+  assert.doesNotMatch(source, /removeAllListeners/,
+    'retiring one audio host must not remove a newer controller generation\'s IPC listeners')
+  assert.match(source, /removeListener\(CHANNELS\.MARK, this\.markListener\)/)
+  assert.match(source, /removeListener\(CHANNELS\.CONTROL, this\.controlListener\)/)
 })
 
 test('diagnostic payloads are rejected from untrusted senders and wrong sessions', () => {

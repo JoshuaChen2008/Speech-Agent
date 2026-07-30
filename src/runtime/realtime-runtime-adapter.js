@@ -55,6 +55,7 @@ class RealtimeRuntimeAdapter {
     /* 最近一次会话的纯指标快照。只包含帧/队列/worker 计数，不包含 PCM、
        音频路径或字幕正文，供 I2 smoke 与故障诊断读取。 */
     this.lastRunDiagnostics = null
+    this.disposePromise = null
     this.disposed = false
   }
 
@@ -81,7 +82,9 @@ class RealtimeRuntimeAdapter {
        同一轮收敛，避免旧 host teardown 与新一轮 start 竞态。 */
     session.stopping = true
     session.faulted = true
-    session.cleanupPromise = this.cleanupFaultedSession(session)
+    const cleanupPromise = this.cleanupFaultedSession(session)
+    cleanupPromise.catch(() => {})
+    session.cleanupPromise = cleanupPromise
     if (this.errorHandler) {
       try { this.errorHandler(event) } catch { /* observer failures stay isolated */ }
     }
@@ -94,7 +97,7 @@ class RealtimeRuntimeAdapter {
       await session.worker.waitForEnd()
     } catch { /* 原始 fault 已上报；清理继续走 finally，不能制造第二个产品错误 */ } finally {
       this.captureDiagnostics(session)
-      this.teardown(session)
+      await this.teardownSession(session, 'graceful')
     }
   }
 
@@ -124,7 +127,8 @@ class RealtimeRuntimeAdapter {
       unsubscribers: [],
       stopping: false,
       faulted: false,
-      cleanupPromise: null
+      cleanupPromise: null,
+      teardownPromise: null
     }
     this.session = session
     try {
@@ -151,7 +155,7 @@ class RealtimeRuntimeAdapter {
           if (this.session === session && !session.stopping && session.refineWorker && session.refineReady) {
             const refineWorker = session.refineWorker
             session.refineWorker = null
-            try { refineWorker.dispose() } catch { /* best effort */ }
+            try { void Promise.resolve(refineWorker.dispose()).catch(() => {}) } catch { /* best effort */ }
             this.onDegraded(`refine worker exited (${code}); captions continue without refinement`)
           }
         }))
@@ -206,7 +210,7 @@ class RealtimeRuntimeAdapter {
         session.worker.attachRefinePort(refineChannel.port1)
         session.refineWorker.attachPort(refineChannel.port2)
       } else if (session.refineWorker) {
-        session.refineWorker.dispose()
+        await this.shutdownWorker(session.refineWorker, 'graceful', 'offline refinement')
         session.refineWorker = null
       }
 
@@ -233,7 +237,7 @@ class RealtimeRuntimeAdapter {
         throw new Error(`realtime worker exited during start (code ${session.worker.exited.code})`)
       }
     } catch (error) {
-      this.teardown(session)
+      await this.teardownSession(session, 'force').catch(() => {})
       throw error
     }
   }
@@ -269,7 +273,7 @@ class RealtimeRuntimeAdapter {
       await session.worker.waitForEnd()
     } finally {
       this.captureDiagnostics(session)
-      this.teardown(session)
+      await this.teardownSession(session, 'graceful')
     }
   }
 
@@ -296,30 +300,61 @@ class RealtimeRuntimeAdapter {
     return this.session
   }
 
-  teardown (session) {
-    if (this.session === session) this.session = null
+  async shutdownWorker (worker, mode, label) {
+    if (!worker) return
+    let outcome
+    if (mode === 'graceful' && typeof worker.shutdown === 'function') {
+      outcome = await worker.shutdown()
+    } else if (typeof worker.terminateAndWait === 'function') {
+      await worker.terminateAndWait()
+      return
+    } else if (typeof worker.dispose === 'function') {
+      await worker.dispose()
+      return
+    }
+    if (outcome && outcome.graceful === false) {
+      this.onDegraded(`${label} required forced shutdown (${outcome.reason})`)
+    }
+  }
+
+  teardownSession (session, mode = 'force') {
+    if (session.teardownPromise) return session.teardownPromise
+    session.stopping = true
     for (const unsubscribe of session.unsubscribers) {
       try { unsubscribe() } catch { /* best effort */ }
     }
     session.unsubscribers = []
     try { session.host.dispose() } catch { /* best effort */ }
-    try { session.worker.dispose() } catch { /* best effort */ }
-    if (session.refineWorker) {
-      try { session.refineWorker.dispose() } catch { /* best effort */ }
-      session.refineWorker = null
-    }
+    const refineWorker = session.refineWorker
+    session.refineWorker = null
+    const promise = Promise.all([
+      this.shutdownWorker(session.worker, mode, 'realtime ASR'),
+      this.shutdownWorker(refineWorker, mode, 'offline refinement')
+    ]).catch((error) => {
+      /* An unconfirmed old native generation must make this adapter unusable;
+         a later retry may only proceed through a newly constructed adapter. */
+      this.disposed = true
+      throw error
+    }).finally(() => {
+      if (this.session === session) this.session = null
+    })
+    session.teardownPromise = promise
+    return promise
   }
 
   dispose () {
-    if (this.disposed) return
+    if (this.disposePromise) return this.disposePromise
     this.disposed = true
     const session = this.session
     if (session) {
       session.stopping = true
-      this.teardown(session)
+      this.disposePromise = this.teardownSession(session, 'force')
+    } else {
+      this.disposePromise = Promise.resolve()
     }
     this.captionHandler = null
     this.errorHandler = null
+    return this.disposePromise
   }
 }
 

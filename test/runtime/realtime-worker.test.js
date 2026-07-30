@@ -230,7 +230,10 @@ test('worker host cleans up the child on configure failure and rejects fast on e
   function fakeChild (behavior) {
     const child = new EventEmitter()
     child.killed = false
-    child.kill = () => { child.killed = true }
+    child.kill = () => {
+      child.killed = true
+      setImmediate(() => child.emit('exit', 0))
+    }
     child.postMessage = (message) => {
       if (message?.type === 'configure') setImmediate(() => behavior(child))
     }
@@ -281,7 +284,7 @@ test('worker host cleans up the child on configure failure and rejects fast on e
   })
   assert.equal(received.length, 1)
   assert.equal(host3.droppedCaptionCount, 1, '非法事件丢弃必须可观测')
-  host3.dispose()
+  await host3.dispose()
   assert.equal(child3.killed, true)
 })
 

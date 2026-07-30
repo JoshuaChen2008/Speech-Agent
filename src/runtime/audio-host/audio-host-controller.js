@@ -56,6 +56,8 @@ class AudioHostController {
     this.hostWindow = null
     this.partitionReady = false
     this.ipcRegistered = false
+    this.markListener = null
+    this.controlListener = null
     this.activeDiagnostic = null
     this.activeCapture = null
     this.controlListeners = new Set()
@@ -142,11 +144,11 @@ class AudioHostController {
     if (this.ipcRegistered) return
     const { ipcMain } = this.electron
     ipcMain.handle(CHANNELS.SAVE_DIAGNOSTIC, (event, payload) => this.acceptDiagnostic(event, payload))
-    ipcMain.on(CHANNELS.MARK, (event, payload) => {
+    this.markListener = (event, payload) => {
       if (!this.isTrustedHostSender(event.sender)) return
       this.record('host-mark', { stage: scrubLocalPaths(payload?.stage || 'unknown').slice(0, 100) })
-    })
-    ipcMain.on(CHANNELS.CONTROL, (event, payload) => {
+    }
+    this.controlListener = (event, payload) => {
       if (!this.isTrustedHostSender(event.sender)) return
       const message = sanitizeControlMessage(payload)
       if (!message) return
@@ -157,7 +159,9 @@ class AudioHostController {
       if (message.sessionId !== expected) return
       this.record('host-control', { type: message.type })
       this.emitControl(message)
-    })
+    }
+    ipcMain.on(CHANNELS.MARK, this.markListener)
+    ipcMain.on(CHANNELS.CONTROL, this.controlListener)
     this.ipcRegistered = true
   }
 
@@ -383,8 +387,10 @@ class AudioHostController {
     this.destroyHostWindow()
     if (this.ipcRegistered) {
       this.electron.ipcMain.removeHandler(CHANNELS.SAVE_DIAGNOSTIC)
-      this.electron.ipcMain.removeAllListeners(CHANNELS.MARK)
-      this.electron.ipcMain.removeAllListeners(CHANNELS.CONTROL)
+      if (this.markListener) this.electron.ipcMain.removeListener(CHANNELS.MARK, this.markListener)
+      if (this.controlListener) this.electron.ipcMain.removeListener(CHANNELS.CONTROL, this.controlListener)
+      this.markListener = null
+      this.controlListener = null
       this.ipcRegistered = false
     }
   }

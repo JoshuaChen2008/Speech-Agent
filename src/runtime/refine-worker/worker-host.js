@@ -11,6 +11,25 @@
 const path = require('node:path')
 
 const WORKER_PATH = path.join(__dirname, 'refine-worker.js')
+const SERVICE_NAME = 'Speech Agent offline refinement'
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 2000
+
+function positiveTimeout (value) {
+  if (!Number.isInteger(value) || value < 1) throw new RangeError('timeoutMs must be a positive integer')
+  return value
+}
+
+function waitWithTimeout (promise, timeoutMs, message) {
+  let timer = null
+  return Promise.race([
+    promise,
+    new Promise((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+    })
+  ]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
+}
 
 class RefineWorkerHost {
   constructor (options = {}) {
@@ -20,7 +39,27 @@ class RefineWorkerHost {
     this.exitListeners = new Set()
     this.lastStats = null
     this.exited = null
+    this.childExit = null
+    this.shutdownPromise = null
+    this.terminatePromise = null
+    this.onFatalError = typeof options.onFatalError === 'function' ? options.onFatalError : () => {}
     this.disposed = false
+  }
+
+  installChild (child) {
+    let resolveExit
+    const exitPromise = new Promise((resolve) => { resolveExit = resolve })
+    this.childExit = { child, promise: exitPromise }
+    child.on('error', () => {
+      try { this.onFatalError(Object.freeze({ role: 'offline-refinement', type: 'FatalError' })) } catch { /* observer isolation */ }
+    })
+    child.once('exit', (code) => {
+      this.exited = { code }
+      if (this.child === child) this.child = null
+      this.emit(this.exitListeners, { code })
+      resolveExit(code)
+    })
+    return this.childExit
   }
 
   onStats (listener) {
@@ -43,18 +82,14 @@ class RefineWorkerHost {
   async start (config) {
     if (this.disposed) throw new Error('refine worker host is disposed')
     if (this.child) throw new Error('refine worker is already running')
-    const child = this.electron.utilityProcess.fork(WORKER_PATH)
+    const child = this.electron.utilityProcess.fork(WORKER_PATH, [], { serviceName: SERVICE_NAME })
     this.child = child
+    this.installChild(child)
     child.on('message', (message) => {
       if (message?.type === 'stats') {
         this.lastStats = message.stats
         this.emit(this.statsListeners, message.stats)
       }
-    })
-    child.on('exit', (code) => {
-      this.exited = { code }
-      if (this.child === child) this.child = null
-      this.emit(this.exitListeners, { code })
     })
     const configureTimeoutMs = Number.isInteger(config?.configureTimeoutMs) ? config.configureTimeoutMs : 30000
     try {
@@ -74,8 +109,7 @@ class RefineWorkerHost {
         child.postMessage({ type: 'configure', model: config.model })
       })
     } catch (error) {
-      if (this.child === child) this.child = null
-      try { child.kill() } catch { /* already exited */ }
+      try { await this.terminateChildAndWait(child, DEFAULT_SHUTDOWN_TIMEOUT_MS) } catch { /* original error wins */ }
       throw error
     }
   }
@@ -90,20 +124,86 @@ class RefineWorkerHost {
     if (this.child) this.child.postMessage({ type: 'report' })
   }
 
-  kill () {
-    if (this.child) {
-      try { this.child.kill() } catch { /* already exited */ }
-      this.child = null
-    }
+  waitForChildExit (child, timeoutMs) {
+    const record = this.childExit?.child === child ? this.childExit : null
+    if (!record) return Promise.resolve(this.exited?.code ?? null)
+    return waitWithTimeout(record.promise, positiveTimeout(timeoutMs), 'refine worker exit timed out')
   }
 
-  dispose () {
-    if (this.disposed) return
+  async terminateChildAndWait (child, timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS) {
+    const record = this.childExit?.child === child ? this.childExit : null
+    if (!record) return this.exited?.code ?? null
+    try { child.kill() } catch { /* exit promise decides the outcome */ }
+    return this.waitForChildExit(child, timeoutMs)
+  }
+
+  shutdown (timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS) {
+    if (this.shutdownPromise) return this.shutdownPromise
     this.disposed = true
-    this.kill()
+    this.shutdownPromise = this.shutdownGeneration(positiveTimeout(timeoutMs))
+    return this.shutdownPromise
+  }
+
+  async shutdownGeneration (timeoutMs) {
+    const child = this.child
+    if (!child) {
+      this.clearListeners()
+      return Object.freeze({ graceful: true, reason: null, exitCode: this.exited?.code ?? null })
+    }
+    let reason = null
+    let exitCode = null
+    try {
+      child.postMessage({ type: 'shutdown' })
+      exitCode = await this.waitForChildExit(child, timeoutMs)
+      if (exitCode !== 0) reason = 'WORKER_EXITED'
+    } catch (error) {
+      reason = /timed out/i.test(String(error?.message || ''))
+        ? 'SHUTDOWN_TIMEOUT'
+        : 'SHUTDOWN_REQUEST_FAILED'
+    }
+    if (reason && this.child === child) {
+      try {
+        exitCode = await this.terminateChildAndWait(child, timeoutMs)
+      } catch {
+        reason = 'TERMINATION_TIMEOUT'
+      }
+    }
+    if (reason === 'TERMINATION_TIMEOUT') {
+      this.clearListeners()
+      const error = new Error('refine worker termination timed out')
+      error.code = 'UTILITY_TERMINATION_TIMEOUT'
+      throw error
+    }
+    this.clearListeners()
+    return Object.freeze({ graceful: reason === null, reason, exitCode })
+  }
+
+  terminateAndWait (timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS) {
+    if (this.terminatePromise) return this.terminatePromise
+    this.disposed = true
+    const timeout = positiveTimeout(timeoutMs)
+    this.terminatePromise = (async () => {
+      const child = this.child
+      const exitCode = child ? await this.terminateChildAndWait(child, timeout) : (this.exited?.code ?? null)
+      this.clearListeners()
+      return exitCode
+    })()
+    return this.terminatePromise
+  }
+
+  clearListeners () {
     this.statsListeners.clear()
     this.exitListeners.clear()
   }
+
+  dispose () {
+    return this.terminateAndWait()
+  }
 }
 
-module.exports = { RefineWorkerHost, WORKER_PATH }
+module.exports = {
+  DEFAULT_SHUTDOWN_TIMEOUT_MS,
+  RefineWorkerHost,
+  SERVICE_NAME,
+  WORKER_PATH
+}

@@ -36,7 +36,7 @@ Hosted CI 不声称验证真实 WASAPI/回环、物理麦克风、DWM 窗口行�
 | J3 | Agent：已提交的单路会话停止 → 字幕上下文插件按完整水位读取 → Pi Agent Loop → 纪要插件生成概要/结论/待办/风险 → 独立保存并在历史展示 | A2 PR 阻断 + AI provider 替身；`loopback`/`mic` fixture 分别运行；实网仅手动验收 | Agent 未实现；不阻断字幕 MVP |
 | J4 | 来源互斥：设置/UI/runtime 均拒绝 `mic + loopback`；活动会话禁止直接换源；停止后以另一来源启动新会话且历史/Agent 产物不串会话 | 字幕 MVP 每次 PR；两种来源分别做 I2 smoke，不做双路 soak | 已覆盖 UI 结构、配置/迁移、Coordinator、adapter/audio host/worker 和停止换源后的两份隔离历史；SQLite/Agent 接入后沿用本旅程扩展 |
 | J5 | pause/resume 时存在在途 refine 与后续 Agent 任务；恢复后不丢、不重发、不跨会话 | 字幕部分 I2；Agent 部分 A2 + 实机 smoke | Gateway 真实组合已覆盖 pause/resume→同会话 refined→SQLite；真实 refine 暂停、物理来源和 Agent 后置部分仍待补 |
-| J6 | realtime/refine/storage worker 崩溃后恢复；已定稿内容仍可显示、落盘、历史可见；Agent 可继续追赶 | CI 故障注入 + I2/I3 实机 smoke | realtime worker 恢复基线已通过；Gateway 真实组合新增 storage worker 空闲退出、提交前退出和 COMMIT 后 ACK 丢失重放切片；确定性 Coordinator→Recorder→Gateway 压力旅程证明越过高水位的已显示定稿与停采集边界字幕均保留，ACK 前不恢复采集；error→stop 必须按「已保留 backlog→边界缓冲→close」顺序获得 ACK 后才 idle，并在 flush→close 竞争窗口拒绝终止栅栏后的退役 worker 事件。历史查询/导出实现已接入同一 SQLite 投影；真实产品历史窗口、I3 与 Agent 仍待补，完整 J6 未通过 |
+| J6 | realtime/refine/storage worker 崩溃后恢复；已定稿内容仍可显示、落盘、历史可见；Agent 可继续追赶 | CI 故障注入 + I2/I3 实机 smoke | realtime/Gateway 恢复与字幕/close ACK 压力旅程已通过；UtilityProcess fatal error 由固定角色诊断消费，realtime/refine 正常退出和强制终止都等待 exact child exit，无法收殓旧代时 Coordinator 禁止 replacement。批准模型零音频诊断已并发加载 ASR/VAD/refine 三轮、6 个 worker 全部优雅 exit 0；补丁后三轮完整产品壳均正常自退出。截图中的 native breakpoint 尚未归因，真实硬崩溃→重启恢复、I3 与 Agent 仍待补，完整 J6 未通过。 |
 | J7 | Agent 超时、限流、断网、凭据失效或 Loop 失败；本地字幕、权威存储和历史必须继续 | A1/A2 PR 阻断 | 未实现；不阻断字幕 MVP |
 | J8 | 两小时字幕会话、数千段和历史滚动；CPU/内存/队列/SQLite WAL 有界 | I3 soak / 字幕发布门禁 | 未覆盖 |
 | J9 | 打包版首启、模型下载、权限、真字幕、自动保存、历史查看和退出清理；全程不需要 Agent | I4 干净 Win11 | 未覆盖 |

@@ -30,6 +30,7 @@ const state = {
   creditDebt: new Map(),
   endReceived: false,
   statsTimer: null,
+  shuttingDown: false,
   /* samples 跨进程反序列化后不是 Float32Array 的帧数——传输层类型回归
      的哨兵指标（B2.2 已证明这条桥会有非标准行为）。 */
   badSampleTypeFrames: 0,
@@ -155,9 +156,32 @@ function attachPort (port) {
   if (!state.statsTimer) state.statsTimer = setInterval(reportStats, 500)
 }
 
+function shutdown () {
+  if (state.shuttingDown) return
+  state.shuttingDown = true
+  if (state.statsTimer) {
+    clearInterval(state.statsTimer)
+    state.statsTimer = null
+  }
+  const port = state.port
+  state.port = null
+  if (port) {
+    try { port.close() } catch { /* already closed */ }
+  }
+  try { state.refine.dispose() } catch { /* best effort */ }
+  try { if (state.core) state.core.dispose() } catch { /* best effort */ }
+  state.core = null
+  publish({ type: 'stopped' })
+  setImmediate(() => process.exit(0))
+}
+
 process.parentPort.on('message', (event) => {
   const message = event.data
-  if (message?.type === 'configure') {
+  if (message?.type === 'shutdown') {
+    shutdown()
+  } else if (state.shuttingDown) {
+    return
+  } else if (message?.type === 'configure') {
     /* 二次 configure 会把 sequence/segmentId 归零，旧游标下所有新事件都会
        被 coordinator 拒绝——按编程错误拒绝，重配置应当重启 worker。 */
     if (state.core) {

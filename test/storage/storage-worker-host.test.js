@@ -49,7 +49,8 @@ function harness (options = {}) {
   const host = new StorageWorkerHost({
     databasePath: path.join(os.tmpdir(), `storage-host-${Math.random()}.sqlite3`),
     requestTimeoutMs: options.requestTimeoutMs || 100,
-    electron
+    electron,
+    onFatalError: options.onFatalError
   })
   return { children, host }
 }
@@ -110,6 +111,15 @@ test('concurrent start calls share one initialize promise and one child', async 
   await first
   assert.equal(host.state, 'ready')
   assert.strictEqual(host.start(), first, 'ready generation keeps the same initialization promise')
+  await terminateQuietly(host)
+})
+
+test('storage utility fatal error is consumed without retaining the V8 report', async () => {
+  const diagnostics = []
+  const { child, host } = await startReady({ onFatalError: (value) => diagnostics.push(value) })
+  assert.doesNotThrow(() => child.emit('error', 'FatalError', 'private-location', 'sensitive report'))
+  assert.deepEqual(diagnostics, [{ role: 'subtitle-storage', type: 'FatalError' }])
+  assert.doesNotMatch(JSON.stringify(diagnostics), /private|sensitive|report|location/i)
   await terminateQuietly(host)
 })
 

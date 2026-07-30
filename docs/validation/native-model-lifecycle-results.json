@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "kind": "native-model-lifecycle-smoke",
+  "generatedAt": "2026-07-30T22:11:03.451Z",
+  "result": "pass",
+  "gateStatus": "diagnostic-only",
+  "runtime": {
+    "electron": "43.2.0",
+    "node": "24.18.0"
+  },
+  "scope": {
+    "approvedInstalledBundleResolved": true,
+    "realtimeModelAndVadLoaded": true,
+    "offlineRefinementModelLoaded": true,
+    "audioCaptureOpened": false,
+    "pcmFramesSent": 0,
+    "packagedRuntime": false,
+    "userDialogReproduced": false,
+    "browserWindowCount": 0
+  },
+  "metrics": {
+    "requestedIterations": 3,
+    "completedIterations": 3,
+    "responsiveWorkerPairs": 3,
+    "gracefulRealtimeExits": 3,
+    "gracefulRefinementExits": 3,
+    "zeroExitCodeCount": 6,
+    "fatalErrorCount": 0,
+    "abnormalChildProcessCount": 0,
+    "cleanChildProcessCount": 0
+  },
+  "privacy": {
+    "capturedAudioPersisted": false,
+    "transcriptTextPersisted": false,
+    "localPathsPersisted": false,
+    "diagnosticAudioArtifacts": 0
+  },
+  "limitations": [
+    "no-audio-capture-or-pcm",
+    "does-not-reproduce-user-dialog",
+    "does-not-prove-two-hour-stability",
+    "not-packaged-i4"
+  ],
+  "errorCode": null
+}

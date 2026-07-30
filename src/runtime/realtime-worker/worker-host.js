@@ -12,6 +12,25 @@ const path = require('node:path')
 const { assertSingleSourceIds, isCaptionEvent } = require('../../contracts')
 
 const WORKER_PATH = path.join(__dirname, 'realtime-worker.js')
+const SERVICE_NAME = 'Speech Agent realtime ASR'
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 2000
+
+function positiveTimeout (value) {
+  if (!Number.isInteger(value) || value < 1) throw new RangeError('timeoutMs must be a positive integer')
+  return value
+}
+
+function waitWithTimeout (promise, timeoutMs, message) {
+  let timer = null
+  return Promise.race([
+    promise,
+    new Promise((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+    })
+  ]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
+}
 
 class RealtimeWorkerHost {
   constructor (options = {}) {
@@ -22,9 +41,33 @@ class RealtimeWorkerHost {
     this.exitListeners = new Set()
     this.lastStats = null
     this.exited = null
+    this.childExit = null
+    this.shutdownPromise = null
+    this.terminatePromise = null
+    this.onFatalError = typeof options.onFatalError === 'function' ? options.onFatalError : () => {}
     /* 边界丢弃必须可观测：isCaptionEvent 拒绝的事件计数。 */
     this.droppedCaptionCount = 0
     this.disposed = false
+  }
+
+  installChild (child) {
+    let resolveExit
+    const exitPromise = new Promise((resolve) => { resolveExit = resolve })
+    this.childExit = { child, promise: exitPromise }
+    /* Electron 的 UtilityProcess error 不是普通业务错误，而是即将终止的
+       V8 fatal。必须注册 listener，避免 EventEmitter 把未监听的 error
+       继续抛向主进程；diagnostic 只保留固定角色/类型，绝不转存 report、
+       location、路径、字幕或 PCM。最终状态仍由紧随其后的 exit 统一收束。 */
+    child.on('error', () => {
+      try { this.onFatalError(Object.freeze({ role: 'realtime-asr', type: 'FatalError' })) } catch { /* observer isolation */ }
+    })
+    child.once('exit', (code) => {
+      this.exited = { code }
+      if (this.child === child) this.child = null
+      this.emit(this.exitListeners, { code })
+      resolveExit(code)
+    })
+    return this.childExit
   }
 
   onCaption (listener) {
@@ -58,8 +101,9 @@ class RealtimeWorkerHost {
       throw new TypeError('sessionId is required')
     }
     assertSingleSourceIds(config.sourceIds)
-    const child = this.electron.utilityProcess.fork(WORKER_PATH)
+    const child = this.electron.utilityProcess.fork(WORKER_PATH, [], { serviceName: SERVICE_NAME })
     this.child = child
+    this.installChild(child)
     child.on('message', (message) => {
       if (message?.type === 'caption') {
         /* 契约边界：worker 是独立进程，事件先过 isCaptionEvent 再进主进程
@@ -72,11 +116,6 @@ class RealtimeWorkerHost {
         this.lastStats = message.stats
         this.emit(this.statsListeners, message.stats)
       }
-    })
-    child.on('exit', (code) => {
-      this.exited = { code }
-      if (this.child === child) this.child = null
-      this.emit(this.exitListeners, { code })
     })
     /* 真实 recognizer 的 configure 包含同步模型载入（int8 encoder 秒级），
        超时相应放宽；结构/null 路径维持快失败。 */
@@ -100,9 +139,9 @@ class RealtimeWorkerHost {
         child.postMessage({ type: 'configure', ...config })
       })
     } catch (error) {
-      /* 失败路径不留孤儿进程：kill 并复位占位，调用方可重试 start()。 */
-      if (this.child === child) this.child = null
-      try { child.kill() } catch { /* already exited */ }
+      /* 配置失败也要等待旧世代退出；否则下一次 start 或应用退出可能与
+         尚在释放 sherpa/ONNX 原生资源的旧进程重叠。原始配置错误优先。 */
+      try { await this.terminateChildAndWait(child, DEFAULT_SHUTDOWN_TIMEOUT_MS) } catch { /* original error wins */ }
       throw error
     }
   }
@@ -179,21 +218,87 @@ class RealtimeWorkerHost {
     })
   }
 
-  kill () {
-    if (this.child) {
-      try { this.child.kill() } catch { /* already exited */ }
-      this.child = null
-    }
+  waitForChildExit (child, timeoutMs) {
+    const record = this.childExit?.child === child ? this.childExit : null
+    if (!record) return Promise.resolve(this.exited?.code ?? null)
+    return waitWithTimeout(record.promise, positiveTimeout(timeoutMs), 'realtime worker exit timed out')
   }
 
-  dispose () {
-    if (this.disposed) return
+  async terminateChildAndWait (child, timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS) {
+    const record = this.childExit?.child === child ? this.childExit : null
+    if (!record) return this.exited?.code ?? null
+    try { child.kill() } catch { /* exit promise decides the outcome */ }
+    return this.waitForChildExit(child, timeoutMs)
+  }
+
+  shutdown (timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS) {
+    if (this.shutdownPromise) return this.shutdownPromise
     this.disposed = true
-    this.kill()
+    this.shutdownPromise = this.shutdownGeneration(positiveTimeout(timeoutMs))
+    return this.shutdownPromise
+  }
+
+  async shutdownGeneration (timeoutMs) {
+    const child = this.child
+    if (!child) {
+      this.clearListeners()
+      return Object.freeze({ graceful: true, reason: null, exitCode: this.exited?.code ?? null })
+    }
+    let reason = null
+    let exitCode = null
+    try {
+      child.postMessage({ type: 'shutdown' })
+      exitCode = await this.waitForChildExit(child, timeoutMs)
+      if (exitCode !== 0) reason = 'WORKER_EXITED'
+    } catch (error) {
+      reason = /timed out/i.test(String(error?.message || ''))
+        ? 'SHUTDOWN_TIMEOUT'
+        : 'SHUTDOWN_REQUEST_FAILED'
+    }
+    if (reason && this.child === child) {
+      try {
+        exitCode = await this.terminateChildAndWait(child, timeoutMs)
+      } catch {
+        reason = 'TERMINATION_TIMEOUT'
+      }
+    }
+    if (reason === 'TERMINATION_TIMEOUT') {
+      this.clearListeners()
+      const error = new Error('realtime worker termination timed out')
+      error.code = 'UTILITY_TERMINATION_TIMEOUT'
+      throw error
+    }
+    this.clearListeners()
+    return Object.freeze({ graceful: reason === null, reason, exitCode })
+  }
+
+  terminateAndWait (timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS) {
+    if (this.terminatePromise) return this.terminatePromise
+    this.disposed = true
+    const timeout = positiveTimeout(timeoutMs)
+    this.terminatePromise = (async () => {
+      const child = this.child
+      const exitCode = child ? await this.terminateChildAndWait(child, timeout) : (this.exited?.code ?? null)
+      this.clearListeners()
+      return exitCode
+    })()
+    return this.terminatePromise
+  }
+
+  clearListeners () {
     this.captionListeners.clear()
     this.statsListeners.clear()
     this.exitListeners.clear()
   }
+
+  dispose () {
+    return this.terminateAndWait()
+  }
 }
 
-module.exports = { RealtimeWorkerHost, WORKER_PATH }
+module.exports = {
+  DEFAULT_SHUTDOWN_TIMEOUT_MS,
+  RealtimeWorkerHost,
+  SERVICE_NAME,
+  WORKER_PATH
+}

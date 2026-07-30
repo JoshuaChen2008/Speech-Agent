@@ -142,6 +142,17 @@ class RefinementController {
     for (const event of this.bufferedWhilePaused) this.publish({ type: 'caption', event })
     this.bufferedWhilePaused = []
   }
+
+  dispose () {
+    this.accepting = false
+    this.pending.clear()
+    this.bufferedWhilePaused = []
+    const port = this.port
+    this.port = null
+    if (port) {
+      try { port.close() } catch { /* already closed */ }
+    }
+  }
 }
 
 module.exports = { RefinementController }
