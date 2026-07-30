@@ -8,6 +8,7 @@ let patchTimer = null
 const status = document.getElementById('settingsStatus')
 const onboarding = document.getElementById('onboarding')
 const presetButtons = [...document.querySelectorAll('.preset-card')]
+const sourceButtons = [...document.querySelectorAll('#audioSourceChoice button')]
 const asrNote = document.getElementById('asrNote')
 
 function showStatus (message) {
@@ -78,7 +79,7 @@ function flushPatch () {
 
 const SEG_KEY = { fontsize: 'fontSize', theme: 'theme', latency: 'latency' }
 const NUM_SEG = { fontsize: true, latency: true }
-document.querySelectorAll('.seg').forEach((seg) => {
+document.querySelectorAll('.seg[data-seg]').forEach((seg) => {
   seg.addEventListener('click', (event) => {
     const button = event.target.closest('button')
     if (!button || button.disabled) return
@@ -92,6 +93,29 @@ document.querySelectorAll('.seg').forEach((seg) => {
 document.querySelectorAll('.toggle').forEach((toggle) => {
   toggle.addEventListener('click', () => {
     void savePatch({ [toggle.dataset.toggle]: !toggle.classList.contains('on') })
+  })
+})
+
+sourceButtons.forEach((button) => {
+  button.addEventListener('click', async () => {
+    if (button.disabled || button.getAttribute('aria-checked') === 'true') return
+    sourceButtons.forEach((item) => { item.disabled = true })
+    showStatus('正在切换监听模式…')
+    try {
+      const result = await window.shell.selectPreset(button.dataset.preset)
+      if (!result.ok) {
+        showStatus(result.message)
+        reflect(await window.shell.getConfig())
+      } else {
+        showStatus('')
+      }
+    } catch {
+      showStatus('监听模式未保存')
+      try { reflect(await window.shell.getConfig()) } catch { /* noop */ }
+    } finally {
+      const active = runtimeSnapshot && runtimeSnapshot.sessionId !== null
+      sourceButtons.forEach((item) => { item.disabled = !!active })
+    }
   })
 })
 
@@ -160,8 +184,11 @@ function reflect (next) {
   setSeg('theme', next.theme)
   setSeg('latency', next.latency)
   setToggle('bilingual', next.bilingual)
-  setToggle('mic', next.mic)
-  setToggle('loopback', next.loopback)
+  sourceButtons.forEach((button) => {
+    const checked = next[button.dataset.source] === true
+    button.classList.toggle('on', checked)
+    button.setAttribute('aria-checked', String(checked))
+  })
   opacity.value = next.opacity
   opacityVal.textContent = Number(next.opacity).toFixed(2)
   toolbarOpacity.value = next.toolbarOpacity
@@ -180,6 +207,7 @@ const PROFILE_BY_LATENCY = { 160: 'fast', 480: 'balanced', 960: 'accurate' }
 function reflectRuntime (snapshot) {
   if (!snapshot || (runtimeSnapshot && snapshot.revision < runtimeSnapshot.revision)) return
   runtimeSnapshot = snapshot
+  sourceButtons.forEach((button) => { button.disabled = snapshot.sessionId !== null })
   const profiles = snapshot.capabilities.availableProfiles
   const buttons = document.querySelectorAll('.seg[data-seg="latency"] button')
   buttons.forEach((button) => {

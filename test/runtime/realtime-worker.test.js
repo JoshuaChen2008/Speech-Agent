@@ -138,42 +138,33 @@ test('worker core emits contract-valid partial/final streams per segment', () =>
   for (const event of events) assert.ok(event.t1 >= event.t0)
 })
 
-test('worker core tracks per-source sequence gaps and dual-source independence', () => {
-  const core = new WorkerCore({
-    sessionId: 'session-1',
-    sourceIds: ['mic', 'loopback'],
-    adapterFactory: () => scriptedAdapter(),
-    vadOptions: { threshold: 0.05, voicedFramesToStart: 1, silentFramesToEnd: 2 }
-  })
-  const events = []
-  events.push(...core.ingestFrame(frame('mic', 0, 0.3)))
-  events.push(...core.ingestFrame(frame('loopback', 0, 0.3)))
-  /* mic 丢 2 帧（1、2）。 */
-  events.push(...core.ingestFrame(frame('mic', 3, 0.3)))
-  events.push(...core.ingestFrame(frame('loopback', 1, 0)))
-  events.push(...core.ingestFrame(frame('loopback', 2, 0)))
-  events.push(...core.ingestFrame(frame('mic', 4, 0)))
-  events.push(...core.ingestFrame(frame('mic', 5, 0)))
+test('worker core supports either source in separate runs and rejects dual-source input', () => {
+  assert.throws(() => new WorkerCore({
+    sessionId: 'session-dual',
+    sourceIds: ['mic', 'loopback']
+  }), /exactly one/)
 
-  const metrics = core.metrics()
-  assert.equal(metrics.mic.sequenceGapCount, 1)
-  assert.equal(metrics.mic.missedFrames, 2)
-  assert.equal(metrics.loopback.sequenceGapCount, 0)
-
-  const bySource = new Map()
-  for (const event of events) {
-    assertCaptionEvent(event)
-    const list = bySource.get(event.sourceId) || []
-    list.push(event.sequence)
-    bySource.set(event.sourceId, list)
+  for (const sourceId of ['mic', 'loopback']) {
+    const core = new WorkerCore({
+      sessionId: `session-${sourceId}`,
+      sourceIds: [sourceId],
+      adapterFactory: () => scriptedAdapter(),
+      vadOptions: { threshold: 0.05, voicedFramesToStart: 1, silentFramesToEnd: 2 }
+    })
+    const events = []
+    events.push(...core.ingestFrame(frame(sourceId, 0, 0.3)))
+    events.push(...core.ingestFrame(frame(sourceId, 3, 0.3)))
+    events.push(...core.ingestFrame(frame(sourceId, 4, 0)))
+    events.push(...core.ingestFrame(frame(sourceId, 5, 0)))
+    const metrics = core.metrics()[sourceId]
+    assert.equal(metrics.sequenceGapCount, 1)
+    assert.equal(metrics.missedFrames, 2)
+    assert.ok(events.length > 0)
+    for (const event of events) {
+      assertCaptionEvent(event)
+      assert.equal(event.sourceId, sourceId)
+    }
   }
-  for (const sequences of bySource.values()) {
-    assert.deepEqual(sequences, [...sequences].sort((a, b) => a - b))
-  }
-  /* 跨源 segmentId 不冲突。 */
-  const ids = events.map((event) => event.segmentId)
-  assert.ok(ids.filter((id) => id.includes('mic')).length > 0)
-  assert.ok(ids.filter((id) => id.includes('loopback')).length > 0)
 })
 
 test('worker core flush finalizes an open segment and malformed frames are ignored', () => {

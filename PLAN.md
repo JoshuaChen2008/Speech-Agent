@@ -1,7 +1,7 @@
 # Live Subtitle Agent · Win11 实时字幕技术规划
 
-> **Rev.3 · 2026-07-26**。初版调研 2026-07-23（版本号、模型名、体积经 GitHub Release API / npm registry / 下载解包核实）。
-> 本次修订：把视觉/UI、Electron 壳层与运行后端拆成独立工作流；补充跨进程契约、会话状态机、双 worker、事件式 JSONL、权限边界和并行验收路线。视觉设计可交给擅长 UI 的模型独立完成，但不得越过运行契约。
+> **Rev.6 · 2026-07-30**。初版调研 2026-07-23（版本号、模型名、体积经 GitHub Release API / npm registry / 下载解包核实）。
+> 本次修订：冻结并实现 `loopback`/`mic` 产品级互斥与诊断无音频落盘；接受独立增强文本、会后结构化纪要和 Pi Core + 项目自有插件宿主设计；向量检索继续后置。
 
 ---
 
@@ -14,14 +14,23 @@
 | 三窗架构（字幕 / 工具条 / 设置）、停靠与脱离 | 历史面板（`src/toolbar/toolbar.js` 的 `history` 分支仍是 TODO） |
 | 锁定穿透、逐像素命中测试、主进程手动拖动 | 历史面板 UI（数据层已就绪） |
 | 配置持久化（`userData/config.json`）+ 三窗实时联动 | 模型下载与资源管理、AI 层、打包分发 |
-| 亚克力设置窗（显示 / 音频源 / 语音识别 / 关于 四个 pane） | 双路（mic+loopback）并发 soak 与 I2 完整指标 |
+| 亚克力设置窗（显示 / 音频源 / 语音识别 / 关于 四个 pane）+ 单路模式 XOR 门禁/J4 | I2 完整指标 |
 | B1 `SessionCoordinator`、状态机、per-window preload 与 contract-valid fake adapter | |
 | B2 audio host、PCM 直通/背压、realtime worker、**真实 160ms 模型 + silero VAD** | |
-| B3 **二遍精修 refine worker**（final→refined 自动变准补标点）+ JSONL 会话档 | |
+| B3 **二遍精修 refine worker**（final→refined 自动变准补标点）+ JSONL 过渡会话档 | B3.3 SQLite 权威存储、旧 JSONL 迁移与历史 UI |
 
-**Gate 0B 已于 2026-07-27 正式改判通过**（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修，门槛重设留档于 `docs/validation/gate-0b.md` 改判节），**两遍链路已全部接通**：真实 160ms 模型 + silero VAD + 离线精修 worker（实机 smoke `scripts/i2-live-caption-smoke.js`：语料外放 → 回环 → 第一遍整句定稿 CER 0 → refined 自动替换、标点齐全、CER 0）。当前主线：历史面板 UI、双路并发 soak 与 I2 完整指标验收；之后 B4 资源管理与 B5 分发；弱机与打包版仍需 B5/I4 复测后才发布 profile。
+**Gate 0B 已于 2026-07-27 正式改判通过**（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修，门槛重设留档于 `docs/validation/gate-0b.md` 改判节），**两遍链路已全部接通**：真实 160ms 模型 + silero VAD + 离线精修 worker（实机 smoke `scripts/i2-live-caption-smoke.js`：语料外放 → 回环 → 一遍定稿 CER 0 → refined 自动替换、标点齐全、CER 0）。`loopback`/`mic` 已在 UI、配置、Coordinator、runtime 与 worker 形成 XOR 门禁，并由 J4 验证停止换源和新会话隔离。当前主线继续收口 I2 指标/故障门禁、B3.3 SQLite 与历史查看、ModelManager 和干净 Win11 分发。Agent 系统在字幕闭环后启动，向量检索后置。
 
-### 0.1 三层职责与协作边界
+### 0.1 两套产品系统的边界
+
+| 系统 | 独立承诺 | 输入 | 输出 | 失败边界 |
+|---|---|---|---|---|
+| **字幕系统（MVP）** | 点击运行后监听一个已选择来源，实时显示 ASR 字幕，自动保存定稿及时间戳，并可从历史查看复盘 | `mic` XOR `loopback` PCM | partial、final/refined、SQLite 字幕历史 | 不依赖网络、LLM、Agent Loop 或向量扩展；不保存原始音频 |
+| **Agent 系统（后置）** | 基于已提交字幕运行上下文增强和会后结构化纪要插件 | 字幕提交边界之后的当前正文与水位 | 独立增强文本、概要/结论/待办/风险 | 只生成内容；超时、断网、模型或插件失败不得停止字幕或损伤原文 |
+
+两套系统在同一桌面产品内协作，不等于必须拆成两个安装包。唯一允许的主依赖方向是“Agent 系统消费字幕系统已提交事实”；字幕系统不得反向等待 Agent。历史只做带时间戳的文本复盘，产品现在及未来都不保存原始音频。
+
+### 0.2 三层技术职责与协作边界
 
 本项目不按传统 Web 的“页面前端 / HTTP 后端”二分，而采用三层：
 
@@ -55,8 +64,8 @@
 | 外壳 | **Electron 43.2.0** | 复核：已是 latest，不动 |
 | 构建工具链 | **不引入**（vanilla + JSDoc `@ts-check`） | 见 §6.1 |
 | 模型解压 | **系统自带 `C:\Windows\System32\tar.exe`** | 已实测：bsdtar 3.7.7 带 bz2lib 1.0.8 |
-| 转写存储 | **append-only JSONL 事件日志**（不上 sqlite） | 见 §6.4 |
-| AI 接入 | **原生 fetch + 手写 SSE**（不引 SDK） | 见 §6.5 |
+| 转写存储 | **SQLite 单一权威 + append-only 字幕事件 + segment 投影**；JSONL 仅作迁移/导出/恢复 | 已决定、尚未实现，见 §6.4 / ADR 0001 |
+| Agent runtime | **Pi Agent Core + 本项目 AgentPluginHost/存储适配** | 后置；A1 先做 ESM/Electron/打包隔离探针，见 §6.5 |
 | 打包 | **electron-builder 26.15.3 + NSIS** | 见 §6.6 |
 
 ---
@@ -203,7 +212,9 @@ Chromium 的 `backdrop-filter` 只模糊「页面内部」在它后面的内容�
 
 **为什么不放字幕窗**：字幕窗是常驻置顶的合成热点且 `focusable: false`，把音频栈塞进去会让「采集失败」和「字幕闪烁」耦合成同一类故障；独立宿主窗崩了可以静默重启，字幕不受影响。
 
-**Gate 0C 已验证**：主进程用 `hostWin.webContents.executeJavaScript(code, true)`（第二参 `userGesture = true`）触发时，隐藏窗的 display handler 实际收到 `request.userGesture: true`，并完成麦克风/回环双路 48k→16k Worklet 采集；见 `docs/validation/gate-0c.md`。当前批准隐藏 audio host。若未来打包版回归，工具条点击回退必须重新实测，并由工具条持有 stream/Worklet、向后端传 PCM；不能未经验证就假定 `MediaStreamTrack` 可跨 renderer 转移。
+**Gate 0C 已验证**：主进程用 `hostWin.webContents.executeJavaScript(code, true)`（第二参 `userGesture = true`）触发时，隐藏窗的 display handler 实际收到 `request.userGesture: true`，并分别验证麦克风/回环 48k→16k Worklet 采集路径；见 `docs/validation/gate-0c.md`。产品运行时只允许选择其中一路。当前批准隐藏 audio host；新隐私语义要求后续 diagnostic/smoke 只保留内存指标，不再 dump 现场 WAV。若未来打包版回归，工具条点击回退必须重新实测，并由工具条持有 stream/Worklet、向后端传 PCM；不能未经验证就假定 `MediaStreamTrack` 可跨 renderer 转移。
+
+> **实现状态（2026-07-30）**：上述隐私修正已完成。产品 diagnostic 明确拒绝 `dumpDir`，产品 smoke 与当前 Gate 0C runner 只做内存分析并写结构化指标，不生成现场 WAV。
 
 ### 4.2 音频帧走 MessageChannelMain，绕开主进程
 
@@ -211,15 +222,15 @@ Chromium 的 `backdrop-filter` 只模糊「页面内部」在它后面的内容�
 
 > **B2.2 实测修正**：renderer DOM MessagePort → MessagePortMain 桥会**静默丢弃**带 ArrayBuffer transferable 的消息（纯 JSON 的控制消息可达，带 `[samples.buffer]` 的帧全部丢失）。帧改为结构化克隆发送：1600×4B ≈ 6.4KB/帧、每路 10 帧/秒，拷贝成本可忽略；「PCM 不经过主进程 JS 事件循环」的关键不变量不受影响。
 
-**为什么**：100ms 一帧、16k mono Float32 = 6.4 KB/帧/路，双路 128 KB/s 长流。让它穿过主进程等于把主进程变成音频中继 —— 而主进程正在以 **~120fps 轮询光标做拖动**（`src/main.js` 的 `dragTick`，8ms 定时器）。这两件事绝不能挤在同一个事件循环里。
+**为什么**：100ms 一帧、16k mono Float32 = 6.4 KB/帧，单路约 64 KB/s 长流。让它穿过主进程等于把主进程变成音频中继 —— 而主进程正在以 **~120fps 轮询光标做拖动**（`src/main.js` 的 `dragTick`，8ms 定时器）。这两件事绝不能挤在同一个事件循环里。
 
-只有 PCM 绕开主进程。`partial/final/refined/translated` 是低带宽文本事件，统一交给 `SessionCoordinator` 排序、持久化并广播，避免字幕窗、历史和导出各自维护一份不同的真相。若性能测量证明文本路由仍是瓶颈，再增加旁路，不提前优化。
+只有 PCM 绕开主进程。字幕系统的 `partial/final/refined` 是低带宽文本事件，统一交给 `SessionCoordinator` 排序并广播；`final/refined` 再进入字幕持久化，避免字幕窗、历史和导出各自维护一份不同的真相。Agent 的 translated/enhanced/summary 在提交边界后生成并独立保存。若性能测量证明文本路由仍是瓶颈，再增加旁路，不提前优化。
 
 ### 4.3 实时识别与二遍精修拆成两个 utility process
 
 `decode()` 是同步 CPU 密集调用，放主进程会卡住 IPC 和窗口动画；而在同一个 worker 里“异步”调用 OfflineRecognizer 也不会变成非阻塞，仍会暂停实时 partial。
 
-- `realtime-asr-worker`：只做双路 OnlineRecognizer、VAD/分段和实时事件。
+- `realtime-asr-worker`：只为当前选定的单路来源运行 OnlineRecognizer、VAD/分段和实时事件；底层保留 `sourceId` 隔离能力。
 - `refine-worker`：只做 SenseVoice，按 `segmentId` 返回更高 `revision`；队列必须有上限，积压时允许降级或跳过，不能拖慢实时字幕。
 - 主进程监听两个 worker 的 `exit`，将状态切到 `recovering/error`，并按策略重建 MessagePort。
 
@@ -263,11 +274,11 @@ const mic = await navigator.mediaDevices.getUserMedia({
 
 用 `AudioWorkletNode` 重采样到 **16000 Hz 单声道 Float32**，每 ~100ms 一帧 `postMessage` 到 port。不要用废弃的 `ScriptProcessorNode`。
 
-### 5.2 音频源归因 —— 免费的双路方案
+### 5.2 互斥监听模式与音频源归因
 
 真做多说话人 diarization 要 speaker embedding + 在线聚类，误标率高、调参痛苦。
 
-**v1 先做 100% 可判定的音频源归因：麦克风 / 系统音频。** 开两个 `OnlineRecognizer` 实例分别跑两路；UI 允许用户把来源别名设为「我 / 对方」，但数据层只保存 `sourceId`，不宣称完成了说话人分离。系统音频可能同时包含多名远端参会者、通知或媒体声，真 diarization 推到 v2 以后。
+**v1 先做 100% 可判定的音频源归因：麦克风或系统音频。** UI、配置验证和 runtime 必须共同执行 XOR：一次会话只启动当前选中来源对应的 recognizer，运行中不能直接换源；停止后才能以另一来源创建新会话。数据层保存 `sourceId`，但不宣称完成了说话人分离。系统音频可能同时包含多名远端参会者、通知或媒体声，真 diarization 推到 v2 以后。
 
 ### 5.3 两遍解码（字幕手感的关键）
 
@@ -294,13 +305,14 @@ const mic = await navigator.mediaDevices.getUserMedia({
 
 v1 先由 **VAD 的 speech-end** 负责分段，recognizer endpoint 只作超长句兜底。不能一边“不向 recognizer 喂静音”，一边依赖它的 trailing-silence endpoint，否则可能永不断句。分段参数属于运行配置，由后端校验并返回 effective value；UI 只展示产品级选项。
 
-### 5.4 翻译与摘要
+### 5.4 Agent 系统：上下文增强、翻译与摘要（字幕 MVP 后）
 
-不走本地模型 —— 本地 NMT 在 Win 上没有好的 onnx 方案，摘要本来就该用大模型。
-
-- **ASR 永远本地离线**（隐私卖点，也是选 sherpa-onnx 的初衷）
-- **翻译**：每条 committed segment 触发一次请求，以 `segmentId + revision + targetLanguage` 去重；使用保序的有界队列、取消和超时。不得把不同 segment 合并成一个“单飞”请求后再猜结果对应关系
-- **摘要**：每 N 条 / 每 2 分钟滚动一次，只传定稿文本
+- **ASR 永远本地离线**，字幕显示、保存和历史查看不依赖 Agent。
+- Agent 只消费字幕提交边界后的当前正文；`partial` 不进入 Agent 上下文。
+- **上下文增强文本**独立保存并声明输入水位、digest 和模型，永不覆盖原始权威转写；A2 首版只做会后或用户主动触发的整场增强，滚动逐段增强后置。
+- **翻译**：每条 committed segment 触发一次请求，以 `segmentId + revision + targetLanguage` 去重；使用保序的有界队列、取消和超时。
+- **摘要**：首版只做会后结构化纪要，栏目为概要、结论、待办、风险；会中滚动摘要后置，待办只生成文字。
+- Pi 的低层 Agent Loop 承载“LLM → 内容型工具 → 观察 → 继续/结束”；项目自有 `AgentPluginHost` 管理字幕上下文、增强文本和纪要插件。编码 Agent 自带的 shell/read/write 工具、TUI 和 JSONL 会话不进入产品。
 
 ---
 
@@ -333,30 +345,35 @@ Range 断点续传 + SHA256 校验 + 写 `.part`。解压到 staging 目录，�
 - 校验失败必须能原地重来，不能只留一个半截文件
 - 正在被 worker 使用的模型禁止删除；UI 只发送命令，ModelManager 决定能否执行
 
-### 6.4 转写存储 —— JSONL，不上数据库
+### 6.4 转写存储 —— SQLite 单一权威，保留事件语义
 
-`userData/sessions/<windows-safe-time>_<session-id>.jsonl`，append-only。不能直接把 ISO8601 用作 Windows 文件名，因为其中的 `:` 非法。
+**2026-07-30 新决定正式替代 Rev.3 的“JSONL，不上数据库”。** B3.1 的 JSONL 已实现且继续作为迁移前基线；B3.3 验收通过后，`userData/data/speech-agent.sqlite3` 成为唯一权威写入，JSONL 只用于旧数据导入、显式导出和灾难恢复，不长期双写。
 
-JSONL 保存事件而不是一条“最终可变记录”：
+字幕存储仍然保存事件而不是一条“最终可变记录”：
 
-```json
-{"v":1,"event":"segment.final","sessionId":"...","segmentId":"...","sourceId":"mic","revision":1,"t0":12.34,"t1":15.02,"text":"..."}
-{"v":1,"event":"segment.refined","sessionId":"...","segmentId":"...","revision":2,"text":"..."}
-{"v":1,"event":"segment.translated","sessionId":"...","segmentId":"...","revision":3,"lang":"en","text":"..."}
-```
+- `caption_events` append-only 保存字幕系统的 `final/refined`；partial 只服务实时 UI。Agent 的 translated/enhanced/summary 使用独立派生表或事件类型，不伪装成 ASR 事实。
+- `segments` 按 `segmentId + revision` 形成当前正文投影，字幕历史和导出共用它；Agent 通过已提交事件/水位读取。
+- 字幕事实写入与 segment 投影更新必须在同一 SQLite 事务中完成；Agent 阶段再冻结可靠派发的 outbox/inbox 细节。
+- storage worker 是唯一 SQLite 所有者，避免同步 SQL/扩展加载阻塞 Electron 主进程的窗口与拖动事件循环。
+- 原始音频永不持久化：不写 BLOB、不写库外录音文件、不保存音频路径或恢复材料；有界 PCM 缓冲只服务实时 ASR/精修并及时释放。
+- FTS5 可在需要历史搜索时独立增加；`sqlite-vec` 和 embedding schema 明确后置，均不得成为 SQLite 历史上线前置。
 
-读取和导出时按 `segmentId + revision` 折叠为当前状态。这样 refined/translation 可以晚到，崩溃前已经写入的 final 也不会丢。明确否掉 better-sqlite3：它是 native 模块、绑 Electron ABI，当前查询需求仍只有按会话顺序读。
+驱动在 Electron 43 utility process 中通过 DB0 驱动/WAL/打包探针后再冻结；SQLite 的数据语义不依赖某个 Node binding。完整 schema、迁移、降级和门禁见 [`docs/data-architecture.md`](docs/data-architecture.md)；SQLite 权威与双系统边界分别见 [ADR 0001](docs/adr/0001-sqlite-authoritative-event-store.md) / [ADR 0002](docs/adr/0002-separate-subtitle-and-agent-systems.md)。
 
 历史面板超过 200 条要 DOM 回收或虚拟滚动 —— 两小时会议会有几千条。
 
-### 6.5 AI 层 —— 手写 SSE，不引 SDK
+### 6.5 Agent 层 —— Pi Agent Core + 项目自有插件宿主，后置实施
 
-v1 明确只承诺 **OpenAI-compatible chat completions**。使用 `fetch` + 独立的 provider adapter，不把“任意 Claude / 自建端点”统称为兼容；不同协议以后增加 adapter。SSE parser 必须覆盖跨 chunk Unicode、空行、错误帧、`[DONE]`、取消和超时。
+[earendil-works/pi](https://github.com/earendil-works/pi) 把低层 Agent runtime、统一 LLM provider 和编码 Agent UI/工具分包。已接受的选型是复用 `pi-agent-core`，不把完整 coding-agent CLI/扩展运行时嵌入 Electron；本项目在 core 外提供窄 `AgentPluginHost`，负责清单、静态注册、权限、生命周期、字幕水位、取消/重试、诊断和产物提交。
 
-**两个硬约束：**
+字幕系统本身不作为 Pi 插件；Agent 侧提供只读 `TranscriptContextPlugin`。`EnhancedTranscriptPlugin` 和 `MeetingMinutesPlugin` 是独立内容生成插件，只能经宿主的 `ModelGateway` 与 `ArtifactWriter` 工作。首版只加载随应用发布的受信任第一方插件，不做第三方安装、热重载或市场。
 
-1. **请求不能在渲染进程发** —— v1 由主进程内独立 `AiGateway` 模块负责；如果未来测得流解析影响主进程，再迁移到 utility process。key 永不进入可见 renderer
-2. **API Key 用 `safeStorage.encryptString()` 写 `userData/creds.bin`** —— 绝不进 `config.json`，那个文件是明文且会被 `broadcastConfig()` 广播到所有窗口
+复用 Pi 前必须先做一个无 UI、无 shell/文件写工具的技术探针，验证包体、Electron utility process、取消、流式事件、provider 凭据注入和许可证归档。若探针不通过，保留 `AgentRuntime` 适配器并换实现，不影响字幕系统。
+
+无论采用 Pi 还是自研，两个硬约束不变：
+
+1. LLM 请求不能在可见 renderer 发起，API Key 永不进入 renderer。
+2. API Key 用 Electron `safeStorage` 保护，绝不进入明文 `config.json`、字幕 SQLite、日志或模型上下文。
 
 ### 6.6 打包 —— electron-builder 26.15.3 + NSIS
 
@@ -368,9 +385,18 @@ v1 明确只承诺 **OpenAI-compatible chat completions**。使用 `fetch` + 独
 
 `.node` 在 asar 里 `dlopen` 不了，这是必踩的坑。模型不进安装包，装在 `userData/models/`。
 
-### 6.7 测试 —— 自动化纯逻辑，手测窗口特性
+### 6.7 测试 —— 单元、联合 CI 与实机验收分层
 
-暂不上 Playwright：透明 + `focusable: false` + 点击穿透的窗口自动化驱动成本高，这部分继续用手测矩阵覆盖置顶、穿透、DPI、多屏、锁定和拖动。
+**项目级完成规则（2026-07-30 新增）：只有单元测试不能宣称功能完成。** 每项用户能力必须至少有一条跨模块用户旅程在 CI 中通过；涉及真实声卡、模型性能、透明窗口或长稳运行时，还必须补 Windows 实机 smoke/soak 证据。规范状态词、功能含义和禁止误读以 [`docs/semantic-contract.md`](docs/semantic-contract.md) 为准；详细分层、场景 ID 和摘要联动不变量见 [`docs/testing-strategy.md`](docs/testing-strategy.md)。
+
+暂不上 Playwright：透明 + `focusable: false` + 点击穿透的窗口自动化驱动成本高，这部分继续用实机矩阵覆盖置顶、穿透、DPI、多屏、锁定和拖动。Hosted CI 使用确定性替身隔离声卡/网络，但 `SessionCoordinator`、Caption reducer、TranscriptStore、队列和契约校验必须使用真实产品实现，不允许把整条链路全部 mock 掉。
+
+自动化入口：
+
+- `npm run test:integration`：每次 PR 必跑的跨模块用户旅程。
+- `npm test`：完整回归集（也会发现 integration tests）。
+- `npm run test:ci`：先显式运行联合旅程，再跑完整回归；由 Windows CI workflow 调用。
+- `scripts/*-smoke.js`：真实 Electron/音频/模型进程边界，需有能力的 Windows 实机运行。
 
 使用 `node:test` 自动覆盖：
 
@@ -379,15 +405,15 @@ v1 明确只承诺 **OpenAI-compatible chat completions**。使用 `fetch` + 独
 - IPC sender/payload 校验以及跨进程 contract fixtures。
 - Caption reducer 对乱序 sequence/revision 的处理。
 - 配置校验、迁移、写入防抖和坏文件恢复。
-- JSONL 坏尾行恢复、事件折叠和 md/srt/txt 导出。
+- JSONL 过渡格式的坏尾行恢复、事件折叠和 md/srt/txt 导出；B3.3 增加 SQLite 原子性、幂等迁移与历史查询；Agent 可靠消费在 A1 测，FTS/向量只在 X1 启用后测试。
 - 模型断点续传、SHA 失败、staging 安装和活跃模型保护。
 - SSE parser、取消、超时、重试和有界队列。
 
 ---
 
-## 7. 分轨并行路线图
+## 7. 双系统分阶段路线图
 
-不再把全部工作串成一个 Phase 0→7 队列。完成共享 Gate 0 后，视觉/UI 和运行后端用同一套 fixtures 并行开发，在 Integration Gate 汇合。
+先完成可独立验收的字幕系统；其内部的视觉/UI 与运行后端仍用同一套 fixtures 并行开发并在 Integration Gate 汇合。字幕 MVP 验收后再启动 Agent 系统，避免在 JSONL 过渡存储或不稳定字幕契约上构建 LLM 功能。
 
 ### 7.1 共享 Gate 0（执行中）
 
@@ -420,8 +446,9 @@ node scripts/gate-0b/evaluate-transcripts.js `
 |---|---|---|
 | **V1 设计基础** | 设计 token、组件状态、排版和 fixtures 展示页 | 深浅色、高对比度、键盘 focus、reduced motion 均有定义 |
 | **V2 核心字幕** | 稳定 DOM + caption reducer；工具条完整运行状态 | 38px、双语、长英文、错误和恢复状态不溢出；不靠颜色单独传达状态 |
-| **V3 设置与历史** | capability-driven 设置；可聚焦的历史/导出界面 | 未实现/未安装能力不可误操作；两小时记录滚动不卡 |
-| **V4 首启与云端 UX** | 场景预设、权限、模型下载、AI 隐私提示 | 用户始终知道当前在下载什么、监听什么、哪些文本会离开本机 |
+| **V3 字幕历史（MVP）** | capability-driven 设置；可聚焦的会话列表、带时间戳正文与导出界面 | 停止/重启后仍可查看；两小时记录滚动不卡；不把文本历史误称为音频回放 |
+| **V4 资源与首启（MVP）** | 场景预设、权限和 ASR 模型下载 | 用户始终知道当前在下载什么、监听什么；缺模型可恢复 |
+| **V5 Agent UX（后置）** | 原文/增强文本、摘要、AI 隐私与失败状态 | 用户知道哪些文本会离开本机；Agent 失败不遮蔽原文历史 |
 
 视觉模型只提交视觉/UI 层文件；运行状态和样例数据来自 fixtures，禁止为了“让页面先跑”而在 renderer 内伪造后端成功状态。详细白名单见 `docs/ui-design-brief.md`。
 
@@ -430,14 +457,18 @@ node scripts/gate-0b/evaluate-transcripts.js `
 | 阶段 | 内容 | 验收标准 |
 |---|---|---|
 | **B1 应用骨架（完成）** | `SessionCoordinator`、状态机、per-window preload、contract validation、fake adapter | renderer 重载后快照一致；越权 IPC 和非法配置被拒绝；自动测试与默认/dev Electron smoke 通过 |
-| **B2.0 恢复缺口（完成）** | canonical `CaptionState`（与 renderer 共用同一折叠实现）、caption 角色独占 `getCaptionState()`、订阅-水合-重放 bootstrap、replacement adapter 恢复游标（`resume: {attempt, sourceSequences}`） | reload 水合与实时流逐字段一致（含双路交错与窗口外迟到修订的 property 回归）；replacement 后首条字幕被接受并到达订阅者；stop/新会话/dispose 保留与清空语义有回归覆盖 |
+| **B2.0 恢复缺口（完成）** | canonical `CaptionState`（与 renderer 共用同一折叠实现）、caption 角色独占 `getCaptionState()`、订阅-水合-重放 bootstrap、replacement adapter 恢复游标（`resume: {attempt, sourceSequences}`） | reload 水合与实时流逐字段一致；现存双源交错 property fixture 只作底层隔离防御，不是产品能力；replacement 后首条字幕被接受并到达订阅者；stop/新会话/dispose 保留与清空语义有回归覆盖 |
 | **B2.1 audio host 产品化（完成）** | Gate 0C 拓扑提取到 `src/runtime/audio-host/`：非持久化 session、最小权限 handler、专用 preload、AudioWorklet 48k→16k 1600 samples/100ms、有界诊断采集与指标落盘（`scripts/audio-host-smoke.js`） | 纯逻辑（resampler/assembler/metrics/policy）自动测试；实机 smoke 静音与 997Hz 信号两种情形 PASS（宿主全程隐藏、userGesture、0 gap、时钟覆盖 1.0）；未接 SessionCoordinator |
 | **B2.2 PCM 直通与背压（完成）** | `MessageChannelMain` 直通：host → port → `pcm-sink` utility process；credit 背压（ready 握手 + 窗口式授信）、`FrameFlow` 有界队列（maxQueueMs 丢旧保新）、低频指标控制通道、`replacePort` 中途换消费端 | 实机 smoke 三模式 PASS：normal 40/40/40 帧 0 丢 0 缺口；slow 队列峰值恰好压在预算上、29 丢帧且 sink 观察到对应缺口；crash-replace 消费端 exit(13) 后替换 sink 无缝续流。PCM 不经主进程 JS；帧用结构化克隆（transferable 被桥丢弃，见 §4.2 修正） |
-| **B2.3 realtime worker 骨架（完成）** | `src/runtime/realtime-worker/`：per-source 管线（帧→VAD 分段→recognizer adapter→contract-valid partial/final）、可替换 adapter 注册表（默认 `null`——Gate 0B 未过绝不产文本）、EnergyVad 占位（silero 随模型轨替换）、utilityProcess 入口沿用 B2.2 credit 协议、main 侧 `RealtimeWorkerHost`（边界契约校验） | 纯逻辑单测覆盖 VAD/分段/双源/缺口指标/坏帧；worker 事件全量通过真实 `SessionCoordinator.acceptCaption` 门（集成测试）；实机 smoke 传输与零字幕不变量 PASS，VAD 实音分段因系统静音判 inconclusive（有声复跑即补） |
-| **B2 实时链路** | audio host、MessagePort、双路 realtime worker、VAD/背压 | 真 partial/final 替掉假流；拖动不掉帧；队列深度和丢帧可观测。**模型轨已落地（2026-07-27）**：`sherpa-recognizer.js`（共享 OnlineRecognizer、per-segment stream、0.4s 尾静音冲刷）经 configure 注册；`model-resolver.js` 解析本机模型（env/userData/仓库布局，缺失 fail closed）；组合根默认接真实链路。**silero VAD 已替换 EnergyVad（2026-07-27）**：`silero-vad.js` 包装为同接口经 vadFactory 注入，997Hz 纯音拒识实测通过（能量占位做不到）；收句静音实测定为 1.0s——0.5s 切段时流式模型缺右上下文丢字（「一下」→「一」）且几乎不出标点，1.0s 下整句成段 CER 0。VAD 模型缺失时回退 EnergyVad 并警告。实机 smoke `i2-live-caption-smoke.js` PASS（silero：1 条整句定稿、CER 0；对比 energy：4 条碎片、CER 0.071）。剩余：双路并发 soak、拖动/掉帧指标 |
-| **B3 精修与会话** | refine worker、事件式 JSONL、恢复与导出 | 精修不阻塞实时流；坏尾行可恢复；SRT 时间轴稳定。**B3.1 已落地（2026-07-27）**：append-only JSONL 事件档（Windows-safe 文件名、排他创建防混档）、坏尾行/坏中间行区分恢复、按 revision 折叠、txt/md/srt 导出（毫秒进位正确、换行注入压平），main 接线为会话自动开/封档。**B3.2 refine worker 已落地（2026-07-27）**：独立 utility process 载离线 X-ASR（t=3，M3 同配置）；realtime worker 是 CaptionEvent 唯一序号权威——段定稿后整段音频经 worker↔worker MessagePort 直达 refine，纯文本结果回来后由 realtime worker 以 base+1 revision 发 refined；请求方有界队列（积压 3 即跳过，绝不反压实时）；精修配置失败/中途退出只降级告警不故障会话；暂停期精修缓冲、resume ack 后补发；停止路径 end 收束的段不发起精修（保持 final，计 skipped）。实机 smoke：final 无标点 → refined 全标点，双 CER 0。剩余：历史 UI |
-| **B4 资源与 AI** | ModelManager、CredentialStore、AiGateway | 下载可续传/校验/原子安装；key 不进 renderer；AI 失败不影响本地字幕 |
-| **B5 分发** | electron-builder、NSIS、首启资源检查 | 干净机器安装可用；native module 正确 unpack；模型缺失可恢复 |
+| **B2.3 realtime worker 骨架（完成）** | `src/runtime/realtime-worker/`：per-source 管线（帧→VAD 分段→recognizer adapter→contract-valid partial/final）、可替换 adapter 注册表（默认 `null`——Gate 0B 未过绝不产文本）、EnergyVad 占位（silero 随模型轨替换）、utilityProcess 入口沿用 B2.2 credit 协议、main 侧 `RealtimeWorkerHost`（边界契约校验） | 纯逻辑单测覆盖 VAD/分段/source 隔离/缺口指标/坏帧；多 source fixture 只是底层防御，产品会话仅启用一路；worker 事件全量通过真实 `SessionCoordinator.acceptCaption` 门（集成测试）；实机 smoke 传输与零字幕不变量 PASS，VAD 实音分段因系统静音判 inconclusive（有声复跑即补） |
+| **B2 实时链路** | audio host、MessagePort、互斥单路 realtime worker、VAD/背压 | 真 partial/final 替掉假流；拖动不掉帧；队列深度和丢帧可观测。**模型轨已落地（2026-07-27）**：`sherpa-recognizer.js`（共享 OnlineRecognizer、per-segment stream、0.4s 尾静音冲刷）经 configure 注册；`model-resolver.js` 解析本机模型（env/userData/仓库布局，缺失 fail closed）；组合根默认接真实链路。**silero VAD 已替换 EnergyVad（2026-07-27）**：`silero-vad.js` 包装为同接口经 vadFactory 注入，997Hz 纯音拒识实测通过（能量占位做不到）；收句静音实测定为 1.0s——0.5s 切段时流式模型缺右上下文丢字（「一下」→「一」）且几乎不出标点，1.0s 下整句成段 CER 0。VAD 模型缺失时回退 EnergyVad 并警告。实机 smoke `i2-live-caption-smoke.js` PASS（silero：1 条整句定稿、CER 0；对比 energy：4 条碎片、CER 0.071）。**XOR 门禁与 J4 已完成（2026-07-30）**。剩余：两种来源分别 smoke、拖动/掉帧指标 |
+| **B3 精修与会话** | refine worker、事件式持久化、恢复与导出 | 精修不阻塞实时流；已提交一遍定稿可恢复；SRT 时间轴稳定。**B3.1 已落地（2026-07-27，过渡实现）**：append-only JSONL 事件档（Windows-safe 文件名、排他创建防混档）、坏尾行/坏中间行区分恢复、按 revision 折叠、txt/md/srt 导出（毫秒进位正确、换行注入压平），main 接线为会话自动开/封档。**B3.2 refine worker 已落地（2026-07-27）**：独立 utility process 载离线 X-ASR（t=3，M3 同配置）；realtime worker 是 CaptionEvent 唯一序号权威——段定稿后整段音频经 worker↔worker MessagePort 直达 refine，纯文本结果回来后由 realtime worker 以 base+1 revision 发 refined；请求方有界队列（积压 3 即跳过，绝不反压实时）；精修配置失败/中途退出只降级告警不故障会话；暂停期精修缓冲、resume ack 后补发；停止路径 end 收束的段不发起精修（保持 final，计 skipped）。实机 smoke：final 无标点 → refined 全标点，双 CER 0。剩余：B3.3 与历史 UI |
+| **B3.3 SQLite 字幕历史（已决定 / 未实现）** | storage worker、SQLite 字幕事件/segments、JSONL 迁移、历史查询 API | DB0–DB2 与 J10 通过；J1/J2 切到 SQLite 后端并覆盖“停止/重启→历史查看”；迁移前后正文与 txt/md/srt digest 一致；禁止长期 JSONL 双写 |
+| **B4 字幕资源** | ModelManager、断点下载、校验、原子安装与删除保护 | 下载可续传/校验/原子安装；活跃模型不可删除；模型缺失可恢复 |
+| **B5 字幕 MVP 分发** | electron-builder、NSIS、首启资源检查 | 干净 Win11 机器完成“安装→模型就绪→运行→真字幕→自动保存→历史查看” |
+| **A1 Agent 基础（后置）** | `AgentRuntime` 边界、Pi Core 探针、项目自有 `AgentPluginHost`、CredentialStore、ModelGateway、可靠消费水位 | 只静态注册受信任第一方插件；不启用 shell/进程/任意文件写/外部写；key 不进 renderer；Agent 关闭/崩溃不影响字幕；J7/J13 通过 |
+| **A2 Agent 内容能力（后置）** | `TranscriptContextPlugin`、独立增强文本、会后结构化纪要 | 原文与派生文本不混淆；待办只生成内容；字幕→Agent 通过 J3–J7/J13 联合场景 |
+| **X1 可选检索（Deferred）** | FTS5 按需增加；embedding/`sqlite-vec` 最后评估 | 不阻断 B3.3、B5 或 A2；若启用再执行 J11/DB4 |
 
 > 视觉/UI 层已交付 V1–V2；B1 已关闭 [docs/ui-design-brief.md §6](docs/ui-design-brief.md) 的 A1–A3 和 stop/retry 请求。A4 layout contract、历史、资源管理和权限入口仍按后续阶段推进。
 > C 类是 UI 对后端的持续契约约束，违反时的症状是「界面上东西不见了」而不是报错；B1 的 coordinator 与 fake adapter 已遵守这些约束。
@@ -446,20 +477,22 @@ node scripts/gate-0b/evaluate-transcripts.js `
 
 | Gate | 汇合内容 | 验收标准 |
 |---|---|---|
+| **CI0 联合测试基线（进行中）** | 用户旅程跨越真实产品模块，而非只验证单个函数/类 | Windows workflow 已落地；J1/J2 当前覆盖 coordinator → caption reload → JSONL 过渡存储 → 导出一致性。B3.3 必须切到 SQLite 并补真实历史查询/展示边界与 J10；J11 后置。后续功能必须登记场景；只有单测时最多标记“实现完成 / 尚未验收” |
 | **I1 Contract（完成）** | UI fake adapter ↔ 后端 contract fixtures | coordinator、fake adapter、renderer reducer 和 IPC 共享 v1 validator；默认/dev smoke 均通过 |
-| **I2 Live Caption** | 音频 → realtime ASR → SessionCoordinator → 字幕 UI | P50/P95 延迟、CPU、内存、队列深度达标。**I2.1 结构接线已完成（2026-07-27）**：`RealtimeRuntimeAdapter` 实现 B1 冻结接口组合 host/worker/port，coordinator 新增 adapter `onError` 故障入口（§12.4 关闭）；实机 smoke 全相位通过（含 worker 击杀→error→retry→listening 恢复），null recognizer 零字幕。**I2.2 真字幕已通（2026-07-27）**：模型批准 + sherpa adapter 接线后，`i2-live-caption-smoke.js` 实机 PASS——受控语料外放 → loopback → 真实 160ms 模型 → 6 partial + 4 final 达 coordinator 订阅者，拼接 CER 0.071，全相位干净。完整 I2 PASS 仍需 P50/P95 延迟、CPU/内存、队列深度与拖动不掉帧的指标化验收 |
-| **I3 Durable Session** | final/refined/translation → JSONL → 历史/导出 | 连续 2 小时不卡；崩溃恢复不丢已 final 的段落 |
-| **I4 Packaged App** | 首启、下载、权限、ASR、AI、退出清理 | 在干净 Win11 机器完成完整用户旅程 |
+| **I2 Live Caption** | 单路音频 → realtime ASR → SessionCoordinator → 字幕 UI | P50/P95 延迟、CPU、内存、队列深度达标，并完成 J4/J5/J6 联合场景。**I2.1 结构接线已完成（2026-07-27）**：`RealtimeRuntimeAdapter` 实现 B1 冻结接口组合 host/worker/port，coordinator 新增 adapter `onError` 故障入口（§12.4 关闭）；实机 smoke 全相位通过（含 worker 击杀→error→retry→listening 恢复），null recognizer 零字幕。**I2.2 真字幕已通（2026-07-27）**：模型批准 + sherpa adapter 接线后，`i2-live-caption-smoke.js` 实机 PASS——受控语料外放 → loopback → 真实 160ms 模型 → 6 partial + 4 final 达 coordinator 订阅者，拼接 CER 0.071，全相位干净。**J4/XOR 已完成（2026-07-30）**。完整 I2 PASS 仍需 mic 单路 smoke、P50/P95 延迟、CPU/内存、队列深度、拖动不掉帧及联合故障路径的指标化验收 |
+| **I3 Durable Subtitle Session** | final/refined → SQLite 事件/投影 → 带时间戳历史/导出 | 连续 2 小时不卡；崩溃恢复不丢已一遍定稿的段落；JSONL 迁移通过 J10 |
+| **I4 Packaged Subtitle MVP** | 首启、下载、权限、ASR、持久化、历史与退出清理 | 在干净 Win11 机器完成字幕系统完整用户旅程，断网且无 Agent 时仍成立 |
+| **I5 Agent System（后置）** | committed transcript → TranscriptContextPlugin → Pi Loop → 增强/纪要插件 → 独立产物 → 历史展示 | J3–J7/J13 通过；Agent 失败、取消和恢复不影响 I2–I4 |
 
 ---
 
-## 8. 待拍板
+## 8. 产品决策与剩余待确认项
 
 ### 8.1 主场景是「听会议」还是「记自己说话」？（已拍板）
 
 旧骨架曾默认 `mic: true, loopback: false`，暗示麦克风优先；但产品也强调会议系统声。Gate 0D 已移除这个隐藏默认值，新安装和旧配置迁移都必须先完成显式选择。
 
-**决定：首启提供「会议字幕」和「个人听写」两个预设。** 会议预设默认系统音频开启、麦克风关闭但可后续开启；个人听写默认只开麦克风。配置保存实际 `sourceId`，UI 别名可显示为「我 / 对方」。在用户完成选择前，`mic / loopback` 都为 false，不再用隐藏默认值替用户做产品决定。
+**决定：首启提供「会议字幕」和「个人听写」两个互斥预设。** 会议预设只开系统音频；个人听写只开麦克风。一次会话始终只允许一个 `sourceId`，运行中不能开第二路或换源，停止后才能切换模式。在用户完成选择前，`mic / loopback` 都为 false，不再用隐藏默认值替用户做产品决定。
 
 Gate 0B 原门槛于 2026-07-27 经正式改判重设（见 `docs/validation/gate-0b.md` 改判节）：批准机器基线上发布 `fast` profile（x-asr-160ms + 离线精修）。`LIVE_SUBTITLE_DEV_MODEL=x-asr-480ms` 仍是仅供 B1 fake adapter 的开发开关，不加载真实模型，也不得进入生产默认配置；真实 profile 的发布以模型文件实际就位 + 机器基线满足为条件。
 
@@ -468,6 +501,26 @@ Gate 0B 原门槛于 2026-07-27 经正式改判重设（见 `docs/validation/gat
 **建议：接受，但分两步下。** 首启只拉 x-asr（~170MB）即可用；SenseVoice 二遍精修（~230MB）做成设置页里的可选增强。首次体验等待砍掉一半，精修从「入场门槛」变成「用着用着发现还能更准」。
 
 若要求开箱即用 0 下载，就得砍到 `small-bilingual`（~50MB 级）并放弃二遍精修，准确率有肉眼可见的下降。
+
+### 8.3 字幕 MVP 中“系统音频”具体是哪一路？（已拍板）
+
+**决定：**“监听系统音频”固定指 `loopback`，是会议字幕主场景；保留 `mic` 单路个人听写。两者绝不同时运行，配置、UI、runtime 和 CI 都执行 XOR。
+
+### 8.4 “记录回放”是文本复盘还是原始音频播放？（已拍板）
+
+**决定：**只做带时间戳的文本复盘。产品现在及未来都不保存原始音频，不设计录音文件、音频路径、磁盘配额或文本↔音频 seek。
+
+### 8.5 LLM“修饰”是否允许替换权威转写？（已拍板）
+
+**决定：**原始 ASR/离线精修继续作为权威转写；LLM 结果保存为独立“增强文本”，声明输入水位、digest 和模型，永不覆盖原文。
+
+### 8.6 Pi 复用到哪一层？（ADR 0003 已接受）
+
+**决定：**以官方 Pi Agent Core/Loop 为底层，通过本项目 `AgentRuntime` 与 `AgentPluginHost` 适配；不引入完整 coding-agent CLI、TUI、shell/read/write 默认工具和它自己的会话权威。字幕系统保持独立，Pi 侧只装只读字幕上下文插件；增强文本与纪要是内容插件。具体取舍见 [ADR 0003](docs/adr/0003-project-owned-agent-plugin-host.md) 和 [调研说明](docs/agent-plugin-architecture.md)。
+
+### 8.7 飞书式摘要的首个形态是什么？（已拍板）
+
+**决定：**首个 Agent 验收目标是会后结构化纪要，固定栏目为概要、结论、待办、风险；会中滚动摘要后置。Agent 只生成内容，不自动执行任何外部待办。
 
 ---
 
@@ -484,8 +537,11 @@ Gate 0B 原门槛于 2026-07-27 经正式改判重设（见 `docs/validation/gat
 | 隐藏窗影响应用生命周期判断 | 可见窗消失但应用不退出，或无法重建 | WindowManager 分别追踪 visible/runtime windows，不依赖 `getAllWindows().length` |
 | `.node` 打进 asar | 安装版启动即崩，开发期发现不了 | `asarUnpack`，B5/I4 在干净机器验 |
 | 两小时会话 DOM 膨胀 | 历史面板卡死 | DOM 回收 / 虚拟滚动，V3/I3 验收 |
-| refined/translation 与单记录 JSONL 冲突 | 更新丢失或导出状态错误 | append-only 事件日志，按 revision 折叠 |
+| refined/translation 与可变单记录冲突 | 更新丢失、摘要重复或导出状态错误 | SQLite append-only 事件 + segments 投影，按 revision 折叠；旧事实不覆盖 |
+| SQLite 与 JSONL 长期双写 | 两份权威数据漂移，故障后无法判定以谁为准 | J10 核对后一次性切换；JSONL 降为只读迁移/导出/恢复格式 |
+| `sqlite-vec` 版本/打包加载失败（后期） | 可选语义搜索崩溃或返回过期向量 | X1 前不引入；启用时固定版本与可信路径并执行 DB4/J11；失败降级到普通历史 |
 | 翻译请求打爆 API | 账单与限流 | segment 去重、有界保序队列、取消和超时 |
+| 直接嵌入 Pi coding-agent 扩展运行时 | 引入 TUI/项目/JSONL 会话与完整系统权限，反转字幕生命周期 | 只用 Pi Core；项目自有 capability-based PluginHost；先做 ESM/Electron 探针 |
 | `transparent` 窗开 DevTools 透明失效 | 调试期误判 | Electron 已知限制，非 bug |
 
 ---
@@ -502,6 +558,8 @@ Gate 0B 原门槛于 2026-07-27 经正式改判重设（见 `docs/validation/gat
 - Electron `safeStorage`: https://www.electronjs.org/docs/latest/api/safe-storage
 - Electron BaseWindow 选项（backgroundMaterial）: https://www.electronjs.org/docs/latest/api/structures/base-window-options
 - Electron 回环音频参考实现: https://github.com/alectrocute/electron-audio-loopback
+- Pi Agent Harness: https://github.com/earendil-works/pi
+- Agent 插件架构调研: [docs/agent-plugin-architecture.md](docs/agent-plugin-architecture.md)
 - 字幕窗实现细节: [docs/subtitle-window.md](docs/subtitle-window.md)
 - 视觉/UI 模型交接边界: [docs/ui-design-brief.md](docs/ui-design-brief.md)
 - 运行后端与契约: [docs/runtime-architecture.md](docs/runtime-architecture.md)

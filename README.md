@@ -1,6 +1,8 @@
-# Live Subtitle Agent
+# Live Subtitle + Agent
 
-Win11 实时字幕 Agent。当前已完成 **B1 应用骨架 + B2 实时链路 + B3 两遍精修**：透明字幕条、工具栏、点击穿透、亚克力设置窗、首启双预设、权威会话状态机、隐藏采集窗（回环/麦克风）、realtime worker、Gate 0B 改判批准的 **160ms 真实模型 + silero VAD + 离线精修**——本机模型就位时,启动即出真字幕,说完一句约 1 秒后字幕自动变准并补全标点。
+一个由两套能力协作组成的 Win11 桌面产品：**字幕系统**以互斥的 `loopback` 会议字幕或 `mic` 个人听写为输入，负责本地实时 ASR、字幕、自动保存和带时间戳历史；后置的 **Agent 系统**再消费已提交字幕，通过 Pi Agent Core 与第一方插件生成独立增强文本和会后结构化纪要。Agent 只生成内容，不执行外部操作；关闭或失败时，字幕系统仍独立完整工作。产品现在及未来都不保存原始音频。
+
+当前已完成 **B1 应用骨架 + B2 实时链路 + B3 两遍精修 + JSONL 过渡会话档 + 来源 XOR 联合门禁**：透明字幕条、工具栏、点击穿透、亚克力设置窗、单选监听模式、权威会话状态机、隐藏采集窗（回环/麦克风）、realtime worker、Gate 0B 改判批准的 **160ms 真实模型 + silero VAD + 离线精修**。本机模型就位时，启动即出真字幕，说完一句约 1 秒后自动变准并补全标点。SQLite、历史查看、模型自动安装和可分发版本尚未闭环；Agent 系统尚未实现，向量检索已后置。
 
 ## 运行
 
@@ -23,6 +25,15 @@ $env:LIVE_SUBTITLE_DEV_MODEL='x-asr-480ms'
 npm start
 ```
 
+测试按“局部回归 / 联合 CI / 实机验收”分层；单元测试通过不等于功能完成：
+
+```powershell
+npm run test:integration # 会议回环、麦克风用户旅程的跨模块一致性
+npm run test:ci          # CI 门禁：联合旅程 + 完整回归
+```
+
+字幕 MVP 与后续“字幕 → Agent”的联合验收见 [docs/testing-strategy.md](docs/testing-strategy.md)；功能含义、禁止误读与“完成”口径以 [docs/semantic-contract.md](docs/semantic-contract.md) 为准。
+
 ## 已实现（骨架）
 
 - **双窗架构**：字幕窗 + 工具条窗两个独立透明窗（穿透是整窗属性，锁定态要「字幕穿透 + 工具条可控」只能拆窗）
@@ -36,19 +47,22 @@ npm start
 - **设置 ↔ 字幕条实时联动**：字号 / 不透明度 / 圆角 / 主题 / 双语 改动即时生效，持久化到 `userData/config.json`
 - **设置窗**：独立第三窗，Win11 真·亚克力（`titleBarStyle:'hidden'` + `backgroundMaterial:'acrylic'`，`resizable:false` 防拖动误缩放）
 - **主题**：跟随系统深浅色（`nativeTheme`）
-- **Gate 0D 首启**：显式选择「会议字幕」或「个人听写」；选择前麦克风与系统音频均保持关闭
+- **Gate 0D 首启**：显式选择「会议字幕」或「个人听写」；选择前两路均关闭，一次会话只允许启用一路
 - **最小权限桥接**：caption / toolbar / settings 使用独立 preload，主进程按窗口角色和 main frame 校验 IPC
 - **B1 fake adapter**：字幕只接收 `SessionCoordinator` 发布的 `CaptionEvent`，renderer 不再自造假流
 
 ## 规划边界
 
+- **字幕系统（MVP）**：`loopback`/`mic` 互斥采集、ASR、字幕显示、定稿/精修、SQLite 文本持久化、带时间戳历史、模型资源和离线可用性；永不保存原始音频。
+- **Agent 系统（后置）**：只消费已提交字幕；已决定采用 `pi-agent-core + AgentPluginHost`，由只读字幕上下文插件、增强文本插件和会后纪要插件组成。只生成内容，不复用 coding-agent 的 TUI、shell/文件工具或会话存储。
+- **可选检索（Deferred）**：FTS5 可按历史搜索需求增加；embedding/`sqlite-vec` 不阻断字幕 MVP 或首版 Agent。
 - **视觉/UI**：字幕、工具条、设置/历史/首启的布局、样式、动效、文案和无障碍，可交给擅长视觉的模型独立设计。
 - **Electron 壳层**：窗口、拖动、穿透、最小权限 preload、IPC 校验和会话状态机。
 - **运行后端**：audio host、实时/精修 ASR workers、模型、会话、凭据和 AI provider。
 - 三层只通过 `RuntimeSnapshot / CaptionEvent / CommandResult / Capabilities` 协作；UI 不读取模型、存储或密钥实现。
 - Gate 0A 的 v1 字段、运行时校验器和模拟数据已固化在 [`src/contracts/`](src/contracts/README.md)，B1 UI 与 fake adapter 已按同一契约接线。
 
-视觉模型的文件白名单、状态 fixtures 和交接要求见 [docs/ui-design-brief.md](docs/ui-design-brief.md)；后端职责、状态机和数据流见 [docs/runtime-architecture.md](docs/runtime-architecture.md)。
+视觉模型的文件白名单、状态 fixtures 和交接要求见 [docs/ui-design-brief.md](docs/ui-design-brief.md)；后端职责、状态机和数据流见 [docs/runtime-architecture.md](docs/runtime-architecture.md)。统一领域术语见 [CONTEXT.md](CONTEXT.md)，SQLite 与 Agent 派生数据目标设计见 [docs/data-architecture.md](docs/data-architecture.md)、[ADR 0001](docs/adr/0001-sqlite-authoritative-event-store.md)、[ADR 0002](docs/adr/0002-separate-subtitle-and-agent-systems.md) 和 [ADR 0003](docs/adr/0003-project-owned-agent-plugin-host.md)。插件调研与取舍见 [docs/agent-plugin-architecture.md](docs/agent-plugin-architecture.md)。
 
 ## 结构
 
@@ -73,11 +87,13 @@ src/
 
 ## 下一步
 
-见 [PLAN.md](PLAN.md)（Rev.3）：Gate 0A/0B（改判）/0C/0D、B1、B2、B3 两遍精修均已完成（实机 smoke：外放语料 → 回环 → 第一遍整句 CER 0 → refined 自动补标点 CER 0）；接下来是历史面板 UI、双路并发 soak、I2 完整指标验收,之后 B4 资源管理与 B5 分发。
+见 [PLAN.md](PLAN.md)（Rev.6）：来源互斥 J4 已完成；当前继续按 I2 指标/故障 → B3.3 SQLite 与历史 UI → ModelManager → 干净 Win11 分发闭环字幕 MVP。之后做 Pi Core/Electron 隔离探针、项目自有插件宿主、独立增强文本和会后结构化纪要；向量检索最后评估。任何能力都必须有跨模块用户旅程，不能只交单测。
 
 - 窗口壳和交互不变量：[docs/subtitle-window.md](docs/subtitle-window.md)
 - 视觉/UI 模型交接：[docs/ui-design-brief.md](docs/ui-design-brief.md)
 - 运行后端与契约：[docs/runtime-architecture.md](docs/runtime-architecture.md)
+- 功能与验收语义表：[docs/semantic-contract.md](docs/semantic-contract.md)
+- 本地数据架构：[docs/data-architecture.md](docs/data-architecture.md)
 
 ## 已知事项
 
@@ -87,6 +103,8 @@ src/
 
 ## 关键技术决策
 
+- **会话数据**：目标采用 SQLite 单一权威、append-only 字幕事件和 segments 投影；JSONL 在 B3.3 迁移后只作导入导出/恢复，禁止长期双写。Agent 派生数据不得覆盖字幕事实，`sqlite-vec` 已明确后置。
+- **隐私边界**：PCM 只存在于有界实时/精修缓冲；SQLite、应用数据、日志、迁移与导出都不保存原始音频或音频路径。
 - **设置窗拖动闪烁**：根因是 `-webkit-app-region: drag` 触发 Chromium 自定义拖动路径，与 DWM 亚克力重绘不同步。配置采用社区推荐的防闪配方（`transparent:false` + `backgroundColor:'#00000000'` + `titleBarStyle:'hidden'` + `backgroundMaterial:'acrylic'`），并把拖动改为**主进程手动 setBounds**，彻底绕开 app-region 拖动路径。
 - **字幕条拖动**：透明窗口不能用原生框架，同样用主进程轮询全局光标手动移窗（~120fps），比 app-region 顺滑且不受 mousemove 断流影响。
 - **命中测试**：rAF 节流 + 拖动期间暂停，避免每次 mousemove 都跑 `elementFromPoint` + IPC。

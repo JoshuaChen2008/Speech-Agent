@@ -7,7 +7,9 @@ const {
   assertCaptionEvent,
   assertCaptionState,
   assertCommandResult,
-  assertRuntimeSnapshot
+  assertListeningConfiguration,
+  assertRuntimeSnapshot,
+  selectedSourceIds
 } = require('../../contracts')
 /* canonical caption state 只服务 renderer 恢复显示，不是会话史（那是 B3 的
    JSONL）。折叠必须与 renderer 逐事件一致，否则 reload 前后视图会分叉——
@@ -103,25 +105,7 @@ class SessionCoordinator {
   }
 
   validateConfiguration (configuration) {
-    if (!configuration || typeof configuration !== 'object') {
-      throw new TypeError('configuration is required')
-    }
-    if (typeof configuration.onboardingCompleted !== 'boolean') {
-      throw new TypeError('configuration.onboardingCompleted must be a boolean')
-    }
-    if (configuration.onboardingPreset !== null &&
-        !['meeting', 'dictation'].includes(configuration.onboardingPreset)) {
-      throw new TypeError('configuration.onboardingPreset is invalid')
-    }
-    if (typeof configuration.mic !== 'boolean' || typeof configuration.loopback !== 'boolean') {
-      throw new TypeError('configuration capture flags must be booleans')
-    }
-    if (configuration.onboardingCompleted !== (configuration.onboardingPreset !== null)) {
-      throw new TypeError('configuration onboarding fields are inconsistent')
-    }
-    if (!configuration.onboardingCompleted && (configuration.mic || configuration.loopback)) {
-      throw new TypeError('configuration cannot enable sources before onboarding')
-    }
+    assertListeningConfiguration(configuration)
     return {
       onboardingCompleted: configuration.onboardingCompleted,
       onboardingPreset: configuration.onboardingPreset,
@@ -550,9 +534,7 @@ class SessionCoordinator {
   }
 
   selectedSourceIds () {
-    return SOURCE_DEFINITIONS
-      .filter((source) => this.configuration[source.id] === true)
-      .map((source) => source.id)
+    return selectedSourceIds(this.configuration)
   }
 
   availability () {

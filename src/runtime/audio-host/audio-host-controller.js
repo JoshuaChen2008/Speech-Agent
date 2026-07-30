@@ -4,12 +4,11 @@
 
 /* 隐藏音频宿主的主进程控制器（B2.1）。
    职责：非持久化 session、最小权限 handler、display-media 处理、宿主窗
-   生命周期，以及有界诊断采集的编排与落盘。
+   生命周期，以及有界诊断采集与结构化指标的编排。
    非职责（后续阶段）：连续 MessagePort PCM 直通（B2.2）、崩溃自动重启
    策略、与 SessionCoordinator 的运行时接线。
    拓扑严格沿用 Gate 0C 批准版本（docs/validation/gate-0c.md）。 */
 
-const fs = require('node:fs')
 const path = require('node:path')
 const CHANNELS = require('./channels')
 const {
@@ -25,9 +24,7 @@ const {
 } = require('./policy')
 const {
   analyzeLevels,
-  encodePcm16Wav,
-  evaluateDiagnostic,
-  sha256
+  evaluateDiagnostic
 } = require('./pcm-metrics')
 
 const LOAD_TIMEOUT_MS = 5000
@@ -177,15 +174,9 @@ class AudioHostController {
     const samples = coerceSamples(payload.samples)
     const levels = analyzeLevels(samples)
     const checks = evaluateDiagnostic(payload.pipeline, levels, active.options.durationMs)
-    const entry = { pipeline: payload.pipeline, levels, checks, artifact: null }
-    if (active.dumpDir) {
-      const wav = encodePcm16Wav(samples, payload.pipeline.outputSampleRate)
-      const fileName = `${sourceId}.wav`
-      fs.writeFileSync(path.join(active.dumpDir, fileName), wav)
-      entry.artifact = { file: fileName, bytes: wav.length, sha256: sha256(wav) }
-    }
+    const entry = { pipeline: payload.pipeline, levels, checks }
     active.saved[sourceId] = entry
-    this.record('diagnostic-saved', { sourceId, pass: checks.pass })
+    this.record('diagnostic-analyzed', { sourceId, pass: checks.pass })
     return { checks }
   }
 
@@ -226,17 +217,18 @@ class AudioHostController {
   }
 
   /**
-   * 有界诊断采集：创建宿主窗 → user-gesture 触发采集 → 指标与可选 WAV
-   * 落盘 → 销毁宿主窗。一次只允许一个诊断在跑。
+   * 有界诊断采集：创建宿主窗 → user-gesture 触发采集 → 只返回结构化指标
+   * → 销毁宿主窗。现场 PCM 只存在于内存，一次只允许一个诊断在跑。
    */
   async runDiagnosticCapture (rawOptions = {}) {
     if (this.disposed) throw new Error('audio host controller is disposed')
     /* 与连续采集互斥：否则诊断会覆盖 hostWindow 引用，把正在采集
        麦克风/回环的隐藏窗孤儿化（失去控制句柄却仍在采集）。 */
     if (this.activeDiagnostic || this.activeCapture) throw new Error('audio host is busy')
+    if (Object.hasOwn(rawOptions, 'dumpDir')) {
+      throw new TypeError('diagnostic audio persistence is not supported')
+    }
     const options = validateDiagnosticOptions(rawOptions)
-    const dumpDir = rawOptions.dumpDir ? path.resolve(String(rawOptions.dumpDir)) : null
-    if (dumpDir) fs.mkdirSync(dumpDir, { recursive: true })
 
     let rejectDiagnostic
     const aborted = new Promise((_resolve, reject) => { rejectDiagnostic = reject })
@@ -244,7 +236,7 @@ class AudioHostController {
        render-process-gone 或 dispose 触发；先挂空 catch 防 unhandledRejection，
        race 消费的是原 promise，语义不变。 */
     aborted.catch(() => {})
-    this.activeDiagnostic = { options, dumpDir, saved: {}, reject: rejectDiagnostic }
+    this.activeDiagnostic = { options, saved: {}, reject: rejectDiagnostic }
     try {
       this.setupPartition()
       this.registerIpc()

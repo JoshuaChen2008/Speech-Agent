@@ -4,17 +4,17 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, systemPreferences } = require('electron')
-const { analyzeSamples, encodePcm16Wav, evaluateCaptureChecks, evaluateGate0CDecision, formatPasses, parsePcm16Wav, sha256 } = require('./audio-utils')
+const { analyzeSamples, evaluateCaptureChecks, evaluateGate0CDecision } = require('./audio-utils')
 
 function parseArguments (argv) {
   const options = {
-    artifactDir: '.artifacts/gate-0c',
+    workDir: '.artifacts/gate-0c',
     report: 'docs/validation/gate-0c-results.json',
     durationMs: 2600
   }
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index + 1]
-    if (argv[index] === '--artifact-dir') { options.artifactDir = value; index += 1 } else if (argv[index] === '--report') { options.report = value; index += 1 } else if (argv[index] === '--duration-ms') { options.durationMs = Number(value); index += 1 } else throw new Error(`Unknown argument: ${argv[index]}`)
+    if (argv[index] === '--work-dir') { options.workDir = value; index += 1 } else if (argv[index] === '--report') { options.report = value; index += 1 } else if (argv[index] === '--duration-ms') { options.durationMs = Number(value); index += 1 } else throw new Error(`Unknown argument: ${argv[index]}`)
   }
   if (!Number.isFinite(options.durationMs) || options.durationMs < 2000 || options.durationMs > 10000) throw new Error('--duration-ms must be between 2000 and 10000')
   return options
@@ -51,14 +51,14 @@ function coerceSamples (value) {
 
 async function main () {
   const options = parseArguments(process.argv.slice(2))
-  const artifactDir = path.resolve(options.artifactDir)
+  const workDir = path.resolve(options.workDir)
   const reportPath = path.resolve(options.report)
-  fs.mkdirSync(artifactDir, { recursive: true })
-  const progressPath = path.join(artifactDir, 'progress.jsonl')
+  fs.mkdirSync(workDir, { recursive: true })
+  const progressPath = path.join(workDir, 'progress.jsonl')
   fs.writeFileSync(progressPath, '')
   const progress = (stage, detail = null) => fs.appendFileSync(progressPath, JSON.stringify({ at: new Date().toISOString(), stage, detail }) + '\n')
   progress('process-started', { argvCount: process.argv.length })
-  app.setPath('userData', path.join(artifactDir, 'electron-user-data'))
+  app.setPath('userData', path.join(workDir, 'electron-user-data'))
   app.commandLine.appendSwitch('disable-renderer-backgrounding')
   await app.whenReady()
   progress('app-ready')
@@ -73,7 +73,7 @@ async function main () {
   const permissionChecks = []
   const permissionRequests = []
   const visibility = []
-  const savedCaptures = {}
+  const diagnostics = {}
   const partition = session.fromPartition(`gate-0c-${process.pid}`, { cache: false })
   let hostWindow = null
   let playerWindow = null
@@ -183,10 +183,10 @@ async function main () {
     progress('probe-playback-complete', result)
     return result
   })
-  ipcMain.handle('gate-0c:save-capture', async (event, payload) => {
+  ipcMain.handle('gate-0c:analyze-capture', async (event, payload) => {
     if (event.sender !== hostWindow.webContents) throw new Error('untrusted capture payload')
     const sourceId = String(payload?.sourceId || '')
-    if (!['loopback', 'mic', 'mic-probe'].includes(sourceId) || savedCaptures[sourceId]) throw new Error('invalid or duplicate sourceId')
+    if (!['loopback', 'mic', 'mic-probe'].includes(sourceId) || diagnostics[sourceId]) throw new Error('invalid or duplicate sourceId')
     const inputSamples = coerceSamples(payload.samples)
     let inputPreClampOverRangeCount = 0
     let inputNonFiniteCount = 0
@@ -195,35 +195,21 @@ async function main () {
       else if (Math.abs(value) > 1) inputPreClampOverRangeCount += 1
     }
     if (inputNonFiniteCount > 0) throw new Error(`${sourceId} contains non-finite PCM`)
-    const wav = encodePcm16Wav(inputSamples, 16000)
-    const artifactName = `${sourceId}.wav`
-    fs.writeFileSync(path.join(artifactDir, artifactName), wav)
-    const parsed = parsePcm16Wav(fs.readFileSync(path.join(artifactDir, artifactName)))
-    const analysis = analyzeSamples(parsed.samples, parsed.sampleRate, Number(payload.expectedFrequencyHz), 1600, payload.probeWindow)
-    const format = {
-      audioFormat: parsed.audioFormat,
-      channels: parsed.channels,
-      sampleRate: parsed.sampleRate,
-      bitsPerSample: parsed.bitsPerSample,
-      byteRate: parsed.byteRate,
-      blockAlign: parsed.blockAlign,
-      dataBytes: parsed.dataBytes,
-      sampleCount: parsed.sampleCount
-    }
+    const analysis = analyzeSamples(inputSamples, 16000, Number(payload.expectedFrequencyHz), 1600, payload.probeWindow)
+    const buffer = { channels: 1, sampleRate: 16000, sampleCount: inputSamples.length }
     const checks = evaluateCaptureChecks(sourceId, analysis, payload.pipeline, inputPreClampOverRangeCount)
-    checks.formatPass = formatPasses(format)
-    checks.pass = checks.pass && checks.formatPass
-    const saved = {
-      artifact: { file: artifactName, bytes: wav.length, sha256: sha256(wav) },
-      format,
+    checks.bufferPass = payload.pipeline?.outputSampleRate === 16000 && payload.pipeline?.sampleCount === inputSamples.length
+    checks.pass = checks.pass && checks.bufferPass
+    const diagnostic = {
+      buffer,
       inputPreClampOverRangeCount,
       pipeline: payload.pipeline,
       analysis,
       checks
     }
-    savedCaptures[sourceId] = saved
-    progress('capture-saved', { sourceId, checks, artifact: saved.artifact })
-    return saved
+    diagnostics[sourceId] = diagnostic
+    progress('capture-analyzed', { sourceId, checks })
+    return diagnostic
   })
 
   await withTimeout(hostWindow.loadFile(path.join(__dirname, 'host.html')), 5000, 'host page load')
@@ -246,10 +232,10 @@ async function main () {
   markVisibility('after-no-gesture-probe')
   markVisibility('complete')
 
-  const evaluated = evaluateGate0CDecision({ capture, artifacts: savedCaptures, displayRequests, visibility })
+  const evaluated = evaluateGate0CDecision({ capture, diagnostics, displayRequests, visibility })
   const { result, hiddenSchemePass, loopbackPass, physicalMicrophonePass, deterministicMicrophoneProbePass, microphonePass } = evaluated
   const report = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     gate: '0C',
     runId,
     executedAt: new Date().toISOString(),
@@ -277,7 +263,7 @@ async function main () {
     hiddenGestureControl: noGestureProbe,
     displayRequests,
     capture,
-    artifacts: savedCaptures,
+    diagnostics,
     decision: {
       hiddenThroughout: evaluated.hiddenThroughout,
       requiredVisibilityStagesPresent: evaluated.requiredVisibilityStagesPresent,
@@ -287,19 +273,19 @@ async function main () {
       physicalMicrophonePass,
       deterministicMicrophoneProbePass,
       microphonePass,
-      artifactHashesIndependent: evaluated.artifactHashesIndependent,
+      diagnosticsComplete: evaluated.diagnosticsComplete,
       selectedTopology: hiddenSchemePass ? 'hidden-audio-host' : 'not-approved',
       captureInitiator: hiddenSchemePass ? 'main-execute-javascript-user-gesture' : null,
       toolbarFallbackTested: false,
       note: hiddenSchemePass
-        ? 'The display handler observed a real userGesture on the hidden host and the independent-player loopback WAV passed format, signal, clipping, and continuity checks.'
+        ? 'The display handler observed a real userGesture on the hidden host and each in-memory source probe passed signal, clipping, and continuity checks.'
         : 'Do not claim toolbar fallback: no trusted-click fallback was exercised in this run.'
     },
     privacy: {
-      rawWavCommitted: false,
+      rawAudioPersisted: false,
       absolutePathsCommitted: false,
       deviceLabelsCommitted: false,
-      note: 'Short raw captures stay in the ignored artifact directory; only hashes, track-label hashes, settings, and signal metrics are reported.'
+      note: 'Captured samples are analyzed in memory and released; only structured settings, counters, and signal metrics are reported.'
     }
   }
   fs.mkdirSync(path.dirname(reportPath), { recursive: true })
@@ -313,8 +299,8 @@ async function main () {
 
 main().catch((error) => {
   try {
-    const artifactIndex = process.argv.indexOf('--artifact-dir')
-    const directory = path.resolve(artifactIndex >= 0 ? process.argv[artifactIndex + 1] : '.artifacts/gate-0c')
+    const workIndex = process.argv.indexOf('--work-dir')
+    const directory = path.resolve(workIndex >= 0 ? process.argv[workIndex + 1] : '.artifacts/gate-0c')
     fs.mkdirSync(directory, { recursive: true })
     fs.appendFileSync(path.join(directory, 'progress.jsonl'), JSON.stringify({ at: new Date().toISOString(), stage: 'fatal', detail: publicError(error) }) + '\n')
   } catch {}

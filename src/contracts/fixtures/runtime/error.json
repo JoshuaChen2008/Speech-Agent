@@ -13,12 +13,12 @@
     "canRefine": true,
     "canTranslate": true,
     "availableProfiles": ["fast", "balanced"],
-    "availableSourceIds": ["mic", "loopback"],
+    "availableSourceIds": ["loopback"],
     "translationTargets": ["en", "zh-CN"],
     "limitations": []
   },
   "sources": [
-    { "id": "mic", "label": "麦克风", "state": "error", "level": 0 },
+    { "id": "mic", "label": "麦克风", "state": "unavailable", "level": 0 },
     { "id": "loopback", "label": "系统音频", "state": "error", "level": 0 }
   ],
   "model": { "state": "ready", "profile": "balanced", "progress": 1 },

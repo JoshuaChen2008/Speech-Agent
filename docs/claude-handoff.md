@@ -1,5 +1,11 @@
 # Live Subtitle Agent · Claude 全量交接
 
+> **历史快照，不再作为当前计划或状态来源。** 本文保留 2026-07-26 交接上下文；
+> 当前状态以 [`../PLAN.md`](../PLAN.md) 为准，功能与测试语义以
+> [`semantic-contract.md`](semantic-contract.md) 为准，SQLite 目标设计见
+> [`data-architecture.md`](data-architecture.md)。本文后续出现的 Gate 0B、B2/B3、
+> JSONL 或“未实现”描述均只代表交接当日，不得覆盖上述规范文档。
+
 > 交接日期：2026-07-26（Asia/Singapore）
 >
 > 仓库：本文所在 repository root
@@ -573,17 +579,17 @@ B2 前必须补回归测试，并明确 recovery cursor contract：保持同一 
 - UI 不读模型路径、会话文件、API Key，不直接调用网络或 Node。
 - API Key 后续必须经 `safeStorage`，永不进入 config/snapshot/renderer/log。
 - 模型下载必须固定 manifest/SHA256，`.part` + staging + 验证 + 原子安装。
-- ASR 原始音频和模型继续位于被忽略目录。
+- 模型和来源明确的静态合成测试语料可位于被忽略目录；现场采集的 ASR 原始音频不得持久化，即使目录已被忽略也不例外。
 - `models/`、`.artifacts/`、`node_modules/`、`.claude/settings.local.json` 已在 `.gitignore`。
 
-当前机器本地存在：
+当前机器可能仍存在以下 2026-07-26 隐私决策前形成的历史审计遗留：
 
 - `models/gate-0b/`
 - `.artifacts/gate-0c/loopback.wav`
 - `.artifacts/gate-0c/mic.wav`
 - `.artifacts/gate-0c/mic-probe.wav`
 
-这些只用于本机复核，不得 `git add -f`。
+其中 `models/gate-0b/` 是本机模型；三个 WAV 只用于追溯旧 Gate 0C 证据，不是当前产品或 runner 的允许输出。当前 diagnostic、smoke 与 Gate 0C runner 均只生成内存指标和结构化报告，不再创建现场音频；历史 WAV 不得作为新测试模板，也不得 `git add -f`。
 
 ## 15. 每个大功能的交付清单
 

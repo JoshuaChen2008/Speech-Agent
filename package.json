@@ -1,11 +1,13 @@
 {
   "name": "live-subtitle-agent",
   "version": "0.1.0",
-  "description": "Win11 实时字幕 Agent · 骨架（透明字幕条 + 工具栏 + 点击穿透，未接 ASR）",
+  "description": "Win11 本地实时字幕系统，后置可选 Agent Loop、上下文增强与会议摘要",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "test": "node --test --experimental-test-isolation=none",
+    "test:integration": "node --test --experimental-test-isolation=none \"test/integration/**/*.test.js\"",
+    "test:ci": "npm run test:integration && npm test",
     "preview:fixtures": "node scripts/build-preview-fixtures.js"
   },
   "author": "",

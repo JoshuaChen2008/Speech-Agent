@@ -19,6 +19,7 @@
 const { AudioHostController } = require('./audio-host/audio-host-controller')
 const { RealtimeWorkerHost } = require('./realtime-worker/worker-host')
 const { RefineWorkerHost } = require('./refine-worker/worker-host')
+const { assertSingleSourceIds } = require('../contracts')
 
 const DEFAULT_PROFILE_MAP = Object.freeze({ fast: 'null', balanced: 'null', accurate: 'null' })
 
@@ -83,9 +84,7 @@ class RealtimeRuntimeAdapter {
     if (!context || typeof context.sessionId !== 'string' || context.sessionId.length === 0) {
       throw new TypeError('sessionId is required')
     }
-    if (!Array.isArray(context.sourceIds) || context.sourceIds.length === 0) {
-      throw new TypeError('at least one sourceId is required')
-    }
+    assertSingleSourceIds(context.sourceIds)
     const recognizerProfile = this.profileMap[context.profile]
     if (typeof recognizerProfile !== 'string') {
       throw new TypeError(`no recognizer mapping for profile: ${String(context.profile)}`)

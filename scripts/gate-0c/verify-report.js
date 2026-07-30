@@ -13,19 +13,46 @@ const {
 } = require('./audio-utils')
 
 function parseArguments (argv) {
-  const options = { artifactDir: null, report: null }
+  const options = { workDir: null, report: null }
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index + 1]
-    if (argv[index] === '--artifact-dir') { options.artifactDir = value; index += 1 } else if (argv[index] === '--report') { options.report = value; index += 1 } else throw new Error(`Unknown argument: ${argv[index]}`)
+    if (argv[index] === '--work-dir' || argv[index] === '--artifact-dir') { options.workDir = value; index += 1 } else if (argv[index] === '--report') { options.report = value; index += 1 } else throw new Error(`Unknown argument: ${argv[index]}`)
   }
-  if (!options.artifactDir || !options.report) throw new Error('--artifact-dir and --report are required')
+  if (!options.report) throw new Error('--report is required')
   return options
 }
 
 function main () {
   const options = parseArguments(process.argv.slice(2))
   const report = JSON.parse(fs.readFileSync(path.resolve(options.report), 'utf8'))
-  const artifactDir = path.resolve(options.artifactDir)
+  if (report.schemaVersion === 2) {
+    for (const sourceId of ['loopback', 'mic', 'mic-probe']) {
+      const diagnostic = report.diagnostics?.[sourceId]
+      assert.ok(diagnostic, `missing ${sourceId} diagnostic`)
+      assert.equal(diagnostic.buffer.channels, 1)
+      assert.equal(diagnostic.buffer.sampleRate, 16000)
+      assert.equal(diagnostic.buffer.sampleCount, diagnostic.pipeline.sampleCount)
+      assert.equal(diagnostic.checks.bufferPass, true)
+      assert.equal(diagnostic.checks.pass, true)
+      assert.equal(Object.hasOwn(diagnostic, 'artifact'), false)
+    }
+    const evaluated = evaluateGate0CDecision({
+      capture: report.capture,
+      diagnostics: report.diagnostics,
+      displayRequests: report.displayRequests,
+      visibility: report.window.visibility
+    })
+    assert.equal(report.result, evaluated.result)
+    for (const key of Object.keys(evaluated).filter((key) => key !== 'result')) assert.equal(report.decision[key], evaluated[key], `decision.${key} mismatch`)
+    assert.equal(evaluated.result, 'pass')
+    assert.equal(report.privacy.rawAudioPersisted, false)
+    assert.doesNotMatch(JSON.stringify(report), /[A-Za-z]:\\\\|Joshua|A1Project|Speech-Agent2\.0/i)
+    process.stdout.write('Gate 0C metrics-only report is internally consistent.\n')
+    return
+  }
+
+  if (!options.workDir) throw new Error('--work-dir is required for legacy schemaVersion 1 reports')
+  const artifactDir = path.resolve(options.workDir)
   for (const sourceId of ['loopback', 'mic', 'mic-probe']) {
     const expected = report.artifacts[sourceId]
     assert.ok(expected, `missing ${sourceId} evidence`)
@@ -69,7 +96,7 @@ function main () {
   for (const key of Object.keys(evaluated).filter((key) => key !== 'result')) assert.equal(report.decision[key], evaluated[key], `decision.${key} mismatch`)
   assert.equal(evaluated.result, 'pass')
   assert.doesNotMatch(JSON.stringify(report), /[A-Za-z]:\\\\|Joshua|A1Project|Speech-Agent2\.0/i)
-  process.stdout.write('Gate 0C artifacts and report match.\n')
+  process.stdout.write('Legacy Gate 0C artifacts and report match.\n')
 }
 
 try {

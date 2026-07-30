@@ -107,18 +107,20 @@
       <!-- 音频源 -->
       <section class="pane" data-pane="audio">
         <h1>音频源</h1>
-        <p class="sub">选择要听写的声音来源。</p>
+        <p class="sub">选择本次会话要监听的一路声音。</p>
         <div class="group">
           <div class="row">
-            <div class="label">麦克风（我）</div>
-            <button class="toggle on" data-toggle="mic" aria-label="麦克风"></button>
-          </div>
-          <div class="row">
-            <div class="label">系统声回环（对方）</div>
-            <button class="toggle" data-toggle="loopback" aria-label="系统声"></button>
+            <div>
+              <div class="label">监听模式</div>
+              <div class="hint source-hint">一次只监听一路；活动会话需停止后才能切换。</div>
+            </div>
+            <div class="seg source-choice" id="audioSourceChoice" role="radiogroup" aria-label="监听模式">
+              <button data-source="loopback" data-preset="meeting" role="radio" aria-checked="false">系统音频</button>
+              <button data-source="mic" data-preset="dictation" role="radio" aria-checked="false">麦克风</button>
+            </div>
           </div>
         </div>
-        <p class="note">当前为演示骨架；正式版本会根据设备能力显示可用音频源。</p>
+        <p class="note">两种来源均保留支持，但不会在同一会话中并发采集。系统音频不代表特定说话人。</p>
       </section>
 
       <!-- 语音识别 -->
@@ -142,7 +144,7 @@
       <section class="pane" data-pane="about">
         <h1>关于</h1>
         <p class="sub">Live Subtitle Agent · 骨架 v0.1.0</p>
-        <p class="note">透明字幕条 + 工具栏 + 点击穿透已就绪，ASR 尚未接入。</p>
+        <p class="note">本地两遍 ASR 已接入；模型缺失时保持不可用，不会伪造字幕。</p>
       </section>
     </main>
   </div>

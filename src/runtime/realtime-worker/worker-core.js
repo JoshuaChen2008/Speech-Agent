@@ -16,6 +16,7 @@
 
 const { EnergyVad } = require('./energy-vad')
 const { createRecognizerAdapter } = require('./recognizer-adapter')
+const { assertSingleSourceIds } = require('../../contracts')
 
 const SAMPLE_RATE = 16000
 
@@ -228,9 +229,7 @@ class WorkerCore {
     if (!options || typeof options.sessionId !== 'string' || options.sessionId.length === 0) {
       throw new TypeError('sessionId is required')
     }
-    if (!Array.isArray(options.sourceIds) || options.sourceIds.length === 0) {
-      throw new TypeError('sourceIds are required')
-    }
+    assertSingleSourceIds(options.sourceIds)
     const attempt = options.attempt === undefined ? 0 : options.attempt
     if (!Number.isInteger(attempt) || attempt < 0) throw new TypeError('attempt must be a non-negative integer')
     const sequenceBases = options.sequenceBases || {}

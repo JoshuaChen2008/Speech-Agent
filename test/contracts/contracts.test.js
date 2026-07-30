@@ -6,6 +6,8 @@ const test = require('node:test')
 const {
   CAPTION_KINDS,
   RUNTIME_PHASES,
+  assertListeningConfiguration,
+  assertSingleSourceIds,
   assertCapabilities,
   assertCaptionEvent,
   assertCommandResult,
@@ -13,7 +15,9 @@ const {
   isCapabilities,
   isCaptionEvent,
   isCommandResult,
-  isRuntimeSnapshot
+  isRuntimeSnapshot,
+  selectedSourceIds,
+  sourceFlagsForPreset
 } = require('../../src/contracts')
 const fixtures = require('../../src/contracts/fixtures')
 
@@ -59,6 +63,40 @@ test('runtime fixtures expose state-appropriate transition capabilities', () => 
     assert.equal(capabilities.canStop, false)
     assert.equal(capabilities.canRetry, false)
   }
+})
+
+test('runtime fixtures model one selected source, never dual-source product state', () => {
+  for (const fixture of runtimeFixtures.filter((item) => item.phase !== 'unavailable')) {
+    assert.deepEqual(fixture.capabilities.availableSourceIds, ['loopback'])
+    assert.deepEqual(
+      fixture.sources.filter((source) => source.state !== 'unavailable').map((source) => source.id),
+      ['loopback']
+    )
+  }
+})
+
+test('listening-mode contract maps presets to XOR source flags', () => {
+  assert.deepEqual(sourceFlagsForPreset('meeting'), { mic: false, loopback: true })
+  assert.deepEqual(sourceFlagsForPreset('dictation'), { mic: true, loopback: false })
+  assert.deepEqual(selectedSourceIds({
+    onboardingCompleted: true,
+    onboardingPreset: 'meeting',
+    mic: false,
+    loopback: true
+  }), ['loopback'])
+  assert.doesNotThrow(() => assertListeningConfiguration({
+    onboardingCompleted: false,
+    onboardingPreset: null,
+    mic: false,
+    loopback: false
+  }))
+  assert.throws(() => assertSingleSourceIds(['mic', 'loopback']), /exactly one/)
+  assert.throws(() => assertListeningConfiguration({
+    onboardingCompleted: true,
+    onboardingPreset: 'meeting',
+    mic: true,
+    loopback: true
+  }), /exactly one/)
 })
 
 test('caption fixtures form one ordered partial/final/refined/translated segment', () => {

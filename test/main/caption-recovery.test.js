@@ -25,13 +25,6 @@ const DICTATION = {
   mic: true,
   loopback: false
 }
-const MEETING_WITH_MIC = {
-  onboardingCompleted: true,
-  onboardingPreset: 'meeting',
-  mic: true,
-  loopback: true
-}
-
 function caption (overrides = {}) {
   return {
     schemaVersion: 1,
@@ -157,7 +150,7 @@ test('late amendments to evicted segments keep live and reloaded views identical
 })
 
 test('canonical fold and live reducer stay equivalent across adversarial streams', async (t) => {
-  const { adapter, coordinator } = makeCoordinator({ configuration: MEETING_WITH_MIC })
+  const { adapter, coordinator } = makeCoordinator()
   t.after(() => coordinator.dispose())
   await coordinator.command('start')
   const first = coordinator.getSnapshot().sessionId
@@ -170,33 +163,33 @@ test('canonical fold and live reducer stay equivalent across adversarial streams
     assert.equal(rehydrated.sessionId, live.sessionId)
   }
 
-  /* 双路交错 + 迟到定稿 + 窗口内外修订，每一步都要求 reload 视图与实时视图相同。 */
+  /* 单路多段 + 迟到定稿 + 窗口内外修订，每一步都要求 reload 视图与实时视图相同。 */
   const stream = [
     caption({ sessionId: first, sourceId: 'mic', segmentId: 'a-1', sequence: 1, revision: 1, text: '我在说' }),
     ...Array.from({ length: KEEP_SEGMENTS + 1 }, (_, i) => caption({
       sessionId: first,
-      sourceId: 'loopback',
+      sourceId: 'mic',
       segmentId: `l-${i + 1}`,
-      sequence: i + 1,
+      sequence: i + 2,
       revision: 1,
       kind: 'final',
       text: `对方句${i + 1}`
     })),
     /* a-1 已被窗口淘汰后才定稿：两侧都按重开新段处理（复活到末尾）。 */
-    caption({ sessionId: first, sourceId: 'mic', segmentId: 'a-1', sequence: 2, revision: 2, kind: 'final', text: '我说完了。' }),
+    caption({ sessionId: first, sourceId: 'mic', segmentId: 'a-1', sequence: KEEP_SEGMENTS + 3, revision: 2, kind: 'final', text: '我说完了。' }),
     /* 窗口内修订：应用。 */
     caption({
       sessionId: first,
-      sourceId: 'loopback',
+      sourceId: 'mic',
       segmentId: `l-${KEEP_SEGMENTS + 1}`,
-      sequence: KEEP_SEGMENTS + 2,
+      sequence: KEEP_SEGMENTS + 4,
       revision: 2,
       kind: 'translated',
       text: `对方句${KEEP_SEGMENTS + 1}`,
       translation: { language: 'en', text: 'Latest.', basedOnRevision: 1 }
     }),
     /* 窗口外修订：两侧一致忽略。 */
-    caption({ sessionId: first, sourceId: 'loopback', segmentId: 'l-1', sequence: KEEP_SEGMENTS + 3, revision: 2, kind: 'refined', text: '精修第一句' })
+    caption({ sessionId: first, sourceId: 'mic', segmentId: 'l-1', sequence: KEEP_SEGMENTS + 5, revision: 2, kind: 'refined', text: '精修第一句' })
   ]
   for (const event of stream) {
     adapter.emitCaption(event)
@@ -364,8 +357,8 @@ test('replacement adapter first caption is accepted after a start timeout retry'
   assert.deepEqual(delivered, ['新的'])
 })
 
-test('caption state folds concurrent sources independently', async (t) => {
-  const { adapter, coordinator } = makeCoordinator({ configuration: MEETING_WITH_MIC })
+test('caption state folds only the configured source', async (t) => {
+  const { adapter, coordinator } = makeCoordinator()
   t.after(() => coordinator.dispose())
   await coordinator.command('start')
   const sessionId = coordinator.getSnapshot().sessionId
@@ -376,7 +369,7 @@ test('caption state folds concurrent sources independently', async (t) => {
   const state = assertCaptionState(coordinator.getCaptionState())
   assert.deepEqual(
     state.segments.map((segment) => [segment.segmentId, segment.sourceId]),
-    [['m-1', 'mic'], ['l-1', 'loopback']]
+    [['m-1', 'mic']]
   )
 })
 

@@ -1,14 +1,17 @@
-# Live Subtitle Agent · 运行后端与契约
+# Live Subtitle + Agent · 运行后端与契约
 
-> 状态：Rev.1 · 2026-07-25  
-> 目的：定义 Electron 壳层、音频/ASR runtime、存储和 AI 的责任；视觉/UI 只消费本文对外发布的契约。
+> 状态：Rev.3 · 2026-07-30
+> 目的：定义可独立运行的字幕系统、后置 Agent 系统及 Electron 壳层的责任；视觉/UI 只消费本文对外发布的契约。
+> 功能与验收语义以 [`semantic-contract.md`](semantic-contract.md) 为准；目标数据层见
+> [`data-architecture.md`](data-architecture.md)。
 
 ## 1. 架构目标
 
 - 高频 PCM 不经过主进程。
 - CPU 密集推理不在主进程或可见 renderer 中执行。
 - 主进程拥有应用状态，但不成为音频、ASR 或 DOM 实现的一部分。
-- 字幕、历史、导出和翻译使用同一份规范化 segment 状态。
+- 字幕、历史和导出使用同一份规范化 segment 状态；Agent 派生产物保留输入水位且不覆盖它。
+- 字幕系统不等待网络、Agent Loop 或向量能力。
 - worker、设备或网络失败不会伪装成“仍在录制”。
 - 任何 renderer 只得到完成自身职责所需的最小权限。
 
@@ -36,7 +39,7 @@
 - 启停 audio host、realtime worker 和 refine worker。
 - 归并 CaptionEvent，拒绝过期 sequence/revision。
 - 在广播出口把已交付事件折叠为 canonical `CaptionState`（B2.0），供 caption renderer reload 水合；折叠与 renderer 共用同一份纯逻辑实现和窗口，视图一致由构造保证。pause/error/stop 保留，新会话第一条广播字幕才清空。
-- 把 canonical events 交给 TranscriptStore、AiGateway 和可见 UI。
+- 把 canonical events 交给持久化网关和可见 UI；Agent 只在字幕提交成功后异步消费，不由 coordinator 直连并等待。
 - 监听 worker `exit`、track ended、权限错误和设备变化。
 
 ### 2.2 运行后端
@@ -48,7 +51,7 @@
 - 每帧附带 `sessionId/sourceId/sequence/monotonicTimestamp/sampleCount`。
 - 通过 transferable MessagePort 把 PCM 直接发送给 realtime worker。
 - 汇报 source state、队列指标和 track ended，不负责 UI。
-- B2.1 现状：非持久化 session、最小权限 handler、显式屏幕源 + `audio:'loopback'`、专用 preload、有界诊断采集与 WAV/指标落盘；纯策略在 `policy.js`/`pcm-metrics.js` 有单测，实机验证走 `scripts/audio-host-smoke.js`。
+- B2.1 现状：非持久化 session、最小权限 handler、显式屏幕源 + `audio:'loopback'`、专用 preload、有界诊断采集；纯策略在 `policy.js`/`pcm-metrics.js` 有单测，实机验证走 `scripts/audio-host-smoke.js`。诊断 API 拒绝 `dumpDir`，产品 smoke 与当前 Gate 0C runner 只输出结构化指标，不保存现场音频。
 
 `realtime-asr-worker`（B2.3 骨架已落地：`src/runtime/realtime-worker/`）：
 
@@ -71,11 +74,20 @@
 - 停止路径的取舍（有意为之并披露）：end 收束的段不再发起精修（响应必然晚于收尾，保持 final 并计入 skipped）；更早的在途精修若在 end 处理后返回也被作废。会话最末的少量段可能只有第一遍定稿。
 - `canRefine` 是启动时判定（精修模型就位即为真）；精修 worker 中途降级不回写 capability——运行时能力观测是后续议题（见 handoff §12.4）。
 
-`TranscriptStore`：
+`TranscriptStore`（B3.1 当前过渡实现）：
 
 - 写 Windows-safe 文件名的 append-only JSONL 事件日志。
 - 处理坏尾行、flush、session close 和导出。
 - 按 `segmentId + revision` 折叠，不覆盖历史文件中的旧事件。
+
+`StorageGateway / storage-worker`（B3.3 已接受目标，尚未实现）：
+
+- storage worker 是 SQLite 唯一所有者和写者；主进程与 renderer 不执行同步 SQL、不加载扩展。
+- 在同一短事务中追加字幕 `final/refined` 事实并更新当前 segment 投影；提供按会话和时间戳读取历史的异步 API。
+- A1 再冻结 Agent 可靠消费采用事务 outbox 还是 durable cursor；两者都必须以已提交字幕水位为边界。
+- FTS5 可按历史搜索需求后加；`sqlite-vec` 明确 Deferred，不进入 B3.3 schema 或加载路径。
+- SQLite 迁移验收后替代 JSONL 权威写入；JSONL 只保留为旧数据导入、导出和恢复格式，禁止长期双写。
+- schema、表义、迁移与 DB0–DB5 门禁见 [`data-architecture.md`](data-architecture.md)、[ADR 0001](adr/0001-sqlite-authoritative-event-store.md) 和 [ADR 0002](adr/0002-separate-subtitle-and-agent-systems.md)。
 
 `ModelManager`：
 
@@ -84,12 +96,12 @@
 - 拒绝删除活跃模型，清理失败 staging 和过期 part。
 - 只向 UI 发布产品级 profile 和下载状态，不暴露模型路径。
 
-`CredentialStore / AiGateway`：
+`CredentialStore / AgentRuntime / AgentPluginHost`（A1 后置）：
 
 - API Key 经 `safeStorage` 独立保存，永不进入 config、snapshot 或 renderer。
-- v1 只承诺 OpenAI-compatible chat completions adapter。
-- 翻译按 `segmentId + revision + targetLanguage` 去重和保序。
-- 有界队列、取消、超时、重试和错误分类；AI 失败不改变本地 ASR 状态。
+- 用本项目接口包住 Pi Agent Core 或替代实现；项目宿主管理第一方插件、权限、生命周期和故障隔离，不嵌入完整 coding-agent。
+- 只读字幕上下文插件从提交边界按水位读取；增强文本和会后结构化纪要由独立内容插件生成并保存，不得启用 shell/进程/任意文件写或外部写操作。
+- 有界执行、取消、超时、重试和错误分类；Agent 失败不改变本地 ASR、SQLite 字幕或历史状态。
 
 ## 3. 推荐目录方向
 
@@ -104,9 +116,10 @@ src/
     session/session-coordinator.js
     services/config-store.js
     services/credential-store.js
-    services/transcript-store.js
+    services/transcript-store.js       # B3.1 JSONL 过渡实现
+    services/storage-gateway.js        # B3.3 主进程异步边界
     services/model-manager.js
-    services/ai-gateway.js
+    services/agent-runtime.js           # A1，Pi 低层 loop 的可替换适配边界
   preload/
     caption.js
     toolbar.js
@@ -122,6 +135,8 @@ src/
     audio-host/
     realtime-asr-worker.js
     refine-worker.js
+    storage-worker/                    # SQLite 字幕事实/投影的单写者
+    agent-worker/                      # A1，后置
   caption/               # 可见 UI
   toolbar/               # 可见 UI
   settings/              # 可见 UI
@@ -144,10 +159,10 @@ error ──retry/reset──▶ starting/idle
 
 规则：
 
-- start 只有在模型、至少一个音频源和 worker 能力满足时才可接受。
+- start 只有在模型、恰好一个音频源和 worker 能力满足时才可接受。
 - `starting/stopping/recovering` 拒绝冲突命令。
 - pause 必须定义为暂停采集还是只暂停推理；v1 建议暂停向 recognizer 送帧并 flush 当前 segment，保留 session。
-- stop 只有在 tracks 停止、队列处理/丢弃策略执行、JSONL flush 后才进入 idle。
+- stop 只有在 tracks 停止、队列处理/丢弃策略执行、所有字幕事务已提交或明确失败后才进入 idle；不等待 Agent 完成。
 - 每次迁移发布完整 RuntimeSnapshot，而不是只广播一个布尔值。
 
 ## 5. 数据路径
@@ -187,9 +202,12 @@ realtime/refine worker
   └─ CaptionEvent
       └─ SessionCoordinator
           ├─ reducer / revision check
-          ├─ TranscriptStore
-          ├─ AiGateway
-          └─ caption/history/settings subscribers
+          ├─ partial ───────────────▶ caption subscriber
+          ├─ final/refined
+          │   └─ StorageGateway ────▶ storage-worker / SQLite
+          │                           ├─ segments ─▶ history / export
+          │                           └─ committed boundary ─▶ AgentRuntime（后置）
+          └─ snapshot subscribers
 ```
 
 文本先走主进程以保持单一状态权威。只有性能 trace 证明该路径成为瓶颈时，才考虑 caption 直连 port。
@@ -224,7 +242,7 @@ realtime/refine worker
 - refine worker 崩溃：实时字幕继续；未完成 segment 标记 refinement unavailable，可稍后重试。
 - 可见 renderer 重载：读取完整 snapshot 和当前 caption state，不依赖历史广播。
 - 系统睡眠/唤醒：重建 media tracks，校正单调时间基准并记录 session gap。
-- 退出：停止接收命令 → 停 tracks → 处理/放弃队列 → flush JSONL → kill workers → 关闭窗口。
+- 退出：停止接收命令 → 停 tracks → 处理/放弃实时队列 → 提交/报告字幕事务 → 有界 checkpoint → kill workers → 关闭窗口。Agent 未完成任务按 A1 的可靠消费协议保留，不能无限阻塞退出。
 
 ## 9. 安全要求
 
@@ -233,14 +251,19 @@ realtime/refine worker
 - IPC 同时验证 sender 身份、payload schema 和当前状态。
 - 导航和新窗口默认拒绝；本地 UI 不加载远程脚本。
 - API Key 不进日志、错误消息、config、fixture 或 renderer。
+- 现场采集 PCM 不进入数据库、文件、日志、诊断产物、导出或 Agent 上下文；smoke 只输出指标。
 - 模型下载必须有固定 manifest/SHA256；解压到 staging 并验证期望文件。
 
 ## 10. 后端验收顺序
 
-1. contract fixtures 和 reducer/state-machine 测试。
-2. audio dump、时间戳和背压指标。
-3. 单路 realtime ASR，再开双路。
-4. SessionCoordinator 与可见 UI 接 fake/real CaptionEvent。
-5. 独立 refine worker 和事件式 JSONL。
-6. ModelManager、AiGateway、首启和打包。
-7. 两小时、设备拔插、worker crash、睡眠唤醒和干净机器验收。
+每一步都必须同时具有局部测试和跨模块用户旅程；只有单元测试时只能标记“实现完成 / 尚未验收”。完整测试分层与场景矩阵见 [`testing-strategy.md`](testing-strategy.md)。
+
+1. contract fixtures 和 reducer/state-machine 测试，并由联合 CI 验证同一事件在 coordinator、renderer 与存储之间一致。
+2. 内存音频指标、时间戳和背压指标；禁止 dump 现场采集音频。
+3. 完成 `loopback` 会议字幕与 `mic` 个人听写两种单路路径；配置、UI 和 runtime 都拒绝双路并发，停止后才允许换源。
+4. SessionCoordinator 与可见 UI 接 fake/real CaptionEvent，同时验证 reload、自动存档、时间戳历史与导出。
+5. 独立 refine worker 和事件式 JSONL 过渡基线，验证 pause/resume、迟到修订和进程故障。
+6. B3.3 引入 storage worker、SQLite 字幕事件/投影/历史查询，完成 J10；适用的 J1/J2 切到 SQLite 后端重跑。
+7. ModelManager 与字幕 MVP 打包；完成两小时、设备/worker 故障、睡眠唤醒和干净机器验收。
+8. 字幕 MVP 通过后做 A1：`AgentRuntime` + Pi Core 隔离探针 + 项目自有插件宿主 + 凭据/可靠消费；再以第一方插件实现独立增强文本和会后结构化纪要，并通过 J3–J7/J13。
+9. 只有 X1 明确进入范围时才增加 FTS5/`sqlite-vec`，并执行 J11/DB4。

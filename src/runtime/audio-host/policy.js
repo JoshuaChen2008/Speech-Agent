@@ -6,7 +6,7 @@
    诊断参数校验。与 Electron 对象解耦，由 controller 接线、由单测覆盖。
    规则来源：Gate 0C 批准的拓扑（docs/validation/gate-0c.md）。 */
 
-const SOURCE_IDS = Object.freeze(['mic', 'loopback'])
+const { AUDIO_SOURCE_IDS: SOURCE_IDS, assertSingleSourceIds } = require('../../contracts')
 const MIN_DIAGNOSTIC_MS = 1000
 const MAX_DIAGNOSTIC_MS = 10000
 
@@ -48,15 +48,7 @@ function validateDiagnosticOptions (options) {
   if (options.sessionId.length > 128) {
     throw new TypeError('sessionId must be at most 128 characters')
   }
-  if (!Array.isArray(options.sourceIds) || options.sourceIds.length === 0) {
-    throw new TypeError('sourceIds must be a non-empty array')
-  }
-  const seen = new Set()
-  for (const sourceId of options.sourceIds) {
-    if (!SOURCE_IDS.includes(sourceId)) throw new TypeError(`unknown sourceId: ${String(sourceId)}`)
-    if (seen.has(sourceId)) throw new TypeError(`duplicate sourceId: ${sourceId}`)
-    seen.add(sourceId)
-  }
+  assertSingleSourceIds(options.sourceIds)
   if (!Number.isInteger(options.durationMs) ||
       options.durationMs < MIN_DIAGNOSTIC_MS || options.durationMs > MAX_DIAGNOSTIC_MS) {
     throw new TypeError(`durationMs must be an integer between ${MIN_DIAGNOSTIC_MS} and ${MAX_DIAGNOSTIC_MS}`)

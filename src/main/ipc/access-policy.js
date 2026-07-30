@@ -30,8 +30,6 @@ const RENDERER_CONFIG_KEYS = Object.freeze([
   'theme',
   'bilingual',
   'maxLines',
-  'mic',
-  'loopback',
   'latency'
 ])
 const CAPTURE_CONFIG_KEYS = Object.freeze(['mic', 'loopback'])

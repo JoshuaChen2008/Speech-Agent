@@ -6,5 +6,6 @@ module.exports = {
   ...require('./runtime-snapshot'),
   ...require('./caption-event'),
   ...require('./caption-state'),
-  ...require('./command-result')
+  ...require('./command-result'),
+  ...require('./listening-mode')
 }

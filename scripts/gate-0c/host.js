@@ -137,14 +137,14 @@ async function createRecorder (stream, sourceId, durationMs, probe) {
     wallElapsedSeconds: Number(wallElapsedSeconds.toFixed(6)),
     audioContextElapsedSeconds: Number(audioContextElapsedSeconds.toFixed(6))
   }
-  const saved = await window.gate0c.saveCapture({
+  const diagnostic = await window.gate0c.analyzeCapture({
     sourceId,
     samples,
     pipeline,
     expectedFrequencyHz: probe.frequencyHz,
     probeWindow: { startSeconds: probe.startDelayMs / 1000, durationSeconds: probe.durationMs / 1000 }
   })
-  return { playback, pipeline, saved }
+  return { playback, pipeline, diagnostic }
 }
 
 async function captureLoopback (displayPromise, durationMs, probe) {

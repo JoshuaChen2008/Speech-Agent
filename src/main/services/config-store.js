@@ -4,9 +4,13 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
+const {
+  ONBOARDING_PRESETS,
+  assertListeningConfiguration,
+  sourceFlagsForPreset
+} = require('../../contracts')
 
 const CONFIG_SCHEMA_VERSION = 1
-const ONBOARDING_PRESETS = Object.freeze(['meeting', 'dictation'])
 
 const DEFAULT_CONFIG = Object.freeze({
   schemaVersion: CONFIG_SCHEMA_VERSION,
@@ -106,6 +110,10 @@ function migrateConfig (input) {
     migrated.onboardingPreset = null
     migrated.mic = false
     migrated.loopback = false
+  } else {
+    /* preset 是持久化选择的权威表达。旧版本允许两个独立开关，加载时将
+       当前 schema 的有效 preset 归一化成单路 XOR，避免脏配置继续双路。 */
+    Object.assign(migrated, sourceFlagsForPreset(migrated.onboardingPreset))
   }
 
   return migrated
@@ -138,11 +146,7 @@ class ConfigStore {
   update (patch) {
     validateConfigPatch(patch)
     const next = { ...this.state, ...patch, schemaVersion: CONFIG_SCHEMA_VERSION }
-    // Cross-field onboarding invariant: completion always records one of the
-    // two product decisions, and an incomplete setup records neither.
-    if (next.onboardingCompleted !== (next.onboardingPreset !== null)) {
-      throw new TypeError('config patch must keep onboarding completion and preset consistent')
-    }
+    assertListeningConfiguration(next, 'config patch')
     this.persist(next)
     this.state = next
     return this.get()
@@ -155,8 +159,7 @@ class ConfigStore {
     return this.update({
       onboardingCompleted: true,
       onboardingPreset: preset,
-      mic: preset === 'dictation',
-      loopback: preset === 'meeting'
+      ...sourceFlagsForPreset(preset)
     })
   }
 

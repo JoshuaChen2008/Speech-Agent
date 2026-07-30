@@ -88,7 +88,7 @@ test('capture decision rejects silent or discontinuous pipelines', () => {
   assert.equal(evaluateCaptureChecks('mic', stuckDc, pipeline, 0).pass, false)
 })
 
-test('Gate decision fails closed on fallback devices, missing visibility, and reused artifacts', () => {
+test('Gate decision supports metrics-only runs and fails closed on legacy reused artifacts', () => {
   const requiredVisibility = [
     'ready',
     'before-user-gesture-trigger',
@@ -126,6 +126,23 @@ test('Gate decision fails closed on fallback devices, missing visibility, and re
   assert.equal(evaluateGate0CDecision({ ...evidence, visibility: requiredVisibility.slice(1) }).hiddenThroughout, false)
   assert.equal(evaluateGate0CDecision({ ...evidence, displayRequests: [{ ...displayRequests[0], hostVisible: true }] }).displayRequestPass, false)
   assert.equal(evaluateGate0CDecision({ ...evidence, artifacts: { ...artifacts, 'mic-probe': { ...artifacts['mic-probe'], artifact: { sha256: '1'.repeat(64) } } } }).artifactHashesIndependent, false)
+
+  const diagnostics = Object.fromEntries(['loopback', 'mic', 'mic-probe'].map((sourceId) => [
+    sourceId,
+    { pipeline: { sampleCount: 1 }, analysis: { acRmsDbfs: -10 }, checks: { pass: true } }
+  ]))
+  const metricsOnly = evaluateGate0CDecision({ capture, diagnostics, displayRequests, visibility: requiredVisibility })
+  assert.equal(metricsOnly.result, 'pass')
+  assert.equal(metricsOnly.diagnosticsComplete, true)
+  assert.equal(Object.hasOwn(metricsOnly, 'artifactHashesIndependent'), false)
+})
+
+test('current Gate 0C runner analyzes samples in memory and contains no audio write path', () => {
+  const main = fs.readFileSync(path.resolve(__dirname, '../../scripts/gate-0c/main.js'), 'utf8')
+  const preload = fs.readFileSync(path.resolve(__dirname, '../../scripts/gate-0c/preload.js'), 'utf8')
+  assert.match(main, /gate-0c:analyze-capture/)
+  assert.match(preload, /analyzeCapture/)
+  assert.doesNotMatch(main, /encodePcm16Wav|parsePcm16Wav|\.wav|save-capture/)
 })
 
 test('published Gate 0C evidence records three independent passing routes without local paths', () => {

@@ -2,7 +2,7 @@
 
 // @ts-check
 
-const { LANGUAGE_TAG_PATTERN, assertCaptionEvent } = require('../../contracts')
+const { LANGUAGE_TAG_PATTERN, assertCaptionEvent, assertSingleSourceIds } = require('../../contracts')
 
 const DEFAULT_SCRIPT = Object.freeze([
   Object.freeze({
@@ -126,9 +126,7 @@ class FakeRuntimeAdapter {
     if (typeof context.sessionId !== 'string' || context.sessionId.length === 0) {
       throw new TypeError('sessionId is required')
     }
-    if (!Array.isArray(context.sourceIds) || context.sourceIds.length === 0) {
-      throw new TypeError('at least one sourceId is required')
-    }
+    assertSingleSourceIds(context.sourceIds)
     if (context.profile !== 'balanced') throw new TypeError('fake adapter only supports balanced')
     if (context.resume === undefined || context.resume === null) return
     const resume = context.resume

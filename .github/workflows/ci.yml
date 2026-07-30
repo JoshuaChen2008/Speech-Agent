@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-user-journeys:
+    name: Windows user journeys and regression suite
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run deterministic integration journeys and full regression suite
+        run: npm run test:ci

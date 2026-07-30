@@ -341,31 +341,19 @@ test('fake pause flushes an in-progress partial as final', async () => {
   assert.ok(seen.at(-1).text.length > 0)
 })
 
-test('segmentId revision is unique across sources within a session', async (t) => {
-  const configuration = { ...MEETING, mic: true }
-  const { adapter, coordinator } = makeCoordinator({ configuration })
-  t.after(() => coordinator.dispose())
-  await coordinator.command('start')
-  const sessionId = coordinator.getSnapshot().sessionId
-  const seen = []
-  coordinator.onCaption((event) => seen.push(event))
+test('coordinator and fake adapter reject dual, empty, and preset-mismatched sources', async () => {
+  assert.throws(() => makeCoordinator({ configuration: { ...MEETING, mic: true } }), /exactly one/)
+  assert.throws(() => makeCoordinator({ configuration: { ...MEETING, loopback: false } }), /exactly one/)
+  assert.throws(
+    () => makeCoordinator({ configuration: { ...MEETING, onboardingPreset: 'dictation' } }),
+    /exactly one/
+  )
 
-  for (const [index, sourceId] of ['mic', 'loopback'].entries()) {
-    adapter.emitCaption({
-      schemaVersion: 1,
-      sessionId,
-      sourceId,
-      segmentId: 'shared-segment',
-      sequence: 1,
-      revision: index + 1,
-      kind: 'partial',
-      t0: 0,
-      t1: 0.2,
-      text: sourceId,
-      translation: null
-    })
-  }
-  assert.equal(seen.length, 1)
+  const adapter = new FakeRuntimeAdapter({ autoEmit: false })
+  await assert.rejects(
+    adapter.start({ sessionId: 'session-1', sourceIds: ['mic', 'loopback'], profile: 'balanced' }),
+    /exactly one/
+  )
 })
 
 test('capture configuration changes are rejected during active sessions', async (t) => {

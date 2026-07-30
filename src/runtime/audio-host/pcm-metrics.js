@@ -2,78 +2,10 @@
 
 // @ts-check
 
-/* PCM 诊断指标与 WAV 落盘。编码/解析与 Gate 0C 的实测实现一致；
+/* PCM 诊断指标。现场样本只在内存中参与计算，不提供编码或落盘能力。
    诊断判定与 Gate 0C 的区别：产品诊断不放挑战音，静音是合法状态
    （系统可能就是没声音），只对「管线完整性」与「数据损坏」判失败，
    电平只报告不判定。 */
-
-const crypto = require('node:crypto')
-
-function encodePcm16Wav (samples, sampleRate = 16000) {
-  if (!(samples instanceof Float32Array)) throw new TypeError('samples must be a Float32Array')
-  if (!Number.isInteger(sampleRate) || sampleRate <= 0) throw new TypeError('sampleRate must be a positive integer')
-  const dataBytes = samples.length * 2
-  const buffer = Buffer.alloc(44 + dataBytes)
-  buffer.write('RIFF', 0, 'ascii')
-  buffer.writeUInt32LE(36 + dataBytes, 4)
-  buffer.write('WAVE', 8, 'ascii')
-  buffer.write('fmt ', 12, 'ascii')
-  buffer.writeUInt32LE(16, 16)
-  buffer.writeUInt16LE(1, 20)
-  buffer.writeUInt16LE(1, 22)
-  buffer.writeUInt32LE(sampleRate, 24)
-  buffer.writeUInt32LE(sampleRate * 2, 28)
-  buffer.writeUInt16LE(2, 32)
-  buffer.writeUInt16LE(16, 34)
-  buffer.write('data', 36, 'ascii')
-  buffer.writeUInt32LE(dataBytes, 40)
-  for (let index = 0; index < samples.length; index += 1) {
-    const clamped = Math.max(-1, Math.min(1, samples[index]))
-    const value = clamped < 0 ? Math.round(clamped * 32768) : Math.round(clamped * 32767)
-    buffer.writeInt16LE(value, 44 + (index * 2))
-  }
-  return buffer
-}
-
-function parsePcm16Wav (buffer) {
-  if (!Buffer.isBuffer(buffer) || buffer.length < 12) throw new Error('WAV is too short')
-  if (buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WAVE') throw new Error('Invalid RIFF/WAVE header')
-
-  let format = null
-  let data = null
-  for (let offset = 12; offset + 8 <= buffer.length;) {
-    const id = buffer.toString('ascii', offset, offset + 4)
-    const size = buffer.readUInt32LE(offset + 4)
-    const start = offset + 8
-    const end = start + size
-    if (end > buffer.length) throw new Error(`Truncated ${id} chunk`)
-    if (id === 'fmt ') {
-      if (size < 16) throw new Error('Invalid fmt chunk')
-      format = {
-        audioFormat: buffer.readUInt16LE(start),
-        channels: buffer.readUInt16LE(start + 2),
-        sampleRate: buffer.readUInt32LE(start + 4),
-        byteRate: buffer.readUInt32LE(start + 8),
-        blockAlign: buffer.readUInt16LE(start + 12),
-        bitsPerSample: buffer.readUInt16LE(start + 14)
-      }
-    } else if (id === 'data') {
-      data = buffer.subarray(start, end)
-    }
-    offset = end + (size % 2)
-  }
-  if (!format || !data) throw new Error('WAV requires fmt and data chunks')
-  if (format.audioFormat !== 1 || format.channels !== 1 || format.bitsPerSample !== 16) throw new Error('Expected mono PCM16 WAV')
-  if (data.length % 2 !== 0) throw new Error('PCM16 data size must be even')
-
-  const samples = new Float32Array(data.length / 2)
-  for (let index = 0; index < samples.length; index += 1) samples[index] = data.readInt16LE(index * 2) / 32768
-  return { ...format, dataBytes: data.length, sampleCount: samples.length, samples }
-}
-
-function sha256 (buffer) {
-  return crypto.createHash('sha256').update(buffer).digest('hex')
-}
 
 function dbfs (value) {
   return value > 0 ? 20 * Math.log10(value) : -240
@@ -158,8 +90,5 @@ function evaluateDiagnostic (pipeline, levels, durationMs) {
 
 module.exports = {
   analyzeLevels,
-  encodePcm16Wav,
-  evaluateDiagnostic,
-  parsePcm16Wav,
-  sha256
+  evaluateDiagnostic
 }

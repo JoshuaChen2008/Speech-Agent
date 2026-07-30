@@ -19,10 +19,7 @@ const {
 } = require('../../src/runtime/audio-host/policy')
 const {
   analyzeLevels,
-  encodePcm16Wav,
-  evaluateDiagnostic,
-  parsePcm16Wav,
-  sha256
+  evaluateDiagnostic
 } = require('../../src/runtime/audio-host/pcm-metrics')
 const { AudioHostController, coerceSamples } = require('../../src/runtime/audio-host/audio-host-controller')
 
@@ -144,19 +141,6 @@ test('frame assembler rejects invalid configuration', async () => {
   assert.throws(() => new FrameAssembler({ sampleRate: -1 }), /sampleRate/)
 })
 
-test('wav encoding round-trips 16k mono PCM and hashes deterministically', () => {
-  const samples = sine(997, 16000, 4800, 0.25)
-  const wav = encodePcm16Wav(samples, 16000)
-  const parsed = parsePcm16Wav(wav)
-  assert.equal(parsed.sampleRate, 16000)
-  assert.equal(parsed.channels, 1)
-  assert.equal(parsed.sampleCount, samples.length)
-  for (let index = 0; index < samples.length; index += 1) {
-    assert.ok(Math.abs(parsed.samples[index] - samples[index]) < 1 / 32000)
-  }
-  assert.equal(sha256(wav), sha256(encodePcm16Wav(samples, 16000)))
-})
-
 test('level analysis counts clipping runs, over-range and non-finite samples', () => {
   const samples = new Float32Array(16000)
   samples.set(sine(440, 16000, 8000, 0.4))
@@ -248,7 +232,6 @@ test('diagnostic payloads are rejected from untrusted senders and wrong sessions
 
   controller.activeDiagnostic = {
     options: { sessionId: 's-1', sourceIds: ['mic'], durationMs: 2600 },
-    dumpDir: null,
     saved: {},
     reject: () => {}
   }
@@ -290,10 +273,9 @@ function workingFakeElectron (captureResult, hooks = {}) {
   return { electron, listeners, win }
 }
 
-test('the full diagnostic orchestration passes and scrubs renderer text at the boundary', async () => {
+test('the full single-source diagnostic returns metrics and scrubs console text', async () => {
   const capture = {
-    loopback: { status: 'ok' },
-    mic: { status: 'error', error: { name: 'NotReadableError', message: 'open failed C:\\Users\\someone\\mic.wav' } }
+    loopback: { status: 'ok' }
   }
   let controller
   const { electron, listeners, win } = workingFakeElectron(capture, {
@@ -310,15 +292,13 @@ test('the full diagnostic orchestration passes and scrubs renderer text at the b
 
   const outcome = await controller.runDiagnosticCapture({
     sessionId: 's-1',
-    sourceIds: ['loopback', 'mic'],
+    sourceIds: ['loopback'],
     durationMs: 2600
   })
-  assert.equal(outcome.result, 'fail', 'mic 失败时整体 fail')
+  assert.equal(outcome.result, 'pass')
   assert.equal(outcome.sources.loopback.diagnostic.checks.pass, true)
-  assert.equal(outcome.sources.mic.diagnostic, null)
-  /* renderer 提供的错误与 console 文本必须在 main 边界脱敏。 */
-  assert.ok(outcome.sources.mic.error.message.includes('<local-path>'))
-  assert.ok(!outcome.sources.mic.error.message.includes('Users'))
+  assert.equal(Object.hasOwn(outcome.sources.loopback.diagnostic, 'artifact'), false)
+  /* console 文本必须在 main 边界脱敏。 */
   const consoleEvidence = evidence.find((event) => event.stage === 'host-console')
   assert.ok(consoleEvidence.detail.message.includes('<local-path>'))
   assert.ok(!consoleEvidence.detail.message.includes('A1Project'))
@@ -422,17 +402,31 @@ test('screen source selection prefers the primary display', () => {
 })
 
 test('diagnostic options are validated and normalized', () => {
-  const normalized = validateDiagnosticOptions({ sessionId: 's-1', sourceIds: ['loopback', 'mic'], durationMs: 2600 })
-  assert.deepEqual(normalized, { sessionId: 's-1', sourceIds: ['loopback', 'mic'], durationMs: 2600 })
+  const normalized = validateDiagnosticOptions({ sessionId: 's-1', sourceIds: ['loopback'], durationMs: 2600 })
+  assert.deepEqual(normalized, { sessionId: 's-1', sourceIds: ['loopback'], durationMs: 2600 })
 
   assert.throws(() => validateDiagnosticOptions(null), /options/)
   assert.throws(() => validateDiagnosticOptions({ sessionId: ' ', sourceIds: ['mic'], durationMs: 2000 }), /sessionId/)
   assert.throws(() => validateDiagnosticOptions({ sessionId: 's', sourceIds: [], durationMs: 2000 }), /sourceIds/)
   assert.throws(() => validateDiagnosticOptions({ sessionId: 's', sourceIds: ['speaker'], durationMs: 2000 }), /unknown sourceId/)
-  assert.throws(() => validateDiagnosticOptions({ sessionId: 's', sourceIds: ['mic', 'mic'], durationMs: 2000 }), /duplicate/)
+  assert.throws(() => validateDiagnosticOptions({ sessionId: 's', sourceIds: ['mic', 'loopback'], durationMs: 2000 }), /exactly one/)
+  assert.throws(() => validateDiagnosticOptions({ sessionId: 's', sourceIds: ['mic', 'mic'], durationMs: 2000 }), /exactly one/)
   assert.throws(() => validateDiagnosticOptions({ sessionId: 's', sourceIds: ['mic'], durationMs: MIN_DIAGNOSTIC_MS - 1 }), /durationMs/)
   assert.throws(() => validateDiagnosticOptions({ sessionId: 's', sourceIds: ['mic'], durationMs: MAX_DIAGNOSTIC_MS + 1 }), /durationMs/)
   assert.throws(() => validateDiagnosticOptions({ sessionId: 's', sourceIds: ['mic'], durationMs: 2000.5 }), /durationMs/)
+})
+
+test('diagnostic API refuses every audio persistence option', async () => {
+  const controller = new AudioHostController({ electron: fakeElectron() })
+  await assert.rejects(
+    controller.runDiagnosticCapture({
+      sessionId: 's-1',
+      sourceIds: ['mic'],
+      durationMs: 2000,
+      dumpDir: '.artifacts/audio-host'
+    }),
+    /persistence is not supported/
+  )
 })
 
 test('public errors and console text scrub local paths and clamp length', () => {

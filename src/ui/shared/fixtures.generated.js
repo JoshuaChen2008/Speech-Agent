@@ -81,7 +81,6 @@ window.FIXTURES = Object.freeze({
           "balanced"
         ],
         "availableSourceIds": [
-          "mic",
           "loopback"
         ],
         "translationTargets": [
@@ -94,7 +93,7 @@ window.FIXTURES = Object.freeze({
         {
           "id": "mic",
           "label": "麦克风",
-          "state": "inactive",
+          "state": "unavailable",
           "level": 0
         },
         {
@@ -130,7 +129,6 @@ window.FIXTURES = Object.freeze({
           "balanced"
         ],
         "availableSourceIds": [
-          "mic",
           "loopback"
         ],
         "translationTargets": [
@@ -150,7 +148,7 @@ window.FIXTURES = Object.freeze({
         {
           "id": "mic",
           "label": "麦克风",
-          "state": "starting",
+          "state": "unavailable",
           "level": 0
         },
         {
@@ -186,7 +184,6 @@ window.FIXTURES = Object.freeze({
           "balanced"
         ],
         "availableSourceIds": [
-          "mic",
           "loopback"
         ],
         "translationTargets": [
@@ -199,8 +196,8 @@ window.FIXTURES = Object.freeze({
         {
           "id": "mic",
           "label": "麦克风",
-          "state": "active",
-          "level": 0.31
+          "state": "unavailable",
+          "level": 0
         },
         {
           "id": "loopback",
@@ -235,7 +232,6 @@ window.FIXTURES = Object.freeze({
           "balanced"
         ],
         "availableSourceIds": [
-          "mic",
           "loopback"
         ],
         "translationTargets": [
@@ -248,7 +244,7 @@ window.FIXTURES = Object.freeze({
         {
           "id": "mic",
           "label": "麦克风",
-          "state": "paused",
+          "state": "unavailable",
           "level": 0
         },
         {
@@ -284,7 +280,6 @@ window.FIXTURES = Object.freeze({
           "balanced"
         ],
         "availableSourceIds": [
-          "mic",
           "loopback"
         ],
         "translationTargets": [
@@ -297,8 +292,8 @@ window.FIXTURES = Object.freeze({
         {
           "id": "mic",
           "label": "麦克风",
-          "state": "active",
-          "level": 0.26
+          "state": "unavailable",
+          "level": 0
         },
         {
           "id": "loopback",
@@ -333,7 +328,6 @@ window.FIXTURES = Object.freeze({
           "balanced"
         ],
         "availableSourceIds": [
-          "mic",
           "loopback"
         ],
         "translationTargets": [
@@ -353,7 +347,7 @@ window.FIXTURES = Object.freeze({
         {
           "id": "mic",
           "label": "麦克风",
-          "state": "paused",
+          "state": "unavailable",
           "level": 0
         },
         {
@@ -389,7 +383,6 @@ window.FIXTURES = Object.freeze({
           "balanced"
         ],
         "availableSourceIds": [
-          "mic",
           "loopback"
         ],
         "translationTargets": [
@@ -409,8 +402,8 @@ window.FIXTURES = Object.freeze({
         {
           "id": "mic",
           "label": "麦克风",
-          "state": "active",
-          "level": 0.12
+          "state": "unavailable",
+          "level": 0
         },
         {
           "id": "loopback",
@@ -451,7 +444,6 @@ window.FIXTURES = Object.freeze({
           "balanced"
         ],
         "availableSourceIds": [
-          "mic",
           "loopback"
         ],
         "translationTargets": [
@@ -464,7 +456,7 @@ window.FIXTURES = Object.freeze({
         {
           "id": "mic",
           "label": "麦克风",
-          "state": "error",
+          "state": "unavailable",
           "level": 0
         },
         {

@@ -4,6 +4,8 @@
 >
 > 结论：**PASS。批准隐藏 audio host 拓扑；不需要启用工具条点击回退。**
 
+> 历史证据说明：本页与 `gate-0c-results.json` 记录的是 2026-07-26 的一次性拓扑资格验证，当时为校验字节与多路独立性曾在忽略目录暂存短 WAV。2026-07-30 起的新隐私合同禁止任何现场音频落盘；当前 Gate 0C runner 已改为纯内存分析和结构化指标，不再复现旧 WAV 产物。历史记录保留是为了审计当时的批准依据，不代表当前诊断行为。
+
 实测环境为 Windows 11 Home 23H2（10.0.22631）、Electron 43.2.0 / Chromium 150。独立播放器经 Windows 默认输出播放带淡入淡出的 997 Hz 挑战音；隐藏 host 通过 `getDisplayMedia` loopback 与物理优先麦克风采集，再由 AudioWorklet 从输入 48 kHz 流式降采样到 16 kHz mono。由于房间麦克风不保证能听到当前默认输出，另以已安装的 VB-Cable 把同一挑战音确定性送入第三条 audioinput 探针；生产麦克风仍是物理设备，虚拟线只用于验证采集/重采样链。完整结构化证据见 [`gate-0c-results.json`](gate-0c-results.json)，复现及校验命令见 [`scripts/gate-0c/README.md`](../../scripts/gate-0c/README.md)。
 
 ## 实测结果

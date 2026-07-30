@@ -93,6 +93,25 @@ const START_CONTEXT = {
   resume: { attempt: 2, sourceSequences: { mic: 9 } }
 }
 
+test('runtime adapter rejects empty or dual source input before constructing hosts', async () => {
+  let hostCreations = 0
+  let workerCreations = 0
+  const adapter = new RealtimeRuntimeAdapter({
+    hostFactory: () => { hostCreations += 1; return fakeHost() },
+    workerFactory: () => { workerCreations += 1; return fakeWorker() }
+  })
+  await assert.rejects(
+    adapter.start({ sessionId: 'session-empty', sourceIds: [], profile: 'balanced' }),
+    /exactly one/
+  )
+  await assert.rejects(
+    adapter.start({ sessionId: 'session-dual', sourceIds: ['mic', 'loopback'], profile: 'balanced' }),
+    /exactly one/
+  )
+  assert.equal(hostCreations, 0)
+  assert.equal(workerCreations, 0)
+})
+
 test('recognizer options reach the worker only for non-null profile mappings', async () => {
   const recognizer = { kind: 'sherpa-online-transducer', modelDir: 'model-dir', numThreads: 4, modelType: 'zipformer2' }
   const vad = { kind: 'silero', modelPath: 'vad-model' }

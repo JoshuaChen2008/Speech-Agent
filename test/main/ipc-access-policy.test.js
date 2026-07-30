@@ -42,6 +42,8 @@ test('renderer config writes are whitelisted and capture changes are classified'
   assert.doesNotThrow(() => assertRendererConfigPatch({ opacity: 0.5, theme: 'dark' }))
   assert.throws(() => assertRendererConfigPatch({ schemaVersion: 1 }), /not renderer-writable/)
   assert.throws(() => assertRendererConfigPatch({ onboardingCompleted: true }), /not renderer-writable/)
+  assert.throws(() => assertRendererConfigPatch({ mic: true }), /not renderer-writable/)
+  assert.throws(() => assertRendererConfigPatch({ loopback: true }), /not renderer-writable/)
   assert.throws(() => assertRendererConfigPatch(null), /object/)
   assert.equal(changesCaptureConfiguration({ mic: true }), true)
   assert.equal(changesCaptureConfiguration({ opacity: 0.5 }), false)

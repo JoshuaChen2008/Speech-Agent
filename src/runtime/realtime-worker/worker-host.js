@@ -9,7 +9,7 @@
    adapter 组合本类）、不做自动重启策略（那是 coordinator 的恢复语义）。 */
 
 const path = require('node:path')
-const { isCaptionEvent } = require('../../contracts')
+const { assertSingleSourceIds, isCaptionEvent } = require('../../contracts')
 
 const WORKER_PATH = path.join(__dirname, 'realtime-worker.js')
 
@@ -54,6 +54,10 @@ class RealtimeWorkerHost {
   async start (config) {
     if (this.disposed) throw new Error('worker host is disposed')
     if (this.child) throw new Error('worker is already running')
+    if (!config || typeof config.sessionId !== 'string' || config.sessionId.length === 0) {
+      throw new TypeError('sessionId is required')
+    }
+    assertSingleSourceIds(config.sourceIds)
     const child = this.electron.utilityProcess.fork(WORKER_PATH)
     this.child = child
     child.on('message', (message) => {

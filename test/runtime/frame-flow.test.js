@@ -133,6 +133,7 @@ test('capture options validation enforces the queue budget range', () => {
   assert.throws(() => validateCaptureOptions({ sessionId: 's', sourceIds: ['mic'], maxQueueMs: 100 }), /maxQueueMs/)
   assert.throws(() => validateCaptureOptions({ sessionId: 's', sourceIds: ['mic'], maxQueueMs: 20000 }), /maxQueueMs/)
   assert.throws(() => validateCaptureOptions({ sessionId: 's', sourceIds: ['tv'] }), /unknown sourceId/)
+  assert.throws(() => validateCaptureOptions({ sessionId: 's', sourceIds: ['mic', 'loopback'] }), /exactly one/)
   assert.throws(() => validateCaptureOptions(null), /options/)
 })
 

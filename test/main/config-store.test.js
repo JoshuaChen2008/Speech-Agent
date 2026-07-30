@@ -59,8 +59,14 @@ test('config updates reject unknown keys, invalid window bounds, and inconsisten
   assert.throws(() => validateConfigPatch({ arbitrary: true }), /not allowed/)
   assert.throws(() => store.update({ captionWidth: 'wide' }), /invalid value/)
   assert.throws(() => store.update({ captionHeight: Number.NaN }), /invalid value/)
-  assert.throws(() => store.update({ onboardingCompleted: true }), /consistent/)
-  assert.deepEqual(store.get(), DEFAULT_CONFIG)
+  assert.throws(() => store.update({ onboardingCompleted: true }), /inconsistent/)
+  store.applyPreset('meeting')
+  assert.throws(() => store.update({ mic: true }), /exactly one/)
+  assert.throws(() => store.update({ loopback: false }), /exactly one/)
+  assert.throws(() => store.update({ onboardingPreset: 'dictation' }), /exactly one/)
+  assert.equal(store.get().onboardingPreset, 'meeting')
+  assert.equal(store.get().mic, false)
+  assert.equal(store.get().loopback, true)
 })
 
 test('persisted config is atomically replaceable and reloadable', (t) => {
@@ -122,6 +128,28 @@ test('current-schema onboarding corruption also fails closed', () => {
     assert.equal(migrated.mic, false)
     assert.equal(migrated.loopback, false)
   }
+})
+
+test('current-schema valid presets repair legacy independent source flags to XOR', () => {
+  const meeting = migrateConfig({
+    schemaVersion: CONFIG_SCHEMA_VERSION,
+    onboardingCompleted: true,
+    onboardingPreset: 'meeting',
+    mic: true,
+    loopback: true
+  })
+  assert.equal(meeting.mic, false)
+  assert.equal(meeting.loopback, true)
+
+  const dictation = migrateConfig({
+    schemaVersion: CONFIG_SCHEMA_VERSION,
+    onboardingCompleted: true,
+    onboardingPreset: 'dictation',
+    mic: false,
+    loopback: false
+  })
+  assert.equal(dictation.mic, true)
+  assert.equal(dictation.loopback, false)
 })
 
 test('Gate 0B fails closed unless the exact development override is present', () => {

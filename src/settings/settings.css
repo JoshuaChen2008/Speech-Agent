@@ -168,6 +168,8 @@ h1 { font-size: var(--fs-title); font-weight: var(--fw-bold); margin: 14px 0 4px
   margin-left: 6px;
   font-variant-numeric: tabular-nums;
 }
+.source-hint { display: block; margin: 5px 0 0; max-width: 250px; line-height: 1.45; }
+.source-choice { flex: none; }
 
 /* 分段控件 */
 .seg {

@@ -240,19 +240,20 @@ function evaluateCaptureChecks (sourceId, analysis, pipeline, inputPreClampOverR
   }
 }
 
-function evaluateGate0CDecision ({ capture, artifacts, displayRequests, visibility }) {
-  if (!capture || !artifacts || !Array.isArray(displayRequests) || !Array.isArray(visibility)) throw new TypeError('complete Gate 0C evidence is required')
+function evaluateGate0CDecision ({ capture, diagnostics, artifacts, displayRequests, visibility }) {
+  const evidence = diagnostics || artifacts
+  if (!capture || !evidence || !Array.isArray(displayRequests) || !Array.isArray(visibility)) throw new TypeError('complete Gate 0C evidence is required')
 
   const loopbackPass = capture.loopback?.status === 'ok' &&
     capture.loopback?.capture?.playback?.output?.selected === 'default' &&
-    artifacts.loopback?.checks?.pass === true
+    evidence.loopback?.checks?.pass === true
   const physicalMicrophonePass = capture.mic?.status === 'ok' &&
     capture.mic?.selection === 'physical-preferred' &&
-    artifacts.mic?.checks?.pass === true
+    evidence.mic?.checks?.pass === true
   const deterministicMicrophoneProbePass = capture.micProbe?.status === 'ok' &&
     capture.micProbe?.selection === 'virtual-cable' &&
     capture.micProbe?.capture?.playback?.output?.selected === 'virtual-cable' &&
-    artifacts['mic-probe']?.checks?.pass === true
+    evidence['mic-probe']?.checks?.pass === true
   const microphonePass = physicalMicrophonePass && deterministicMicrophoneProbePass
 
   const requiredVisibilityStagesPresent = REQUIRED_VISIBILITY_STAGES.every((stage) => visibility.some((event) => event?.stage === stage))
@@ -268,13 +269,20 @@ function evaluateGate0CDecision ({ capture, artifacts, displayRequests, visibili
     actualDisplayRequest?.error == null
   const hiddenSchemePass = hiddenThroughout && displayRequestPass && loopbackPass
 
-  const hashes = ['loopback', 'mic', 'mic-probe'].map((sourceId) => artifacts[sourceId]?.artifact?.sha256)
-  const artifactHashesIndependent = hashes.every((hash) => typeof hash === 'string' && /^[a-f0-9]{64}$/.test(hash)) && new Set(hashes).size === hashes.length
-  const result = hiddenSchemePass && microphonePass && artifactHashesIndependent
+  const diagnosticsComplete = ['loopback', 'mic', 'mic-probe'].every((sourceId) =>
+    evidence[sourceId]?.pipeline && evidence[sourceId]?.analysis && evidence[sourceId]?.checks)
+  const hashes = artifacts
+    ? ['loopback', 'mic', 'mic-probe'].map((sourceId) => artifacts[sourceId]?.artifact?.sha256)
+    : []
+  const artifactHashesIndependent = artifacts
+    ? hashes.every((hash) => typeof hash === 'string' && /^[a-f0-9]{64}$/.test(hash)) && new Set(hashes).size === hashes.length
+    : null
+  const evidencePass = artifacts ? artifactHashesIndependent : diagnosticsComplete
+  const result = hiddenSchemePass && microphonePass && evidencePass
     ? 'pass'
     : (hiddenSchemePass && !microphonePass ? 'inconclusive-microphone-signal' : 'fail')
 
-  return {
+  const decision = {
     result,
     hiddenThroughout,
     requiredVisibilityStagesPresent,
@@ -283,9 +291,11 @@ function evaluateGate0CDecision ({ capture, artifacts, displayRequests, visibili
     loopbackPass,
     physicalMicrophonePass,
     deterministicMicrophoneProbePass,
-    microphonePass,
-    artifactHashesIndependent
+    microphonePass
   }
+  if (artifacts) decision.artifactHashesIndependent = artifactHashesIndependent
+  else decision.diagnosticsComplete = diagnosticsComplete
+  return decision
 }
 
 module.exports = {

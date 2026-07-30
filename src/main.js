@@ -22,8 +22,10 @@ const { FakeRuntimeAdapter } = require('./main/session/fake-runtime-adapter')
 const { RealtimeRuntimeAdapter } = require('./runtime/realtime-runtime-adapter')
 const { SessionCoordinator, failure, success } = require('./main/session/session-coordinator')
 const { TranscriptStore } = require('./main/services/transcript-store')
+const { SessionTranscriptRecorder } = require('./main/services/session-transcript-recorder')
 
 /** @type {TranscriptStore | null} */ let transcriptStore = null
+/** @type {SessionTranscriptRecorder | null} */ let transcriptRecorder = null
 
 /** @type {BrowserWindow | null} */ let captionWin = null
 /** @type {BrowserWindow | null} */ let toolbarWin = null
@@ -424,24 +426,10 @@ function createCoordinator () {
     directory: path.join(app.getPath('userData'), 'sessions'),
     onError: (error) => logError('transcript', error)
   })
-  let transcriptSessionId = null
-  coordinator.onSnapshot((snapshot) => {
-    if (snapshot.sessionId && snapshot.sessionId !== transcriptSessionId) {
-      /* 开档成功才记账：失败时同会话的下一次 snapshot 天然构成重试，
-         整场定稿不会因一次磁盘抖动静默丢弃。 */
-      try {
-        transcriptStore.openSession(snapshot.sessionId)
-        transcriptSessionId = snapshot.sessionId
-      } catch (error) {
-        logError('transcript.open', error)
-      }
-    } else if (!snapshot.sessionId && transcriptSessionId) {
-      transcriptSessionId = null
-      transcriptStore.closeSession()
-    }
-  })
-  coordinator.onCaption((event) => {
-    if (event.kind !== 'partial') transcriptStore.append(event)
+  transcriptRecorder = new SessionTranscriptRecorder({
+    coordinator,
+    store: transcriptStore,
+    onError: (error) => logError('transcript.open', error)
   })
 }
 
@@ -558,6 +546,7 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   stopDrag(null, true)
   stopResize(null, true)
+  if (transcriptRecorder) transcriptRecorder.dispose()
   if (coordinator) coordinator.dispose()
   if (transcriptStore) transcriptStore.dispose()
 })
