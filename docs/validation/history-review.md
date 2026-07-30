@@ -1,7 +1,7 @@
 # SQLite 历史复盘与安全导出验证
 
 - 日期：2026-07-31
-- 状态：确定性联合验收完成；真实 Electron 窗口与 I3/I4 尚未验收
+- 状态：确定性联合验收完成；受控真实 Electron 终态历史已补证；系统对话框/长列表、I3/I4 尚未验收
 - 语义：SEM-F02/F03/F04/F05/F07/F11/F14，SEM-T01/T02/T04/T05
 - 旅程：J1/J2/J4/J12
 
@@ -50,11 +50,19 @@ node --test --experimental-test-isolation=none test/integration/history-review-j
 
 结果：11 tests passed，0 failed。
 
-完整门禁 `npm run test:ci`：integration 12/12；完整回归 255/255，0 failed。
+阶段提交前最新完整门禁 `npm run test:ci`：integration 13/13；完整回归 292/292，0 failed。
+
+## 后续产品壳补证
+
+2026-07-31 的 [`product-shell-results.json`](product-shell-results.json) 使用真实
+`src/main.js`、四个 BrowserWindow/preload/IPC、SQLite utility process 与退出屏障，
+在隔离 fresh userData 中完成听写首设、开始、final DOM、停止、打开终态历史和正常
+退出，四个 renderer 且 `crashEventCount=0`。该 smoke 使用显式 fake-ASR 且没有操作
+系统保存对话框，所以不替代物理 mic、旧档迁移/重启、长列表或 I4。
 
 ## 尚未被本证据证明
 
-- 真实 `BrowserWindow` 的点击、滚动、系统保存弹窗、DWM 外观与辅助技术行为。
+- 真实鼠标点击/长列表滚动、系统保存弹窗、DWM 外观与辅助技术行为。
 - 两小时数千段下的 DOM、SQLite WAL、内存和查询延迟（I3/J8）。
 - 打包版 utility process、asar/NSIS 路径和干净 Win11 用户旅程（I4/J9）。
-- 物理 mic 实机 ASR。以上边界未通过前，状态保持“实现完成/尚未实机验收”。
+- 物理 mic 实机 ASR。以上边界未通过前，不得声称 I3/I4 或发布验收完成。

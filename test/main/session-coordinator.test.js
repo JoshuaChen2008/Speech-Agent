@@ -65,6 +65,94 @@ test('no resolved model keeps the coordinator unavailable with no profiles', asy
   assert.equal(coordinator.getSnapshot().revision, snapshot.revision)
 })
 
+test('an installed runtime can replace the missing model while idle and start immediately', async (t) => {
+  const original = new FakeRuntimeAdapter({ autoEmit: false })
+  const replacement = new FakeRuntimeAdapter({ autoEmit: false })
+  const { coordinator } = makeCoordinator({
+    adapter: original,
+    runtimeOptions: NO_MODEL,
+    configuration: MEETING
+  })
+  t.after(() => coordinator.dispose())
+
+  const before = coordinator.getSnapshot()
+  const activated = coordinator.replaceRuntime({
+    adapterFactory: () => replacement,
+    runtimeOptions: DEV_MODEL,
+    transitionTimeoutMs: 30000
+  })
+
+  assert.equal(before.phase, 'unavailable')
+  assert.equal(activated.phase, 'idle')
+  assert.equal(activated.model.state, 'ready')
+  assert.deepEqual(activated.capabilities.availableProfiles, ['balanced'])
+  assert.equal(activated.capabilities.canStart, true)
+  assert.ok(activated.revision > before.revision)
+
+  assert.equal((await coordinator.command('start')).ok, true)
+  assert.deepEqual(replacement.context.sourceIds, ['loopback'])
+  assert.equal(replacement.context.profile, 'balanced')
+  assert.equal(original.context, null)
+})
+
+test('runtime replacement is rejected while a session is active without touching its adapter', async (t) => {
+  const original = new FakeRuntimeAdapter({ autoEmit: false })
+  const replacement = new FakeRuntimeAdapter({ autoEmit: false })
+  const { coordinator } = makeCoordinator({ adapter: original })
+  t.after(() => coordinator.dispose())
+
+  assert.equal((await coordinator.command('start')).ok, true)
+  const listening = coordinator.getSnapshot()
+  assert.throws(() => coordinator.replaceRuntime({
+    adapterFactory: () => replacement,
+    runtimeOptions: DEV_MODEL
+  }), (error) => error.code === 'SESSION_ACTIVE')
+
+  assert.equal(coordinator.getSnapshot().phase, 'listening')
+  assert.equal(coordinator.getSnapshot().revision, listening.revision)
+  assert.notEqual(original.context, null)
+  assert.equal(replacement.context, null)
+})
+
+test('failed runtime candidate binding leaves the unavailable coordinator intact', async (t) => {
+  const original = new FakeRuntimeAdapter({ autoEmit: false })
+  const broken = new FakeRuntimeAdapter({ autoEmit: false })
+  broken.onCaption = () => { throw new Error('binding failed') }
+  const { coordinator } = makeCoordinator({
+    adapter: original,
+    runtimeOptions: NO_MODEL,
+    configuration: MEETING
+  })
+  t.after(() => coordinator.dispose())
+  const before = coordinator.getSnapshot()
+
+  assert.throws(() => coordinator.replaceRuntime({
+    adapterFactory: () => broken,
+    runtimeOptions: DEV_MODEL
+  }), /binding failed/)
+
+  assert.deepEqual(coordinator.getSnapshot(), before)
+  assert.equal((await coordinator.command('start')).code, 'MODEL_NOT_READY')
+})
+
+test('invalid replacement metadata is rejected before creating an adapter', async (t) => {
+  const { coordinator } = makeCoordinator({ runtimeOptions: NO_MODEL, configuration: MEETING })
+  t.after(() => coordinator.dispose())
+  let factoryCalls = 0
+
+  assert.throws(() => coordinator.replaceRuntime({
+    adapterFactory: () => {
+      factoryCalls += 1
+      return new FakeRuntimeAdapter({ autoEmit: false })
+    },
+    runtimeOptions: {
+      modelOverride: { id: 'real-model', profile: 'turbo', developmentOnly: false }
+    }
+  }), /profile is invalid/)
+  assert.equal(factoryCalls, 0)
+  assert.equal(coordinator.getSnapshot().model.state, 'missing')
+})
+
 test('Gate 0D blocks start until one of the two presets is explicit', async (t) => {
   const { coordinator } = makeCoordinator({ configuration: NOT_ONBOARDED })
   t.after(() => coordinator.dispose())

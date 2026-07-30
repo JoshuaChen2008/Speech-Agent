@@ -18,10 +18,18 @@ const {
   isRoleAllowed
 } = require('./main/ipc/access-policy')
 const { resolveRuntimeOptions } = require('./main/runtime-options')
-const { resolveApprovedRealtimeModel, resolveApprovedRefinementModel, resolveSileroVadModel } = require('./main/services/model-resolver')
 const { FakeRuntimeAdapter } = require('./main/session/fake-runtime-adapter')
 const { RealtimeRuntimeAdapter } = require('./runtime/realtime-runtime-adapter')
 const { SessionCoordinator, failure, success } = require('./main/session/session-coordinator')
+const {
+  DEFAULT_MODEL_SHUTDOWN_TIMEOUT_MS,
+  ModelManager
+} = require('./main/services/model-manager')
+const {
+  activateApprovedRuntime,
+  createApprovedRuntimeDefinition,
+  isExternalArtifactReady
+} = require('./main/services/model-runtime')
 const {
   DEFAULT_SHUTDOWN_TIMEOUT_MS,
   SubtitleApplicationRuntime
@@ -29,6 +37,7 @@ const {
 const { HistoryService } = require('./main/services/history-service')
 
 /** @type {SubtitleApplicationRuntime | null} */ let applicationRuntime = null
+/** @type {ModelManager | null} */ let modelManager = null
 
 /** @type {BrowserWindow | null} */ let captionWin = null
 /** @type {BrowserWindow | null} */ let toolbarWin = null
@@ -79,6 +88,10 @@ function broadcastSnapshot (snapshot) {
   for (const win of [toolbarWin, settingsWin]) send(win, CHANNELS.RUNTIME_CHANGED, snapshot)
 }
 
+function broadcastModelStatus (status) {
+  send(settingsWin, CHANNELS.MODEL_STATUS_CHANGED, status)
+}
+
 function registerWindowRole (win, role) {
   const senderId = win.webContents.id
   windowRoles.set(senderId, role)
@@ -90,6 +103,13 @@ function registerWindowRole (win, role) {
   win.on('blur', () => {
     stopDrag(senderId)
     stopResize(senderId)
+  })
+  win.on('unresponsive', () => console.error(`[electron.window] role=${role} event=unresponsive`))
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error(`[electron.renderer] role=${role} reason=${details.reason} exitCode=${details.exitCode}`)
+  })
+  win.webContents.on('did-fail-load', (_event, errorCode, _description, _url, isMainFrame) => {
+    if (isMainFrame) console.error(`[electron.load] role=${role} errorCode=${errorCode}`)
   })
 }
 
@@ -202,9 +222,12 @@ function intendedSize (win) {
   return { width: bounds.width, height: bounds.height }
 }
 
-function openSettingsWindow () {
+function openSettingsWindow (initialPane = null) {
   if (settingsWin && !settingsWin.isDestroyed()) {
+    if (settingsWin.isMinimized()) settingsWin.restore()
+    settingsWin.show()
     settingsWin.focus()
+    if (initialPane) send(settingsWin, CHANNELS.SETTINGS_NAVIGATE, initialPane)
     return
   }
   settingsWin = new BrowserWindow({
@@ -227,7 +250,10 @@ function openSettingsWindow () {
   registerWindowRole(settingsWin, 'settings')
   hardenContents(settingsWin)
   settingsWin.webContents.on('console-message', (details) => console.log('[settings]', details.message))
-  settingsWin.once('ready-to-show', () => settingsWin.show())
+  settingsWin.once('ready-to-show', () => {
+    settingsWin.show()
+    if (initialPane) send(settingsWin, CHANNELS.SETTINGS_NAVIGATE, initialPane)
+  })
   settingsWin.on('closed', () => { stopDrag(null, true); settingsWin = null })
   settingsWin.loadFile(path.join(__dirname, 'settings', 'settings.html'))
 }
@@ -407,51 +433,25 @@ function createCoordinator (persistenceSink) {
   if (structuralRuntime) {
     console.warn('[runtime] structural runtime enabled: real capture and worker, null recognizer, no captions')
   }
-  /* 真实模型（Gate 0B 2026-07-27 改判批准的 fast/x-asr-160ms）：显式 dev
-     开关都未设且本机模型四件套就位时启用。找不到模型 → capabilities 维持
-     不可用（fail closed），与改判前行为一致。 */
-  const realModel = (!devOptions.modelOverride && !structuralRuntime)
-    ? resolveApprovedRealtimeModel({ userDataDir: app.getPath('userData') })
+  /* 产品能力只在 ModelManager 审计完整三资源 bundle 后开启。仓库模型和显式
+     env 路径通过 Manager 的 externalReady 开发缝进入；userData 则必须具有
+     清单匹配的 ready marker，不能只凭文件存在冒充安装成功。 */
+  const managerReady = modelManager?.getStatus().state === 'ready'
+  const approvedRuntime = (!devOptions.modelOverride && !structuralRuntime && managerReady)
+    ? createApprovedRuntimeDefinition({ userDataDir: app.getPath('userData') })
     : null
   let adapterFactory
   let runtimeOptions = devOptions
   let transitionTimeoutMs
-  if (realModel) {
-    console.log(`[runtime] approved realtime model ready: ${realModel.id} (${realModel.profile})`)
-    /* silero VAD 缺失时诚实降级到 EnergyVad（字幕仍真实，分段质量下降），
-       并留下可排查的警告。 */
-    const vadModel = resolveSileroVadModel({ userDataDir: app.getPath('userData') })
-    if (!vadModel) {
-      console.warn('[runtime] silero VAD model missing; falling back to the energy placeholder (degraded segmentation)')
-    }
-    /* B3 精修：模型就位才开二遍（canRefine 随之发布）；缺失只关精修，
-       实时字幕不受影响。 */
-    const refineModel = resolveApprovedRefinementModel({ userDataDir: app.getPath('userData') })
-    if (refineModel) {
-      console.log(`[runtime] refinement model ready: ${refineModel.id}`)
-    } else {
-      console.warn('[runtime] refinement model missing; captions stay first-pass only')
-    }
-    adapterFactory = () => new RealtimeRuntimeAdapter({
-      profileMap: { [realModel.profile]: realModel.id },
-      recognizer: {
-        kind: realModel.kind,
-        modelDir: realModel.modelDir,
-        numThreads: realModel.numThreads,
-        modelType: realModel.modelType
-      },
-      vad: vadModel || undefined,
-      refinement: refineModel
-        ? { kind: refineModel.kind, modelDir: refineModel.modelDir, numThreads: refineModel.numThreads }
-        : undefined
-    })
-    runtimeOptions = {
-      modelOverride: { id: realModel.id, profile: realModel.profile, developmentOnly: false },
-      refinementAvailable: !!refineModel
-    }
-    /* start 包含 worker 内同步模型载入（秒级）；默认 5s 迁移超时会误判。 */
-    transitionTimeoutMs = 30000
+  if (approvedRuntime) {
+    console.log('[runtime] approved local subtitle model bundle ready')
+    adapterFactory = approvedRuntime.adapterFactory
+    runtimeOptions = approvedRuntime.runtimeOptions
+    transitionTimeoutMs = approvedRuntime.transitionTimeoutMs
   } else {
+    if (managerReady && !devOptions.modelOverride && !structuralRuntime) {
+      console.error('[runtime] model manager reported ready but runtime bundle could not be resolved')
+    }
     adapterFactory = () => structuralRuntime ? new RealtimeRuntimeAdapter() : new FakeRuntimeAdapter()
   }
   const created = new SessionCoordinator({
@@ -500,6 +500,54 @@ async function selectPreset (preset) {
   }
 }
 
+function publicModelError (error) {
+  const code = typeof error?.code === 'string' && /^[A-Z][A-Z0-9_]{2,63}$/.test(error.code)
+    ? error.code
+    : 'MODEL_INSTALL_FAILED'
+  const messages = {
+    ABORTED: '模型安装已停止',
+    ARCHIVE_UNSAFE: '模型资源包无法安全安装',
+    DOWNLOAD_FAILED: '模型下载失败',
+    DOWNLOAD_HASH_MISMATCH: '模型校验失败',
+    DOWNLOAD_HOST_BLOCKED: '模型下载来源不受信任',
+    DOWNLOAD_SIZE_MISMATCH: '模型下载大小不符',
+    INSTALL_FAILED: '模型安装失败',
+    INVALID_MANIFEST: '模型资源清单无效',
+    MODEL_FILES_MISSING: '模型文件不完整',
+    MODEL_RUNTIME_UNAVAILABLE: '模型已安装但字幕运行时未就绪',
+    SESSION_ACTIVE: '请先停止当前字幕会话',
+    SHUTDOWN: '模型管理服务已关闭',
+    TOO_MANY_REDIRECTS: '模型下载重定向过多'
+  }
+  return { code, message: messages[code] || '模型资源暂时不可用' }
+}
+
+async function installModelResources () {
+  if (!modelManager || !coordinator) {
+    return { ok: false, error: publicModelError({ code: 'MODEL_INSTALL_FAILED' }) }
+  }
+  if (coordinator.getSnapshot().sessionId !== null) {
+    return { ok: false, error: publicModelError({ code: 'SESSION_ACTIVE' }) }
+  }
+  try {
+    const status = await modelManager.install()
+    const devOptions = resolveRuntimeOptions()
+    const structuralRuntime = process.env.LIVE_SUBTITLE_DEV_RUNTIME === 'structural'
+    if (!devOptions.modelOverride && !structuralRuntime &&
+        coordinator.getSnapshot().model.state !== 'ready') {
+      activateApprovedRuntime({
+        coordinator,
+        userDataDir: app.getPath('userData')
+      })
+    }
+    return { ok: true, value: status }
+  } catch (error) {
+    const safe = publicModelError(error)
+    console.error(`[model.install] ${safe.code}`)
+    return { ok: false, error: safe }
+  }
+}
+
 ipcMain.on(CHANNELS.MOUSE_THROUGH, (event, ignore) => {
   const { win } = requireSender(event, CHANNELS.MOUSE_THROUGH)
   if (win === captionWin && locked && !ignore) return
@@ -526,6 +574,7 @@ ipcMain.handle(CHANNELS.LOCK_GET, (event) => {
 ipcMain.on(CHANNELS.TOOLBAR_ACTION, (event, action) => {
   requireSender(event, CHANNELS.TOOLBAR_ACTION)
   if (action === 'settings') openSettingsWindow()
+  else if (action === 'open-model-manager') openSettingsWindow('resources')
   else if (action === 'history') openHistoryWindow()
   else if (action === 'close') app.quit()
 })
@@ -565,6 +614,15 @@ ipcMain.handle(CHANNELS.RUNTIME_COMMAND, async (event, name) => {
     logError('runtime.command', error)
     return failure('COMMAND_FAILED', '命令执行失败', true)
   }
+})
+ipcMain.handle(CHANNELS.MODEL_STATUS_GET, (event) => {
+  requireSender(event, CHANNELS.MODEL_STATUS_GET)
+  if (!modelManager) throw new Error('model manager is not ready')
+  return modelManager.getStatus()
+})
+ipcMain.handle(CHANNELS.MODEL_INSTALL, (event) => {
+  requireSender(event, CHANNELS.MODEL_INSTALL)
+  return installModelResources()
 })
 
 function publicHistoryError (error) {
@@ -609,8 +667,15 @@ nativeTheme.on('updated', broadcastConfig)
 
 async function bootstrapApplication () {
   config.load()
+  const userDataDir = app.getPath('userData')
+  modelManager = new ModelManager({
+    userDataDir,
+    externalReady: (artifactId) => isExternalArtifactReady(artifactId)
+  })
+  modelManager.onStatus(broadcastModelStatus)
+  await modelManager.initialize()
   applicationRuntime = new SubtitleApplicationRuntime({
-    userDataDir: app.getPath('userData'),
+    userDataDir,
     coordinatorFactory: ({ persistenceSink }) => createCoordinator(persistenceSink),
     onError: (error) => logError('subtitle.storage', error)
   })
@@ -646,6 +711,12 @@ function beginQuitBarrier (event) {
   if (quitBarrierPromise) return
   cleanupUiRuntime()
   quitBarrierPromise = (async () => {
+    if (modelManager) {
+      const modelOutcome = await modelManager.shutdownWithin(DEFAULT_MODEL_SHUTDOWN_TIMEOUT_MS)
+      if (!modelOutcome.graceful) {
+        console.error(`[model.manager] forced shutdown (${modelOutcome.reason})`)
+      }
+    }
     if (applicationRuntime) {
       const outcome = await applicationRuntime.shutdownWithin(DEFAULT_SHUTDOWN_TIMEOUT_MS)
       if (!outcome.graceful) {
@@ -672,6 +743,9 @@ if (!hasSingleInstanceLock) {
     if (primary.isMinimized()) primary.restore()
     primary.show()
     primary.focus()
+  })
+  app.on('child-process-gone', (_event, details) => {
+    console.error(`[electron.child] type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`)
   })
   app.on('before-quit', beginQuitBarrier)
   app.on('will-quit', cleanupUiRuntime)

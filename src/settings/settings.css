@@ -171,6 +171,74 @@ h1 { font-size: var(--fs-title); font-weight: var(--fw-bold); margin: 14px 0 4px
 .source-hint { display: block; margin: 5px 0 0; max-width: 250px; line-height: 1.45; }
 .source-choice { flex: none; }
 
+/* 本地模型资源：只呈现公开状态，不展示下载地址或文件系统细节。 */
+.model-summary { padding-bottom: 14px; }
+.model-state { display: block; margin: 5px 0 0; }
+.primary-btn {
+  min-width: 92px;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--accent-solid);
+  color: var(--on-accent);
+  font-family: inherit;
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+.primary-btn:disabled { opacity: 0.42; cursor: not-allowed; }
+.model-progress {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgba(var(--fg), 0.14);
+}
+.model-progress > span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--accent-solid);
+  transition: width var(--dur-base) var(--ease);
+}
+.model-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 7px;
+  font-size: var(--fs-hint);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.58;
+}
+.model-error {
+  margin: 12px 0 0;
+  color: var(--tone-danger);
+  font-size: var(--fs-hint);
+  line-height: 1.5;
+}
+.resource-list {
+  margin-top: 14px;
+  border-radius: var(--radius-bar);
+  background: rgba(var(--fg), 0.05);
+  padding: 4px 16px;
+}
+.resource-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 0;
+  border-bottom: 1px solid rgba(var(--fg), 0.07);
+}
+.resource-row:last-child { border-bottom: 0; }
+.resource-status {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  min-width: 126px;
+  font-size: var(--fs-label);
+}
+.resource-row[data-state="downloading"] .resource-status,
+.resource-row[data-state="verifying"] .resource-status { color: var(--tone-busy); }
+.resource-row[data-state="error"] .resource-status { color: var(--tone-danger); }
+
 /* 分段控件 */
 .seg {
   display: inline-flex;
@@ -196,28 +264,6 @@ h1 { font-size: var(--fs-title); font-weight: var(--fw-bold); margin: 14px 0 4px
   box-shadow: var(--shadow-pill);
 }
 .seg button:disabled { opacity: 0.35; cursor: not-allowed; }
-
-/* iOS 风 toggle */
-.toggle {
-  width: 42px; height: 25px;
-  border: 0; border-radius: 13px;
-  background: rgba(var(--fg), 0.22);
-  position: relative;
-  cursor: pointer;
-  transition: background var(--dur-base);
-}
-.toggle::after {
-  content: '';
-  position: absolute;
-  top: 3px; left: 3px;
-  width: 19px; height: 19px;
-  border-radius: 50%;
-  background: var(--thumb-face);
-  box-shadow: var(--shadow-thumb);
-  transition: transform var(--dur-base);
-}
-.toggle.on { background: var(--accent-solid); }
-.toggle.on::after { transform: translateX(17px); }
 
 /* 一行里放多个控件（颜色 + 复位） */
 .field {
@@ -271,8 +317,7 @@ input[type="range"]::-webkit-slider-thumb {
    高对比度：开关/分段控件靠底色区分状态，强制色下会失去差异，补形状编码
    -------------------------------------------------------------------------- */
 @media (forced-colors: active) {
-  .group, .seg, .toggle { border: 1px solid CanvasText; }
+  .group, .seg, .resource-list, .model-progress { border: 1px solid CanvasText; }
   .seg button.on { border: 2px solid Highlight; }
-  .toggle.on::after { background: Highlight; }
   .nav-item.active, .preset-card:hover { border: 1px solid Highlight; }
 }

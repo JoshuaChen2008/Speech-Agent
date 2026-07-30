@@ -94,5 +94,14 @@ jobs:
           }
           node scripts/verify-storage-gateway-report.js .artifacts/storage-gateway-ci/report.json
 
+      - name: Run four-window product-shell user journey
+        shell: powershell
+        run: |
+          & .\scripts\run-electron-smoke.ps1 `
+            -EntryPoint 'scripts/product-shell-smoke.js' `
+            -EntryArguments @('--work-dir','.artifacts/product-shell-ci/work','--report','.artifacts/product-shell-ci/report.json') `
+            -LogDirectory '.artifacts/product-shell-ci/logs'
+          node scripts/verify-product-shell-report.js .artifacts/product-shell-ci/report.json
+
       - name: Run deterministic integration journeys and full regression suite
         run: npm run test:ci

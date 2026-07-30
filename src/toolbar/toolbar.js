@@ -76,6 +76,7 @@ const SUPPORTED = {
   stop: () => runCommand('stop'),
   retry: () => runCommand('retry'),
   'open-settings': () => bridge.action('settings'),
+  'open-model-manager': () => bridge.action('open-model-manager'),
   history: () => bridge.action('history'),
   lock: () => bridge.lockToggle(),
   settings: () => bridge.action('settings'),

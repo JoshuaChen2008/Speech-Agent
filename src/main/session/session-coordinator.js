@@ -170,6 +170,68 @@ class SessionCoordinator {
     return this.getSnapshot()
   }
 
+  /**
+   * Activate a newly installed runtime without rebuilding the application
+   * storage lifecycle. Replacement is intentionally an idle-only operation:
+   * an active (or transitioning) capture keeps its adapter and model identity
+   * until that durable session has closed.
+   */
+  replaceRuntime (options) {
+    if (this.disposed) throw new Error('coordinator is closed')
+    if (this.shuttingDown) throw new Error('coordinator is closing')
+    if (this.busy || this.snapshot.sessionId !== null) {
+      const error = new Error('runtime cannot be replaced during an active session')
+      error.code = 'SESSION_ACTIVE'
+      throw error
+    }
+
+    const replacement = validateRuntimeReplacement(options, this.transitionTimeoutMs)
+    let candidate
+    let unsubscribeCandidate
+    try {
+      candidate = this.registerAdapter(replacement.adapterFactory())
+      unsubscribeCandidate = this.bindAdapter(candidate)
+    } catch (error) {
+      if (unsubscribeCandidate) {
+        try { unsubscribeCandidate() } catch { /* best effort */ }
+      }
+      this.cleanupAdapter(candidate)
+      throw error
+    }
+
+    const previous = {
+      adapter: this.adapter,
+      adapterFactory: this.adapterFactory,
+      runtimeOptions: this.runtimeOptions,
+      transitionTimeoutMs: this.transitionTimeoutMs,
+      unsubscribeAdapter: this.unsubscribeAdapter
+    }
+
+    try {
+      this.adapter = candidate
+      this.adapterFactory = replacement.adapterFactory
+      this.runtimeOptions = replacement.runtimeOptions
+      this.transitionTimeoutMs = replacement.transitionTimeoutMs
+      this.unsubscribeAdapter = unsubscribeCandidate
+      this.adapterEpoch += 1
+      this.publish(this.buildRestingSnapshot())
+    } catch (error) {
+      this.adapter = previous.adapter
+      this.adapterFactory = previous.adapterFactory
+      this.runtimeOptions = previous.runtimeOptions
+      this.transitionTimeoutMs = previous.transitionTimeoutMs
+      this.unsubscribeAdapter = previous.unsubscribeAdapter
+      this.adapterEpoch -= 1
+      try { unsubscribeCandidate() } catch { /* best effort */ }
+      this.cleanupAdapter(candidate)
+      throw error
+    }
+
+    try { previous.unsubscribeAdapter() } catch (error) { this.reportListenerError(error) }
+    this.cleanupAdapter(previous.adapter)
+    return this.getSnapshot()
+  }
+
   async command (name) {
     if (this.disposed) return failure('COORDINATOR_CLOSED', '会话服务已关闭', false)
     if (this.shuttingDown) return failure('COORDINATOR_CLOSING', '应用正在退出', false)
@@ -656,7 +718,9 @@ class SessionCoordinator {
     if (!adapter || typeof adapter.onCaption !== 'function') {
       throw new TypeError('adapter.onCaption is required')
     }
-    const unsubscribers = [adapter.onCaption((event) => this.acceptCaption(event))]
+    const unsubscribers = [adapter.onCaption((event) => {
+      if (adapter === this.adapter) this.acceptCaption(event)
+    })]
     /* B2 缺口关闭（handoff §12.4）：adapter 可选提供 onError——worker/host
        在会话进行中自行崩溃时主动把 coordinator 推入 error（retry 走既有
        replacement/cursor 恢复路径）。 */
@@ -1055,6 +1119,52 @@ function sameConfiguration (left, right) {
     left.onboardingPreset === right.onboardingPreset &&
     left.mic === right.mic &&
     left.loopback === right.loopback
+}
+
+function validateRuntimeReplacement (options, currentTransitionTimeoutMs) {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+    throw new TypeError('runtime replacement options are required')
+  }
+  if (typeof options.adapterFactory !== 'function') {
+    throw new TypeError('runtime replacement adapterFactory is required')
+  }
+  const runtimeOptions = options.runtimeOptions
+  const model = runtimeOptions?.modelOverride
+  if (!runtimeOptions || typeof runtimeOptions !== 'object' || Array.isArray(runtimeOptions) ||
+      !model || typeof model !== 'object' || Array.isArray(model)) {
+    throw new TypeError('runtime replacement requires a model override')
+  }
+  if (typeof model.id !== 'string' || model.id.length === 0) {
+    throw new TypeError('runtime replacement model id is required')
+  }
+  if (!['fast', 'balanced', 'accurate'].includes(model.profile)) {
+    throw new TypeError('runtime replacement profile is invalid')
+  }
+  if (typeof model.developmentOnly !== 'boolean') {
+    throw new TypeError('runtime replacement developmentOnly flag is required')
+  }
+  if (runtimeOptions.refinementAvailable !== undefined &&
+      typeof runtimeOptions.refinementAvailable !== 'boolean') {
+    throw new TypeError('runtime replacement refinementAvailable flag is invalid')
+  }
+  const transitionTimeoutMs = options.transitionTimeoutMs === undefined
+    ? currentTransitionTimeoutMs
+    : options.transitionTimeoutMs
+  if (!Number.isFinite(transitionTimeoutMs) || transitionTimeoutMs <= 0) {
+    throw new TypeError('runtime replacement transition timeout is invalid')
+  }
+  return {
+    adapterFactory: options.adapterFactory,
+    runtimeOptions: Object.freeze({
+      modelOverride: Object.freeze({
+        id: model.id,
+        profile: model.profile,
+        developmentOnly: model.developmentOnly
+      }),
+      refinementAvailable: runtimeOptions.refinementAvailable === true
+    }),
+    transitionTimeoutMs
+  }
 }
 
 module.exports = {

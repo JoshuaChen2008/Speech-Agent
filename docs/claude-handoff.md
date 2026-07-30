@@ -6,6 +6,11 @@
 > [`data-architecture.md`](data-architecture.md)。本文后续出现的 Gate 0B、B2/B3、
 > JSONL 或“未实现”描述均只代表交接当日，不得覆盖上述规范文档。
 
+> **当前检查点（2026-07-31）：** B3.3 SQLite 权威存储/历史和 B4 固定模型
+> manifest/续传校验/白名单安装/资源页/空闲热启用已完成，并有联合 CI、批准
+> bundle 三运行时真实调用及四窗口 Electron 产品壳证据；物理 mic、I3 两小时与
+> I4 公网干净 Win11/打包态仍未关闭。翻译与整个 Agent 系统继续后置。
+
 > 交接日期：2026-07-26（Asia/Singapore）
 >
 > 仓库：本文所在 repository root

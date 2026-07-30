@@ -184,6 +184,6 @@ AgentRuntime（对产品保持稳定）
 | 设置页使用 `radiogroup` 单选并只经 preset IPC 原子切换 | 对齐 | 活动会话中控件禁用，主进程仍做权威拒绝 |
 | 共享 listening-mode 契约、`ConfigStore` 与 `SessionCoordinator` 都要求完成 onboarding 后恰好一路且匹配 preset | 对齐 | 旧独立开关配置按有效 preset 迁移修复 |
 | Fake/Realtime adapter、audio host、worker host/core 都拒绝长度不为 1 的来源数组 | 对齐 | `mic` 与 `loopback` 仅在不同会话/独立实机 smoke 中验证 |
-| Runtime fixtures 为单路状态；J4 联合旅程验证 UI/config/runtime 拒绝双路、活动期拒绝换源、停止后新会话隔离 | 对齐 | SQLite/Agent 产物接入后需在同一 J4 继续扩展断言 |
-| 正常字幕旅程只写文字 JSONL，产品诊断、smoke 与当前 Gate 0C runner 只输出结构化指标 | 对齐 | J12 的打包版应用数据目录检查仍待 I4 |
+| Runtime fixtures 为单路状态；J4 联合旅程验证 UI/config/runtime/SQLite 拒绝双路、活动期拒绝换源、停止后新会话隔离 | 对齐 | Agent 产物接入后需在同一 J4 继续扩展断言 |
+| 默认产品旅程只把 final/refined 文字事实写入 SQLite，JSONL 仅迁移/导出；产品诊断、smoke 与 Gate runner 只输出无正文结构化指标 | 对齐 | J12 的打包版应用数据目录检查仍待 I4 |
 | 项目尚未安装或实现 Pi/Agent runtime | 尚无框架锁定 | 先做 A1 ESM/Electron 探针，再实现 PluginHost；不影响当前字幕主线 |

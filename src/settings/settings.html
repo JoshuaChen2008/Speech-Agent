@@ -43,6 +43,7 @@
       <button class="nav-item active" data-pane="display">显示与字幕</button>
       <button class="nav-item" data-pane="audio">音频源</button>
       <button class="nav-item" data-pane="asr">语音识别</button>
+      <button class="nav-item" data-pane="resources">模型资源</button>
       <button class="nav-item" data-pane="about">关于</button>
     </nav>
 
@@ -96,11 +97,6 @@
             <div class="label">圆角 <span class="hint" id="radiusVal">10 px</span></div>
             <input type="range" id="radius" min="6" max="16" step="1" value="10">
           </div>
-
-          <div class="row">
-            <div class="label">显示双语译文</div>
-            <button class="toggle on" data-toggle="bilingual" aria-label="显示双语译文"></button>
-          </div>
         </div>
       </section>
 
@@ -138,6 +134,66 @@
           </div>
         </div>
         <p class="note" id="asrNote">正在读取模型能力。</p>
+      </section>
+
+      <!-- 模型资源 -->
+      <section class="pane" data-pane="resources">
+        <h1>模型资源</h1>
+        <p class="sub">下载并校验字幕系统所需的本地离线语音识别资源。</p>
+
+        <div class="group model-summary">
+          <div class="row">
+            <div>
+              <div class="label">本地 ASR 资源</div>
+              <div class="hint model-state" id="modelOverallState" aria-live="polite">正在读取状态</div>
+            </div>
+            <button class="primary-btn" id="modelInstallButton" type="button" disabled>正在读取</button>
+          </div>
+          <div class="model-progress" id="modelProgress" role="progressbar"
+               aria-label="模型资源总进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <span id="modelProgressBar"></span>
+          </div>
+          <div class="model-progress-meta">
+            <span id="modelProgressText">0%</span>
+            <span id="modelBytes">0 B / 0 B</span>
+          </div>
+          <p class="model-error" id="modelError" role="alert" hidden></p>
+        </div>
+
+        <div class="resource-list" aria-label="模型资源明细">
+          <div class="resource-row" data-resource-id="x-asr-160ms" data-state="missing">
+            <div>
+              <div class="label">实时字幕模型</div>
+              <div class="hint">负责低延迟字幕识别</div>
+            </div>
+            <div class="resource-status">
+              <span data-field="state">未安装</span>
+              <span class="hint" data-field="bytes">0 B / 0 B</span>
+            </div>
+          </div>
+          <div class="resource-row" data-resource-id="x-asr-offline" data-state="missing">
+            <div>
+              <div class="label">精修识别模型</div>
+              <div class="hint">负责终稿的离线精修</div>
+            </div>
+            <div class="resource-status">
+              <span data-field="state">未安装</span>
+              <span class="hint" data-field="bytes">0 B / 0 B</span>
+            </div>
+          </div>
+          <div class="resource-row" data-resource-id="silero-vad" data-state="missing">
+            <div>
+              <div class="label">语音活动检测</div>
+              <div class="hint">辅助判断语音片段边界</div>
+            </div>
+            <div class="resource-status">
+              <span data-field="state">未安装</span>
+              <span class="hint" data-field="bytes">0 B / 0 B</span>
+            </div>
+          </div>
+        </div>
+
+        <p class="note">这些资源只服务于本地字幕识别，不包含 Agent、翻译或大语言模型。下载中关闭应用后，可在下次启动时继续。</p>
       </section>
 
       <!-- 关于 -->

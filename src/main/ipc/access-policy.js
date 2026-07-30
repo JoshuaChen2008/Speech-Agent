@@ -20,6 +20,8 @@ const ROLE_ACCESS = Object.freeze({
   [CHANNELS.CONFIG_GET]: Object.freeze(['caption', 'toolbar', 'settings', 'history']),
   [CHANNELS.CONFIG_UPDATE]: Object.freeze(['settings']),
   [CHANNELS.PRESET_SELECT]: Object.freeze(['settings']),
+  [CHANNELS.MODEL_STATUS_GET]: Object.freeze(['settings']),
+  [CHANNELS.MODEL_INSTALL]: Object.freeze(['settings']),
   [CHANNELS.RUNTIME_GET]: Object.freeze(['toolbar', 'settings']),
   [CHANNELS.RUNTIME_COMMAND]: Object.freeze(['toolbar']),
   [CHANNELS.CAPTION_STATE_GET]: Object.freeze(['caption'])

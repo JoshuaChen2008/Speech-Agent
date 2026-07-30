@@ -14,7 +14,9 @@ const {
 test('every inbound channel has an explicit least-privilege role allowlist', () => {
   const inbound = Object.values(CHANNELS).filter((channel) => ![
     CHANNELS.LOCK_CHANGED,
+    CHANNELS.SETTINGS_NAVIGATE,
     CHANNELS.CONFIG_CHANGED,
+    CHANNELS.MODEL_STATUS_CHANGED,
     CHANNELS.RUNTIME_CHANGED,
     CHANNELS.CAPTION_EVENT
   ].includes(channel))
@@ -32,6 +34,10 @@ test('window roles cannot invoke one another privileged APIs', () => {
   assert.equal(isRoleAllowed(CHANNELS.CAPTION_STATE_GET, 'settings'), false)
   assert.equal(isRoleAllowed(CHANNELS.CONFIG_UPDATE, 'settings'), true)
   assert.equal(isRoleAllowed(CHANNELS.CONFIG_UPDATE, 'toolbar'), false)
+  assert.equal(isRoleAllowed(CHANNELS.MODEL_STATUS_GET, 'settings'), true)
+  assert.equal(isRoleAllowed(CHANNELS.MODEL_INSTALL, 'settings'), true)
+  assert.equal(isRoleAllowed(CHANNELS.MODEL_STATUS_GET, 'toolbar'), false)
+  assert.equal(isRoleAllowed(CHANNELS.MODEL_INSTALL, 'caption'), false)
   assert.equal(isRoleAllowed(CHANNELS.RESIZE_START, 'caption'), true)
   assert.equal(isRoleAllowed(CHANNELS.RESIZE_START, 'settings'), false)
   assert.equal(isRoleAllowed(CHANNELS.SETTINGS_CLOSE, 'settings'), true)

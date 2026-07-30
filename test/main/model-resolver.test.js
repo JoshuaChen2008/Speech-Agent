@@ -18,6 +18,9 @@ const {
   resolveApprovedRefinementModel,
   resolveSileroVadModel
 } = require('../../src/main/services/model-resolver')
+const { PRODUCTION_MODEL_MANIFEST } = require('../../src/main/services/model-manifest')
+
+const ARTIFACTS = new Map(PRODUCTION_MODEL_MANIFEST.artifacts.map((artifact) => [artifact.id, artifact]))
 
 function makeTempRoot (t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'model-resolver-'))
@@ -28,6 +31,16 @@ function makeTempRoot (t) {
 function writeModelFiles (directory, files = REQUIRED_FILES) {
   fs.mkdirSync(directory, { recursive: true })
   for (const name of files) fs.writeFileSync(path.join(directory, name), 'stub')
+}
+
+function writeReadyMarker (directory, artifactId) {
+  const artifact = ARTIFACTS.get(artifactId)
+  fs.writeFileSync(path.join(directory, '.ready.json'), JSON.stringify({
+    manifestVersion: PRODUCTION_MODEL_MANIFEST.version,
+    artifactId: artifact.id,
+    sha256: artifact.sha256,
+    bytes: artifact.bytes
+  }))
 }
 
 test('resolver returns null when no candidate has the full file set', (t) => {
@@ -66,6 +79,7 @@ test('an invalid explicit directory falls through to the next candidates', (t) =
   const userData = path.join(root, 'user-data')
   const installed = path.join(userData, 'models', APPROVED_REALTIME_MODEL.id, APPROVED_REALTIME_MODEL.directoryName)
   writeModelFiles(installed)
+  writeReadyMarker(installed, 'x-asr-160ms')
 
   const resolved = resolveApprovedRealtimeModel({
     env: { [MODEL_DIR_ENV]: path.join(root, 'missing') },
@@ -96,6 +110,7 @@ test('refinement resolver requires the offline four-file set and carries decisio
 
   const installed = path.join(root, 'user-data', 'models', APPROVED_REFINEMENT_MODEL.id, APPROVED_REFINEMENT_MODEL.directoryName)
   writeModelFiles(installed, REFINEMENT_REQUIRED_FILES)
+  writeReadyMarker(installed, 'x-asr-offline')
   assert.equal(
     resolveApprovedRefinementModel({ env: {}, userDataDir: path.join(root, 'user-data'), repoRoot: path.join(root, 'repo') }).modelDir,
     installed
@@ -121,6 +136,7 @@ test('silero VAD resolver walks env, userData, then repo layout and fails closed
   const installed = path.join(root, 'user-data', 'models', 'silero-vad', 'silero_vad.onnx')
   fs.mkdirSync(path.dirname(installed), { recursive: true })
   fs.writeFileSync(installed, 'stub')
+  writeReadyMarker(path.dirname(installed), 'silero-vad')
   assert.equal(
     resolveSileroVadModel({ env: {}, userDataDir: path.join(root, 'user-data'), repoRoot: path.join(root, 'repo') }).modelPath,
     installed
@@ -134,18 +150,25 @@ test('silero VAD resolver walks env, userData, then repo layout and fails closed
   )
 })
 
-test('userData flat layout and repo development layout are both accepted, in that order', (t) => {
+test('userData installs require an exact ready marker while development layouts remain usable', (t) => {
   const root = makeTempRoot(t)
   const userData = path.join(root, 'user-data')
-  const flat = path.join(userData, 'models', APPROVED_REALTIME_MODEL.id)
-  writeModelFiles(flat)
+  const installed = path.join(userData, 'models', APPROVED_REALTIME_MODEL.id, APPROVED_REALTIME_MODEL.directoryName)
+  writeModelFiles(installed)
   const repoModel = path.join(root, 'repo', 'models', 'gate-0b', 'extracted', 'x-asr-160', APPROVED_REALTIME_MODEL.directoryName)
   writeModelFiles(repoModel)
 
   const resolved = resolveApprovedRealtimeModel({ env: {}, userDataDir: userData, repoRoot: path.join(root, 'repo') })
-  assert.equal(resolved.modelDir, flat)
+  assert.equal(resolved.modelDir, repoModel)
 
-  fs.rmSync(flat, { recursive: true, force: true })
-  const fallback = resolveApprovedRealtimeModel({ env: {}, userDataDir: userData, repoRoot: path.join(root, 'repo') })
-  assert.equal(fallback.modelDir, repoModel)
+  writeReadyMarker(installed, 'x-asr-160ms')
+  const fromInstall = resolveApprovedRealtimeModel({ env: {}, userDataDir: userData, repoRoot: path.join(root, 'repo') })
+  assert.equal(fromInstall.modelDir, installed)
+
+  const markerPath = path.join(installed, '.ready.json')
+  const wrong = JSON.parse(fs.readFileSync(markerPath, 'utf8'))
+  wrong.sha256 = '0'.repeat(64)
+  fs.writeFileSync(markerPath, JSON.stringify(wrong))
+  const afterTamper = resolveApprovedRealtimeModel({ env: {}, userDataDir: userData, repoRoot: path.join(root, 'repo') })
+  assert.equal(afterTamper.modelDir, repoModel)
 })

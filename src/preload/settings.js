@@ -12,6 +12,10 @@ contextBridge.exposeInMainWorld('shell', {
   setConfig: (patch) => ipcRenderer.invoke(CHANNELS.CONFIG_UPDATE, patch),
   onConfig: (callback) => subscribe(CHANNELS.CONFIG_CHANGED, callback),
   selectPreset: (preset) => ipcRenderer.invoke(CHANNELS.PRESET_SELECT, String(preset || '')),
+  getModelStatus: () => ipcRenderer.invoke(CHANNELS.MODEL_STATUS_GET),
+  installModelResources: () => ipcRenderer.invoke(CHANNELS.MODEL_INSTALL),
+  onModelStatus: (callback) => subscribe(CHANNELS.MODEL_STATUS_CHANGED, callback),
+  onNavigate: (callback) => subscribe(CHANNELS.SETTINGS_NAVIGATE, callback),
   getSnapshot: () => ipcRenderer.invoke(CHANNELS.RUNTIME_GET),
   onSnapshot: (callback) => subscribe(CHANNELS.RUNTIME_CHANGED, callback)
 })

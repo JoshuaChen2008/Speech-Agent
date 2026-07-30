@@ -18,6 +18,16 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
+const { PRODUCTION_MODEL_MANIFEST } = require('./model-manifest')
+
+const ARTIFACTS = new Map(PRODUCTION_MODEL_MANIFEST.artifacts.map((artifact) => [artifact.id, artifact]))
+const REALTIME_ARTIFACT = ARTIFACTS.get('x-asr-160ms')
+const REFINEMENT_ARTIFACT = ARTIFACTS.get('x-asr-offline')
+const VAD_ARTIFACT = ARTIFACTS.get('silero-vad')
+
+if (!REALTIME_ARTIFACT || !REFINEMENT_ARTIFACT || !VAD_ARTIFACT) {
+  throw new Error('production model manifest is incomplete')
+}
 
 const MODEL_DIR_ENV = 'LIVE_SUBTITLE_MODEL_DIR'
 
@@ -27,14 +37,42 @@ const APPROVED_REALTIME_MODEL = Object.freeze({
   kind: 'sherpa-online-transducer',
   numThreads: 4,
   modelType: 'zipformer2',
-  directoryName: 'sherpa-onnx-x-asr-160ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05'
+  directoryName: REALTIME_ARTIFACT.directoryName
 })
 
-const REQUIRED_FILES = Object.freeze(['tokens.txt', 'encoder.int8.onnx', 'decoder.onnx', 'joiner.int8.onnx'])
+const REQUIRED_FILES = Object.freeze([...REALTIME_ARTIFACT.requiredFiles])
 
 function hasRequiredFiles (directory) {
   try {
     return REQUIRED_FILES.every((name) => fs.statSync(path.join(directory, name)).isFile())
+  } catch {
+    return false
+  }
+}
+
+function hasInstalledArtifact (directory, artifact) {
+  try {
+    const rootStat = fs.lstatSync(directory)
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return false
+    const markerPath = path.join(directory, '.ready.json')
+    const markerStat = fs.lstatSync(markerPath)
+    if (!markerStat.isFile() || markerStat.isSymbolicLink()) return false
+    const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'))
+    const keys = Object.keys(marker).sort()
+    if (keys.join(',') !== 'artifactId,bytes,manifestVersion,sha256') return false
+    if (marker.manifestVersion !== PRODUCTION_MODEL_MANIFEST.version ||
+        marker.artifactId !== artifact.id ||
+        marker.sha256 !== artifact.sha256 ||
+        marker.bytes !== artifact.bytes) return false
+
+    const rootReal = fs.realpathSync(directory)
+    return artifact.requiredFiles.every((name) => {
+      const candidate = path.join(directory, name)
+      const stat = fs.lstatSync(candidate)
+      if (!stat.isFile() || stat.isSymbolicLink()) return false
+      const relative = path.relative(rootReal, fs.realpathSync(candidate))
+      return relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+    })
   } catch {
     return false
   }
@@ -48,28 +86,28 @@ function resolveApprovedRealtimeModel (options = {}) {
   const env = options.env || process.env
   const repoRoot = options.repoRoot || path.join(__dirname, '..', '..', '..')
   const model = APPROVED_REALTIME_MODEL
-  const candidates = []
   const explicit = env[MODEL_DIR_ENV]
-  if (typeof explicit === 'string' && explicit.length > 0) candidates.push(explicit)
+  if (typeof explicit === 'string' && explicit.length > 0 && hasRequiredFiles(explicit)) {
+    return resolvedRealtime(explicit, model)
+  }
   if (typeof options.userDataDir === 'string' && options.userDataDir.length > 0) {
-    candidates.push(path.join(options.userDataDir, 'models', model.id, model.directoryName))
-    candidates.push(path.join(options.userDataDir, 'models', model.id))
+    const installed = path.join(options.userDataDir, 'models', model.id, model.directoryName)
+    if (hasInstalledArtifact(installed, REALTIME_ARTIFACT)) return resolvedRealtime(installed, model)
   }
-  candidates.push(path.join(repoRoot, 'models', 'gate-0b', 'extracted', 'x-asr-160', model.directoryName))
-
-  for (const candidate of candidates) {
-    if (hasRequiredFiles(candidate)) {
-      return Object.freeze({
-        id: model.id,
-        profile: model.profile,
-        kind: model.kind,
-        numThreads: model.numThreads,
-        modelType: model.modelType,
-        modelDir: candidate
-      })
-    }
-  }
+  const development = path.join(repoRoot, 'models', 'gate-0b', 'extracted', 'x-asr-160', model.directoryName)
+  if (hasRequiredFiles(development)) return resolvedRealtime(development, model)
   return null
+}
+
+function resolvedRealtime (modelDir, model) {
+  return Object.freeze({
+    id: model.id,
+    profile: model.profile,
+    kind: model.kind,
+    numThreads: model.numThreads,
+    modelType: model.modelType,
+    modelDir
+  })
 }
 
 const REFINE_MODEL_DIR_ENV = 'LIVE_SUBTITLE_REFINE_MODEL_DIR'
@@ -79,15 +117,10 @@ const APPROVED_REFINEMENT_MODEL = Object.freeze({
   kind: 'sherpa-offline-transducer',
   /* numThreads=3 与 M3 评估/改判证据同配置（RTF 0.027），不是可调偏好。 */
   numThreads: 3,
-  directoryName: 'sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03'
+  directoryName: REFINEMENT_ARTIFACT.directoryName
 })
 
-const REFINEMENT_REQUIRED_FILES = Object.freeze([
-  'tokens.txt',
-  'encoder-epoch-99-avg-1.int8.onnx',
-  'decoder-epoch-99-avg-1.onnx',
-  'joiner-epoch-99-avg-1.int8.onnx'
-])
+const REFINEMENT_REQUIRED_FILES = Object.freeze([...REFINEMENT_ARTIFACT.requiredFiles])
 
 function hasFiles (directory, files) {
   try {
@@ -107,21 +140,21 @@ function resolveApprovedRefinementModel (options = {}) {
   const env = options.env || process.env
   const repoRoot = options.repoRoot || path.join(__dirname, '..', '..', '..')
   const model = APPROVED_REFINEMENT_MODEL
-  const candidates = []
   const explicit = env[REFINE_MODEL_DIR_ENV]
-  if (typeof explicit === 'string' && explicit.length > 0) candidates.push(explicit)
+  if (typeof explicit === 'string' && explicit.length > 0 && hasFiles(explicit, REFINEMENT_REQUIRED_FILES)) {
+    return resolvedRefinement(explicit, model)
+  }
   if (typeof options.userDataDir === 'string' && options.userDataDir.length > 0) {
-    candidates.push(path.join(options.userDataDir, 'models', model.id, model.directoryName))
-    candidates.push(path.join(options.userDataDir, 'models', model.id))
+    const installed = path.join(options.userDataDir, 'models', model.id, model.directoryName)
+    if (hasInstalledArtifact(installed, REFINEMENT_ARTIFACT)) return resolvedRefinement(installed, model)
   }
-  candidates.push(path.join(repoRoot, 'models', 'gate-0b', 'extracted', 'x-asr-offline', model.directoryName))
-
-  for (const candidate of candidates) {
-    if (hasFiles(candidate, REFINEMENT_REQUIRED_FILES)) {
-      return Object.freeze({ id: model.id, kind: model.kind, numThreads: model.numThreads, modelDir: candidate })
-    }
-  }
+  const development = path.join(repoRoot, 'models', 'gate-0b', 'extracted', 'x-asr-offline', model.directoryName)
+  if (hasFiles(development, REFINEMENT_REQUIRED_FILES)) return resolvedRefinement(development, model)
   return null
+}
+
+function resolvedRefinement (modelDir, model) {
+  return Object.freeze({ id: model.id, kind: model.kind, numThreads: model.numThreads, modelDir })
 }
 
 const VAD_MODEL_ENV = 'LIVE_SUBTITLE_VAD_MODEL'
@@ -139,15 +172,21 @@ function resolveSileroVadModel (options = {}) {
   const repoRoot = options.repoRoot || path.join(__dirname, '..', '..', '..')
   const candidates = []
   const explicit = env[VAD_MODEL_ENV]
-  if (typeof explicit === 'string' && explicit.length > 0) candidates.push(explicit)
+  if (typeof explicit === 'string' && explicit.length > 0) candidates.push({ path: explicit, installed: false })
   if (typeof options.userDataDir === 'string' && options.userDataDir.length > 0) {
-    candidates.push(path.join(options.userDataDir, 'models', 'silero-vad', VAD_MODEL_FILE))
+    candidates.push({
+      path: path.join(options.userDataDir, 'models', 'silero-vad', VAD_MODEL_FILE),
+      installed: true
+    })
   }
-  candidates.push(path.join(repoRoot, 'models', 'vad', VAD_MODEL_FILE))
+  candidates.push({ path: path.join(repoRoot, 'models', 'vad', VAD_MODEL_FILE), installed: false })
 
   for (const candidate of candidates) {
     try {
-      if (fs.statSync(candidate).isFile()) return Object.freeze({ kind: 'silero', modelPath: candidate })
+      const accepted = candidate.installed
+        ? hasInstalledArtifact(path.dirname(candidate.path), VAD_ARTIFACT)
+        : fs.statSync(candidate.path).isFile()
+      if (accepted) return Object.freeze({ kind: 'silero', modelPath: candidate.path })
     } catch { /* try next */ }
   }
   return null

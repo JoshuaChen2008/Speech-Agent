@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "kind": "model-install-live-smoke",
+  "generatedAt": "2026-07-30T21:24:24.904Z",
+  "manifestVersion": 1,
+  "result": "pass",
+  "transport": {
+    "source": "loopback-http-from-hash-identical-approved-assets",
+    "resumeSeedBytes": 1048576,
+    "rangeResumeObserved": true
+  },
+  "installation": {
+    "resourceCount": 3,
+    "totalBytes": 270938600,
+    "finalState": "ready",
+    "observedStates": [
+      "missing",
+      "downloading",
+      "verifying",
+      "ready"
+    ]
+  },
+  "callability": {
+    "online": {
+      "loaded": true,
+      "partialObserved": true,
+      "finalNonEmpty": true,
+      "outputDigest": "5584fc1de8b7a41e73cb680d48568183a2a73527e4e6ba03f82480242727399c"
+    },
+    "offline": {
+      "loaded": true,
+      "finalNonEmpty": true,
+      "outputDigest": "3cdd1b9f6290201ed9c8c2afcffade4f180974e2bfd5e46a889b935dad69c07e"
+    },
+    "vad": {
+      "loaded": true,
+      "speechStartObserved": true
+    }
+  },
+  "privacy": {
+    "capturedAudioPersisted": false,
+    "transcriptTextPersisted": false,
+    "localPathsPersisted": false
+  }
+}

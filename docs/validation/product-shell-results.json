@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "kind": "product-shell-smoke",
+  "generatedAt": "2026-07-30T21:45:25.912Z",
+  "result": "pass",
+  "gateStatus": "partial",
+  "runtime": {
+    "electron": "43.2.0",
+    "node": "24.18.0",
+    "rendererCount": 4,
+    "crashEventCount": 0
+  },
+  "journey": {
+    "onboardingPreset": "dictation",
+    "startListeningStop": true,
+    "finalCaptionRendered": true,
+    "terminalHistoryCount": 1,
+    "resourcesPaneOpenedFromToolbar": true,
+    "modelState": "ready",
+    "resourceCount": 3,
+    "modelReadinessSource": "development-fixture-files",
+    "translationAdvertised": false
+  },
+  "privacy": {
+    "physicalAudioSourceOpened": false,
+    "audioPersisted": false,
+    "transcriptTextPersistedInReport": false,
+    "localPathsPersistedInReport": false
+  },
+  "limitations": [
+    "fake-asr-no-physical-audio",
+    "development-model-fixtures-no-real-inference",
+    "not-packaged-i4"
+  ]
+}

@@ -80,7 +80,7 @@
 - 处理坏尾行、flush、session close 和导出。
 - 按 `segmentId + revision` 折叠，不覆盖历史文件中的旧事件。
 
-`StorageGateway / storage-worker / HistoryService`（B3.3 实现完成/尚未实机验收）：
+`StorageGateway / storage-worker / HistoryService`（B3.3 联合验收完成；I3/I4 待验）：
 
 - storage worker 是 SQLite 唯一所有者和写者；主进程与 renderer 不执行同步 SQL、不加载扩展。
 - 在同一短事务中追加字幕 `final/refined` 事实并更新当前 segment 投影；提供只列终态会话的稳定 keyset 分页、按会话/时间戳读取详情和 txt/md/srt 当前正文导出。
@@ -90,15 +90,17 @@
 - A1 再冻结 Agent 可靠消费采用事务 outbox 还是 durable cursor；两者都必须以已提交字幕水位为边界。
 - FTS5 可按历史搜索需求后加；`sqlite-vec` 明确 Deferred，不进入 B3.3 schema 或加载路径。
 - 默认组合根已以 SQLite 替代 JSONL 权威写入；冷启动先收束 stale-active、再迁移旧档，运行期不构造 JSONL writer。JSONL 只保留为旧数据导入、显式格式兼容和恢复格式，禁止长期双写。
-- 历史 renderer 只得到列表/详情/格式选择能力；SQL、数据库路径、文件系统和导出目标路径均留在主进程/storage worker 边界。真实 BrowserWindow 与 I3/I4 仍须单独验收。
+- 历史 renderer 只得到列表/详情/格式选择能力；SQL、数据库路径、文件系统和导出目标路径均留在主进程/storage worker 边界。真实四窗口 Electron/SQLite 旅程已通过；两小时 I3 与打包态 I4 仍须单独验收。
 - schema、表义、迁移与 DB0–DB6 门禁见 [`data-architecture.md`](data-architecture.md)、[ADR 0001](adr/0001-sqlite-authoritative-event-store.md) 和 [ADR 0002](adr/0002-separate-subtitle-and-agent-systems.md)。
 
 `ModelManager`：
 
-- 维护模型 manifest、Capabilities、下载/暂停/续传/校验状态。
-- 下载到 `.part`，解压到 staging，验证期望文件后原子安装。
-- 拒绝删除活跃模型，清理失败 staging 和过期 part。
-- 只向 UI 发布产品级 profile 和下载状态，不暴露模型路径。
+- 内置不可由 renderer 修改的三资源 manifest；每个资源固定 HTTPS URL、字节数、SHA-256、安装目录和允许运行文件。
+- 逐跳校验 HTTPS 下载主机，使用 `.part` + Range 续传并对完整字节流做 SHA-256；重定向、长度或摘要不符时 fail closed。
+- 归档固定调用 Windows `System32\tar.exe`（不走可被抢占的 PATH），先审查全部路径和条目类型，只从通过审查的归档提取 `requiredFiles`，因此上游示例 WAV 和非运行材料不会进入 `userData`；随后在同卷 staging 校验普通文件并原子安装。
+- 安装态由严格四字段 `.ready.json` 与期望文件共同证明；实时 ASR、离线精修和 VAD 三者完整才发布 bundle ready，空闲 Coordinator 可原子替换运行时而无需重启。
+- 当前只提供下载、安全重试和退出收束，不提供删除；合法 `.part` 可跨重启续传。退出先 abort/kill 并等待，5 秒仍不收束则 fail closed 放行应用退出，下次初始化清理残留 staging，避免卡死 `before-quit`。
+- UI 只得到结构化资源状态、字节进度和安全错误码，不得到 URL、SHA、模型路径、归档参数或底层 Error。
 
 `CredentialStore / AgentRuntime / AgentPluginHost`（A1 后置）：
 
@@ -256,7 +258,7 @@ realtime/refine worker
 - 导航和新窗口默认拒绝；本地 UI 不加载远程脚本。
 - API Key 不进日志、错误消息、config、fixture 或 renderer。
 - 现场采集 PCM 不进入数据库、文件、日志、诊断产物、导出或 Agent 上下文；smoke 只输出指标。
-- 模型下载必须有固定 manifest/SHA256；解压到 staging 并验证期望文件。
+- 模型下载必须有固定 manifest/SHA256；归档先做路径/类型审查且只提取运行白名单，随后在 staging 验证期望文件并写严格 ready marker。
 
 ## 10. 后端验收顺序
 
@@ -267,7 +269,7 @@ realtime/refine worker
 3. 完成 `loopback` 会议字幕与 `mic` 个人听写两种单路路径；配置、UI 和 runtime 都拒绝双路并发，停止后才允许换源。
 4. SessionCoordinator 与可见 UI 接 fake/real CaptionEvent，同时验证 reload、自动存档、时间戳历史与导出。
 5. 独立 refine worker 和事件式 JSONL 过渡基线，验证 pause/resume、迟到修订和进程故障。
-6. B3.3 已在 DB0/DB1 基座上接入产品网关、迁移、默认 SQLite-only 生命周期与历史查询/导出；J1/J2/J10 已有确定性联合证据，真实 Electron/I3/I4 继续作为独立门禁。
-7. 当前进入 ModelManager 与字幕 MVP 打包；完成两小时、设备/worker 故障、睡眠唤醒和干净机器验收。
+6. B3.3 已在 DB0/DB1 基座上接入产品网关、迁移、默认 SQLite-only 生命周期与历史查询/导出；J1/J2/J10 及真实四窗口 Electron/SQLite 旅程已有证据，I3/I4 继续作为独立门禁。
+7. B4 ModelManager、资源页、空闲热启用和 J14 已完成；生产 Manager 已安装并实际调用固定三资源 bundle。当前按物理 mic → I3 两小时/恢复 → I4 公网干净 Win11/ASAR/NSIS 完成字幕 MVP 发布验收。
 8. 字幕 MVP 通过后做 A1：`AgentRuntime` + Pi Core 隔离探针 + 项目自有插件宿主 + 凭据/可靠消费；再以第一方插件实现独立增强文本和会后结构化纪要，并通过 J3–J7/J13。
 9. 只有 X1 明确进入范围时才增加 FTS5/`sqlite-vec`，并执行 J11/DB4。

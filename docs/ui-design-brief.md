@@ -270,8 +270,8 @@ UI 规则：
 |---|---|---|---|
 | `stop` | stop 命令 | B1 | **完成** |
 | `retry` | retry 命令 | B1 | **完成** |
-| `history` | 可聚焦的历史窗 + 只读终态会话/时间戳正文/导出 contract；搜索可后加 | B3.3 | **实现完成/尚未实机验收** |
-| `open-model-manager` | 资源管理页 | B4 | 未实现 |
+| `history` | 可聚焦的历史窗 + 只读终态会话/时间戳正文/导出 contract；搜索可后加 | B3.3 | **联合验收完成/真实 Electron 终态历史已验；系统对话框、长列表与 I3/I4 待验** |
+| `open-model-manager` | 资源管理页：固定三项本地 ASR 资源、总/分项进度、安全错误与单一下载/重试动作；不接受 URL/hash/path 参数 | B4 | **实现完成/真实 Electron 产品壳已验收；I4 干净机公网下载待验收** |
 | `request-permission` | 权限请求入口 | Gate 0C / B2 | 未实现 |
 
 四个 `nextAction` 值里 `retry` 与 `open-settings` 已接通；`open-model-manager` 与 `request-permission` 等待后续阶段。
@@ -290,7 +290,7 @@ UI 规则：
 
 ### 6.4 后续顺序
 
-字幕 MVP 当前先完成 B4 ModelManager 资源入口，再做真实 Electron/I3/I4 验收；A4 layout contract 可并行收口。Agent UI 等 A1/A2 契约冻结后再做，不在 renderer 内先行伪造能力。
+字幕 MVP 的 B4 ModelManager 资源入口与真实 Electron 四窗口产品壳旅程已完成；下一门禁是物理 mic、I3 长稳与 I4 干净 Win11 公网安装/打包验收。Agent UI 等 A1/A2 契约冻结后再做，不在 renderer 内先行伪造能力；当前设置页不展示翻译开关。
 
 ## 7. 每次视觉交接必须包含
 

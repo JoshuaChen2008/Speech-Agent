@@ -2,6 +2,8 @@
 
 let cfg = null
 let runtimeSnapshot = null
+let modelStatus = null
+let modelInstallPending = false
 let pendingPatch = {}
 let patchTimer = null
 
@@ -10,6 +12,14 @@ const onboarding = document.getElementById('onboarding')
 const presetButtons = [...document.querySelectorAll('.preset-card')]
 const sourceButtons = [...document.querySelectorAll('#audioSourceChoice button')]
 const asrNote = document.getElementById('asrNote')
+const modelOverallState = document.getElementById('modelOverallState')
+const modelInstallButton = document.getElementById('modelInstallButton')
+const modelProgress = document.getElementById('modelProgress')
+const modelProgressBar = document.getElementById('modelProgressBar')
+const modelProgressText = document.getElementById('modelProgressText')
+const modelBytes = document.getElementById('modelBytes')
+const modelError = document.getElementById('modelError')
+const modelResourceRows = [...document.querySelectorAll('[data-resource-id]')]
 
 function showStatus (message) {
   status.textContent = message || ''
@@ -39,11 +49,16 @@ window.addEventListener('blur', endDrag)
 
 const navItems = [...document.querySelectorAll('.nav-item')]
 const panes = [...document.querySelectorAll('.pane')]
+function activatePane (name) {
+  const selected = navItems.find((item) => item.dataset.pane === name)
+  if (!selected) return false
+  navItems.forEach((node) => node.classList.toggle('active', node === selected))
+  panes.forEach((pane) => pane.classList.toggle('active', pane.dataset.pane === name))
+  return true
+}
+
 navItems.forEach((item) => {
-  item.addEventListener('click', () => {
-    navItems.forEach((node) => node.classList.toggle('active', node === item))
-    panes.forEach((pane) => pane.classList.toggle('active', pane.dataset.pane === item.dataset.pane))
-  })
+  item.addEventListener('click', () => activatePane(item.dataset.pane))
 })
 
 async function savePatch (patch) {
@@ -87,12 +102,6 @@ document.querySelectorAll('.seg[data-seg]').forEach((seg) => {
     let value = button.dataset.val
     if (NUM_SEG[seg.dataset.seg]) value = Number(value)
     void savePatch({ [key]: value })
-  })
-})
-
-document.querySelectorAll('.toggle').forEach((toggle) => {
-  toggle.addEventListener('click', () => {
-    void savePatch({ [toggle.dataset.toggle]: !toggle.classList.contains('on') })
   })
 })
 
@@ -171,11 +180,6 @@ function setSeg (segName, value) {
   ;[...seg.children].forEach((button) => button.classList.toggle('on', String(button.dataset.val) === String(value)))
 }
 
-function setToggle (name, on) {
-  const toggle = document.querySelector(`.toggle[data-toggle="${name}"]`)
-  if (toggle) toggle.classList.toggle('on', !!on)
-}
-
 function reflect (next) {
   cfg = next
   onboarding.hidden = !!next.onboardingCompleted
@@ -183,7 +187,6 @@ function reflect (next) {
   setSeg('fontsize', next.fontSize)
   setSeg('theme', next.theme)
   setSeg('latency', next.latency)
-  setToggle('bilingual', next.bilingual)
   sourceButtons.forEach((button) => {
     const checked = next[button.dataset.source] === true
     button.classList.toggle('on', checked)
@@ -219,13 +222,176 @@ function reflectRuntime (snapshot) {
   asrNote.textContent = profiles.length === 0
     ? (limitation ? limitation.message : '当前没有可用识别档位。')
     : '识别档位由本机已就绪的模型决定，不可用的档位已停用。'
+  updateModelInstallControl()
 }
+
+const MODEL_STATES = Object.freeze(['missing', 'downloading', 'verifying', 'ready', 'error'])
+const MODEL_STATE_LABELS = Object.freeze({
+  missing: '未安装',
+  downloading: '正在下载',
+  verifying: '正在校验',
+  ready: '已就绪',
+  error: '安装失败'
+})
+const MODEL_STATE_DETAILS = Object.freeze({
+  missing: '需要下载三项本地 ASR 资源',
+  downloading: '正在下载本地资源，可以关闭应用后继续',
+  verifying: '正在校验并安装本地资源',
+  ready: '实时字幕、离线精修与语音活动检测均已就绪',
+  error: '资源未能完成安装，可以安全重试'
+})
+
+function normalizeModelState (value) {
+  return MODEL_STATES.includes(value) ? value : 'missing'
+}
+
+function clampProgress (value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : 0
+}
+
+function formatBytes (value) {
+  let bytes = Number(value)
+  if (!Number.isFinite(bytes) || bytes < 0) bytes = 0
+  const units = ['B', 'KiB', 'MiB', 'GiB']
+  let unit = 0
+  while (bytes >= 1024 && unit < units.length - 1) {
+    bytes /= 1024
+    unit += 1
+  }
+  const digits = unit === 0 || bytes >= 100 ? 0 : 1
+  return `${bytes.toFixed(digits)} ${units[unit]}`
+}
+
+function formatByteProgress (downloaded, total) {
+  return `${formatBytes(downloaded)} / ${formatBytes(total)}`
+}
+
+/* 不把后端错误原文直接放进 DOM：即使未来底层错误意外带路径，设置页也只给出
+   可执行的安全说明。错误 code 是公开契约，用于选择说明，不用于拼接展示。 */
+function safeModelErrorMessage (error) {
+  const code = error && typeof error.code === 'string' ? error.code.toUpperCase() : ''
+  if (/HASH|INTEGRITY|CHECKSUM|SIZE/.test(code)) return '资源校验未通过，请重新下载。'
+  if (/NETWORK|DOWNLOAD|CONNECTION|HTTP/.test(code)) return '下载未完成，请检查网络后重试。'
+  if (/ARCHIVE|EXTRACT|CONTENT/.test(code)) return '资源包无法安全安装，请重新下载。'
+  if (/SESSION|ACTIVE|BUSY/.test(code)) return '请先停止当前字幕会话，再安装模型资源。'
+  if (/ABORT|CANCEL|SHUTDOWN/.test(code)) return '安装已中断，下次可以继续下载。'
+  return '模型资源未能完成安装，请重试。'
+}
+
+function updateModelInstallControl () {
+  const state = modelStatus ? normalizeModelState(modelStatus.state) : null
+  const busy = state === 'downloading' || state === 'verifying'
+  const runtimeKnown = runtimeSnapshot !== null
+  const sessionActive = runtimeSnapshot !== null && runtimeSnapshot.sessionId !== null
+  const canInstall = modelStatus !== null && modelStatus.canInstall === true
+  modelInstallButton.disabled = !runtimeKnown || modelInstallPending || sessionActive || busy || state === 'ready' || !canInstall
+
+  if (!runtimeKnown) {
+    modelInstallButton.textContent = '正在读取'
+    modelInstallButton.title = '正在读取字幕会话状态'
+  } else if (sessionActive && !busy && state !== 'ready') {
+    modelInstallButton.textContent = '请先停止会话'
+    modelInstallButton.title = '活动字幕会话期间不能安装模型资源'
+  } else if (modelInstallPending || busy) {
+    modelInstallButton.textContent = state === 'verifying' ? '正在校验' : '正在下载'
+    modelInstallButton.title = '模型资源正在处理'
+  } else if (state === 'error') {
+    modelInstallButton.textContent = '重试'
+    modelInstallButton.title = '重新下载并校验模型资源'
+  } else if (state === 'ready') {
+    modelInstallButton.textContent = '已就绪'
+    modelInstallButton.title = '模型资源已安装'
+  } else if (state === 'missing') {
+    modelInstallButton.textContent = '下载模型'
+    modelInstallButton.title = '下载本地字幕识别所需资源'
+  } else {
+    modelInstallButton.textContent = '正在读取'
+    modelInstallButton.title = '正在读取模型资源状态'
+  }
+}
+
+function reflectModelStatus (next) {
+  if (!next || next.schemaVersion !== 1 || !Array.isArray(next.resources)) return
+  modelStatus = next
+  const state = normalizeModelState(next.state)
+  const progress = clampProgress(next.progress)
+  const percent = Math.round(progress * 100)
+
+  modelOverallState.textContent = MODEL_STATE_DETAILS[state]
+  modelProgress.setAttribute('aria-valuenow', String(percent))
+  modelProgressBar.style.width = `${percent}%`
+  modelProgressText.textContent = `${percent}%`
+  modelBytes.textContent = formatByteProgress(next.downloadedBytes, next.totalBytes)
+
+  const resources = new Map(next.resources.map((resource) => [resource.id, resource]))
+  modelResourceRows.forEach((row) => {
+    const resource = resources.get(row.dataset.resourceId) || {
+      state: 'missing',
+      downloadedBytes: 0,
+      totalBytes: 0
+    }
+    const resourceState = normalizeModelState(resource.state)
+    row.dataset.state = resourceState
+    const resourcePercent = Math.round(clampProgress(resource.progress) * 100)
+    row.querySelector('[data-field="state"]').textContent =
+      resourceState === 'downloading' || resourceState === 'verifying'
+        ? `${MODEL_STATE_LABELS[resourceState]} · ${resourcePercent}%`
+        : MODEL_STATE_LABELS[resourceState]
+    row.querySelector('[data-field="bytes"]').textContent = formatByteProgress(
+      resource.downloadedBytes,
+      resource.totalBytes
+    )
+  })
+
+  modelError.hidden = next.error === null
+  modelError.textContent = next.error === null ? '' : safeModelErrorMessage(next.error)
+  updateModelInstallControl()
+}
+
+async function refreshModelStatus () {
+  try {
+    reflectModelStatus(await window.shell.getModelStatus())
+  } catch {
+    modelError.hidden = false
+    modelError.textContent = '无法读取模型资源状态，请稍后重试。'
+    updateModelInstallControl()
+  }
+}
+
+modelInstallButton.addEventListener('click', async () => {
+  if (modelInstallButton.disabled) return
+  modelInstallPending = true
+  let installRequestFailed = false
+  updateModelInstallControl()
+  try {
+    const result = await window.shell.installModelResources()
+    installRequestFailed = !!(result && result.ok === false)
+    const returnedStatus = result && result.schemaVersion === 1
+      ? result
+      : (result && result.value && result.value.schemaVersion === 1 ? result.value : null)
+    if (returnedStatus) reflectModelStatus(returnedStatus)
+  } catch {
+    installRequestFailed = true
+  } finally {
+    await refreshModelStatus()
+    modelInstallPending = false
+    if (installRequestFailed && (!modelStatus || modelStatus.state !== 'error')) {
+      modelError.hidden = false
+      modelError.textContent = '安装请求未能完成，请稍后重试。'
+    }
+    updateModelInstallControl()
+  }
+})
 
 async function init () {
   window.shell.onConfig(reflect)
   window.shell.onSnapshot(reflectRuntime)
+  window.shell.onModelStatus(reflectModelStatus)
+  window.shell.onNavigate((pane) => activatePane(String(pane || '')))
   try { reflect(await window.shell.getConfig()) } catch { /* noop */ }
   try { reflectRuntime(await window.shell.getSnapshot()) } catch { /* noop */ }
+  await refreshModelStatus()
 }
 
 window.addEventListener('beforeunload', flushPatch)
