@@ -15,7 +15,10 @@ function fakeWorker () {
   const worker = {
     calls: [],
     captionListeners: new Set(),
+    statsListeners: new Set(),
     exitListeners: new Set(),
+    lastStats: null,
+    droppedCaptionCount: 0,
     disposed: false,
     exited: null,
     async start (config) { worker.calls.push(['start', config]) },
@@ -25,9 +28,10 @@ function fakeWorker () {
     async resume () { worker.calls.push(['resume']) },
     async waitForEnd () { worker.calls.push(['waitForEnd']); return true },
     onCaption (listener) { worker.captionListeners.add(listener); return () => worker.captionListeners.delete(listener) },
-    onStats () { return () => {} },
+    onStats (listener) { worker.statsListeners.add(listener); return () => worker.statsListeners.delete(listener) },
     onExit (listener) { worker.exitListeners.add(listener); return () => worker.exitListeners.delete(listener) },
     emitCaption (event) { for (const listener of worker.captionListeners) listener(event) },
+    emitStats (stats) { worker.lastStats = stats; for (const listener of worker.statsListeners) listener(stats) },
     emitExit (code) { for (const listener of worker.exitListeners) listener({ code }) },
     dispose () { worker.disposed = true }
   }
@@ -180,7 +184,7 @@ test('start orchestrates worker-first wiring and maps the resume cursor', async 
   await adapter.start(START_CONTEXT)
 
   const workerStart = worker.calls.find(([name]) => name === 'start')[1]
-  assert.equal(workerStart.recognizerProfile, 'null', 'Gate 0B 未过：profile 映射到 null')
+  assert.equal(workerStart.recognizerProfile, 'null', '结构模式必须把 profile 映射到 null')
   assert.equal(workerStart.attempt, 2)
   assert.deepEqual(workerStart.sequenceBases, { mic: 9 })
 
@@ -194,7 +198,7 @@ test('start orchestrates worker-first wiring and maps the resume cursor', async 
   adapter.dispose()
 })
 
-test('captions pass through only while the session is current and faults are reported', async () => {
+test('runtime faults stop capture immediately even when the user does not retry or stop', async () => {
   const { adapter, worker, host } = makeAdapter()
   const captions = []
   const faults = []
@@ -207,17 +211,56 @@ test('captions pass through only while the session is current and faults are rep
 
   worker.emitExit(13)
   host.emitControl({ type: 'track-ended', sessionId: 'session-1', sourceId: 'mic' })
-  assert.deepEqual(faults.map((fault) => fault.code), ['REALTIME_WORKER_EXITED', 'AUDIO_TRACK_ENDED'])
+  worker.emitCaption({ late: true })
+  assert.deepEqual(faults.map((fault) => fault.code), ['REALTIME_WORKER_EXITED'])
   assert.ok(faults.every((fault) => fault.recoverable === true))
+  assert.equal(captions.length, 1, 'faulted sessions reject late captions before async teardown finishes')
+
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(host.calls.map(([name]) => name), ['startCapture', 'stopCapture'])
+  assert.equal(worker.disposed, true)
+  assert.equal(host.disposed, true)
+  assert.deepEqual(adapter.getLastRunDiagnostics().sourceIds, ['mic'])
 
   await adapter.stop()
   worker.emitCaption({ late: true })
   worker.emitExit(1)
   assert.equal(captions.length, 1, '停止后事件不再透传')
-  assert.equal(faults.length, 2, '停止后的退出不算故障')
-  assert.equal(worker.disposed, true)
-  assert.equal(host.disposed, true)
+  assert.equal(faults.length, 1, '清理期间与停止后的迟到故障不得重复上报')
+  assert.equal(host.calls.filter(([name]) => name === 'stopCapture').length, 1, 'stop after fault reuses completed cleanup')
   adapter.dispose()
+})
+
+test('audio fault during start fails closed instead of publishing stale listening state', async (t) => {
+  const { adapter, host } = makeAdapter()
+  host.startCapture = async (options) => {
+    host.calls.push(['startCapture', options])
+    host.emitControl({
+      type: 'track-ended',
+      sessionId: options.sessionId,
+      sourceId: options.sourceIds[0]
+    })
+    return { started: true }
+  }
+  const coordinator = new SessionCoordinator({
+    adapter,
+    runtimeOptions: DEV_MODEL,
+    configuration: DICTATION,
+    idFactory: () => 'startup-fault-session'
+  })
+  t.after(() => coordinator.dispose())
+
+  const result = await coordinator.command('start')
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'ADAPTER_START_FAILED')
+  assert.equal(coordinator.getSnapshot().phase, 'error')
+  assert.equal(coordinator.getSnapshot().sessionId, 'startup-fault-session')
+  assert.equal(adapter.session, null, 'fault cleanup must finish before start rejects')
+  assert.equal(host.calls.filter(([name]) => name === 'stopCapture').length, 1)
+  assert.equal(host.disposed, true)
+
+  assert.equal((await coordinator.command('stop')).ok, true)
+  assert.equal(coordinator.getSnapshot().phase, 'idle')
 })
 
 test('stop is capture-first and start failures tear down cleanly', async () => {
@@ -240,6 +283,40 @@ test('stop is capture-first and start failures tear down cleanly', async () => {
   failing.adapter.hostFactory = () => fakeHost()
   await failing.adapter.start(START_CONTEXT)
   failing.adapter.dispose()
+  adapter.dispose()
+})
+
+test('completed sessions expose text-free I2 diagnostics from the real composition boundary', async () => {
+  const { adapter, worker, host } = makeAdapter()
+  await adapter.start(START_CONTEXT)
+  host.emitControl({
+    type: 'metrics',
+    sessionId: START_CONTEXT.sessionId,
+    sources: { mic: { capturedFrames: 12, sentFrames: 12, droppedFrames: 0, maxQueuedMsObserved: 0 } }
+  })
+  worker.emitStats({
+    endReceived: false,
+    badSampleTypeFrames: 0,
+    sources: { mic: { framesIngested: 12, sequenceGapCount: 0, missedFrames: 0, captionsEmitted: 2 } }
+  })
+  worker.droppedCaptionCount = 1
+  host.stopCapture = async () => ({
+    stopped: true,
+    metrics: { mic: { capturedFrames: 14, sentFrames: 14, droppedFrames: 0, maxQueuedMsObserved: 0 } }
+  })
+
+  await adapter.stop()
+  const diagnostics = adapter.getLastRunDiagnostics()
+  assert.equal(diagnostics.sessionId, START_CONTEXT.sessionId)
+  assert.deepEqual(diagnostics.sourceIds, ['mic'])
+  assert.equal(diagnostics.capture.mic.capturedFrames, 14)
+  assert.equal(diagnostics.worker.sources.mic.framesIngested, 12)
+  assert.equal(diagnostics.droppedCaptionCount, 1)
+  assert.equal(JSON.stringify(diagnostics).includes('samples'), false)
+  assert.equal(JSON.stringify(diagnostics).includes('text'), false)
+
+  diagnostics.capture.mic.capturedFrames = 999
+  assert.equal(adapter.getLastRunDiagnostics().capture.mic.capturedFrames, 14, 'caller cannot mutate stored diagnostics')
   adapter.dispose()
 })
 

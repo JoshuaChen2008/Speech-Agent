@@ -52,6 +52,9 @@ class RealtimeRuntimeAdapter {
     this.captionHandler = null
     this.errorHandler = null
     this.session = null
+    /* 最近一次会话的纯指标快照。只包含帧/队列/worker 计数，不包含 PCM、
+       音频路径或字幕正文，供 I2 smoke 与故障诊断读取。 */
+    this.lastRunDiagnostics = null
     this.disposed = false
   }
 
@@ -73,8 +76,25 @@ class RealtimeRuntimeAdapter {
 
   fault (session, event) {
     if (this.disposed || this.session !== session || session.stopping) return
+    /* 故障一发生就关闭采集，不能要求用户先点 retry/stop 才释放麦克风、
+       loopback track 或隐藏窗口。cleanupPromise 让紧接着的 retry/stop 等待
+       同一轮收敛，避免旧 host teardown 与新一轮 start 竞态。 */
+    session.stopping = true
+    session.faulted = true
+    session.cleanupPromise = this.cleanupFaultedSession(session)
     if (this.errorHandler) {
       try { this.errorHandler(event) } catch { /* observer failures stay isolated */ }
+    }
+  }
+
+  async cleanupFaultedSession (session) {
+    try {
+      const captureResult = await session.host.stopCapture()
+      if (captureResult?.metrics) session.captureMetrics = captureResult.metrics
+      await session.worker.waitForEnd()
+    } catch { /* 原始 fault 已上报；清理继续走 finally，不能制造第二个产品错误 */ } finally {
+      this.captureDiagnostics(session)
+      this.teardown(session)
     }
   }
 
@@ -99,13 +119,20 @@ class RealtimeRuntimeAdapter {
       worker: this.workerFactory(),
       refineWorker: useRefinement ? this.refineWorkerFactory() : null,
       refineReady: false,
+      captureMetrics: {},
+      workerStats: null,
       unsubscribers: [],
-      stopping: false
+      stopping: false,
+      faulted: false,
+      cleanupPromise: null
     }
     this.session = session
     try {
       session.unsubscribers.push(session.worker.onCaption((event) => {
-        if (this.session === session && this.captionHandler) this.captionHandler(event)
+        if (this.session === session && !session.faulted && this.captionHandler) this.captionHandler(event)
+      }))
+      session.unsubscribers.push(session.worker.onStats((stats) => {
+        if (this.session === session) session.workerStats = stats
       }))
       session.unsubscribers.push(session.worker.onExit(({ code }) => {
         this.fault(session, {
@@ -144,6 +171,8 @@ class RealtimeRuntimeAdapter {
             message: '音频采集进程中断',
             recoverable: true
           })
+        } else if (message.type === 'metrics' || message.type === 'stopped') {
+          session.captureMetrics = message.sources || {}
         }
       }))
 
@@ -190,6 +219,13 @@ class RealtimeRuntimeAdapter {
         port: channel.port1
       })
       throwIfAborted(context.signal)
+      /* host/track 可在 startCapture 的异步窗口内先上报 fault。Coordinator
+         此时处于 busy，会让当前 start 的失败路径负责；不能继续返回成功并
+         发布一个 adapter 已经 teardown 的伪 listening 状态。 */
+      if (session.faulted || this.session !== session) {
+        if (session.cleanupPromise) await session.cleanupPromise
+        throw new Error('runtime faulted during start')
+      }
       /* 活性兜底：worker 在 configure 后、采集就绪前退出的话，其 exit
          故障落在 busy 迁移窗口内被 coordinator 忽略且不会重发——这里
          显式失败，让迁移自己的失败路径接管。 */
@@ -219,16 +255,39 @@ class RealtimeRuntimeAdapter {
     throwIfAborted(options.signal)
     const session = this.session
     if (!session) return
+    if (session.cleanupPromise) {
+      await session.cleanupPromise
+      return
+    }
     session.stopping = true
     try {
       /* 先停采集：host 发 end → worker flush 未收束段（final 在 stopping
          相位仍会被 coordinator 接受）→ 等 worker 的 endReceived 确定性
          信号（带上限）→ 再收拾 worker。 */
-      await session.host.stopCapture()
+      const captureResult = await session.host.stopCapture()
+      if (captureResult?.metrics) session.captureMetrics = captureResult.metrics
       await session.worker.waitForEnd()
     } finally {
+      this.captureDiagnostics(session)
       this.teardown(session)
     }
+  }
+
+  captureDiagnostics (session) {
+    const workerStats = session.worker.lastStats || session.workerStats || null
+    this.lastRunDiagnostics = {
+      schemaVersion: 1,
+      sessionId: session.sessionId,
+      sourceIds: [...session.sourceIds],
+      capture: structuredCloneSafe(session.captureMetrics || {}),
+      worker: structuredCloneSafe(workerStats),
+      droppedCaptionCount: session.worker.droppedCaptionCount,
+      refinementEnabled: session.refineReady === true
+    }
+  }
+
+  getLastRunDiagnostics () {
+    return structuredCloneSafe(this.lastRunDiagnostics)
   }
 
   requireSession () {
@@ -262,6 +321,11 @@ class RealtimeRuntimeAdapter {
     this.captionHandler = null
     this.errorHandler = null
   }
+}
+
+function structuredCloneSafe (value) {
+  if (value === undefined || value === null) return value ?? null
+  return JSON.parse(JSON.stringify(value))
 }
 
 module.exports = { DEFAULT_PROFILE_MAP, RealtimeRuntimeAdapter }

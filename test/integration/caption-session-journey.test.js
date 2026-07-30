@@ -74,6 +74,15 @@ function simulatedElectronRuntime () {
           if (message?.type === 'configure') {
             child.configuration = message
             setImmediate(() => child.emit('message', { type: 'configured' }))
+          } else if (message?.type === 'pause') {
+            setImmediate(() => child.emit('message', { type: 'paused' }))
+          } else if (message?.type === 'resume') {
+            setImmediate(() => child.emit('message', { type: 'resumed' }))
+          } else if (message?.type === 'report') {
+            setImmediate(() => child.emit('message', {
+              type: 'stats',
+              stats: { endReceived: false, badSampleTypeFrames: 0, sources: {} }
+            }))
           }
         }
         child.kill = () => { child.killed = true }
@@ -369,4 +378,91 @@ test('CI journey J4/J12: source switch requires stop, creates a new isolated tex
     ].sort()
   )
   assert.deepEqual(audioFilesUnder(directory), [], '配置切换和两次持久化后仍不得出现音频文件')
+})
+
+test('CI journey J5/J6/J12: pause-refine and worker recovery preserve one durable session', async (t) => {
+  const directory = tempDirectory(t, 'pause-fault-recovery')
+  const runtimeBoundary = simulatedElectronRuntime()
+  const adapters = []
+  const coordinator = new SessionCoordinator({
+    adapterFactory: () => {
+      const adapter = new RealtimeRuntimeAdapter({ electron: runtimeBoundary.electron })
+      adapters.push(adapter)
+      return adapter
+    },
+    runtimeOptions: DEV_RUNTIME,
+    configuration: { onboardingCompleted: true, onboardingPreset: 'meeting', mic: false, loopback: true },
+    idFactory: () => 'ci-pause-fault-session'
+  })
+  const transcriptStore = new TranscriptStore({ directory })
+  const recorder = new SessionTranscriptRecorder({ coordinator, store: transcriptStore })
+  t.after(async () => {
+    recorder.dispose()
+    transcriptStore.dispose()
+    await coordinator.dispose()
+  })
+
+  assert.equal((await coordinator.command('start')).ok, true)
+  const sessionId = coordinator.getSnapshot().sessionId
+  const firstChild = runtimeBoundary.children[0]
+  firstChild.emit('message', { type: 'caption', event: caption(sessionId, 'loopback', {
+    segmentId: 'segment-before-pause',
+    sequence: 1,
+    revision: 1,
+    kind: 'final',
+    text: '暂停前的一遍定稿'
+  }) })
+
+  assert.equal((await coordinator.command('pause')).ok, true)
+  assert.equal(coordinator.getSnapshot().phase, 'paused')
+  assert.equal(coordinator.getSnapshot().sessionId, sessionId, 'pause must retain the session')
+  assert.equal((await coordinator.command('resume')).ok, true)
+  firstChild.emit('message', { type: 'caption', event: caption(sessionId, 'loopback', {
+    segmentId: 'segment-before-pause',
+    sequence: 2,
+    revision: 2,
+    kind: 'refined',
+    text: '暂停前的一遍定稿。'
+  }) })
+
+  firstChild.emit('exit', 13)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(coordinator.getSnapshot().phase, 'error')
+  assert.equal(coordinator.getSnapshot().lastError.code, 'REALTIME_WORKER_EXITED')
+  assert.equal(coordinator.getSnapshot().sessionId, sessionId, 'worker fault must retain the session')
+  assert.deepEqual(runtimeBoundary.captureStops, [sessionId], 'fault must stop hidden capture without waiting for retry')
+
+  assert.equal((await coordinator.command('retry')).ok, true)
+  assert.equal(coordinator.getSnapshot().phase, 'listening')
+  assert.equal(coordinator.getSnapshot().sessionId, sessionId, 'retry must not create a second session')
+  const replacementChild = runtimeBoundary.children[1]
+  assert.equal(replacementChild.configuration.attempt, 0, 'same adapter retry keeps its epoch and resumes by sequence cursor')
+  assert.deepEqual(replacementChild.configuration.sequenceBases, { loopback: 2 })
+  replacementChild.emit('message', { type: 'caption', event: caption(sessionId, 'loopback', {
+    segmentId: 'segment-after-recovery',
+    sequence: 3,
+    revision: 1,
+    kind: 'final',
+    text: '恢复后的字幕继续保存。'
+  }) })
+
+  assert.equal((await coordinator.command('stop')).ok, true)
+  assert.equal(adapters.length, 1, 'recoverable worker faults reuse the adapter while replacing its worker/host session')
+  assert.equal(runtimeBoundary.children.length, 2, 'fault recovery must fork a fresh realtime worker')
+  assert.equal(runtimeBoundary.captureStops.length, 2, 'final stop closes only the replacement capture')
+  assert.deepEqual(adapters[0].getLastRunDiagnostics().sourceIds, ['loopback'])
+
+  const files = fs.readdirSync(directory).filter((name) => name.endsWith('.jsonl'))
+  assert.equal(files.length, 1, 'pause/retry must not split one session into multiple archives')
+  const report = readSessionFile(path.join(directory, files[0]))
+  assert.equal(report.corruptLineCount, 0)
+  assert.equal(report.truncatedTail, false)
+  const segments = foldSegments(report.events)
+  assert.deepEqual(segments.map((segment) => [segment.segmentId, segment.text]), [
+    ['segment-before-pause', '暂停前的一遍定稿。'],
+    ['segment-after-recovery', '恢复后的字幕继续保存。']
+  ])
+  assert.equal(report.events.filter((event) => event.event === 'session.open').length, 1)
+  assert.equal(report.events.filter((event) => event.event === 'session.close').length, 1)
+  assert.deepEqual(audioFilesUnder(directory), [], 'pause/recovery diagnostics and history must remain text-only')
 })

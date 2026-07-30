@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 2,
+  "kind": "i2-live-caption-smoke",
+  "executedAt": "2026-07-30T18:30:58.793Z",
+  "environment": {
+    "electron": "43.2.0",
+    "node": "24.18.0"
+  },
+  "sourceId": "loopback",
+  "result": "pass",
+  "model": {
+    "id": "x-asr-160ms",
+    "profile": "fast",
+    "numThreads": 4
+  },
+  "vad": "silero",
+  "refinement": "x-asr-offline",
+  "stimulus": {
+    "kind": "controlled-playback",
+    "corpusId": "zh-en-code-switch",
+    "durationSeconds": 8.56,
+    "outputSampleRate": 48000
+  },
+  "failures": [],
+  "phases": [
+    "starting",
+    "listening",
+    "stopping",
+    "idle"
+  ],
+  "counts": {
+    "captions": 21,
+    "partials": 19,
+    "finals": 1,
+    "refined": 1
+  },
+  "accuracy": {
+    "finalCer": 0,
+    "refinedCer": 0,
+    "refinedHasPunctuation": true
+  },
+  "timings": {
+    "firstPartialFromStimulusStartMs": 1460,
+    "firstFinalFromStimulusStartMs": 9604,
+    "firstRefinedFromStimulusStartMs": 9847,
+    "firstFinalAfterStimulusEndMs": 699,
+    "captionArrivalCount": 21
+  },
+  "resources": {
+    "sampleCount": 76,
+    "cpuPercent": {
+      "p50": 19.488,
+      "p95": 41.624,
+      "max": 42.625
+    },
+    "workingSetMiB": {
+      "p50": 1149.578,
+      "p95": 1160.488,
+      "max": 1160.637
+    },
+    "maxProcessCount": 8
+  },
+  "signal": {
+    "peakRms": 0.322759
+  },
+  "transport": {
+    "capturedFrames": 126,
+    "sentFrames": 126,
+    "ingestedFrames": 126,
+    "droppedFrames": 0,
+    "creditStalls": 0,
+    "maxQueuedMsObserved": 0,
+    "acknowledgedFrames": 120,
+    "lostInFlightFrames": 0,
+    "portReplacements": 0,
+    "queuedFramesAtStop": 0,
+    "queuedMsAtStop": 0,
+    "discardedAtStop": 0,
+    "sequenceGapCount": 0,
+    "missedFrames": 0,
+    "badSampleTypeFrames": 0,
+    "droppedCaptionCount": 0
+  },
+  "privacy": {
+    "capturedAudioPersisted": false,
+    "reportContainsTranscriptText": false,
+    "reportContainsAudioPath": false
+  },
+  "limitations": [
+    "This is one real loopback run, not a latency percentile study.",
+    "Physical microphone evidence remains pending and must be produced by a separate --source mic run."
+  ]
+}

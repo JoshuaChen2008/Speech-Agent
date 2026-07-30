@@ -19,7 +19,7 @@
 | B2 audio host、PCM 直通/背压、realtime worker、**真实 160ms 模型 + silero VAD** | |
 | B3 **二遍精修 refine worker**（final→refined 自动变准补标点）+ JSONL 过渡会话档 | B3.3 SQLite 权威存储、旧 JSONL 迁移与历史 UI |
 
-**Gate 0B 已于 2026-07-27 正式改判通过**（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修，门槛重设留档于 `docs/validation/gate-0b.md` 改判节），**两遍链路已全部接通**：真实 160ms 模型 + silero VAD + 离线精修 worker（实机 smoke `scripts/i2-live-caption-smoke.js`：语料外放 → 回环 → 一遍定稿 CER 0 → refined 自动替换、标点齐全、CER 0）。`loopback`/`mic` 已在 UI、配置、Coordinator、runtime 与 worker 形成 XOR 门禁，并由 J4 验证停止换源和新会话隔离。当前主线继续收口 I2 指标/故障门禁、B3.3 SQLite 与历史查看、ModelManager 和干净 Win11 分发。Agent 系统在字幕闭环后启动，向量检索后置。
+**Gate 0B 已于 2026-07-27 正式改判通过**（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修，门槛重设留档于 `docs/validation/gate-0b.md` 改判节），**两遍链路已全部接通**：真实 160ms 模型 + silero VAD + 离线精修 worker。2026-07-31 的 I2 schema v2 loopback 实机报告再次得到 final/refined CER 0，并记录 captured/sent/ingested 帧数一致且零丢失/零缺口、CPU/工作集和字幕到达时序；runner 已支持 `loopback`/`mic` 分开执行，物理 mic 证据仍待补。来源 XOR 由 J4 验证；J5/J6 已增加暂停/精修/worker 故障后同会话继续文本持久化的确定性联合旅程。当前主线继续收口 I2 实机门禁、B3.3 SQLite 与历史查看、ModelManager 和干净 Win11 分发。Agent 系统在字幕闭环后启动，向量检索后置。
 
 ### 0.1 两套产品系统的边界
 
@@ -479,7 +479,7 @@ node scripts/gate-0b/evaluate-transcripts.js `
 |---|---|---|
 | **CI0 联合测试基线（进行中）** | 用户旅程跨越真实产品模块，而非只验证单个函数/类 | Windows workflow 已落地；J1/J2 当前覆盖 coordinator → caption reload → JSONL 过渡存储 → 导出一致性。B3.3 必须切到 SQLite 并补真实历史查询/展示边界与 J10；J11 后置。后续功能必须登记场景；只有单测时最多标记“实现完成 / 尚未验收” |
 | **I1 Contract（完成）** | UI fake adapter ↔ 后端 contract fixtures | coordinator、fake adapter、renderer reducer 和 IPC 共享 v1 validator；默认/dev smoke 均通过 |
-| **I2 Live Caption** | 单路音频 → realtime ASR → SessionCoordinator → 字幕 UI | P50/P95 延迟、CPU、内存、队列深度达标，并完成 J4/J5/J6 联合场景。**I2.1 结构接线已完成（2026-07-27）**：`RealtimeRuntimeAdapter` 实现 B1 冻结接口组合 host/worker/port，coordinator 新增 adapter `onError` 故障入口（§12.4 关闭）；实机 smoke 全相位通过（含 worker 击杀→error→retry→listening 恢复），null recognizer 零字幕。**I2.2 真字幕已通（2026-07-27）**：模型批准 + sherpa adapter 接线后，`i2-live-caption-smoke.js` 实机 PASS——受控语料外放 → loopback → 真实 160ms 模型 → 6 partial + 4 final 达 coordinator 订阅者，拼接 CER 0.071，全相位干净。**J4/XOR 已完成（2026-07-30）**。完整 I2 PASS 仍需 mic 单路 smoke、P50/P95 延迟、CPU/内存、队列深度、拖动不掉帧及联合故障路径的指标化验收 |
+| **I2 Live Caption** | 单路音频 → realtime ASR → SessionCoordinator → 字幕 UI | P50/P95 延迟、CPU、内存、队列深度达标，并完成 J4/J5/J6 联合场景。**I2.1 结构接线已完成（2026-07-27）**：`RealtimeRuntimeAdapter` 实现 B1 冻结接口组合 host/worker/port，coordinator 新增 adapter `onError` 故障入口；实机结构 smoke 覆盖 worker 击杀→error→retry→pause/resume→stop。**I2.2 真字幕已通**：2026-07-31 schema v2 loopback 实机 PASS——真实 160ms 模型 + silero + 离线精修得到 final/refined CER 0；captured/sent/ingested 帧数一致，零丢帧、零 sequence gap、零坏类型，并记录 CPU/工作集与字幕到达时序（`docs/validation/i2-loopback-results.json`）。runner 支持 `--source loopback|mic` 分开执行。**J4/XOR 与 J5/J6 确定性故障旅程已覆盖**。完整 I2 实机验收仍需物理 mic 报告、重复运行形成延迟 P50/P95 门槛、拖动不掉帧、设备变化/睡眠唤醒验证 |
 | **I3 Durable Subtitle Session** | final/refined → SQLite 事件/投影 → 带时间戳历史/导出 | 连续 2 小时不卡；崩溃恢复不丢已一遍定稿的段落；JSONL 迁移通过 J10 |
 | **I4 Packaged Subtitle MVP** | 首启、下载、权限、ASR、持久化、历史与退出清理 | 在干净 Win11 机器完成字幕系统完整用户旅程，断网且无 Agent 时仍成立 |
 | **I5 Agent System（后置）** | committed transcript → TranscriptContextPlugin → Pi Loop → 增强/纪要插件 → 独立产物 → 历史展示 | J3–J7/J13 通过；Agent 失败、取消和恢复不影响 I2–I4 |

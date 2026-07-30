@@ -84,15 +84,15 @@ f6eaa6d  chore: establish project baseline
 | 工作项 | 状态 | 结论 |
 |---|---|---|
 | Gate 0A 契约 | 完成 / PASS | 四类 v1 契约、validators、fixtures 已冻结 |
-| Gate 0B 模型 | 实测完成 / **FAIL** | 没有批准 realtime profile，也没有批准精修模型 |
+| Gate 0B 模型 | 改判通过 / PASS | 已批准 `x-asr-160ms` fast profile 与离线 X-ASR 精修；原失败门槛和改判理由均保留审计 |
 | Gate 0C 音频拓扑 | 完成 / PASS | 批准当前开发机上的 hidden audio host 拓扑 |
 | Gate 0D 产品入口 | 完成 | 首启双预设；选择前两路音频均关闭 |
 | 视觉 V1–V2 | 完成 | token、状态矩阵、稳定字幕 DOM、caption reducer、工具条和预览页 |
 | B1 应用骨架 | 已提交 / 恢复缺口已关闭 | ConfigStore、SessionCoordinator、fake adapter、per-window preload、IPC 已接线；caption bootstrap 与 replacement cursor 已由 B2.0 关闭 |
-| I1 Contract | 现有路径已接通 | UI/fake adapter/coordinator/IPC 共用 v1 契约；renderer reload 的 caption state 尚未形成完整闭环 |
-| B2 实时链路 | 未实现 | Gate 0C spike 尚未产品化；没有 audio host/ASR utility process |
-| B3 精修/会话 | B3.1 已落地 | JSONL 事件档 + 坏尾行恢复 + 折叠 + txt/md/srt 导出已接线（`src/main/services/transcript-store.js`）；refine worker 与历史 UI 未实现 |
-| B4 资源/AI | 未实现 | 没有 ModelManager、CredentialStore、AiGateway |
+| I1 Contract | 验收完成 | UI/adapter/coordinator/IPC 共用 v1 契约；renderer reload 的 caption state 已形成订阅/水合/重放闭环 |
+| B2 实时链路 | 实现完成 / 部分实机验收 | hidden audio host、PCM 直通、realtime worker、silero VAD 与真实 ASR 已产品化；loopback schema v2 实机通过，物理 mic 与完整性能门槛待补 |
+| B3 精修/会话 | B3.1/B3.2 已落地 | JSONL 过渡事件档、恢复/折叠/导出与独立离线精修 worker 已接线；B3.3 SQLite 与历史 UI 未实现 |
+| B4 资源 | 未实现 | 没有 ModelManager、下载/校验/原子安装或模型管理 UI；Agent 资源不属于本轮 MVP |
 | B5 分发 | 未实现 | 没有 electron-builder/NSIS/干净机验收 |
 
 ## 5. Gate 0A：冻结的 v1 契约

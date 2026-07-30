@@ -6,7 +6,7 @@
    链路：SessionCoordinator（真实状态机）→ RealtimeRuntimeAdapter →
    AudioHostController（loopback 采集）+ MessageChannelMain + realtime worker
    （null recognizer）。
-   验证（Gate 0B 未过，全程零字幕、不伪造）：
+   验证（显式 null recognizer 结构模式，全程零字幕、不伪造）：
    - start → listening（真实采集/worker 就绪）
    - 击杀 worker → coordinator error（REALTIME_WORKER_EXITED，可重试）
    - retry → 重新 listening（fresh worker + host）
