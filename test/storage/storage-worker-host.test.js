@@ -10,7 +10,8 @@ const {
   OPERATIONS,
   PROTOCOL_VERSION,
   SAFE_ERROR_MESSAGES,
-  StorageError
+  StorageError,
+  makeLegacyImportKey
 } = require('../../src/runtime/storage-worker/protocol')
 const {
   StorageTransportError,
@@ -264,4 +265,29 @@ test('concurrent shutdown calls share one drain and one shutdown request', async
   assert.equal(host.state, 'closed')
   assert.equal(host.child, null)
   assert.strictEqual(host.shutdown(), first)
+})
+
+test('legacy JSONL import is forwarded with a source-SHA idempotency key', async () => {
+  const { child, host } = await startReady()
+  const sourceSha256 = 'b'.repeat(64)
+  const payload = {
+    sourceSha256,
+    sourceName: 'legacy.jsonl',
+    importedAt: 1000,
+    sourceRecordCount: 3,
+    captionEventCount: 1,
+    translatedEventCount: 0,
+    corruptLineCount: 0,
+    truncatedTail: false,
+    session: null,
+    captions: []
+  }
+  const pending = host.importLegacyJsonl(payload)
+  await nextTurn()
+  const request = requestFor(child, OPERATIONS.IMPORT_LEGACY_JSONL)
+  assert.deepEqual(request.payload, payload)
+  assert.equal(request.idempotencyKey, makeLegacyImportKey(sourceSha256))
+  child.emit('message', successResponse(request, { status: 'skipped' }))
+  assert.deepEqual(await pending, { status: 'skipped' })
+  await terminateQuietly(host)
 })

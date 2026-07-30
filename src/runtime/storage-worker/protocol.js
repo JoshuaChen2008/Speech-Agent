@@ -11,6 +11,7 @@ const OPERATIONS = Object.freeze({
   OPEN_SESSION: 'session:open',
   APPEND_CAPTION: 'caption:append',
   CLOSE_SESSION: 'session:close',
+  IMPORT_LEGACY_JSONL: 'legacy:import-jsonl',
   GET_SESSION: 'history:get-session',
   GET_STATS: 'storage:get-stats',
   SHUTDOWN: 'storage:shutdown'
@@ -34,8 +35,22 @@ const SAFE_ERROR_MESSAGES = Object.freeze({
   UNSUPPORTED_CAPTION_KIND: 'Only final and refined captions can be persisted.',
   EVENT_IDENTITY_CONFLICT: 'Caption identity conflicts with persisted data.',
   MISSING_BASE_SEGMENT: 'A refined caption cannot create a segment.',
+  INVALID_LEGACY_IMPORT: 'Legacy transcript import data is invalid.',
   STORAGE_COMMAND_FAILED: 'Storage command failed.'
 })
+
+const LEGACY_IMPORT_KEYS = Object.freeze([
+  'sourceSha256',
+  'sourceName',
+  'importedAt',
+  'sourceRecordCount',
+  'captionEventCount',
+  'translatedEventCount',
+  'corruptLineCount',
+  'truncatedTail',
+  'session',
+  'captions'
+])
 
 class StorageError extends Error {
   constructor (code) {
@@ -89,6 +104,10 @@ function makeCloseSessionKey (sessionId) {
   return `close-v1-${digestParts([sessionId])}`
 }
 
+function makeLegacyImportKey (sourceSha256) {
+  return `legacy-v1-${digestParts([sourceSha256])}`
+}
+
 function assertIdempotencyKey (actual, expected) {
   if (actual !== expected) throw new StorageError('IDEMPOTENCY_KEY_MISMATCH')
 }
@@ -100,6 +119,7 @@ function publicError (error) {
 
 module.exports = {
   OPERATIONS,
+  LEGACY_IMPORT_KEYS,
   PROTOCOL_VERSION,
   SAFE_ERROR_MESSAGES,
   StorageError,
@@ -109,6 +129,7 @@ module.exports = {
   isPlainObject,
   makeCaptionEventId,
   makeCloseSessionKey,
+  makeLegacyImportKey,
   makeOpenSessionKey,
   publicError
 }

@@ -130,7 +130,13 @@ class TranscriptStore {
  * 中间行损坏同样跳过计数——绝不因单行损坏丢弃整个文件。
  */
 function readSessionFile (filePath) {
-  const raw = fs.readFileSync(filePath, 'utf8')
+  return parseSessionText(fs.readFileSync(filePath, 'utf8'))
+}
+
+/* Parse a caller-owned immutable text snapshot. Migration uses this entry
+   point so the SHA-256 and parsed records come from the exact same bytes. */
+function parseSessionText (raw) {
+  if (typeof raw !== 'string') throw new TypeError('session text must be a string')
   /* 截断只可能发生在没有换行收尾的最后一行（partial write 是前缀；
      '\n' 是每条记录的最后一字节）。带换行的坏行是损坏，不是截断。 */
   const endsWithNewline = raw.endsWith('\n')
@@ -248,6 +254,7 @@ module.exports = {
   exportText,
   foldSegments,
   formatSrtTime,
+  parseSessionText,
   readSessionFile,
   windowsSafeTimestamp
 }

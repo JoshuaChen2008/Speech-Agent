@@ -11,6 +11,7 @@ const {
   PROTOCOL_VERSION,
   makeCaptionEventId,
   makeCloseSessionKey,
+  makeLegacyImportKey,
   makeOpenSessionKey
 } = require('../../src/runtime/storage-worker/protocol')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
@@ -45,6 +46,35 @@ function caption (overrides = {}) {
     t1: 1,
     text: '协议字幕。',
     translation: null,
+    ...overrides
+  }
+}
+
+function legacyImport (overrides = {}) {
+  const session = {
+    sessionId: 'legacy-session-1',
+    sourceId: 'loopback',
+    startedAt: 1000,
+    endedAt: 2000,
+    state: 'closed'
+  }
+  const event = caption({
+    sessionId: session.sessionId,
+    sourceId: session.sourceId,
+    segmentId: 'legacy-segment-1',
+    text: '旧档案正文。'
+  })
+  return {
+    sourceSha256: 'a'.repeat(64),
+    sourceName: 'legacy-session.jsonl',
+    importedAt: 3000,
+    sourceRecordCount: 4,
+    captionEventCount: 1,
+    translatedEventCount: 1,
+    corruptLineCount: 0,
+    truncatedTail: false,
+    session,
+    captions: [event],
     ...overrides
   }
 }
@@ -146,5 +176,72 @@ test('malformed, overprivileged and mismatched requests fail safely without pois
   assert.equal(rejectedTranslation.error.code, 'UNSUPPORTED_CAPTION_KIND')
   assert.ok(!JSON.stringify(rejectedTranslation).includes(sentinel))
   assert.equal(service.handle(request(OPERATIONS.GET_STATS)).result.captionEvents, 0)
+  service.handle(request(OPERATIONS.SHUTDOWN))
+})
+
+test('legacy import RPC is narrow, idempotent and cannot accept translation, audio, SQL or source paths', (t) => {
+  const service = new StorageWorkerService()
+  const databasePath = tempDatabase(t)
+  const sentinel = 'SECRET_TRANSCRIPT_AND_C:\\private\\speech-agent.sqlite3'
+  assert.equal(service.handle(request(OPERATIONS.INITIALIZE, { databasePath })).ok, true)
+
+  const valid = legacyImport()
+  const imported = service.handle(request(OPERATIONS.IMPORT_LEGACY_JSONL, valid, {
+    idempotencyKey: makeLegacyImportKey(valid.sourceSha256)
+  }))
+  assert.equal(imported.ok, true)
+  assert.equal(imported.result.status, 'imported')
+  assert.equal(imported.result.captionEventCount, 1)
+  const replay = service.handle(request(OPERATIONS.IMPORT_LEGACY_JSONL, {
+    ...valid,
+    importedAt: 4000
+  }, {
+    idempotencyKey: makeLegacyImportKey(valid.sourceSha256),
+    requestId: 'legacy-replay'
+  }))
+  assert.equal(replay.result.status, 'already_processed')
+  assert.equal(
+    Number(service.store.database.prepare('SELECT event_count FROM legacy_imports').get().event_count),
+    1,
+    'legacy_imports.event_count is the imported final/refined fact count, not all JSONL records'
+  )
+  assert.deepEqual(service.handle(request(OPERATIONS.GET_STATS)).result, {
+    sessions: 1,
+    activeSessions: 0,
+    captionEvents: 1,
+    segments: 1,
+    legacyImports: 1,
+    journalMode: 'wal',
+    integrity: 'ok'
+  })
+
+  for (const invalid of [
+    legacyImport({ sourceSha256: 'b'.repeat(64), audioPath: sentinel }),
+    legacyImport({ sourceSha256: 'c'.repeat(64), sql: `DROP TABLE ${sentinel}` }),
+    legacyImport({ sourceSha256: 'd'.repeat(64), sourceName: sentinel }),
+    legacyImport({
+      sourceSha256: 'e'.repeat(64),
+      captions: [caption({
+        sessionId: 'legacy-session-1',
+        sourceId: 'loopback',
+        kind: 'translated',
+        revision: 2,
+        translation: { language: 'en', text: sentinel, basedOnRevision: 1 }
+      })]
+    }),
+    legacyImport({
+      sourceSha256: 'f'.repeat(64),
+      captions: [caption({
+        sessionId: 'legacy-session-1', sourceId: 'loopback', audioPath: sentinel
+      })]
+    })
+  ]) {
+    const response = service.handle(request(OPERATIONS.IMPORT_LEGACY_JSONL, invalid, {
+      idempotencyKey: makeLegacyImportKey(invalid.sourceSha256)
+    }))
+    assert.equal(response.ok, false)
+    assert.ok(!JSON.stringify(response).includes(sentinel))
+  }
+  assert.equal(service.handle(request(OPERATIONS.GET_STATS)).result.captionEvents, 1)
   service.handle(request(OPERATIONS.SHUTDOWN))
 })

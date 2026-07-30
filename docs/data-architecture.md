@@ -82,7 +82,7 @@ SQLite 驱动放在 storage worker 内的适配器后。当前候选为 Electron
 | `segments_fts`（可选） | **可重建索引** | `rowid -> segments.id, text` | 只有历史关键字搜索进入范围时才创建；不阻断 SQLite 历史。 |
 | `segment_embedding_state`（Deferred） | 派生版本元数据 | `segment_id, text_revision, model_id, dimensions, content_hash, indexed_at` | X1 前不创建。启用后只有 revision、模型和内容哈希都匹配当前正文时才可检索。 |
 | `segment_vectors`（Deferred） | **可重建索引** | `rowid -> segment_id, embedding` | X1 前不创建；启用后不得混放不同维度。 |
-| `legacy_imports` | 迁移审计 | `source_path, source_sha256, imported_at, event_count, segment_count, result` | 保证同一 JSONL 不重复导入，并可核对迁移结果。 |
+| `legacy_imports` | 迁移审计 | `source_path, source_sha256, imported_at, event_count, segment_count, result` | 保证同一 JSONL 不重复导入，并可核对迁移结果；其中 `event_count` 只记实际导入的 `final/refined` 字幕事实，源文件总记录数、translated/partial 与损坏行计数只出现在结构化迁移报告。 |
 
 `event_order` 是数据库提交顺序，不取代 `sequence/revision` 的有效性判断；统一时间线展示仍按会话时间、来源与稳定的 tie-break 规则生成。
 
@@ -173,3 +173,11 @@ B3.1 JSONL 是当前已实现基线；B3.3 迁移通过前，不得把 SQLite �
 - Gateway 组合已验证：`starting` 先等 open ACK 才启动采集，final/refined 先进入持久化 FIFO 再广播 UI，close ACK 前保持 `stopping`；worker 空闲退出、提交前退出及 COMMIT 后 ACK 丢失均在旧 generation 完全退出后以同一载荷恢复，事实/投影不重复；pause/resume 保持同一会话，loopback/mic 顺序会话不串源，translated 不进入字幕事实。
 - DB6 局部已验证：schema 无 BLOB/音频列，RPC 拒绝 `audioPath/samples/sql` 等额外字段且错误不回显正文/路径；Gateway 正常/故障组合的隔离 userData 无 JSONL 双写和音频产物。完整 DB6 仍需默认产品切换后的迁移、导出、`before-quit`、应用目录与 I4 检查。
 - 尚未表示：SQLite 已成为默认产品权威、JSONL 已迁移、历史 UI 或产品 `before-quit` 已完成，或打包态已通过。
+
+### 7.3 当前 DB2 实现证据
+
+- 实现/范围报告：[`validation/db2-jsonl-migration.md`](validation/db2-jsonl-migration.md)
+- 确定性 J10 联合 CI 使用生产 `JsonlSqliteMigrator、StorageGateway、WorkerService、SqliteSubtitleStore` 和真实临时文件 SQLite；只替代 Electron utility-process 进程边界。
+- 已覆盖：逐文件原子事务；第二文件中断时不影响已提交第一文件、本文件无半导入；恢复后以同一队首和 SHA-256 幂等记录重放；SHA 与解析共用一份不可变字节快照；原文投影、txt/md/srt digest 一致；不可无损表达的亚毫秒时间 fail closed；缺失 close 记为 interrupted；坏中间行、截断尾、partial 与 translated 只计入无路径报告。
+- 迁移 RPC 只接受已解析的 `final/refined` 白名单载荷与文件名/SHA，拒绝 SQL、绝对路径、音频字段和 translated 字幕事实；原 JSONL 不改写。
+- 状态是「实现完成/尚未验收」：真实 Electron utility process 还未执行 import 操作，`main.js` 也未在冷启动调用迁移；因此不得声称 DB2/J10 产品门禁已通过或 SQLite 已切换权威。

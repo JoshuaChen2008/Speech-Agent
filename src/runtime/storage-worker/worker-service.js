@@ -6,6 +6,7 @@ const { runDatabaseQualification } = require('./qualification')
 const { SqliteSubtitleStore } = require('./subtitle-store')
 const {
   OPERATIONS,
+  LEGACY_IMPORT_KEYS,
   PROTOCOL_VERSION,
   StorageError,
   assertExactKeys,
@@ -13,6 +14,7 @@ const {
   assertRequestEnvelope,
   makeCaptionEventId,
   makeCloseSessionKey,
+  makeLegacyImportKey,
   makeOpenSessionKey,
   publicError
 } = require('./protocol')
@@ -57,6 +59,11 @@ class StorageWorkerService {
       assertExactKeys(payload, ['sessionId', 'sourceId', 'endedAt', 'state'])
       assertIdempotencyKey(idempotencyKey, makeCloseSessionKey(payload.sessionId))
       return this.requireStore().closeSession(payload)
+    }
+    if (operation === OPERATIONS.IMPORT_LEGACY_JSONL) {
+      assertExactKeys(payload, LEGACY_IMPORT_KEYS)
+      assertIdempotencyKey(idempotencyKey, makeLegacyImportKey(payload.sourceSha256))
+      return this.requireStore().importLegacyJsonl(payload)
     }
     if (operation === OPERATIONS.GET_SESSION) {
       assertExactKeys(payload, ['sessionId'])

@@ -7,7 +7,12 @@
 
 const { assertCaptionEvent } = require('../../contracts')
 const { openSubtitleDatabase, rollbackQuietly, scalar } = require('./sqlite-store')
-const { StorageError, assertExactKeys, makeCaptionEventId } = require('./protocol')
+const {
+  LEGACY_IMPORT_KEYS,
+  StorageError,
+  assertExactKeys,
+  makeCaptionEventId
+} = require('./protocol')
 
 const MODE_BY_SOURCE = Object.freeze({ loopback: 'meeting', mic: 'dictation' })
 const PERSISTED_CAPTION_KINDS = Object.freeze(['final', 'refined'])
@@ -25,6 +30,8 @@ const CAPTION_EVENT_KEYS = Object.freeze([
   'translation'
 ])
 
+const LEGACY_SESSION_KEYS = Object.freeze(['sessionId', 'sourceId', 'startedAt', 'endedAt', 'state'])
+
 function integerTimestamp (value, code = 'INVALID_SESSION') {
   if (!Number.isSafeInteger(value) || value < 0) throw new StorageError(code)
   return value
@@ -40,6 +47,73 @@ function sessionIdValue (value) {
 function sourceValue (value, code = 'INVALID_SESSION') {
   if (!Object.hasOwn(MODE_BY_SOURCE, value)) throw new StorageError(code)
   return value
+}
+
+function nonNegativeInteger (value, code = 'INVALID_LEGACY_IMPORT') {
+  if (!Number.isSafeInteger(value) || value < 0) throw new StorageError(code)
+  return value
+}
+
+function legacySourceName (value) {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 240 ||
+      value === '.' || value === '..' || /[\\/\0]/.test(value)) {
+    throw new StorageError('INVALID_LEGACY_IMPORT')
+  }
+  return value
+}
+
+function legacySession (value) {
+  if (value === null) return null
+  try {
+    assertExactKeys(value, LEGACY_SESSION_KEYS, 'INVALID_LEGACY_IMPORT')
+    const sessionId = sessionIdValue(value.sessionId)
+    const sourceId = sourceValue(value.sourceId, 'INVALID_LEGACY_IMPORT')
+    const startedAt = nonNegativeInteger(value.startedAt)
+    const endedAt = nonNegativeInteger(value.endedAt)
+    if (endedAt < startedAt || !['closed', 'interrupted'].includes(value.state)) {
+      throw new StorageError('INVALID_LEGACY_IMPORT')
+    }
+    return { sessionId, sourceId, startedAt, endedAt, state: value.state }
+  } catch (error) {
+    if (error instanceof StorageError && error.code === 'INVALID_LEGACY_IMPORT') throw error
+    throw new StorageError('INVALID_LEGACY_IMPORT')
+  }
+}
+
+function legacyImport (input) {
+  assertExactKeys(input, LEGACY_IMPORT_KEYS, 'INVALID_LEGACY_IMPORT')
+  if (typeof input.sourceSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(input.sourceSha256) ||
+      !Number.isSafeInteger(input.importedAt) || input.importedAt < 0 ||
+      !Number.isSafeInteger(input.sourceRecordCount) || input.sourceRecordCount < 0 ||
+      !Number.isSafeInteger(input.captionEventCount) || input.captionEventCount < 0 ||
+      !Number.isSafeInteger(input.translatedEventCount) || input.translatedEventCount < 0 ||
+      !Number.isSafeInteger(input.corruptLineCount) || input.corruptLineCount < 0 ||
+      typeof input.truncatedTail !== 'boolean' || !Array.isArray(input.captions)) {
+    throw new StorageError('INVALID_LEGACY_IMPORT')
+  }
+  const sourceName = legacySourceName(input.sourceName)
+  const session = legacySession(input.session)
+  const captions = input.captions.map((event) => persistedEvent(event))
+  if (input.translatedEventCount > input.sourceRecordCount ||
+      input.captionEventCount !== captions.length || captions.length > input.sourceRecordCount) {
+    throw new StorageError('INVALID_LEGACY_IMPORT')
+  }
+  if (!session && captions.length > 0) throw new StorageError('INVALID_LEGACY_IMPORT')
+  if (session && captions.some((event) => event.sessionId !== session.sessionId || event.sourceId !== session.sourceId)) {
+    throw new StorageError('INVALID_LEGACY_IMPORT')
+  }
+  return {
+    sourceSha256: input.sourceSha256,
+    sourceName,
+    importedAt: input.importedAt,
+    sourceRecordCount: input.sourceRecordCount,
+    captionEventCount: input.captionEventCount,
+    translatedEventCount: input.translatedEventCount,
+    corruptLineCount: input.corruptLineCount,
+    truncatedTail: input.truncatedTail,
+    session,
+    captions
+  }
 }
 
 function persistedEvent (event) {
@@ -256,6 +330,142 @@ class SqliteSubtitleStore {
     }
   }
 
+  /* 单个旧 JSONL 的所有副作用（session、事实、投影、导入审计）共用一个短
+     事务。source_sha256 是迁移幂等键；失败/中断时审计行也会回滚，重跑从头
+     开始，提交后重跑只返回 already_processed。 */
+  importLegacyJsonl (input) {
+    this.assertOpen()
+    const legacy = legacyImport(input)
+    const database = this.database
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const prior = database.prepare(`
+        SELECT source_path, event_count, segment_count, result
+        FROM legacy_imports WHERE source_sha256 = ?
+      `).get(legacy.sourceSha256)
+      if (prior) {
+        database.exec('COMMIT')
+        return {
+          status: 'already_processed',
+          sourceName: prior.source_path,
+          sourceSha256: legacy.sourceSha256,
+          captionEventCount: Number(prior.event_count),
+          segmentCount: Number(prior.segment_count),
+          result: prior.result
+        }
+      }
+
+      const active = database.prepare("SELECT session_id FROM sessions WHERE state = 'active' LIMIT 1").get()
+      if (active) throw new StorageError('ACTIVE_SESSION_EXISTS')
+
+      if (!legacy.session) {
+        database.prepare(`
+          INSERT INTO legacy_imports(
+            source_sha256, source_path, imported_at, event_count, segment_count, result
+          ) VALUES (?, ?, ?, ?, 0, 'skipped')
+        `).run(legacy.sourceSha256, legacy.sourceName, legacy.importedAt, legacy.captionEventCount)
+        database.exec('COMMIT')
+        return {
+          status: 'skipped',
+          sourceName: legacy.sourceName,
+          sourceSha256: legacy.sourceSha256,
+          captionEventCount: legacy.captionEventCount,
+          segmentCount: 0,
+          result: 'skipped'
+        }
+      }
+
+      const session = legacy.session
+      const existing = database.prepare('SELECT session_id FROM sessions WHERE session_id = ?').get(session.sessionId)
+      if (existing) throw new StorageError('SESSION_CONFLICT')
+      database.prepare(`
+        INSERT INTO sessions(session_id, mode, source_id, started_at, ended_at, state)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        session.sessionId, MODE_BY_SOURCE[session.sourceId], session.sourceId,
+        session.startedAt, session.endedAt, session.state
+      )
+      this.inject('legacyAfterSession')
+
+      const seenEventIds = new Set()
+      const seenSequences = new Set()
+      const seenRevisions = new Set()
+      for (const event of legacy.captions) {
+        const sequenceKey = `${event.sessionId}\u0000${event.sourceId}\u0000${event.sequence}`
+        const revisionKey = `${event.sessionId}\u0000${event.sourceId}\u0000${event.segmentId}\u0000${event.revision}`
+        if (seenEventIds.has(event.eventId) || seenSequences.has(sequenceKey) || seenRevisions.has(revisionKey)) {
+          throw new StorageError('EVENT_IDENTITY_CONFLICT')
+        }
+        seenEventIds.add(event.eventId)
+        seenSequences.add(sequenceKey)
+        seenRevisions.add(revisionKey)
+
+        const current = database.prepare(`
+          SELECT id, text_revision FROM segments
+          WHERE session_id = ? AND source_id = ? AND segment_id = ?
+        `).get(event.sessionId, event.sourceId, event.segmentId)
+        if (!current && event.kind === 'refined') throw new StorageError('MISSING_BASE_SEGMENT')
+
+        const inserted = database.prepare(`
+          INSERT INTO caption_events(
+            event_id, session_id, source_id, segment_id, sequence, revision,
+            kind, t0_ms, t1_ms, text, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          event.eventId, event.sessionId, event.sourceId, event.segmentId,
+          event.sequence, event.revision, event.kind, event.t0Ms, event.t1Ms,
+          event.text, legacy.importedAt
+        )
+        const eventOrder = Number(inserted.lastInsertRowid)
+        if (!current) {
+          database.prepare(`
+            INSERT INTO segments(
+              session_id, source_id, segment_id, text, text_revision,
+              t0_ms, t1_ms, first_event_order, updated_event_order
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            event.sessionId, event.sourceId, event.segmentId, event.text, event.revision,
+            event.t0Ms, event.t1Ms, eventOrder, eventOrder
+          )
+        } else if (event.revision > Number(current.text_revision)) {
+          database.prepare(`
+            UPDATE segments SET
+              text = ?, text_revision = ?, t0_ms = ?, t1_ms = ?, updated_event_order = ?
+            WHERE id = ?
+          `).run(event.text, event.revision, event.t0Ms, event.t1Ms, eventOrder, current.id)
+        }
+        this.inject('legacyAfterCaption')
+      }
+
+      const segmentCount = Number(database.prepare(
+        'SELECT COUNT(*) AS count FROM segments WHERE session_id = ?'
+      ).get(session.sessionId).count)
+      this.inject('legacyBeforeAudit')
+      database.prepare(`
+        INSERT INTO legacy_imports(
+          source_sha256, source_path, imported_at, event_count, segment_count, result
+        ) VALUES (?, ?, ?, ?, ?, 'imported')
+      `).run(
+        legacy.sourceSha256, legacy.sourceName, legacy.importedAt,
+        legacy.captionEventCount, segmentCount
+      )
+      database.exec('COMMIT')
+      return {
+        status: 'imported',
+        sourceName: legacy.sourceName,
+        sourceSha256: legacy.sourceSha256,
+        captionEventCount: legacy.captionEventCount,
+        translatedEventCount: legacy.translatedEventCount,
+        segmentCount,
+        state: session.state,
+        result: 'imported'
+      }
+    } catch (error) {
+      rollbackQuietly(database)
+      throw error
+    }
+  }
+
   getSessionTranscript (input) {
     this.assertOpen()
     if (!input || typeof input !== 'object' || Array.isArray(input) ||
@@ -320,9 +530,11 @@ class SqliteSubtitleStore {
 
 module.exports = {
   CAPTION_EVENT_KEYS,
+  LEGACY_SESSION_KEYS,
   MODE_BY_SOURCE,
   PERSISTED_CAPTION_KINDS,
   SqliteSubtitleStore,
+  legacyImport,
   persistedEvent,
   sameEvent
 }

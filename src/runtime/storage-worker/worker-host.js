@@ -17,6 +17,7 @@ const {
   isPlainObject,
   makeCaptionEventId,
   makeCloseSessionKey,
+  makeLegacyImportKey,
   makeOpenSessionKey
 } = require('./protocol')
 
@@ -326,6 +327,10 @@ class StorageWorkerHost {
 
   closeSession (input) {
     return this.enqueue(OPERATIONS.CLOSE_SESSION, input, makeCloseSessionKey(input?.sessionId))
+  }
+
+  importLegacyJsonl (input) {
+    return this.enqueue(OPERATIONS.IMPORT_LEGACY_JSONL, input, makeLegacyImportKey(input?.sourceSha256))
   }
 
   getSessionTranscript (sessionId) {

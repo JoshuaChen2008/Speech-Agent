@@ -39,7 +39,7 @@ Hosted CI 不声称验证真实 WASAPI/回环、物理麦克风、DWM 窗口行�
 | J7 | Agent 超时、限流、断网、凭据失效或 Loop 失败；本地字幕、权威存储和历史必须继续 | A1/A2 PR 阻断 | 未实现；不阻断字幕 MVP |
 | J8 | 两小时字幕会话、数千段和历史滚动；CPU/内存/队列/SQLite WAL 有界 | I3 soak / 字幕发布门禁 | 未覆盖 |
 | J9 | 打包版首启、模型下载、权限、真字幕、自动保存、历史查看和退出清理；全程不需要 Agent | I4 干净 Win11 | 未覆盖 |
-| J10 | 旧 JSONL → SQLite：中断后重跑不重复，`final/refined` 事件、原文当前投影及 txt/md/srt 原文导出 digest 一致，切换后不双写；遗留 `translated` 只读保留并报告，不导入字幕事实 | B3.3 PR 阻断 + 迁移 fixture | 原文/遗留译文边界已冻结；DB0 开发态资格通过，DB2/J10 未实现 |
+| J10 | 旧 JSONL → SQLite：中断后重跑不重复，`final/refined` 事件、原文当前投影及 txt/md/srt 原文导出 digest 一致，切换后不双写；遗留 `translated` 只读保留并报告，不导入字幕事实 | B3.3 PR 阻断 + 迁移 fixture | DB2 确定性联合旅程已用真实 `JsonlSqliteMigrator → StorageGateway → WorkerService → SqliteSubtitleStore → 文件 SQLite` 验证逐文件事务、第二文件故障后重跑、同一字节快照的 SHA/解析幂等、亚毫秒无损表达 fail-closed、坏中间行/截断尾报告、缺失 close 转 interrupted、四类原文 digest 一致及 translated-only 隔离。进程边界由 service-backed host 替身，真实 Electron utility 迁移、产品启动调用与切换后不双写仍待验收，完整 J10 未通过 |
 | J11 | final/refined → 可选 FTS/embedding：旧向量立即失效，重建结果一致；`sqlite-vec` 缺失时 history 继续 | X1 启用时才阻断对应 PR/打包验收 | Deferred；不阻断 B3.3、字幕 MVP 或 A2 |
 | J12 | 隐私负证据：正常停止、崩溃恢复、诊断 smoke、迁移和导出后，SQLite、应用数据目录、日志、测试产物与 Agent 上下文均不存在现场采集 PCM/WAV、录音片段或音频路径 | 字幕 MVP PR schema/文件检查 + I2 diagnostic + I4 打包版数据目录检查；测试只可读取来源明确的静态合成语料 | diagnostic 与 DB0/DB1 schema/RPC 已通过；Gateway 正常/三类 worker 故障的隔离 userData 无音频产物且无 JSONL 双写。默认切换、迁移/导出、退出与 I4 仍待补 |
 | J13 | 内容型插件权限：真实 PluginHost 装载字幕上下文/增强文本/纪要插件；只允许读已提交正文、调用 ModelGateway、写 `agent_artifacts`；外部操作请求被拒绝且不影响字幕 | A1/A2 PR 阻断；契约 provider 替身 + 真实 SQLite/宿主 | 宿主与插件未实现 |

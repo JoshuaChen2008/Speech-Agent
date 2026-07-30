@@ -20,7 +20,7 @@ const { StorageError } = require('../../runtime/storage-worker/protocol')
 
 const DEFAULT_MAX_RESTARTS = 2
 const DEFAULT_MAX_QUEUE = 4096
-const DURABLE_WRITE_OPERATIONS = new Set(['openSession', 'appendCaption', 'closeSession'])
+const DURABLE_WRITE_OPERATIONS = new Set(['openSession', 'appendCaption', 'closeSession', 'importLegacyJsonl'])
 const TRANSPORT_CODES = new Set([
   'NOT_INITIALIZED',
   'STORAGE_WORKER_EXITED',
@@ -259,6 +259,10 @@ class StorageGateway {
     return this.enqueue('closeSession', input)
   }
 
+  importLegacyJsonl (input) {
+    return this.enqueue('importLegacyJsonl', input)
+  }
+
   getSessionTranscript (sessionId) {
     return this.enqueue('getSessionTranscript', sessionId)
   }
@@ -272,6 +276,7 @@ class StorageGateway {
       case 'openSession': return host.openSession(item.payload)
       case 'appendCaption': return host.appendCaption(item.payload)
       case 'closeSession': return host.closeSession(item.payload)
+      case 'importLegacyJsonl': return host.importLegacyJsonl(item.payload)
       case 'getSessionTranscript': return host.getSessionTranscript(item.payload)
       case 'getStats': return host.getStats()
       default: throw new TypeError(`unsupported gateway operation: ${item.operation}`)
