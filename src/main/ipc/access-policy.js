@@ -15,7 +15,7 @@ const ROLE_ACCESS = Object.freeze({
   [CHANNELS.SETTINGS_CLOSE]: Object.freeze(['settings']),
   [CHANNELS.HISTORY_CLOSE]: Object.freeze(['history']),
   [CHANNELS.HISTORY_LIST]: Object.freeze(['history']),
-  [CHANNELS.HISTORY_GET]: Object.freeze(['history']),
+  [CHANNELS.HISTORY_PAGE]: Object.freeze(['history']),
   [CHANNELS.HISTORY_EXPORT]: Object.freeze(['history']),
   [CHANNELS.CONFIG_GET]: Object.freeze(['caption', 'toolbar', 'settings', 'history']),
   [CHANNELS.CONFIG_UPDATE]: Object.freeze(['settings']),

@@ -17,6 +17,7 @@ const EXPORT_FORMATS = Object.freeze({
   md: Object.freeze({ extension: 'md', name: 'Markdown', mimeType: 'text/markdown' }),
   srt: Object.freeze({ extension: 'srt', name: 'SubRip 字幕', mimeType: 'application/x-subrip' })
 })
+const MODE_BY_SOURCE = Object.freeze({ loopback: 'meeting', mic: 'dictation' })
 
 class HistoryError extends Error {
   constructor (code, message) {
@@ -30,7 +31,7 @@ function exactObject (value, keys, code = 'INVALID_HISTORY_REQUEST') {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
       Object.keys(value).some((key) => !keys.includes(key)) ||
       keys.some((key) => !Object.hasOwn(value, key))) {
-    throw new HistoryError(code, '历史记录请求无效')
+    throw new HistoryError(code, code === 'INVALID_HISTORY_DATA' ? '历史记录数据无效' : '历史记录请求无效')
   }
   return value
 }
@@ -40,6 +41,222 @@ function sessionIdValue (value) {
     throw new HistoryError('INVALID_SESSION', '会话标识无效')
   }
   return value
+}
+
+function safeInteger (value, options = {}) {
+  const min = options.min === undefined ? 0 : options.min
+  const max = options.max === undefined ? Number.MAX_SAFE_INTEGER : options.max
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw new HistoryError(options.code || 'INVALID_HISTORY_REQUEST', options.message || '历史记录请求无效')
+  }
+  return value
+}
+
+function listRequest (input) {
+  exactObject(input, ['limit', 'cursor'])
+  const request = {
+    limit: safeInteger(input.limit, { min: 1, max: 100 }),
+    cursor: null
+  }
+  if (input.cursor !== null) {
+    exactObject(input.cursor, ['startedAt', 'sessionId'])
+    request.cursor = {
+      startedAt: safeInteger(input.cursor.startedAt),
+      sessionId: sessionIdValue(input.cursor.sessionId)
+    }
+  }
+  return request
+}
+
+function listItem (value) {
+  exactObject(value, [
+    'sessionId', 'mode', 'sourceId', 'startedAt', 'endedAt', 'state', 'segmentCount'
+  ], 'INVALID_HISTORY_DATA')
+  if (typeof value.sessionId !== 'string' || value.sessionId.length < 1 || value.sessionId.length > 160 ||
+      !Object.hasOwn(MODE_BY_SOURCE, value.sourceId) || value.mode !== MODE_BY_SOURCE[value.sourceId] ||
+      !['closed', 'interrupted'].includes(value.state)) {
+    throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+  }
+  const startedAt = safeInteger(value.startedAt, {
+    code: 'INVALID_HISTORY_DATA', message: '历史记录数据无效'
+  })
+  const endedAt = safeInteger(value.endedAt, {
+    min: startedAt, code: 'INVALID_HISTORY_DATA', message: '历史记录数据无效'
+  })
+  const segmentCount = safeInteger(value.segmentCount, {
+    code: 'INVALID_HISTORY_DATA', message: '历史记录数据无效'
+  })
+  return {
+    sessionId: value.sessionId,
+    mode: value.mode,
+    sourceId: value.sourceId,
+    startedAt,
+    endedAt,
+    state: value.state,
+    segmentCount
+  }
+}
+
+function sessionIdBefore (left, right) {
+  return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8')) < 0
+}
+
+function listItemAfterCursor (item, cursor) {
+  return item.startedAt < cursor.startedAt ||
+    (item.startedAt === cursor.startedAt && sessionIdBefore(item.sessionId, cursor.sessionId))
+}
+
+function listResult (value, request) {
+  exactObject(value, ['items', 'nextCursor'], 'INVALID_HISTORY_DATA')
+  if (!Array.isArray(value.items) || value.items.length > request.limit) {
+    throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+  }
+  const items = value.items.map(listItem)
+  for (let index = 1; index < items.length; index += 1) {
+    if (!listItemAfterCursor(items[index], items[index - 1])) {
+      throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+    }
+  }
+  if (request.cursor && items.length > 0 && !listItemAfterCursor(items[0], request.cursor)) {
+    throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+  }
+
+  let nextCursor = null
+  if (value.nextCursor !== null) {
+    exactObject(value.nextCursor, ['startedAt', 'sessionId'], 'INVALID_HISTORY_DATA')
+    nextCursor = {
+      startedAt: safeInteger(value.nextCursor.startedAt, {
+        code: 'INVALID_HISTORY_DATA', message: '历史记录数据无效'
+      }),
+      sessionId: typeof value.nextCursor.sessionId === 'string'
+        ? value.nextCursor.sessionId
+        : ''
+    }
+    if (nextCursor.sessionId.length < 1 || nextCursor.sessionId.length > 160 ||
+        items.length !== request.limit || nextCursor.startedAt !== items.at(-1)?.startedAt ||
+        nextCursor.sessionId !== items.at(-1)?.sessionId) {
+      throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+    }
+  }
+  return { items, nextCursor }
+}
+
+function pageRequest (input) {
+  exactObject(input, ['sessionId', 'limit', 'cursor'])
+  const request = {
+    sessionId: sessionIdValue(input.sessionId),
+    limit: safeInteger(input.limit, { min: 1, max: 100 }),
+    cursor: null
+  }
+  if (input.cursor !== null) {
+    exactObject(input.cursor, ['t0Ms', 'firstEventOrder'])
+    request.cursor = {
+      t0Ms: safeInteger(input.cursor.t0Ms),
+      firstEventOrder: safeInteger(input.cursor.firstEventOrder, { min: 1 })
+    }
+  }
+  return request
+}
+
+function pageSession (value, expectedSessionId) {
+  exactObject(value, ['sessionId', 'mode', 'sourceId', 'startedAt', 'endedAt', 'state'], 'INVALID_HISTORY_DATA')
+  if (value.sessionId !== expectedSessionId ||
+      !Object.hasOwn(MODE_BY_SOURCE, value.sourceId) ||
+      value.mode !== MODE_BY_SOURCE[value.sourceId]) {
+    throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+  }
+  if (value.state === 'active') {
+    throw new HistoryError('SESSION_ACTIVE', '活动会话尚未进入历史记录')
+  }
+  if (!['closed', 'interrupted'].includes(value.state)) {
+    throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+  }
+  const startedAt = safeInteger(value.startedAt, {
+    code: 'INVALID_HISTORY_DATA', message: '历史记录数据无效'
+  })
+  const endedAt = safeInteger(value.endedAt, {
+    min: startedAt, code: 'INVALID_HISTORY_DATA', message: '历史记录数据无效'
+  })
+  return {
+    sessionId: value.sessionId,
+    mode: value.mode,
+    sourceId: value.sourceId,
+    startedAt,
+    endedAt,
+    state: value.state
+  }
+}
+
+function pageItem (value, sourceId) {
+  exactObject(value, ['segmentId', 'sourceId', 'text', 'textRevision', 't0Ms', 't1Ms'], 'INVALID_HISTORY_DATA')
+  if (typeof value.segmentId !== 'string' || value.segmentId.length < 1 || value.segmentId.length > 240 ||
+      value.sourceId !== sourceId || typeof value.text !== 'string' || value.text.length < 1) {
+    throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+  }
+  const textRevision = safeInteger(value.textRevision, {
+    min: 1, code: 'INVALID_HISTORY_DATA', message: '历史记录数据无效'
+  })
+  const t0Ms = safeInteger(value.t0Ms, {
+    code: 'INVALID_HISTORY_DATA', message: '历史记录数据无效'
+  })
+  const t1Ms = safeInteger(value.t1Ms, {
+    min: t0Ms, code: 'INVALID_HISTORY_DATA', message: '历史记录数据无效'
+  })
+  return {
+    segmentId: value.segmentId,
+    sourceId: value.sourceId,
+    text: value.text,
+    textRevision,
+    t0Ms,
+    t1Ms
+  }
+}
+
+function pageResult (value, request) {
+  exactObject(value, ['session', 'totalCount', 'items', 'nextCursor'], 'INVALID_HISTORY_DATA')
+  const session = pageSession(value.session, request.sessionId)
+  const totalCount = safeInteger(value.totalCount, {
+    code: 'INVALID_HISTORY_DATA', message: '历史记录数据无效'
+  })
+  if (!Array.isArray(value.items) || value.items.length > request.limit || totalCount < value.items.length) {
+    throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+  }
+  const items = value.items.map((item) => pageItem(item, session.sourceId))
+  for (let index = 1; index < items.length; index += 1) {
+    if (items[index].t0Ms < items[index - 1].t0Ms) {
+      throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+    }
+  }
+  if (request.cursor && items.length > 0 && items[0].t0Ms < request.cursor.t0Ms) {
+    throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+  }
+
+  let nextCursor = null
+  if (value.nextCursor !== null) {
+    exactObject(value.nextCursor, ['t0Ms', 'firstEventOrder'], 'INVALID_HISTORY_DATA')
+    nextCursor = {
+      t0Ms: safeInteger(value.nextCursor.t0Ms, {
+        code: 'INVALID_HISTORY_DATA', message: '历史记录数据无效'
+      }),
+      firstEventOrder: safeInteger(value.nextCursor.firstEventOrder, {
+        min: 1, code: 'INVALID_HISTORY_DATA', message: '历史记录数据无效'
+      })
+    }
+    if (items.length !== request.limit || nextCursor.t0Ms !== items.at(-1)?.t0Ms) {
+      throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+    }
+    if (totalCount <= items.length) {
+      throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+    }
+    if (request.cursor && (nextCursor.t0Ms < request.cursor.t0Ms ||
+        (nextCursor.t0Ms === request.cursor.t0Ms &&
+         nextCursor.firstEventOrder <= request.cursor.firstEventOrder))) {
+      throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+    }
+  } else if (request.cursor === null && totalCount !== items.length) {
+    throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+  }
+  return { session, totalCount, items, nextCursor }
 }
 
 function formatValue (value) {
@@ -105,7 +322,8 @@ function buildExport (transcript, format) {
 class HistoryService {
   constructor (options = {}) {
     if (!options.gateway || typeof options.gateway.listSessions !== 'function' ||
-        typeof options.gateway.getSessionTranscript !== 'function') {
+        typeof options.gateway.getSessionTranscript !== 'function' ||
+        typeof options.gateway.getSessionPage !== 'function') {
       throw new TypeError('history storage gateway is required')
     }
     if (typeof options.showSaveDialog !== 'function') {
@@ -120,13 +338,14 @@ class HistoryService {
   }
 
   listSessions (input) {
-    exactObject(input, ['limit', 'cursor'])
-    return this.gateway.listSessions(structuredClone(input))
+    const request = listRequest(input)
+    return Promise.resolve(this.gateway.listSessions(structuredClone(request)))
+      .then((value) => listResult(value, request))
   }
 
-  async getSession (sessionId) {
-    const transcript = await this.gateway.getSessionTranscript(sessionIdValue(sessionId))
-    return structuredClone(terminalTranscript(transcript))
+  async getSessionPage (input) {
+    const request = pageRequest(input)
+    return pageResult(await this.gateway.getSessionPage(structuredClone(request)), request)
   }
 
   async exportSession (input, ownerWindow = null) {

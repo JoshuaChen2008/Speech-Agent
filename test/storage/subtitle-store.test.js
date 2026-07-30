@@ -303,3 +303,91 @@ test('history listing fails closed for malformed pagination and over-privileged 
     assert.throws(() => store.listSessions(input), (error) => error.code === 'INVALID_SESSION')
   }
 })
+
+test('history detail pages 205 same-timestamp segments without gaps, duplicates or internal fields', (t) => {
+  const store = tempStore(t)
+  const sessionId = 'paged-history'
+  store.openSession({ sessionId, sourceId: 'loopback', startedAt: 1000 })
+  for (let index = 0; index < 205; index += 1) {
+    const t0 = Math.floor(index / 7)
+    store.appendCaption(caption({
+      sessionId,
+      segmentId: `segment-${String(index).padStart(3, '0')}`,
+      sequence: index + 1,
+      revision: 1,
+      t0,
+      t1: t0 + 0.5,
+      text: `字幕 ${index}`
+    }))
+  }
+  store.closeSession({ sessionId, sourceId: 'loopback', endedAt: 40000, state: 'closed' })
+
+  let cursor = null
+  let pageCount = 0
+  const collected = []
+  let firstPageLast = null
+  let secondPageFirst = null
+  do {
+    const page = store.getSessionPage({ sessionId, limit: 50, cursor })
+    pageCount += 1
+    assert.deepEqual(Object.keys(page).sort(), ['items', 'nextCursor', 'session', 'totalCount'])
+    assert.deepEqual(page.session, {
+      sessionId,
+      mode: 'meeting',
+      sourceId: 'loopback',
+      startedAt: 1000,
+      endedAt: 40000,
+      state: 'closed'
+    })
+    assert.equal(page.totalCount, 205)
+    for (const item of page.items) {
+      assert.deepEqual(Object.keys(item).sort(), [
+        'segmentId', 'sourceId', 't0Ms', 't1Ms', 'text', 'textRevision'
+      ])
+      assert.equal(Object.hasOwn(item, 'firstEventOrder'), false)
+      assert.equal(Object.hasOwn(item, 'updatedEventOrder'), false)
+    }
+    if (pageCount === 1) firstPageLast = page.items.at(-1)
+    if (pageCount === 2) secondPageFirst = page.items[0]
+    collected.push(...page.items)
+    cursor = page.nextCursor
+  } while (cursor !== null)
+
+  assert.equal(pageCount, 5)
+  assert.equal(firstPageLast.t0Ms, secondPageFirst.t0Ms,
+    'the keyset must cross a page boundary inside one timestamp group')
+  assert.equal(collected.length, 205)
+  assert.equal(new Set(collected.map((item) => item.segmentId)).size, 205)
+  assert.deepEqual(collected.map((item) => item.segmentId),
+    Array.from({ length: 205 }, (_, index) => `segment-${String(index).padStart(3, '0')}`))
+})
+
+test('history detail pages reject active sessions, malformed cursors and over-privileged fields', (t) => {
+  const store = tempStore(t)
+  store.openSession({ sessionId: 'active-history', sourceId: 'mic', startedAt: 1000 })
+  store.appendCaption(caption({
+    sessionId: 'active-history', sourceId: 'mic', sequence: 1, revision: 1
+  }))
+
+  assert.throws(
+    () => store.getSessionPage({ sessionId: 'active-history', limit: 50, cursor: null }),
+    (error) => error.code === 'SESSION_ACTIVE'
+  )
+  assert.throws(
+    () => store.getSessionPage({ sessionId: 'missing-history', limit: 50, cursor: null }),
+    (error) => error.code === 'SESSION_NOT_FOUND'
+  )
+  for (const input of [
+    { sessionId: 'active-history', limit: 0, cursor: null },
+    { sessionId: 'active-history', limit: 101, cursor: null },
+    { sessionId: 'active-history', limit: 1.5, cursor: null },
+    { sessionId: 'active-history', limit: 50, cursor: {} },
+    { sessionId: 'active-history', limit: 50, cursor: { t0Ms: -1, firstEventOrder: 1 } },
+    { sessionId: 'active-history', limit: 50, cursor: { t0Ms: 0, firstEventOrder: 0 } },
+    { sessionId: 'active-history', limit: 50, cursor: { t0Ms: 0, firstEventOrder: 1, id: 7 } },
+    { sessionId: 'active-history', limit: 50, cursor: null, sql: 'SELECT * FROM segments' },
+    { sessionId: 'active-history', limit: 50, cursor: null, audioPath: 'C:\\private\\audio.wav' }
+  ]) {
+    assert.throws(() => store.getSessionPage(input), (error) => error.code === 'INVALID_SESSION')
+  }
+})

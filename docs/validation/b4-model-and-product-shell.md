@@ -50,15 +50,17 @@ WAV 误称为现场录音，但产品仍统一禁止落音频文件。
 userData 的 Electron 进程；使用显式 fake-ASR 开发缝避免打开物理设备，但其余
 `src/main.js`、四个 renderer、preload/IPC、SQLite utility process 与退出屏障均为
 产品实现。脚本通过真实 DOM 操作完成听写首设、开始、定稿显示、停止、终态历史、
-工具条打开模型资源页，并由应用自身正常退出，不按 `electron.exe` 名称杀进程。
+205 段详情的 5 页前后翻批、工具条打开模型资源页，并由应用自身正常退出，不按
+`electron.exe` 名称杀进程。
 三项模型 ready 状态来自脚本在隔离 workDir 创建的最小开发文件 fixture，只用于
 证明资源 UI/IPC 与应用组合接线，不加载张量、不冒充真实推理；真实模型调用由上一节
 独立证据承担。该旅程及严格报告 verifier 已接入 Windows push/PR CI。
 
 结果见 [product-shell-results.json](product-shell-results.json)：Electron 43.2.0，
-四个可见 renderer，`crashEventCount=0`，模型资源三项开发 fixture ready，MVP UI
-不再展示翻译入口，未打开物理音源且未落音频；报告保持 `gateStatus=partial` 和
-fake-ASR/开发 fixture/非 I4 三项限制。
+四个可见 renderer，`crashEventCount=0`，历史到达第 201–205 条、前后翻批成功且
+`historyMaxTimelineNodes=50`，模型资源三项开发 fixture ready，MVP UI 不再展示翻译
+入口，未打开物理音源且未落音频；报告保持 `gateStatus=partial`，并明确保留
+fake-ASR、开发 fixture、205 段非两小时 I3、非 I4 四项限制。
 
 用户截图中的 `electron.exe 0x80000003` 本次无法复现，也没有既有 WER/事件日志能
 把它归因到本项目。因此这里只能证明这次受控产品旅程无 renderer/child crash，
@@ -85,7 +87,7 @@ worker 都在退出前响应 stats，fatal 与异常 child 事件均为 0。结�
 拒绝路径、字幕、音频引用和发布门禁越权。
 
 生命周期补丁后，完整产品壳又连续执行 3 次，均为四 renderer、0 crash event 并正常
-自退出；全量 CI 为 13/13 组合旅程、302/302 测试通过。这些证据降低了“批准模型包或
+自退出；分页阶段最新全量 CI 为 14/14 组合旅程、327/327 测试通过。这些证据降低了“批准模型包或
 当前 ABI 一加载就必崩”的可能性，也证明本次收束逻辑没有破坏产品旅程；它们仍不能
 证明截图中的 `0x80000003` 根因已经定位或修复。该弹窗若再现，需要同一时刻的新角色
 日志或 dump，且未经 GPU A/B 证据不永久禁用 GPU。

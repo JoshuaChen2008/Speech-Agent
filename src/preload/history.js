@@ -17,7 +17,14 @@ contextBridge.exposeInMainWorld('historyApi', {
       sessionId: String(cursor?.sessionId || '')
     }
   }),
-  getSession: (sessionId) => ipcRenderer.invoke(CHANNELS.HISTORY_GET, String(sessionId || '')),
+  getSessionPage: (sessionId, limit, cursor) => ipcRenderer.invoke(CHANNELS.HISTORY_PAGE, {
+    sessionId: String(sessionId || ''),
+    limit: Number(limit),
+    cursor: cursor === null ? null : {
+      t0Ms: Number(cursor?.t0Ms),
+      firstEventOrder: Number(cursor?.firstEventOrder)
+    }
+  }),
   exportSession: (sessionId, format) => ipcRenderer.invoke(CHANNELS.HISTORY_EXPORT, {
     sessionId: String(sessionId || ''),
     format: String(format || '')

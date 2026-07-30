@@ -90,7 +90,7 @@
 - A1 再冻结 Agent 可靠消费采用事务 outbox 还是 durable cursor；两者都必须以已提交字幕水位为边界。
 - FTS5 可按历史搜索需求后加；`sqlite-vec` 明确 Deferred，不进入 B3.3 schema 或加载路径。
 - 默认组合根已以 SQLite 替代 JSONL 权威写入；冷启动先收束 stale-active、再迁移旧档，运行期不构造 JSONL writer。JSONL 只保留为旧数据导入、显式格式兼容和恢复格式，禁止长期双写。
-- 历史 renderer 只得到列表/详情/格式选择能力；SQL、数据库路径、文件系统和导出目标路径均留在主进程/storage worker 边界。真实四窗口 Electron/SQLite 旅程已通过；两小时 I3 与打包态 I4 仍须单独验收。
+- 历史 renderer 只得到白名单终态会话列表、固定上限的 keyset 详情页和格式选择能力；每次只持有当前 50 条并通过 cursor 栈前后翻页。完整 transcript 只在 main/storage worker 内供导出与迁移；`firstEventOrder` 仅作为受限 keyset cursor 返回，正文 item 不含内部事件顺序，SQL、数据库路径、文件系统和导出目标路径均不跨 IPC。205 段确定性多模块旅程证明三格式完整导出不受分页截断；真实 Electron 壳另行证明 main/preload/IPC/utility/renderer 的 5 页交互与 DOM 上界 50。两小时数千段资源稳定性 I3 与打包态 I4 仍须单独验收。
 - schema、表义、迁移与 DB0–DB6 门禁见 [`data-architecture.md`](data-architecture.md)、[ADR 0001](adr/0001-sqlite-authoritative-event-store.md) 和 [ADR 0002](adr/0002-separate-subtitle-and-agent-systems.md)。
 
 `ModelManager`：

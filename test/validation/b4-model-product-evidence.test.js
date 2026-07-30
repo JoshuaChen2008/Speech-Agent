@@ -66,7 +66,14 @@ test('published product-shell evidence proves the four-window user journey witho
     onboardingPreset: 'dictation',
     startListeningStop: true,
     finalCaptionRendered: true,
-    terminalHistoryCount: 1,
+    terminalHistoryCount: 2,
+    longHistorySegmentCount: 205,
+    historyPageCount: 5,
+    historyPageSize: 50,
+    historyMaxTimelineNodes: 50,
+    historyReachedEnd: true,
+    historyBackForwardNavigation: true,
+    historyAriaRangeAligned: true,
     resourcesPaneOpenedFromToolbar: true,
     modelState: 'ready',
     resourceCount: 3,
@@ -85,6 +92,14 @@ test('published product-shell evidence proves the four-window user journey witho
 test('product-shell report verifier rejects real-model, physical-audio and release overclaims', () => {
   const report = readReport(PRODUCT_REPORT_PATH)
   assert.throws(() => validateProductShellReport({ ...report, gateStatus: 'pass' }), /overclaimed/)
+  assert.throws(() => validateProductShellReport({
+    ...report,
+    journey: { ...report.journey, historyMaxTimelineNodes: 51 }
+  }), /journey evidence/)
+  assert.throws(() => validateProductShellReport({
+    ...report,
+    limitations: report.limitations.filter((value) => value !== 'deterministic-205-segment-fixture-not-two-hour-i3')
+  }), /limitations/)
   assert.throws(() => validateProductShellReport({
     ...report,
     journey: { ...report.journey, modelReadinessSource: 'production-model-inference' }

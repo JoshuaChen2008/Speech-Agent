@@ -681,9 +681,9 @@ ipcMain.handle(CHANNELS.HISTORY_LIST, (event, input) => {
   requireSender(event, CHANNELS.HISTORY_LIST)
   return invokeHistory('list', () => historyService.listSessions(input))
 })
-ipcMain.handle(CHANNELS.HISTORY_GET, (event, sessionId) => {
-  requireSender(event, CHANNELS.HISTORY_GET)
-  return invokeHistory('get', () => historyService.getSession(sessionId))
+ipcMain.handle(CHANNELS.HISTORY_PAGE, (event, input) => {
+  requireSender(event, CHANNELS.HISTORY_PAGE)
+  return invokeHistory('page', () => historyService.getSessionPage(input))
 })
 ipcMain.handle(CHANNELS.HISTORY_EXPORT, (event, input) => {
   const { win } = requireSender(event, CHANNELS.HISTORY_EXPORT)

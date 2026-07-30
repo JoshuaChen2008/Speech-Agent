@@ -9,6 +9,7 @@
  */
 
 const assert = require('node:assert/strict')
+const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -89,6 +90,9 @@ function serviceBackedHost (service, databasePath, operations) {
     },
     async getSessionTranscript (sessionId) {
       return call(OPERATIONS.GET_SESSION, { sessionId })
+    },
+    async getSessionPage (input) {
+      return call(OPERATIONS.GET_SESSION_PAGE, input)
     },
     async listSessions (input) {
       return call(OPERATIONS.LIST_SESSIONS, input)
@@ -224,7 +228,11 @@ test('CI journey: review completed SQLite sessions, their detail, and text-only 
     nextCursor: null
   })
 
-  const micDetail = await history.getSession(micSessionId)
+  const micDetail = await history.getSessionPage({
+    sessionId: micSessionId,
+    limit: 50,
+    cursor: null
+  })
   assert.deepEqual(micDetail.session, {
     sessionId: micSessionId,
     mode: 'dictation',
@@ -233,21 +241,21 @@ test('CI journey: review completed SQLite sessions, their detail, and text-only 
     endedAt: 1777700002500,
     state: 'closed'
   }, 'detail retains terminal state and both durable timestamps')
-  assert.deepEqual(micDetail.segments, [{
+  assert.equal(micDetail.totalCount, 1)
+  assert.equal(micDetail.nextCursor, null)
+  assert.deepEqual(micDetail.items, [{
     segmentId: 'segment-1',
     sourceId: 'mic',
     text: 'refined transcript body',
     textRevision: 3,
     t0Ms: 0,
-    t1Ms: 1000,
-    firstEventOrder: 1,
-    updatedEventOrder: 2
+    t1Ms: 1000
   }], 'partial captions are not persisted and refined text projects as the body')
   assert.equal(Object.hasOwn(micDetail, 'translation'), false)
   assert.equal(Object.hasOwn(micDetail, 'audioPath'), false)
   assert.equal(Object.hasOwn(micDetail.session, 'audioPath'), false)
-  assert.equal(Object.hasOwn(micDetail.segments[0], 'translation'), false)
-  assert.equal(Object.hasOwn(micDetail.segments[0], 'audioPath'), false)
+  assert.equal(Object.hasOwn(micDetail.items[0], 'translation'), false)
+  assert.equal(Object.hasOwn(micDetail.items[0], 'audioPath'), false)
 
   clock += 1000
   coordinator.updateConfiguration({
@@ -312,5 +320,164 @@ test('CI journey: review completed SQLite sessions, their detail, and text-only 
 
   assert.ok(operations.includes(OPERATIONS.LIST_SESSIONS),
     'HistoryService listing must cross the real storage-worker list-sessions operation')
+  assert.ok(operations.includes(OPERATIONS.GET_SESSION_PAGE),
+    'HistoryService detail must cross the bounded storage-worker page operation')
   assert.deepEqual(audioFilesUnder(root), [], 'history review and exports do not create raw-audio files')
+})
+
+function publicProjection (segment) {
+  return {
+    segmentId: segment.segmentId,
+    sourceId: segment.sourceId,
+    text: segment.text,
+    textRevision: segment.textRevision,
+    t0Ms: segment.t0Ms,
+    t1Ms: segment.t1Ms
+  }
+}
+
+function digest (value) {
+  return crypto.createHash('sha256').update(JSON.stringify(value), 'utf8').digest('hex')
+}
+
+function cursorIsAfter (next, previous) {
+  if (previous === null) return true
+  return next.t0Ms > previous.t0Ms ||
+    (next.t0Ms === previous.t0Ms && next.firstEventOrder > previous.firstEventOrder)
+}
+
+test('CI journey: 205 refined captions page through the real durability stack without truncating exports', async (t) => {
+  const root = temporaryDirectory()
+  const databasePath = path.join(root, 'data', 'speech-agent.sqlite3')
+  const exportDirectory = path.join(root, 'exports')
+  const exportPaths = ['txt', 'md', 'srt'].map((extension) =>
+    path.join(exportDirectory, `long-session.${extension}`))
+  const operations = []
+  const { gateway } = createGateway(databasePath, operations)
+  const adapter = new FakeRuntimeAdapter({ autoEmit: false })
+  let clock = 1777800000000
+  const recorder = new SqliteSessionRecorder({ gateway, now: () => clock })
+  const coordinator = new SessionCoordinator({
+    adapter,
+    persistenceSink: recorder,
+    runtimeOptions: DEV_RUNTIME,
+    configuration: {
+      onboardingCompleted: true,
+      onboardingPreset: 'dictation',
+      mic: true,
+      loopback: false
+    },
+    idFactory: () => 'long-history-session'
+  })
+  const chosenPaths = [...exportPaths]
+  const history = new HistoryService({
+    gateway,
+    showSaveDialog: async () => ({ canceled: false, filePath: chosenPaths.shift() })
+  })
+
+  fs.mkdirSync(exportDirectory, { recursive: true })
+  t.after(async () => {
+    await coordinator.dispose().catch(() => {})
+    await gateway.shutdown().catch(() => gateway.terminate())
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  await gateway.start()
+  assert.equal((await coordinator.command('start')).ok, true)
+  const sessionId = coordinator.getSnapshot().sessionId
+  let sequence = 0
+  const refinedIndexes = new Set([49, 50, 99, 100, 149, 150, 199, 200])
+  for (let index = 0; index < 205; index += 1) {
+    if (index % 11 === 0 || index % 17 === 0) refinedIndexes.add(index)
+    const t0 = Math.floor(index / 7) / 10
+    const segmentId = `long-segment-${String(index + 1).padStart(3, '0')}`
+    adapter.emitCaption(caption(sessionId, 'mic', {
+      segmentId,
+      sequence: ++sequence,
+      revision: 1,
+      t0,
+      t1: t0 + 0.08,
+      text: `final subtitle ${String(index + 1).padStart(3, '0')}`
+    }))
+    if (refinedIndexes.has(index)) {
+      adapter.emitCaption(caption(sessionId, 'mic', {
+        segmentId,
+        sequence: ++sequence,
+        revision: 2,
+        kind: 'refined',
+        t0,
+        t1: t0 + 0.08,
+        text: `refined subtitle ${String(index + 1).padStart(3, '0')}`
+      }))
+    }
+  }
+  await gateway.flush()
+  clock += 30000
+  assert.equal((await coordinator.command('stop')).ok, true)
+  await gateway.flush()
+
+  const fullTranscript = await gateway.getSessionTranscript(sessionId)
+  const expected = fullTranscript.segments.map(publicProjection)
+  assert.equal(expected.length, 205)
+  const pageOperationStart = operations.length
+  const collected = []
+  const cursors = []
+  let cursor = null
+  let pageCount = 0
+  let sameTimestampBoundaryCount = 0
+  do {
+    const page = await history.getSessionPage({ sessionId, limit: 50, cursor })
+    pageCount += 1
+    assert.deepEqual(Object.keys(page).sort(), ['items', 'nextCursor', 'session', 'totalCount'])
+    assert.deepEqual(Object.keys(page.session).sort(), ['endedAt', 'mode', 'sessionId', 'sourceId', 'startedAt', 'state'])
+    assert.equal(page.totalCount, 205)
+    assert.ok(page.items.length > 0 && page.items.length <= 50)
+    for (const item of page.items) {
+      assert.deepEqual(Object.keys(item).sort(), ['segmentId', 'sourceId', 't0Ms', 't1Ms', 'text', 'textRevision'])
+      assert.doesNotMatch(JSON.stringify(item), /audio|path|sql|translation|eventOrder/i)
+    }
+    if (collected.length > 0 && collected.at(-1).t0Ms === page.items[0].t0Ms) {
+      sameTimestampBoundaryCount += 1
+    }
+    collected.push(...page.items)
+    if (page.nextCursor !== null) {
+      assert.deepEqual(Object.keys(page.nextCursor).sort(), ['firstEventOrder', 't0Ms'])
+      assert.equal(cursorIsAfter(page.nextCursor, cursor), true)
+      cursors.push(page.nextCursor)
+    }
+    cursor = page.nextCursor
+  } while (cursor !== null)
+
+  const pageOperations = operations.slice(pageOperationStart)
+  assert.equal(pageCount, 5)
+  assert.equal(cursors.length, 4)
+  assert.ok(sameTimestampBoundaryCount >= 4, 'all four full-page boundaries split equal-timestamp groups')
+  assert.equal(new Set(collected.map(({ segmentId }) => segmentId)).size, 205)
+  assert.deepEqual(collected, expected)
+  assert.equal(digest(collected), digest(expected))
+  assert.equal(pageOperations.every((operation) => operation === OPERATIONS.GET_SESSION_PAGE), true,
+    'the renderer-facing page loop cannot fall back to the private full transcript operation')
+  for (const index of refinedIndexes) {
+    assert.equal(collected[index].textRevision, 2)
+    assert.match(collected[index].text, /^refined subtitle /)
+  }
+
+  for (const format of ['txt', 'md', 'srt']) {
+    assert.deepEqual(await history.exportSession({ sessionId, format }), { status: 'saved', format })
+  }
+  const txt = fs.readFileSync(exportPaths[0], 'utf8')
+  const md = fs.readFileSync(exportPaths[1], 'utf8')
+  const srt = fs.readFileSync(exportPaths[2], 'utf8')
+  assert.equal(txt.trimEnd().split('\n').length, 205)
+  assert.equal((md.match(/^- /gm) || []).length, 205)
+  assert.equal((srt.match(/^\d+$/gm) || []).length, 205)
+  assert.match(txt, /refined subtitle 050/)
+  assert.doesNotMatch(txt, /final subtitle 050/)
+  assert.match(srt, /\n205\n[^\n]+\n(?:final|refined) subtitle 205\n$/)
+  assert.ok(operations.includes(OPERATIONS.OPEN_SESSION))
+  assert.ok(operations.includes(OPERATIONS.APPEND_CAPTION))
+  assert.ok(operations.includes(OPERATIONS.CLOSE_SESSION))
+  assert.ok(operations.includes(OPERATIONS.GET_SESSION_PAGE))
+  assert.ok(operations.includes(OPERATIONS.GET_SESSION), 'full transcript stays private to comparison and export')
+  assert.deepEqual(audioFilesUnder(root), [])
 })

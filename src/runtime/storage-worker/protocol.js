@@ -14,6 +14,7 @@ const OPERATIONS = Object.freeze({
   RECOVER_STALE_SESSIONS: 'session:recover-stale',
   IMPORT_LEGACY_JSONL: 'legacy:import-jsonl',
   GET_SESSION: 'history:get-session',
+  GET_SESSION_PAGE: 'history:get-session-page',
   LIST_SESSIONS: 'history:list-sessions',
   GET_STATS: 'storage:get-stats',
   SHUTDOWN: 'storage:shutdown'
@@ -32,6 +33,7 @@ const SAFE_ERROR_MESSAGES = Object.freeze({
   SESSION_NOT_FOUND: 'Session was not found.',
   SESSION_CONFLICT: 'Session identity conflicts with persisted data.',
   ACTIVE_SESSION_EXISTS: 'Another subtitle session is active.',
+  SESSION_ACTIVE: 'Session is still active.',
   SESSION_NOT_ACTIVE: 'Session is not active.',
   INVALID_CAPTION: 'Caption data is invalid.',
   UNSUPPORTED_CAPTION_KIND: 'Only final and refined captions can be persisted.',

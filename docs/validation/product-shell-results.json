@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "kind": "product-shell-smoke",
-  "generatedAt": "2026-07-30T21:45:25.912Z",
+  "generatedAt": "2026-07-30T22:40:15.269Z",
   "result": "pass",
   "gateStatus": "partial",
   "runtime": {
@@ -14,7 +14,14 @@
     "onboardingPreset": "dictation",
     "startListeningStop": true,
     "finalCaptionRendered": true,
-    "terminalHistoryCount": 1,
+    "terminalHistoryCount": 2,
+    "longHistorySegmentCount": 205,
+    "historyPageCount": 5,
+    "historyPageSize": 50,
+    "historyMaxTimelineNodes": 50,
+    "historyReachedEnd": true,
+    "historyBackForwardNavigation": true,
+    "historyAriaRangeAligned": true,
     "resourcesPaneOpenedFromToolbar": true,
     "modelState": "ready",
     "resourceCount": 3,
@@ -30,6 +37,7 @@
   "limitations": [
     "fake-asr-no-physical-audio",
     "development-model-fixtures-no-real-inference",
+    "deterministic-205-segment-fixture-not-two-hour-i3",
     "not-packaged-i4"
   ]
 }

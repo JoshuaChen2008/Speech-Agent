@@ -29,6 +29,7 @@ const DURABLE_WRITE_OPERATIONS = new Set([
 ])
 const READ_ONLY_OPERATIONS = new Set([
   'getSessionTranscript',
+  'getSessionPage',
   'listSessions',
   'getStats'
 ])
@@ -282,6 +283,10 @@ class StorageGateway {
     return this.enqueue('getSessionTranscript', sessionId)
   }
 
+  getSessionPage (input) {
+    return this.enqueue('getSessionPage', input)
+  }
+
   listSessions (input) {
     return this.enqueue('listSessions', input)
   }
@@ -298,6 +303,7 @@ class StorageGateway {
       case 'recoverStaleSessions': return host.recoverStaleSessions(item.payload)
       case 'importLegacyJsonl': return host.importLegacyJsonl(item.payload)
       case 'getSessionTranscript': return host.getSessionTranscript(item.payload)
+      case 'getSessionPage': return host.getSessionPage(item.payload)
       case 'listSessions': return host.listSessions(item.payload)
       case 'getStats': return host.getStats()
       default: throw new TypeError(`unsupported gateway operation: ${item.operation}`)

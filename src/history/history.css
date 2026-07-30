@@ -126,7 +126,41 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .export-actions button:hover { border-color: rgba(var(--c-accent), 0.55); background: var(--accent-wash); }
 .export-status { min-height: 28px; padding-top: 9px; color: rgb(var(--text-accent)); font-size: var(--fs-hint); }
 
-.timeline { margin: 14px 0 0; padding: 0; list-style: none; }
+.timeline-navigation {
+  min-height: 36px;
+  display: grid;
+  grid-template-columns: auto minmax(140px, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+}
+.timeline-navigation button {
+  padding: 6px 10px;
+  border: 1px solid rgba(var(--fg), 0.13);
+  border-radius: var(--radius-button);
+  background: transparent;
+  color: rgb(var(--fg));
+  font-size: var(--fs-hint);
+  cursor: pointer;
+}
+.timeline-navigation button:hover:not(:disabled) {
+  border-color: rgba(var(--c-accent), 0.55);
+  background: var(--accent-wash);
+}
+.range-status {
+  min-width: 0;
+  text-align: center;
+  color: rgba(var(--fg), 0.58);
+  font-size: var(--fs-hint);
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline { margin: 14px 0 0; padding: 0; list-style: none; outline: none; }
+.timeline:focus-visible {
+  border-radius: var(--radius-control);
+  box-shadow: 0 0 0 2px rgba(var(--c-accent), 0.48);
+}
+.timeline[aria-busy="true"] { opacity: 0.55; }
 .timeline-item {
   position: relative;
   display: grid;
@@ -175,13 +209,15 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   .session-panel { width: 270px; }
   .detail-heading { align-items: flex-start; flex-direction: column; }
   .export-actions { justify-content: flex-start; }
+  .timeline-navigation { grid-template-columns: auto minmax(100px, 1fr) auto; }
+  #retryPage { grid-column: 1 / -1; justify-self: center; }
   .timeline-item { grid-template-columns: 86px minmax(0, 1fr); gap: 14px; }
   .timeline-item::before { left: 79px; }
 }
 
 @media (forced-colors: active) {
   .session-panel, .titlebar { border-color: CanvasText; }
-  .session-card[aria-current="true"], .export-actions button, .load-more { border: 1px solid CanvasText; }
+  .session-card[aria-current="true"], .export-actions button, .timeline-navigation button, .load-more { border: 1px solid CanvasText; }
   .caption-text::before { border-color: Highlight; background: Canvas; }
 }
 

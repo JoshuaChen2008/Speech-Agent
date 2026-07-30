@@ -197,6 +197,9 @@ function serviceBackedHost (service, databasePath, operations) {
     async getSessionTranscript (sessionId) {
       return call(OPERATIONS.GET_SESSION, { sessionId })
     },
+    async getSessionPage (input) {
+      return call(OPERATIONS.GET_SESSION_PAGE, input)
+    },
     async listSessions (input) {
       return call(OPERATIONS.LIST_SESSIONS, input)
     },
@@ -462,17 +465,23 @@ test('CI journey: resumed model install activates captions and produces terminal
   assert.deepEqual(listed.items.map(({ sessionId, state }) => [sessionId, state]), [
     ['installed-model-caption-session', 'closed']
   ])
-  const detail = await history.getSession('installed-model-caption-session')
+  const detail = await history.getSessionPage({
+    sessionId: 'installed-model-caption-session',
+    limit: 50,
+    cursor: null
+  })
   assert.equal(detail.session.sourceId, 'mic')
   assert.equal(detail.session.state, 'closed')
-  assert.deepEqual(detail.segments.map(({ sourceId, text, t0Ms, t1Ms }) => ({ sourceId, text, t0Ms, t1Ms })), [{
+  assert.equal(detail.totalCount, 1)
+  assert.deepEqual(detail.items.map(({ sourceId, text, t0Ms, t1Ms }) => ({ sourceId, text, t0Ms, t1Ms })), [{
     sourceId: 'mic',
     text: finalCaption.text,
     t0Ms: 0,
     t1Ms: 1250
   }])
   assert.equal(Object.hasOwn(detail.session, 'audioPath'), false)
-  assert.equal(Object.hasOwn(detail.segments[0], 'audioPath'), false)
+  assert.equal(Object.hasOwn(detail.items[0], 'audioPath'), false)
   assert.ok(operations.includes(OPERATIONS.LIST_SESSIONS))
+  assert.ok(operations.includes(OPERATIONS.GET_SESSION_PAGE))
   assert.deepEqual(audioFilesUnder(root), [], 'installation and subtitle history never persist raw audio')
 })

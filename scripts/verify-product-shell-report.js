@@ -20,7 +20,12 @@ function validateProductShellReport (report) {
   if (journey.onboardingPreset !== 'dictation' ||
       journey.startListeningStop !== true ||
       journey.finalCaptionRendered !== true ||
-      !Number.isSafeInteger(journey.terminalHistoryCount) || journey.terminalHistoryCount < 1 ||
+      !Number.isSafeInteger(journey.terminalHistoryCount) || journey.terminalHistoryCount < 2 ||
+      journey.longHistorySegmentCount !== 205 || journey.historyPageCount !== 5 ||
+      journey.historyPageSize !== 50 || journey.historyMaxTimelineNodes > 50 ||
+      !Number.isSafeInteger(journey.historyMaxTimelineNodes) || journey.historyMaxTimelineNodes < 1 ||
+      journey.historyReachedEnd !== true || journey.historyBackForwardNavigation !== true ||
+      journey.historyAriaRangeAligned !== true ||
       journey.resourcesPaneOpenedFromToolbar !== true ||
       journey.modelState !== 'ready' || journey.resourceCount !== 3 ||
       journey.modelReadinessSource !== 'development-fixture-files' ||
@@ -36,6 +41,7 @@ function validateProductShellReport (report) {
   const requiredLimitations = [
     'fake-asr-no-physical-audio',
     'development-model-fixtures-no-real-inference',
+    'deterministic-205-segment-fixture-not-two-hour-i3',
     'not-packaged-i4'
   ]
   if (!Array.isArray(report.limitations) ||

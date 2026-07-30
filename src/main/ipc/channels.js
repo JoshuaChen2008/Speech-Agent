@@ -14,7 +14,7 @@ module.exports = Object.freeze({
   SETTINGS_NAVIGATE: 'settings:navigate',
   HISTORY_CLOSE: 'history:close',
   HISTORY_LIST: 'history:list-sessions',
-  HISTORY_GET: 'history:get-session',
+  HISTORY_PAGE: 'history:get-session-page',
   HISTORY_EXPORT: 'history:export-session',
   CONFIG_GET: 'config:get',
   CONFIG_UPDATE: 'config:update',

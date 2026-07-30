@@ -13,8 +13,19 @@ const fsp = require('node:fs/promises')
 const path = require('node:path')
 const { app, BrowserWindow } = require('electron')
 const { PRODUCTION_MODEL_MANIFEST } = require('../src/main/services/model-manifest')
+const {
+  OPERATIONS,
+  PROTOCOL_VERSION,
+  makeCaptionEventId,
+  makeCloseSessionKey,
+  makeOpenSessionKey
+} = require('../src/runtime/storage-worker/protocol')
+const { StorageWorkerService } = require('../src/runtime/storage-worker/worker-service')
 
 const PROJECT_ROOT = path.resolve(__dirname, '..')
+const LONG_HISTORY_SESSION_ID = 'ci-long-history-session'
+const LONG_HISTORY_SEGMENT_COUNT = 205
+const HISTORY_PAGE_SIZE = 50
 
 function isWithin (parent, child) {
   const relative = path.relative(path.resolve(parent), path.resolve(child))
@@ -62,6 +73,31 @@ function rendererValue (win, expression) {
   return win.webContents.executeJavaScript(expression)
 }
 
+async function waitForHistoryPage (win, firstPosition, lastPosition) {
+  return waitFor(async () => {
+    const state = await rendererValue(win, `(() => {
+      const timeline = document.getElementById('timeline')
+      const items = [...timeline.children]
+      return {
+        busy: timeline.getAttribute('aria-busy'),
+        count: items.length,
+        first: Number(items[0]?.getAttribute('aria-posinset')),
+        last: Number(items.at(-1)?.getAttribute('aria-posinset')),
+        setSize: Number(items[0]?.getAttribute('aria-setsize')),
+        positionsAligned: items.every((item, index) =>
+          Number(item.getAttribute('aria-posinset')) === ${firstPosition} + index &&
+          Number(item.getAttribute('aria-setsize')) === ${LONG_HISTORY_SEGMENT_COUNT})
+      }
+    })()`)
+    return state.busy === 'false' &&
+      state.count === lastPosition - firstPosition + 1 &&
+      state.first === firstPosition && state.last === lastPosition &&
+      state.setSize === LONG_HISTORY_SEGMENT_COUNT && state.positionsAligned === true
+      ? state
+      : null
+  }, `history page ${firstPosition}-${lastPosition}`)
+}
+
 function audioFilesUnder (directory) {
   const found = []
   const visit = (current) => {
@@ -93,11 +129,75 @@ function createDevelopmentModelFixtures (workDir) {
   return { realtimeRoot, refinementRoot, vadPath }
 }
 
+function seedLongHistoryFixture (databasePath) {
+  const service = new StorageWorkerService()
+  let requestSequence = 0
+  const call = (operation, payload, idempotencyKey) => {
+    const response = service.handle({
+      version: PROTOCOL_VERSION,
+      type: 'storage:request',
+      requestId: `product-shell-fixture-${++requestSequence}`,
+      operation,
+      payload,
+      ...(idempotencyKey ? { idempotencyKey } : {})
+    })
+    if (!response.ok) throw new Error(`long history fixture failed: ${response.error.code}`)
+    return response.result
+  }
+  const startedAt = 1700000000000
+  let captionSequence = 0
+  try {
+    call(OPERATIONS.INITIALIZE, { databasePath })
+    call(OPERATIONS.OPEN_SESSION, {
+      sessionId: LONG_HISTORY_SESSION_ID,
+      sourceId: 'mic',
+      startedAt
+    }, makeOpenSessionKey(LONG_HISTORY_SESSION_ID))
+    for (let index = 0; index < LONG_HISTORY_SEGMENT_COUNT; index += 1) {
+      const t0 = Math.floor(index / 7) / 10
+      const segmentId = `ci-long-segment-${String(index + 1).padStart(3, '0')}`
+      const finalEvent = {
+        schemaVersion: 1,
+        sessionId: LONG_HISTORY_SESSION_ID,
+        sourceId: 'mic',
+        segmentId,
+        sequence: ++captionSequence,
+        revision: 1,
+        kind: 'final',
+        t0,
+        t1: t0 + 0.08,
+        text: `fixture subtitle ${String(index + 1).padStart(3, '0')}`,
+        translation: null
+      }
+      call(OPERATIONS.APPEND_CAPTION, { event: finalEvent }, makeCaptionEventId(finalEvent))
+      if (index % 11 === 0 || index % 17 === 0 || [49, 50, 99, 100, 149, 150, 199, 200].includes(index)) {
+        const refinedEvent = {
+          ...finalEvent,
+          sequence: ++captionSequence,
+          revision: 2,
+          kind: 'refined',
+          text: `fixture refined subtitle ${String(index + 1).padStart(3, '0')}`
+        }
+        call(OPERATIONS.APPEND_CAPTION, { event: refinedEvent }, makeCaptionEventId(refinedEvent))
+      }
+    }
+    call(OPERATIONS.CLOSE_SESSION, {
+      sessionId: LONG_HISTORY_SESSION_ID,
+      sourceId: 'mic',
+      endedAt: startedAt + 30000,
+      state: 'closed'
+    }, makeCloseSessionKey(LONG_HISTORY_SESSION_ID))
+  } finally {
+    if (!service.shuttingDown) call(OPERATIONS.SHUTDOWN, {})
+  }
+}
+
 const options = parseArguments(process.argv.slice(2))
 fs.mkdirSync(options.workDir, { recursive: false })
 const userDataDir = path.join(options.workDir, 'user-data')
 fs.mkdirSync(userDataDir, { recursive: false })
 app.setPath('userData', userDataDir)
+seedLongHistoryFixture(path.join(userDataDir, 'data', 'speech-agent.sqlite3'))
 const modelFixtures = createDevelopmentModelFixtures(options.workDir)
 process.env.LIVE_SUBTITLE_MODEL_DIR = modelFixtures.realtimeRoot
 process.env.LIVE_SUBTITLE_REFINE_MODEL_DIR = modelFixtures.refinementRoot
@@ -121,7 +221,7 @@ app.whenReady().then(() => {
   watchdog = setTimeout(() => {
     console.error('product shell smoke watchdog expired')
     app.exit(1)
-  }, 30000)
+  }, 45000)
   void runJourney().catch(async (error) => {
     smokeFailed = true
     console.error(error && error.stack ? error.stack : error)
@@ -164,6 +264,54 @@ async function runJourney () {
     const count = await rendererValue(history, `document.querySelectorAll('.session-card').length`)
     return count > 0 ? count : 0
   }, 'terminal history')
+  await waitFor(() => rendererValue(history,
+    `!!document.querySelector('.session-card[data-session-id="${LONG_HISTORY_SESSION_ID}"]')`),
+  'long history fixture card')
+  await rendererValue(history, `(() => {
+    const timeline = document.getElementById('timeline')
+    const probe = { maxNodes: timeline.childElementCount, appendCalls: 0 }
+    const appendChild = timeline.appendChild.bind(timeline)
+    timeline.appendChild = (node) => {
+      const result = appendChild(node)
+      probe.appendCalls += 1
+      probe.maxNodes = Math.max(probe.maxNodes, timeline.childElementCount)
+      return result
+    }
+    window.__historyDomProbe = probe
+    return true
+  })()`)
+  await rendererValue(history,
+    `document.querySelector('.session-card[data-session-id="${LONG_HISTORY_SESSION_ID}"]').click(); true`)
+
+  const visitedHistoryPages = []
+  visitedHistoryPages.push(await waitForHistoryPage(history, 1, 50))
+  for (const [first, last] of [[51, 100], [101, 150], [151, 200], [201, 205]]) {
+    await rendererValue(history, `document.getElementById('nextPage').click(); true`)
+    visitedHistoryPages.push(await waitForHistoryPage(history, first, last))
+  }
+  const reachedHistoryEnd = await rendererValue(history,
+    `document.getElementById('nextPage').disabled === true && document.getElementById('previousPage').disabled === false`)
+  await rendererValue(history, `document.getElementById('previousPage').click(); true`)
+  await waitForHistoryPage(history, 151, 200)
+  await rendererValue(history, `document.getElementById('nextPage').click(); true`)
+  await waitForHistoryPage(history, 201, 205)
+  const historyProbe = await rendererValue(history, `({
+    maxNodes: window.__historyDomProbe.maxNodes,
+    appendCalls: window.__historyDomProbe.appendCalls,
+    currentNodes: document.getElementById('timeline').childElementCount
+  })`)
+  const historyBackForwardNavigation = historyProbe.currentNodes === 5
+  const historyAriaRangeAligned = visitedHistoryPages.every((state, index) =>
+    state.first === index * HISTORY_PAGE_SIZE + 1 &&
+    state.last === Math.min((index + 1) * HISTORY_PAGE_SIZE, LONG_HISTORY_SEGMENT_COUNT) &&
+    state.setSize === LONG_HISTORY_SEGMENT_COUNT && state.positionsAligned === true)
+  if (visitedHistoryPages.length !== 5 || !reachedHistoryEnd || !historyBackForwardNavigation ||
+      !historyAriaRangeAligned || historyProbe.maxNodes > HISTORY_PAGE_SIZE || historyProbe.appendCalls < 260) {
+    throw new Error('bounded history paging contract is not aligned: ' +
+      `pages=${visitedHistoryPages.length} reachedEnd=${reachedHistoryEnd} ` +
+      `backForward=${historyBackForwardNavigation} aria=${historyAriaRangeAligned} ` +
+      `maxNodes=${historyProbe.maxNodes} appendCalls=${historyProbe.appendCalls}`)
+  }
 
   await rendererValue(toolbar, `window.shell.action('open-model-manager'); true`)
   await waitFor(() => rendererValue(settings, `document.querySelector('.pane[data-pane="resources"]').classList.contains('active')`), 'resource navigation')
@@ -191,6 +339,13 @@ async function runJourney () {
       startListeningStop: true,
       finalCaptionRendered: true,
       terminalHistoryCount: historyCount,
+      longHistorySegmentCount: LONG_HISTORY_SEGMENT_COUNT,
+      historyPageCount: visitedHistoryPages.length,
+      historyPageSize: HISTORY_PAGE_SIZE,
+      historyMaxTimelineNodes: historyProbe.maxNodes,
+      historyReachedEnd: reachedHistoryEnd,
+      historyBackForwardNavigation,
+      historyAriaRangeAligned,
       resourcesPaneOpenedFromToolbar: true,
       modelState,
       resourceCount,
@@ -206,6 +361,7 @@ async function runJourney () {
     limitations: [
       'fake-asr-no-physical-audio',
       'development-model-fixtures-no-real-inference',
+      'deterministic-205-segment-fixture-not-two-hour-i3',
       'not-packaged-i4'
     ]
   }

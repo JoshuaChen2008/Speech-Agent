@@ -104,6 +104,9 @@ test('service composes protocol, real SQLite and subtitle semantics without SQL 
 
   const queried = service.handle(request(OPERATIONS.GET_SESSION, { sessionId: 'session-1' }))
   assert.equal(queried.result.segments[0].text, '协议字幕。')
+  assert.equal(service.handle(request(OPERATIONS.GET_SESSION_PAGE, {
+    sessionId: 'session-1', limit: 50, cursor: null
+  })).error.code, 'SESSION_ACTIVE')
   assert.equal(service.handle(request(OPERATIONS.GET_STATS)).result.captionEvents, 1)
 
   const closed = { sessionId: 'session-1', sourceId: 'loopback', endedAt: 2000, state: 'closed' }
@@ -116,6 +119,20 @@ test('service composes protocol, real SQLite and subtitle semantics without SQL 
     items: [{
       sessionId: 'session-1', mode: 'meeting', sourceId: 'loopback',
       startedAt: 1000, endedAt: 2000, state: 'closed', segmentCount: 1
+    }],
+    nextCursor: null
+  })
+  assert.deepEqual(service.handle(request(OPERATIONS.GET_SESSION_PAGE, {
+    sessionId: 'session-1', limit: 50, cursor: null
+  })).result, {
+    session: {
+      sessionId: 'session-1', mode: 'meeting', sourceId: 'loopback',
+      startedAt: 1000, endedAt: 2000, state: 'closed'
+    },
+    totalCount: 1,
+    items: [{
+      segmentId: 'segment-1', sourceId: 'loopback', text: '协议字幕。',
+      textRevision: 1, t0Ms: 0, t1Ms: 1000
     }],
     nextCursor: null
   })
@@ -160,6 +177,18 @@ test('malformed, overprivileged and mismatched requests fail safely without pois
     assert.equal(rejectedList.ok, false)
     assert.ok(['INVALID_REQUEST', 'INVALID_SESSION'].includes(rejectedList.error.code))
     assert.ok(!JSON.stringify(rejectedList).includes(sentinel))
+  }
+
+  for (const invalidPayload of [
+    { sessionId: 'session-1', limit: 50, cursor: null, sql: sentinel },
+    { sessionId: 'session-1', limit: 50, cursor: null, audioPath: sentinel },
+    { sessionId: 'session-1', limit: 0, cursor: null },
+    { sessionId: 'session-1', limit: 50, cursor: { t0Ms: 0, firstEventOrder: 1, id: sentinel } }
+  ]) {
+    const rejectedPage = service.handle(request(OPERATIONS.GET_SESSION_PAGE, invalidPayload))
+    assert.equal(rejectedPage.ok, false)
+    assert.ok(['INVALID_REQUEST', 'INVALID_SESSION'].includes(rejectedPage.error.code))
+    assert.ok(!JSON.stringify(rejectedPage).includes(sentinel))
   }
 
   const overprivileged = service.handle(request(OPERATIONS.OPEN_SESSION, {

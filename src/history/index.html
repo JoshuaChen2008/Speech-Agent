@@ -56,7 +56,14 @@
           </div>
         </header>
         <div class="export-status" id="exportStatus" role="status" aria-live="polite"></div>
-        <ol class="timeline" id="timeline"></ol>
+        <nav class="timeline-navigation" aria-label="字幕批次导航">
+          <button type="button" id="previousPage" aria-controls="timeline" disabled>上一批</button>
+          <div class="range-status" id="rangeStatus" role="status" aria-live="polite" aria-atomic="true"></div>
+          <button type="button" id="nextPage" aria-controls="timeline" disabled>下一批</button>
+          <button type="button" id="retryPage" aria-controls="timeline" hidden>重试</button>
+        </nav>
+        <ol class="timeline" id="timeline" role="list" tabindex="0"
+            aria-busy="false" aria-describedby="rangeStatus"></ol>
       </div>
     </section>
   </main>

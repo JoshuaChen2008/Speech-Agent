@@ -4,7 +4,7 @@ const api = window.historyApi || {
   dragStart () {}, dragEnd () {}, close () {}, onConfig () {},
   getConfig: async () => ({ theme: 'dark', systemDark: true }),
   listSessions: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
-  getSession: async () => ({ ok: false, error: { message: '历史记录不可用' } }),
+  getSessionPage: async () => ({ ok: false, error: { message: '历史记录不可用' } }),
   exportSession: async () => ({ ok: false, error: { message: '导出不可用' } })
 }
 
@@ -22,14 +22,25 @@ const detailSource = document.getElementById('detailSource')
 const detailTitle = document.getElementById('detailTitle')
 const detailMeta = document.getElementById('detailMeta')
 const exportStatus = document.getElementById('exportStatus')
+const previousPageButton = document.getElementById('previousPage')
+const nextPageButton = document.getElementById('nextPage')
+const retryPageButton = document.getElementById('retryPage')
+const rangeStatus = document.getElementById('rangeStatus')
 const timeline = document.getElementById('timeline')
 const exportButtons = [...document.querySelectorAll('[data-export]')]
 
 let sessions = []
+let sessionButtons = new Map()
 let nextCursor = null
 let selectedSessionId = null
 let listPending = false
-let detailRequest = 0
+let detailGeneration = 0
+let detailPending = false
+let detailError = null
+let detailPage = null
+let detailPageIndex = 0
+let detailCursorStack = [{ cursor: null, offset: 0 }]
+let exportRequest = 0
 let exportPending = false
 let dragging = false
 
@@ -97,6 +108,7 @@ function element (tag, className, text) {
 
 function renderSessionList () {
   sessionList.textContent = ''
+  sessionButtons = new Map()
   if (sessions.length === 0 && !listPending) {
     const emptyItem = element('div', 'session-list-item')
     emptyItem.setAttribute('role', 'listitem')
@@ -110,6 +122,7 @@ function renderSessionList () {
     button.type = 'button'
     button.dataset.sessionId = session.sessionId
     button.setAttribute('aria-current', String(session.sessionId === selectedSessionId))
+    sessionButtons.set(session.sessionId, button)
     button.appendChild(element('strong', null, shortDateTime(session.startedAt)))
     button.appendChild(element('span', 'summary',
       `${sourceLabel(session.sourceId)} · ${durationText(session.startedAt, session.endedAt)}`))
@@ -126,50 +139,175 @@ function renderSessionList () {
   loadMore.disabled = listPending
 }
 
-function renderTimeline (transcript) {
-  timeline.textContent = ''
-  if (transcript.segments.length === 0) {
-    const item = element('li', 'timeline-empty', '这个会话没有已定稿字幕。')
-    timeline.appendChild(item)
+function selectSessionButton (sessionId) {
+  if (selectedSessionId === sessionId) return
+  sessionButtons.get(selectedSessionId)?.setAttribute('aria-current', 'false')
+  selectedSessionId = sessionId
+  sessionButtons.get(selectedSessionId)?.setAttribute('aria-current', 'true')
+}
+
+function assertHistoryPage (value, sessionId) {
+  if (!value || typeof value !== 'object' || !value.session || value.session.sessionId !== sessionId) {
+    throw new Error('历史记录分页响应无效')
+  }
+  if (!Array.isArray(value.items) || value.items.length > PAGE_SIZE) {
+    throw new Error('历史记录分页响应无效')
+  }
+  if (!Number.isSafeInteger(value.totalCount) || value.totalCount < 0) {
+    throw new Error('历史记录分页响应无效')
+  }
+  if (value.nextCursor !== null && (
+    !Number.isSafeInteger(value.nextCursor?.t0Ms) ||
+    !Number.isSafeInteger(value.nextCursor?.firstEventOrder)
+  )) {
+    throw new Error('历史记录分页响应无效')
+  }
+  return value
+}
+
+function updateDetailControls () {
+  previousPageButton.disabled = detailPending || detailPageIndex === 0
+  nextPageButton.disabled = detailPending || detailPage === null || detailPage.nextCursor === null
+  retryPageButton.hidden = detailError === null
+  retryPageButton.disabled = detailPending
+  exportButtons.forEach((button) => {
+    button.disabled = detailPending || exportPending || detailPage === null
+  })
+}
+
+function invalidateExportPresentation () {
+  exportRequest += 1
+  exportPending = false
+  exportStatus.textContent = ''
+}
+
+function renderDetailHeading (session, totalCount) {
+  detailSource.textContent = `${sourceLabel(session.sourceId)} · ${stateLabel(session.state)}`
+  detailTitle.textContent = fullDateTime(session.startedAt)
+  detailMeta.textContent = `${durationText(session.startedAt, session.endedAt)}` +
+    ` · ${totalCount} 条已定稿字幕`
+}
+
+function renderSelectedSessionHeading (sessionId) {
+  const session = sessions.find((candidate) => candidate.sessionId === sessionId)
+  if (!session) {
+    detailSource.textContent = ''
+    detailTitle.textContent = '字幕会话'
+    detailMeta.textContent = ''
     return
   }
-  for (const segment of transcript.segments) {
+  renderDetailHeading(session, session.segmentCount)
+}
+
+function renderTimeline (page, offset) {
+  timeline.textContent = ''
+  if (page.items.length === 0) {
+    const item = element('li', 'timeline-empty', '这个会话没有已定稿字幕。')
+    item.setAttribute('role', 'listitem')
+    timeline.appendChild(item)
+    rangeStatus.textContent = page.totalCount === 0
+      ? '共 0 条已定稿字幕'
+      : `当前批次为空，共 ${page.totalCount} 条已定稿字幕`
+    return
+  }
+  page.items.forEach((segment, index) => {
     const item = element('li', 'timeline-item')
+    item.setAttribute('role', 'listitem')
+    item.setAttribute('aria-posinset', String(offset + index + 1))
+    item.setAttribute('aria-setsize', String(page.totalCount))
     const time = element('div', 'time-code')
     time.appendChild(element('strong', null, relativeTime(segment.t0Ms)))
-    time.appendChild(element('span', null, wallTime(transcript.session.startedAt, segment.t0Ms)))
+    time.appendChild(element('span', null, wallTime(page.session.startedAt, segment.t0Ms)))
     item.appendChild(time)
     item.appendChild(element('div', 'caption-text', segment.text))
     timeline.appendChild(item)
+  })
+  rangeStatus.textContent = `第 ${offset + 1}–${offset + page.items.length} 条，共 ${page.totalCount} 条`
+}
+
+async function loadDetailPage (pageIndex) {
+  const sessionId = selectedSessionId
+  const cursorEntry = detailCursorStack[pageIndex]
+  if (!sessionId || !cursorEntry || detailPending) return
+
+  const generation = ++detailGeneration
+  invalidateExportPresentation()
+  detailPending = true
+  detailError = null
+  detailPage = null
+  detailPageIndex = pageIndex
+  timeline.textContent = ''
+  timeline.setAttribute('aria-busy', 'true')
+  rangeStatus.textContent = '正在读取字幕批次…'
+  globalStatus.textContent = '正在读取会话…'
+  updateDetailControls()
+  try {
+    const page = assertHistoryPage(
+      unwrap(await api.getSessionPage(sessionId, PAGE_SIZE, cursorEntry.cursor)),
+      sessionId
+    )
+    if (generation !== detailGeneration || sessionId !== selectedSessionId) return
+
+    detailPage = page
+    detailCursorStack = detailCursorStack.slice(0, pageIndex + 1)
+    if (page.nextCursor !== null) {
+      detailCursorStack.push({
+        cursor: page.nextCursor,
+        offset: cursorEntry.offset + page.items.length
+      })
+    }
+    renderDetailHeading(page.session, page.totalCount)
+    renderTimeline(page, cursorEntry.offset)
+    emptyState.hidden = true
+    sessionDetail.hidden = false
+    globalStatus.textContent = ''
+  } catch (error) {
+    if (generation !== detailGeneration || sessionId !== selectedSessionId) return
+    detailError = error
+    globalStatus.textContent = error.message
+    rangeStatus.textContent = '读取失败，请重试'
+  } finally {
+    if (generation !== detailGeneration || sessionId !== selectedSessionId) return
+    detailPending = false
+    timeline.setAttribute('aria-busy', 'false')
+    updateDetailControls()
   }
 }
 
 async function selectSession (sessionId) {
-  if (selectedSessionId === sessionId && !sessionDetail.hidden) return
-  selectedSessionId = sessionId
-  exportStatus.textContent = ''
-  renderSessionList()
-  const request = ++detailRequest
-  globalStatus.textContent = '正在读取会话…'
-  exportButtons.forEach((button) => { button.disabled = true })
-  try {
-    const transcript = unwrap(await api.getSession(sessionId))
-    if (request !== detailRequest) return
-    detailSource.textContent = `${sourceLabel(transcript.session.sourceId)} · ${stateLabel(transcript.session.state)}`
-    detailTitle.textContent = fullDateTime(transcript.session.startedAt)
-    detailMeta.textContent = `${durationText(transcript.session.startedAt, transcript.session.endedAt)}` +
-      ` · ${transcript.segments.length} 条已定稿字幕`
-    renderTimeline(transcript)
-    emptyState.hidden = true
-    sessionDetail.hidden = false
-    globalStatus.textContent = ''
-    exportButtons.forEach((button) => { button.disabled = false })
-  } catch (error) {
-    if (request !== detailRequest) return
-    globalStatus.textContent = error.message
-    sessionDetail.hidden = true
-    emptyState.hidden = false
+  if (selectedSessionId === sessionId && (detailPending || detailPage !== null)) return
+  if (selectedSessionId !== sessionId) {
+    detailGeneration += 1
+    detailPending = false
   }
+  selectSessionButton(sessionId)
+  detailCursorStack = [{ cursor: null, offset: 0 }]
+  detailPageIndex = 0
+  detailPage = null
+  detailError = null
+  renderSelectedSessionHeading(sessionId)
+  timeline.textContent = ''
+  emptyState.hidden = true
+  sessionDetail.hidden = false
+  await loadDetailPage(0)
+}
+
+function clearDetailSelection () {
+  detailGeneration += 1
+  invalidateExportPresentation()
+  sessionButtons.get(selectedSessionId)?.setAttribute('aria-current', 'false')
+  selectedSessionId = null
+  detailPending = false
+  detailError = null
+  detailPage = null
+  detailPageIndex = 0
+  detailCursorStack = [{ cursor: null, offset: 0 }]
+  timeline.textContent = ''
+  timeline.setAttribute('aria-busy', 'false')
+  rangeStatus.textContent = ''
+  sessionDetail.hidden = true
+  emptyState.hidden = false
+  updateDetailControls()
 }
 
 async function loadSessions (reset) {
@@ -177,12 +315,9 @@ async function loadSessions (reset) {
   listPending = true
   refreshButton.disabled = true
   if (reset) {
+    clearDetailSelection()
     sessions = []
     nextCursor = null
-    selectedSessionId = null
-    detailRequest += 1
-    sessionDetail.hidden = true
-    emptyState.hidden = false
   }
   renderSessionList()
   globalStatus.textContent = ''
@@ -201,17 +336,23 @@ async function loadSessions (reset) {
 
 async function exportSelected (format) {
   if (!selectedSessionId || exportPending) return
+  const sessionId = selectedSessionId
+  const generation = detailGeneration
+  const request = ++exportRequest
   exportPending = true
-  exportButtons.forEach((button) => { button.disabled = true })
   exportStatus.textContent = '正在准备导出…'
+  updateDetailControls()
   try {
-    const result = unwrap(await api.exportSession(selectedSessionId, format))
+    const result = unwrap(await api.exportSession(sessionId, format))
+    if (request !== exportRequest || generation !== detailGeneration || sessionId !== selectedSessionId) return
     exportStatus.textContent = result.status === 'saved' ? '字幕原文已导出' : '已取消导出'
   } catch (error) {
+    if (request !== exportRequest || generation !== detailGeneration || sessionId !== selectedSessionId) return
     exportStatus.textContent = error.message
   } finally {
+    if (request !== exportRequest || generation !== detailGeneration || sessionId !== selectedSessionId) return
     exportPending = false
-    exportButtons.forEach((button) => { button.disabled = false })
+    updateDetailControls()
   }
 }
 
@@ -242,10 +383,22 @@ titlebar.addEventListener('lostpointercapture', endDrag)
 closeButton.addEventListener('click', () => api.close())
 refreshButton.addEventListener('click', () => { void loadSessions(true) })
 loadMore.addEventListener('click', () => { void loadSessions(false) })
+previousPageButton.addEventListener('click', () => {
+  if (!detailPending && detailPageIndex > 0) void loadDetailPage(detailPageIndex - 1)
+})
+nextPageButton.addEventListener('click', () => {
+  if (!detailPending && detailPage !== null && detailPage.nextCursor !== null) {
+    void loadDetailPage(detailPageIndex + 1)
+  }
+})
+retryPageButton.addEventListener('click', () => {
+  if (!detailPending && detailError !== null) void loadDetailPage(detailPageIndex)
+})
 exportButtons.forEach((button) => {
   button.addEventListener('click', () => { void exportSelected(button.dataset.export) })
 })
 
+updateDetailControls()
 api.onConfig(applyConfig)
 api.getConfig().then(applyConfig).catch(() => {})
 void loadSessions(true)

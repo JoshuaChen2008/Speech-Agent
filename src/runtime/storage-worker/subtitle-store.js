@@ -54,6 +54,11 @@ function nonNegativeInteger (value, code = 'INVALID_LEGACY_IMPORT') {
   return value
 }
 
+function positiveInteger (value, code = 'INVALID_SESSION') {
+  if (!Number.isSafeInteger(value) || value < 1) throw new StorageError(code)
+  return value
+}
+
 function legacySourceName (value) {
   if (typeof value !== 'string' || value.length < 1 || value.length > 240 ||
       value === '.' || value === '..' || /[\\/\0]/.test(value)) {
@@ -543,6 +548,81 @@ class SqliteSubtitleStore {
         state: session.state
       },
       segments
+    }
+  }
+
+  /* 终态会话不能再接受新事实，因此 session/count/page 三次只读查询不会发生
+     投影漂移；游标顺序与 segments_session_timeline 索引完全一致。 */
+  getSessionPage (input) {
+    this.assertOpen()
+    assertExactKeys(input, ['sessionId', 'limit', 'cursor'], 'INVALID_SESSION')
+    const sessionId = sessionIdValue(input.sessionId)
+    const limit = positiveInteger(input.limit)
+    if (limit > 100) throw new StorageError('INVALID_SESSION')
+
+    let cursor = null
+    if (input.cursor !== null) {
+      assertExactKeys(input.cursor, ['t0Ms', 'firstEventOrder'], 'INVALID_SESSION')
+      cursor = {
+        t0Ms: integerTimestamp(input.cursor.t0Ms),
+        firstEventOrder: positiveInteger(input.cursor.firstEventOrder)
+      }
+    }
+
+    const session = this.database.prepare(`
+      SELECT session_id, mode, source_id, started_at, ended_at, state
+      FROM sessions WHERE session_id = ?
+    `).get(sessionId)
+    if (!session) throw new StorageError('SESSION_NOT_FOUND')
+    if (!['closed', 'interrupted'].includes(session.state)) {
+      throw new StorageError('SESSION_ACTIVE')
+    }
+
+    const params = [sessionId]
+    let afterCursor = ''
+    if (cursor) {
+      afterCursor = `
+        AND (t0_ms > ? OR (t0_ms = ? AND first_event_order > ?))
+      `
+      params.push(cursor.t0Ms, cursor.t0Ms, cursor.firstEventOrder)
+    }
+    params.push(limit + 1)
+    const rows = this.database.prepare(`
+      SELECT segment_id, source_id, text, text_revision, t0_ms, t1_ms,
+             first_event_order
+      FROM segments
+      WHERE session_id = ?
+      ${afterCursor}
+      ORDER BY t0_ms, first_event_order
+      LIMIT ?
+    `).all(...params)
+    const hasMore = rows.length > limit
+    const pageRows = rows.slice(0, limit)
+    const items = pageRows.map((row) => ({
+      segmentId: row.segment_id,
+      sourceId: row.source_id,
+      text: row.text,
+      textRevision: Number(row.text_revision),
+      t0Ms: Number(row.t0_ms),
+      t1Ms: Number(row.t1_ms)
+    }))
+    const last = pageRows.at(-1)
+    return {
+      session: {
+        sessionId: session.session_id,
+        mode: session.mode,
+        sourceId: session.source_id,
+        startedAt: Number(session.started_at),
+        endedAt: Number(session.ended_at),
+        state: session.state
+      },
+      totalCount: Number(this.database.prepare(
+        'SELECT COUNT(*) AS count FROM segments WHERE session_id = ?'
+      ).get(sessionId).count),
+      items,
+      nextCursor: hasMore
+        ? { t0Ms: Number(last.t0_ms), firstEventOrder: Number(last.first_event_order) }
+        : null
     }
   }
 

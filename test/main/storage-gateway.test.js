@@ -28,6 +28,7 @@ function hostWith (overrides = {}) {
     async recoverStaleSessions () { return { status: 'none', recoveredSessionCount: 0 } },
     async importLegacyJsonl () { return { status: 'skipped' } },
     async getSessionTranscript (sessionId) { return { sessionId } },
+    async getSessionPage () { return { session: {}, totalCount: 0, items: [], nextCursor: null } },
     async listSessions () { return { items: [], nextCursor: null } },
     async getStats () { return { sessions: 0 } },
     async shutdown () {},
@@ -374,6 +375,51 @@ test('history-list business rejections leave the FIFO healthy and its input is c
   assert.equal(gateway.faulted, false)
   assert.deepEqual(log, [
     ['list', { limit: 1, cursor: { startedAt: 1000, sessionId: 'terminal-z' } }],
+    ['open', { sessionId: 'new-session', sourceId: 'mic', startedAt: 2000 }]
+  ])
+})
+
+test('history-page business rejections are read-only, cloned and do not trip the gateway', async (t) => {
+  const ready = deferred()
+  const log = []
+  const gateway = new StorageGateway({
+    databasePath: DATABASE_PATH,
+    hostFactory: () => hostWith({
+      async getSessionPage (input) {
+        await ready.promise
+        log.push(['page', input])
+        throw new StorageError('SESSION_ACTIVE')
+      },
+      async openSession (input) {
+        log.push(['open', input])
+        return { status: 'committed' }
+      }
+    })
+  })
+  t.after(() => gateway.terminate())
+
+  const input = {
+    sessionId: 'active-session',
+    limit: 50,
+    cursor: { t0Ms: 1000, firstEventOrder: 10 }
+  }
+  const paged = gateway.getSessionPage(input)
+  const opened = gateway.openSession({ sessionId: 'new-session', sourceId: 'mic', startedAt: 2000 })
+  const flushed = gateway.flush()
+  input.limit = 100
+  input.cursor.firstEventOrder = 999
+  ready.resolve()
+
+  await assert.rejects(paged,
+    (error) => error instanceof StorageError && error.code === 'SESSION_ACTIVE')
+  assert.deepEqual(await opened, { status: 'committed' })
+  await assert.doesNotReject(flushed)
+  assert.equal(gateway.faulted, false)
+  assert.deepEqual(log, [
+    ['page', {
+      sessionId: 'active-session', limit: 50,
+      cursor: { t0Ms: 1000, firstEventOrder: 10 }
+    }],
     ['open', { sessionId: 'new-session', sourceId: 'mic', startedAt: 2000 }]
   ])
 })

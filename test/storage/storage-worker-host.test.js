@@ -329,3 +329,29 @@ test('history listing forwards the exact keyset payload without an idempotency k
   assert.deepEqual(await pending, { items: [], nextCursor: null })
   await terminateQuietly(host)
 })
+
+test('history detail forwards the exact segment keyset payload without an idempotency key', async () => {
+  const { child, host } = await startReady()
+  const payload = {
+    sessionId: 'session-9',
+    limit: 50,
+    cursor: { t0Ms: 1775, firstEventOrder: 80 }
+  }
+  const pending = host.getSessionPage(payload)
+  await nextTurn()
+  const request = requestFor(child, OPERATIONS.GET_SESSION_PAGE)
+  assert.deepEqual(request.payload, payload)
+  assert.equal(Object.hasOwn(request, 'idempotencyKey'), false)
+  const result = {
+    session: {
+      sessionId: 'session-9', mode: 'meeting', sourceId: 'loopback',
+      startedAt: 1000, endedAt: 5000, state: 'closed'
+    },
+    totalCount: 0,
+    items: [],
+    nextCursor: null
+  }
+  child.emit('message', successResponse(request, result))
+  assert.deepEqual(await pending, result)
+  await terminateQuietly(host)
+})

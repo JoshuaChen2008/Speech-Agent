@@ -48,10 +48,62 @@ function transcript (overrides = {}) {
   }
 }
 
+function sessionPage (overrides = {}) {
+  return {
+    session: {
+      sessionId: 'session:history/1',
+      mode: 'meeting',
+      sourceId: 'loopback',
+      startedAt: 1775001000000,
+      endedAt: 1775001004800,
+      state: 'closed',
+      ...overrides.session
+    },
+    totalCount: overrides.totalCount === undefined ? 2 : overrides.totalCount,
+    items: overrides.items || [
+      {
+        segmentId: 'segment-1',
+        sourceId: 'loopback',
+        text: '精修后的当前字幕。',
+        textRevision: 2,
+        t0Ms: 250,
+        t1Ms: 1800
+      },
+      {
+        segmentId: 'segment-2',
+        sourceId: 'loopback',
+        text: '第二条字幕',
+        textRevision: 1,
+        t0Ms: 2000,
+        t1Ms: 4750
+      }
+    ],
+    nextCursor: Object.hasOwn(overrides, 'nextCursor') ? overrides.nextCursor : null,
+    ...overrides.root
+  }
+}
+
+function sessionList (overrides = {}) {
+  return {
+    items: overrides.items || [{
+      sessionId: 'session:history/1',
+      mode: 'meeting',
+      sourceId: 'loopback',
+      startedAt: 1775001000000,
+      endedAt: 1775001004800,
+      state: 'closed',
+      segmentCount: 2
+    }],
+    nextCursor: Object.hasOwn(overrides, 'nextCursor') ? overrides.nextCursor : null,
+    ...overrides.root
+  }
+}
+
 function makeService (overrides = {}) {
   const stored = overrides.transcript || transcript()
   const gateway = overrides.gateway || {
-    listSessions: async (input) => ({ items: [{ sessionId: 'terminal' }], nextCursor: input.cursor }),
+    listSessions: async () => sessionList(),
+    getSessionPage: async () => overrides.page || sessionPage(),
     getSessionTranscript: async () => stored
   }
   return new HistoryService({
@@ -69,6 +121,7 @@ test('history listing accepts only the narrow pagination shape and clones caller
       input.cursor.startedAt = 0
       return { items: [], nextCursor: null }
     },
+    getSessionPage: async () => sessionPage(),
     getSessionTranscript: async () => transcript()
   }
   const service = makeService({ gateway })
@@ -83,21 +136,163 @@ test('history listing accepts only the narrow pagination shape and clones caller
   assert.throws(() => service.listSessions({ limit: 20 }), /历史记录请求无效/)
 })
 
-test('history detail is a detached terminal transcript and rejects active sessions', async () => {
-  const stored = transcript()
-  const service = makeService({ transcript: stored })
-  const result = await service.getSession('session:history/1')
+test('history listing rebuilds a strict terminal allowlist and rejects privileged gateway data', async (t) => {
+  const request = { limit: 1, cursor: null }
+  const stored = sessionList({
+    nextCursor: { startedAt: 1775001000000, sessionId: 'session:history/1' }
+  })
+  const gateway = {
+    listSessions: async () => stored,
+    getSessionPage: async () => sessionPage(),
+    getSessionTranscript: async () => transcript()
+  }
+  const result = await makeService({ gateway }).listSessions(request)
+  assert.deepEqual(result, stored)
+  result.items[0].state = 'interrupted'
+  result.nextCursor.sessionId = 'renderer-mutation'
+  assert.equal(stored.items[0].state, 'closed')
+  assert.equal(stored.nextCursor.sessionId, 'session:history/1')
 
+  const invalidLists = [
+    sessionList({ root: { text: 'transcript leak' } }),
+    sessionList({ items: [{ ...sessionList().items[0], audioPath: 'C:\\private\\capture.wav' }] }),
+    sessionList({ items: [{ ...sessionList().items[0], translation: { text: 'leak' } }] }),
+    sessionList({ items: [{ ...sessionList().items[0], state: 'active' }] }),
+    sessionList({ items: [{ ...sessionList().items[0], mode: 'dictation' }] }),
+    sessionList({
+      nextCursor: { startedAt: 1775001000000, sessionId: 'session:history/1', sql: 'SELECT 1' }
+    })
+  ]
+  for (const [index, value] of invalidLists.entries()) {
+    await t.test(`invalid list ${index + 1}`, async () => {
+      const invalidGateway = {
+        ...gateway,
+        listSessions: async () => value
+      }
+      await assert.rejects(
+        makeService({ gateway: invalidGateway }).listSessions(request),
+        (error) => error instanceof HistoryError && error.code === 'INVALID_HISTORY_DATA'
+      )
+    })
+  }
+})
+
+test('history detail page is detached, terminal and accepts only its exact keyset request', async () => {
+  const stored = sessionPage()
+  let received = null
+  const gateway = {
+    listSessions: async () => ({ items: [], nextCursor: null }),
+    getSessionPage: async (input) => {
+      received = input
+      return stored
+    },
+    getSessionTranscript: async () => transcript()
+  }
+  const service = makeService({ gateway })
+  const request = { sessionId: 'session:history/1', limit: 2, cursor: null }
+  const result = await service.getSessionPage(request)
+
+  assert.notEqual(received, request)
+  assert.deepEqual(received, request)
   result.session.state = 'interrupted'
-  result.segments[0].text = 'renderer mutation'
+  result.items[0].text = 'renderer mutation'
   assert.equal(stored.session.state, 'closed')
-  assert.equal(stored.segments[0].text, '精修后的当前字幕。')
+  assert.equal(stored.items[0].text, '精修后的当前字幕。')
+  await assert.rejects(
+    service.getSessionPage({ sessionId: '', limit: 2, cursor: null }),
+    (error) => error instanceof HistoryError && error.code === 'INVALID_SESSION'
+  )
+  await assert.rejects(
+    service.getSessionPage({ sessionId: 'session:history/1', limit: 2, cursor: null, sql: 'SELECT 1' }),
+    (error) => error instanceof HistoryError && error.code === 'INVALID_HISTORY_REQUEST'
+  )
+  await assert.rejects(
+    service.getSessionPage({ sessionId: 'session:history/1', limit: 101, cursor: null }),
+    (error) => error instanceof HistoryError && error.code === 'INVALID_HISTORY_REQUEST'
+  )
+  await assert.rejects(
+    service.getSessionPage({
+      sessionId: 'session:history/1', limit: 2,
+      cursor: { t0Ms: 0, firstEventOrder: 1, id: 7 }
+    }),
+    (error) => error instanceof HistoryError && error.code === 'INVALID_HISTORY_REQUEST'
+  )
+})
 
-  const active = makeService({ transcript: transcript({ session: { state: 'active', endedAt: null } }) })
-  await assert.rejects(active.getSession('session:history/1'),
-    (error) => error instanceof HistoryError && error.code === 'SESSION_ACTIVE')
-  await assert.rejects(service.getSession(''),
-    (error) => error instanceof HistoryError && error.code === 'INVALID_SESSION')
+test('history detail page rejects active, over-privileged and malformed gateway data', async (t) => {
+  const invalidPages = [
+    sessionPage({ session: { state: 'active', endedAt: null } }),
+    sessionPage({ session: { state: 'unknown' } }),
+    sessionPage({ root: { sql: 'SELECT * FROM segments' } }),
+    sessionPage({ session: { audioPath: 'C:\\private\\capture.wav' } }),
+    sessionPage({ items: [
+      { ...sessionPage().items[0], translation: { language: 'en', text: 'secret' } },
+      sessionPage().items[1]
+    ] }),
+    sessionPage({ items: [
+      { ...sessionPage().items[0], audioPath: 'C:\\private\\capture.wav' },
+      sessionPage().items[1]
+    ] }),
+    sessionPage({ items: [
+      { ...sessionPage().items[0], firstEventOrder: 1 },
+      sessionPage().items[1]
+    ] }),
+    sessionPage({ items: [
+      sessionPage().items[0],
+      { ...sessionPage().items[1], sql: 'SELECT 1' }
+    ] }),
+    sessionPage({ nextCursor: { t0Ms: 2000, firstEventOrder: 3, path: 'C:\\private' } })
+  ]
+
+  for (const [index, page] of invalidPages.entries()) {
+    await t.test(`invalid page ${index + 1}`, async () => {
+      const service = makeService({ page })
+      await assert.rejects(
+        service.getSessionPage({ sessionId: 'session:history/1', limit: 2, cursor: null }),
+        (error) => error instanceof HistoryError &&
+          (index === 0 ? error.code === 'SESSION_ACTIVE' : error.code === 'INVALID_HISTORY_DATA')
+      )
+    })
+  }
+})
+
+test('history detail page requires a cursor matching the last item and strictly advancing', async () => {
+  const items = sessionPage().items.map((item) => ({ ...item, t0Ms: 1000, t1Ms: 2000 }))
+  const request = {
+    sessionId: 'session:history/1',
+    limit: 2,
+    cursor: { t0Ms: 1000, firstEventOrder: 10 }
+  }
+
+  const valid = makeService({ page: sessionPage({
+    totalCount: 3,
+    items,
+    nextCursor: { t0Ms: 1000, firstEventOrder: 12 }
+  }) })
+  assert.equal((await valid.getSessionPage(request)).nextCursor.firstEventOrder, 12)
+
+  for (const nextCursor of [
+    { t0Ms: 1000, firstEventOrder: 10 },
+    { t0Ms: 1000, firstEventOrder: 9 },
+    { t0Ms: 999, firstEventOrder: 99 },
+    { t0Ms: 1001, firstEventOrder: 12 }
+  ]) {
+    const service = makeService({ page: sessionPage({ totalCount: 3, items, nextCursor }) })
+    await assert.rejects(
+      service.getSessionPage(request),
+      (error) => error instanceof HistoryError && error.code === 'INVALID_HISTORY_DATA'
+    )
+  }
+})
+
+test('history service constructor requires both paged reads and private full export reads', () => {
+  assert.throws(() => new HistoryService({
+    gateway: {
+      listSessions: async () => ({ items: [], nextCursor: null }),
+      getSessionTranscript: async () => transcript()
+    },
+    showSaveDialog: async () => ({ canceled: true })
+  }), /history storage gateway is required/)
 })
 
 test('txt, markdown and srt exports contain only the current subtitle projection', () => {

@@ -73,6 +73,10 @@ class StorageWorkerService {
       assertExactKeys(payload, ['sessionId'])
       return this.requireStore().getSessionTranscript(payload)
     }
+    if (operation === OPERATIONS.GET_SESSION_PAGE) {
+      assertExactKeys(payload, ['sessionId', 'limit', 'cursor'])
+      return this.requireStore().getSessionPage(payload)
+    }
     if (operation === OPERATIONS.LIST_SESSIONS) {
       assertExactKeys(payload, ['limit', 'cursor'])
       return this.requireStore().listSessions(payload)
