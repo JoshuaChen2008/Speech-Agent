@@ -1,6 +1,6 @@
 # 字幕系统持久化与 Agent 派生数据架构
 
-> 状态：SQLite 字幕存储与 Agent 插件宿主语义已接受；DB0 开发态、DB1 原子/幂等及 Gateway/Recorder 恢复组合门禁已通过（2026-07-31）；默认产品切换、迁移、历史、退出接线及打包态资格尚未完成；向量检索 Deferred
+> 状态：SQLite 字幕存储与 Agent 插件宿主语义已接受；DB0 开发态、DB1 原子/幂等、Gateway 恢复及默认产品 SQLite-only 生命周期的确定性门禁已通过（2026-07-31）；真实产品 Electron 启动迁移、历史、I3/I4 与打包态资格尚未完成；向量检索 Deferred
 >
 > 决策依据：[ADR 0001](adr/0001-sqlite-authoritative-event-store.md) / [ADR 0002](adr/0002-separate-subtitle-and-agent-systems.md) / [ADR 0003](adr/0003-project-owned-agent-plugin-host.md)
 >
@@ -134,7 +134,7 @@ SQLite 驱动放在 storage worker 内的适配器后。当前候选为 Electron
 
 ## 6. JSONL 迁移
 
-B3.1 JSONL 是当前已实现基线；B3.3 迁移通过前，不得把 SQLite 写成已实现。迁移步骤：
+B3.1 JSONL 是旧版过渡基线；默认组合根现已按下列顺序切到 SQLite，真实产品 Electron/I4 验收前不得把完整 DB2/J10 写成发布通过。迁移步骤：
 
 1. 在没有活动会话时创建数据库与 schema，先保留原 JSONL 不动。
 2. 逐文件解析并按现有 `segmentId + revision` 规则导入 `final/refined`；坏尾行继续容忍并记录，坏中间行要求显式报告。遗留 `translated` 只计入迁移报告并保留原 JSONL，不导入字幕 `caption_events`；未来由 Agent 迁移进入独立派生表。
@@ -171,8 +171,8 @@ B3.1 JSONL 是当前已实现基线；B3.3 迁移通过前，不得把 SQLite �
 - 真实组合：Electron main 使用生产 `StorageWorkerHost`，经 utility process 的 `WorkerService` 串行调用真实 `SqliteSubtitleStore` 和文件 SQLite；loopback/mic 分开建会话并重开查询。
 - DB1 已验证：业务幂等键不依赖 `requestId`；同键同载荷去重，同键异载荷冲突；高 revision 更新投影，迟到低 revision 只保留事实；ghost refined、partial、translated、跨源/关闭后新事件均 fail closed；事件插入后或投影后故障会整事务回滚，commit 后丢回复再提交只保留一份事实。
 - Gateway 组合已验证：`starting` 先等 open ACK 才启动采集，final/refined 先进入持久化 FIFO 再广播 UI，close ACK 前保持 `stopping`；worker 空闲退出、提交前退出及 COMMIT 后 ACK 丢失均在旧 generation 完全退出后以同一载荷恢复，事实/投影不重复；pause/resume 保持同一会话，loopback/mic 顺序会话不串源，translated 不进入字幕事实。
-- DB6 局部已验证：schema 无 BLOB/音频列，RPC 拒绝 `audioPath/samples/sql` 等额外字段且错误不回显正文/路径；Gateway 正常/故障组合的隔离 userData 无 JSONL 双写和音频产物。完整 DB6 仍需默认产品切换后的迁移、导出、`before-quit`、应用目录与 I4 检查。
-- 尚未表示：SQLite 已成为默认产品权威、JSONL 已迁移、历史 UI 或产品 `before-quit` 已完成，或打包态已通过。
+- DB6 局部已验证：schema 无 BLOB/音频列，RPC 拒绝 `audioPath/samples/sql` 等额外字段且错误不回显正文/路径；默认产品确定性旅程的两次冷启动、迁移、XOR 会话和退出均无 JSONL 双写或音频产物。完整 DB6 仍需历史导出、真实产品应用目录与 I4 检查。
+- 默认组合根已经 SQLite-only，并实现单实例锁、stale-active 收束和有界 `before-quit`；这仍不表示真实产品 Electron 启动迁移、历史 UI、I3/I4 或打包态已通过。
 
 ### 7.3 当前 DB2 实现证据
 
@@ -180,4 +180,6 @@ B3.1 JSONL 是当前已实现基线；B3.3 迁移通过前，不得把 SQLite �
 - 确定性 J10 联合 CI 使用生产 `JsonlSqliteMigrator、StorageGateway、WorkerService、SqliteSubtitleStore` 和真实临时文件 SQLite；只替代 Electron utility-process 进程边界。
 - 已覆盖：逐文件原子事务；第二文件中断时不影响已提交第一文件、本文件无半导入；恢复后以同一队首和 SHA-256 幂等记录重放；SHA 与解析共用一份不可变字节快照；原文投影、txt/md/srt digest 一致；不可无损表达的亚毫秒时间 fail closed；缺失 close 记为 interrupted；坏中间行、截断尾、partial 与 translated 只计入无路径报告。
 - 迁移 RPC 只接受已解析的 `final/refined` 白名单载荷与文件名/SHA，拒绝 SQL、绝对路径、音频字段和 translated 字幕事实；原 JSONL 不改写。
-- 状态是「实现完成/尚未验收」：真实 Electron utility process 还未执行 import 操作，`main.js` 也未在冷启动调用迁移；因此不得声称 DB2/J10 产品门禁已通过或 SQLite 已切换权威。
+- 默认 `main.js` 通过 `SubtitleApplicationRuntime` 按 `worker ready → stale-active interrupted → JSONL migration → recorder/coordinator` 启动，只把 final/refined 写入 SQLite；退出先收束活动会话并等待存储 ACK，超时后只终止精确持有的 worker。
+- 产品生命周期联合 CI 围绕同一 userData 连续运行两次冷启动，验证旧档只读、SHA 幂等、mic/loopback XOR 新会话、partial 排除、refined 单投影、无 JSONL 双写/音频产物和零 active 遗留。
+- 状态仍是「实现完成/尚未产品验收」：真实 Electron utility process 的产品启动 import、弹窗/退出实机证据、历史 UI、I3/I4 与打包态尚未完成，因此不得声称完整 DB2/J10 发布门禁通过。

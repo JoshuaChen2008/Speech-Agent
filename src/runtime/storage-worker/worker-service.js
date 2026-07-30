@@ -60,6 +60,10 @@ class StorageWorkerService {
       assertIdempotencyKey(idempotencyKey, makeCloseSessionKey(payload.sessionId))
       return this.requireStore().closeSession(payload)
     }
+    if (operation === OPERATIONS.RECOVER_STALE_SESSIONS) {
+      assertExactKeys(payload, ['recoveredAt'])
+      return this.requireStore().recoverStaleSessions(payload)
+    }
     if (operation === OPERATIONS.IMPORT_LEGACY_JSONL) {
       assertExactKeys(payload, LEGACY_IMPORT_KEYS)
       assertIdempotencyKey(idempotencyKey, makeLegacyImportKey(payload.sourceSha256))

@@ -202,3 +202,36 @@ test('faults before commit roll back both facts and projections; lost reply retr
   assert.equal(store.getStats().captionEvents, 1)
   assert.equal(store.getStats().segments, 1)
 })
+
+test('cold-start recovery atomically marks stale active sessions interrupted', (t) => {
+  let faultPoint = 'afterStaleRecovery'
+  const store = tempStore(t, {
+    faultInjector: (point) => {
+      if (point === faultPoint) throw new Error('injected stale recovery fault')
+    }
+  })
+  store.openSession({ sessionId: 'stale-session', sourceId: 'mic', startedAt: 5000 })
+
+  assert.throws(
+    () => store.recoverStaleSessions({ recoveredAt: 4000 }),
+    /injected stale recovery fault/
+  )
+  assert.equal(store.getStats().activeSessions, 1, 'a pre-commit recovery fault must roll back')
+
+  faultPoint = null
+  assert.deepEqual(store.recoverStaleSessions({ recoveredAt: 4000 }), {
+    status: 'committed',
+    recoveredSessionCount: 1
+  })
+  const transcript = store.getSessionTranscript({ sessionId: 'stale-session' })
+  assert.equal(transcript.session.state, 'interrupted')
+  assert.equal(transcript.session.endedAt, 5000, 'clock rollback cannot end before session start')
+  assert.deepEqual(store.recoverStaleSessions({ recoveredAt: 9000 }), {
+    status: 'none',
+    recoveredSessionCount: 0
+  })
+  assert.throws(
+    () => store.recoverStaleSessions({ recoveredAt: 9000, sql: 'UPDATE sessions' }),
+    (error) => error.code === 'INVALID_SESSION'
+  )
+})

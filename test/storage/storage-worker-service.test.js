@@ -245,3 +245,39 @@ test('legacy import RPC is narrow, idempotent and cannot accept translation, aud
   assert.equal(service.handle(request(OPERATIONS.GET_STATS)).result.captionEvents, 1)
   service.handle(request(OPERATIONS.SHUTDOWN))
 })
+
+test('stale recovery RPC is narrow and leaves immutable caption facts intact', (t) => {
+  const service = new StorageWorkerService()
+  const databasePath = tempDatabase(t)
+  assert.equal(service.handle(request(OPERATIONS.INITIALIZE, { databasePath })).ok, true)
+  const opened = { sessionId: 'stale-session', sourceId: 'mic', startedAt: 5000 }
+  assert.equal(service.handle(request(OPERATIONS.OPEN_SESSION, opened, {
+    idempotencyKey: makeOpenSessionKey(opened.sessionId)
+  })).ok, true)
+  const event = caption({
+    sessionId: 'stale-session', sourceId: 'mic', sequence: 1, revision: 1
+  })
+  assert.equal(service.handle(request(OPERATIONS.APPEND_CAPTION, { event }, {
+    idempotencyKey: makeCaptionEventId(event)
+  })).ok, true)
+
+  const rejected = service.handle(request(OPERATIONS.RECOVER_STALE_SESSIONS, {
+    recoveredAt: 4000,
+    audioPath: 'C:\\private\\capture.wav'
+  }))
+  assert.equal(rejected.error.code, 'INVALID_REQUEST')
+  assert.equal(service.handle(request(OPERATIONS.GET_STATS)).result.activeSessions, 1)
+
+  const recovered = service.handle(request(OPERATIONS.RECOVER_STALE_SESSIONS, {
+    recoveredAt: 4000
+  }))
+  assert.deepEqual(recovered.result, { status: 'committed', recoveredSessionCount: 1 })
+  const transcript = service.handle(request(OPERATIONS.GET_SESSION, { sessionId: 'stale-session' })).result
+  assert.equal(transcript.session.state, 'interrupted')
+  assert.equal(transcript.session.endedAt, 5000)
+  assert.equal(transcript.segments[0].text, '协议字幕。')
+  assert.deepEqual(service.handle(request(OPERATIONS.RECOVER_STALE_SESSIONS, {
+    recoveredAt: 9000
+  })).result, { status: 'none', recoveredSessionCount: 0 })
+  service.handle(request(OPERATIONS.SHUTDOWN))
+})

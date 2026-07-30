@@ -110,6 +110,8 @@ class SessionCoordinator {
     this.sessionSourceIds = []
     this.busy = false
     this.disposed = false
+    this.shuttingDown = false
+    this.shutdownPromise = null
     this.transitionSequence = 0
     this.activeTransition = null
     this.revision = 0
@@ -170,6 +172,7 @@ class SessionCoordinator {
 
   async command (name) {
     if (this.disposed) return failure('COORDINATOR_CLOSED', '会话服务已关闭', false)
+    if (this.shuttingDown) return failure('COORDINATOR_CLOSING', '应用正在退出', false)
     if (!COMMANDS.includes(name)) return failure('UNKNOWN_COMMAND', '未知命令', false)
     if (this.busy) return failure('COMMAND_BUSY', '命令处理中', true)
 
@@ -282,9 +285,12 @@ class SessionCoordinator {
     }
   }
 
-  async stop () {
+  async stop (terminalStateOverride = null) {
     if (!this.snapshot.capabilities.canStop) return failure('INVALID_STATE', '当前不能停止', true)
-    const terminalState = this.snapshot.phase === 'error' ? 'interrupted' : 'closed'
+    if (terminalStateOverride !== null && !['closed', 'interrupted'].includes(terminalStateOverride)) {
+      throw new TypeError('terminal state override is invalid')
+    }
+    const terminalState = terminalStateOverride || (this.snapshot.phase === 'error' ? 'interrupted' : 'closed')
     const sessionId = this.snapshot.sessionId
     if (!this.adapter) {
       this.publish(this.buildSnapshot('stopping', sessionId, 'inactive', null))
@@ -553,12 +559,17 @@ class SessionCoordinator {
 
   beginTransition (operation) {
     if (!this.adapter) throw new Error('runtime adapter is unavailable')
+    let resolveDone
+    const done = new Promise((resolve) => { resolveDone = resolve })
     const transition = {
       token: ++this.transitionSequence,
       operation,
       controller: new AbortController(),
       timedOut: false,
-      timeout: null
+      timeout: null,
+      done,
+      resolveDone,
+      doneResolved: false
     }
     transition.adapter = this.adapter
     this.activeTransition = transition
@@ -571,11 +582,15 @@ class SessionCoordinator {
   }
 
   finishTransition (transition) {
-    if (this.activeTransition !== transition) return
     clearTimeout(transition.timeout)
+    if (!transition.doneResolved) {
+      transition.doneResolved = true
+      transition.resolveDone()
+    }
+    if (this.activeTransition !== transition) return
     this.activeTransition = null
     this.busy = false
-    if (this.persistenceFault?.mode === 'active') {
+    if (!this.shuttingDown && this.persistenceFault?.mode === 'active') {
       queueMicrotask(() => this.maybeStopForPersistenceFault())
     }
   }
@@ -877,7 +892,7 @@ class SessionCoordinator {
   }
 
   maybeStopForPersistenceFault () {
-    if (this.disposed || this.busy || this.persistenceFaultTask ||
+    if (this.disposed || this.shuttingDown || this.busy || this.persistenceFaultTask ||
         this.persistenceFault?.mode !== 'active' ||
         !['listening', 'paused'].includes(this.snapshot.phase)) return
 
@@ -929,6 +944,82 @@ class SessionCoordinator {
       this.pendingCaptions.push(clone(event))
     }
     return true
+  }
+
+  shutdownForAppQuit () {
+    if (this.shutdownPromise) return this.shutdownPromise
+    this.shuttingDown = true
+    this.shutdownPromise = this.shutdownApplicationSession()
+    return this.shutdownPromise
+  }
+
+  async shutdownApplicationSession () {
+    const transition = this.activeTransition
+    if (transition) {
+      transition.controller.abort()
+      await transition.done
+    }
+    if (this.disposed) return
+
+    /* An open acknowledgement may have been retained behind a storage fault.
+       Drain it without restarting capture; only then can this exact durable
+       session be closed as interrupted. */
+    if (this.persistenceFault?.mode === 'open') {
+      try {
+        await this.persistenceSink.retry()
+        this.persistenceFault = null
+      } catch (cause) {
+        const error = new Error('durable session open could not be recovered during shutdown')
+        error.code = 'SHUTDOWN_STORAGE_OPEN_FAILED'
+        error.cause = cause
+        throw error
+      }
+    }
+
+    let stopAttempts = 0
+    while (this.snapshot.sessionId !== null && stopAttempts < 2) {
+      stopAttempts += 1
+      const stopped = await this.stop('interrupted')
+      if (stopped.ok) break
+      if (this.persistenceFault && ['stop', 'close'].includes(this.persistenceFault.mode)) {
+        const recovered = await this.retryPersistenceForShutdown()
+        if (!recovered.ok) {
+          const error = new Error('durable session close could not be recovered during shutdown')
+          error.code = recovered.code || 'SHUTDOWN_STORAGE_CLOSE_FAILED'
+          throw error
+        }
+      }
+    }
+    if (this.snapshot.sessionId !== null) {
+      const error = new Error('active subtitle session could not be closed during shutdown')
+      error.code = 'SHUTDOWN_SESSION_ACTIVE'
+      throw error
+    }
+    if (this.persistenceSink) await this.persistenceSink.flush()
+    await this.dispose()
+  }
+
+  async retryPersistenceForShutdown () {
+    const fault = this.persistenceFault
+    const sessionId = this.snapshot.sessionId
+    try {
+      await this.persistenceSink.retry()
+    } catch (cause) {
+      this.persistenceFault = { ...fault, cause }
+      const error = this.persistenceError('RECOVERY')
+      this.publish(this.buildSnapshot('error', sessionId, 'error', error))
+      return failure(error.code, error.message, error.recoverable, error.nextAction)
+    }
+    this.persistenceFault = null
+    if (fault.mode === 'close') return this.completeStoppedSession()
+    if (fault.mode === 'stop') {
+      const bufferedFailure = await this.flushBufferedPersistence(sessionId)
+      if (bufferedFailure) return bufferedFailure
+      const closeFailure = await this.commitPersistenceClose(sessionId, fault.terminalState)
+      if (closeFailure) return closeFailure
+      return this.completeStoppedSession()
+    }
+    return failure('SHUTDOWN_STORAGE_STATE_INVALID', '字幕保存状态无法收束', false)
   }
 
   async dispose () {

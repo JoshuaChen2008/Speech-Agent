@@ -30,8 +30,8 @@ Hosted CI 不声称验证真实 WASAPI/回环、物理麦克风、DWM 窗口行�
 
 | ID | 用户场景与联合链路 | CI / 验收 | 当前状态 |
 |---|---|---|---|
-| J1 | 会议模式：点击运行 → 系统音频字幕 → partial/final/refined → 自动持久化 → 停止/重启 → 按时间戳查看历史 → 导出 | 字幕 MVP 每次 PR；真实音频另走 I2 smoke；B3.3 后必须改跑 SQLite | SQLite Gateway 组合已覆盖 loopback 的 open/字幕/stop barrier/重开查询切片；默认权威切换、历史 UI/导出尚缺，完整 J1 未通过 |
-| J2 | 听写模式：点击运行 → 麦克风字幕 → partial/final/refined → 自动持久化 → 停止/重启 → 按时间戳查看历史 → 导出 | 字幕 MVP / 发布阻断；真实麦克风另走 I2 smoke | SQLite Gateway 组合已覆盖 mic 的 open/final/stop barrier/重开查询切片；默认权威切换、物理 mic、历史 UI/导出尚缺，完整 J2 未通过 |
+| J1 | 会议模式：点击运行 → 系统音频字幕 → partial/final/refined → 自动持久化 → 停止/重启 → 按时间戳查看历史 → 导出 | 字幕 MVP 每次 PR；真实音频另走 I2 smoke；B3.3 后必须改跑 SQLite | 默认产品 SQLite-only 联合旅程已覆盖 loopback 的 start/final/退出屏障/重开查询；真实 loopback I2 已有。历史 UI/导出尚缺，完整 J1 未通过 |
+| J2 | 听写模式：点击运行 → 麦克风字幕 → partial/final/refined → 自动持久化 → 停止/重启 → 按时间戳查看历史 → 导出 | 字幕 MVP / 发布阻断；真实麦克风另走 I2 smoke | 默认产品 SQLite-only 联合旅程已覆盖 mic 的 start/partial/final/refined/退出屏障/重开查询；物理 mic、历史 UI/导出尚缺，完整 J2 未通过 |
 | J3 | Agent：已提交的单路会话停止 → 字幕上下文插件按完整水位读取 → Pi Agent Loop → 纪要插件生成概要/结论/待办/风险 → 独立保存并在历史展示 | A2 PR 阻断 + AI provider 替身；`loopback`/`mic` fixture 分别运行；实网仅手动验收 | Agent 未实现；不阻断字幕 MVP |
 | J4 | 来源互斥：设置/UI/runtime 均拒绝 `mic + loopback`；活动会话禁止直接换源；停止后以另一来源启动新会话且历史/Agent 产物不串会话 | 字幕 MVP 每次 PR；两种来源分别做 I2 smoke，不做双路 soak | 已覆盖 UI 结构、配置/迁移、Coordinator、adapter/audio host/worker 和停止换源后的两份隔离历史；SQLite/Agent 接入后沿用本旅程扩展 |
 | J5 | pause/resume 时存在在途 refine 与后续 Agent 任务；恢复后不丢、不重发、不跨会话 | 字幕部分 I2；Agent 部分 A2 + 实机 smoke | Gateway 真实组合已覆盖 pause/resume→同会话 refined→SQLite；真实 refine 暂停、物理来源和 Agent 后置部分仍待补 |
@@ -39,9 +39,9 @@ Hosted CI 不声称验证真实 WASAPI/回环、物理麦克风、DWM 窗口行�
 | J7 | Agent 超时、限流、断网、凭据失效或 Loop 失败；本地字幕、权威存储和历史必须继续 | A1/A2 PR 阻断 | 未实现；不阻断字幕 MVP |
 | J8 | 两小时字幕会话、数千段和历史滚动；CPU/内存/队列/SQLite WAL 有界 | I3 soak / 字幕发布门禁 | 未覆盖 |
 | J9 | 打包版首启、模型下载、权限、真字幕、自动保存、历史查看和退出清理；全程不需要 Agent | I4 干净 Win11 | 未覆盖 |
-| J10 | 旧 JSONL → SQLite：中断后重跑不重复，`final/refined` 事件、原文当前投影及 txt/md/srt 原文导出 digest 一致，切换后不双写；遗留 `translated` 只读保留并报告，不导入字幕事实 | B3.3 PR 阻断 + 迁移 fixture | DB2 确定性联合旅程已用真实 `JsonlSqliteMigrator → StorageGateway → WorkerService → SqliteSubtitleStore → 文件 SQLite` 验证逐文件事务、第二文件故障后重跑、同一字节快照的 SHA/解析幂等、亚毫秒无损表达 fail-closed、坏中间行/截断尾报告、缺失 close 转 interrupted、四类原文 digest 一致及 translated-only 隔离。进程边界由 service-backed host 替身，真实 Electron utility 迁移、产品启动调用与切换后不双写仍待验收，完整 J10 未通过 |
+| J10 | 旧 JSONL → SQLite：中断后重跑不重复，`final/refined` 事件、原文当前投影及 txt/md/srt 原文导出 digest 一致，切换后不双写；遗留 `translated` 只读保留并报告，不导入字幕事实 | B3.3 PR 阻断 + 迁移 fixture | DB2 内核旅程覆盖逐文件事务、故障重跑、同字节 SHA/解析、亚毫秒 fail-closed、坏行/截断尾、缺失 close、四类原文 digest 和 translated 隔离；新增产品生命周期旅程再覆盖 stale-active→冷启动迁移→SQLite-only mic/loopback→退出→二次启动幂等。两者使用真实文件 SQLite，只替代 Electron utility-process 边界；真实产品 Electron 启动和打包态仍待验收，完整 J10 未通过 |
 | J11 | final/refined → 可选 FTS/embedding：旧向量立即失效，重建结果一致；`sqlite-vec` 缺失时 history 继续 | X1 启用时才阻断对应 PR/打包验收 | Deferred；不阻断 B3.3、字幕 MVP 或 A2 |
-| J12 | 隐私负证据：正常停止、崩溃恢复、诊断 smoke、迁移和导出后，SQLite、应用数据目录、日志、测试产物与 Agent 上下文均不存在现场采集 PCM/WAV、录音片段或音频路径 | 字幕 MVP PR schema/文件检查 + I2 diagnostic + I4 打包版数据目录检查；测试只可读取来源明确的静态合成语料 | diagnostic 与 DB0/DB1 schema/RPC 已通过；Gateway 正常/三类 worker 故障的隔离 userData 无音频产物且无 JSONL 双写。默认切换、迁移/导出、退出与 I4 仍待补 |
+| J12 | 隐私负证据：正常停止、崩溃恢复、诊断 smoke、迁移和导出后，SQLite、应用数据目录、日志、测试产物与 Agent 上下文均不存在现场采集 PCM/WAV、录音片段或音频路径 | 字幕 MVP PR schema/文件检查 + I2 diagnostic + I4 打包版数据目录检查；测试只可读取来源明确的静态合成语料 | diagnostic、schema/RPC、Gateway 以及默认产品两次冷启动/迁移/XOR 会话/退出均无音频产物且不创建新 JSONL。历史导出与 I4 仍待补 |
 | J13 | 内容型插件权限：真实 PluginHost 装载字幕上下文/增强文本/纪要插件；只允许读已提交正文、调用 ModelGateway、写 `agent_artifacts`；外部操作请求被拒绝且不影响字幕 | A1/A2 PR 阻断；契约 provider 替身 + 真实 SQLite/宿主 | 宿主与插件未实现 |
 
 新增功能必须在本表增加或更新场景；只有单元测试、没有对应用户旅程时，状态最多写“实现完成 / 尚未验收”。
@@ -76,8 +76,10 @@ B3.3 开始，数据库联合测试必须使用临时目录中的真实 schema�
 
 ## 6. 当前 CI 基线
 
-`.github/workflows/ci.yml` 使用 Windows runner，因为项目依赖 Windows x64 的 sherpa-onnx 预编译包。workflow 使用锁文件安装依赖，先以隐藏、无窗口 Electron main 执行 DB0 资格，再通过生产 `StorageWorkerHost → utilityProcess → WorkerService → SqliteSubtitleStore` 跑 DB1 基座；随后以 `SessionCoordinator → SqliteSessionRecorder → StorageGateway → StorageWorkerHost → utilityProcess → SQLite` 跑 loopback/mic、pause/refine、stop barrier、空闲退出和提交前/后故障重放并动态校验报告，最后运行确定性用户旅程和完整回归。权限仅为只读仓库内容，并对同一分支的新运行取消旧运行。打包态 DB0、默认产品权威切换、DB2/历史 UI 和 `before-quit` 接线仍不得由该阶段 CI 冒充。
+`.github/workflows/ci.yml` 使用 Windows runner，因为项目依赖 Windows x64 的 sherpa-onnx 预编译包。workflow 使用锁文件安装依赖，先以隐藏、无窗口 Electron main 执行 DB0 资格，再通过生产 `StorageWorkerHost → utilityProcess → WorkerService → SqliteSubtitleStore` 跑 DB1 基座；随后以 `SessionCoordinator → SqliteSessionRecorder → StorageGateway → StorageWorkerHost → utilityProcess → SQLite` 跑 loopback/mic、pause/refine、stop barrier、空闲退出和提交前/后故障重放并动态校验报告，最后运行确定性用户旅程和完整回归。默认组合根的冷启动顺序、迁移、SQLite-only 写入、stale-active 与退出屏障由 service-backed host 的真实文件 SQLite 旅程验证。权限仅为只读仓库内容，并对同一分支的新运行取消旧运行。真实产品 UI 启动、打包态 DB0、历史 UI 和 I3/I4 仍不得由确定性 CI 冒充。
 
 当前 J1/J2/J4/J5/J6/J12 的确定性基线位于 `test/integration/caption-session-journey.test.js`。它使用生产的会话协调器、配置存储、字幕 reducer、会话存档接线与导出逻辑；J1/J2 只在 ASR/设备边界注入契约合法的 CaptionEvent。J4 进一步构造真实 `RealtimeRuntimeAdapter → RealtimeWorkerHost + AudioHostController` 组合，只模拟 Electron utility process、隐藏宿主 renderer 与物理声卡边界；旅程先跑 loopback 会话、活动期拒绝切换、停止后再跑 mic 新会话，并断言两次单路选择分别到达 worker configure 与 audio-host capture、PCM 端口完成接线、两份历史不串源。J5/J6 在同一生产组合边界中执行暂停/恢复、迟到 refined、worker 退出、error/retry、新 worker 游标恢复和同一会话继续持久化。J12 同时检查持久化目录没有音频扩展名文件。现存 translated fixture 只证明向后兼容的折叠契约，不属于字幕 MVP 成功条件，也不证明 Agent 已实现。
+
+`test/integration/product-sqlite-lifecycle-journey.test.js` 是默认产品组合根的 DB2/J10/J12 旅程：真实 `SubtitleApplicationRuntime → JsonlSqliteMigrator → StorageGateway → WorkerService → SqliteSubtitleStore → SqliteSessionRecorder → SessionCoordinator` 围绕同一 userData 运行两次冷启动，仅用 service-backed host 替换 Electron 进程边界。它断言 crash 遗留 active 会话先收束、旧 JSONL 后迁移、mic/loopback 只单路运行、partial 不落盘、refined 成为唯一投影、退出写 interrupted、第二次迁移幂等、没有新 JSONL 或音频文件。
 
 I2 实机入口 `scripts/i2-live-caption-smoke.js` 必须显式传入且只接受一个 `--source loopback` 或 `--source mic`，两次运行不得并发。schema v2 报告由 runner 原样生成，包含字幕到达时序、Electron CPU/工作集、audio-host 队列/丢帧、worker 缺口与 CaptionEvent 边界丢弃计数，且不包含字幕正文、PCM、现场音频文件或音频路径。当前受控 loopback 证据见 `docs/validation/i2-loopback-results.json`；物理 mic 报告仍是 I2 关闭条件。

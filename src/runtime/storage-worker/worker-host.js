@@ -329,6 +329,10 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.CLOSE_SESSION, input, makeCloseSessionKey(input?.sessionId))
   }
 
+  recoverStaleSessions (input) {
+    return this.enqueue(OPERATIONS.RECOVER_STALE_SESSIONS, input)
+  }
+
   importLegacyJsonl (input) {
     return this.enqueue(OPERATIONS.IMPORT_LEGACY_JSONL, input, makeLegacyImportKey(input?.sourceSha256))
   }

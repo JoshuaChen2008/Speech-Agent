@@ -20,7 +20,13 @@ const { StorageError } = require('../../runtime/storage-worker/protocol')
 
 const DEFAULT_MAX_RESTARTS = 2
 const DEFAULT_MAX_QUEUE = 4096
-const DURABLE_WRITE_OPERATIONS = new Set(['openSession', 'appendCaption', 'closeSession', 'importLegacyJsonl'])
+const DURABLE_WRITE_OPERATIONS = new Set([
+  'openSession',
+  'appendCaption',
+  'closeSession',
+  'recoverStaleSessions',
+  'importLegacyJsonl'
+])
 const TRANSPORT_CODES = new Set([
   'NOT_INITIALIZED',
   'STORAGE_WORKER_EXITED',
@@ -259,6 +265,10 @@ class StorageGateway {
     return this.enqueue('closeSession', input)
   }
 
+  recoverStaleSessions (input) {
+    return this.enqueue('recoverStaleSessions', input)
+  }
+
   importLegacyJsonl (input) {
     return this.enqueue('importLegacyJsonl', input)
   }
@@ -276,6 +286,7 @@ class StorageGateway {
       case 'openSession': return host.openSession(item.payload)
       case 'appendCaption': return host.appendCaption(item.payload)
       case 'closeSession': return host.closeSession(item.payload)
+      case 'recoverStaleSessions': return host.recoverStaleSessions(item.payload)
       case 'importLegacyJsonl': return host.importLegacyJsonl(item.payload)
       case 'getSessionTranscript': return host.getSessionTranscript(item.payload)
       case 'getStats': return host.getStats()

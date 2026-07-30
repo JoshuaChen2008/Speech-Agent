@@ -291,3 +291,18 @@ test('legacy JSONL import is forwarded with a source-SHA idempotency key', async
   assert.deepEqual(await pending, { status: 'skipped' })
   await terminateQuietly(host)
 })
+
+test('stale-session recovery forwards only the startup timestamp', async () => {
+  const { child, host } = await startReady()
+  const payload = { recoveredAt: 1775000000000 }
+  const pending = host.recoverStaleSessions(payload)
+  await nextTurn()
+  const request = requestFor(child, OPERATIONS.RECOVER_STALE_SESSIONS)
+  assert.deepEqual(request.payload, { recoveredAt: 1775000000000 })
+  assert.equal(Object.hasOwn(request, 'idempotencyKey'), false)
+  child.emit('message', successResponse(request, {
+    status: 'committed', recoveredSessionCount: 1
+  }))
+  assert.deepEqual(await pending, { status: 'committed', recoveredSessionCount: 1 })
+  await terminateQuietly(host)
+})

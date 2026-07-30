@@ -330,6 +330,45 @@ class SqliteSubtitleStore {
     }
   }
 
+  /* 冷启动时，唯一进程锁确认本次没有并行产品实例后，上一进程遗留的
+     active 会话只能来自未完成退出。一次短事务将其收束为 interrupted；
+     字幕事实保持不可变，ended_at 在系统时钟回拨时也不会早于 started_at。 */
+  recoverStaleSessions (input) {
+    this.assertOpen()
+    if (!input || typeof input !== 'object' || Array.isArray(input) ||
+        Object.keys(input).length !== 1 || !Object.hasOwn(input, 'recoveredAt')) {
+      throw new StorageError('INVALID_SESSION')
+    }
+    const recoveredAt = integerTimestamp(input.recoveredAt)
+    const database = this.database
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const active = database.prepare(`
+        SELECT session_id, started_at
+        FROM sessions
+        WHERE state = 'active'
+        ORDER BY started_at, session_id
+      `).all()
+      if (active.length > 0) {
+        database.prepare(`
+          UPDATE sessions
+          SET ended_at = CASE WHEN started_at > ? THEN started_at ELSE ? END,
+              state = 'interrupted'
+          WHERE state = 'active'
+        `).run(recoveredAt, recoveredAt)
+      }
+      this.inject('afterStaleRecovery')
+      database.exec('COMMIT')
+      return {
+        status: active.length > 0 ? 'committed' : 'none',
+        recoveredSessionCount: active.length
+      }
+    } catch (error) {
+      rollbackQuietly(database)
+      throw error
+    }
+  }
+
   /* 单个旧 JSONL 的所有副作用（session、事实、投影、导入审计）共用一个短
      事务。source_sha256 是迁移幂等键；失败/中断时审计行也会回滚，重跑从头
      开始，提交后重跑只返回 already_processed。 */

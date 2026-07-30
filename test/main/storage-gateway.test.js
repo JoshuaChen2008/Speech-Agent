@@ -25,6 +25,8 @@ function hostWith (overrides = {}) {
     async openSession (input) { return { status: 'committed', input } },
     async appendCaption (event) { return { status: 'committed', event } },
     async closeSession (input) { return { status: 'committed', input } },
+    async recoverStaleSessions () { return { status: 'none', recoveredSessionCount: 0 } },
+    async importLegacyJsonl () { return { status: 'skipped' } },
     async getSessionTranscript (sessionId) { return { sessionId } },
     async getStats () { return { sessions: 0 } },
     async shutdown () {},
@@ -304,4 +306,35 @@ test('shutdown rejects while the FIFO head has no ACK and never calls host shutd
   const closeRejected = assert.rejects(close, /worker exited before close ACK/)
   await gateway.terminate()
   await closeRejected
+})
+
+test('stale-session recovery is a retained startup write and safely replays an unknown ACK', async (t) => {
+  const log = []
+  let generation = 0
+  const gateway = new StorageGateway({
+    databasePath: DATABASE_PATH,
+    maxRestarts: 1,
+    hostFactory: () => {
+      const id = ++generation
+      return hostWith({
+        async recoverStaleSessions (input) {
+          log.push([id, structuredClone(input)])
+          if (id === 1) throw transportFailure('recovery committed before ACK')
+          return { status: 'none', recoveredSessionCount: 0 }
+        }
+      })
+    }
+  })
+  t.after(() => gateway.terminate())
+
+  const input = { recoveredAt: 1775000000000 }
+  assert.deepEqual(await gateway.recoverStaleSessions(input), {
+    status: 'none',
+    recoveredSessionCount: 0
+  })
+  input.recoveredAt = 0
+  assert.deepEqual(log, [
+    [1, { recoveredAt: 1775000000000 }],
+    [2, { recoveredAt: 1775000000000 }]
+  ])
 })

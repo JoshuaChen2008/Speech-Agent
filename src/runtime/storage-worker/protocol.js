@@ -11,6 +11,7 @@ const OPERATIONS = Object.freeze({
   OPEN_SESSION: 'session:open',
   APPEND_CAPTION: 'caption:append',
   CLOSE_SESSION: 'session:close',
+  RECOVER_STALE_SESSIONS: 'session:recover-stale',
   IMPORT_LEGACY_JSONL: 'legacy:import-jsonl',
   GET_SESSION: 'history:get-session',
   GET_STATS: 'storage:get-stats',

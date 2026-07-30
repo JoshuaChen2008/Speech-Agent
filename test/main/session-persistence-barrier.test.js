@@ -183,3 +183,21 @@ test('open failure never starts capture and retry resumes the same frozen sessio
   assert.equal(context.coordinator.getSnapshot().phase, 'listening')
   assert.equal(context.coordinator.getSnapshot().sessionId, 'durable-session')
 })
+
+test('application quit closes an active durable session as interrupted before disposal', async () => {
+  const context = fixture()
+  await context.coordinator.command('start')
+  context.adapter.emitCaption(caption('durable-session'))
+
+  await context.coordinator.shutdownForAppQuit()
+
+  assert.equal(context.coordinator.getSnapshot().phase, 'idle')
+  assert.equal(context.adapter.context, null)
+  assert.deepEqual(context.calls.filter(([name]) => name === 'close'), [[
+    'close',
+    { sessionId: 'durable-session', sourceId: 'loopback', state: 'interrupted' }
+  ]])
+  assert.equal(context.calls.some(([name]) => name === 'flush'), true)
+  const afterQuit = await context.coordinator.command('start')
+  assert.equal(afterQuit.code, 'COORDINATOR_CLOSED')
+})

@@ -21,16 +21,20 @@ const { resolveApprovedRealtimeModel, resolveApprovedRefinementModel, resolveSil
 const { FakeRuntimeAdapter } = require('./main/session/fake-runtime-adapter')
 const { RealtimeRuntimeAdapter } = require('./runtime/realtime-runtime-adapter')
 const { SessionCoordinator, failure, success } = require('./main/session/session-coordinator')
-const { TranscriptStore } = require('./main/services/transcript-store')
-const { SessionTranscriptRecorder } = require('./main/services/session-transcript-recorder')
+const {
+  DEFAULT_SHUTDOWN_TIMEOUT_MS,
+  SubtitleApplicationRuntime
+} = require('./main/services/subtitle-application-runtime')
 
-/** @type {TranscriptStore | null} */ let transcriptStore = null
-/** @type {SessionTranscriptRecorder | null} */ let transcriptRecorder = null
+/** @type {SubtitleApplicationRuntime | null} */ let applicationRuntime = null
 
 /** @type {BrowserWindow | null} */ let captionWin = null
 /** @type {BrowserWindow | null} */ let toolbarWin = null
 /** @type {BrowserWindow | null} */ let settingsWin = null
 /** @type {SessionCoordinator | null} */ let coordinator = null
+
+let quitBarrierComplete = false
+let quitBarrierPromise = null
 
 const windowRoles = new Map()
 let locked = false
@@ -353,7 +357,7 @@ function applyLock (on) {
   if (!on) dock()
 }
 
-function createCoordinator () {
+function createCoordinator (persistenceSink) {
   const devOptions = resolveRuntimeOptions()
   if (devOptions.warning) console.warn(`[runtime] ${devOptions.warning}`)
   /* I2.1 结构模式（显式 dev 开关，默认关闭）：真实采集窗 + realtime worker，
@@ -410,27 +414,17 @@ function createCoordinator () {
   } else {
     adapterFactory = () => structuralRuntime ? new RealtimeRuntimeAdapter() : new FakeRuntimeAdapter()
   }
-  coordinator = new SessionCoordinator({
+  const created = new SessionCoordinator({
     adapterFactory,
     runtimeOptions,
     transitionTimeoutMs,
     configuration: config.get(),
+    persistenceSink,
     onListenerError: (error) => logError('runtime.listener', error)
   })
-  coordinator.onSnapshot(broadcastSnapshot)
-  coordinator.onCaption((event) => send(captionWin, CHANNELS.CAPTION_EVENT, event))
-
-  /* B3.1：事件式 JSONL 转写档。会话出现即开档、回到无会话即封档；
-     只收定稿事件（final/refined/translated），partial 是显示态不入档。 */
-  transcriptStore = new TranscriptStore({
-    directory: path.join(app.getPath('userData'), 'sessions'),
-    onError: (error) => logError('transcript', error)
-  })
-  transcriptRecorder = new SessionTranscriptRecorder({
-    coordinator,
-    store: transcriptStore,
-    onError: (error) => logError('transcript.open', error)
-  })
+  created.onSnapshot(broadcastSnapshot)
+  created.onCaption((event) => send(captionWin, CHANNELS.CAPTION_EVENT, event))
+  return created
 }
 
 async function updateConfig (patch) {
@@ -530,26 +524,77 @@ ipcMain.handle(CHANNELS.RUNTIME_COMMAND, async (event, name) => {
 
 nativeTheme.on('updated', broadcastConfig)
 
-app.whenReady().then(() => {
+async function bootstrapApplication () {
   config.load()
-  createCoordinator()
+  applicationRuntime = new SubtitleApplicationRuntime({
+    userDataDir: app.getPath('userData'),
+    coordinatorFactory: ({ persistenceSink }) => createCoordinator(persistenceSink),
+    onError: (error) => logError('subtitle.storage', error)
+  })
+  const started = await applicationRuntime.start()
+  coordinator = started.coordinator
+  if (started.recoveryReport.recoveredSessionCount > 0) {
+    console.warn(`[subtitle.storage] recovered ${started.recoveryReport.recoveredSessionCount} interrupted session`)
+  }
+  if (started.migrationReports.length > 0) {
+    console.log(`[subtitle.storage] checked ${started.migrationReports.length} legacy transcript file(s)`)
+  }
   createWindows()
   if (!config.get().onboardingCompleted) openSettingsWindow()
 
   globalShortcut.register('CommandOrControl+Alt+L', () => applyLock(!locked))
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindows()
-  })
-})
+}
 
-app.on('will-quit', () => {
+function cleanupUiRuntime () {
   globalShortcut.unregisterAll()
   stopDrag(null, true)
   stopResize(null, true)
-  if (transcriptRecorder) transcriptRecorder.dispose()
-  if (coordinator) coordinator.dispose()
-  if (transcriptStore) transcriptStore.dispose()
-})
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
-})
+}
+
+function beginQuitBarrier (event) {
+  if (quitBarrierComplete) return
+  event.preventDefault()
+  if (quitBarrierPromise) return
+  cleanupUiRuntime()
+  quitBarrierPromise = (async () => {
+    if (applicationRuntime) {
+      const outcome = await applicationRuntime.shutdownWithin(DEFAULT_SHUTDOWN_TIMEOUT_MS)
+      if (!outcome.graceful) {
+        console.error(`[subtitle.storage] forced shutdown (${outcome.reason})`)
+      }
+    } else if (coordinator) {
+      await coordinator.dispose()
+    }
+  })().catch((error) => {
+    logError('application.shutdown', error)
+  }).finally(() => {
+    quitBarrierComplete = true
+    app.quit()
+  })
+}
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const primary = toolbarWin || captionWin
+    if (!primary || primary.isDestroyed()) return
+    if (primary.isMinimized()) primary.restore()
+    primary.show()
+    primary.focus()
+  })
+  app.on('before-quit', beginQuitBarrier)
+  app.on('will-quit', cleanupUiRuntime)
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit()
+  })
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0 && coordinator && !quitBarrierPromise) createWindows()
+  })
+  app.whenReady().then(bootstrapApplication).catch((error) => {
+    logError('application.startup', error)
+    process.exitCode = 1
+    app.quit()
+  })
+}
