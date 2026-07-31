@@ -30,6 +30,7 @@ function fakeChild (options = {}) {
   }
   child.kill = () => {
     child.killCount += 1
+    if (options.throwOnFirstKill === true && child.killCount === 1) throw new Error('kill was not issued')
     if (options.exitOnKill !== false) setImmediate(() => child.emit('exit', options.killExitCode || 0))
   }
   return child
@@ -112,6 +113,26 @@ test('concurrent start calls share one initialize promise and one child', async 
   assert.equal(host.state, 'ready')
   assert.strictEqual(host.start(), first, 'ready generation keeps the same initialization promise')
   await terminateQuietly(host)
+})
+
+test('startup and concurrent application termination share one exact-child kill', async () => {
+  const child = fakeChild({ exitOnKill: false })
+  const { host } = harness({ childFactory: () => child, requestTimeoutMs: 20 })
+  const starting = host.start()
+  const terminating = host.terminateAndWait(100)
+
+  await nextTurn()
+  assert.equal(child.killCount, 1)
+  child.emit('exit', 0)
+
+  assert.equal(await terminating, 0)
+  await assert.rejects(starting, (error) => {
+    assert.equal(isStorageTransportError(error), true)
+    assert.equal(error.code, 'WORKER_EXITED')
+    return true
+  })
+  assert.equal(child.killCount, 1)
+  assert.equal(host.state, 'stopped')
 })
 
 test('storage utility fatal error is consumed without retaining the V8 report', async () => {
@@ -255,7 +276,31 @@ test('terminateAndWait reports a distinguishable timeout when the exact child st
     return true
   })
   assert.equal(child.killCount, 1)
+
+  let settled = false
+  const joined = host.terminateAndWait(100)
+  joined.then(() => { settled = true }, () => { settled = true })
+  await nextTurn()
+  assert.equal(child.killCount, 1, 'late reap retry must not kill the exact child twice')
+  assert.equal(settled, false)
+
   child.emit('exit', 0)
+  assert.equal(await joined, 0)
+  assert.equal(await host.waitForExactExit(), 0)
+  assert.equal(host.state, 'stopped')
+})
+
+test('termination can retry when the first child kill threw before being issued', async () => {
+  const child = fakeChild({ throwOnFirstKill: true })
+  const { host } = await startReady({ childFactory: () => child, requestTimeoutMs: 20 })
+
+  await assert.rejects(host.terminateAndWait(10), (error) => {
+    assert.equal(error.code, 'TERMINATION_TIMEOUT')
+    return true
+  })
+  assert.equal(child.killCount, 1)
+  assert.equal(await host.terminateAndWait(100), 0)
+  assert.equal(child.killCount, 2)
 })
 
 test('concurrent shutdown calls share one drain and one shutdown request', async () => {

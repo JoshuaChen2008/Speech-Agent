@@ -35,6 +35,10 @@ const {
   SubtitleApplicationRuntime
 } = require('./main/services/subtitle-application-runtime')
 const { HistoryService } = require('./main/services/history-service')
+const { createMainEvidenceBridge } = require('./main/services/electron-exit-evidence')
+
+const exitEvidence = createMainEvidenceBridge()
+exitEvidence.markLifecycle('main-started')
 
 /** @type {SubtitleApplicationRuntime | null} */ let applicationRuntime = null
 /** @type {ModelManager | null} */ let modelManager = null
@@ -48,6 +52,7 @@ const { HistoryService } = require('./main/services/history-service')
 
 let quitBarrierComplete = false
 let quitBarrierPromise = null
+let quitRequested = false
 
 const windowRoles = new Map()
 let locked = false
@@ -82,8 +87,18 @@ const CHILD_PROCESS_REASONS = Object.freeze([
   'crashed',
   'oom',
   'launch-failed',
-  'integrity-failure'
+  'integrity-failure',
+  'memory-eviction'
 ])
+
+const runtimeEvidenceOptions = Object.freeze({
+  registerAudioHostWebContents: (webContents) => exitEvidence.registerWebContents(webContents, 'audio-host'),
+  onAudioHostRenderProcessGone: (webContents, details) => exitEvidence.recordRenderProcessGone(webContents, details),
+  onAudioHostPreloadError: (webContents) => exitEvidence.recordPreloadError(webContents),
+  onAudioHostUnresponsive: (webContents) => exitEvidence.recordUnresponsive(webContents),
+  onRealtimeUtilityFatal: () => exitEvidence.recordUtilityFatal('realtime'),
+  onRefineUtilityFatal: () => exitEvidence.recordUtilityFatal('refine')
+})
 
 function logError (scope, error) {
   const message = error instanceof Error ? error.message : String(error)
@@ -121,8 +136,10 @@ function broadcastModelStatus (status) {
 
 function registerWindowRole (win, role) {
   const senderId = win.webContents.id
+  const unregisterExitEvidence = exitEvidence.registerWebContents(win.webContents, role)
   windowRoles.set(senderId, role)
   win.webContents.once('destroyed', () => {
+    unregisterExitEvidence()
     windowRoles.delete(senderId)
     stopDrag(senderId)
     stopResize(senderId)
@@ -131,10 +148,15 @@ function registerWindowRole (win, role) {
     stopDrag(senderId)
     stopResize(senderId)
   })
-  win.on('unresponsive', () => console.error(`[electron.window] role=${role} event=unresponsive`))
+  win.on('unresponsive', () => {
+    exitEvidence.recordUnresponsive(win.webContents)
+    console.error(`[electron.window] role=${role} event=unresponsive`)
+  })
   win.webContents.on('render-process-gone', (_event, details) => {
+    exitEvidence.recordRenderProcessGone(win.webContents, details)
     console.error(`[electron.renderer] role=${role} reason=${details.reason} exitCode=${details.exitCode}`)
   })
+  win.webContents.on('preload-error', () => exitEvidence.recordPreloadError(win.webContents))
   win.webContents.on('did-fail-load', (_event, errorCode, _description, _url, isMainFrame) => {
     if (isMainFrame) console.error(`[electron.load] role=${role} errorCode=${errorCode}`)
   })
@@ -465,7 +487,10 @@ function createCoordinator (persistenceSink) {
      清单匹配的 ready marker，不能只凭文件存在冒充安装成功。 */
   const managerReady = modelManager?.getStatus().state === 'ready'
   const approvedRuntime = (!devOptions.modelOverride && !structuralRuntime && managerReady)
-    ? createApprovedRuntimeDefinition({ userDataDir: app.getPath('userData') })
+    ? createApprovedRuntimeDefinition({
+        userDataDir: app.getPath('userData'),
+        ...runtimeEvidenceOptions
+      })
     : null
   let adapterFactory
   let runtimeOptions = devOptions
@@ -479,7 +504,9 @@ function createCoordinator (persistenceSink) {
     if (managerReady && !devOptions.modelOverride && !structuralRuntime) {
       console.error('[runtime] model manager reported ready but runtime bundle could not be resolved')
     }
-    adapterFactory = () => structuralRuntime ? new RealtimeRuntimeAdapter() : new FakeRuntimeAdapter()
+    adapterFactory = () => structuralRuntime
+      ? new RealtimeRuntimeAdapter(runtimeEvidenceOptions)
+      : new FakeRuntimeAdapter()
   }
   const created = new SessionCoordinator({
     adapterFactory,
@@ -564,7 +591,8 @@ async function installModelResources () {
         coordinator.getSnapshot().model.state !== 'ready') {
       activateApprovedRuntime({
         coordinator,
-        userDataDir: app.getPath('userData')
+        userDataDir: app.getPath('userData'),
+        ...runtimeEvidenceOptions
       })
     }
     return { ok: true, value: status }
@@ -693,6 +721,7 @@ ipcMain.handle(CHANNELS.HISTORY_EXPORT, (event, input) => {
 nativeTheme.on('updated', broadcastConfig)
 
 async function bootstrapApplication () {
+  if (quitRequested) return false
   config.load()
   const userDataDir = app.getPath('userData')
   modelManager = new ModelManager({
@@ -701,12 +730,15 @@ async function bootstrapApplication () {
   })
   modelManager.onStatus(broadcastModelStatus)
   await modelManager.initialize()
+  if (quitRequested) return false
   applicationRuntime = new SubtitleApplicationRuntime({
     userDataDir,
     coordinatorFactory: ({ persistenceSink }) => createCoordinator(persistenceSink),
-    onError: (error) => logError('subtitle.storage', error)
+    onError: (error) => logError('subtitle.storage', error),
+    onStorageUtilityFatal: () => exitEvidence.recordUtilityFatal('storage')
   })
   const started = await applicationRuntime.start()
+  if (quitRequested) return false
   coordinator = started.coordinator
   historyService = new HistoryService({
     gateway: applicationRuntime.gateway,
@@ -724,6 +756,7 @@ async function bootstrapApplication () {
   if (!config.get().onboardingCompleted) openSettingsWindow()
 
   globalShortcut.register('CommandOrControl+Alt+L', () => applyLock(!locked))
+  return true
 }
 
 function cleanupUiRuntime () {
@@ -734,34 +767,49 @@ function cleanupUiRuntime () {
 
 function beginQuitBarrier (event) {
   if (quitBarrierComplete) return
+  quitRequested = true
   event.preventDefault()
   if (quitBarrierPromise) return
+  exitEvidence.markLifecycle('quit-requested')
   cleanupUiRuntime()
   quitBarrierPromise = (async () => {
+    const shutdownTasks = []
     if (modelManager) {
-      const modelOutcome = await modelManager.shutdownWithin(DEFAULT_MODEL_SHUTDOWN_TIMEOUT_MS)
-      if (!modelOutcome.graceful) {
-        console.error(`[model.manager] forced shutdown (${modelOutcome.reason})`)
-      }
+      shutdownTasks.push(modelManager.shutdownWithin(DEFAULT_MODEL_SHUTDOWN_TIMEOUT_MS).then((modelOutcome) => {
+        if (!modelOutcome.graceful) {
+          console.error(`[model.manager] forced shutdown (${modelOutcome.reason})`)
+        }
+      }))
     }
     if (applicationRuntime) {
-      const outcome = await applicationRuntime.shutdownWithin(DEFAULT_SHUTDOWN_TIMEOUT_MS)
-      if (!outcome.graceful) {
-        console.error(`[subtitle.storage] forced shutdown (${outcome.reason})`)
-      }
+      shutdownTasks.push(applicationRuntime.shutdownWithin(DEFAULT_SHUTDOWN_TIMEOUT_MS).then((outcome) => {
+        if (!outcome.graceful) {
+          console.error(`[subtitle.storage] forced shutdown (${outcome.reason})`)
+        }
+      }))
     } else if (coordinator) {
-      await coordinator.dispose()
+      shutdownTasks.push(coordinator.dispose())
     }
-  })().catch((error) => {
-    logError('application.shutdown', error)
-  }).finally(() => {
+    const settlements = await Promise.allSettled(shutdownTasks)
+    const failed = settlements.find((result) => result.status === 'rejected')
+    if (failed) throw failed.reason
+  })().then(() => {
+    /* Only confirmed root termination may release Electron's before-quit
+       barrier.  In particular, a failed exact-child reap must leave the app
+       alive and prevent will-quit/main exit. */
     quitBarrierComplete = true
     app.quit()
+  }).catch((error) => {
+    logError('application.shutdown', error)
+    quitBarrierPromise = null
   })
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) {
+  quitRequested = true
+  exitEvidence.markLifecycle('quit-requested')
+  app.once('will-quit', () => exitEvidence.markLifecycle('will-quit'))
   app.quit()
 } else {
   app.on('second-instance', () => {
@@ -776,6 +824,7 @@ if (!hasSingleInstanceLock) {
        roles such as GPU. Every string is selected from a fixed allow-list,
        never scrubbed from an arbitrary Electron value, so a path-shaped name
        cannot survive as text fragments in the log. */
+    exitEvidence.recordChildProcessGone(details)
     const service = diagnosticLabel(details.serviceName, CHILD_SERVICE_LABELS)
     const type = diagnosticLabel(details.type, CHILD_PROCESS_TYPES)
     const reason = diagnosticLabel(details.reason, CHILD_PROCESS_REASONS)
@@ -783,14 +832,22 @@ if (!hasSingleInstanceLock) {
     console.error(`[electron.child] service=${service} type=${type} reason=${reason} exitCode=${exitCode}`)
   })
   app.on('before-quit', beginQuitBarrier)
-  app.on('will-quit', cleanupUiRuntime)
+  app.on('will-quit', () => {
+    exitEvidence.markLifecycle('will-quit')
+    cleanupUiRuntime()
+  })
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()
   })
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0 && coordinator && !quitBarrierPromise) createWindows()
   })
-  app.whenReady().then(bootstrapApplication).catch((error) => {
+  app.whenReady().then(async () => {
+    exitEvidence.markLifecycle('app-ready')
+    const bootstrapped = await bootstrapApplication()
+    if (bootstrapped) exitEvidence.markLifecycle('bootstrap-complete')
+  }).catch((error) => {
+    if (quitRequested) return
     logError('application.startup', error)
     process.exitCode = 1
     app.quit()

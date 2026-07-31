@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "kind": "native-model-activity-lifecycle-smoke",
+  "generatedAt": "2026-07-31T02:46:40.058Z",
+  "result": "pass",
+  "gateStatus": "diagnostic-only",
+  "runtime": {
+    "electron": "43.2.0",
+    "node": "24.18.0"
+  },
+  "input": {
+    "mode": "frozen-fixture-in-memory",
+    "fixtureId": "controlled-code-switch-v1",
+    "fixtureSha256": "cf741c91fae04e20ae92193065a24248a1f6ecd20a179c3deaf3d69bc9a6febc",
+    "sampleRate": 16000,
+    "frameSamples": 1600,
+    "trailingSilenceFrames": 15
+  },
+  "scope": {
+    "approvedInstalledBundleResolved": true,
+    "realtimeOnlineModelLoaded": true,
+    "sileroVadLoaded": true,
+    "offlineRefinementModelLoaded": true,
+    "concurrentNativeUtilitiesObserved": true,
+    "onlineStreamActivityObserved": true,
+    "offlineRefinementActivityObserved": true,
+    "physicalCaptureOpened": false,
+    "browserWindowCount": 0,
+    "packagedRuntime": false,
+    "userDialogReproduced": false
+  },
+  "metrics": {
+    "requestedIterations": 3,
+    "completedIterations": 3,
+    "concurrentUtilityPairs": 3,
+    "onlineActivityIterations": 3,
+    "offlineRefinementIterations": 3,
+    "totalFramesFed": 303,
+    "totalFramesIngested": 303,
+    "totalFinalCaptions": 3,
+    "totalRefinedCaptions": 3,
+    "totalOfflineDecodes": 3,
+    "gracefulRealtimeExits": 3,
+    "gracefulRefinementExits": 3,
+    "zeroExitCodeCount": 6,
+    "fatalErrorCount": 0
+  },
+  "iterations": [
+    {
+      "ordinal": 1,
+      "utility": {
+        "distinctProcessPair": true,
+        "concurrentDuringActivity": true
+      },
+      "activity": {
+        "framesFed": 101,
+        "framesIngested": 101,
+        "sequenceGapCount": 0,
+        "badSampleTypeFrames": 0,
+        "speechSegmentsDetected": 1,
+        "finalCaptionCount": 1,
+        "refinedCaptionCount": 1,
+        "offlineDecodeCount": 1
+      },
+      "shutdown": {
+        "realtimeGraceful": true,
+        "realtimeExitCode": 0,
+        "refinementGraceful": true,
+        "refinementExitCode": 0
+      }
+    },
+    {
+      "ordinal": 2,
+      "utility": {
+        "distinctProcessPair": true,
+        "concurrentDuringActivity": true
+      },
+      "activity": {
+        "framesFed": 101,
+        "framesIngested": 101,
+        "sequenceGapCount": 0,
+        "badSampleTypeFrames": 0,
+        "speechSegmentsDetected": 1,
+        "finalCaptionCount": 1,
+        "refinedCaptionCount": 1,
+        "offlineDecodeCount": 1
+      },
+      "shutdown": {
+        "realtimeGraceful": true,
+        "realtimeExitCode": 0,
+        "refinementGraceful": true,
+        "refinementExitCode": 0
+      }
+    },
+    {
+      "ordinal": 3,
+      "utility": {
+        "distinctProcessPair": true,
+        "concurrentDuringActivity": true
+      },
+      "activity": {
+        "framesFed": 101,
+        "framesIngested": 101,
+        "sequenceGapCount": 0,
+        "badSampleTypeFrames": 0,
+        "speechSegmentsDetected": 1,
+        "finalCaptionCount": 1,
+        "refinedCaptionCount": 1,
+        "offlineDecodeCount": 1
+      },
+      "shutdown": {
+        "realtimeGraceful": true,
+        "realtimeExitCode": 0,
+        "refinementGraceful": true,
+        "refinementExitCode": 0
+      }
+    }
+  ],
+  "privacy": {
+    "capturedAudioPersisted": false,
+    "rawPcmPersisted": false,
+    "transcriptTextPersisted": false,
+    "audioPathPersisted": false,
+    "localPathsPersisted": false,
+    "diagnosticAudioArtifacts": 0
+  },
+  "limitations": [
+    "frozen-fixture-direct-memory-injection",
+    "no-physical-mic-or-loopback",
+    "diagnostic-only-not-user-dialog-reproduction",
+    "does-not-prove-long-duration-stability",
+    "not-packaged-runtime"
+  ],
+  "errorCode": null
+}

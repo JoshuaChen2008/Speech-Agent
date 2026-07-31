@@ -116,3 +116,12 @@ test('B4 evidence report explicitly preserves the remaining I4 boundary', () => 
   assert.match(report, /不能声称已经修复/)
   assert.match(report, /不替代 I4 干净机经真实公网完整下载/)
 })
+
+test('Windows CI supervises the full four-window product journey and verifies both reports', () => {
+  const workflow = fs.readFileSync(path.resolve(__dirname, '../../.github/workflows/ci.yml'), 'utf8')
+  assert.match(workflow, /Run four-window product-shell user journey[\s\S]*node scripts\/run-supervised-electron\.js/)
+  assert.match(workflow, /--entry scripts\/product-shell-smoke\.js[\s\S]*--strict-report/)
+  assert.match(workflow, /--strict-report[\s\S]*if \(\$LASTEXITCODE -ne 0\)/)
+  assert.match(workflow, /verify-product-shell-report\.js \.artifacts\/product-shell-ci\/report\.json/)
+  assert.match(workflow, /verify-electron-exit-evidence\.js \.artifacts\/product-shell-ci\/exit-evidence\.json/)
+})

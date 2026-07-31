@@ -45,10 +45,22 @@ class RealtimeRuntimeAdapter {
        null = 无二遍精修。精修是增强路径：refine worker 起不来或中途退出都
        只降级（无 refined 事件），绝不影响实时字幕。 */
     this.refinement = options.refinement || null
-    this.refineWorkerFactory = options.refineWorkerFactory || (() => new RefineWorkerHost({ electron: this.electron }))
+    this.refineWorkerFactory = options.refineWorkerFactory || (() => new RefineWorkerHost({
+      electron: this.electron,
+      onFatalError: options.onRefineUtilityFatal
+    }))
     this.onDegraded = options.onDegraded || ((message) => console.warn(`[runtime] ${message}`))
-    this.hostFactory = options.hostFactory || (() => new AudioHostController({ electron: this.electron }))
-    this.workerFactory = options.workerFactory || (() => new RealtimeWorkerHost({ electron: this.electron }))
+    this.hostFactory = options.hostFactory || (() => new AudioHostController({
+      electron: this.electron,
+      registerWebContents: options.registerAudioHostWebContents,
+      onRenderProcessGone: options.onAudioHostRenderProcessGone,
+      onPreloadError: options.onAudioHostPreloadError,
+      onUnresponsive: options.onAudioHostUnresponsive
+    }))
+    this.workerFactory = options.workerFactory || (() => new RealtimeWorkerHost({
+      electron: this.electron,
+      onFatalError: options.onRealtimeUtilityFatal
+    }))
     this.captionHandler = null
     this.errorHandler = null
     this.session = null
@@ -237,7 +249,20 @@ class RealtimeRuntimeAdapter {
         throw new Error(`realtime worker exited during start (code ${session.worker.exited.code})`)
       }
     } catch (error) {
-      await this.teardownSession(session, 'force').catch(() => {})
+      /* A failed start can still leave sherpa/ONNX synchronously constructing
+         or releasing native state.  Reuse the normal graceful teardown rather
+         than immediately killing that live utility generation. */
+      try {
+        await this.teardownSession(session, 'graceful')
+      } catch (cleanupError) {
+        /* Reaping failure is the stronger safety signal: returning only the
+           original capture/configuration error would let Coordinator treat an
+           unconfirmed native generation as an ordinary retryable failure. */
+        if (cleanupError instanceof Error && cleanupError.cause === undefined) {
+          try { cleanupError.cause = error } catch { /* immutable error */ }
+        }
+        throw cleanupError
+      }
       throw error
     }
   }
@@ -303,13 +328,26 @@ class RealtimeRuntimeAdapter {
   async shutdownWorker (worker, mode, label) {
     if (!worker) return
     let outcome
-    if (mode === 'graceful' && typeof worker.shutdown === 'function') {
-      outcome = await worker.shutdown()
-    } else if (typeof worker.terminateAndWait === 'function') {
-      await worker.terminateAndWait()
-      return
-    } else if (typeof worker.dispose === 'function') {
-      await worker.dispose()
+    try {
+      if (mode === 'graceful' && typeof worker.shutdown === 'function') {
+        outcome = await worker.shutdown()
+      } else if (typeof worker.terminateAndWait === 'function') {
+        await worker.terminateAndWait()
+        return
+      } else if (typeof worker.dispose === 'function') {
+        await worker.dispose()
+        return
+      }
+    } catch (error) {
+      if (error?.code !== 'UTILITY_TERMINATION_TIMEOUT' ||
+          typeof worker.waitForExactExit !== 'function') {
+        throw error
+      }
+      /* The 30s + 5s deadlines trigger escalation and diagnostics; they are
+         not permission to abandon a live exact child.  Keep the application
+         quit/adapter retirement promise pending until Electron reports exit. */
+      await worker.waitForExactExit()
+      this.onDegraded(`${label} exited after the termination deadline`)
       return
     }
     if (outcome && outcome.graceful === false) {
@@ -317,7 +355,7 @@ class RealtimeRuntimeAdapter {
     }
   }
 
-  teardownSession (session, mode = 'force') {
+  teardownSession (session, mode = 'graceful') {
     if (session.teardownPromise) return session.teardownPromise
     session.stopping = true
     for (const unsubscribe of session.unsubscribers) {
@@ -348,7 +386,7 @@ class RealtimeRuntimeAdapter {
     const session = this.session
     if (session) {
       session.stopping = true
-      this.disposePromise = this.teardownSession(session, 'force')
+      this.disposePromise = this.teardownSession(session, 'graceful')
     } else {
       this.disposePromise = Promise.resolve()
     }

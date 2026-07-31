@@ -72,6 +72,9 @@ class StorageGateway {
     if (options.hostFactory !== undefined && typeof options.hostFactory !== 'function') {
       throw new TypeError('hostFactory must be a function')
     }
+    if (options.onFatalError !== undefined && typeof options.onFatalError !== 'function') {
+      throw new TypeError('onFatalError must be a function')
+    }
     const maxQueue = options.maxQueue === undefined ? DEFAULT_MAX_QUEUE : options.maxQueue
     if (!Number.isInteger(maxQueue) || maxQueue < 1 || maxQueue > 100000) {
       throw new RangeError('maxQueue must be an integer between 1 and 100000')
@@ -84,6 +87,7 @@ class StorageGateway {
     for (const key of ['electron', 'workerPath', 'requestTimeoutMs']) {
       if (options[key] !== undefined) this.hostOptions[key] = options[key]
     }
+    if (options.onFatalError) this.hostOptions.onFatalError = options.onFatalError
     this.hostFactory = options.hostFactory || ((hostOptions) => new StorageWorkerHost(hostOptions))
     this.host = null
     this.hostInvalid = false
@@ -443,8 +447,22 @@ class StorageGateway {
     const host = this.host
     let terminationError = null
     if (host) {
-      try { await host.terminateAndWait() } catch (cause) { terminationError = cause }
-      if (this.host === host) this.host = null
+      try {
+        await host.terminateAndWait()
+      } catch (cause) {
+        terminationError = cause
+        if (cause?.code === 'TERMINATION_TIMEOUT' && typeof host.waitForExactExit === 'function') {
+          try {
+            await host.waitForExactExit()
+            terminationError = null
+          } catch (lateExitError) {
+            terminationError = lateExitError
+          }
+        }
+      }
+      /* Keep the exact host reachable after any unconfirmed termination so a
+         later quit attempt can continue joining it. */
+      if (!terminationError && this.host === host) this.host = null
     }
     this.hostInvalid = false
     const pending = this.queue.splice(0)

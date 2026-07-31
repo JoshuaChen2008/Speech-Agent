@@ -64,7 +64,13 @@ function createApprovedRuntimeDefinition (options = {}) {
       kind: refinement.kind,
       modelDir: refinement.modelDir,
       numThreads: refinement.numThreads
-    }
+    },
+    registerAudioHostWebContents: options.registerAudioHostWebContents,
+    onAudioHostRenderProcessGone: options.onAudioHostRenderProcessGone,
+    onAudioHostPreloadError: options.onAudioHostPreloadError,
+    onAudioHostUnresponsive: options.onAudioHostUnresponsive,
+    onRealtimeUtilityFatal: options.onRealtimeUtilityFatal,
+    onRefineUtilityFatal: options.onRefineUtilityFatal
   })
 
   return Object.freeze({

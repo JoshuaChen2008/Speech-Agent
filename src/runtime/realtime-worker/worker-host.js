@@ -13,7 +13,13 @@ const { assertSingleSourceIds, isCaptionEvent } = require('../../contracts')
 
 const WORKER_PATH = path.join(__dirname, 'realtime-worker.js')
 const SERVICE_NAME = 'Speech Agent realtime ASR'
-const DEFAULT_SHUTDOWN_TIMEOUT_MS = 2000
+/* Native model construction and ONNX inference are synchronous inside the
+   utility process.  A shutdown message cannot be observed until that work
+   yields back to the event loop, so the graceful phase must cover the same
+   order of magnitude as model configuration.  Forced termination remains a
+   separate, shorter, exact-child reap deadline. */
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30000
+const DEFAULT_FORCE_KILL_TIMEOUT_MS = 5000
 
 function positiveTimeout (value) {
   if (!Number.isInteger(value) || value < 1) throw new RangeError('timeoutMs must be a positive integer')
@@ -44,6 +50,7 @@ class RealtimeWorkerHost {
     this.childExit = null
     this.shutdownPromise = null
     this.terminatePromise = null
+    this.terminationChild = null
     this.onFatalError = typeof options.onFatalError === 'function' ? options.onFatalError : () => {}
     /* 边界丢弃必须可观测：isCaptionEvent 拒绝的事件计数。 */
     this.droppedCaptionCount = 0
@@ -141,7 +148,14 @@ class RealtimeWorkerHost {
     } catch (error) {
       /* 配置失败也要等待旧世代退出；否则下一次 start 或应用退出可能与
          尚在释放 sherpa/ONNX 原生资源的旧进程重叠。原始配置错误优先。 */
-      try { await this.terminateChildAndWait(child, DEFAULT_SHUTDOWN_TIMEOUT_MS) } catch { /* original error wins */ }
+      try {
+        await this.shutdown()
+      } catch (cleanupError) {
+        if (cleanupError instanceof Error && cleanupError.cause === undefined) {
+          try { cleanupError.cause = error } catch { /* immutable error */ }
+        }
+        throw cleanupError
+      }
       throw error
     }
   }
@@ -224,21 +238,33 @@ class RealtimeWorkerHost {
     return waitWithTimeout(record.promise, positiveTimeout(timeoutMs), 'realtime worker exit timed out')
   }
 
-  async terminateChildAndWait (child, timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS) {
+  async terminateChildAndWait (child, timeoutMs = DEFAULT_FORCE_KILL_TIMEOUT_MS) {
     const record = this.childExit?.child === child ? this.childExit : null
     if (!record) return this.exited?.code ?? null
-    try { child.kill() } catch { /* exit promise decides the outcome */ }
+    if (this.terminationChild !== child) {
+      try {
+        child.kill()
+        this.terminationChild = child
+      } catch { /* a later join may retry an unissued termination */ }
+    }
     return this.waitForChildExit(child, timeoutMs)
   }
 
-  shutdown (timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS) {
+  waitForExactExit () {
+    return this.childExit?.promise || Promise.resolve(this.exited?.code ?? null)
+  }
+
+  shutdown (timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS, forceKillTimeoutMs = DEFAULT_FORCE_KILL_TIMEOUT_MS) {
     if (this.shutdownPromise) return this.shutdownPromise
     this.disposed = true
-    this.shutdownPromise = this.shutdownGeneration(positiveTimeout(timeoutMs))
+    this.shutdownPromise = this.shutdownGeneration(
+      positiveTimeout(timeoutMs),
+      positiveTimeout(forceKillTimeoutMs)
+    )
     return this.shutdownPromise
   }
 
-  async shutdownGeneration (timeoutMs) {
+  async shutdownGeneration (timeoutMs, forceKillTimeoutMs) {
     const child = this.child
     if (!child) {
       this.clearListeners()
@@ -257,7 +283,10 @@ class RealtimeWorkerHost {
     }
     if (reason && this.child === child) {
       try {
-        exitCode = await this.terminateChildAndWait(child, timeoutMs)
+        /* Route every escalation through the shared termination promise so an
+           application timeout cannot issue a second kill against this exact
+           native generation while graceful shutdown is still unwinding. */
+        exitCode = await this.terminateAndWait(forceKillTimeoutMs)
       } catch {
         reason = 'TERMINATION_TIMEOUT'
       }
@@ -272,17 +301,22 @@ class RealtimeWorkerHost {
     return Object.freeze({ graceful: reason === null, reason, exitCode })
   }
 
-  terminateAndWait (timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS) {
+  terminateAndWait (timeoutMs = DEFAULT_FORCE_KILL_TIMEOUT_MS) {
     if (this.terminatePromise) return this.terminatePromise
     this.disposed = true
     const timeout = positiveTimeout(timeoutMs)
-    this.terminatePromise = (async () => {
+    const promise = (async () => {
       const child = this.child
       const exitCode = child ? await this.terminateChildAndWait(child, timeout) : (this.exited?.code ?? null)
       this.clearListeners()
       return exitCode
     })()
-    return this.terminatePromise
+    this.terminatePromise = promise
+    promise.then(
+      () => { if (this.terminatePromise === promise) this.terminatePromise = null },
+      () => { if (this.terminatePromise === promise) this.terminatePromise = null }
+    )
+    return promise
   }
 
   clearListeners () {
@@ -292,11 +326,12 @@ class RealtimeWorkerHost {
   }
 
   dispose () {
-    return this.terminateAndWait()
+    return this.shutdown()
   }
 }
 
 module.exports = {
+  DEFAULT_FORCE_KILL_TIMEOUT_MS,
   DEFAULT_SHUTDOWN_TIMEOUT_MS,
   RealtimeWorkerHost,
   SERVICE_NAME,

@@ -149,20 +149,33 @@ class ModelManager {
   }
 
   async _initialize () {
+    this._throwIfClosed()
     await fsp.mkdir(this.downloadsRoot, { recursive: true })
+    this._throwIfClosed()
     await fsp.mkdir(this.stagingRoot, { recursive: true })
+    this._throwIfClosed()
     await this._assertManagedDirectory(this.modelsRoot, this.userDataDir)
+    this._throwIfClosed()
     await this._assertManagedDirectory(this.downloadsRoot, this.modelsRoot)
+    this._throwIfClosed()
     await this._assertManagedDirectory(this.stagingRoot, this.modelsRoot)
+    this._throwIfClosed()
     await this._cleanupStaleStaging()
+    this._throwIfClosed()
     for (const artifact of this.manifest.artifacts) {
+      this._throwIfClosed()
       let ready = await this._isArtifactReady(artifact)
+      this._throwIfClosed()
       if (!ready && this.externalReady) {
         try {
           ready = typeof this.externalReady === 'function'
             ? Boolean(await this.externalReady(artifact.id))
             : Boolean(this.externalReady)
-        } catch { ready = false }
+        } catch {
+          this._throwIfClosed()
+          ready = false
+        }
+        this._throwIfClosed()
       }
       const part = this._partPath(artifact)
       let downloadedBytes = 0
@@ -170,12 +183,14 @@ class ModelManager {
         const stat = await fsp.lstat(part)
         if (stat.isFile() && !stat.isSymbolicLink() && stat.size <= artifact.bytes) downloadedBytes = stat.size
       } catch { /* absent */ }
+      this._throwIfClosed()
       this.resourceState.set(artifact.id, {
         state: ready ? 'ready' : 'missing',
         downloadedBytes: ready ? artifact.bytes : downloadedBytes,
         totalBytes: artifact.bytes
       })
     }
+    this._throwIfClosed()
     this.initialized = true
     this._publish(this._allReady() ? 'ready' : 'missing', null, null)
     return this.getStatus()

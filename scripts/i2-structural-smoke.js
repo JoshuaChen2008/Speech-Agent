@@ -77,8 +77,9 @@ async function main () {
     expect(coordinator.getSnapshot().phase === 'listening', 'not listening after start')
     await delay(3000)
 
-    /* worker 中途死亡 → coordinator 必须自行进入可重试 error。 */
-    workers.at(-1).kill()
+    /* 测试专用的显式强制终止：等待这个 exact child 真正退出后再验证
+       coordinator 的可重试故障路径，避免旧 `.kill()` 绕过宿主生命周期。 */
+    await workers.at(-1).terminateAndWait()
     await delay(600)
     const faulted = coordinator.getSnapshot()
     expect(faulted.phase === 'error', `expected error after worker kill, got ${faulted.phase}`)

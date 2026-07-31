@@ -97,11 +97,25 @@ jobs:
       - name: Run four-window product-shell user journey
         shell: powershell
         run: |
-          & .\scripts\run-electron-smoke.ps1 `
-            -EntryPoint 'scripts/product-shell-smoke.js' `
-            -EntryArguments @('--work-dir','.artifacts/product-shell-ci/work','--report','.artifacts/product-shell-ci/report.json') `
-            -LogDirectory '.artifacts/product-shell-ci/logs'
+          node scripts/run-supervised-electron.js `
+            --entry scripts/product-shell-smoke.js `
+            --entry-arg --work-dir `
+            --entry-arg .artifacts/product-shell-ci/work `
+            --entry-arg --report `
+            --entry-arg .artifacts/product-shell-ci/report.json `
+            --report .artifacts/product-shell-ci/exit-evidence.json `
+            --strict-report
+          if ($LASTEXITCODE -ne 0) {
+            throw "Supervised product-shell journey failed with exit code $LASTEXITCODE"
+          }
           node scripts/verify-product-shell-report.js .artifacts/product-shell-ci/report.json
+          if ($LASTEXITCODE -ne 0) {
+            throw "Product-shell report verification failed with exit code $LASTEXITCODE"
+          }
+          node scripts/verify-electron-exit-evidence.js .artifacts/product-shell-ci/exit-evidence.json
+          if ($LASTEXITCODE -ne 0) {
+            throw "Electron exit evidence verification failed with exit code $LASTEXITCODE"
+          }
 
       - name: Run deterministic integration journeys and full regression suite
         run: npm run test:ci

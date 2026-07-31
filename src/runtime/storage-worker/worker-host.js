@@ -134,6 +134,7 @@ class StorageWorkerHost {
     this.startPromise = null
     this.shutdownPromise = null
     this.terminatePromise = null
+    this.terminationChild = null
     this.onFatalError = typeof options.onFatalError === 'function' ? options.onFatalError : () => {}
   }
 
@@ -228,7 +229,10 @@ class StorageWorkerHost {
     } catch (error) {
       this.state = 'failed'
       try {
-        await this.terminateChildAndWait(child, this.requestTimeoutMs)
+        /* Startup failure and application quit may race while SQLite is still
+           initializing.  Share the one exact-child termination promise so
+           neither path can issue a second kill or outlive the other. */
+        await this.terminateAndWait(this.requestTimeoutMs)
       } catch (terminationError) {
         if (isStorageTransportError(terminationError)) {
           terminationError.cause = error
@@ -409,7 +413,12 @@ class StorageWorkerHost {
     const record = this.childExit?.child === child ? this.childExit : null
     if (!record) return null
     let killCause
-    try { child.kill() } catch (cause) { killCause = cause }
+    if (this.terminationChild !== child) {
+      try {
+        child.kill()
+        this.terminationChild = child
+      } catch (cause) { killCause = cause }
+    }
     return waitWithTimeout(
       record.promise,
       timeoutMs,
@@ -419,6 +428,10 @@ class StorageWorkerHost {
         { outcome: 'unknown', cause: killCause }
       )
     )
+  }
+
+  waitForExactExit () {
+    return this.childExit?.promise || Promise.resolve(null)
   }
 
   terminateAndWait (timeoutMs) {
@@ -442,6 +455,10 @@ class StorageWorkerHost {
       }
     })()
     this.terminatePromise = promise
+    promise.then(
+      () => { if (this.terminatePromise === promise) this.terminatePromise = null },
+      () => { if (this.terminatePromise === promise) this.terminatePromise = null }
+    )
     return promise
   }
 

@@ -4,6 +4,8 @@
 
 当前已完成 **B1 应用骨架 + B2 实时链路 + B3 两遍精修/SQLite 历史 + B4 本地模型资源闭环 + 来源 XOR 联合门禁**：透明字幕条、工具栏、点击穿透、亚克力设置窗、单选监听模式、权威会话状态机、隐藏采集窗（回环/麦克风）、realtime worker，以及 Gate 0B 批准的 **160ms 真实模型 + silero VAD + 离线精修**。首次缺模型时可从设置的“模型资源”页一键下载固定三资源 bundle，支持断点续传、哈希/归档审查、原子安装；空闲应用安装后无需重启即可开始真字幕。字幕自动写入 SQLite，工具条可打开独立历史窗查看带时间戳正文并导出 txt/md/srt。确定性多模块 CI、270,938,600 字节批准模型真实安装/调用和四窗口 Electron 产品壳 smoke 已通过；物理 mic、两小时长稳、干净 Win11 公网/打包验收仍待闭环。Agent/翻译未实现，向量检索已后置。
 
+针对用户看到的 `electron.exe / 0x80000003`，两张截图均早于生命周期修复提交 `64b3e55`；当前没有 dump 或 native stack，根因仍未获得调用栈级证明。修复后，批准模型活跃诊断三轮共送入并消费 303 帧，得到 3 条 final、3 条 refined、3 次 offline decode，六个 realtime/refine 子进程均优雅 `exitCode=0`、fatal 为 0；最贴近历史场景的真实 I2 loopback→ASR→offline refine→退出也 PASS：128 帧 captured/sent/ingested 一致，0 dropped/gap/bad sample，1 final + 1 refined、双 CER 0，Electron exact process 正常退出且未强制终止；受监督多窗口产品壳另为 clean exit、0 incident、未观察到 breakpoint。冻结语料诊断和 fake-ASR 产品壳仍只是 diagnostic/partial；真实 loopback 单轮也不替代物理 mic、长时 I3 或打包态 I4。详见 [Electron breakpoint 调查](docs/validation/electron-breakpoint-investigation.md)。
+
 ## 运行
 
 仅支持 Windows x64：依赖 `sherpa-onnx-win-x64`（平台门控的 N-API 预编译包），其他平台 `npm install` 会以 EBADPLATFORM 失败。
@@ -12,6 +14,10 @@
 npm install
 npm start
 ```
+
+`npm start` 通过 exact-child supervisor 启动 Electron，并原子覆盖一份仅供本机诊断的
+`last-exit-evidence.json`。该报告只记录固定枚举的生命周期、进程角色、退出原因与状态码
+分类；不保存字幕正文、音频/PCM、本地路径、stack、dump，也不上传外部服务。
 
 Gate 0B 已于 2026-07-27 正式改判通过（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修；门槛重设理由与适用条件留档于 [docs/validation/gate-0b.md](docs/validation/gate-0b.md) 改判节），真实 recognizer 已接入 realtime worker：
 
@@ -43,7 +49,10 @@ npm run test:ci          # CI 门禁：联合旅程 + 完整回归
   -EntryArguments @('--source', 'mic', '--listen-seconds', '12', '--report', '.artifacts\i2-live\mic.json')
 ```
 
-本地 Electron smoke 必须经上述启动器隐藏启动、等待自然退出并保留 stdout/stderr；不要用
+本地 Electron smoke 必须经上述启动器隐藏启动、等待自然退出并保留 stdout/stderr；native
+worker 先等待最多 30 秒优雅退出，超时后只终止并收殓该 exact child（最多再等 5 秒）。字幕
+应用运行时以 45 秒作为优雅收束结束/升级触发线，ModelManager 的 5 秒收束与其并行；升级后仍
+必须等待 exact child 收殓，所以 45 秒不是无视子进程状态的硬退出上限。不要用
 `electron.exe --help` 探测运行时，也不要按进程名结束仍在验证中的 Electron。
 
 `mic` 运行时终端只显示 `promptId`，请朗读 `scripts/gate-0b/corpus.json` 中对应 case 的冻结 reference；终端和报告都不回显现场转写正文。当前已留档的 loopback schema v2 实机证据包含真实 ASR/精修、字幕时序、CPU/工作集、PCM 队列与缺口指标；物理 mic 仍是 I2 完整验收的待办。
@@ -106,7 +115,7 @@ src/
 
 ## 下一步
 
-见 [PLAN.md](PLAN.md)（Rev.8）：来源互斥、默认 SQLite-only 生命周期、文本历史/导出、ModelManager 与真实产品壳旅程已通过对应门禁；当前按物理 mic I2 → I3 长稳 → I4 干净 Win11 公网/打包验收闭环字幕 MVP。之后才做 Pi Core/Electron 隔离探针、项目自有插件宿主、独立增强文本和会后结构化纪要；向量检索最后评估。任何能力都必须有跨模块用户旅程，不能只交单测。
+见 [PLAN.md](PLAN.md)（Rev.9）：来源互斥、默认 SQLite-only 生命周期、文本历史/导出、ModelManager 与真实产品壳旅程已通过对应门禁；当前按物理 mic I2 → I3 长稳 → I4 干净 Win11 公网/打包验收闭环字幕 MVP。之后才做 Pi Core/Electron 隔离探针、项目自有插件宿主、独立增强文本和会后结构化纪要；向量检索最后评估。任何能力都必须有跨模块用户旅程，不能只交单测。
 
 - 窗口壳和交互不变量：[docs/subtitle-window.md](docs/subtitle-window.md)
 - 视觉/UI 模型交接：[docs/ui-design-brief.md](docs/ui-design-brief.md)

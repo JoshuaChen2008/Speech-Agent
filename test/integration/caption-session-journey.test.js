@@ -117,7 +117,7 @@ function simulatedElectronRuntime () {
     desktopCapturer: { getSources: async () => [] },
     screen: { getPrimaryDisplay: () => ({ id: 1 }) },
     BrowserWindow: function () {
-      const win = {
+      const win = Object.assign(new EventEmitter(), {
         destroyed: false,
         webContents: {
           mainFrame: 'main',
@@ -147,7 +147,7 @@ function simulatedElectronRuntime () {
         isVisible: () => false,
         isDestroyed: () => win.destroyed,
         destroy: () => { win.destroyed = true }
-      }
+      })
       return win
     }
   }

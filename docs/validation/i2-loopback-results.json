@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "kind": "i2-live-caption-smoke",
-  "executedAt": "2026-07-30T18:30:58.793Z",
+  "executedAt": "2026-07-31T02:51:41.094Z",
   "environment": {
     "electron": "43.2.0",
     "node": "24.18.0"
@@ -29,8 +29,8 @@
     "idle"
   ],
   "counts": {
-    "captions": 21,
-    "partials": 19,
+    "captions": 16,
+    "partials": 14,
     "finals": 1,
     "refined": 1
   },
@@ -40,33 +40,33 @@
     "refinedHasPunctuation": true
   },
   "timings": {
-    "firstPartialFromStimulusStartMs": 1460,
-    "firstFinalFromStimulusStartMs": 9604,
-    "firstRefinedFromStimulusStartMs": 9847,
-    "firstFinalAfterStimulusEndMs": 699,
-    "captionArrivalCount": 21
+    "firstPartialFromStimulusStartMs": 1493,
+    "firstFinalFromStimulusStartMs": 9639,
+    "firstRefinedFromStimulusStartMs": 9887,
+    "firstFinalAfterStimulusEndMs": 646,
+    "captionArrivalCount": 16
   },
   "resources": {
-    "sampleCount": 76,
+    "sampleCount": 83,
     "cpuPercent": {
-      "p50": 19.488,
-      "p95": 41.624,
-      "max": 42.625
+      "p50": 15.227,
+      "p95": 40.94,
+      "max": 46.898
     },
     "workingSetMiB": {
-      "p50": 1149.578,
-      "p95": 1160.488,
-      "max": 1160.637
+      "p50": 1137.832,
+      "p95": 1158.723,
+      "max": 1159.043
     },
     "maxProcessCount": 8
   },
   "signal": {
-    "peakRms": 0.322759
+    "peakRms": 0.3101
   },
   "transport": {
-    "capturedFrames": 126,
-    "sentFrames": 126,
-    "ingestedFrames": 126,
+    "capturedFrames": 128,
+    "sentFrames": 128,
+    "ingestedFrames": 128,
     "droppedFrames": 0,
     "creditStalls": 0,
     "maxQueuedMsObserved": 0,

@@ -1,7 +1,7 @@
 # Live Subtitle Agent · Win11 实时字幕技术规划
 
-> **Rev.8 · 2026-07-31**。初版调研 2026-07-23（版本号、模型名、体积经 GitHub Release API / npm registry / 下载解包核实）。
-> 本次修订：B4 ModelManager、资源页、空闲热启用、J14 模型→字幕→SQLite 历史联合旅程、批准大模型安装/调用和真实 Electron 四窗口产品壳 smoke 完成对应验收；下一主线为物理 mic I2、I3 长稳和 I4 干净机公网/打包闭环。`loopback`/`mic` 继续产品级互斥，翻译/Agent 与向量继续后置。
+> **Rev.9 · 2026-07-31**。初版调研 2026-07-23（版本号、模型名、体积经 GitHub Release API / npm registry / 下载解包核实）。
+> 本次修订：补充 Electron native 生命周期两阶段收束、隐私安全 role evidence、批准模型活跃退出诊断和受监督产品壳证据。两张 `0x80000003` 截图均早于 `64b3e55`，但根因没有 native stack 级证明；这些诊断不改变下一主线：物理 mic I2、I3 长稳和 I4 干净机公网/打包闭环。`loopback`/`mic` 继续产品级互斥，翻译/Agent 与向量继续后置。
 
 ---
 
@@ -16,10 +16,13 @@
 | 配置持久化（`userData/config.json`）+ 四窗主题联动 | Agent 层（后置）、打包分发 |
 | 亚克力设置窗（含模型资源 pane）+ 单路模式 XOR 门禁/J4 | I2 完整指标 |
 | B1 `SessionCoordinator`、状态机、per-window preload 与 contract-valid fake adapter | |
+| Electron 生命周期：30s graceful + 5s exact-child reap、45s 字幕运行时升级触发线（ModelManager 5s 并行）；隐私安全 role evidence | `0x80000003` 的 native stack 级根因、真实硬崩溃恢复 |
 | B2 audio host、PCM 直通/背压、realtime worker、**真实 160ms 模型 + silero VAD** | |
 | B3 **二遍精修 refine worker**（final→refined 自动变准补标点）+ JSONL 旧档迁移；B3.3 DB0/DB1、Gateway 恢复、默认 SQLite-only 生命周期、历史查询/导出 UI 与联合旅程；B4 固定 manifest/续传/校验/白名单解包/marker/资源 UI/热启用 | 物理 mic、I3 与 I4 打包态/公网干净机 |
 
 **Gate 0B 已于 2026-07-27 正式改判通过**（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修，门槛重设留档于 `docs/validation/gate-0b.md` 改判节），**两遍链路已全部接通**：真实 160ms 模型 + silero VAD + 离线精修 worker。2026-07-31 的 I2 schema v2 loopback 实机报告再次得到 final/refined CER 0，并记录 captured/sent/ingested 帧数一致且零丢失/零缺口、CPU/工作集和字幕到达时序；runner 已支持 `loopback`/`mic` 分开执行，物理 mic 证据仍待补。来源 XOR 由 J4 验证；J5/J6 已增加暂停/精修/worker 故障后同会话继续文本持久化的确定性联合旅程。SQLite 默认组合根和历史窗口已接入同一投影。B4 现又以 J14 覆盖 Range 续传→三资源校验/安装→空闲热启用→字幕→终态 SQLite 历史；批准 270,938,600 字节 bundle 已由生产 Manager 真实安装并被在线 ASR、离线精修、VAD 调用。真实 Electron 四窗口/preload/IPC/SQLite/退出的听写旅程同样通过且无 renderer/child crash。当前主线只剩物理 mic、I3 及 I4/ASAR/NSIS；Agent 在字幕闭环后启动，向量检索后置。
+
+native 生命周期补丁后，真实模型活跃 smoke 连续三轮累计处理 303 帧，产生 3 final、3 refined、3 次 offline decode，六个 realtime/refine exact child 均优雅 `exitCode=0`、fatal 0；最接近历史场景的真实 I2 loopback 单轮也以 128 帧 captured/sent/ingested 一致、0 dropped/gap/bad sample、1 final + 1 refined、双 CER 0 正常退出且未强制终止；受监督多窗口产品壳为 clean exit、0 incident、未观察到 breakpoint。冻结语料 smoke 与 fake-ASR 产品壳只属 diagnostic/partial；真实 loopback 单轮也不替代物理 mic、I3、I4 或历史异常根因验收。role evidence 不保存正文、音频/PCM、本地路径、stack 或 dump。完整时间线见 `docs/validation/electron-breakpoint-investigation.md`。
 
 ### 0.1 两套产品系统的边界
 

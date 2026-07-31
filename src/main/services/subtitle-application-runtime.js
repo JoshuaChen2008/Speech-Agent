@@ -13,7 +13,10 @@ const { JsonlSqliteMigrator } = require('./jsonl-sqlite-migrator')
 const { SqliteSessionRecorder } = require('./sqlite-session-recorder')
 const { StorageGateway } = require('./storage-gateway')
 
-const DEFAULT_SHUTDOWN_TIMEOUT_MS = 8000
+/* Approved model transitions and native utility graceful shutdown each allow
+   up to 30 seconds.  The application deadline must also cover the separate
+   five-second exact-child reap phase plus storage/renderer handoff margin. */
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 45000
 
 function epochMilliseconds (value, label) {
   if (!Number.isSafeInteger(value) || value < 0) {
@@ -91,6 +94,9 @@ class SubtitleApplicationRuntime {
     this.recorderFactory = options.recorderFactory || ((recorderOptions) => new SqliteSessionRecorder(recorderOptions))
     this.now = typeof options.now === 'function' ? options.now : () => Date.now()
     this.onError = typeof options.onError === 'function' ? options.onError : () => {}
+    this.onStorageUtilityFatal = typeof options.onStorageUtilityFatal === 'function'
+      ? options.onStorageUtilityFatal
+      : () => {}
 
     this.state = 'new'
     this.gateway = null
@@ -101,6 +107,15 @@ class SubtitleApplicationRuntime {
     this.startPromise = null
     this.shutdownPromise = null
     this.terminationPromise = null
+    this.terminationRequested = false
+  }
+
+  assertStartupActive () {
+    if (this.terminationRequested || this.state === 'stopping' || this.state === 'stopped') {
+      const error = new Error('subtitle application startup was terminated')
+      error.code = 'APPLICATION_START_ABORTED'
+      throw error
+    }
   }
 
   start () {
@@ -113,10 +128,16 @@ class SubtitleApplicationRuntime {
 
   async startApplication () {
     try {
+      this.assertStartupActive()
       const recoveredAt = epochMilliseconds(this.now(), 'startup clock')
-      this.gateway = assertGateway(this.gatewayFactory({ databasePath: this.databasePath }))
+      this.gateway = assertGateway(this.gatewayFactory({
+        databasePath: this.databasePath,
+        onFatalError: this.onStorageUtilityFatal
+      }))
       await this.gateway.start()
+      this.assertStartupActive()
       this.recoveryReport = structuredClone(await this.gateway.recoverStaleSessions({ recoveredAt }))
+      this.assertStartupActive()
 
       const migrator = this.migratorFactory({ gateway: this.gateway, now: this.now })
       if (!migrator || typeof migrator.migrateDirectory !== 'function') {
@@ -125,6 +146,7 @@ class SubtitleApplicationRuntime {
       this.migrationReports = Object.freeze(
         structuredClone(await migrator.migrateDirectory(this.legacyDirectory))
       )
+      this.assertStartupActive()
 
       this.recorder = assertRecorder(this.recorderFactory({
         gateway: this.gateway,
@@ -134,6 +156,7 @@ class SubtitleApplicationRuntime {
       this.coordinator = assertCoordinator(this.coordinatorFactory({
         persistenceSink: this.recorder
       }))
+      this.assertStartupActive()
       this.state = 'running'
       return Object.freeze({
         coordinator: this.coordinator,
@@ -150,6 +173,10 @@ class SubtitleApplicationRuntime {
   }
 
   shutdown () {
+    /* Quit is monotonic even when it arrives during startup.  Every awaited
+       startup stage checks this flag before it can publish a recorder or
+       coordinator, so a fast migration cannot briefly revive product roots. */
+    this.terminationRequested = true
     if (this.shutdownPromise) return this.shutdownPromise
     if (this.state === 'stopped') return Promise.resolve()
     this.shutdownPromise = this.shutdownApplication()
@@ -157,11 +184,32 @@ class SubtitleApplicationRuntime {
   }
 
   async shutdownApplication () {
-    if (this.state === 'starting' && this.startPromise) await this.startPromise
+    if (this.state === 'starting' && this.startPromise) {
+      try {
+        await this.startPromise
+      } catch (error) {
+        if (this.terminationRequested && error?.code === 'APPLICATION_START_ABORTED') {
+          if (this.terminationPromise) await this.terminationPromise
+          return
+        }
+        throw error
+      }
+    }
     if (this.state === 'stopped') return
     this.state = 'stopping'
     if (this.coordinator) await this.coordinator.shutdownForAppQuit()
+    /* A bounded shutdown may have escalated while the coordinator was still
+       yielding from native work.  Join that one termination instead of later
+       running flush/shutdown a second time against already terminated roots. */
+    if (this.terminationPromise) {
+      await this.terminationPromise
+      return
+    }
     if (this.recorder) await this.recorder.flush()
+    if (this.terminationPromise) {
+      await this.terminationPromise
+      return
+    }
     if (this.gateway) await this.gateway.shutdown()
     this.state = 'stopped'
   }
@@ -194,7 +242,9 @@ class SubtitleApplicationRuntime {
   }
 
   terminate () {
+    this.terminationRequested = true
     if (this.terminationPromise) return this.terminationPromise
+    if (this.state !== 'stopped') this.state = 'stopping'
     this.terminationPromise = this.terminateApplication()
     return this.terminationPromise
   }
@@ -204,12 +254,16 @@ class SubtitleApplicationRuntime {
     if (this.gateway) tasks.push(Promise.resolve().then(() => this.gateway.terminate()))
     if (this.coordinator) tasks.push(Promise.resolve().then(() => this.coordinator.dispose()))
     const results = await Promise.allSettled(tasks)
-    this.state = 'stopped'
     const rejected = results.filter((result) => result.status === 'rejected')
     for (const result of rejected) {
       try { this.onError(result.reason) } catch { /* observer failures stay isolated */ }
     }
-    return Object.freeze({ terminated: true, errorCount: rejected.length })
+    /* An unreaped exact child is not a completed termination.  Propagate the
+       first failure so main must keep before-quit prevented; state stays
+       stopping and no replacement/start path can treat this runtime as dead. */
+    if (rejected.length > 0) throw rejected[0].reason
+    this.state = 'stopped'
+    return Object.freeze({ terminated: true, errorCount: 0 })
   }
 }
 

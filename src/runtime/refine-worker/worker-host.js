@@ -12,7 +12,11 @@ const path = require('node:path')
 
 const WORKER_PATH = path.join(__dirname, 'refine-worker.js')
 const SERVICE_NAME = 'Speech Agent offline refinement'
-const DEFAULT_SHUTDOWN_TIMEOUT_MS = 2000
+/* Offline decode is synchronous in the utility process.  Give it a bounded
+   chance to yield and consume the shutdown message before escalating to an
+   exact-child kill and reap. */
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30000
+const DEFAULT_FORCE_KILL_TIMEOUT_MS = 5000
 
 function positiveTimeout (value) {
   if (!Number.isInteger(value) || value < 1) throw new RangeError('timeoutMs must be a positive integer')
@@ -42,6 +46,7 @@ class RefineWorkerHost {
     this.childExit = null
     this.shutdownPromise = null
     this.terminatePromise = null
+    this.terminationChild = null
     this.onFatalError = typeof options.onFatalError === 'function' ? options.onFatalError : () => {}
     this.disposed = false
   }
@@ -109,7 +114,14 @@ class RefineWorkerHost {
         child.postMessage({ type: 'configure', model: config.model })
       })
     } catch (error) {
-      try { await this.terminateChildAndWait(child, DEFAULT_SHUTDOWN_TIMEOUT_MS) } catch { /* original error wins */ }
+      try {
+        await this.shutdown()
+      } catch (cleanupError) {
+        if (cleanupError instanceof Error && cleanupError.cause === undefined) {
+          try { cleanupError.cause = error } catch { /* immutable error */ }
+        }
+        throw cleanupError
+      }
       throw error
     }
   }
@@ -130,21 +142,33 @@ class RefineWorkerHost {
     return waitWithTimeout(record.promise, positiveTimeout(timeoutMs), 'refine worker exit timed out')
   }
 
-  async terminateChildAndWait (child, timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS) {
+  async terminateChildAndWait (child, timeoutMs = DEFAULT_FORCE_KILL_TIMEOUT_MS) {
     const record = this.childExit?.child === child ? this.childExit : null
     if (!record) return this.exited?.code ?? null
-    try { child.kill() } catch { /* exit promise decides the outcome */ }
+    if (this.terminationChild !== child) {
+      try {
+        child.kill()
+        this.terminationChild = child
+      } catch { /* a later join may retry an unissued termination */ }
+    }
     return this.waitForChildExit(child, timeoutMs)
   }
 
-  shutdown (timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS) {
+  waitForExactExit () {
+    return this.childExit?.promise || Promise.resolve(this.exited?.code ?? null)
+  }
+
+  shutdown (timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS, forceKillTimeoutMs = DEFAULT_FORCE_KILL_TIMEOUT_MS) {
     if (this.shutdownPromise) return this.shutdownPromise
     this.disposed = true
-    this.shutdownPromise = this.shutdownGeneration(positiveTimeout(timeoutMs))
+    this.shutdownPromise = this.shutdownGeneration(
+      positiveTimeout(timeoutMs),
+      positiveTimeout(forceKillTimeoutMs)
+    )
     return this.shutdownPromise
   }
 
-  async shutdownGeneration (timeoutMs) {
+  async shutdownGeneration (timeoutMs, forceKillTimeoutMs) {
     const child = this.child
     if (!child) {
       this.clearListeners()
@@ -163,7 +187,7 @@ class RefineWorkerHost {
     }
     if (reason && this.child === child) {
       try {
-        exitCode = await this.terminateChildAndWait(child, timeoutMs)
+        exitCode = await this.terminateAndWait(forceKillTimeoutMs)
       } catch {
         reason = 'TERMINATION_TIMEOUT'
       }
@@ -178,17 +202,22 @@ class RefineWorkerHost {
     return Object.freeze({ graceful: reason === null, reason, exitCode })
   }
 
-  terminateAndWait (timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS) {
+  terminateAndWait (timeoutMs = DEFAULT_FORCE_KILL_TIMEOUT_MS) {
     if (this.terminatePromise) return this.terminatePromise
     this.disposed = true
     const timeout = positiveTimeout(timeoutMs)
-    this.terminatePromise = (async () => {
+    const promise = (async () => {
       const child = this.child
       const exitCode = child ? await this.terminateChildAndWait(child, timeout) : (this.exited?.code ?? null)
       this.clearListeners()
       return exitCode
     })()
-    return this.terminatePromise
+    this.terminatePromise = promise
+    promise.then(
+      () => { if (this.terminatePromise === promise) this.terminatePromise = null },
+      () => { if (this.terminatePromise === promise) this.terminatePromise = null }
+    )
+    return promise
   }
 
   clearListeners () {
@@ -197,11 +226,12 @@ class RefineWorkerHost {
   }
 
   dispose () {
-    return this.terminateAndWait()
+    return this.shutdown()
   }
 }
 
 module.exports = {
+  DEFAULT_FORCE_KILL_TIMEOUT_MS,
   DEFAULT_SHUTDOWN_TIMEOUT_MS,
   RefineWorkerHost,
   SERVICE_NAME,

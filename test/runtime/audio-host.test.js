@@ -259,6 +259,7 @@ function workingFakeElectron (captureResult, hooks = {}) {
   const listeners = {}
   const win = {
     destroyed: false,
+    on (name, handler) { listeners[`window:${name}`] = handler },
     webContents: {
       mainFrame: 'main',
       setWindowOpenHandler () {},
@@ -276,6 +277,41 @@ function workingFakeElectron (captureResult, hooks = {}) {
   const electron = fakeElectron({ BrowserWindow: function () { return win } })
   return { electron, listeners, win }
 }
+
+test('audio host role evidence follows the exact hidden WebContents lifecycle', () => {
+  const { electron, listeners, win } = workingFakeElectron({})
+  const registrations = []
+  const gone = []
+  const preloadErrors = []
+  const unresponsive = []
+  let unregisterCount = 0
+  const controller = new AudioHostController({
+    electron,
+    registerWebContents: (webContents) => {
+      registrations.push(webContents)
+      return () => { unregisterCount += 1 }
+    },
+    onRenderProcessGone: (webContents, details) => gone.push({ webContents, details }),
+    onPreloadError: (webContents) => preloadErrors.push(webContents),
+    onUnresponsive: (webContents) => unresponsive.push(webContents)
+  })
+
+  controller.hostWindow = controller.createHostWindow()
+  const details = { reason: 'crashed', exitCode: -2147483645 }
+  listeners['preload-error']({}, 'private-path', new Error('private error'))
+  listeners['window:unresponsive']()
+  listeners['render-process-gone']({}, details)
+
+  assert.deepEqual(registrations, [win.webContents])
+  assert.deepEqual(preloadErrors, [win.webContents])
+  assert.deepEqual(unresponsive, [win.webContents])
+  assert.deepEqual(gone, [{ webContents: win.webContents, details }])
+  controller.destroyHostWindow()
+  assert.equal(unregisterCount, 1)
+  assert.equal(win.destroyed, true)
+  controller.destroyHostWindow()
+  assert.equal(unregisterCount, 1, 'evidence role cleanup is exactly once')
+})
 
 test('the full single-source diagnostic returns metrics and scrubs console text', async () => {
   const capture = {

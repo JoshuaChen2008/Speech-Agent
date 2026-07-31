@@ -53,6 +53,19 @@ class AudioHostController {
     this.electron = options.electron || require('electron')
     this.partitionName = options.partitionName || `audio-host-${process.pid}`
     this.onEvidence = options.onEvidence || (() => {})
+    this.registerWebContents = typeof options.registerWebContents === 'function'
+      ? options.registerWebContents
+      : null
+    this.onRenderProcessGone = typeof options.onRenderProcessGone === 'function'
+      ? options.onRenderProcessGone
+      : null
+    this.onPreloadError = typeof options.onPreloadError === 'function'
+      ? options.onPreloadError
+      : null
+    this.onUnresponsive = typeof options.onUnresponsive === 'function'
+      ? options.onUnresponsive
+      : null
+    this.unregisterHostWebContents = null
     this.hostWindow = null
     this.partitionReady = false
     this.ipcRegistered = false
@@ -201,12 +214,31 @@ class AudioHostController {
         backgroundThrottling: false
       }
     })
+    if (this.registerWebContents) {
+      try {
+        const unregister = this.registerWebContents(win.webContents)
+        if (typeof unregister === 'function') this.unregisterHostWebContents = unregister
+      } catch { /* diagnostic evidence must never block capture */ }
+    }
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    win.on('unresponsive', () => {
+      if (this.onUnresponsive) {
+        try { this.onUnresponsive(win.webContents) } catch { /* evidence stays isolated */ }
+      }
+    })
     win.webContents.on('will-navigate', (event) => event.preventDefault())
+    win.webContents.on('preload-error', () => {
+      if (this.onPreloadError) {
+        try { this.onPreloadError(win.webContents) } catch { /* evidence stays isolated */ }
+      }
+    })
     win.webContents.on('console-message', (details) => {
       this.record('host-console', { message: scrubLocalPaths(details?.message) })
     })
     win.webContents.on('render-process-gone', (_event, details) => {
+      if (this.onRenderProcessGone) {
+        try { this.onRenderProcessGone(win.webContents, details) } catch { /* evidence stays isolated */ }
+      }
       this.record('host-renderer-gone', { reason: details?.reason || null })
       const active = this.activeDiagnostic
       if (active) active.reject(new Error(`audio host renderer exited: ${details?.reason || 'unknown'}`))
@@ -372,6 +404,11 @@ class AudioHostController {
   }
 
   destroyHostWindow () {
+    const unregister = this.unregisterHostWebContents
+    this.unregisterHostWebContents = null
+    if (unregister) {
+      try { unregister() } catch { /* evidence cleanup stays isolated */ }
+    }
     if (this.hostWindow && !this.hostWindow.isDestroyed()) this.hostWindow.destroy()
     this.hostWindow = null
   }

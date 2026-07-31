@@ -236,17 +236,18 @@ test('worker host cleans up the child on configure failure and rejects fast on e
     }
     child.postMessage = (message) => {
       if (message?.type === 'configure') setImmediate(() => behavior(child))
+      if (message?.type === 'shutdown') setImmediate(() => child.emit('exit', 0))
     }
     return child
   }
 
-  /* configure-failed：reject + kill + 可重试。 */
+  /* configure-failed：reject + 优雅退出 + 可重试。 */
   let child1
   const host1 = new RealtimeWorkerHost({
     electron: { utilityProcess: { fork: () => { child1 = fakeChild((c) => c.emit('message', { type: 'configure-failed', message: 'bad profile' })); return child1 } } }
   })
   await assert.rejects(host1.start({ sessionId: 's', sourceIds: ['mic'] }), /configure failed: bad profile/)
-  assert.equal(child1.killed, true, '失败必须 kill 子进程')
+  assert.equal(child1.killed, false, '可响应的失败世代必须先优雅退出')
   assert.equal(host1.child, null, '占位复位后可重试 start')
 
   /* configured 前退出：立即 reject（不是等 5 秒超时）。 */
@@ -285,7 +286,7 @@ test('worker host cleans up the child on configure failure and rejects fast on e
   assert.equal(received.length, 1)
   assert.equal(host3.droppedCaptionCount, 1, '非法事件丢弃必须可观测')
   await host3.dispose()
-  assert.equal(child3.killed, true)
+  assert.equal(child3.killed, false)
 })
 
 test('worker core honors the recovery cursor: sequence base and attempt namespace', () => {

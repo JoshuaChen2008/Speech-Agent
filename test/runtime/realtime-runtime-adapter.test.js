@@ -11,6 +11,16 @@ const { DEV_MODEL_VALUE, resolveRuntimeOptions } = require('../../src/main/runti
 const DEV_MODEL = resolveRuntimeOptions({ LIVE_SUBTITLE_DEV_MODEL: DEV_MODEL_VALUE })
 const DICTATION = { onboardingCompleted: true, onboardingPreset: 'dictation', mic: true, loopback: false }
 
+function deferred () {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 function fakeWorker () {
   const worker = {
     calls: [],
@@ -108,6 +118,32 @@ const START_CONTEXT = {
   profile: 'balanced',
   resume: { attempt: 2, sourceSequences: { mic: 9 } }
 }
+
+test('default runtime factories carry only fixed role evidence callbacks', () => {
+  const registerAudioHostWebContents = () => () => {}
+  const onAudioHostRenderProcessGone = () => {}
+  const onAudioHostPreloadError = () => {}
+  const onAudioHostUnresponsive = () => {}
+  const onRealtimeUtilityFatal = () => {}
+  const onRefineUtilityFatal = () => {}
+  const adapter = new RealtimeRuntimeAdapter({
+    electron: {},
+    registerAudioHostWebContents,
+    onAudioHostRenderProcessGone,
+    onAudioHostPreloadError,
+    onAudioHostUnresponsive,
+    onRealtimeUtilityFatal,
+    onRefineUtilityFatal
+  })
+
+  const host = adapter.hostFactory()
+  assert.equal(host.registerWebContents, registerAudioHostWebContents)
+  assert.equal(host.onRenderProcessGone, onAudioHostRenderProcessGone)
+  assert.equal(host.onPreloadError, onAudioHostPreloadError)
+  assert.equal(host.onUnresponsive, onAudioHostUnresponsive)
+  assert.equal(adapter.workerFactory().onFatalError, onRealtimeUtilityFatal)
+  assert.equal(adapter.refineWorkerFactory().onFatalError, onRefineUtilityFatal)
+})
 
 test('runtime adapter rejects empty or dual source input before constructing hosts', async () => {
   let hostCreations = 0
@@ -288,6 +324,9 @@ test('stop is capture-first and start failures tear down cleanly', async () => {
   await assert.rejects(failing.adapter.start(START_CONTEXT), /capture denied/)
   assert.equal(failing.worker.disposed, true)
   assert.equal(failing.host.disposed, true)
+  assert.equal(failing.worker.calls.filter(([name]) => name === 'shutdown').length, 1)
+  assert.equal(failing.worker.calls.filter(([name]) => name === 'terminateAndWait').length, 0,
+    'start failure must not immediately kill a live native worker')
   assert.deepEqual(faults, [], '启动失败走异常路径，不重复上报故障')
   /* 失败后可重试。 */
   const retry = fakeWorker()
@@ -296,6 +335,151 @@ test('stop is capture-first and start failures tear down cleanly', async () => {
   await failing.adapter.start(START_CONTEXT)
   failing.adapter.dispose()
   adapter.dispose()
+})
+
+test('start failure propagates a worker cleanup failure before the original capture error', async () => {
+  const { adapter, worker, host } = makeAdapter()
+  const cleanupError = new Error('exact child could not be reaped')
+  cleanupError.code = 'UTILITY_REAP_FAILED'
+  worker.shutdown = async () => {
+    worker.calls.push(['shutdown'])
+    throw cleanupError
+  }
+  host.startCapture = async () => { throw new Error('capture denied') }
+
+  await assert.rejects(adapter.start(START_CONTEXT), (error) => {
+    assert.strictEqual(error, cleanupError)
+    assert.match(error.cause?.message || '', /capture denied/)
+    return true
+  })
+  assert.equal(adapter.disposed, true)
+  assert.equal(worker.calls.filter(([name]) => name === 'shutdown').length, 1)
+})
+
+test('repeated Coordinator timeouts keep every retirement gate until the real adapter joins a late exact exit', async (t) => {
+  const exactExit = deferred()
+  const { adapter, worker, host } = makeAdapter()
+  worker.shutdown = async () => {
+    worker.calls.push(['shutdown'])
+    const error = new Error('termination deadline elapsed')
+    error.code = 'UTILITY_TERMINATION_TIMEOUT'
+    throw error
+  }
+  worker.waitForExactExit = () => exactExit.promise
+  host.startCapture = async () => { throw new Error('capture denied') }
+
+  const replacementStarts = [0, 0]
+  const replacements = replacementStarts.map((_count, index) => {
+    const replacement = new FakeRuntimeAdapter({ autoEmit: false })
+    const replacementStart = replacement.start.bind(replacement)
+    replacement.start = async (context) => {
+      replacementStarts[index] += 1
+      return replacementStart(context)
+    }
+    return replacement
+  })
+  let factoryCalls = 0
+  const coordinator = new SessionCoordinator({
+    adapter,
+    adapterFactory: () => replacements[factoryCalls++],
+    runtimeOptions: DEV_MODEL,
+    configuration: DICTATION,
+    idFactory: () => 'late-exit-session',
+    transitionTimeoutMs: 50
+  })
+  t.after(() => coordinator.dispose())
+
+  const first = await coordinator.command('start')
+  assert.equal(first.code, 'ADAPTER_START_TIMEOUT')
+  assert.equal(worker.calls.filter(([name]) => name === 'shutdown').length, 1)
+
+  const second = await coordinator.command('retry')
+  assert.equal(second.code, 'ADAPTER_RETRY_TIMEOUT')
+  assert.deepEqual(replacementStarts, [0, 0])
+  assert.equal(factoryCalls, 2)
+
+  const third = coordinator.command('retry')
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(replacementStarts, [0, 0],
+    'generation C must still wait for the cumulative retirement of A and B')
+  assert.equal(exactExit.promise instanceof Promise, true)
+
+  exactExit.resolve(0)
+  assert.equal((await third).ok, true)
+  assert.deepEqual(replacementStarts, [0, 1])
+  assert.equal(worker.calls.filter(([name]) => name === 'shutdown').length, 1,
+    'all teardown callers reuse the one exact-child retirement')
+})
+
+test('runtime installed after a no-factory timeout still waits for the old exact generation to exit', async (t) => {
+  const exactExit = deferred()
+  const { adapter, worker, host } = makeAdapter()
+  worker.shutdown = async () => {
+    worker.calls.push(['shutdown'])
+    const error = new Error('termination deadline elapsed')
+    error.code = 'UTILITY_TERMINATION_TIMEOUT'
+    throw error
+  }
+  worker.waitForExactExit = () => exactExit.promise
+  host.startCapture = async () => { throw new Error('capture denied') }
+
+  let replacementStarts = 0
+  const replacement = new FakeRuntimeAdapter({ autoEmit: false })
+  const replacementStart = replacement.start.bind(replacement)
+  replacement.start = async (context) => {
+    replacementStarts += 1
+    return replacementStart(context)
+  }
+  let sessionNumber = 0
+  const coordinator = new SessionCoordinator({
+    adapter,
+    runtimeOptions: DEV_MODEL,
+    configuration: DICTATION,
+    idFactory: () => `late-install-session-${++sessionNumber}`,
+    transitionTimeoutMs: 50
+  })
+  t.after(async () => {
+    exactExit.resolve(0)
+    await coordinator.dispose()
+  })
+
+  const first = await coordinator.command('start')
+  assert.equal(first.code, 'ADAPTER_START_TIMEOUT')
+  assert.equal((await coordinator.command('stop')).ok, true)
+
+  coordinator.replaceRuntime({
+    adapterFactory: () => replacement,
+    runtimeOptions: DEV_MODEL,
+    transitionTimeoutMs: 50
+  })
+  const next = coordinator.command('start')
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(replacementStarts, 0,
+    'a runtime installed later must still wait for the no-factory retirement gate')
+
+  exactExit.resolve(0)
+  assert.equal((await next).ok, true)
+  assert.equal(replacementStarts, 1)
+  assert.equal(worker.calls.filter(([name]) => name === 'shutdown').length, 1)
+})
+
+test('adapter dispose reuses graceful worker shutdown for active native generations', async () => {
+  const { adapter, worker, refineWorker } = makeAdapterWith({
+    profileMap: { fast: 'x-asr-160ms' },
+    recognizer: { kind: 'sherpa-online-transducer', modelDir: 'm', numThreads: 4 },
+    refinement: REFINEMENT
+  })
+  await adapter.start({ sessionId: 'session-dispose', sourceIds: ['mic'], profile: 'fast' })
+
+  const first = adapter.dispose()
+  const second = adapter.dispose()
+  assert.strictEqual(first, second, 'dispose callers must share one teardown promise')
+  await first
+
+  assert.equal(worker.calls.filter(([name]) => name === 'shutdown').length, 1)
+  assert.equal(refineWorker.calls.filter(([name]) => name === 'shutdown').length, 1)
+  assert.equal(worker.calls.filter(([name]) => name === 'terminateAndWait').length, 0)
+  assert.equal(refineWorker.calls.filter(([name]) => name === 'terminateAndWait').length, 0)
 })
 
 test('completed sessions expose text-free I2 diagnostics from the real composition boundary', async () => {

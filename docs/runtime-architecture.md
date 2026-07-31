@@ -26,6 +26,11 @@
 - 分别追踪 visible windows 与 runtime windows；不使用 `BrowserWindow.getAllWindows().length` 判断是否应重建 UI。
 - 关闭、睡眠唤醒和退出时协调 session flush 与 worker 清理。
 
+产品的普通 `npm start` 由 exact-child supervisor 启动 Electron。主进程只向 supervisor
+发送固定枚举的生命周期与角色级故障分类；supervisor 在 main 即使 native 退出后仍能
+原子写完最后一次 evidence。该通道不接收或保存 PID、命令行、正文、音频/PCM、本地路径、
+stack、dump 或任意 Error 文本，也不配置 WER/Crashpad 或外部上传。
+
 `IpcRouter`：
 
 - 按窗口身份验证 sender。
@@ -246,11 +251,21 @@ realtime/refine worker
 - audio host 崩溃：关闭旧 port，RuntimeSnapshot → recovering，按上限重建；不能无提示无限重试权限请求。
 - realtime worker 崩溃：停止送帧或进入有界暂存，清理旧 stream 后重新建 port。I2.1 落地：`RealtimeRuntimeAdapter` 把 worker 退出/track-ended/host-gone 经 adapter `onError` 上报，coordinator 进入可重试 error，retry 走 stop+start 重建全链路（fresh host+worker）。
 - refine worker 崩溃：实时字幕继续；未完成 segment 标记 refinement unavailable，可稍后重试。
-- realtime/refine worker 的正常停止通过窄 `shutdown` 消息释放端口、timer、recognizer/VAD 引用，再由宿主等待该 exact child 的 `exit`；优雅退出超时后可以 kill，但仍必须等同一 child 的退出确认。无法确认退出时 adapter 永久失效且 Coordinator 不允许 replacement 开始，避免两代 sherpa/ONNX native runtime 重叠。
-- 所有 UtilityProcess 都必须注册 `error` listener；fatal 诊断只发布固定角色和类型，不保存 Electron/V8 report、location、本地路径、字幕或 PCM。`serviceName` 用于主进程的角色级 `child-process-gone` 日志，不把原始 details 透给 renderer。
+- realtime/refine worker 的正常停止通过窄 `shutdown` 消息释放端口、timer、recognizer/VAD 引用，再由宿主等待该 exact child 的 `exit`。当前期限固定为 **30 秒 graceful window + 5 秒 exact-child force/reap window**；强制终止后仍必须等同一 child 的退出确认。无法确认退出时 adapter 永久失效且 Coordinator 不允许 replacement 开始，避免两代 sherpa/ONNX native runtime 重叠。
+- 字幕应用运行时以 **45 秒**作为优雅收束结束/升级触发线，用于容纳 worker 的两阶段收束、字幕 flush 与 storage shutdown；ModelManager 的 **5 秒**收束与它并行。触线后进入 termination，但仍必须等待 exact child 收殓，因此 45 秒不是硬退出上限。迟到的原始 shutdown 会加入同一 termination promise，不得再次 flush/关闭或启动第二条退出路径。
+- 所有 UtilityProcess 都必须注册 `error` listener；fatal 诊断只发布固定角色和类型，不保存 Electron/V8 report、location、本地路径、stack、字幕或 PCM。`serviceName` 用于主进程的角色级 `child-process-gone` 归因，不把原始 details 透给 renderer；可见 renderer 与隐藏 audio host 由各自 WebContents role 归因。
 - 可见 renderer 重载：读取完整 snapshot 和当前 caption state，不依赖历史广播。
 - 系统睡眠/唤醒：重建 media tracks，校正单调时间基准并记录 session gap。
-- 退出：停止接收命令 → 停 tracks → 处理/放弃实时队列 → 提交/报告字幕事务 → 有界 checkpoint → kill workers → 关闭窗口。Agent 未完成任务按 A1 的可靠消费协议保留，不能无限阻塞退出。
+- 退出：停止接收命令 → 停 tracks → 处理/放弃实时队列 → 提交/报告字幕事务 → 有界 checkpoint → graceful shutdown workers → 必要时只终止并收殓 exact child → 关闭窗口。Agent 未完成任务按 A1 的可靠消费协议保留，不能无限阻塞退出；禁止按进程名批量结束 Electron。
+
+2026-07-31 的真实模型活跃诊断已用批准 bundle 连续三轮驱动 online stream、silero VAD
+和 offline refine：303 帧全部消费，产生 3 final、3 refined、3 offline decode，六个
+realtime/refine 子进程均优雅 `exitCode=0`、fatal 0。受监督多窗口产品壳也得到 clean exit、
+0 incident、未观察到 breakpoint。另一次修复后真实 I2 loopback 以 128 帧完整通过采集、
+online ASR、offline refine 与正常退出：0 dropped/gap/bad sample、1 final + 1 refined、
+双 CER 0，exact process 未强制终止。冻结语料诊断和 fake-ASR 产品壳只证明当前退出接线
+与活跃 native 收束；真实 loopback 单轮也不证明物理 mic、两小时 I3、打包态 I4，三者
+均不能证明历史 `0x80000003` 的 native stack 根因。
 
 ## 9. 安全要求
 

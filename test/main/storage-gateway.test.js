@@ -41,6 +41,25 @@ function transportFailure (message, outcome = 'unknown') {
   return new StorageTransportError('INJECTED_TRANSPORT_FAILURE', message, { outcome })
 }
 
+test('gateway forwards the fixed fatal callback to every storage host generation', async (t) => {
+  const onFatalError = () => {}
+  const received = []
+  const gateway = new StorageGateway({
+    databasePath: DATABASE_PATH,
+    onFatalError,
+    hostFactory: (options) => {
+      received.push(options)
+      return hostWith()
+    }
+  })
+  t.after(() => gateway.terminate())
+  await gateway.start()
+  assert.equal(received.length, 1)
+  assert.equal(received[0].databasePath, DATABASE_PATH)
+  assert.equal(received[0].onFatalError, onFatalError)
+  assert.throws(() => new StorageGateway({ databasePath: DATABASE_PATH, onFatalError: true }), /onFatalError/)
+})
+
 test('gateway keeps a cloned FIFO head until ACK and replays commit-before-ack on a fresh host', async (t) => {
   const log = []
   const durable = new Set()
@@ -280,6 +299,41 @@ test('gateway waits for old host exit before constructing its replacement', asyn
     'terminate-end:1',
     'created:2'
   ])
+})
+
+test('application termination keeps the storage host until a late exact exit is confirmed', async () => {
+  const exit = deferred()
+  let terminateCalls = 0
+  const host = hostWith({
+    async terminateAndWait () {
+      terminateCalls += 1
+      throw new StorageTransportError(
+        'TERMINATION_TIMEOUT',
+        'Storage worker did not exit after termination.',
+        { outcome: 'unknown' }
+      )
+    },
+    async waitForExactExit () { return exit.promise }
+  })
+  const gateway = new StorageGateway({
+    databasePath: DATABASE_PATH,
+    hostFactory: () => host
+  })
+  await gateway.start()
+
+  let settled = false
+  const terminating = gateway.terminate()
+  terminating.then(() => { settled = true }, () => { settled = true })
+  await Promise.resolve()
+  await Promise.resolve()
+
+  assert.equal(terminateCalls, 1)
+  assert.strictEqual(gateway.host, host)
+  assert.equal(settled, false)
+
+  exit.resolve(0)
+  await terminating
+  assert.equal(gateway.host, null)
 })
 
 test('shutdown rejects while the FIFO head has no ACK and never calls host shutdown', async (t) => {

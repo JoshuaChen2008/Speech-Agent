@@ -4,7 +4,7 @@
   "description": "Win11 本地实时字幕系统，后置可选 Agent Loop、上下文增强与会议摘要",
   "main": "src/main.js",
   "scripts": {
-    "start": "electron .",
+    "start": "node scripts/run-supervised-electron.js --entry .",
     "test": "node --test --experimental-test-isolation=none",
     "test:integration": "node --test --experimental-test-isolation=none \"test/integration/**/*.test.js\"",
     "test:ci": "npm run test:integration && npm test",

@@ -554,10 +554,11 @@ class SessionCoordinator {
 
   adapterError (operation, label, cause, transition = null) {
     const timedOut = cause && cause.name === 'TransitionTimeoutError'
-    if (timedOut && transition) this.quarantineAdapter(transition.adapter)
+    const terminationFailed = cause?.code === 'UTILITY_TERMINATION_TIMEOUT'
+    if ((timedOut || terminationFailed) && transition) this.quarantineAdapter(transition.adapter)
     const recoverable = this.adapter !== null
     return this.runtimeError(
-      `ADAPTER_${operation}_${timedOut ? 'TIMEOUT' : 'FAILED'}`,
+      `ADAPTER_${operation}_${timedOut ? 'TIMEOUT' : (terminationFailed ? 'TERMINATION_FAILED' : 'FAILED')}`,
       `${label}${timedOut ? '超时' : '失败'}`,
       recoverable
     )
@@ -779,18 +780,15 @@ class SessionCoordinator {
     this.unsubscribeAdapter()
     this.quarantinedAdapters.add(adapter)
     this.adapter = null
-    const retirement = this.cleanupAdapter(adapter)
+    /* Retirement is cumulative. A replacement can time out while it is still
+       waiting for an older exact generation; quarantining that replacement
+       must never overwrite the older pending gate. */
+    const previousRetirement = this.adapterRetirementPromise
+    const adapterRetirement = this.cleanupAdapter(adapter)
+    const retirement = previousRetirement
+      ? Promise.all([previousRetirement, adapterRetirement]).then(() => undefined)
+      : adapterRetirement
     let replacement = null
-    if (!this.adapterFactory) return
-    try {
-      replacement = this.createAdapter()
-      this.adapter = replacement
-      this.unsubscribeAdapter = this.bindAdapter(replacement)
-      this.adapterEpoch += 1
-    } catch (error) {
-      this.adapter = null
-      this.reportListenerError(error)
-    }
     const guarded = retirement.catch((error) => {
       /* Never let a replacement start if the old native generation could not
          be reaped. Retire the unused candidate and make retry unavailable. */
@@ -804,6 +802,19 @@ class SessionCoordinator {
     })
     guarded.catch(() => {})
     this.adapterRetirementPromise = guarded
+    /* The retirement gate belongs to the old exact generation, not to the
+       availability of a replacement factory. A runtime installed later via
+       replaceRuntime() must still wait for this gate before it can start. */
+    if (!this.adapterFactory) return
+    try {
+      replacement = this.createAdapter()
+      this.adapter = replacement
+      this.unsubscribeAdapter = this.bindAdapter(replacement)
+      this.adapterEpoch += 1
+    } catch (error) {
+      this.adapter = null
+      this.reportListenerError(error)
+    }
   }
 
   cleanupAdapter (adapter) {

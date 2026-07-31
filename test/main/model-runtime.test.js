@@ -60,11 +60,23 @@ test('runtime definition stays unavailable until the complete installed bundle i
   }), null)
 
   const offlineRoot = installArtifact(userDataDir, 'x-asr-offline')
+  const registerAudioHostWebContents = () => () => {}
+  const onAudioHostRenderProcessGone = () => {}
+  const onAudioHostPreloadError = () => {}
+  const onAudioHostUnresponsive = () => {}
+  const onRealtimeUtilityFatal = () => {}
+  const onRefineUtilityFatal = () => {}
   const definition = createApprovedRuntimeDefinition({
     userDataDir,
     repoRoot: path.join(root, 'empty-repo'),
     env: {},
-    Adapter: CapturingAdapter
+    Adapter: CapturingAdapter,
+    registerAudioHostWebContents,
+    onAudioHostRenderProcessGone,
+    onAudioHostPreloadError,
+    onAudioHostUnresponsive,
+    onRealtimeUtilityFatal,
+    onRefineUtilityFatal
   })
   assert.equal(definition.runtimeOptions.modelOverride.id, 'x-asr-160ms')
   assert.equal(definition.runtimeOptions.modelOverride.profile, 'fast')
@@ -74,6 +86,12 @@ test('runtime definition stays unavailable until the complete installed bundle i
   assert.ok(adapter.options.recognizer.modelDir.endsWith(APPROVED_REALTIME_MODEL.directoryName))
   assert.equal(adapter.options.refinement.modelDir, offlineRoot)
   assert.equal(adapter.options.vad.kind, 'silero')
+  assert.equal(adapter.options.registerAudioHostWebContents, registerAudioHostWebContents)
+  assert.equal(adapter.options.onAudioHostRenderProcessGone, onAudioHostRenderProcessGone)
+  assert.equal(adapter.options.onAudioHostPreloadError, onAudioHostPreloadError)
+  assert.equal(adapter.options.onAudioHostUnresponsive, onAudioHostUnresponsive)
+  assert.equal(adapter.options.onRealtimeUtilityFatal, onRealtimeUtilityFatal)
+  assert.equal(adapter.options.onRefineUtilityFatal, onRefineUtilityFatal)
 })
 
 test('external readiness only accepts known development or explicit artifacts', (t) => {

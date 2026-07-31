@@ -13,13 +13,17 @@ test('published I2 loopback evidence proves one lossless real-model run without 
   const report = JSON.parse(fs.readFileSync(REPORT_PATH, 'utf8'))
   assert.equal(report.schemaVersion, 2)
   assert.equal(report.kind, 'i2-live-caption-smoke')
+  assert.equal(report.executedAt, '2026-07-31T02:51:41.094Z')
   assert.equal(report.sourceId, 'loopback')
   assert.equal(report.result, 'pass')
+  assert.equal(report.counts.finals, 1)
+  assert.equal(report.counts.refined, 1)
   assert.equal(report.accuracy.finalCer, 0)
   assert.equal(report.accuracy.refinedCer, 0)
   assert.equal(report.accuracy.refinedHasPunctuation, true)
-  assert.equal(report.transport.capturedFrames, report.transport.sentFrames)
-  assert.equal(report.transport.sentFrames, report.transport.ingestedFrames)
+  assert.equal(report.transport.capturedFrames, 128)
+  assert.equal(report.transport.sentFrames, 128)
+  assert.equal(report.transport.ingestedFrames, 128)
   for (const key of [
     'droppedFrames',
     'sequenceGapCount',
@@ -32,8 +36,11 @@ test('published I2 loopback evidence proves one lossless real-model run without 
   assert.equal(report.transport.creditStalls, 0)
   assert.equal(report.transport.maxQueuedMsObserved, 0)
   assert.equal(report.transport.portReplacements, 0)
-  assert.equal(report.privacy.capturedAudioPersisted, false)
-  assert.equal(report.privacy.reportContainsTranscriptText, false)
+  assert.deepEqual(report.privacy, {
+    capturedAudioPersisted: false,
+    reportContainsTranscriptText: false,
+    reportContainsAudioPath: false
+  })
   assert.ok(report.limitations.some((item) => /microphone.*pending/i.test(item)))
 
   const serialized = JSON.stringify(report)

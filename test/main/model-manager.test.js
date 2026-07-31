@@ -438,6 +438,41 @@ test('bounded shutdown returns when a fetch ignores abort', async (t) => {
   await assert.rejects(manager.install(), (error) => error.code === 'SHUTDOWN')
 })
 
+test('late initialize cannot publish readiness after bounded shutdown closes the manager', async (t) => {
+  const body = Buffer.from('late initialize')
+  const manifest = manifestFor([{ id: 'late-init', body }])
+  let releaseExternalReady
+  let markExternalReadyEntered
+  const externalReadyEntered = new Promise((resolve) => { markExternalReadyEntered = resolve })
+  const externalReadyGate = new Promise((resolve) => { releaseExternalReady = resolve })
+  const manager = managerFor(t, manifest, async () => response(body), {
+    externalReady: async () => {
+      markExternalReadyEntered()
+      await externalReadyGate
+      return true
+    }
+  })
+  const statuses = []
+  manager.onStatus((status) => statuses.push(status.state))
+  const initializing = manager.initialize()
+  initializing.catch(() => {})
+  await externalReadyEntered
+
+  assert.deepEqual(await manager.shutdownWithin(5), {
+    graceful: false,
+    reason: 'SHUTDOWN_TIMEOUT'
+  })
+  const statusCountAtShutdown = statuses.length
+  releaseExternalReady()
+  await assert.rejects(initializing, (error) => error.code === 'ABORTED')
+  await manager.shutdownPromise
+
+  assert.equal(manager.initialized, false)
+  assert.equal(manager.closed, true)
+  assert.equal(manager.getStatus().canInstall, false)
+  assert.equal(statuses.length, statusCountAtShutdown, 'late initialize must not publish after shutdown')
+})
+
 test('bounded shutdown survives an extractor that ignores kill and the next start removes stale staging', async (t) => {
   const body = Buffer.from('archive extractor never settles')
   const manifest = manifestFor([{
