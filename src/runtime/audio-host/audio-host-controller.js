@@ -347,7 +347,8 @@ class AudioHostController {
       const invocation = {
         sessionId: options.sessionId,
         sourceIds: options.sourceIds,
-        maxQueueMs: options.maxQueueMs
+        maxQueueMs: options.maxQueueMs,
+        micLabelSha256: options.micLabelSha256
       }
       const evidence = await withTimeout(
         window().webContents.executeJavaScript(

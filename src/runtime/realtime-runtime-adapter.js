@@ -36,6 +36,7 @@ class RealtimeRuntimeAdapter {
     this.electron = options.electron || require('electron')
     this.profileMap = options.profileMap || DEFAULT_PROFILE_MAP
     this.maxQueueMs = options.maxQueueMs || 2000
+    this.micLabelSha256 = options.micLabelSha256 || null
     this.vadOptions = options.vadOptions
     /* 真实模型选项（{kind, modelDir, numThreads, modelType}），null = 结构模式。 */
     this.recognizer = options.recognizer || null
@@ -134,6 +135,7 @@ class RealtimeRuntimeAdapter {
       worker: this.workerFactory(),
       refineWorker: useRefinement ? this.refineWorkerFactory() : null,
       refineReady: false,
+      captureEvidence: null,
       captureMetrics: {},
       workerStats: null,
       unsubscribers: [],
@@ -228,10 +230,11 @@ class RealtimeRuntimeAdapter {
 
       const channel = new this.electron.MessageChannelMain()
       session.worker.attachPort(channel.port2)
-      await session.host.startCapture({
+      session.captureEvidence = await session.host.startCapture({
         sessionId: session.sessionId,
         sourceIds: session.sourceIds,
         maxQueueMs: this.maxQueueMs,
+        micLabelSha256: this.micLabelSha256,
         port: channel.port1
       })
       throwIfAborted(context.signal)
@@ -308,6 +311,8 @@ class RealtimeRuntimeAdapter {
       schemaVersion: 1,
       sessionId: session.sessionId,
       sourceIds: [...session.sourceIds],
+      /* 只有来源 track 的哈希与非身份 settings；不含 PCM、正文或设备明文。 */
+      input: structuredCloneSafe(session.captureEvidence || {}),
       capture: structuredCloneSafe(session.captureMetrics || {}),
       worker: structuredCloneSafe(workerStats),
       droppedCaptionCount: session.worker.droppedCaptionCount,

@@ -39,11 +39,13 @@ realtime/refine exact child 全部优雅 `exitCode=0`，fatal 为 0。
 报告不保存正文、PCM、音频引用或本地路径。该诊断不开 BrowserWindow，也不打开物理
 mic/loopback，因此只证明活跃 native 工作后的当前收束路径，不是 I2/I3/I4。
 
-当前代码还完成了一轮真实 I2 loopback→ASR→offline refine→退出：128 帧
-captured/sent/ingested 一致，dropped、sequence gap、bad sample 均为 0；得到 1 final 和
-1 refined，双 CER 0，refined 含标点。Electron exact process 正常退出且没有强制终止。
-这是当前真实 native 工作路径的单轮证据，但它仍是开发态 loopback，不覆盖
-物理 mic 或长时稳定，也没有生成 native stack。
+当前 schema v4 I2 bundle 又完成 loopback/mic 各 5 轮产品路径 ASR→offline refine→退出：
+10 轮均得到 final/refined、最大双 CER 0、captured/sent/ingested 一致，12 项丢失峰值全为 0，
+Electron exact process 均正常退出。mic 仅为 `physical-preferred-label-heuristic` 声学 fixture；
+其匿名标签绑定可防预检后静默换标签，但不是硬件证明，也不能排除未知或伪造标签的虚拟设备。
+两来源首 partial P95=1126/1024ms，均高于冻结的裸模型 `<1000ms` 线，因此 I2 性能与整体门禁
+仍未关闭。权威证据为 `i2-live-v4/` 中的精确 Gate、10 个 child 和两份确定性内嵌 summary；
+严格递归校验与 CI byte-for-byte 重建只证明证据完整性，不生成 native stack。
 
 受监督多窗口产品壳也已完成首设、开始、字幕 DOM、停止、SQLite 历史翻页、资源页与退出
 联动。产品壳报告为 `pass / partial`；独立 role exit evidence 为 `clean-exit`、主进程状态码
@@ -58,6 +60,8 @@ packaged DB0 完成 WAL、事务、重开与 integrity 资格检查，相关 exa
 breakpoint。另一份精确、未签名 NSIS 候选的隔离静默安装/卸载机械资格也通过。
 打包产品旅程仍使用受控资源与 fake ASR，而 NSIS 探针未启动已安装应用；它们共同
 取得 B5 打包态确定性资格，不替代干净 Win11、真实音源、公网模型与断网复启的 I4。
+该 exact installer/SHA 属于前一候选 `369055a`；本阶段修改了生产 audio-host/runtime，
+进入 I4 前必须从新 HEAD 重建、重取证并冻结新的 installer SHA。
 
 `npm start` 现在由 exact-child supervisor 启动 Electron。main、renderer、audio-host、
 realtime、refine、storage 和 Chromium 其他子进程只按固定枚举记录角色、生命周期、退出原因
@@ -83,5 +87,5 @@ realtime、refine、storage 和 Chromium 其他子进程只按固定枚举记录
 - 没有证明异常来自 sherpa/ONNX、GPU、renderer 或 Electron main 中的任意一个角色；
 - 没有证明用户交互问题已复现；
 - 没有证明硬崩溃后的 replacement、字幕恢复或两小时资源稳定性；
-- 没有完成物理 mic I2、两小时 I3 或干净机发布验收 I4；
+- 后续 schema v4 mic 标签启发式声学 fixture 5 轮通过，但不是硬件证明，也没有复现截图或提供 native stack，因此不改变本调查的根因结论。真实 pause/refine、拖动、设备变化、睡眠/唤醒、硬崩溃、性能、两小时 I3 和干净机发布验收 I4 仍未完成；
 - 没有因为诊断需要改变“永不持久化现场音频”的产品语义。

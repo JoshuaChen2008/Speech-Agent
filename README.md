@@ -4,9 +4,9 @@
 
 当前已完成 **B1 应用骨架 + B2 实时链路 + B3 两遍精修/SQLite 历史 + B4 本地模型资源闭环 + B5 打包态确定性资格 + 来源 XOR 联合门禁**：透明字幕条、工具栏、点击穿透、亚克力设置窗、单选监听模式、权威会话状态机、隐藏采集窗（回环/麦克风）、realtime/refine/storage utility，以及 Gate 0B 批准的 **160ms 真实模型 + silero VAD + 离线精修**。首次缺模型时可从设置的“模型资源”页一键下载固定三资源 bundle，支持断点续传、哈希/归档审查、原子安装；空闲应用安装后无需重启即可开始真字幕。字幕自动写入 SQLite，工具条可打开独立历史窗查看带时间戳正文并导出 txt/md/srt。
 
-B5 已生成 Windows x64 ASAR/NSIS，并从真实 packaged exe 复跑设置下载、热启用、字幕、暂停/恢复、停止、SQLite 历史、205 段分页、sherpa native utility 与 clean exit；精确 NSIS 的隔离安装/卸载也通过。该候选未签名，测试 package 使用受控资源/fake ASR，不能冒充 I4。物理 mic、两小时长稳、干净 Win11 的公网/权限/真实音源/ready 后离线复启仍待闭环。Agent/翻译未实现，向量检索已后置。
+B5 已生成 Windows x64 ASAR/NSIS，并从真实 packaged exe 复跑设置下载、热启用、字幕、暂停/恢复、停止、SQLite 历史、205 段分页、sherpa native utility 与 clean exit；精确 NSIS 的隔离安装/卸载也通过。I2 schema v4 bundle 又让 loopback 与 `physical-preferred` 标签启发式声学 mic fixture 各完成 5/5 轮产品路径 ASR/refine：10 轮都有 final/refined、最大双 CER 0、帧全等且 12 项丢失峰值全为 0。首 partial P50/P95/min/max：loopback 1112/1126/1042/1126ms，mic 843/1024/819/1024ms；两路 P95 均高于冻结的裸模型 `<1000ms` 线，I2 尚未关闭。B5 exact installer/SHA 属于前一候选 `369055a`；本阶段已修改生产 audio-host/runtime，所以旧制品不代表新 HEAD，进入 I4 前必须重建、重取证并冻结新 SHA。测试 package 仍不能冒充 I4；I2 性能/交互/恢复、两小时长稳、干净 Win11 公网/权限/ready 后离线复启仍待。Agent/翻译未实现，向量检索已后置。
 
-针对用户看到的 `electron.exe / 0x80000003`，当前没有 dump、发生时间或 native stack，根因仍未获得调用栈级证明。生命周期修复后，批准模型活跃诊断三轮共送入并消费 303 帧，得到 3 条 final、3 条 refined、3 次 offline decode，六个 realtime/refine 子进程均优雅 `exitCode=0`、fatal 为 0；最贴近截图场景的真实 I2 loopback→ASR→offline refine→退出也 PASS：128 帧 captured/sent/ingested 一致，0 dropped/gap/bad sample，1 final + 1 refined、双 CER 0，Electron exact process 正常退出且未强制终止。开发态与打包态四窗口产品壳均为 clean exit、0 incident、未观察到 breakpoint；打包态还实际加载了 unpacked native addon/DLL。上述证据仍不能替代 native stack，也不能声明历史异常已永久修复。详见 [Electron breakpoint 调查](docs/validation/electron-breakpoint-investigation.md)和 [B5 打包证据](docs/validation/b5-packaging.md)。
+针对用户看到的 `electron.exe / 0x80000003`，当前没有 dump、发生时间或 native stack，根因仍未获得调用栈级证明。生命周期修复后，批准模型活跃诊断的六个 realtime/refine 子进程均优雅 `exitCode=0`、fatal 为 0；schema v4 的 10 轮产品路径 I2 也全部自然退出且 12 项丢失峰值全为 0。开发态与打包态四窗口产品壳均为 clean exit、0 incident、未观察到 breakpoint；打包态还实际加载了 unpacked native addon/DLL。上述证据仍不能替代 native stack，也不能声明历史异常已永久修复。详见 [Electron breakpoint 调查](docs/validation/electron-breakpoint-investigation.md)、[I2 schema v4 bundle](docs/validation/i2-real-source-series.md)和 [B5 打包证据](docs/validation/b5-packaging.md)。
 
 ## 运行
 
@@ -62,7 +62,7 @@ npm run package:release  # Windows x64 NSIS 候选
 Agent 时字幕、SQLite 保存和历史继续可用。默认卸载移除程序、快捷方式和卸载登记，保留 userData 中的模型、
 配置和字幕历史。证据边界见 [B5 打包态确定性资格](docs/validation/b5-packaging.md)。
 
-真实设备验收必须把两个来源分开运行；报告只保存结构化指标，不保存现场音频：
+I2 来源验收必须把两个来源分开运行；报告只保存结构化指标，不保存现场音频：
 
 ```powershell
 .\scripts\run-electron-smoke.ps1 `
@@ -73,13 +73,23 @@ Agent 时字幕、SQLite 保存和历史继续可用。默认卸载移除程序�
   -EntryArguments @('--source', 'mic', '--listen-seconds', '12', '--report', '.artifacts\i2-live\mic.json')
 ```
 
+自动 mic 声学 fixture 先运行 memory-only Gate 0C，再按匿名标签哈希要求唯一匹配同一输入；这能防止预检后静默换标签，但只是 `physical-preferred` 标签启发式，不是硬件证明，也不能排除未知或伪造标签的虚拟设备。当前权威分位证据固定为每个来源恰好 5 轮：
+
+```powershell
+.\scripts\run-i2-live-series.ps1 -Source loopback -RunCount 5 `
+  -OutputDirectory .artifacts\i2-live-series
+.\scripts\run-i2-live-series.ps1 -Source mic -RunCount 5 `
+  -OutputDirectory .artifacts\i2-live-series `
+  -PhysicalMicPreflight .artifacts\gate-0c\report.json
+```
+
 本地 Electron smoke 必须经上述启动器隐藏启动、等待自然退出并保留 stdout/stderr；native
 worker 先等待最多 30 秒优雅退出，超时后只终止并收殓该 exact child（最多再等 5 秒）。字幕
 应用运行时以 45 秒作为优雅收束结束/升级触发线，ModelManager 的 5 秒收束与其并行；升级后仍
 必须等待 exact child 收殓，所以 45 秒不是无视子进程状态的硬退出上限。不要用
 `electron.exe --help` 探测运行时，也不要按进程名结束仍在验证中的 Electron。
 
-`mic` 运行时终端只显示 `promptId`，请朗读 `scripts/gate-0b/corpus.json` 中对应 case 的冻结 reference；终端和报告都不回显现场转写正文。当前已留档的 loopback schema v2 实机证据包含真实 ASR/精修、字幕时序、CPU/工作集、PCM 队列与缺口指标；物理 mic 仍是 I2 完整验收的待办。
+`mic` 的 operator 模式只显示 `promptId`，请朗读 `scripts/gate-0b/corpus.json` 中对应 case 的冻结 reference；自动 series 使用同轮 Gate 0C 的匿名输入/输出标签哈希和声学回放 fixture。两种模式的终端和报告都不回显转写正文。权威证据是 [`docs/validation/i2-live-v4/`](docs/validation/i2-live-v4/) 内精确 tracked Gate、10 个 schema-v4 child 和两份确定性内嵌 summary；严格递归校验、runner 自校验与 CI byte-for-byte 重建共同防止证据漂移。语料 WAV 由受跟踪的 generator/reference 本地生成并被 Git 忽略；报告绑定生成 WAV 与 reference 的摘要。完整 I2 仍需两来源性能、真实 pause/refine、拖动、设备变化、睡眠/唤醒和硬崩溃恢复。
 
 字幕 MVP 与后续“字幕 → Agent”的联合验收见 [docs/testing-strategy.md](docs/testing-strategy.md)；功能含义、禁止误读与“完成”口径以 [docs/semantic-contract.md](docs/semantic-contract.md) 为准。
 
@@ -139,7 +149,7 @@ src/
 
 ## 下一步
 
-见 [PLAN.md](PLAN.md)（Rev.10）：来源互斥、默认 SQLite-only 生命周期、文本历史/导出、ModelManager、真实产品壳与 B5 打包态确定性资格已通过对应门禁；当前按物理 mic I2 → I3 长稳 → I4 精确 NSIS 的干净 Win11 发布验收闭环字幕 MVP。之后才做 Pi Core/Electron 隔离探针、项目自有插件宿主、独立增强文本和会后结构化纪要；向量检索最后评估。任何能力都必须有跨模块用户旅程，不能只交单测。
+见 [PLAN.md](PLAN.md)（Rev.11）：来源互斥、默认 SQLite-only 生命周期、文本历史/导出、ModelManager、真实产品壳、B5 打包态资格及 I2 schema v4 重复运行证据已通过各自门禁；但 I2 本身仍未关闭。当前按 I2 两来源性能/交互/恢复 → I3 长稳 → I4 精确 NSIS 的干净 Win11 发布验收闭环字幕 MVP。之后才做 Pi Core/Electron 隔离探针、项目自有插件宿主、独立增强文本和会后结构化纪要；向量检索最后评估。任何能力都必须有跨模块用户旅程，不能只交单测。
 
 - 窗口壳和交互不变量：[docs/subtitle-window.md](docs/subtitle-window.md)
 - 视觉/UI 模型交接：[docs/ui-design-brief.md](docs/ui-design-brief.md)

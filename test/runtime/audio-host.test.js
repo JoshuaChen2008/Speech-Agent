@@ -493,3 +493,14 @@ test('diagnostic sample payloads are coerced defensively', () => {
   assert.throws(() => coerceSamples('nope'), /Float32/)
   assert.throws(() => coerceSamples(null), /Float32/)
 })
+
+test('I2 anonymous device selectors fail closed on duplicate labels and recheck the acquired routes', () => {
+  const host = fs.readFileSync(path.resolve(__dirname, '../../src/runtime/audio-host/host.js'), 'utf8')
+  const player = fs.readFileSync(path.resolve(__dirname, '../../scripts/i2-live-caption-player.js'), 'utf8')
+  assert.match(host, /matches\.length !== 1/)
+  assert.match(host, /digestText\(audioTrack\.label\) !== micLabelSha256/)
+  assert.match(host, /deviceId: \{ exact: selected\.deviceId \}/)
+  assert.match(player, /matches\.length !== 1/)
+  assert.match(player, /setSinkId\(selected\.device\.deviceId\)/)
+  assert.match(player, /matchedLabelHashCount: matches\.length/)
+})

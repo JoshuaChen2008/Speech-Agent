@@ -290,7 +290,7 @@ UI 规则：
 
 ### 6.4 后续顺序
 
-字幕 MVP 的 B4 ModelManager 资源入口已实现，开发态与 packaged Electron 四窗口产品壳均已通过 settings renderer 点击下载→preload/IPC→受控安装→热启用→字幕→SQLite 历史的专门旅程；B5 正式 ASAR/NSIS 和隔离安装卸载也已通过确定性资格。下一步推进物理 mic、I3 长稳与 I4 精确 NSIS 的干净 Win11 公网/权限/真实音源验收。受控 UI 旅程使用小型受控资源和 fake ASR，只证明接线、打包路径与用户交互，不能冒充真实推理、真实公网或物理声卡。Agent UI 等 A1/A2 契约冻结后再做，不在 renderer 内先行伪造能力；当前设置页不展示翻译开关。
+字幕 MVP 的 B4 ModelManager 资源入口已实现，开发态与 packaged Electron 四窗口产品壳均已通过 settings renderer 点击下载→preload/IPC→受控安装→热启用→字幕→SQLite 历史的专门旅程；B5 正式 ASAR/NSIS 和隔离安装卸载的方法也已通过确定性资格。schema v4 bundle 已记录 loopback 与 mic 标签启发式声学 fixture 各 5 轮；该 fixture 不是硬件证明，且两来源产品路径 P95 都超过冻结 `<1000ms` 线。下一步推进性能、拖动/DPI/权限/真实 pause/refine/设备变化/睡眠唤醒/硬崩溃等 I2 实机交互，再做 I3 长稳与 I4。前一 B5 exact installer/SHA 不代表当前含 audio-host/runtime 改动的新 HEAD，进入 I4 前必须重建、重取证并冻结新 SHA。受控 UI 旅程使用小型受控资源和 fake ASR，只证明接线、打包路径与用户交互，不能冒充真实推理、真实公网或硬件身份。Agent UI 等 A1/A2 契约冻结后再做，不在 renderer 内先行伪造能力；当前设置页不展示翻译开关。
 
 ## 7. 每次视觉交接必须包含
 

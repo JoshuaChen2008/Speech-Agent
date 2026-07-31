@@ -206,6 +206,8 @@ B2.2 落地的流控协议（`src/runtime/audio-host/frame-flow.js` + `src/runti
 - partial latency P50/P95
 - end-to-end final latency P50/P95
 
+2026-07-31 的 schema v4 I2 bundle 已按实际播放器起点和本地生成 WAV 的 `-45dBFS` 连续双 20ms 窗口估算语音起点。loopback 5 轮首 partial P50/P95/min/max=1112/1126/1042/1126ms；`physical-preferred-label-heuristic` mic 声学 fixture=843/1024/819/1024ms；final-after-stimulus-end P95 分别 722/772ms。10 轮最大 final/refined CER 均为 0、captured/sent/ingested 帧全等，12 项丢失峰值全为 0。两路 P95 都高于冻结 Gate 0B 裸模型 `<1000ms` 线，因此 integration 性能债仍未关闭。该 mic 分类只按标签启发式并绑定预检后同一匿名标签，不能视为硬件证明或排除未知/伪造标签的虚拟设备。generator/reference 受跟踪，生成 WAV 被忽略；报告绑定两者摘要。完整 bundle 见 [`validation/i2-live-v4/`](validation/i2-live-v4/) 与 [`validation/i2-real-source-series.md`](validation/i2-real-source-series.md)。
+
 ### 5.2 低频控制与文本路径
 
 ```text
@@ -258,14 +260,13 @@ realtime/refine worker
 - 系统睡眠/唤醒：重建 media tracks，校正单调时间基准并记录 session gap。
 - 退出：停止接收命令 → 停 tracks → 处理/放弃实时队列 → 提交/报告字幕事务 → 有界 checkpoint → graceful shutdown workers → 必要时只终止并收殓 exact child → 关闭窗口。Agent 未完成任务按 A1 的可靠消费协议保留，不能无限阻塞退出；禁止按进程名批量结束 Electron。
 
-2026-07-31 的真实模型活跃诊断已用批准 bundle 连续三轮驱动 online stream、silero VAD
-和 offline refine：303 帧全部消费，产生 3 final、3 refined、3 offline decode，六个
-realtime/refine 子进程均优雅 `exitCode=0`、fatal 0。受监督多窗口产品壳也得到 clean exit、
-0 incident、未观察到 breakpoint。另一次修复后真实 I2 loopback 以 128 帧完整通过采集、
-online ASR、offline refine 与正常退出：0 dropped/gap/bad sample、1 final + 1 refined、
-双 CER 0，exact process 未强制终止。冻结语料诊断和 fake-ASR 产品壳只证明当前退出接线
-与活跃 native 收束；真实 loopback 单轮也不证明物理 mic、两小时 I3 或干净机 I4，三者
-均不能证明历史 `0x80000003` 的 native stack 根因。
+2026-07-31 的真实模型活跃诊断已用批准 bundle 连续三轮驱动 online stream、Silero VAD
+和 offline refine，六个 realtime/refine 子进程均优雅 `exitCode=0`、fatal 0。随后 schema v4
+bundle 让 loopback/mic 各 5 轮完整通过采集、online ASR、offline refine 与正常退出：
+10 final + 10 refined、最大双 CER 0，所有 captured/sent/ingested 帧一致且 12 项丢失峰值全为 0。
+受监督多窗口产品壳也得到 clean exit、0 incident、未观察到 breakpoint。冻结语料诊断、
+schema v4 bundle 和 fake-ASR 产品壳只证明各自边界；它们不证明性能门槛、拖动、真实 pause/refine、设备变化/睡眠/硬崩溃、
+两小时 I3、干净机 I4 或历史 `0x80000003` 的 native stack 根因。
 
 ## 9. 安全要求
 
@@ -288,6 +289,6 @@ online ASR、offline refine 与正常退出：0 dropped/gap/bad sample、1 final
 5. 独立 refine worker 和事件式 JSONL 过渡基线，验证 pause/resume、迟到修订和进程故障。
 6. B3.3 已在 DB0/DB1 基座上接入产品网关、迁移、默认 SQLite-only 生命周期与历史查询/导出；J1/J2/J10 及开发态/packaged 四窗口 Electron/SQLite 旅程已有证据，I3/I4 继续作为独立门禁。
 7. B4 ModelManager、资源页、空闲热启用和 J14 已完成；生产 Manager 已安装并实际调用固定三资源 bundle。
-8. B5 正式 ASAR/NSIS、native unpack、Electron fuses、packaged DB0/产品旅程及隔离安装卸载已通过确定性资格；测试 package 与正式候选明确分离。当前按物理 mic → I3 两小时/恢复 → I4 精确 NSIS 的公网/权限/真实音源/ready 后离线复启完成字幕 MVP 发布验收。
+8. B5 正式 ASAR/NSIS、native unpack、Electron fuses、packaged DB0/产品旅程及隔离安装卸载的方法已通过确定性资格；但冻结的 exact installer/SHA 来自前一候选 `369055a`，本阶段修改了生产 audio-host/runtime，进入 I4 前必须从含 schema-v4 hook 的新 HEAD 重建、重取证并冻结新的 installer SHA。I2 schema v4 重复运行证据通过，但整体仍未关闭；当前先解决两来源性能、交互与恢复，再做 I3 两小时/恢复和 I4 新精确 NSIS 的公网/权限/真实音源/ready 后离线复启。
 8. 字幕 MVP 通过后做 A1：`AgentRuntime` + Pi Core 隔离探针 + 项目自有插件宿主 + 凭据/可靠消费；再以第一方插件实现独立增强文本和会后结构化纪要，并通过 J3–J7/J13。
 9. 只有 X1 明确进入范围时才增加 FTS5/`sqlite-vec`，并执行 J11/DB4。

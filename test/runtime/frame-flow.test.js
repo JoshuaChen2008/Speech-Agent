@@ -128,8 +128,12 @@ test('frame flow rejects invalid construction and input', () => {
 
 test('capture options validation enforces the queue budget range', () => {
   const normalized = validateCaptureOptions({ sessionId: 's-1', sourceIds: ['loopback'], maxQueueMs: 500 })
-  assert.deepEqual(normalized, { sessionId: 's-1', sourceIds: ['loopback'], maxQueueMs: 500 })
+  assert.deepEqual(normalized, { sessionId: 's-1', sourceIds: ['loopback'], maxQueueMs: 500, micLabelSha256: null })
   assert.equal(validateCaptureOptions({ sessionId: 's', sourceIds: ['mic'] }).maxQueueMs, 2000)
+  const micHash = 'a'.repeat(64)
+  assert.equal(validateCaptureOptions({ sessionId: 's', sourceIds: ['mic'], micLabelSha256: micHash }).micLabelSha256, micHash)
+  assert.throws(() => validateCaptureOptions({ sessionId: 's', sourceIds: ['mic'], micLabelSha256: 'not-a-hash' }), /SHA-256/)
+  assert.throws(() => validateCaptureOptions({ sessionId: 's', sourceIds: ['loopback'], micLabelSha256: micHash }), /only valid for mic/)
   assert.throws(() => validateCaptureOptions({ sessionId: 's', sourceIds: ['mic'], maxQueueMs: 100 }), /maxQueueMs/)
   assert.throws(() => validateCaptureOptions({ sessionId: 's', sourceIds: ['mic'], maxQueueMs: 20000 }), /maxQueueMs/)
   assert.throws(() => validateCaptureOptions({ sessionId: 's', sourceIds: ['tv'] }), /unknown sourceId/)

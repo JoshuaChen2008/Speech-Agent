@@ -6,10 +6,14 @@
 > [`data-architecture.md`](data-architecture.md)。本文后续出现的 Gate 0B、B2/B3、
 > JSONL 或“未实现”描述均只代表交接当日，不得覆盖上述规范文档。
 
-> **当前检查点（2026-07-31）：** B3.3 SQLite 权威存储/历史和 B4 固定模型
-> manifest/续传校验/白名单安装/资源页/空闲热启用已完成，并有联合 CI、批准
-> bundle 三运行时真实调用及四窗口 Electron 产品壳证据；物理 mic、I3 两小时与
-> I4 公网干净 Win11/打包态仍未关闭。翻译与整个 Agent 系统继续后置。
+> **当前检查点（2026-07-31）：** B3.3 SQLite、B4 模型资源和 B5 资格方法已有证据；
+> I2 权威证据已升级为 `docs/validation/i2-live-v4/` 内精确 Gate、loopback/mic 各 5 个
+> schema-v4 child 与两份确定性内嵌 summary。10 轮均 final/refined、最大双 CER 0、帧全等、
+> 12 项丢失峰值全为 0；但 loopback/mic P95=1126/1024ms，均高于冻结裸模型 `<1000ms`
+> 线。mic 仅为 `physical-preferred-label-heuristic` 声学 fixture，不是硬件证明。I2 的性能、
+> 拖动、真实 pause/refine、设备变化、睡眠/唤醒和硬崩溃仍未关闭；I3/I4 也待验。
+> B5 exact installer/SHA 属于前一候选 `369055a`，生产 audio-host/runtime 已变化，进入 I4
+> 前必须从新 HEAD 重建、重取证并冻结新 SHA。翻译、Agent 与向量继续后置。
 
 > 交接日期：2026-07-26（Asia/Singapore）
 >
@@ -95,10 +99,10 @@ f6eaa6d  chore: establish project baseline
 | 视觉 V1–V2 | 完成 | token、状态矩阵、稳定字幕 DOM、caption reducer、工具条和预览页 |
 | B1 应用骨架 | 已提交 / 恢复缺口已关闭 | ConfigStore、SessionCoordinator、fake adapter、per-window preload、IPC 已接线；caption bootstrap 与 replacement cursor 已由 B2.0 关闭 |
 | I1 Contract | 验收完成 | UI/adapter/coordinator/IPC 共用 v1 契约；renderer reload 的 caption state 已形成订阅/水合/重放闭环 |
-| B2 实时链路 | 实现完成 / 部分实机验收 | hidden audio host、PCM 直通、realtime worker、silero VAD 与真实 ASR 已产品化；loopback schema v2 实机通过，物理 mic 与完整性能门槛待补 |
-| B3 精修/会话 | B3.1/B3.2 已落地；B3.3 进行中 | JSONL 过渡事件档、恢复/折叠/导出与独立离线精修 worker 已接线；SQLite DB0 开发态和 DB1 原子事实/投影基座已通过，产品网关、迁移、权威切换与历史 UI 未实现 |
-| B4 资源 | 未实现 | 没有 ModelManager、下载/校验/原子安装或模型管理 UI；Agent 资源不属于本轮 MVP |
-| B5 分发 | 未实现 | 没有 electron-builder/NSIS/干净机验收 |
+| B2/I2 实时链路 | 实现完成 / I2 未关闭 | hidden audio host、PCM 直通、realtime/refine worker、silero VAD 与真实 ASR 已产品化；schema v4 两来源各 5 轮通过准确性/传输，但两路 P95 超线，mic fixture 也不是硬件证明；交互/恢复待补 |
+| B3 精修/会话 | 实现完成 / I3 待验 | SQLite-only 产品网关、迁移、两遍精修、历史查询与 txt/md/srt 导出已接线；两小时/数千段与真实恢复仍归 I3 |
+| B4 资源 | 联合验收完成 / I4 待验 | ModelManager、固定资源下载/校验/原子安装、设置页和空闲热启用已接线；干净机公网首次供给与 ready 后离线复启归 I4 |
+| B5 分发 | 资格方法通过 / 当前 HEAD 待重建 | 前一候选 `369055a` 的 ASAR/NSIS/native/packaged journey/隔离安装卸载已取证；生产 runtime 已变化，进入 I4 前须重建并冻结新 SHA |
 
 ## 5. Gate 0A：冻结的 v1 契约
 
@@ -217,9 +221,9 @@ node scripts/gate-0b/streaming-bench.js `
 
 ## 7. Gate 0C：系统音频拓扑通过
 
-- 提交：`3370a81`
-- 报告：[`docs/validation/gate-0c.md`](validation/gate-0c.md)
-- 结构化证据：[`docs/validation/gate-0c-results.json`](validation/gate-0c-results.json)
+- 初次拓扑提交：`3370a81`
+- 当前说明：[`docs/validation/gate-0c.md`](validation/gate-0c.md)
+- I2 绑定的精确预检：[`docs/validation/i2-live-v4/gate-0c-preflight.json`](validation/i2-live-v4/gate-0c-preflight.json)，SHA-256 `43e97770e3508c88ff5843df2c897825f7e8b717bc1010fccb750c5beb2d1f0b`
 
 批准项：
 
@@ -228,34 +232,16 @@ node scripts/gate-0b/streaming-bench.js `
 - 主进程用 `executeJavaScript(code, true)` 触发，display handler 实际记录 `userGesture:true`。
 - 用 `desktopCapturer.getSources()` 选择屏幕 source，回环使用 `audio:'loopback'`。
 - AudioWorklet 把原生 48k 流式降采样为 16kHz mono，输出 1600 samples/100ms 帧。
-- 系统回环、物理优先麦克风、VB-Cable 确定性 audioinput 探针三路均通过。
-- 三路约 2.601 秒、27 帧；无 sequence gap、时间戳回退、削波、溢出和大跳变。
-- 回环与 VB-Cable 精确命中 997Hz；三个 WAV SHA256 互不相同。
-
-本地原始 WAV 仍在 `.artifacts/gate-0c/`，被 Git 忽略。复核提交报告与本地字节：
-
-```powershell
-node scripts/gate-0c/verify-report.js `
-  --artifact-dir .artifacts/gate-0c `
-  --report docs/validation/gate-0c-results.json
-```
-
-完整重跑会播放两个短可听挑战音，并需要物理麦克风和已安装的 VB-Cable：
-
-```powershell
-$gate0cProcess = Start-Process `
-  -FilePath '.\node_modules\electron\dist\electron.exe' `
-  -ArgumentList 'scripts\gate-0c\main.js','--artifact-dir','.artifacts\gate-0c','--report','docs\validation\gate-0c-results.json','--duration-ms','2600' `
-  -WindowStyle Hidden `
-  -PassThru `
-  -Wait
-```
+- 系统回环、标签启发式 `physical-preferred` mic candidate、`physical-speaker-preferred` 输出和 VB-Cable 确定性 audioinput 探针通过。
+- 三路无 sequence gap、时间戳回退、削波、溢出和大跳变；`rawAudioPersisted=false`。
+- 当前 runner 只作内存分析。旧 2026-07-26 evidence 曾暂存短音频，只保留作历史审计，不能作为当前模板。
+- I2 语音 WAV 由受跟踪 generator/reference 本地生成并被 Git 忽略；报告绑定 WAV/reference digest。
 
 不要误读 Gate 0C：
 
 - 它仍是 [`scripts/gate-0c/`](../scripts/gate-0c/) 下的独立 spike，不是产品 B2。
-- 物理麦克风只证明真实、连续、非静音；确定性 997Hz audioinput 证明由 VB-Cable 独立承担。
-- 尚未验证签名打包版、长时 soak、热插拔、睡眠恢复和 ASR worker 集成。
+- `physical-preferred` 只是标签分类，不是硬件证明，也不能排除未知或伪造标签的虚拟设备；精确 Gate SHA 与匿名 label hash 只防预检后静默换标签。
+- 尚未验证签名打包版、长时 soak、拖动、真实 pause/refine、热插拔、睡眠/唤醒、硬崩溃和两来源性能门槛。
 - 不能把 `loopback` 改成会静音用户输出的 `loopbackWithMute`。
 - Electron 43 request 没有 `request.video`；必须显式选择 desktop source。
 - 工具条 trusted-click fallback 没有测试。若未来 hidden host 回归，必须重新实测；工具条应持有 stream/Worklet 并只传 PCM，不能假定 `MediaStreamTrack` 可跨 renderer 转移。
@@ -561,7 +547,7 @@ B2 前必须补回归测试，并明确 recovery cursor contract：保持同一 
 
 ### B2.5 I2 验收
 
-只有以下闭环成立才能标记 I2 PASS：
+只有以下闭环和性能/交互/恢复门禁全部成立才能标记 I2 PASS；当前 schema v4 重复运行证据不等于整体关闭：
 
 ```text
 真实 mic/loopback
@@ -584,17 +570,10 @@ B2 前必须补回归测试，并明确 recovery cursor contract：保持同一 
 - UI 不读模型路径、会话文件、API Key，不直接调用网络或 Node。
 - API Key 后续必须经 `safeStorage`，永不进入 config/snapshot/renderer/log。
 - 模型下载必须固定 manifest/SHA256，`.part` + staging + 验证 + 原子安装。
-- 模型和来源明确的静态合成测试语料可位于被忽略目录；现场采集的 ASR 原始音频不得持久化，即使目录已被忽略也不例外。
+- 测试语料只跟踪 generator/reference；生成 WAV 必须位于被忽略目录且不得提交。现场采集的 ASR 原始音频不得持久化，即使目录已被忽略也不例外。
 - `models/`、`.artifacts/`、`node_modules/`、`.claude/settings.local.json` 已在 `.gitignore`。
 
-当前机器可能仍存在以下 2026-07-26 隐私决策前形成的历史审计遗留：
-
-- `models/gate-0b/`
-- `.artifacts/gate-0c/loopback.wav`
-- `.artifacts/gate-0c/mic.wav`
-- `.artifacts/gate-0c/mic-probe.wav`
-
-其中 `models/gate-0b/` 是本机模型；三个 WAV 只用于追溯旧 Gate 0C 证据，不是当前产品或 runner 的允许输出。当前 diagnostic、smoke 与 Gate 0C runner 均只生成内存指标和结构化报告，不再创建现场音频；历史 WAV 不得作为新测试模板，也不得 `git add -f`。
+2026-07-26 隐私决策前的 Gate 0C 报告曾用忽略目录中的短音频核对多路独立性；该行为只属历史审计，不是当前产品或 runner 的允许输出。当前 diagnostic、smoke 与 Gate 0C runner 均只生成内存指标和结构化报告，不创建现场音频。Gate 0B/I2 的语音 WAV 也不是受跟踪资产：它由受跟踪 generator/reference 本地生成并被忽略，报告只绑定生成 WAV 与 reference digest。
 
 ## 15. 每个大功能的交付清单
 

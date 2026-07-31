@@ -1,7 +1,7 @@
 # Live Subtitle Agent · Win11 实时字幕技术规划
 
-> **Rev.10 · 2026-07-31**。初版调研 2026-07-23（版本号、模型名、体积经 GitHub Release API / npm registry / 下载解包核实）。
-> 本次修订：B5 打包态确定性资格已在本机通过并接入 Windows workflow。正式 Windows x64 ASAR/NSIS 候选、正向内容 allowlist、Electron fuses、五个 unpacked native 二进制、打包态四窗/ModelManager/SQLite/native utility 联合旅程、exact-child clean exit 及隔离安装/卸载均已有结构化证据；精确候选 SHA 已冻结但未签名。B5 与 I4 现明确分层：这些证据不冒充干净 Win11 的公网、权限、真实音源、交互安装或离线复启。截图所示 `0x80000003` 仍没有 native stack 级根因证明；当前打包旅程只说明未复现。下一主线是物理 mic I2 → I3 长稳 → I4 干净机发布验收。`loopback`/`mic` 继续产品级互斥，翻译/Agent 与向量继续后置。
+> **Rev.11 · 2026-07-31**。初版调研 2026-07-23（版本号、模型名、体积经 GitHub Release API / npm registry / 下载解包核实）。
+> 本次修订：B5 打包态确定性资格已提交；I2 证据升级为严格递归 schema v4 bundle。loopback 与 `physical-preferred` 标签启发式声学 mic fixture 各完成 5/5 轮真实 audio-host→online ASR→Silero→offline refine，10 轮均 final/refined、最大双 CER 0、帧全等且 12 项丢失峰值全为 0。mic 首 partial P50/P95/min/max=843/1024/819/1024ms，loopback=1112/1126/1042/1126ms；两路 P95 都高于冻结的裸模型 `<1000ms` 线，故 I2 **尚未关闭**。mic 匿名标签绑定只防止预检后静默换标签，不是硬件证明，也不能排除未知或伪造标签的虚拟设备。拖动、真实 pause/refine、设备变化、睡眠/唤醒、硬崩溃恢复与性能仍属 I2；之后是 I3 长稳与 I4 干净机发布验收。截图所示 `0x80000003` 仍没有 native stack 级根因证明。`loopback`/`mic` 继续产品级 XOR，翻译/Agent 与向量继续后置。
 
 ---
 
@@ -11,18 +11,20 @@
 
 | 已实现 / 已有确定性证据 | 尚未完成 |
 |---|---|
-| 四窗架构（字幕 / 工具条 / 设置 / 历史）、停靠与脱离；真实 Electron 产品壳旅程 | 物理 mic、透明窗人工视觉与 I3 长稳 |
+| 四窗架构（字幕 / 工具条 / 设置 / 历史）、停靠与脱离；真实 Electron 产品壳旅程；mic 标签启发式声学 fixture 的真实 ASR 5 轮 | 透明窗人工视觉、真实 pause/refine 与 I3 长稳 |
 | 锁定穿透、逐像素命中测试、主进程手动拖动 | 透明窗 DPI/人工视觉、设备变化与睡眠唤醒实机验收 |
 | 配置持久化（`userData/config.json`）+ 四窗主题联动 | Agent 层（后置）、正式代码签名与外部发布身份 |
-| 亚克力设置窗（含模型资源 pane）+ 单路模式 XOR 门禁/J4 | I2 完整指标 |
+| 亚克力设置窗（含模型资源 pane）+ 单路模式 XOR 门禁/J4；schema v4 两来源 I2 五轮 P50/P95/资源/传输 bundle | 两来源性能与 I2 交互/恢复场景 |
 | B1 `SessionCoordinator`、状态机、per-window preload 与 contract-valid fake adapter | |
 | Electron 生命周期：30s graceful + 5s exact-child reap、45s 字幕运行时升级触发线（ModelManager 5s 并行）；隐私安全 role evidence | `0x80000003` 的 native stack 级根因、真实硬崩溃恢复 |
 | B2 audio host、PCM 直通/背压、realtime worker、**真实 160ms 模型 + silero VAD** | |
-| B3 **二遍精修 refine worker**（final→refined 自动变准补标点）+ JSONL 旧档迁移；B3.3 DB0/DB1、Gateway 恢复、默认 SQLite-only 生命周期、历史查询/导出 UI 与联合旅程；B4 固定 manifest/续传/校验/白名单解包/marker/资源 UI/热启用；B5 ASAR/NSIS/native/packaged journey 确定性资格 | 物理 mic、I3 与 I4 公网/权限/真实音源干净机发布验收 |
+| B3 **二遍精修 refine worker**（final→refined 自动变准补标点）+ JSONL 旧档迁移；B3.3 DB0/DB1、Gateway 恢复、默认 SQLite-only 生命周期、历史查询/导出 UI 与联合旅程；B4 固定 manifest/续传/校验/白名单解包/marker/资源 UI/热启用；B5 ASAR/NSIS/native/packaged journey 确定性资格；I2 schema v4 两来源重复运行证据 | I2 性能/交互/恢复、I3 与 I4 公网/权限/真实音源干净机发布验收 |
 
-**Gate 0B 已于 2026-07-27 正式改判通过**（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修，门槛重设留档于 `docs/validation/gate-0b.md` 改判节），**两遍链路已全部接通**：真实 160ms 模型 + silero VAD + 离线精修 worker。2026-07-31 的 I2 schema v2 loopback 实机报告再次得到 final/refined CER 0，并记录 captured/sent/ingested 帧数一致且零丢失/零缺口、CPU/工作集和字幕到达时序；runner 已支持 `loopback`/`mic` 分开运行，物理 mic 证据仍待补。来源 XOR 由 J4 验证；J5/J6 已增加暂停/精修/worker 故障后同会话继续文本持久化的确定性联合旅程。SQLite 默认组合根和历史窗口已接入同一投影。B4 以 J14 覆盖 Range 续传→三资源校验/安装→空闲热启用→字幕→终态 SQLite 历史；批准 270,938,600 字节 bundle 已由生产 Manager 真实安装并被在线 ASR、离线精修、VAD 调用。B5 又从真实 packaged exe 复跑四窗口/preload/IPC/SQLite/native load/退出，并生成及隔离安装卸载精确 NSIS。当前主线只剩物理 mic、I3 和 I4 干净机发布验收；Agent 在字幕闭环后启动，向量检索后置。
+**Gate 0B 已于 2026-07-27 正式改判通过**（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修，门槛重设留档于 `docs/validation/gate-0b.md` 改判节），**两遍链路已全部接通**。2026-07-31 的 I2 schema v4 bundle 让 loopback 与 `physical-preferred-label-heuristic` mic 声学 fixture 各连续跑 5 轮真实 160ms 模型 + Silero + 离线精修；两来源均 5/5 pass、10 个 final + 10 个 refined、最大双 CER 0、全轮 captured/sent/ingested 一致且 12 项丢失峰值全为 0。mic fixture 绑定同轮 Gate 0C 的精确报告 SHA 与匿名输入/输出标签哈希，能阻止预检后静默换标签，但不是硬件证明，不能排除未知或伪造标签的虚拟设备。严格递归 verifier、runner 自校验与 CI byte-for-byte 重建约束精确 Gate + 10 个 child + 两份内嵌 summary。两来源 P95=1126/1024ms，均未满足冻结的裸模型 `<1000ms` 线。来源 XOR 由 J4 验证；J5/J6 已增加暂停/精修/worker 故障后同会话继续文本持久化的确定性联合旅程。SQLite 默认组合根和历史窗口已接入同一投影。B4/J14 与 B5 的模型/产品壳/打包证据保持不变。当前主线是关闭 I2 的性能、交互与恢复缺口，再做 I3 和 I4；Agent 在字幕闭环后启动，向量检索后置。
 
-native 生命周期补丁后，真实模型活跃 smoke 连续三轮累计处理 303 帧，产生 3 final、3 refined、3 次 offline decode，六个 realtime/refine exact child 均优雅 `exitCode=0`、fatal 0；最接近历史场景的真实 I2 loopback 单轮也以 128 帧 captured/sent/ingested 一致、0 dropped/gap/bad sample、1 final + 1 refined、双 CER 0 正常退出且未强制终止；受监督多窗口产品壳为 clean exit、0 incident、未观察到 breakpoint。冻结语料 smoke 与 fake-ASR 产品壳只属 diagnostic/partial；真实 loopback 单轮也不替代物理 mic、I3、I4 或历史异常根因验收。role evidence 不保存正文、音频/PCM、本地路径、stack 或 dump。完整时间线见 `docs/validation/electron-breakpoint-investigation.md`。
+native 生命周期补丁后，真实模型活跃 smoke 连续三轮的六个 realtime/refine exact child 均优雅 `exitCode=0`、fatal 0；随后 schema v4 的 10 轮产品路径 I2 也全部自然退出，12 项丢失峰值全为 0。受监督多窗口产品壳为 clean exit、0 incident、未观察到 breakpoint。冻结语料 smoke 与 fake-ASR 产品壳仍只属 diagnostic/partial；schema v4 bundle 也不替代性能、拖动、真实 pause/refine、设备变化、睡眠/唤醒、硬崩溃、I3、I4 或历史异常根因验收。role evidence 与 I2 报告不保存正文、音频/PCM、本地路径、stack 或 dump。完整时间线见 `docs/validation/electron-breakpoint-investigation.md`，I2 当前证据见 `docs/validation/i2-real-source-series.md`。
+
+> **B5 制品边界：**已冻结的 exact installer/SHA 属于前一候选 `369055a`。本阶段修改了生产 audio-host/runtime，因此 B5 的资格方法仍有效，但旧制品不代表当前新 HEAD；进入 I4 前必须从包含 schema-v4 evidence hook 的新 HEAD 重建、重取证并冻结新的 installer SHA。
 
 ### 0.1 两套产品系统的边界
 
@@ -439,7 +441,7 @@ Node、既有 userData/模型的 Win11 上验公网、权限、真实音源、re
 |---|---|---|
 | **0A 契约（完成）** | 固化 `RuntimeSnapshot / CaptionEvent / CommandResult / Capabilities` v1 和样例 fixtures；见 `src/contracts/` | validator 测试覆盖 idle、启动、监听、暂停、恢复、错误、精修、翻译；UI 接线留给视觉工作流 |
 | **0B 模型（2026-07-27 改判通过）** | X-ASR 480/160、small-bilingual、SenseVoice 的 CLI + N-API 实测；见 `docs/validation/gate-0b.md` | 原门槛下四候选全败（判定历史保留）。M2 复测证实两候选失败为架构/算力性、调参封闭；M3 评估给出全面胜出的精修替换。**2026-07-27 产品负责人正式改判：RTF 门槛在写明机器基线与理由后重设为 <0.60，批准 `x-asr-160ms`（fast，t=4，改判日全语料补测首 partial 0.70–0.86s、zh-date-itn 一句骑线 1000.3ms 如实留档为边缘案例）+ 离线 X-ASR 精修（CER 零退化、标点 F1 1.0）。判定与 tracked 证据（`gate-0b-m2-sweep.json`/`gate-0b-m3-evaluation.json`）由测试强制一致；弱机/打包版须 B5/I4 复测后发布** |
-| **0C 音频拓扑（完成）** | 隐藏 audio host 的麦克风/回环、用户手势、AudioWorklet 48k→16k 实测；见 `docs/validation/gate-0c.md` | 回环挑战音命中、物理麦克风非静音、确定性 audioinput 探针通过；三路 16k mono PCM16 无削波/帧缺口/大跳变，批准 hidden audio host |
+| **0C 音频拓扑（完成）** | 隐藏 audio host 的麦克风/回环、用户手势、AudioWorklet 48k→16k 实测；见 `docs/validation/gate-0c.md` | 回环挑战音命中、`physical-preferred` 标签启发式输入非静音、确定性 audioinput 探针通过；三路 16k mono PCM 无削波/帧缺口/大跳变，批准 hidden audio host；输入分类不构成硬件证明 |
 | **0D 产品入口（完成）** | 首启提供「会议字幕 / 个人听写」双预设 | 2026-07-26 拍板：会议默认系统音频、听写默认麦克风；新安装在选择前两路都不暗中启用 |
 
 Gate 0B 的固定复现入口：
@@ -497,7 +499,7 @@ node scripts/gate-0b/evaluate-transcripts.js `
 |---|---|---|
 | **CI0 联合测试基线（持续维护）** | 用户旅程跨越真实产品模块，而非只验证单个函数/类 | Windows workflow 已落地；真实 Electron Gateway 组合覆盖 Coordinator→Recorder→utility process→SQLite、XOR、pause/refine、stop barrier 与故障重放；确定性默认产品/历史旅程覆盖 DB2、SQLite-only/stale-active/退出、205 段 keyset 详情与不截断三格式导出；开发态及 packaged 产品壳覆盖真实 main/preload/IPC/renderer 五页往返和 DOM≤50。J14/B5 从真实 settings DOM 点击覆盖 `preload/IPC→ModelManager→HTTP/tar→热启用→字幕→SQLite 历史`，B5 再覆盖 ASAR/native/NSIS；J11 后置 |
 | **I1 Contract（完成）** | UI fake adapter ↔ 后端 contract fixtures | coordinator、fake adapter、renderer reducer 和 IPC 共享 v1 validator；默认/dev smoke 均通过 |
-| **I2 Live Caption** | 单路音频 → realtime ASR → SessionCoordinator → 字幕 UI | P50/P95 延迟、CPU、内存、队列深度达标，并完成 J4/J5/J6 联合场景。**I2.1 结构接线已完成（2026-07-27）**：`RealtimeRuntimeAdapter` 实现 B1 冻结接口组合 host/worker/port，coordinator 新增 adapter `onError` 故障入口；实机结构 smoke 覆盖 worker 击杀→error→retry→pause/resume→stop。**I2.2 真字幕已通**：2026-07-31 schema v2 loopback 实机 PASS——真实 160ms 模型 + silero + 离线精修得到 final/refined CER 0；captured/sent/ingested 帧数一致，零丢帧、零 sequence gap、零坏类型，并记录 CPU/工作集与字幕到达时序（`docs/validation/i2-loopback-results.json`）。runner 支持 `--source loopback|mic` 分开执行。**J4/XOR 与 J5/J6 确定性故障旅程已覆盖**。完整 I2 实机验收仍需物理 mic 报告、重复运行形成延迟 P50/P95 门槛、拖动不掉帧、设备变化/睡眠唤醒验证 |
+| **I2 Live Caption（schema v4 重复运行已验；整体未关闭）** | 单路音频 → realtime ASR → SessionCoordinator → 字幕 UI | **I2.1 结构接线已完成**：worker 击杀→error→retry→pause/resume→stop 及 J4/J5/J6 确定性旅程已覆盖。**I2.2 重复运行已有严格证据**：精确 tracked Gate + loopback/mic 各 5 个 child + 两份确定性内嵌 summary；10 final + 10 refined、最大双 CER 0、全部帧一致且 12 项丢失峰值全为 0（见 `docs/validation/i2-live-v4/` 与 `docs/validation/i2-real-source-series.md`）。mic 仅为 physical-preferred 标签启发式声学 fixture，不是硬件证明。loopback/mic P95=1126/1024ms，均高于冻结 `<1000ms` 线；完整 I2 仍需解决两来源性能，并实测拖动不掉帧、真实 pause/refine、设备变化、睡眠/唤醒与硬崩溃恢复。 |
 | **I3 Durable Subtitle Session** | final/refined → SQLite 事件/投影 → 带时间戳历史/导出 | 连续 2 小时不卡；崩溃恢复不丢已一遍定稿的段落；JSONL 迁移通过 J10 |
 | **I4 Packaged Subtitle MVP** | 精确 NSIS 的干净机首启、公网下载、权限、真实 ASR、持久化、历史、离线复启与卸载数据策略 | 在无仓库/Node/既有 userData/模型的 Win11 机器完成完整用户旅程；首次取得完整 bundle 需要网络，三项 ready 后断网且无 Agent 仍成立；installer SHA 必须与 B5 候选一致 |
 | **I5 Agent System（后置）** | committed transcript → TranscriptContextPlugin → Pi Loop → 增强/纪要插件 → 独立产物 → 历史展示 | J3–J7/J13 通过；Agent 失败、取消和恢复不影响 I2–I4 |

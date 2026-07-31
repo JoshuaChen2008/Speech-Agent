@@ -29,7 +29,7 @@ SessionCoordinator
 只替代三个不可确定或平台边界：
 
 1. Electron utility process 由 service-backed host 代替，但请求仍经过生产协议、WorkerService 和真实 SQLite store。
-2. 物理 mic/loopback 与 ASR 由 `FakeRuntimeAdapter` 注入契约合法的 CaptionEvent；真实 loopback ASR 另有 I2 证据，物理 mic 仍待补。
+2. 本历史旅程中的 mic/loopback 与 ASR 由 `FakeRuntimeAdapter` 注入契约合法的 CaptionEvent；后续独立 I2 schema v4 bundle 覆盖两来源产品路径 ASR，其中 mic 是 `physical-preferred-label-heuristic` 声学 fixture，而非硬件证明。本旅程本身不冒充声卡验证。
 3. OS 保存对话框返回测试目录中的主进程选择路径；renderer 没有提供路径、SQL 或文件写能力。
 
 ## 覆盖结果
@@ -62,7 +62,7 @@ node --test --experimental-test-isolation=none test/integration/history-review-j
 退出；另预置 205 段终态 SQLite fixture，通过真实 main/preload/IPC/renderer 点击 5 页、
 到达第 201–205 条并执行上一批/下一批往返。报告记录 `historyMaxTimelineNodes=50`、
 四个 renderer 且 `crashEventCount=0`。该 smoke 使用显式 fake-ASR 且没有操作系统保存
-对话框，也不是两小时墙钟/数千段 soak，所以不替代物理 mic、旧档迁移/重启、I3 或 I4。
+对话框，也不是两小时墙钟/数千段 soak，所以不替代后续独立的 schema v4 I2 bundle、旧档迁移/重启、I3 或 I4。
 
 B5 已从 packaged test executable 对同一四窗口/分页旅程进行重跑，并在 ASAR 中的
 storage utility 完成 DB0 WAL、事务、重开与 integrity 检查，exact child `exitCode=0`。
@@ -74,4 +74,4 @@ storage utility 完成 DB0 WAL、事务、重开与 integrity 检查，exact chi
 - 系统保存弹窗、DWM 外观与真实辅助技术行为。
 - 两小时数千段下的 DOM、SQLite WAL、内存和查询延迟（I3/J8）。
 - 精确 NSIS 安装后的系统保存对话框与干净 Win11 用户旅程（I4/J9-I4）。
-- 物理 mic 实机 ASR。以上边界未通过前，不得声称 I3/I4 或发布验收完成。
+- 该旅程不含真实音频采集/ASR；后续 I2 只补了 loopback 与 mic 标签启发式声学 fixture 的重复运行证据，仍未补硬件证明、两来源性能、真实 pause/refine、拖动、设备变化、睡眠/唤醒或硬崩溃。其余边界未通过前，不得声称 I2/I3/I4 或发布验收完成。

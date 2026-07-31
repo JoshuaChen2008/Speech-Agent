@@ -81,7 +81,14 @@ function validateCaptureOptions (options) {
   if (!Number.isInteger(maxQueueMs) || maxQueueMs < MIN_QUEUE_MS || maxQueueMs > MAX_QUEUE_MS) {
     throw new TypeError(`maxQueueMs must be an integer between ${MIN_QUEUE_MS} and ${MAX_QUEUE_MS}`)
   }
-  return { sessionId: base.sessionId, sourceIds: base.sourceIds, maxQueueMs }
+  const micLabelSha256 = options.micLabelSha256 ?? null
+  if (micLabelSha256 !== null) {
+    if (base.sourceIds[0] !== 'mic') throw new TypeError('micLabelSha256 is only valid for mic capture')
+    if (typeof micLabelSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(micLabelSha256)) {
+      throw new TypeError('micLabelSha256 must be a lowercase SHA-256 hash')
+    }
+  }
+  return { sessionId: base.sessionId, sourceIds: base.sourceIds, maxQueueMs, micLabelSha256 }
 }
 
 /**

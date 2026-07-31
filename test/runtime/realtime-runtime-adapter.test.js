@@ -59,7 +59,22 @@ function fakeHost () {
     calls: [],
     controlListeners: new Set(),
     disposed: false,
-    async startCapture (options) { host.calls.push(['startCapture', options]) },
+    async startCapture (options) {
+      host.calls.push(['startCapture', options])
+      return {
+        sources: {
+          mic: {
+            selection: 'system-default',
+            matchedLabelHashCount: null,
+            track: {
+              kind: 'audio',
+              labelSha256: 'a'.repeat(64),
+              settings: { sampleRate: 48000, channelCount: 2 }
+            }
+          }
+        }
+      }
+    },
     async stopCapture () { host.calls.push(['stopCapture']); return { stopped: true, metrics: {} } },
     onControl (listener) { host.controlListeners.add(listener); return () => host.controlListeners.delete(listener) },
     emitControl (message) { for (const listener of host.controlListeners) listener(message) },
@@ -505,6 +520,9 @@ test('completed sessions expose text-free I2 diagnostics from the real compositi
   const diagnostics = adapter.getLastRunDiagnostics()
   assert.equal(diagnostics.sessionId, START_CONTEXT.sessionId)
   assert.deepEqual(diagnostics.sourceIds, ['mic'])
+  assert.equal(diagnostics.input.sources.mic.selection, 'system-default')
+  assert.equal(diagnostics.input.sources.mic.matchedLabelHashCount, null)
+  assert.equal(diagnostics.input.sources.mic.track.labelSha256, 'a'.repeat(64))
   assert.equal(diagnostics.capture.mic.capturedFrames, 14)
   assert.equal(diagnostics.worker.sources.mic.framesIngested, 12)
   assert.equal(diagnostics.droppedCaptionCount, 1)
@@ -512,7 +530,9 @@ test('completed sessions expose text-free I2 diagnostics from the real compositi
   assert.equal(JSON.stringify(diagnostics).includes('text'), false)
 
   diagnostics.capture.mic.capturedFrames = 999
+  diagnostics.input.sources.mic.track.labelSha256 = 'mutated'
   assert.equal(adapter.getLastRunDiagnostics().capture.mic.capturedFrames, 14, 'caller cannot mutate stored diagnostics')
+  assert.equal(adapter.getLastRunDiagnostics().input.sources.mic.track.labelSha256, 'a'.repeat(64), 'input evidence is cloned')
   adapter.dispose()
 })
 

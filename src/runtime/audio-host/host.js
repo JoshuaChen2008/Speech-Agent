@@ -9,7 +9,8 @@
    拓扑严格沿用 Gate 0C 批准版本：
    - 回环必须同时请求 video+audio，拿到流的瞬间停掉 video track；
    - 麦克风关闭 echoCancellation / noiseSuppression / autoGainControl；
-   - 产品代码不包含任何机器特定的设备启发式，麦克风用系统默认设备。 */
+   - 产品代码不包含任何机器特定的设备启发式，默认使用系统麦克风；I2 可把
+     Gate 0C 产生的匿名 label SHA-256 作为 exact 选择证明，不接受设备明文。 */
 
 const TARGET_SAMPLE_RATE = 16000
 const FRAME_SAMPLES = 1600
@@ -77,14 +78,37 @@ async function resolveLoopback (displayPromise) {
   return { stream, audioTrack, videoTrackCount }
 }
 
-async function acquireMicrophone () {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: UNPROCESSED_AUDIO })
+async function acquireMicrophone (micLabelSha256 = null) {
+  let audio = UNPROCESSED_AUDIO
+  let selection = 'system-default'
+  let matchedLabelHashCount = null
+  if (micLabelSha256 !== null) {
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    const inputs = devices.filter((device) => device.kind === 'audioinput' && device.deviceId && device.deviceId !== 'default' && device.deviceId !== 'communications')
+    const matches = []
+    for (const device of inputs) {
+      if (await digestText(device.label) === micLabelSha256) {
+        matches.push(device)
+      }
+    }
+    matchedLabelHashCount = matches.length
+    if (matches.length === 0) throw new DOMException('Expected microphone label hash is not available', 'NotFoundError')
+    if (matches.length !== 1) throw new DOMException('Expected microphone label hash is ambiguous', 'NotFoundError')
+    const selected = matches[0]
+    audio = { ...UNPROCESSED_AUDIO, deviceId: { exact: selected.deviceId } }
+    selection = 'label-hash-exact'
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({ audio })
   const audioTrack = stream.getAudioTracks()[0]
   if (!audioTrack) {
     for (const item of stream.getTracks()) item.stop()
     throw new Error('getUserMedia returned no microphone audio track')
   }
-  return { stream, audioTrack }
+  if (micLabelSha256 !== null && await digestText(audioTrack.label) !== micLabelSha256) {
+    for (const item of stream.getTracks()) item.stop()
+    throw new DOMException('Acquired microphone does not match the requested label hash', 'NotReadableError')
+  }
+  return { stream, audioTrack, selection, matchedLabelHashCount }
 }
 
 /** stream → worklet 管线。onFrame 收 {sequence, timestampSeconds, samples}。 */
@@ -210,7 +234,7 @@ globalThis.runAudioHostDiagnostic = async function runAudioHostDiagnostic (optio
       } else {
         const microphone = await acquireMicrophone()
         stream = microphone.stream
-        evidence = { track: await trackEvidence(microphone.audioTrack) }
+        evidence = { selection: microphone.selection, track: await trackEvidence(microphone.audioTrack) }
       }
       const saved = await captureDiagnosticSource(stream, sessionId, sourceId, durationMs)
       result[sourceId] = { status: 'ok', stream: evidence, saved }
@@ -264,7 +288,7 @@ window.addEventListener('message', (event) => {
 })
 
 globalThis.startAudioCapture = async function startAudioCapture (options) {
-  const { sessionId, sourceIds, maxQueueMs } = options
+  const { sessionId, sourceIds, maxQueueMs, micLabelSha256 = null } = options
   if (!pcmPort) throw new Error('pcm port is not attached')
   if (activeCapture) throw new Error('capture is already running')
   const displayPromise = sourceIds.includes('loopback') ? beginLoopbackAcquisition() : null
@@ -282,10 +306,14 @@ globalThis.startAudioCapture = async function startAudioCapture (options) {
         audioTrack = loopback.audioTrack
         evidence[sourceId] = { videoTrackCountBeforeStop: loopback.videoTrackCount, track: await trackEvidence(audioTrack) }
       } else {
-        const microphone = await acquireMicrophone()
+        const microphone = await acquireMicrophone(micLabelSha256)
         stream = microphone.stream
         audioTrack = microphone.audioTrack
-        evidence[sourceId] = { track: await trackEvidence(audioTrack) }
+        evidence[sourceId] = {
+          selection: microphone.selection,
+          matchedLabelHashCount: microphone.matchedLabelHashCount,
+          track: await trackEvidence(audioTrack)
+        }
       }
 
       const flow = new FrameFlow({
