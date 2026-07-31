@@ -19,9 +19,11 @@
 const { AudioHostController } = require('./audio-host/audio-host-controller')
 const { RealtimeWorkerHost } = require('./realtime-worker/worker-host')
 const { RefineWorkerHost } = require('./refine-worker/worker-host')
+const { performance } = require('node:perf_hooks')
 const { assertSingleSourceIds } = require('../contracts')
 
 const DEFAULT_PROFILE_MAP = Object.freeze({ fast: 'null', balanced: 'null', accurate: 'null' })
+const CAPTURE_PROBE_FLOOR_AFTER_SOURCE_START_MS = 40
 
 function throwIfAborted (signal) {
   if (signal && signal.aborted) {
@@ -142,12 +144,28 @@ class RealtimeRuntimeAdapter {
       stopping: false,
       faulted: false,
       cleanupPromise: null,
-      teardownPromise: null
+      teardownPromise: null,
+      acceptedCaptionTimings: [],
+      clockCalibrations: {
+        audioHost: null,
+        utility: null
+      }
     }
     this.session = session
     try {
       session.unsubscribers.push(session.worker.onCaption((event) => {
-        if (this.session === session && !session.faulted && this.captionHandler) this.captionHandler(event)
+        const timing = typeof session.worker.takeCaptionTiming === 'function'
+          ? session.worker.takeCaptionTiming(event)
+          : null
+        if (this.session === session && !session.faulted && this.captionHandler) {
+          const accepted = this.captionHandler(event)
+          if (accepted === true && timing && session.acceptedCaptionTimings.length < 64) {
+            session.acceptedCaptionTimings.push({
+              ...timing,
+              coordinatorAcceptedReturnMainClockMs: Number(performance.now().toFixed(3))
+            })
+          }
+        }
       }))
       session.unsubscribers.push(session.worker.onStats((stats) => {
         if (this.session === session) session.workerStats = stats
@@ -283,6 +301,48 @@ class RealtimeRuntimeAdapter {
     await session.worker.resume()
   }
 
+  /** I2-only clock preparation; visible product renderers cannot invoke it. */
+  async calibrateTimingProbe () {
+    const session = this.requireSession()
+    const [audioHostCalibration, utility] = await Promise.all([
+      session.host.calibrateTimingClock(session.sourceIds[0]),
+      session.worker.calibrateClock()
+    ])
+    if (this.session !== session || session.faulted || session.stopping) {
+      throw new Error('runtime session changed during timing calibration')
+    }
+    session.clockCalibrations = {
+      audioHost: audioHostCalibration || null,
+      utility: utility || null
+    }
+    return structuredCloneSafe(session.clockCalibrations)
+  }
+
+  /** I2-only probe arm for one already-calibrated, scheduled source start. */
+  async armTimingProbe (sourceStartMainClockMs) {
+    const session = this.requireSession()
+    if (!Number.isFinite(sourceStartMainClockMs) || sourceStartMainClockMs < 0) {
+      throw new TypeError('sourceStartMainClockMs must be a finite non-negative number')
+    }
+    if (!session.clockCalibrations.audioHost || !session.clockCalibrations.utility) {
+      throw new Error('timing clocks must be calibrated before arming')
+    }
+    /* The corpus has a frozen 140 ms leading-silence onset. Ignore only the
+       first two 20 ms analysis windows after source t0 so pre-source ambient
+       energy and sub-ms cross-clock uncertainty cannot become a fake onset;
+       the authoritative source+140 ms acceptance origin is unchanged. */
+    const captureFloorMainClockMs =
+      sourceStartMainClockMs + CAPTURE_PROBE_FLOOR_AFTER_SOURCE_START_MS
+    const audioHost = await session.host.armTimingProbe(session.sourceIds[0], captureFloorMainClockMs)
+    if (this.session !== session || session.faulted || session.stopping) {
+      throw new Error('runtime session changed while arming the timing probe')
+    }
+    return {
+      ...audioHost,
+      clockCalibrations: structuredCloneSafe(session.clockCalibrations)
+    }
+  }
+
   async stop (options = {}) {
     throwIfAborted(options.signal)
     const session = this.session
@@ -315,6 +375,10 @@ class RealtimeRuntimeAdapter {
       input: structuredCloneSafe(session.captureEvidence || {}),
       capture: structuredCloneSafe(session.captureMetrics || {}),
       worker: structuredCloneSafe(workerStats),
+      workerHost: {
+        acceptedCaptionTimings: structuredCloneSafe(session.acceptedCaptionTimings)
+      },
+      timingCalibrations: structuredCloneSafe(session.clockCalibrations),
       droppedCaptionCount: session.worker.droppedCaptionCount,
       refinementEnabled: session.refineReady === true
     }
@@ -406,4 +470,8 @@ function structuredCloneSafe (value) {
   return JSON.parse(JSON.stringify(value))
 }
 
-module.exports = { DEFAULT_PROFILE_MAP, RealtimeRuntimeAdapter }
+module.exports = {
+  CAPTURE_PROBE_FLOOR_AFTER_SOURCE_START_MS,
+  DEFAULT_PROFILE_MAP,
+  RealtimeRuntimeAdapter
+}

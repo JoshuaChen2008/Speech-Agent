@@ -2,15 +2,15 @@
 
 // @ts-check
 
-/* 隐藏音频宿主的主进程控制器（B2.1）。
+/* 隐藏音频宿主的主进程控制器（B2.1/B2.2）。
    职责：非持久化 session、最小权限 handler、display-media 处理、宿主窗
-   生命周期，以及有界诊断采集与结构化指标的编排。
-   非职责（后续阶段）：连续 MessagePort PCM 直通（B2.2）、崩溃自动重启
-   策略、与 SessionCoordinator 的运行时接线。
+   生命周期、有界诊断，以及连续 MessagePort PCM 直通与结构化指标编排。
+   崩溃恢复策略与 Session 状态机仍由上层 runtime/coordinator 拥有。
    拓扑严格沿用 Gate 0C 批准版本（docs/validation/gate-0c.md）。 */
 
 const path = require('node:path')
 const CHANNELS = require('./channels')
+const { MAIN_CLOCK_ID, selectClockCalibration } = require('../clock-calibration')
 const {
   evaluateDisplayRequest,
   isPermissionAllowed,
@@ -28,6 +28,32 @@ const {
 } = require('./pcm-metrics')
 
 const LOAD_TIMEOUT_MS = 5000
+const AUDIO_HOST_CLOCK_ID = 'audio-host-performance-v1'
+const CLOCK_CALIBRATION_PROBE_COUNT = 7
+const CLOCK_PROBE_TIMEOUT_MS = 1000
+const MIN_TIMING_START_LEAD_MS = 100
+
+function mainClockNowMs () {
+  return performance.now()
+}
+
+function clockProbeSample (probe, mainSentClockMs, mainReceivedClockMs) {
+  if (!probe || typeof probe !== 'object' || Array.isArray(probe)) {
+    throw new TypeError('audio host clock probe must return an object')
+  }
+  const expectedKeys = ['clockId', 'remoteReceivedClockMs', 'remoteSentClockMs']
+  const actualKeys = Object.keys(probe).sort()
+  if (actualKeys.length !== expectedKeys.length || actualKeys.some((key, index) => key !== expectedKeys[index])) {
+    throw new TypeError('audio host clock probe returned an unexpected shape')
+  }
+  return {
+    mainSentClockMs,
+    remoteReceivedClockMs: probe.remoteReceivedClockMs,
+    remoteSentClockMs: probe.remoteSentClockMs,
+    mainReceivedClockMs,
+    clockId: probe.clockId
+  }
+}
 
 function withTimeout (promise, milliseconds, label) {
   let timer
@@ -386,6 +412,95 @@ class AudioHostController {
     }
   }
 
+  /** Calibrate the active renderer clock without arming the energy probe. */
+  async calibrateTimingClock (sourceId) {
+    const active = this.activeCapture
+    const win = this.hostWindow
+    if (!active || active.phase !== 'capturing' || !win || win.isDestroyed()) {
+      throw new Error('no active capture to calibrate the timing clock')
+    }
+    if (active.options.sourceIds.length !== 1 || active.options.sourceIds[0] !== sourceId) {
+      throw new Error('timing probe source mismatch')
+    }
+    const assertCaptureCurrent = () => {
+      if (this.activeCapture !== active || this.hostWindow !== win || win.isDestroyed()) {
+        throw new Error('audio host capture superseded or stopped during clock calibration')
+      }
+    }
+    const clockSamples = []
+    for (let index = 0; index < CLOCK_CALIBRATION_PROBE_COUNT; index += 1) {
+      assertCaptureCurrent()
+      const mainSentClockMs = mainClockNowMs()
+      const probe = await withTimeout(
+        win.webContents.executeJavaScript('globalThis.readAudioHostClockProbe()', true),
+        CLOCK_PROBE_TIMEOUT_MS,
+        `audio host clock probe ${index + 1}`)
+      const mainReceivedClockMs = mainClockNowMs()
+      clockSamples.push(clockProbeSample(probe, mainSentClockMs, mainReceivedClockMs))
+    }
+    /* The collection is deliberately serial: each four-timestamp sample
+       measures one request/response interval, and concurrent probes would
+       contaminate the minimum-RTT selection. */
+    const selectedClockCalibration = selectClockCalibration(
+      clockSamples,
+      AUDIO_HOST_CLOCK_ID,
+      mainClockNowMs())
+    const clockCalibration = selectedClockCalibration
+    assertCaptureCurrent()
+    active.clockCalibration = clockCalibration
+    /* The calibration object describes its remote clock only. Keep the
+       canonical main clock identity separately for the internal caller that
+       later normalizes the two domains. */
+    active.clockCalibrationMainClockId = MAIN_CLOCK_ID
+    return clockCalibration
+  }
+
+  /**
+   * 在连续采集期间重置内存中的 I2 延迟探针。时钟校准必须先完成，使 arm
+   * 到受控播放启动之间只剩一个有界 renderer 往返；不返回 PCM、文本、
+   * 设备标识或路径。普通产品 UI 不调用该诊断入口。
+   */
+  async armTimingProbe (sourceId, notBeforeMainClockMs) {
+    const active = this.activeCapture
+    const win = this.hostWindow
+    if (!active || active.phase !== 'capturing' || !win || win.isDestroyed()) {
+      throw new Error('no active capture to arm the timing probe')
+    }
+    if (active.options.sourceIds.length !== 1 || active.options.sourceIds[0] !== sourceId) {
+      throw new Error('timing probe source mismatch')
+    }
+    const clockCalibration = active.clockCalibration
+    if (!clockCalibration || active.clockCalibrationMainClockId !== MAIN_CLOCK_ID) {
+      throw new Error('timing clock must be calibrated before arming the probe')
+    }
+    if (!Number.isFinite(notBeforeMainClockMs) ||
+        notBeforeMainClockMs < mainClockNowMs() + MIN_TIMING_START_LEAD_MS) {
+      throw new RangeError(`timing source start must be at least ${MIN_TIMING_START_LEAD_MS} ms in the future`)
+    }
+    const notBeforeAudioHostClockMs = notBeforeMainClockMs - clockCalibration.offsetToMainMs
+    if (!Number.isFinite(notBeforeAudioHostClockMs) || notBeforeAudioHostClockMs < 0) {
+      throw new RangeError('timing source start could not be projected into the audio-host clock')
+    }
+    const invocation = {
+      sessionId: active.options.sessionId,
+      sourceId,
+      notBeforeAudioHostClockMs
+    }
+    const result = await withTimeout(
+      win.webContents.executeJavaScript(
+        `globalThis.armCaptureTimingProbe(${JSON.stringify(invocation)})`, true),
+      2000,
+      'audio host timing probe arm')
+    if (this.activeCapture !== active || this.hostWindow !== win || win.isDestroyed()) {
+      throw new Error('audio host capture superseded or stopped while arming the timing probe')
+    }
+    if (result?.armed !== true || result?.sourceId !== sourceId ||
+        result?.audioHostClockId !== AUDIO_HOST_CLOCK_ID) {
+      throw new Error('audio host timing probe did not acknowledge')
+    }
+    return { ...result, clockCalibration }
+  }
+
   /**
    * 采集中途更换消费端端口（worker 重建后）。宿主 renderer 关闭旧端口、
    * 作废旧 credit；队列中的帧在新消费端授信后继续流动。
@@ -434,4 +549,11 @@ class AudioHostController {
   }
 }
 
-module.exports = { AudioHostController, coerceSamples, withTimeout }
+module.exports = {
+  AUDIO_HOST_CLOCK_ID,
+  CLOCK_CALIBRATION_PROBE_COUNT,
+  MIN_TIMING_START_LEAD_MS,
+  AudioHostController,
+  coerceSamples,
+  withTimeout
+}

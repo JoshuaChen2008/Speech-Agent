@@ -43,9 +43,18 @@ if ($Source -eq 'mic') {
 }
 
 New-Item -ItemType Directory -Force -Path $resolvedOutput | Out-Null
+$summaryPath = Join-Path $resolvedOutput "$Source-series.json"
+if (Test-Path -LiteralPath $summaryPath) {
+  throw "I2 series summary output already exists; use a fresh output directory."
+}
 $reportPaths = @()
+$exitEvidencePaths = @()
 for ($run = 1; $run -le $RunCount; $run += 1) {
   $reportPath = Join-Path $resolvedOutput "$Source-$run.json"
+  $exitEvidencePath = Join-Path $resolvedOutput "$Source-$run.exit.json"
+  if ((Test-Path -LiteralPath $reportPath) -or (Test-Path -LiteralPath $exitEvidencePath)) {
+    throw "I2 run $run output already exists; use a fresh output directory."
+  }
   $logDirectory = Join-Path $resolvedOutput "$Source-$run-logs"
   $entryArguments = @('--source', $Source, '--report', $reportPath)
   if ($Source -eq 'mic') {
@@ -62,10 +71,18 @@ for ($run = 1; $run -le $RunCount; $run += 1) {
   }
   & node (Join-Path $PSScriptRoot 'verify-i2-live-report.js') @verifyArguments
   if ($LASTEXITCODE -ne 0) { throw "I2 report verification failed for run $run" }
+  & node (Join-Path $PSScriptRoot 'write-i2-exact-child-exit.js') `
+    --source $Source `
+    --report $reportPath `
+    --output $exitEvidencePath
+  if ($LASTEXITCODE -ne 0) { throw "I2 exact child exit evidence failed for run $run" }
   $reportPaths += $reportPath
+  $exitEvidencePaths += $exitEvidencePath
 }
 
-$summaryPath = Join-Path $resolvedOutput "$Source-series.json"
+if (Test-Path -LiteralPath $summaryPath) {
+  throw "I2 series summary output appeared during child runs; refusing to overwrite it."
+}
 $summaryArguments = @(
   '--output', $summaryPath,
   '--source', $Source,
@@ -73,6 +90,9 @@ $summaryArguments = @(
 )
 if ($Source -eq 'mic') {
   $summaryArguments += @('--gate-0c-report', $preflightPath)
+}
+foreach ($exitEvidencePath in $exitEvidencePaths) {
+  $summaryArguments += @('--exit-evidence', $exitEvidencePath)
 }
 $summaryArguments += $reportPaths
 & node (Join-Path $PSScriptRoot 'summarize-i2-live-series.js') @summaryArguments

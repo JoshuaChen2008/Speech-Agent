@@ -16,7 +16,15 @@ const TARGET_SAMPLE_RATE = 16000
 const FRAME_SAMPLES = 1600
 const UNPROCESSED_AUDIO = { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
 const PCM_PORT_MESSAGE = 'audio-host:pcm-port'
+const AUDIO_HOST_CLOCK_ID = 'audio-host-performance-v1'
 const { FrameFlow } = window.FrameFlowModule
+const { SpeechOnsetProbe } = window.SpeechOnsetProbeModule
+
+function audioHostClockNowMs () {
+  /* The host's timing evidence is on one monotonic renderer-local clock.
+     It is converted only by the main-process calibration sampled at arm time. */
+  return performance.now()
+}
 
 function delay (milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -116,6 +124,7 @@ async function createWorkletPipeline (stream, onFrame, onStopped) {
   const context = new AudioContext({ latencyHint: 'interactive' })
   await context.audioWorklet.addModule('capture-worklet.mjs')
   await context.resume()
+  const contextAudioHostClockZeroMs = audioHostClockNowMs() - (context.currentTime * 1000)
   const mediaSource = context.createMediaStreamSource(stream)
   const recorder = new AudioWorkletNode(context, 'live-subtitle-pcm-capture', {
     numberOfInputs: 1,
@@ -129,7 +138,7 @@ async function createWorkletPipeline (stream, onFrame, onStopped) {
   mediaSource.connect(recorder).connect(context.destination)
   recorder.port.onmessage = (event) => {
     const message = event.data
-    if (message?.type === 'frame') onFrame(message)
+    if (message?.type === 'frame') onFrame({ ...message, contextAudioHostClockZeroMs })
     else if (message?.type === 'stopped') onStopped(message)
   }
   return {
@@ -254,6 +263,57 @@ globalThis.runAudioHostDiagnostic = async function runAudioHostDiagnostic (optio
 let pcmPort = null
 let activeCapture = null
 
+/* A tiny NTP-style probe endpoint. It contains only the renderer's monotonic
+   clock scalars and is intentionally callable before/after media timing work.
+   No PCM, text, device identity, or path can cross this boundary. */
+globalThis.readAudioHostClockProbe = function readAudioHostClockProbe () {
+  const remoteReceivedClockMs = audioHostClockNowMs()
+  return {
+    clockId: AUDIO_HOST_CLOCK_ID,
+    remoteReceivedClockMs,
+    remoteSentClockMs: audioHostClockNowMs()
+  }
+}
+
+function timingMetrics (source) {
+  const timing = source.timingProbe.snapshot(source.streamAudioHostClockEstimateMs)
+  return {
+    timingProbeArmedAudioHostClockMs: timing.armedAtClockMs,
+    timingClockAnchorAudioHostClockMs: timing.clockAnchorClockMs,
+    timingSpeechOnsetAudioMs: timing.speechOnsetAudioTimestampMs,
+    timingSpeechOnsetEstimatedAudioHostClockMs: timing.speechOnsetEstimatedClockMs,
+    timingSpeechOnsetObservedAudioHostClockMs: timing.speechOnsetObservedClockMs,
+    timingSpeechOnsetFrameSequence: timing.speechOnsetFrameSequence,
+    timingProbeDiscontinuities: timing.discontinuityCount,
+    timingProbeInvalidSamples: timing.invalidSampleCount
+  }
+}
+
+function sourceMetrics (source) {
+  return { ...source.flow.metrics(), ...timingMetrics(source) }
+}
+
+/* I2-only timing probe. It resets immediately before controlled playback and
+   observes samples in memory using the frozen Gate 0B onset rule. The method
+   returns no PCM and is not exposed to visible renderers. */
+globalThis.armCaptureTimingProbe = function armCaptureTimingProbe (options) {
+  const capture = activeCapture
+  if (!capture || capture.stopping) throw new Error('capture is not active')
+  if (options?.sessionId !== capture.sessionId) throw new Error('timing probe session mismatch')
+  const sourceId = String(options?.sourceId || '')
+  const source = capture.sources.get(sourceId)
+  if (!source || capture.sources.size !== 1) throw new Error('timing probe source mismatch')
+  if (source.streamAudioHostClockEstimateMs === null) throw new Error('capture clock is not established')
+  if (!Number.isFinite(options?.notBeforeAudioHostClockMs) || options.notBeforeAudioHostClockMs < 0) {
+    throw new Error('timing probe source floor is invalid')
+  }
+  const armedAtAudioHostClockMs = audioHostClockNowMs()
+  const audioFloorTimestampSeconds = Math.max(0,
+    (options.notBeforeAudioHostClockMs - source.streamAudioHostClockEstimateMs) / 1000)
+  source.timingProbe.arm(armedAtAudioHostClockMs, audioFloorTimestampSeconds)
+  return { armed: true, sourceId, audioHostClockId: AUDIO_HOST_CLOCK_ID }
+}
+
 /* 主进程经 preload 转交 MessagePort。可在采集中途替换（worker 重建）：
    send 闭包动态引用 pcmPort，队列中的帧自动走新端口；旧端口关闭，
    旧 credit 作废（新消费端重新授信）。 */
@@ -325,7 +385,14 @@ globalThis.startAudioCapture = async function startAudioCapture (options) {
            1600×4B ≈ 6.4KB/帧、每路 10 帧/秒，拷贝成本可忽略。 */
         send: (frame) => { pcmPort.postMessage(frame) }
       })
-      const source = { stream, flow, pipeline: null, stopped: null }
+      const source = {
+        stream,
+        flow,
+        pipeline: null,
+        stopped: null,
+        timingProbe: new SpeechOnsetProbe({ sampleRate: TARGET_SAMPLE_RATE }),
+        streamAudioHostClockEstimateMs: null
+      }
       capture.sources.set(sourceId, source)
 
       audioTrack.addEventListener('ended', () => {
@@ -336,22 +403,49 @@ globalThis.startAudioCapture = async function startAudioCapture (options) {
       let stoppedResolve
       source.stopped = new Promise((resolve) => { stoppedResolve = resolve })
       source.pipeline = await createWorkletPipeline(stream, (message) => {
+        const captureAudioHostClockMs = audioHostClockNowMs()
+        if (source.streamAudioHostClockEstimateMs === null &&
+            Number.isFinite(message.contextAudioHostClockZeroMs) &&
+            Number.isFinite(message.streamStartContextTimeSeconds)) {
+          /* Map the worklet's sample timeline onto the renderer-local
+             performance clock. Cross-process conversion is done once by the
+             main controller, never with Date.now or a mixed clock here. */
+          source.streamAudioHostClockEstimateMs = message.contextAudioHostClockZeroMs +
+            (message.streamStartContextTimeSeconds * 1000)
+        }
+        const onset = source.timingProbe.observeFrame({
+          samples: message.samples,
+          timestampSeconds: message.timestampSeconds,
+          sequence: message.sequence,
+          ingressClockMs: captureAudioHostClockMs
+        })
         flow.handleFrame({
           type: 'frame',
           sessionId,
           sourceId,
           sequence: message.sequence,
           timestampSeconds: message.timestampSeconds,
-          captureTimeMs: performance.now(),
+          audioHostClockId: AUDIO_HOST_CLOCK_ID,
+          captureAudioHostClockMs: Number(captureAudioHostClockMs.toFixed(3)),
           sampleCount: message.samples.length,
-          samples: message.samples
+          samples: message.samples,
+          timing: onset && source.streamAudioHostClockEstimateMs !== null
+            ? {
+                audioHostClockId: AUDIO_HOST_CLOCK_ID,
+                speechOnsetAudioTimestampMs: onset.onsetAudioTimestampMs,
+                speechOnsetEstimatedAudioHostClockMs: Math.round(
+                  source.streamAudioHostClockEstimateMs + onset.onsetAudioTimestampMs),
+                speechOnsetObservedAudioHostClockMs: onset.observedAtClockMs,
+                speechOnsetFrameSequence: onset.detectionFrameSequence
+              }
+            : null
         })
       }, (message) => stoppedResolve(message))
     }
 
     capture.metricsTimer = setInterval(() => {
       const sources = {}
-      for (const [sourceId, source] of capture.sources) sources[sourceId] = source.flow.metrics()
+      for (const [sourceId, source] of capture.sources) sources[sourceId] = sourceMetrics(source)
       window.audioHost.control({ type: 'metrics', sessionId, sources })
     }, 1000)
     /* ready 握手：所有 source 注册完毕后才宣告，消费端此时授初始信用。
@@ -382,7 +476,7 @@ globalThis.stopAudioCapture = async function stopAudioCapture () {
     source.pipeline.stop()
     await Promise.race([source.stopped, delay(2000)])
     const discarded = source.flow.discardQueued()
-    metrics[sourceId] = { ...source.flow.metrics(), discardedAtStop: discarded }
+    metrics[sourceId] = { ...sourceMetrics(source), discardedAtStop: discarded }
     for (const item of source.stream.getTracks()) item.stop()
     await source.pipeline.teardown()
   }

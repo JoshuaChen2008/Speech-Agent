@@ -206,7 +206,7 @@ B2.2 落地的流控协议（`src/runtime/audio-host/frame-flow.js` + `src/runti
 - partial latency P50/P95
 - end-to-end final latency P50/P95
 
-2026-07-31 的 schema v4 I2 bundle 已按实际播放器起点和本地生成 WAV 的 `-45dBFS` 连续双 20ms 窗口估算语音起点。loopback 5 轮首 partial P50/P95/min/max=1112/1126/1042/1126ms；`physical-preferred-label-heuristic` mic 声学 fixture=843/1024/819/1024ms；final-after-stimulus-end P95 分别 722/772ms。10 轮最大 final/refined CER 均为 0、captured/sent/ingested 帧全等，12 项丢失峰值全为 0。两路 P95 都高于冻结 Gate 0B 裸模型 `<1000ms` 线，因此 integration 性能债仍未关闭。该 mic 分类只按标签启发式并绑定预检后同一匿名标签，不能视为硬件证明或排除未知/伪造标签的虚拟设备。generator/reference 受跟踪，生成 WAV 被忽略；报告绑定两者摘要。完整 bundle 见 [`validation/i2-live-v4/`](validation/i2-live-v4/) 与 [`validation/i2-real-source-series.md`](validation/i2-real-source-series.md)。
+2026-07-31 的 I2 exit-bound bundle 以共享的未来播放 `source t0` 加冻结的 140ms 语料 onset offset，到 `SessionCoordinator` 接受并通知观察者的同一首个 partial，作为冻结字幕可见延迟。播放器、audio host 与 utility 先完成时钟校准，再先 arm 同一 `source t0`、后 schedule 播放，避免准备 IPC 偷吃 onset 预算；captured-energy 诊断另从 `source t0 + 40ms` 固定 guard 后观察，但不移动冻结起点。loopback 5 轮 P50/P95/min/max=1133/1158/1092/1158ms；`physical-preferred-label-heuristic` mic 声学 fixture=875/1005/822/1005ms；final-after-stimulus-end P95 分别 710/792ms。10 轮最大 final/refined CER 为 loopback 0/0、mic 0.035714/0，captured/sent/ingested 帧全等，12 项丢失峰值全为 0。两来源分别超过未改变的 `<1000ms` 线 158ms/5ms，因此 I2 integration 性能债与整体门禁未关闭。每个 schema-v5 child 还以 NTP 式最小 RTT 校准把同一 exact accepted partial 拆为六段非负整数诊断区间；P95 依次为 loopback=729/405/1/33/1/1ms、mic=557/500/1/28/1/1ms。该 trace 精确望远镜到冻结值，但不改变验收起点、终点或门槛。该 mic 分类只按标签启发式并绑定 SHA-256 为 `0f9f7668751c64fbce922883421ead41680226126800e0b7f6b3da81b39840ef`、runId 为 `gate-0c-2026-07-31T09-52-00-521Z`、执行时间为 `2026-07-31T09:52:13.999Z` 的精确 Gate 0C 预检及同一匿名标签，不能视为硬件证明或排除未知/伪造标签的虚拟设备。generator/reference 受跟踪，生成 WAV 被忽略；报告绑定两者摘要。完整 bundle 见 [`validation/i2-live-v5/`](validation/i2-live-v5/) 与 [`validation/i2-real-source-series.md`](validation/i2-real-source-series.md)。
 
 ### 5.2 低频控制与文本路径
 
@@ -261,12 +261,11 @@ realtime/refine worker
 - 退出：停止接收命令 → 停 tracks → 处理/放弃实时队列 → 提交/报告字幕事务 → 有界 checkpoint → graceful shutdown workers → 必要时只终止并收殓 exact child → 关闭窗口。Agent 未完成任务按 A1 的可靠消费协议保留，不能无限阻塞退出；禁止按进程名批量结束 Electron。
 
 2026-07-31 的真实模型活跃诊断已用批准 bundle 连续三轮驱动 online stream、Silero VAD
-和 offline refine，六个 realtime/refine 子进程均优雅 `exitCode=0`、fatal 0。随后 schema v4
-bundle 让 loopback/mic 各 5 轮完整通过采集、online ASR、offline refine 与正常退出：
-10 final + 10 refined、最大双 CER 0，所有 captured/sent/ingested 帧一致且 12 项丢失峰值全为 0。
-受监督多窗口产品壳也得到 clean exit、0 incident、未观察到 breakpoint。冻结语料诊断、
-schema v4 bundle 和 fake-ASR 产品壳只证明各自边界；它们不证明性能门槛、拖动、真实 pause/refine、设备变化/睡眠/硬崩溃、
-两小时 I3、干净机 I4 或历史 `0x80000003` 的 native stack 根因。
+和 offline refine，六个 realtime/refine 子进程均优雅 `exitCode=0`、fatal 0。随后 I2
+exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online ASR 与 offline refine：
+10 轮均有 final/refined，loopback 最大 final/refined CER=0/0、mic=0.035714/0，所有 captured/sent/ingested 帧一致且 12 项丢失峰值全为 0。每个 schema-v5 child report 都有独立 schema-v1 sidecar，记录外部 runner 已观察到其 exact Electron child 返回 exit code 0 且 runner 未终止它；每来源的五组 report/sidecar 再被 schema-v6 series 严格绑定。这样可阻止应用内部先写 `pass`、随后悬挂或超时仍被计绿，但 sidecar 不是签名、远端背书、硬件证明或崩溃根因证明。
+
+受监督多窗口产品壳也得到 clean exit、0 incident、未观察到 breakpoint。一次未纳入权威 bundle 的运行曾在报告 `pass` stdout 后悬挂；因此本批外部退出证明不等于悬挂已永久排除。`PostQueuedCompletionStatus(6)` 失败进入 Node/libuv `uv_fatal_error`、`DebugBreak` 的即时 `0x80000003` 机制已有闭环解释，但缺少 native stack，仍不能确定具体竞态、发送者或进程角色；相容的上游 IOCP/`uv_async_send` 修复也不是本次根因证明。冻结语料诊断、I2 exit-bound bundle 和 fake-ASR 产品壳只证明各自边界；它们不证明 loopback 性能门槛、拖动、真实 pause/refine、设备变化/睡眠/硬崩溃、两小时 I3、干净机 I4 或历史异常的具体根因。
 
 ## 9. 安全要求
 
@@ -289,6 +288,6 @@ schema v4 bundle 和 fake-ASR 产品壳只证明各自边界；它们不证明�
 5. 独立 refine worker 和事件式 JSONL 过渡基线，验证 pause/resume、迟到修订和进程故障。
 6. B3.3 已在 DB0/DB1 基座上接入产品网关、迁移、默认 SQLite-only 生命周期与历史查询/导出；J1/J2/J10 及开发态/packaged 四窗口 Electron/SQLite 旅程已有证据，I3/I4 继续作为独立门禁。
 7. B4 ModelManager、资源页、空闲热启用和 J14 已完成；生产 Manager 已安装并实际调用固定三资源 bundle。
-8. B5 正式 ASAR/NSIS、native unpack、Electron fuses、packaged DB0/产品旅程及隔离安装卸载的方法已通过确定性资格；但冻结的 exact installer/SHA 来自前一候选 `369055a`，本阶段修改了生产 audio-host/runtime，进入 I4 前必须从含 schema-v4 hook 的新 HEAD 重建、重取证并冻结新的 installer SHA。I2 schema v4 重复运行证据通过，但整体仍未关闭；当前先解决两来源性能、交互与恢复，再做 I3 两小时/恢复和 I4 新精确 NSIS 的公网/权限/真实音源/ready 后离线复启。
+8. B5 正式 ASAR/NSIS、native unpack、Electron fuses、packaged DB0/产品旅程及隔离安装卸载的方法已通过确定性资格；但冻结的 exact installer/SHA 来自前一候选 `369055a`，本阶段修改了生产 audio-host/runtime，进入 I4 前必须从含跨时钟观测与 exit-bound I2 证据钩子的新版 HEAD 重建、重取证并冻结新的 installer SHA。I2 的 schema-v5 child + schema-v1 exit sidecar + schema-v6 series 重复运行证据通过，但 loopback 性能、交互与恢复仍使整体未关闭；当前先关闭这些缺口，再做 I3 两小时/恢复和 I4 新精确 NSIS 的公网/权限/真实音源/ready 后离线复启。
 8. 字幕 MVP 通过后做 A1：`AgentRuntime` + Pi Core 隔离探针 + 项目自有插件宿主 + 凭据/可靠消费；再以第一方插件实现独立增强文本和会后结构化纪要，并通过 J3–J7/J13。
 9. 只有 X1 明确进入范围时才增加 FTS5/`sqlite-vec`，并执行 J11/DB4。

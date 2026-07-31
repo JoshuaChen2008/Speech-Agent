@@ -66,7 +66,14 @@ const CONTROL_TYPES = Object.freeze(['track-ended', 'metrics', 'stopped'])
 const METRIC_KEYS = Object.freeze([
   'capturedFrames', 'sentFrames', 'droppedFrames', 'creditStalls',
   'maxQueuedMsObserved', 'queuedFrames', 'queuedMs', 'credits', 'discardedAtStop',
-  'acknowledgedFrames', 'lostInFlightFrames', 'portReplacements'
+  'acknowledgedFrames', 'lostInFlightFrames', 'portReplacements',
+  /* I2 latency probe: timing scalars only. PCM and transcript text never
+     cross the control channel. All host values are renderer-local monotonic
+     performance-clock readings; the main controller calibrates separately. */
+  'timingProbeArmedAudioHostClockMs', 'timingClockAnchorAudioHostClockMs',
+  'timingSpeechOnsetAudioMs', 'timingSpeechOnsetEstimatedAudioHostClockMs',
+  'timingSpeechOnsetObservedAudioHostClockMs', 'timingSpeechOnsetFrameSequence',
+  'timingProbeDiscontinuities', 'timingProbeInvalidSamples'
 ])
 
 /** 连续采集（B2.2）参数校验：与诊断共享 sessionId/sourceIds 规则，外加队列预算。 */

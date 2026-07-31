@@ -13,6 +13,7 @@ const {
   evaluateDisplayRequest,
   isPermissionAllowed,
   publicError,
+  sanitizeControlMessage,
   scrubLocalPaths,
   selectScreenSource,
   validateDiagnosticOptions
@@ -21,7 +22,14 @@ const {
   analyzeLevels,
   evaluateDiagnostic
 } = require('../../src/runtime/audio-host/pcm-metrics')
-const { AudioHostController, coerceSamples } = require('../../src/runtime/audio-host/audio-host-controller')
+const {
+  AUDIO_HOST_CLOCK_ID,
+  CLOCK_CALIBRATION_PROBE_COUNT,
+  AudioHostController,
+  coerceSamples
+} = require('../../src/runtime/audio-host/audio-host-controller')
+const { MAIN_CLOCK_ID } = require('../../src/runtime/clock-calibration')
+const { SpeechOnsetProbe } = require('../../src/runtime/audio-host/speech-onset-probe')
 
 /* 假 electron：让 controller 生命周期与 IPC sender 校验可以脱离 Electron 测试。 */
 function fakeElectron (overrides = {}) {
@@ -141,6 +149,90 @@ test('frame assembler rejects invalid configuration', async () => {
   assert.throws(() => new FrameAssembler({ sampleRate: -1 }), /sampleRate/)
 })
 
+function observeOnsetWithChunks (samples, chunkSize) {
+  const sampleRate = 16000
+  const probe = new SpeechOnsetProbe()
+  probe.arm(1000)
+  let detection = null
+  let offset = 0
+  let sequence = 0
+  while (offset < samples.length) {
+    const next = Math.min(samples.length, offset + chunkSize)
+    detection = probe.observeFrame({
+      samples: samples.slice(offset, next),
+      timestampSeconds: offset / sampleRate,
+      sequence,
+      ingressClockMs: 1000 + Math.round((next / sampleRate) * 1000)
+    }) || detection
+    offset = next
+    sequence += 1
+  }
+  return { detection, snapshot: probe.snapshot(1000) }
+}
+
+test('speech onset probe reproduces the frozen 20 ms rule across arbitrary frame boundaries', () => {
+  const signal = new Float32Array(320 * 7)
+  signal.fill(0.1, 320 * 3, 320 * 5)
+  for (const chunkSize of [1, 319, 320, 321, 640, 1600]) {
+    const { detection, snapshot } = observeOnsetWithChunks(signal, chunkSize)
+    assert.equal(detection.onsetAudioTimestampMs, 60, `chunk size ${chunkSize}`)
+    assert.equal(snapshot.speechOnsetEstimatedClockMs, 1060, `chunk size ${chunkSize}`)
+    assert.equal(snapshot.discontinuityCount, 0)
+    assert.equal(snapshot.invalidSampleCount, 0)
+  }
+})
+
+test('speech onset probe resets consecutive windows on gaps without shifting its grid', () => {
+  const probe = new SpeechOnsetProbe()
+  const loud = new Float32Array(320).fill(0.1)
+  const quiet = new Float32Array(320)
+  probe.arm(1000)
+  assert.equal(probe.observeFrame({ samples: loud, timestampSeconds: 0, sequence: 0, ingressClockMs: 1020 }), null)
+  assert.equal(probe.observeFrame({ samples: loud, timestampSeconds: 0.04, sequence: 2, ingressClockMs: 1060 }), null)
+  assert.equal(probe.observeFrame({ samples: quiet, timestampSeconds: 0.06, sequence: 3, ingressClockMs: 1080 }), null)
+  assert.equal(probe.observeFrame({ samples: loud, timestampSeconds: 0.08, sequence: 4, ingressClockMs: 1100 }), null)
+  const detection = probe.observeFrame({ samples: loud, timestampSeconds: 0.1, sequence: 5, ingressClockMs: 1120 })
+  assert.equal(detection.onsetAudioTimestampMs, 80)
+  assert.equal(probe.snapshot(1000).discontinuityCount, 1)
+})
+
+test('speech onset probe treats an invalid sample as a below-threshold window', () => {
+  const probe = new SpeechOnsetProbe()
+  const invalid = new Float32Array(320).fill(0.1)
+  const loud = new Float32Array(320).fill(0.1)
+  invalid[10] = Number.NaN
+  probe.arm(1000)
+  assert.equal(probe.observeFrame({ samples: invalid, timestampSeconds: 0, sequence: 0, ingressClockMs: 1020 }), null)
+  assert.equal(probe.observeFrame({ samples: loud, timestampSeconds: 0.02, sequence: 1, ingressClockMs: 1040 }), null)
+  const detection = probe.observeFrame({ samples: loud, timestampSeconds: 0.04, sequence: 2, ingressClockMs: 1060 })
+  assert.equal(detection.onsetAudioTimestampMs, 20)
+  assert.equal(probe.snapshot(1000).invalidSampleCount, 1)
+})
+
+test('speech onset probe excludes pre-arm samples and exposes timing scalars only', () => {
+  const probe = new SpeechOnsetProbe()
+  probe.arm(1000, 0.1)
+  const detection = probe.observeFrame({
+    samples: new Float32Array(3200).fill(0.1),
+    timestampSeconds: 0,
+    sequence: 0,
+    ingressClockMs: 1200
+  })
+  assert.equal(detection.onsetAudioTimestampMs, 100)
+  const snapshot = probe.snapshot(900)
+  assert.deepEqual(Object.keys(snapshot).sort(), [
+    'armedAtClockMs',
+    'clockAnchorClockMs',
+    'discontinuityCount',
+    'invalidSampleCount',
+    'speechOnsetAudioTimestampMs',
+    'speechOnsetEstimatedClockMs',
+    'speechOnsetFrameSequence',
+    'speechOnsetObservedClockMs'
+  ].sort())
+  assert.doesNotMatch(JSON.stringify(snapshot), /samples|pcm|text|path/i)
+})
+
 test('level analysis counts clipping runs, over-range and non-finite samples', () => {
   const samples = new Float32Array(16000)
   samples.set(sine(440, 16000, 8000, 0.4))
@@ -223,6 +315,17 @@ test('audio host window keeps the Chromium sandbox enabled', () => {
     'retiring one audio host must not remove a newer controller generation\'s IPC listeners')
   assert.match(source, /removeListener\(CHANNELS\.MARK, this\.markListener\)/)
   assert.match(source, /removeListener\(CHANNELS\.CONTROL, this\.controlListener\)/)
+})
+
+test('audio host uses one renderer-local monotonic clock and exposes only the clock probe scalars', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'src', 'runtime', 'audio-host', 'host.js'), 'utf8')
+  assert.match(source, /AUDIO_HOST_CLOCK_ID = 'audio-host-performance-v1'/)
+  assert.match(source, /globalThis\.readAudioHostClockProbe/)
+  assert.match(source, /remoteReceivedClockMs/)
+  assert.match(source, /remoteSentClockMs/)
+  assert.match(source, /captureAudioHostClockMs/)
+  assert.ok(!source.includes('Date.now()'), 'mixed wall-clock timestamps must not enter the host timing path')
 })
 
 test('diagnostic payloads are rejected from untrusted senders and wrong sessions', () => {
@@ -387,6 +490,82 @@ test('replacePort is rejected until capture start completes', () => {
   assert.throws(() => controller.replacePort(port), /before capture start completes/)
   controller.activeCapture.phase = 'capturing'
   assert.doesNotThrow(() => controller.replacePort(port))
+})
+
+test('timing probe calibrates the host clock with seven serial probes before arming the exact source', async () => {
+  const controller = new AudioHostController({ electron: fakeElectron() })
+  const invocations = []
+  controller.activeCapture = {
+    options: { sessionId: 's-1', sourceIds: ['mic'], maxQueueMs: 2000 },
+    phase: 'capturing'
+  }
+  controller.hostWindow = {
+    isDestroyed: () => false,
+    webContents: {
+      async executeJavaScript (script) {
+        invocations.push(script)
+        if (script === 'globalThis.readAudioHostClockProbe()') {
+          return {
+            clockId: AUDIO_HOST_CLOCK_ID,
+            remoteReceivedClockMs: 100,
+            remoteSentClockMs: 100
+          }
+        }
+        return { armed: true, sourceId: 'mic', audioHostClockId: AUDIO_HOST_CLOCK_ID }
+      }
+    }
+  }
+  await assert.rejects(controller.armTimingProbe('mic', performance.now() + 500), /must be calibrated/)
+  const calibration = await controller.calibrateTimingClock('mic')
+  assert.equal(invocations.length, CLOCK_CALIBRATION_PROBE_COUNT,
+    'calibration must not arm the energy probe')
+  await assert.rejects(controller.armTimingProbe('mic', performance.now()), /at least 100 ms/)
+  const result = await controller.armTimingProbe('mic', performance.now() + 500)
+  assert.equal(invocations.filter((script) => script === 'globalThis.readAudioHostClockProbe()').length,
+    CLOCK_CALIBRATION_PROBE_COUNT)
+  const invocation = invocations.at(-1)
+  assert.match(invocation, /armCaptureTimingProbe/)
+  assert.match(invocation, /"sessionId":"s-1"/)
+  assert.match(invocation, /"notBeforeAudioHostClockMs":/)
+  assert.equal(result.armed, true)
+  assert.equal(result.sourceId, 'mic')
+  assert.equal(result.clockCalibration.clockId, AUDIO_HOST_CLOCK_ID)
+  assert.equal(result.clockCalibration.sampleCount, CLOCK_CALIBRATION_PROBE_COUNT)
+  assert.equal(calibration, result.clockCalibration)
+  assert.equal(controller.activeCapture.clockCalibration, result.clockCalibration,
+    'the private calibration remains associated with this capture generation')
+  assert.equal(controller.activeCapture.clockCalibrationMainClockId, MAIN_CLOCK_ID)
+  await assert.rejects(controller.armTimingProbe('loopback', performance.now() + 500), /source mismatch/)
+  controller.activeCapture = null
+  await assert.rejects(controller.calibrateTimingClock('mic'), /no active capture/)
+  await assert.rejects(controller.armTimingProbe('mic', performance.now() + 500), /no active capture/)
+})
+
+test('audio control boundary keeps local-clock timing scalars but rejects PCM and unknown metrics', () => {
+  const message = sanitizeControlMessage({
+    type: 'metrics',
+    sessionId: 's-1',
+    sources: {
+      mic: {
+        capturedFrames: 12,
+        timingProbeArmedAudioHostClockMs: 120000.125,
+        timingSpeechOnsetAudioMs: 140,
+        timingSpeechOnsetEstimatedAudioHostClockMs: 123456,
+        timingSpeechOnsetEstimatedEpochMs: 654321,
+        timingProbeDiscontinuities: 0,
+        samples: [0.1],
+        transcript: 'private'
+      }
+    }
+  })
+  assert.deepEqual(message.sources.mic, {
+    capturedFrames: 12,
+    timingProbeArmedAudioHostClockMs: 120000.125,
+    timingSpeechOnsetAudioMs: 140,
+    timingSpeechOnsetEstimatedAudioHostClockMs: 123456,
+    timingProbeDiscontinuities: 0
+  })
+  assert.doesNotMatch(JSON.stringify(message), /samples|transcript|private/i)
 })
 
 test('a setup failure does not wedge the controller for later diagnostics', async () => {

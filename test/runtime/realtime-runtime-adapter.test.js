@@ -3,7 +3,10 @@
 const assert = require('node:assert/strict')
 const test = require('node:test')
 
-const { RealtimeRuntimeAdapter } = require('../../src/runtime/realtime-runtime-adapter')
+const {
+  CAPTURE_PROBE_FLOOR_AFTER_SOURCE_START_MS,
+  RealtimeRuntimeAdapter
+} = require('../../src/runtime/realtime-runtime-adapter')
 const { FakeRuntimeAdapter } = require('../../src/main/session/fake-runtime-adapter')
 const { SessionCoordinator } = require('../../src/main/session/session-coordinator')
 const { DEV_MODEL_VALUE, resolveRuntimeOptions } = require('../../src/main/runtime-options')
@@ -25,6 +28,7 @@ function fakeWorker () {
   const worker = {
     calls: [],
     captionListeners: new Set(),
+    captionTimings: new Map(),
     statsListeners: new Set(),
     exitListeners: new Set(),
     lastStats: null,
@@ -36,6 +40,18 @@ function fakeWorker () {
     attachRefinePort (port) { worker.calls.push(['attachRefinePort', port]) },
     async pause () { worker.calls.push(['pause']) },
     async resume () { worker.calls.push(['resume']) },
+    async calibrateClock () {
+      worker.calls.push(['calibrateClock'])
+      return {
+        clockId: 'realtime-utility-performance-v1',
+        method: 'ntp-min-rtt-monotonic-v1',
+        offsetToMainMs: 0.25,
+        minimumRoundTripMs: 0.5,
+        uncertaintyMs: 0.25,
+        sampleCount: 7,
+        calibratedAtMainClockMs: 100
+      }
+    },
     async waitForEnd () { worker.calls.push(['waitForEnd']); return true },
     async shutdown () {
       worker.calls.push(['shutdown'])
@@ -46,7 +62,16 @@ function fakeWorker () {
     onCaption (listener) { worker.captionListeners.add(listener); return () => worker.captionListeners.delete(listener) },
     onStats (listener) { worker.statsListeners.add(listener); return () => worker.statsListeners.delete(listener) },
     onExit (listener) { worker.exitListeners.add(listener); return () => worker.exitListeners.delete(listener) },
-    emitCaption (event) { for (const listener of worker.captionListeners) listener(event) },
+    takeCaptionTiming (event) {
+      const key = `${event?.sourceId}:${event?.sequence}`
+      const timing = worker.captionTimings.get(key) || null
+      worker.captionTimings.delete(key)
+      return timing
+    },
+    emitCaption (event, timing = null) {
+      if (timing) worker.captionTimings.set(`${event?.sourceId}:${event?.sequence}`, timing)
+      for (const listener of worker.captionListeners) listener(event)
+    },
     emitStats (stats) { worker.lastStats = stats; for (const listener of worker.statsListeners) listener(stats) },
     emitExit (code) { for (const listener of worker.exitListeners) listener({ code }) },
     async dispose () { worker.calls.push(['dispose']); worker.disposed = true }
@@ -76,6 +101,25 @@ function fakeHost () {
       }
     },
     async stopCapture () { host.calls.push(['stopCapture']); return { stopped: true, metrics: {} } },
+    async calibrateTimingClock (sourceId) {
+      host.calls.push(['calibrateTimingClock', sourceId])
+      return {
+        clockId: 'audio-host-performance-v1',
+        method: 'ntp-min-rtt-monotonic-v1',
+        offsetToMainMs: -0.25,
+        minimumRoundTripMs: 0.5,
+        uncertaintyMs: 0.25,
+        sampleCount: 7,
+        calibratedAtMainClockMs: 100
+      }
+    },
+    async armTimingProbe (sourceId, notBeforeMainClockMs) {
+      host.calls.push(['armTimingProbe', sourceId, notBeforeMainClockMs])
+      return {
+        armed: true,
+        sourceId
+      }
+    },
     onControl (listener) { host.controlListeners.add(listener); return () => host.controlListeners.delete(listener) },
     emitControl (message) { for (const listener of host.controlListeners) listener(message) },
     dispose () { host.disposed = true }
@@ -258,6 +302,100 @@ test('start orchestrates worker-first wiring and maps the resume cursor', async 
   assert.equal(worker.calls.find(([name]) => name === 'attachPort')[1].id, 'p2')
 
   await assert.rejects(adapter.start(START_CONTEXT), /already running/)
+  adapter.dispose()
+})
+
+test('timing evidence is retained only for the exact caption accepted by the coordinator boundary', async () => {
+  const { adapter, worker, host } = makeAdapter()
+  adapter.onCaption((event) => event.sequence === 2)
+  await adapter.start(START_CONTEXT)
+  await assert.rejects(adapter.armTimingProbe(performance.now() + 500), /must be calibrated/)
+  await assert.rejects(adapter.armTimingProbe(Number.NaN), /finite non-negative/)
+  const calibrations = await adapter.calibrateTimingProbe()
+  assert.equal(calibrations.utility.clockId, 'realtime-utility-performance-v1')
+  assert.equal(calibrations.audioHost.clockId, 'audio-host-performance-v1')
+  const scheduledStart = performance.now() + 500
+  const armed = await adapter.armTimingProbe(scheduledStart)
+  assert.equal(armed.armed, true)
+  assert.equal(armed.sourceId, 'mic')
+  assert.equal(armed.clockCalibrations.utility.clockId, 'realtime-utility-performance-v1')
+  assert.equal(armed.clockCalibrations.audioHost.clockId, 'audio-host-performance-v1')
+  assert.deepEqual(host.calls.find(([name]) => name === 'calibrateTimingClock'), ['calibrateTimingClock', 'mic'])
+  assert.deepEqual(host.calls.find(([name]) => name === 'armTimingProbe'), [
+    'armTimingProbe',
+    'mic',
+    scheduledStart + CAPTURE_PROBE_FLOOR_AFTER_SOURCE_START_MS
+  ])
+  const hostCalibrationIndex = host.calls.findIndex(([name]) => name === 'calibrateTimingClock')
+  const hostArmIndex = host.calls.findIndex(([name]) => name === 'armTimingProbe')
+  assert.ok(hostCalibrationIndex >= 0 && hostArmIndex > hostCalibrationIndex,
+    'audio host must calibrate before its energy probe is armed')
+  assert.ok(worker.calls.some(([name]) => name === 'calibrateClock'), 'audio and utility clocks must calibrate together')
+
+  const timing = (sequence) => ({
+    schemaVersion: 2,
+    sourceId: 'mic',
+    segmentId: `seg-${sequence}`,
+    sequence,
+    audioHostClockId: 'audio-host-performance-v1',
+    vadStartAudioTimestampMs: 200,
+    vadStartFrameAudioHostClockMs: 1000,
+    partialTriggerAudioEndMs: 500,
+    partialTriggerFrameAudioHostClockMs: 1300,
+    utilityClockId: 'realtime-utility-performance-v1',
+    partialTriggerUtilityIngressClockMs: 1301,
+    partialPublishUtilityClockMs: 1400,
+    mainClockId: 'electron-main-performance-v1',
+    workerHostMainClockMs: 1401
+  })
+  worker.emitCaption({ sourceId: 'mic', segmentId: 'seg-1', sequence: 1 }, timing(1))
+  worker.emitCaption({ sourceId: 'mic', segmentId: 'seg-2', sequence: 2 }, timing(2))
+  await adapter.stop()
+
+  const accepted = adapter.getLastRunDiagnostics().workerHost.acceptedCaptionTimings
+  assert.equal(accepted.length, 1)
+  assert.equal(accepted[0].sequence, 2)
+  assert.equal(accepted[0].segmentId, 'seg-2')
+  assert.ok(Number.isFinite(accepted[0].coordinatorAcceptedReturnMainClockMs))
+  assert.equal(worker.captionTimings.size, 0, 'rejected timing must be consumed, not retained for a later event')
+  adapter.dispose()
+})
+
+test('timing probe arms only after both clock calibration rounds settle', async () => {
+  const { adapter, worker, host } = makeAdapter()
+  const utilityCalibration = deferred()
+  worker.calibrateClock = async () => {
+    worker.calls.push(['calibrateClock'])
+    return utilityCalibration.promise
+  }
+  await adapter.start(START_CONTEXT)
+
+  const calibrationPromise = adapter.calibrateTimingProbe()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.ok(host.calls.some(([name]) => name === 'calibrateTimingClock'))
+  assert.equal(host.calls.some(([name]) => name === 'armTimingProbe'), false,
+    'a delayed utility calibration must not leave the energy probe armed before playback')
+
+  utilityCalibration.resolve({
+    clockId: 'realtime-utility-performance-v1',
+    method: 'ntp-min-rtt-monotonic-v1',
+    offsetToMainMs: 0.25,
+    minimumRoundTripMs: 0.5,
+    uncertaintyMs: 0.25,
+    sampleCount: 7,
+    calibratedAtMainClockMs: 100
+  })
+  await calibrationPromise
+  assert.equal(host.calls.some(([name]) => name === 'armTimingProbe'), false,
+    'clock calibration alone must never arm the energy probe')
+  const scheduledStart = performance.now() + 500
+  const armed = await adapter.armTimingProbe(scheduledStart)
+  assert.equal(armed.armed, true)
+  assert.deepEqual(host.calls.at(-1), [
+    'armTimingProbe',
+    'mic',
+    scheduledStart + CAPTURE_PROBE_FLOOR_AFTER_SOURCE_START_MS
+  ])
   adapter.dispose()
 })
 
@@ -526,6 +664,7 @@ test('completed sessions expose text-free I2 diagnostics from the real compositi
   assert.equal(diagnostics.capture.mic.capturedFrames, 14)
   assert.equal(diagnostics.worker.sources.mic.framesIngested, 12)
   assert.equal(diagnostics.droppedCaptionCount, 1)
+  assert.deepEqual(diagnostics.timingCalibrations, { audioHost: null, utility: null })
   assert.equal(JSON.stringify(diagnostics).includes('samples'), false)
   assert.equal(JSON.stringify(diagnostics).includes('text'), false)
 

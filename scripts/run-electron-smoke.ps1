@@ -5,7 +5,10 @@ param(
 
   [string[]]$EntryArguments = @(),
 
-  [string]$LogDirectory = '.artifacts/electron-smoke-logs'
+  [string]$LogDirectory = '.artifacts/electron-smoke-logs',
+
+  [ValidateRange(5, 600)]
+  [int]$TimeoutSeconds = 120
 )
 
 Set-StrictMode -Version Latest
@@ -60,17 +63,37 @@ $process = Start-Process `
   -RedirectStandardOutput $stdoutPath `
   -RedirectStandardError $stderrPath `
   -WindowStyle Hidden `
-  -Wait `
   -PassThru
+
+# Windows PowerShell 5 can lose access to ExitCode after a very short child
+# exits unless the exact process handle is materialized while it is alive.
+[void]$process.Handle
+$exited = $process.WaitForExit($TimeoutSeconds * 1000)
+if (-not $exited) {
+  try { $process.Kill() } catch { }
+  try { $process.WaitForExit() } catch { }
+  if (Test-Path -LiteralPath $stdoutPath) {
+    Get-Content -Raw -ErrorAction SilentlyContinue -LiteralPath $stdoutPath
+  }
+  if (Test-Path -LiteralPath $stderrPath) {
+    Get-Content -Raw -ErrorAction SilentlyContinue -LiteralPath $stderrPath
+  }
+  throw "Electron smoke exact process timed out after $TimeoutSeconds seconds. Logs: $resolvedLogDirectory"
+}
+# Ensure redirected asynchronous stream copies are fully drained before the
+# runner reads their files.
+$process.WaitForExit()
+$process.Refresh()
+$exitCode = $process.ExitCode
 
 if (Test-Path -LiteralPath $stdoutPath) {
   Get-Content -Raw -ErrorAction SilentlyContinue -LiteralPath $stdoutPath
 }
-if ($process.ExitCode -ne 0) {
+if ($exitCode -ne 0) {
   if (Test-Path -LiteralPath $stderrPath) {
     Get-Content -Raw -ErrorAction SilentlyContinue -LiteralPath $stderrPath
   }
-  throw "Electron smoke failed with exit code $($process.ExitCode). Logs: $resolvedLogDirectory"
+  throw "Electron smoke failed with exit code $exitCode. Logs: $resolvedLogDirectory"
 }
 
 Write-Output "Electron smoke completed without forcing process termination. Logs: $resolvedLogDirectory"

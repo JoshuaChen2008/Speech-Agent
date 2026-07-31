@@ -11,6 +11,8 @@ const {
   registerRecognizerAdapter
 } = require('../../src/runtime/realtime-worker/recognizer-adapter')
 const { WorkerCore } = require('../../src/runtime/realtime-worker/worker-core')
+const { RealtimeWorkerHost, sanitizeCaptionTiming, UTILITY_CLOCK_ID } = require('../../src/runtime/realtime-worker/worker-host')
+const { MAIN_CLOCK_ID } = require('../../src/runtime/clock-calibration')
 const { FakeRuntimeAdapter } = require('../../src/main/session/fake-runtime-adapter')
 const { SessionCoordinator } = require('../../src/main/session/session-coordinator')
 const { DEV_MODEL_VALUE, resolveRuntimeOptions } = require('../../src/main/runtime-options')
@@ -136,6 +138,102 @@ test('worker core emits contract-valid partial/final streams per segment', () =>
   }
   /* 段首 pre-roll：t0 不晚于确认帧，t1 随帧推进且 >= t0。 */
   for (const event of events) assert.ok(event.t1 >= event.t0)
+})
+
+test('worker core reports the exact VAD opening frame without affecting captions', () => {
+  const opened = []
+  const core = new WorkerCore({
+    sessionId: 'session-1',
+    sourceIds: ['mic'],
+    adapterFactory: () => scriptedAdapter(),
+    vadOptions: { threshold: 0.05, voicedFramesToStart: 2, silentFramesToEnd: 3 },
+    onSegmentStarted: (info) => opened.push(info)
+  })
+  assert.deepEqual(core.ingestFrame(frame('mic', 7, 0.3)), [])
+  const events = core.ingestFrame(frame('mic', 8, 0.3))
+  assert.equal(opened.length, 1)
+  assert.deepEqual(opened[0], {
+    sourceId: 'mic',
+    segmentId: events[0].segmentId,
+    frameSequence: 8,
+    frameTimestampSeconds: 0.8
+  })
+  assert.equal(core.metrics().mic.firstSpeechStartFrameSequence, 8)
+  assert.equal(core.metrics().mic.firstSpeechStartAudioTimestampMs, 800)
+})
+
+test('caption timing sanitizer requires exact event binding and only local-clock ordering', () => {
+  const event = {
+    schemaVersion: 1,
+    sessionId: 's',
+    sourceId: 'mic',
+    segmentId: 'seg-mic-1',
+    sequence: 4,
+    revision: 1,
+    kind: 'partial',
+    t0: 0,
+    t1: 0.5,
+    text: '好',
+    translation: null
+  }
+  const timing = {
+    schemaVersion: 2,
+    sourceId: 'mic',
+    segmentId: 'seg-mic-1',
+    sequence: 4,
+    audioHostClockId: 'audio-host-performance-v1',
+    vadStartAudioTimestampMs: 200,
+    vadStartFrameAudioHostClockMs: 1000.25,
+    partialTriggerAudioEndMs: 500,
+    partialTriggerFrameAudioHostClockMs: 1300.5,
+    utilityClockId: UTILITY_CLOCK_ID,
+    partialTriggerUtilityIngressClockMs: 10.25,
+    partialPublishUtilityClockMs: 11
+  }
+  assert.deepEqual(sanitizeCaptionTiming(timing, event, 12.75), {
+    ...timing,
+    mainClockId: MAIN_CLOCK_ID,
+    workerHostMainClockMs: 12.75
+  })
+  assert.equal(sanitizeCaptionTiming({ ...timing, sequence: 5 }, event, 12.75), null)
+  assert.equal(sanitizeCaptionTiming({ ...timing, segmentId: 'other' }, event, 12.75), null)
+  assert.equal(sanitizeCaptionTiming({ ...timing, unknown: 1 }, event, 12.75), null)
+  assert.equal(sanitizeCaptionTiming({ ...timing, partialPublishUtilityClockMs: 9 }, event, 12.75), null)
+  assert.equal(sanitizeCaptionTiming({ ...timing, partialTriggerFrameAudioHostClockMs: 999 }, event, 12.75), null)
+  assert.equal(sanitizeCaptionTiming({ ...timing, utilityClockId: 'other-clock' }, event, 12.75), null)
+  assert.equal(sanitizeCaptionTiming({ ...timing, partialPublishUtilityClockMs: 11.125 }, event, 0.125)
+    .workerHostMainClockMs, 0.125,
+  'main and utility clocks are not compared before calibration')
+})
+
+test('worker clock calibration performs serial parent/utility probes and selects a minimum-rtt sample', async () => {
+  const { EventEmitter } = require('node:events')
+  const child = new EventEmitter()
+  const probes = []
+  child.postMessage = (message) => {
+    if (message?.type !== 'clock-probe') return
+    probes.push(message.probeId)
+    const clockMs = 10 + probes.length
+    setImmediate(() => child.emit('message', {
+      type: 'clock-probe-result',
+      probeId: message.probeId,
+      clockId: UTILITY_CLOCK_ID,
+      r1: clockMs,
+      r2: clockMs + 0.01
+    }))
+  }
+  const host = new RealtimeWorkerHost({ electron: { utilityProcess: {} } })
+  host.child = child
+
+  const calibration = await host.calibrateClock(3)
+  assert.equal(probes.length, 3)
+  assert.deepEqual(probes, ['realtime-clock-1', 'realtime-clock-2', 'realtime-clock-3'])
+  assert.equal(calibration.clockId, UTILITY_CLOCK_ID)
+  assert.equal(calibration.sampleCount, 3)
+  assert.equal(calibration.method, 'ntp-min-rtt-monotonic-v1')
+  assert.ok(Number.isFinite(calibration.offsetToMainMs))
+  assert.ok(calibration.minimumRoundTripMs >= 0)
+  await assert.rejects(host.calibrateClock(2), /between 3 and 31/)
 })
 
 test('worker core supports either source in separate runs and rejects dual-source input', () => {

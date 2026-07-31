@@ -1,6 +1,9 @@
 'use strict'
 
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
 const test = require('node:test')
 
 const {
@@ -11,6 +14,19 @@ const {
   MIC_OPERATOR_LIMITATIONS,
   validateI2LiveReport
 } = require('../../scripts/verify-i2-live-report')
+const {
+  serializeI2SeriesSummary,
+  summarizeI2LiveSeries,
+  writeI2SeriesSummaryExclusive
+} = require('../../scripts/summarize-i2-live-series')
+const {
+  EXIT_EVIDENCE_KEYS,
+  buildI2ExactChildExitEvidence,
+  parseArguments: parseExitArguments,
+  serializeI2ExactChildExitEvidence,
+  validateI2ExactChildExitEvidenceBytes,
+  writeI2ExactChildExitEvidenceExclusive
+} = require('../../scripts/write-i2-exact-child-exit')
 
 const MIC_SHA256 = 'a'.repeat(64)
 const SPEAKER_SHA256 = 'b'.repeat(64)
@@ -20,9 +36,13 @@ function clone (value) {
   return structuredClone(value)
 }
 
+function evidenceBytes (value) {
+  return Buffer.from(JSON.stringify(value, null, 2) + '\n')
+}
+
 function makeAcousticReport () {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: 'i2-live-caption-smoke',
     executedAt: '2026-07-31T05:23:47.938Z',
     environment: { electron: '43.2.0', node: '24.18.0' },
@@ -88,6 +108,57 @@ function makeAcousticReport () {
       firstRefinedFromStimulusStartMs: 9200,
       firstFinalAfterStimulusEndMs: 440,
       captionArrivalCount: 3
+    },
+    latencyTrace: {
+      estimatedSpeechOnsetToVadStartFrameAudioHostReceiptMs: 20,
+      vadStartFrameToPartialTriggerFrameAudioHostMs: 40,
+      partialTriggerFrameAudioHostToUtilityIngressMs: 2,
+      partialTriggerUtilityIngressToPublishMs: 30,
+      partialPublishUtilityToMainWorkerHostMs: 5,
+      mainWorkerHostToCoordinatorObserverMs: 3
+    },
+    latencyDiagnostics: {
+      classification: 'diagnostic-only NTP-estimated stages; frozen source-start onset remains authoritative',
+      clockCalibration: {
+        method: 'ntp-min-rtt-monotonic-v1',
+        mainClockId: 'electron-main-performance-v1',
+        sampleCountPerRemote: 7,
+        maximumMinimumRoundTripMs: 50,
+        maximumAgeMs: 30000,
+        playbackRenderer: { method: 'ntp-min-rtt-monotonic-v1', sampleCount: 7, minimumRoundTripMs: 1, uncertaintyMs: 1, ageMs: 1000 },
+        audioHostRenderer: { method: 'ntp-min-rtt-monotonic-v1', sampleCount: 7, minimumRoundTripMs: 2, uncertaintyMs: 1.5, ageMs: 900 },
+        realtimeUtility: { method: 'ntp-min-rtt-monotonic-v1', sampleCount: 7, minimumRoundTripMs: 3, uncertaintyMs: 2, ageMs: 800 }
+      },
+      onsetRule: { sampleRate: 16000, windowMs: 20, thresholdDbfs: -45, consecutiveWindows: 2 },
+      playbackClock: {
+        method: 'get-output-timestamp-projection',
+        baseLatencyMs: 10,
+        outputLatencyMs: 20,
+        validProjectionSampleCount: 3,
+        projectionSpreadMs: 1,
+        estimatedFirstSamplePresentationFromStimulusStartMs: 5,
+        firstPartialFromEstimatedPresentedSpeechOnsetMs: 95
+      },
+      captureOnset: {
+        probeArmedBeforeFrozenSpeechOnsetMs: 135,
+        speechOnsetAudioTimelineMs: 950,
+        speechOnsetFromStimulusStartMs: 150,
+        speechOnsetObservedFromStimulusStartMs: 200,
+        detectionLagMs: 50,
+        detectionFrameSequence: 9,
+        discontinuityCount: 0,
+        invalidSampleCount: 0,
+        speechOnsetMinusFrozenEstimateMs: 10
+      },
+      modelAudio: {
+        vadStartAfterCapturedOnsetMs: 20,
+        audioNeededAfterCapturedOnsetMs: 60
+      },
+      derived: {
+        capturedOnsetToCoordinatorPartialMs: 90,
+        estimatedPresentationToCapturedOnsetMs: 145
+      },
+      acceptanceMetricUnchanged: true
     },
     resources: {
       sampleCount: 80,
@@ -156,11 +227,13 @@ function makeOperatorReport () {
   report.input.selection = 'system-default'
   report.input.matchedLabelHashCount = null
   report.timings.firstPartialFromEstimatedSpeechOnsetMs = null
+  report.latencyTrace = null
+  report.latencyDiagnostics = null
   report.limitations = [...MIC_OPERATOR_LIMITATIONS]
   return report
 }
 
-test('schema v4 accepts only the three explicitly supported source fixtures', () => {
+test('schema v5 accepts only the three explicitly supported source fixtures', () => {
   assert.equal(validateI2LiveReport(makeLoopbackReport(), 'loopback').sourceId, 'loopback')
   assert.equal(validateI2LiveReport(makeAcousticReport(), 'mic').stimulus.kind, 'controlled-physical-speaker-playback')
   assert.equal(validateI2LiveReport(makeOperatorReport(), 'mic').stimulus.kind, 'operator-spoken-prompt')
@@ -172,7 +245,7 @@ test('schema v4 accepts only the three explicitly supported source fixtures', ()
   assert.equal(validateI2LiveReport(amplified, 'mic').signal.peakRms, 1.2, 'Web Audio observations may exceed nominal full scale')
 })
 
-test('schema v4 rejects unknown and sensitive fields recursively', () => {
+test('schema v5 rejects unknown and sensitive fields recursively', () => {
   const mutations = [
     (report) => { report.capturedPcmBase64 = 'AAAA' },
     (report) => { report.transcript = 'secret transcript' },
@@ -191,7 +264,7 @@ test('schema v4 rejects unknown and sensitive fields recursively', () => {
   }
 })
 
-test('schema v4 requires real refinement output and controlled-playback timings', () => {
+test('schema v5 requires real refinement output and controlled-playback timings', () => {
   for (const mutate of [
     (report) => { report.refinement = null },
     (report) => { delete report.refinement },
@@ -207,7 +280,7 @@ test('schema v4 requires real refinement output and controlled-playback timings'
   }
 })
 
-test('schema v4 binds acoustic replay to one preflight microphone and speaker', () => {
+test('schema v5 binds acoustic replay to one preflight microphone and speaker', () => {
   const mutations = [
     (report) => { report.preflight.executedAt = 'not-a-timestamp' },
     (report) => { report.preflight.executedAt = '2026-08-01T00:00:00.000Z' },
@@ -227,7 +300,7 @@ test('schema v4 binds acoustic replay to one preflight microphone and speaker', 
   }
 })
 
-test('schema v4 rejects nonfinite, negative, fractional-count, and coercible numbers', () => {
+test('schema v5 rejects nonfinite, negative, fractional-count, and coercible numbers', () => {
   const mutations = [
     (report) => { report.timings.firstFinalFromStimulusStartMs = Infinity },
     (report) => { report.timings.firstFinalAfterStimulusEndMs = -1 },
@@ -247,7 +320,38 @@ test('schema v4 rejects nonfinite, negative, fractional-count, and coercible num
   }
 })
 
-test('schema v4 fixes the corpus digest, privacy shape, phases, and limitations', () => {
+test('schema v5 makes latency observability exact, telescoping, and diagnostic-only', () => {
+  const mutations = [
+    (report) => { delete report.latencyTrace.partialPublishUtilityToMainWorkerHostMs },
+    (report) => { report.latencyTrace.unknown = 0 },
+    (report) => { report.latencyTrace.partialTriggerFrameAudioHostToUtilityIngressMs = 0.5 },
+    (report) => { report.latencyTrace.partialTriggerUtilityIngressToPublishMs = -1 },
+    (report) => { report.latencyTrace.mainWorkerHostToCoordinatorObserverMs += 1 },
+    (report) => { report.latencyDiagnostics.acceptanceMetricUnchanged = false },
+    (report) => { report.latencyDiagnostics.captureOnset.speechOnsetObservedFromStimulusStartMs += 1 },
+    (report) => { report.latencyDiagnostics.captureOnset.speechOnsetMinusFrozenEstimateMs += 1 },
+    (report) => { report.latencyDiagnostics.derived.capturedOnsetToCoordinatorPartialMs += 1 },
+    (report) => { report.latencyDiagnostics.playbackClock.firstPartialFromEstimatedPresentedSpeechOnsetMs += 1 },
+    (report) => { report.latencyDiagnostics.captureOnset.discontinuityCount = 1 },
+    (report) => { report.latencyDiagnostics.captureOnset.invalidSampleCount = 1 },
+    (report) => { report.latencyDiagnostics.clockCalibration.audioHostRenderer.offsetToMainMs = 10 },
+    (report) => { report.latencyDiagnostics.clockCalibration.realtimeUtility.minimumRoundTripMs = 51 },
+    (report) => { report.latencyDiagnostics.clockCalibration.playbackRenderer.uncertaintyMs = 999 },
+    (report) => { report.latencyDiagnostics.clockCalibration.audioHostRenderer.ageMs = 30001 },
+    (report) => { report.latencyDiagnostics.unknown = true }
+  ]
+  for (const mutate of mutations) {
+    const report = makeAcousticReport()
+    mutate(report)
+    assert.throws(() => validateI2LiveReport(report))
+  }
+
+  const operator = makeOperatorReport()
+  operator.latencyTrace = makeAcousticReport().latencyTrace
+  assert.throws(() => validateI2LiveReport(operator))
+})
+
+test('schema v5 fixes the corpus digest, privacy shape, phases, and limitations', () => {
   const mutations = [
     (report) => { report.stimulus.corpusSha256 = 'd'.repeat(64) },
     (report) => { report.stimulus.referenceSha256 = 'd'.repeat(64) },
@@ -260,5 +364,65 @@ test('schema v4 fixes the corpus digest, privacy shape, phases, and limitations'
     const report = makeAcousticReport()
     mutate(report)
     assert.throws(() => validateI2LiveReport(report))
+  }
+})
+
+test('schema v1 exact-exit sidecars bind five schema v5 children into one schema v6 series', () => {
+  assert.deepEqual(
+    parseExitArguments(['--source', 'loopback', '--report', 'run.json', '--output', 'run.exit.json']),
+    { source: 'loopback', report: 'run.json', output: 'run.exit.json' }
+  )
+  assert.throws(() => parseExitArguments(['--source', 'loopback', '--report', 'run.json']), /--output is required/)
+  assert.throws(() => parseExitArguments([
+    '--source', 'loopback', '--source', 'mic', '--report', 'run.json', '--output', 'run.exit.json'
+  ]), /exactly once/)
+
+  const reports = [...Array(5)].map((_, index) => {
+    const report = makeLoopbackReport()
+    report.executedAt = `2026-07-31T05:23:${String(47 + index).padStart(2, '0')}.938Z`
+    return evidenceBytes(report)
+  })
+  const exits = reports.map((reportBytes) => evidenceBytes(buildI2ExactChildExitEvidence(reportBytes, 'loopback')))
+  const summary = summarizeI2LiveSeries(reports, exits, 'loopback', 5)
+
+  assert.equal(summary.schemaVersion, 6)
+  assert.equal(summary.criteria.everyRunPassedSchema5, true)
+  assert.equal(summary.criteria.everyRunExitedZeroWithoutRunnerTermination, true)
+  assert.equal(summary.runs.length, 5)
+  for (const run of summary.runs) {
+    assert.deepEqual(Object.keys(run), ['ordinal', 'reportSha256', 'report', 'exitEvidenceSha256', 'exitEvidence'])
+    assert.deepEqual(Object.keys(run.exitEvidence), EXIT_EVIDENCE_KEYS)
+    assert.equal(run.exitEvidence.reportSha256, run.reportSha256)
+  }
+
+  const swapped = [...exits]
+  ;[swapped[0], swapped[1]] = [swapped[1], swapped[0]]
+  assert.throws(() => summarizeI2LiveSeries(reports, swapped, 'loopback', 5), /exact child report bytes/)
+  assert.throws(() => summarizeI2LiveSeries(reports, exits.slice(0, 4), 'loopback', 5), /exactly five/)
+  assert.throws(() => summarizeI2LiveSeries(reports, [...exits, exits[0]], 'loopback', 5), /exactly five/)
+
+  const unknown = structuredClone(buildI2ExactChildExitEvidence(reports[0], 'loopback'))
+  unknown.diagnostic = 'private transcript C:\\capture.wav'
+  assert.throws(() => validateI2ExactChildExitEvidenceBytes(evidenceBytes(unknown), 'loopback', reports[0]), /closed schema/)
+
+  const duplicateKey = serializeI2ExactChildExitEvidence(buildI2ExactChildExitEvidence(reports[0], 'loopback'))
+    .replace('"sourceId": ', '"sourceId": "mic",\n  "sourceId": ')
+  assert.throws(() => validateI2ExactChildExitEvidenceBytes(duplicateKey, 'loopback', reports[0]), /duplicate object key/)
+
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'i2-exit-exclusive-'))
+  try {
+    const outputPath = path.join(temporaryDirectory, 'exit.json')
+    const evidence = buildI2ExactChildExitEvidence(reports[0], 'loopback')
+    writeI2ExactChildExitEvidenceExclusive(outputPath, evidence)
+    assert.deepEqual(validateI2ExactChildExitEvidenceBytes(fs.readFileSync(outputPath), 'loopback', reports[0]), evidence)
+    assert.throws(() => writeI2ExactChildExitEvidenceExclusive(outputPath, evidence), /EEXIST/)
+
+    const summaryPath = path.join(temporaryDirectory, 'series.json')
+    const seriesEvidence = { inputs: reports, exitEvidenceInputs: exits, minimumRuns: 5 }
+    writeI2SeriesSummaryExclusive(summaryPath, summary, 'loopback', seriesEvidence)
+    assert.equal(fs.readFileSync(summaryPath, 'utf8'), serializeI2SeriesSummary(summary))
+    assert.throws(() => writeI2SeriesSummaryExclusive(summaryPath, summary, 'loopback', seriesEvidence), /EEXIST/)
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true })
   }
 })

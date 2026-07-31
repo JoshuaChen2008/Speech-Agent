@@ -30,6 +30,7 @@ class SourcePipeline {
     /* B3：段定稿后把整段音频交给精修请求方（realtime-worker 决定是否发给
        refine worker）。null = 不保留段音频（结构模式零额外内存）。 */
     this.onSegmentFinalized = options.onSegmentFinalized || null
+    this.onSegmentStarted = options.onSegmentStarted || null
     /* 恢复游标（B2.0 契约）：replacement worker 的 sequence 从游标续增，
        segmentId 以 attempt 命名空间隔离，旧游标才不会拒绝新事件。 */
     this.sequence = options.sequenceBase || 0
@@ -46,7 +47,9 @@ class SourcePipeline {
       forcedSegmentEnds: 0,
       captionsEmitted: 0,
       refinedEmitted: 0,
-      peakRms: 0
+      peakRms: 0,
+      firstSpeechStartFrameSequence: null,
+      firstSpeechStartAudioTimestampMs: null
     }
   }
 
@@ -141,6 +144,10 @@ class SourcePipeline {
 
     if (!this.segment) {
       if (verdict.event === 'speech-start') {
+        if (this.metricsState.firstSpeechStartFrameSequence === null) {
+          this.metricsState.firstSpeechStartFrameSequence = frame.sequence
+          this.metricsState.firstSpeechStartAudioTimestampMs = Number((frame.timestampSeconds * 1000).toFixed(3))
+        }
         this.segmentOrdinal += 1
         this.metricsState.segmentsDetected += 1
         const opening = [...this.preRoll, frame]
@@ -157,6 +164,16 @@ class SourcePipeline {
           /* 精修需要整段音频；无请求方时不保留（结构模式零额外内存）。
              上限随段而弃：段最长 30s ≈ 1.92MB。 */
           chunks: []
+        }
+        if (this.onSegmentStarted) {
+          try {
+            this.onSegmentStarted({
+              sourceId: this.sourceId,
+              segmentId: this.segment.id,
+              frameSequence: frame.sequence,
+              frameTimestampSeconds: frame.timestampSeconds
+            })
+          } catch { /* observability must not affect recognition */ }
         }
         for (const buffered of opening) {
           this.adapter.acceptFrame(buffered.samples, buffered.timestampSeconds)
@@ -222,6 +239,7 @@ class WorkerCore {
    *   vadFactory?: (sourceId: string) => *,
    *   adapterFactory?: (sourceId: string) => *,
    *   preRollLimit?: number,
+   *   onSegmentStarted?: (info: *) => void,
    *   onSegmentFinalized?: (info: *) => void
    * }} options
    */
@@ -254,6 +272,7 @@ class WorkerCore {
         adapter: adapterFactory(sourceId),
         vad: vadFactory(sourceId),
         preRollLimit: options.preRollLimit,
+        onSegmentStarted: options.onSegmentStarted,
         onSegmentFinalized: options.onSegmentFinalized,
         attempt,
         sequenceBase

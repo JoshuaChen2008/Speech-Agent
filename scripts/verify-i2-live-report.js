@@ -47,11 +47,22 @@ const ROOT_KEYS = Object.freeze([
   'counts',
   'accuracy',
   'timings',
+  'latencyTrace',
+  'latencyDiagnostics',
   'resources',
   'signal',
   'transport',
   'privacy',
   'limitations'
+])
+
+const LATENCY_TRACE_KEYS = Object.freeze([
+  'estimatedSpeechOnsetToVadStartFrameAudioHostReceiptMs',
+  'vadStartFrameToPartialTriggerFrameAudioHostMs',
+  'partialTriggerFrameAudioHostToUtilityIngressMs',
+  'partialTriggerUtilityIngressToPublishMs',
+  'partialPublishUtilityToMainWorkerHostMs',
+  'mainWorkerHostToCoordinatorObserverMs'
 ])
 
 const TRANSPORT_KEYS = Object.freeze([
@@ -335,6 +346,173 @@ function validateTimings (report) {
   assert.equal(report.timings.captionArrivalCount, report.counts.captions)
 }
 
+function assertNullableNonNegativeFinite (value, label) {
+  if (value === null) return
+  assertFiniteNonNegative(value, label)
+}
+
+function validateLatencyObservability (report) {
+  if (report.stimulus.kind === 'operator-spoken-prompt') {
+    assert.equal(report.latencyTrace, null)
+    assert.equal(report.latencyDiagnostics, null)
+    return
+  }
+
+  assertExactKeys(report.latencyTrace, LATENCY_TRACE_KEYS, 'latencyTrace')
+  for (const key of LATENCY_TRACE_KEYS) {
+    assertNonNegativeInteger(report.latencyTrace[key], `latencyTrace.${key}`)
+  }
+  const traceTotal = LATENCY_TRACE_KEYS.reduce((sum, key) => sum + report.latencyTrace[key], 0)
+  assert.equal(
+    traceTotal,
+    report.timings.firstPartialFromEstimatedSpeechOnsetMs,
+    'latency trace must telescope to the unchanged frozen acceptance metric'
+  )
+
+  const diagnostics = report.latencyDiagnostics
+  assertExactKeys(diagnostics, [
+    'classification', 'clockCalibration', 'onsetRule', 'playbackClock', 'captureOnset',
+    'modelAudio', 'derived', 'acceptanceMetricUnchanged'
+  ], 'latencyDiagnostics')
+  assert.equal(diagnostics.classification, 'diagnostic-only NTP-estimated stages; frozen source-start onset remains authoritative')
+  assert.equal(diagnostics.acceptanceMetricUnchanged, true)
+
+  const calibration = diagnostics.clockCalibration
+  assertExactKeys(calibration, [
+    'method', 'mainClockId', 'sampleCountPerRemote',
+    'maximumMinimumRoundTripMs', 'maximumAgeMs',
+    'playbackRenderer', 'audioHostRenderer', 'realtimeUtility'
+  ], 'latencyDiagnostics.clockCalibration')
+  assert.equal(calibration.method, 'ntp-min-rtt-monotonic-v1')
+  assert.equal(calibration.mainClockId, 'electron-main-performance-v1')
+  assert.equal(calibration.sampleCountPerRemote, 7)
+  assert.equal(calibration.maximumMinimumRoundTripMs, 50)
+  assert.equal(calibration.maximumAgeMs, 30000)
+  for (const role of ['playbackRenderer', 'audioHostRenderer', 'realtimeUtility']) {
+    const summary = calibration[role]
+    assertExactKeys(summary, [
+      'method', 'sampleCount', 'minimumRoundTripMs', 'uncertaintyMs', 'ageMs'
+    ], `latencyDiagnostics.clockCalibration.${role}`)
+    assert.equal(summary.method, calibration.method)
+    assert.equal(summary.sampleCount, calibration.sampleCountPerRemote)
+    assertFiniteNonNegative(summary.minimumRoundTripMs, `latencyDiagnostics.clockCalibration.${role}.minimumRoundTripMs`)
+    assert.ok(summary.minimumRoundTripMs <= calibration.maximumMinimumRoundTripMs)
+    assertFiniteNonNegative(summary.uncertaintyMs, `latencyDiagnostics.clockCalibration.${role}.uncertaintyMs`)
+    assert.ok(Math.abs(summary.uncertaintyMs - (summary.minimumRoundTripMs / 2 + 0.5)) <= 0.001)
+    assertFiniteNonNegative(summary.ageMs, `latencyDiagnostics.clockCalibration.${role}.ageMs`)
+    assert.ok(summary.ageMs <= calibration.maximumAgeMs)
+  }
+  assertExactKeys(diagnostics.onsetRule, [
+    'sampleRate', 'windowMs', 'thresholdDbfs', 'consecutiveWindows'
+  ], 'latencyDiagnostics.onsetRule')
+  assert.deepEqual(diagnostics.onsetRule, {
+    sampleRate: 16000,
+    windowMs: 20,
+    thresholdDbfs: -45,
+    consecutiveWindows: 2
+  })
+
+  const playback = diagnostics.playbackClock
+  assertExactKeys(playback, [
+    'method', 'baseLatencyMs', 'outputLatencyMs', 'validProjectionSampleCount',
+    'projectionSpreadMs', 'estimatedFirstSamplePresentationFromStimulusStartMs',
+    'firstPartialFromEstimatedPresentedSpeechOnsetMs'
+  ], 'latencyDiagnostics.playbackClock')
+  assert.ok([
+    'get-output-timestamp-projection', 'unavailable', 'invalid', 'unstable'
+  ].includes(playback.method), 'playback clock method must be fixed')
+  assertNullableNonNegativeFinite(playback.baseLatencyMs, 'latencyDiagnostics.playbackClock.baseLatencyMs')
+  assertNullableNonNegativeFinite(playback.outputLatencyMs, 'latencyDiagnostics.playbackClock.outputLatencyMs')
+  assertNonNegativeInteger(playback.validProjectionSampleCount, 'latencyDiagnostics.playbackClock.validProjectionSampleCount')
+  assert.ok(playback.validProjectionSampleCount <= 3)
+  if (playback.method === 'get-output-timestamp-projection') {
+    assertPositiveInteger(playback.validProjectionSampleCount, 'latencyDiagnostics.playbackClock.validProjectionSampleCount')
+    assertFiniteNonNegative(playback.projectionSpreadMs, 'latencyDiagnostics.playbackClock.projectionSpreadMs')
+    assert.ok(playback.projectionSpreadMs <= 20, 'stable playback projection spread must not exceed 20 ms')
+    assertFiniteInteger(
+      playback.estimatedFirstSamplePresentationFromStimulusStartMs,
+      'latencyDiagnostics.playbackClock.estimatedFirstSamplePresentationFromStimulusStartMs'
+    )
+    assert.ok(playback.estimatedFirstSamplePresentationFromStimulusStartMs >= -20)
+    assertNonNegativeInteger(
+      playback.firstPartialFromEstimatedPresentedSpeechOnsetMs,
+      'latencyDiagnostics.playbackClock.firstPartialFromEstimatedPresentedSpeechOnsetMs'
+    )
+    assert.equal(
+      playback.firstPartialFromEstimatedPresentedSpeechOnsetMs,
+      report.timings.firstPartialFromStimulusStartMs -
+        (playback.estimatedFirstSamplePresentationFromStimulusStartMs + report.stimulus.speechOnsetOffsetMs),
+      'presented-speech partial latency must use the playback projection and frozen corpus onset'
+    )
+  } else {
+    assert.equal(playback.estimatedFirstSamplePresentationFromStimulusStartMs, null)
+    assert.equal(playback.firstPartialFromEstimatedPresentedSpeechOnsetMs, null)
+    if (playback.method === 'unstable') {
+      assertFiniteNonNegative(playback.projectionSpreadMs, 'latencyDiagnostics.playbackClock.projectionSpreadMs')
+      assert.ok(playback.projectionSpreadMs > 20)
+    } else {
+      assert.equal(playback.projectionSpreadMs, null)
+      assert.equal(playback.validProjectionSampleCount, 0)
+    }
+  }
+
+  const capture = diagnostics.captureOnset
+  assertExactKeys(capture, [
+    'probeArmedBeforeFrozenSpeechOnsetMs', 'speechOnsetAudioTimelineMs',
+    'speechOnsetFromStimulusStartMs', 'speechOnsetObservedFromStimulusStartMs',
+    'detectionLagMs', 'detectionFrameSequence', 'discontinuityCount',
+    'invalidSampleCount', 'speechOnsetMinusFrozenEstimateMs'
+  ], 'latencyDiagnostics.captureOnset')
+  assertNonNegativeInteger(capture.probeArmedBeforeFrozenSpeechOnsetMs, 'latencyDiagnostics.captureOnset.probeArmedBeforeFrozenSpeechOnsetMs')
+  assertFiniteNonNegative(capture.speechOnsetAudioTimelineMs, 'latencyDiagnostics.captureOnset.speechOnsetAudioTimelineMs')
+  for (const key of [
+    'speechOnsetFromStimulusStartMs', 'speechOnsetObservedFromStimulusStartMs',
+    'detectionLagMs', 'detectionFrameSequence', 'discontinuityCount', 'invalidSampleCount'
+  ]) assertNonNegativeInteger(capture[key], `latencyDiagnostics.captureOnset.${key}`)
+  assertFiniteInteger(capture.speechOnsetMinusFrozenEstimateMs, 'latencyDiagnostics.captureOnset.speechOnsetMinusFrozenEstimateMs')
+  assert.equal(capture.discontinuityCount, 0)
+  assert.equal(capture.invalidSampleCount, 0)
+  assert.equal(
+    capture.speechOnsetObservedFromStimulusStartMs,
+    capture.speechOnsetFromStimulusStartMs + capture.detectionLagMs
+  )
+  assert.equal(
+    capture.speechOnsetMinusFrozenEstimateMs,
+    capture.speechOnsetFromStimulusStartMs - report.stimulus.speechOnsetOffsetMs
+  )
+
+  assertExactKeys(diagnostics.modelAudio, [
+    'vadStartAfterCapturedOnsetMs', 'audioNeededAfterCapturedOnsetMs'
+  ], 'latencyDiagnostics.modelAudio')
+  assertFiniteNonNegative(diagnostics.modelAudio.vadStartAfterCapturedOnsetMs, 'latencyDiagnostics.modelAudio.vadStartAfterCapturedOnsetMs')
+  assertFiniteNonNegative(diagnostics.modelAudio.audioNeededAfterCapturedOnsetMs, 'latencyDiagnostics.modelAudio.audioNeededAfterCapturedOnsetMs')
+  assert.ok(diagnostics.modelAudio.audioNeededAfterCapturedOnsetMs >= diagnostics.modelAudio.vadStartAfterCapturedOnsetMs)
+
+  assertExactKeys(diagnostics.derived, [
+    'capturedOnsetToCoordinatorPartialMs', 'estimatedPresentationToCapturedOnsetMs'
+  ], 'latencyDiagnostics.derived')
+  assertNonNegativeInteger(
+    diagnostics.derived.capturedOnsetToCoordinatorPartialMs,
+    'latencyDiagnostics.derived.capturedOnsetToCoordinatorPartialMs'
+  )
+  assert.equal(
+    diagnostics.derived.capturedOnsetToCoordinatorPartialMs,
+    report.timings.firstPartialFromStimulusStartMs - capture.speechOnsetFromStimulusStartMs
+  )
+  if (playback.estimatedFirstSamplePresentationFromStimulusStartMs === null) {
+    assert.equal(diagnostics.derived.estimatedPresentationToCapturedOnsetMs, null)
+  } else {
+    assertFiniteInteger(
+      diagnostics.derived.estimatedPresentationToCapturedOnsetMs,
+      'latencyDiagnostics.derived.estimatedPresentationToCapturedOnsetMs'
+    )
+    assert.equal(
+      diagnostics.derived.estimatedPresentationToCapturedOnsetMs,
+      capture.speechOnsetFromStimulusStartMs - playback.estimatedFirstSamplePresentationFromStimulusStartMs
+    )
+  }
+}
+
 function validateResources (resources) {
   assertExactKeys(resources, ['sampleCount', 'cpuPercent', 'workingSetMiB', 'maxProcessCount'], 'resources')
   assertPositiveInteger(resources.sampleCount, 'resources.sampleCount')
@@ -361,7 +539,7 @@ function validateTransport (transport) {
 function validateI2LiveReport (report, expectedSource = null) {
   assertSafeSerializedReport(report)
   assertExactKeys(report, ROOT_KEYS, 'report')
-  assert.equal(report.schemaVersion, 4)
+  assert.equal(report.schemaVersion, 5)
   assert.equal(report.kind, 'i2-live-caption-smoke')
   const reportExecutedAtEpoch = assertIsoTimestamp(report.executedAt, 'executedAt')
   validateEnvironment(report.environment)
@@ -380,6 +558,7 @@ function validateI2LiveReport (report, expectedSource = null) {
   validateStimulusAndBinding(report, reportExecutedAtEpoch)
   validateCountsAndAccuracy(report)
   validateTimings(report)
+  validateLatencyObservability(report)
   validateResources(report.resources)
 
   assertExactKeys(report.signal, ['peakRms'], 'signal')
@@ -467,6 +646,7 @@ module.exports = {
   MIC_ACOUSTIC_LIMITATIONS,
   MIC_OPERATOR_LIMITATIONS,
   ROOT_KEYS,
+  LATENCY_TRACE_KEYS,
   TRANSPORT_KEYS,
   ZERO_TRANSPORT_KEYS,
   assertGate0CBinding,

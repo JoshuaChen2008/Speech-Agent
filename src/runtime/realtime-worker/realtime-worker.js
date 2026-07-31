@@ -11,6 +11,9 @@
 
 const { WorkerCore } = require('./worker-core')
 const { RefinementController } = require('./refinement-controller')
+const { performance } = require('node:perf_hooks')
+
+const UTILITY_CLOCK_ID = 'realtime-utility-performance-v1'
 
 const state = {
   port: null,
@@ -37,6 +40,26 @@ const state = {
   sampleTypeObserved: null
 }
 
+state.timing = new Map()
+state.segmentTiming = new Map()
+state.currentFrameTiming = null
+
+function sourceTiming (sourceId) {
+  let timing = state.timing.get(sourceId)
+  if (!timing) {
+    timing = {
+      firstFrameIngressUtilityClockMs: null,
+      firstPartialPublishUtilityClockMs: null,
+      firstPartialFrameSequence: null,
+      firstPartialFrameAudioEndMs: null,
+      firstPartialFrameAudioHostClockMs: null,
+      firstPartialFrameIngressUtilityClockMs: null
+    }
+    state.timing.set(sourceId, timing)
+  }
+  return timing
+}
+
 /* B3 精修：请求方一侧的有界队列与响应状态机。上限 3——积压即跳过
    （段保持 final），绝不反压实时；CaptionEvent 序号仍由 WorkerCore 分配。 */
 state.refine = new RefinementController({
@@ -56,6 +79,8 @@ function publish (message) {
 }
 
 function reportStats () {
+  const timing = {}
+  for (const [sourceId, values] of state.timing) timing[sourceId] = { ...values }
   publish({
     type: 'stats',
     stats: {
@@ -65,7 +90,8 @@ function reportStats () {
       refine: state.refine.enabled
         ? state.refine.metrics()
         : null,
-      sources: state.core ? state.core.metrics() : {}
+      sources: state.core ? state.core.metrics() : {},
+      timing
     }
   })
 }
@@ -99,6 +125,11 @@ function onPortMessage (message) {
   if (message?.type !== 'frame' || !state.core) return
   const sourceId = String(message.sourceId || '')
   if (!state.config.sourceIds.includes(sourceId)) return
+  const ingressUtilityClockMs = performance.now()
+  const timing = sourceTiming(sourceId)
+  if (timing.firstFrameIngressUtilityClockMs === null) {
+    timing.firstFrameIngressUtilityClockMs = Number(ingressUtilityClockMs.toFixed(3))
+  }
   /* 暂停：不向 recognizer 送帧（v1 语义），但帧仍按「送达即消费」回授 credit。 */
   if (state.refine.paused) {
     const pausedDebt = (state.creditDebt.get(sourceId) || 0) + 1
@@ -127,14 +158,63 @@ function onPortMessage (message) {
     state.sampleTypeObserved = Object.prototype.toString.call(samples)
     samples = new Float32Array(0)
   }
-  const events = state.core.ingestFrame({
+  state.currentFrameTiming = {
     sourceId,
     sequence: message.sequence,
-    timestampSeconds: message.timestampSeconds,
-    sampleCount: message.sampleCount,
-    samples
-  })
-  for (const event of events) publish({ type: 'caption', event })
+    frameAudioHostClockMs: Number.isFinite(message.captureAudioHostClockMs)
+      ? Number(message.captureAudioHostClockMs.toFixed(3))
+      : null,
+    workerIngressUtilityClockMs: Number(ingressUtilityClockMs.toFixed(3))
+  }
+  let events
+  try {
+    events = state.core.ingestFrame({
+      sourceId,
+      sequence: message.sequence,
+      timestampSeconds: message.timestampSeconds,
+      sampleCount: message.sampleCount,
+      samples
+    })
+  } finally {
+    state.currentFrameTiming = null
+  }
+  for (const event of events) {
+    const publishedAtUtilityClockMs = performance.now()
+    if (event.kind === 'partial' && timing.firstPartialPublishUtilityClockMs === null) {
+      timing.firstPartialPublishUtilityClockMs = Number(publishedAtUtilityClockMs.toFixed(3))
+      timing.firstPartialFrameSequence = message.sequence
+      timing.firstPartialFrameAudioEndMs = Number((
+        (message.timestampSeconds + (message.sampleCount / 16000)) * 1000
+      ).toFixed(3))
+      timing.firstPartialFrameAudioHostClockMs = Number.isFinite(message.captureAudioHostClockMs)
+        ? Number(message.captureAudioHostClockMs.toFixed(3))
+        : null
+      timing.firstPartialFrameIngressUtilityClockMs = Number(ingressUtilityClockMs.toFixed(3))
+    }
+    const segmentTiming = state.segmentTiming.get(event.segmentId)
+    const trace = event.kind === 'partial' && segmentTiming &&
+      typeof message.audioHostClockId === 'string' && message.audioHostClockId.length > 0 &&
+      Number.isFinite(message.captureAudioHostClockMs)
+      ? {
+          schemaVersion: 2,
+          sourceId: event.sourceId,
+          segmentId: event.segmentId,
+          sequence: event.sequence,
+          audioHostClockId: message.audioHostClockId,
+          vadStartAudioTimestampMs: segmentTiming.vadStartAudioTimestampMs,
+          vadStartFrameAudioHostClockMs: segmentTiming.vadStartFrameAudioHostClockMs,
+          partialTriggerAudioEndMs: Number((
+            (message.timestampSeconds + (message.sampleCount / 16000)) * 1000
+          ).toFixed(3)),
+          partialTriggerFrameAudioHostClockMs: Number(message.captureAudioHostClockMs.toFixed(3)),
+          utilityClockId: UTILITY_CLOCK_ID,
+          partialTriggerUtilityIngressClockMs: Number(ingressUtilityClockMs.toFixed(3)),
+          partialPublishUtilityClockMs: Number(publishedAtUtilityClockMs.toFixed(3))
+        }
+      : null
+    publish({ type: 'caption', event, timing: trace })
+    if (event.kind === 'final') state.segmentTiming.delete(event.segmentId)
+  }
 
   const debt = (state.creditDebt.get(sourceId) || 0) + 1
   if (debt >= state.config.creditBatch) {
@@ -177,7 +257,17 @@ function shutdown () {
 
 process.parentPort.on('message', (event) => {
   const message = event.data
-  if (message?.type === 'shutdown') {
+  if (message?.type === 'clock-probe') {
+    const r1 = performance.now()
+    const r2 = performance.now()
+    publish({
+      type: 'clock-probe-result',
+      probeId: message.probeId,
+      clockId: UTILITY_CLOCK_ID,
+      r1,
+      r2
+    })
+  } else if (message?.type === 'shutdown') {
     shutdown()
   } else if (state.shuttingDown) {
     return
@@ -227,6 +317,16 @@ process.parentPort.on('message', (event) => {
         vadOptions: config.vadOptions,
         vadFactory,
         preRollLimit,
+        onSegmentStarted: (info) => {
+          const current = state.currentFrameTiming
+          if (!current || current.sourceId !== info.sourceId || current.sequence !== info.frameSequence) return
+          if (!Number.isFinite(current.frameAudioHostClockMs)) return
+          state.segmentTiming.set(info.segmentId, {
+            vadStartAudioTimestampMs: Number((info.frameTimestampSeconds * 1000).toFixed(3)),
+            vadStartFrameAudioHostClockMs: current.frameAudioHostClockMs,
+            vadStartUtilityIngressClockMs: current.workerIngressUtilityClockMs
+          })
+        },
         onSegmentFinalized: state.refine.enabled ? (info) => state.refine.request(info) : undefined,
         attempt: config.attempt,
         sequenceBases: config.sequenceBases

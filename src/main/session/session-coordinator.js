@@ -735,7 +735,8 @@ class SessionCoordinator {
       throw new TypeError('adapter.onCaption is required')
     }
     const unsubscribers = [adapter.onCaption((event) => {
-      if (adapter === this.adapter) this.acceptCaption(event)
+      if (adapter !== this.adapter) return false
+      return this.acceptCaption(event)
     })]
     /* B2 缺口关闭（handoff §12.4）：adapter 可选提供 onError——worker/host
        在会话进行中自行崩溃时主动把 coordinator 推入 error（retry 走既有

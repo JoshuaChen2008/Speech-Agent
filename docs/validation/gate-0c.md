@@ -8,7 +8,7 @@
 
 ## 当前权威预检
 
-I2 schema v4 bundle 绑定的精确 Gate 0C 报告是 [`i2-live-v4/gate-0c-preflight.json`](i2-live-v4/gate-0c-preflight.json)，SHA-256 为 `43e97770e3508c88ff5843df2c897825f7e8b717bc1010fccb750c5beb2d1f0b`。该轮在内存中分别验证：
+退出绑定 I2 权威证据所绑定的精确 Gate 0C 报告是 [`i2-live-v5/gate-0c-preflight.json`](i2-live-v5/gate-0c-preflight.json)，SHA-256 为 `0f9f7668751c64fbce922883421ead41680226126800e0b7f6b3da81b39840ef`，run ID 为 `gate-0c-2026-07-31T09-52-00-521Z`，执行时间为 `2026-07-31T09:52:13.999Z`。该轮在内存中分别验证：
 
 - hidden audio host 的 `getDisplayMedia` loopback、真实 `userGesture` 记录和 AudioWorklet 48 kHz→16 kHz mono 分帧；
 - 以标签启发式选出的 `physical-preferred` mic 输入有非 DC 信号，并通过匿名 label SHA-256 供同轮 I2 fixture 绑定；

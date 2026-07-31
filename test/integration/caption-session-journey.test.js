@@ -22,6 +22,8 @@ const { FakeRuntimeAdapter } = require('../../src/main/session/fake-runtime-adap
 const { SessionCoordinator } = require('../../src/main/session/session-coordinator')
 const { ConfigStore } = require('../../src/main/services/config-store')
 const { RealtimeRuntimeAdapter } = require('../../src/runtime/realtime-runtime-adapter')
+const { AudioHostController } = require('../../src/runtime/audio-host/audio-host-controller')
+const { RealtimeWorkerHost, sanitizeCaptionTiming } = require('../../src/runtime/realtime-worker/worker-host')
 
 const DEV_RUNTIME = resolveRuntimeOptions({ LIVE_SUBTITLE_DEV_MODEL: DEV_MODEL_VALUE })
 
@@ -69,6 +71,10 @@ function simulatedElectronRuntime () {
         child.workerPath = workerPath
         child.messages = []
         child.killed = false
+        /* Test-only utility IPC ingress. This deliberately enters through the
+           production child.on('message') listener installed by
+           RealtimeWorkerHost; it is not an adapter/coordinator caption fake. */
+        child.emitUtilityMessage = (message) => child.emit('message', message)
         child.postMessage = (message, ports = []) => {
           child.messages.push({ message, ports })
           if (message?.type === 'configure') {
@@ -169,6 +175,23 @@ function caption (sessionId, sourceId, overrides) {
     text: '正在识别',
     translation: null,
     ...overrides
+  }
+}
+
+function captionTiming (event, base) {
+  return {
+    schemaVersion: 2,
+    sourceId: event.sourceId,
+    segmentId: event.segmentId,
+    sequence: event.sequence,
+    audioHostClockId: 'audio-host-performance-v1',
+    vadStartAudioTimestampMs: base,
+    vadStartFrameAudioHostClockMs: base + 10,
+    partialTriggerAudioEndMs: base + 300,
+    partialTriggerFrameAudioHostClockMs: base + 310,
+    utilityClockId: 'realtime-utility-performance-v1',
+    partialTriggerUtilityIngressClockMs: base + 320,
+    partialPublishUtilityClockMs: base + 340
   }
 }
 
@@ -389,6 +412,125 @@ test('CI journey J4/J12: source switch requires stop, creates a new isolated tex
     ].sort()
   )
   assert.deepEqual(audioFilesUnder(directory), [], '配置切换和两次持久化后仍不得出现音频文件')
+})
+
+test('CI journey I2: production runtime composition retains timing only for the Coordinator-accepted partial', async (t) => {
+  const runtimeBoundary = simulatedElectronRuntime()
+  const adapter = new RealtimeRuntimeAdapter({ electron: runtimeBoundary.electron })
+  const coordinator = new SessionCoordinator({
+    adapter,
+    runtimeOptions: DEV_RUNTIME,
+    configuration: { onboardingCompleted: true, onboardingPreset: 'meeting', mic: false, loopback: true },
+    idFactory: () => 'ci-timing-session'
+  })
+  const observed = []
+  const unsubscribe = coordinator.onCaption((event) => observed.push(event))
+  t.after(async () => {
+    unsubscribe()
+    await coordinator.dispose()
+  })
+
+  assert.equal((await coordinator.command('start')).ok, true)
+  const sessionId = coordinator.getSnapshot().sessionId
+  const child = runtimeBoundary.children[0]
+
+  /* The simulated boundary is intentionally limited to Electron's renderer,
+     physical capture and native inference. The controllers, MessagePort
+     composition, utility message validation/dispatch, adapter and Coordinator
+     acceptance path below are all production implementations. Real
+     PCM -> native ASR remains covered by the tracked machine evidence. */
+  assert.ok(adapter.session.host instanceof AudioHostController)
+  assert.ok(adapter.session.worker instanceof RealtimeWorkerHost)
+  assert.deepEqual(child.configuration.sourceIds, ['loopback'])
+  assert.deepEqual(runtimeBoundary.captureStarts, [{
+    sessionId,
+    sourceIds: ['loopback'],
+    maxQueueMs: 2000,
+    micLabelSha256: null
+  }])
+  assert.equal(runtimeBoundary.pcmTransfers.length, 1)
+  assert.equal(runtimeBoundary.pcmTransfers[0].payload.sessionId, sessionId)
+  assert.deepEqual(runtimeBoundary.pcmTransfers[0].ports.map((port) => port.id), ['pcm-host-1'])
+  const workerPcmTransfer = child.messages.find(({ message }) => message?.type === 'pcm-port')
+  assert.ok(workerPcmTransfer, 'RealtimeWorkerHost must transfer the other MessagePort endpoint')
+  assert.deepEqual(workerPcmTransfer.ports.map((port) => port.id), ['pcm-worker-1'])
+
+  const rejected = caption('ci-other-session', 'loopback', {
+    segmentId: 'segment-rejected-by-coordinator',
+    sequence: 1,
+    revision: 1,
+    kind: 'partial',
+    text: 'private rejected caption text'
+  })
+  const accepted = caption(sessionId, 'loopback', {
+    segmentId: 'segment-accepted-by-coordinator',
+    sequence: 1,
+    revision: 1,
+    kind: 'partial',
+    text: 'private accepted caption text'
+  })
+  const rejectedTiming = captionTiming(rejected, 1000)
+  const acceptedTiming = captionTiming(accepted, 3000)
+  assert.ok(sanitizeCaptionTiming(rejectedTiming, rejected, 2000),
+    'the first timing payload must be contract-valid before Coordinator rejects its session')
+  assert.ok(sanitizeCaptionTiming(acceptedTiming, accepted, 4000),
+    'the accepted timing payload must pass the same utility boundary contract')
+  const privateEnvelopeFields = {
+    deviceName: 'Private USB Headset',
+    localPath: 'C:\\private-audio-file.wav',
+    pcm: new Float32Array([0.1234567, -0.7654321])
+  }
+
+  child.emitUtilityMessage({
+    type: 'caption',
+    event: rejected,
+    timing: rejectedTiming,
+    ...privateEnvelopeFields
+  })
+  assert.deepEqual(observed, [], 'contract-valid captions can still be rejected by Coordinator session semantics')
+  assert.equal(adapter.session.acceptedCaptionTimings.length, 0)
+  assert.equal(adapter.session.worker.captionTimings.size, 0,
+    'timing for a Coordinator-rejected caption must be consumed instead of leaking into a later key reuse')
+
+  child.emitUtilityMessage({
+    type: 'caption',
+    event: accepted,
+    timing: acceptedTiming,
+    ...privateEnvelopeFields
+  })
+  assert.deepEqual(observed, [accepted])
+  assert.equal((await coordinator.command('stop')).ok, true)
+
+  const diagnostics = adapter.getLastRunDiagnostics()
+  assert.equal(diagnostics.droppedCaptionCount, 0, 'both partial events were valid at the utility contract boundary')
+  assert.deepEqual(Object.keys(diagnostics.workerHost), ['acceptedCaptionTimings'],
+    'diagnostics must expose no pre-Coordinator caption-arrival side channel')
+  assert.equal(diagnostics.workerHost.acceptedCaptionTimings.length, 1)
+  const recorded = diagnostics.workerHost.acceptedCaptionTimings[0]
+  const {
+    workerHostMainClockMs,
+    coordinatorAcceptedReturnMainClockMs,
+    ...stableTiming
+  } = recorded
+  assert.ok(Number.isFinite(workerHostMainClockMs))
+  assert.ok(Number.isFinite(coordinatorAcceptedReturnMainClockMs))
+  assert.deepEqual(stableTiming, {
+    ...acceptedTiming,
+    mainClockId: 'electron-main-performance-v1'
+  }, 'diagnostics must retain the exact accepted source/segment/sequence timing and no rejected timing')
+
+  const serializedDiagnostics = JSON.stringify(diagnostics)
+  for (const forbiddenValue of [
+    rejected.text,
+    accepted.text,
+    'Private USB Headset',
+    'private-audio-file.wav'
+  ]) {
+    assert.equal(serializedDiagnostics.includes(forbiddenValue), false,
+      `diagnostics must not retain private value: ${forbiddenValue}`)
+  }
+  assert.doesNotMatch(serializedDiagnostics, /"(?:pcm|samples|deviceName|devicePath|localPath)"\s*:/i,
+    'diagnostics must not retain PCM, device-name or local-path fields from the utility envelope')
 })
 
 test('CI journey J5/J6/J12: pause-refine and worker recovery preserve one durable session', async (t) => {

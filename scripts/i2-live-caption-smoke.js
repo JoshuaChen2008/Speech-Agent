@@ -29,6 +29,13 @@ const path = require('node:path')
 const { app, BrowserWindow, session } = require('electron')
 const { SessionCoordinator } = require('../src/main/session/session-coordinator')
 const { RealtimeRuntimeAdapter } = require('../src/runtime/realtime-runtime-adapter')
+const {
+  CALIBRATION_METHOD,
+  MAIN_CLOCK_ID,
+  normalizeRemoteClockMs,
+  selectClockCalibration,
+  summarizeClockCalibration
+} = require('../src/runtime/clock-calibration')
 const { resolveApprovedRealtimeModel, resolveApprovedRefinementModel, resolveSileroVadModel } = require('../src/main/services/model-resolver')
 const { characterErrorRate, percentile } = require('./gate-0b/metrics')
 const { validateGate0CMetricsReport } = require('./gate-0c/verify-report')
@@ -40,6 +47,14 @@ const REFERENCE_CASE = require('./gate-0b/corpus.json').cases.find((item) => ite
 const REFERENCE = REFERENCE_CASE.reference
 const REFERENCE_SHA256 = crypto.createHash('sha256').update(REFERENCE, 'utf8').digest('hex')
 const CER_LIMIT = 0.3
+const FROZEN_SPEECH_ONSET_OFFSET_MS = 140
+const PLAYBACK_CLOCK_ID = 'playback-renderer-performance-v1'
+const AUDIO_HOST_CLOCK_ID = 'audio-host-performance-v1'
+const UTILITY_CLOCK_ID = 'realtime-utility-performance-v1'
+const CLOCK_CALIBRATION_SAMPLES = 7
+const CLOCK_CALIBRATION_MAX_RTT_MS = 50
+const CLOCK_CALIBRATION_MAX_AGE_MS = 30000
+const PLAYBACK_SCHEDULE_LEAD_MS = 500
 
 function parseArguments (argv) {
   const options = {
@@ -94,7 +109,7 @@ function buildFailureReport ({ sourceId, phases }) {
   const safePhases = new Set(['idle', 'starting', 'listening', 'pausing', 'paused', 'resuming', 'stopping', 'error'])
   if (!['loopback', 'mic'].includes(sourceId)) throw new TypeError('failure report sourceId must be loopback or mic')
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: 'i2-live-caption-smoke-failure',
     sourceId,
     result: 'error',
@@ -105,6 +120,254 @@ function buildFailureReport ({ sourceId, phases }) {
       reportContainsTranscriptText: false,
       reportContainsAudioPath: false,
       reportContainsDiagnosticText: false
+    }
+  }
+}
+
+function mainClockNowMs () {
+  return performance.now()
+}
+
+function buildLatencyObservability ({
+  playback,
+  diagnostics,
+  sourceId,
+  stimulusStartedAtMainClockMs,
+  firstPartialArrival
+}) {
+  const incomplete = (failureCode) => ({ latencyTrace: null, latencyDiagnostics: null, failureCode })
+  if (!playback) return { latencyTrace: null, latencyDiagnostics: null, failureCode: null }
+  if (!firstPartialArrival || !Number.isFinite(stimulusStartedAtMainClockMs) ||
+      !Number.isFinite(firstPartialArrival.arrivedAtMainClockMs)) {
+    return incomplete('latency-observability-caption-missing')
+  }
+  const accepted = diagnostics?.workerHost?.acceptedCaptionTimings?.find((item) =>
+    item?.sourceId === firstPartialArrival.sourceId &&
+    item?.segmentId === firstPartialArrival.segmentId &&
+    item?.sequence === firstPartialArrival.sequence)
+  const capture = diagnostics?.capture?.[sourceId]
+  const clock = playback.timing
+  const audioHostCalibration = diagnostics?.timingCalibrations?.audioHost
+  const utilityCalibration = diagnostics?.timingCalibrations?.utility
+  const playbackCalibration = playback.clockCalibration
+  if (!accepted) return incomplete('latency-observability-accepted-event-missing')
+  if (!capture) return incomplete('latency-observability-capture-missing')
+  if (!clock) return incomplete('latency-observability-playback-clock-missing')
+  if (!audioHostCalibration || !utilityCalibration || !playbackCalibration) {
+    return incomplete('latency-observability-clock-calibration-missing')
+  }
+  if (playbackCalibration.clockId !== PLAYBACK_CLOCK_ID) {
+    return incomplete('latency-observability-clock-domain-mismatch')
+  }
+
+  let calibrationSummaries
+  try {
+    calibrationSummaries = {
+      playbackRenderer: summarizeClockCalibration(
+        playbackCalibration,
+        firstPartialArrival.arrivedAtMainClockMs
+      ),
+      audioHostRenderer: summarizeClockCalibration(
+        audioHostCalibration,
+        firstPartialArrival.arrivedAtMainClockMs
+      ),
+      realtimeUtility: summarizeClockCalibration(
+        utilityCalibration,
+        firstPartialArrival.arrivedAtMainClockMs
+      )
+    }
+  } catch {
+    return incomplete('latency-observability-clock-calibration-invalid')
+  }
+  for (const summary of Object.values(calibrationSummaries)) {
+    if (summary.method !== CALIBRATION_METHOD || summary.sampleCount !== CLOCK_CALIBRATION_SAMPLES ||
+        summary.minimumRoundTripMs > CLOCK_CALIBRATION_MAX_RTT_MS ||
+        summary.ageMs > CLOCK_CALIBRATION_MAX_AGE_MS) {
+      return incomplete('latency-observability-clock-calibration-stale')
+    }
+  }
+
+  if (accepted.audioHostClockId !== AUDIO_HOST_CLOCK_ID ||
+      accepted.utilityClockId !== UTILITY_CLOCK_ID ||
+      accepted.mainClockId !== MAIN_CLOCK_ID) {
+    return incomplete('latency-observability-clock-domain-mismatch')
+  }
+
+  let normalized
+  try {
+    normalized = {
+      vadStartFrame: normalizeRemoteClockMs(
+        accepted.vadStartFrameAudioHostClockMs,
+        audioHostCalibration,
+        AUDIO_HOST_CLOCK_ID
+      ),
+      partialTriggerFrame: normalizeRemoteClockMs(
+        accepted.partialTriggerFrameAudioHostClockMs,
+        audioHostCalibration,
+        AUDIO_HOST_CLOCK_ID
+      ),
+      utilityIngress: normalizeRemoteClockMs(
+        accepted.partialTriggerUtilityIngressClockMs,
+        utilityCalibration,
+        UTILITY_CLOCK_ID
+      ),
+      utilityPublish: normalizeRemoteClockMs(
+        accepted.partialPublishUtilityClockMs,
+        utilityCalibration,
+        UTILITY_CLOCK_ID
+      ),
+      workerHost: accepted.workerHostMainClockMs,
+      coordinatorObserver: firstPartialArrival.arrivedAtMainClockMs,
+      acceptedReturn: accepted.coordinatorAcceptedReturnMainClockMs,
+      probeArmed: normalizeRemoteClockMs(
+        capture.timingProbeArmedAudioHostClockMs,
+        audioHostCalibration,
+        AUDIO_HOST_CLOCK_ID
+      ),
+      capturedOnset: normalizeRemoteClockMs(
+        capture.timingSpeechOnsetEstimatedAudioHostClockMs,
+        audioHostCalibration,
+        AUDIO_HOST_CLOCK_ID
+      ),
+      capturedOnsetObserved: normalizeRemoteClockMs(
+        capture.timingSpeechOnsetObservedAudioHostClockMs,
+        audioHostCalibration,
+        AUDIO_HOST_CLOCK_ID
+      )
+    }
+  } catch {
+    return incomplete('latency-observability-clock-normalization-invalid')
+  }
+
+  const rawCheckpoints = [
+    stimulusStartedAtMainClockMs + FROZEN_SPEECH_ONSET_OFFSET_MS,
+    normalized.vadStartFrame,
+    normalized.partialTriggerFrame,
+    normalized.utilityIngress,
+    normalized.utilityPublish,
+    normalized.workerHost,
+    normalized.coordinatorObserver
+  ]
+  if (!rawCheckpoints.every((value) => Number.isFinite(value) && value >= 0)) {
+    return incomplete('latency-observability-checkpoint-invalid')
+  }
+  for (let index = 1; index < rawCheckpoints.length; index += 1) {
+    if (rawCheckpoints[index] < rawCheckpoints[index - 1]) {
+      return incomplete(`latency-observability-calibrated-order-${index}`)
+    }
+  }
+  if (!Number.isFinite(normalized.acceptedReturn) ||
+      normalized.acceptedReturn < normalized.coordinatorObserver) {
+    return incomplete('latency-observability-acceptance-order')
+  }
+  const checkpoints = rawCheckpoints.map((value) => Math.round(value))
+
+  const captureValues = [
+    capture.timingSpeechOnsetFrameSequence,
+    capture.timingProbeDiscontinuities,
+    capture.timingProbeInvalidSamples
+  ]
+  if (!captureValues.every((value) => Number.isSafeInteger(value))) {
+    return incomplete('latency-observability-capture-scalar-invalid')
+  }
+  if (!Number.isFinite(capture.timingSpeechOnsetAudioMs) || capture.timingSpeechOnsetAudioMs < 0) {
+    return incomplete('latency-observability-capture-audio-invalid')
+  }
+  const frozenSpeechOnsetMainClockMs = stimulusStartedAtMainClockMs + FROZEN_SPEECH_ONSET_OFFSET_MS
+  if (normalized.probeArmed > frozenSpeechOnsetMainClockMs) {
+    return incomplete('latency-observability-probe-armed-after-frozen-onset')
+  }
+  if (normalized.capturedOnset < stimulusStartedAtMainClockMs) {
+    return incomplete('latency-observability-captured-onset-before-stimulus')
+  }
+  if (normalized.capturedOnsetObserved < normalized.capturedOnset) {
+    return incomplete('latency-observability-capture-observed-before-onset')
+  }
+  if (capture.timingProbeDiscontinuities !== 0) {
+    return incomplete('latency-observability-capture-discontinuity')
+  }
+  if (capture.timingProbeInvalidSamples !== 0) {
+    return incomplete('latency-observability-capture-invalid-sample')
+  }
+  if (!Number.isFinite(accepted.vadStartAudioTimestampMs) ||
+      !Number.isFinite(accepted.partialTriggerAudioEndMs) ||
+      accepted.vadStartAudioTimestampMs < capture.timingSpeechOnsetAudioMs ||
+      accepted.partialTriggerAudioEndMs < accepted.vadStartAudioTimestampMs) {
+    return incomplete('latency-observability-model-audio-order')
+  }
+
+  const presentationMainClockMs = Number.isFinite(clock.estimatedFirstSamplePresentationMainClockMs)
+    ? clock.estimatedFirstSamplePresentationMainClockMs
+    : null
+  const stimulusStartRounded = Math.round(stimulusStartedAtMainClockMs)
+  const coordinatorRounded = Math.round(normalized.coordinatorObserver)
+  const capturedOnsetRounded = Math.round(normalized.capturedOnset)
+  const capturedOnsetObservedRounded = Math.round(normalized.capturedOnsetObserved)
+  const probeArmedRounded = Math.round(normalized.probeArmed)
+  const presentationRounded = presentationMainClockMs === null ? null : Math.round(presentationMainClockMs)
+  const playbackClock = {
+    method: clock.method,
+    baseLatencyMs: clock.baseLatencyMs,
+    outputLatencyMs: clock.outputLatencyMs,
+    validProjectionSampleCount: clock.validProjectionSampleCount,
+    projectionSpreadMs: clock.projectionSpreadMs,
+    estimatedFirstSamplePresentationFromStimulusStartMs: presentationRounded === null
+      ? null
+      : presentationRounded - stimulusStartRounded,
+    firstPartialFromEstimatedPresentedSpeechOnsetMs: presentationRounded === null
+      ? null
+      : coordinatorRounded - (presentationRounded + FROZEN_SPEECH_ONSET_OFFSET_MS)
+  }
+
+  return {
+    failureCode: null,
+    latencyTrace: {
+      estimatedSpeechOnsetToVadStartFrameAudioHostReceiptMs: checkpoints[1] - checkpoints[0],
+      vadStartFrameToPartialTriggerFrameAudioHostMs: checkpoints[2] - checkpoints[1],
+      partialTriggerFrameAudioHostToUtilityIngressMs: checkpoints[3] - checkpoints[2],
+      partialTriggerUtilityIngressToPublishMs: checkpoints[4] - checkpoints[3],
+      partialPublishUtilityToMainWorkerHostMs: checkpoints[5] - checkpoints[4],
+      mainWorkerHostToCoordinatorObserverMs: checkpoints[6] - checkpoints[5]
+    },
+    latencyDiagnostics: {
+      classification: 'diagnostic-only NTP-estimated stages; frozen source-start onset remains authoritative',
+      clockCalibration: {
+        method: CALIBRATION_METHOD,
+        mainClockId: MAIN_CLOCK_ID,
+        sampleCountPerRemote: CLOCK_CALIBRATION_SAMPLES,
+        maximumMinimumRoundTripMs: CLOCK_CALIBRATION_MAX_RTT_MS,
+        maximumAgeMs: CLOCK_CALIBRATION_MAX_AGE_MS,
+        ...calibrationSummaries
+      },
+      onsetRule: {
+        sampleRate: 16000,
+        windowMs: 20,
+        thresholdDbfs: -45,
+        consecutiveWindows: 2
+      },
+      playbackClock,
+      captureOnset: {
+        probeArmedBeforeFrozenSpeechOnsetMs: checkpoints[0] - probeArmedRounded,
+        speechOnsetAudioTimelineMs: capture.timingSpeechOnsetAudioMs,
+        speechOnsetFromStimulusStartMs: capturedOnsetRounded - stimulusStartRounded,
+        speechOnsetObservedFromStimulusStartMs: capturedOnsetObservedRounded - stimulusStartRounded,
+        detectionLagMs: capturedOnsetObservedRounded - capturedOnsetRounded,
+        detectionFrameSequence: capture.timingSpeechOnsetFrameSequence,
+        discontinuityCount: capture.timingProbeDiscontinuities,
+        invalidSampleCount: capture.timingProbeInvalidSamples,
+        speechOnsetMinusFrozenEstimateMs: capturedOnsetRounded - checkpoints[0]
+      },
+      modelAudio: {
+        vadStartAfterCapturedOnsetMs: Number((accepted.vadStartAudioTimestampMs - capture.timingSpeechOnsetAudioMs).toFixed(3)),
+        audioNeededAfterCapturedOnsetMs: Number((accepted.partialTriggerAudioEndMs - capture.timingSpeechOnsetAudioMs).toFixed(3))
+      },
+      derived: {
+        capturedOnsetToCoordinatorPartialMs: coordinatorRounded - capturedOnsetRounded,
+        estimatedPresentationToCapturedOnsetMs: presentationRounded === null
+          ? null
+          : capturedOnsetRounded - presentationRounded
+      },
+      acceptanceMetricUnchanged: true
     }
   }
 }
@@ -198,13 +461,15 @@ function buildReport ({
   timings,
   resources,
   peakRms,
-  diagnostics
+  diagnostics,
+  latencyTrace,
+  latencyDiagnostics
 }) {
   const capture = diagnostics?.capture?.[sourceId] || {}
   const worker = diagnostics?.worker || {}
   const source = worker.sources?.[sourceId] || {}
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: 'i2-live-caption-smoke',
     executedAt,
     environment,
@@ -221,6 +486,8 @@ function buildReport ({
     counts,
     accuracy,
     timings,
+    latencyTrace,
+    latencyDiagnostics,
     resources,
     signal: { peakRms },
     transport: {
@@ -325,7 +592,48 @@ function readPcm16MonoWav (filePath) {
   }
 }
 
-async function playWave (wave, outputMode = 'default', expectedOutputLabelSha256 = null) {
+async function calibratePlaybackClock (window) {
+  const samples = []
+  for (let index = 0; index < CLOCK_CALIBRATION_SAMPLES; index += 1) {
+    const mainSentClockMs = mainClockNowMs()
+    const remote = await window.webContents.executeJavaScript('globalThis.readPlaybackClockProbe()', true)
+    const mainReceivedClockMs = mainClockNowMs()
+    samples.push({
+      mainSentClockMs,
+      remoteReceivedClockMs: remote?.remoteReceivedClockMs,
+      remoteSentClockMs: remote?.remoteSentClockMs,
+      mainReceivedClockMs,
+      clockId: remote?.clockId
+    })
+  }
+  return selectClockCalibration(samples, PLAYBACK_CLOCK_ID, mainClockNowMs())
+}
+
+async function startPreparedPlaybackAfterProbe (window, clockCalibration, beforeStart = null) {
+  if (beforeStart !== null && typeof beforeStart !== 'function') {
+    throw new TypeError('beforeStart must be a function or null')
+  }
+  if (!Number.isFinite(clockCalibration?.offsetToMainMs)) {
+    throw new TypeError('playback clock calibration is required')
+  }
+  /* Both remote clocks are already calibrated. Reserve a future source t0,
+     arm the capture probe with that exact floor, then schedule playback at
+     the same cross-clock instant. Pre-source ambient audio is ignored and a
+     delayed IPC cannot consume the corpus's fixed 140 ms onset budget. */
+  const scheduledSourceStartMainClockMs = mainClockNowMs() + PLAYBACK_SCHEDULE_LEAD_MS
+  if (beforeStart) await beforeStart(scheduledSourceStartMainClockMs)
+  const scheduledSourceStartClockMs = scheduledSourceStartMainClockMs - clockCalibration.offsetToMainMs
+  const invocation = { notBeforeClockMs: scheduledSourceStartClockMs }
+  return window.webContents.executeJavaScript(
+    `globalThis.startPreparedPcm16(${JSON.stringify(invocation)})`, true)
+}
+
+async function playWave (
+  wave,
+  outputMode = 'default',
+  expectedOutputLabelSha256 = null,
+  beforeStart = null
+) {
   const partition = `i2-playback-${process.pid}-${Date.now()}`
   const playbackSession = session.fromPartition(partition, { cache: false })
   const window = new BrowserWindow({
@@ -348,10 +656,38 @@ async function playWave (wave, outputMode = 'default', expectedOutputLabelSha256
     await window.loadFile(path.join(__dirname, 'i2-live-caption-player.html'))
     window.showInactive()
     window.webContents.setAudioMuted(false)
-    return await window.webContents.executeJavaScript(
-      `globalThis.playPcm16(${JSON.stringify({ pcm16Base64: wave.pcm16Base64, sampleRate: wave.sampleRate, outputMode, expectedOutputLabelSha256 })})`,
+    const invocation = { pcm16Base64: wave.pcm16Base64, sampleRate: wave.sampleRate, outputMode, expectedOutputLabelSha256 }
+    const prepared = await window.webContents.executeJavaScript(
+      `globalThis.preparePcm16(${JSON.stringify(invocation)})`,
       true
     )
+    if (prepared?.prepared !== true) throw new Error('controlled playback did not prepare')
+    const clockCalibration = await calibratePlaybackClock(window)
+    const normalize = (value) => value === null
+      ? null
+      : normalizeRemoteClockMs(value, clockCalibration, PLAYBACK_CLOCK_ID)
+    const started = await startPreparedPlaybackAfterProbe(window, clockCalibration, async (sourceStartMainClockMs) => {
+      if (beforeStart) await beforeStart(sourceStartMainClockMs)
+    })
+    if (started?.started !== true || started?.clockId !== PLAYBACK_CLOCK_ID) {
+      throw new Error('playback did not start in the calibrated clock domain')
+    }
+    const sourceStartMainClockMs = normalize(started.sourceStartClockMs)
+    const playback = await window.webContents.executeJavaScript('globalThis.finishPreparedPcm16()', true)
+    return {
+      ...playback,
+      clockId: started.clockId,
+      sourceStartMainClockMs,
+      endedAtMainClockMs: normalize(playback.endedAtClockMs),
+      clockCalibration,
+      timing: {
+        ...playback.timing,
+        estimatedFirstSamplePresentationMainClockMs:
+          normalize(playback.timing?.estimatedFirstSamplePresentationClockMs ?? null),
+        estimatedLastSamplePresentationMainClockMs:
+          normalize(playback.timing?.estimatedLastSamplePresentationClockMs ?? null)
+      }
+    }
   } finally {
     window.destroy()
   }
@@ -454,7 +790,13 @@ async function main () {
     coordinator.onSnapshot((snapshot) => phases.push(snapshot.phase))
     coordinator.onCaption((event) => {
       captions.push(event)
-      captionArrivals.push({ kind: event.kind, segmentId: event.segmentId, arrivedAtMs: Date.now() })
+      captionArrivals.push({
+        kind: event.kind,
+        sourceId: event.sourceId,
+        segmentId: event.segmentId,
+        sequence: event.sequence,
+        arrivedAtMainClockMs: mainClockNowMs()
+      })
     })
 
     resourceSampler = startResourceSampler()
@@ -463,22 +805,34 @@ async function main () {
     expect(coordinator.getSnapshot().phase === 'listening', 'listening-phase-not-reached')
     await delay(800)
 
-    let stimulusStartedAtMs = Date.now()
-    let stimulusEndedAtMs = null
+    let stimulusStartedAtMainClockMs = mainClockNowMs()
+    let stimulusEndedAtMainClockMs = null
     let playback = null
     if (options.source === 'loopback') {
-      playback = await playWave(wave, 'default')
+      await runtimeAdapter.calibrateTimingProbe()
+      playback = await playWave(
+        wave,
+        'default',
+        null,
+        (sourceStartMainClockMs) => runtimeAdapter.armTimingProbe(sourceStartMainClockMs)
+      )
     } else if (options.micStimulus === 'acoustic-replay') {
-      playback = await playWave(wave, 'physical-speaker', physicalPreflight.speakerLabelSha256)
+      await runtimeAdapter.calibrateTimingProbe()
+      playback = await playWave(
+        wave,
+        'physical-speaker',
+        physicalPreflight.speakerLabelSha256,
+        (sourceStartMainClockMs) => runtimeAdapter.armTimingProbe(sourceStartMainClockMs)
+      )
     } else {
       process.stdout.write(JSON.stringify(buildMicPromptNotice(options.listenSeconds)) + '\n')
       await delay(options.listenSeconds * 1000)
     }
     if (playback) {
-      stimulusStartedAtMs = playback.startedAtEpochMs
-      stimulusEndedAtMs = playback.endedAtEpochMs
+      stimulusStartedAtMainClockMs = playback.sourceStartMainClockMs
+      stimulusEndedAtMainClockMs = playback.endedAtMainClockMs
     } else {
-      stimulusEndedAtMs = Date.now()
+      stimulusEndedAtMainClockMs = mainClockNowMs()
     }
     /* 尾静音窗口：VAD 收段（silero 默认 1.0s 收句）+ 模型冲刷 + 事件到达。 */
     await delay(3200)
@@ -501,18 +855,28 @@ async function main () {
     const inputTrack = safeTrackEvidence(diagnostics, options.source)
     const resources = resourceSampler.stop()
     resourceSampler = null
-    const firstArrival = (kind) => captionArrivals.find((item) => item.kind === kind)?.arrivedAtMs ?? null
-    const relative = (value, origin) => value === null ? null : Math.max(0, value - origin)
+    const firstArrival = (kind) => captionArrivals.find((item) => item.kind === kind)?.arrivedAtMainClockMs ?? null
+    const relative = (value, origin) => value === null ? null : Math.round(value) - Math.round(origin)
+    const firstPartialFromStimulusStartMs = relative(firstArrival('partial'), stimulusStartedAtMainClockMs)
     const timings = {
-      firstPartialFromStimulusStartMs: relative(firstArrival('partial'), stimulusStartedAtMs),
-      firstPartialFromEstimatedSpeechOnsetMs: playback && wave.speechOnsetOffsetMs !== null
-        ? relative(firstArrival('partial'), stimulusStartedAtMs + wave.speechOnsetOffsetMs)
+      firstPartialFromStimulusStartMs,
+      firstPartialFromEstimatedSpeechOnsetMs: playback && wave.speechOnsetOffsetMs !== null && firstPartialFromStimulusStartMs !== null
+        ? firstPartialFromStimulusStartMs - wave.speechOnsetOffsetMs
         : null,
-      firstFinalFromStimulusStartMs: relative(firstArrival('final'), stimulusStartedAtMs),
-      firstRefinedFromStimulusStartMs: relative(firstArrival('refined'), stimulusStartedAtMs),
-      firstFinalAfterStimulusEndMs: firstArrival('final') === null ? null : firstArrival('final') - stimulusEndedAtMs,
+      firstFinalFromStimulusStartMs: relative(firstArrival('final'), stimulusStartedAtMainClockMs),
+      firstRefinedFromStimulusStartMs: relative(firstArrival('refined'), stimulusStartedAtMainClockMs),
+      firstFinalAfterStimulusEndMs: relative(firstArrival('final'), stimulusEndedAtMainClockMs),
       captionArrivalCount: captionArrivals.length
     }
+    const firstPartialArrival = captionArrivals.find((item) => item.kind === 'partial') || null
+    const observability = buildLatencyObservability({
+      playback,
+      diagnostics,
+      sourceId: options.source,
+      stimulusStartedAtMainClockMs,
+      firstPartialArrival
+    })
+    if (playback && observability?.failureCode) failures.push(observability.failureCode)
 
     const sourceDiagnostics = diagnostics?.worker?.sources?.[options.source] || null
     const captureDiagnostics = diagnostics?.capture?.[options.source] || null
@@ -589,7 +953,9 @@ async function main () {
       timings,
       resources,
       peakRms,
-      diagnostics
+      diagnostics,
+      latencyTrace: observability?.latencyTrace ?? null,
+      latencyDiagnostics: observability?.latencyDiagnostics ?? null
     })
     if (result === 'pass') validateI2LiveReport(report, options.source)
     fs.writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n')
@@ -602,7 +968,8 @@ async function main () {
       transport: report.transport
     }) + '\n')
     await coordinator.dispose()
-    app.exit(result === 'pass' ? 0 : (result === 'inconclusive-no-audio' ? 2 : 1))
+    if (result === 'pass') app.quit()
+    else app.exit(result === 'inconclusive-no-audio' ? 2 : 1)
   } catch {
     console.error(JSON.stringify({ result: 'error', errorCode: 'i2-live-run-failed' }))
     try {
@@ -625,4 +992,16 @@ if (process.versions.electron && process.type === 'browser') {
   })
 }
 
-module.exports = { buildFailureReport, buildMicPromptNotice, buildReport, findSpeechOnsetMsPcm16, normalizeFailureCodes, parseArguments, readPhysicalMicPreflight, safeInputEvidence, safeTrackEvidence }
+module.exports = {
+  buildFailureReport,
+  buildLatencyObservability,
+  buildMicPromptNotice,
+  buildReport,
+  findSpeechOnsetMsPcm16,
+  normalizeFailureCodes,
+  parseArguments,
+  readPhysicalMicPreflight,
+  safeInputEvidence,
+  safeTrackEvidence,
+  startPreparedPlaybackAfterProbe
+}

@@ -1,3 +1,5 @@
 # I2 evidence hashes bind exact JSON bytes; keep them stable across Windows checkouts.
 docs/validation/i2-live-v4/*.json text eol=lf
 docs/validation/i2-live-v4/**/*.json text eol=lf
+docs/validation/i2-live-v5/*.json text eol=lf
+docs/validation/i2-live-v5/**/*.json text eol=lf

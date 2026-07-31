@@ -7,13 +7,17 @@
 > JSONL 或“未实现”描述均只代表交接当日，不得覆盖上述规范文档。
 
 > **当前检查点（2026-07-31）：** B3.3 SQLite、B4 模型资源和 B5 资格方法已有证据；
-> I2 权威证据已升级为 `docs/validation/i2-live-v4/` 内精确 Gate、loopback/mic 各 5 个
-> schema-v4 child 与两份确定性内嵌 summary。10 轮均 final/refined、最大双 CER 0、帧全等、
-> 12 项丢失峰值全为 0；但 loopback/mic P95=1126/1024ms，均高于冻结裸模型 `<1000ms`
-> 线。mic 仅为 `physical-preferred-label-heuristic` 声学 fixture，不是硬件证明。I2 的性能、
+> I2 权威证据已升级为 `docs/validation/i2-live-v5/` 内精确 Gate，以及 loopback/mic 每来源
+> 5 个 schema-v5 child、5 个 schema-v1 exact-child-exit sidecar 和 1 个 schema-v6 series。
+> 外部 runner 只在 exact child 以 0 退出且没有 timeout/runner termination 后写 sidecar，避免
+> 内部 pass 报告后悬挂或超时误绿。10 轮均 final/refined，loopback 最大 final/refined CER=0/0、
+> mic=0.035714/0，帧全等且 12 项丢失峰值全为 0；冻结字幕可见延迟 loopback/mic P95=1158/1005ms。
+> 两来源仍高于未改变的 `<1000ms` 线 158ms/5ms，I2 整体未关闭。
+> 每个 child 的六段 exact accepted-partial trace 与 40ms post-source captured-energy guard 只作诊断，不改写该验收结论。mic 仅为 `physical-preferred-label-heuristic` 声学 fixture，不是硬件证明；sidecar 也不是签名、远端证明、硬件证明或崩溃根因证明。I2 的两来源性能、
 > 拖动、真实 pause/refine、设备变化、睡眠/唤醒和硬崩溃仍未关闭；I3/I4 也待验。
 > B5 exact installer/SHA 属于前一候选 `369055a`，生产 audio-host/runtime 已变化，进入 I4
-> 前必须从新 HEAD 重建、重取证并冻结新 SHA。翻译、Agent 与向量继续后置。
+> 前必须从新 HEAD 重建、重取证并冻结新 SHA。权威 10 轮均有外部退出 sidecar；另一次未纳入 bundle 的运行
+> 在报告 `pass` stdout 后悬挂。`PostQueuedCompletionStatus(6)` 到 libuv fatal、`DebugBreak` 的机制已有闭环解释，但无 native stack，具体关闭竞态、发送者与进程角色仍未证明。翻译、Agent 与向量继续后置。
 
 > 交接日期：2026-07-26（Asia/Singapore）
 >
@@ -99,7 +103,7 @@ f6eaa6d  chore: establish project baseline
 | 视觉 V1–V2 | 完成 | token、状态矩阵、稳定字幕 DOM、caption reducer、工具条和预览页 |
 | B1 应用骨架 | 已提交 / 恢复缺口已关闭 | ConfigStore、SessionCoordinator、fake adapter、per-window preload、IPC 已接线；caption bootstrap 与 replacement cursor 已由 B2.0 关闭 |
 | I1 Contract | 验收完成 | UI/adapter/coordinator/IPC 共用 v1 契约；renderer reload 的 caption state 已形成订阅/水合/重放闭环 |
-| B2/I2 实时链路 | 实现完成 / I2 未关闭 | hidden audio host、PCM 直通、realtime/refine worker、silero VAD 与真实 ASR 已产品化；schema v4 两来源各 5 轮通过准确性/传输，但两路 P95 超线，mic fixture 也不是硬件证明；交互/恢复待补 |
+| B2/I2 实时链路 | 实现完成 / I2 未关闭 | hidden audio host、PCM 直通、realtime/refine worker、silero VAD 与真实 ASR 已产品化；退出绑定权威证据以两来源各 5 个 schema-v5 child + 5 个 schema-v1 exit sidecar + 1 个 schema-v6 series 证明准确性、零丢失与 exact-child exit 0。冻结字幕可见 P95=1158/1005ms；两来源超线 158ms/5ms。六段 trace 与 40ms captured-energy guard 只诊断，mic fixture 与 sidecar 都不构成更强证明；交互/恢复待补 |
 | B3 精修/会话 | 实现完成 / I3 待验 | SQLite-only 产品网关、迁移、两遍精修、历史查询与 txt/md/srt 导出已接线；两小时/数千段与真实恢复仍归 I3 |
 | B4 资源 | 联合验收完成 / I4 待验 | ModelManager、固定资源下载/校验/原子安装、设置页和空闲热启用已接线；干净机公网首次供给与 ready 后离线复启归 I4 |
 | B5 分发 | 资格方法通过 / 当前 HEAD 待重建 | 前一候选 `369055a` 的 ASAR/NSIS/native/packaged journey/隔离安装卸载已取证；生产 runtime 已变化，进入 I4 前须重建并冻结新 SHA |
@@ -223,7 +227,7 @@ node scripts/gate-0b/streaming-bench.js `
 
 - 初次拓扑提交：`3370a81`
 - 当前说明：[`docs/validation/gate-0c.md`](validation/gate-0c.md)
-- I2 绑定的精确预检：[`docs/validation/i2-live-v4/gate-0c-preflight.json`](validation/i2-live-v4/gate-0c-preflight.json)，SHA-256 `43e97770e3508c88ff5843df2c897825f7e8b717bc1010fccb750c5beb2d1f0b`
+- I2 绑定的精确预检：[`docs/validation/i2-live-v5/gate-0c-preflight.json`](validation/i2-live-v5/gate-0c-preflight.json)，SHA-256 `0f9f7668751c64fbce922883421ead41680226126800e0b7f6b3da81b39840ef`，run ID `gate-0c-2026-07-31T09-52-00-521Z`，执行时间 `2026-07-31T09:52:13.999Z`
 
 批准项：
 
@@ -241,7 +245,7 @@ node scripts/gate-0b/streaming-bench.js `
 
 - 它仍是 [`scripts/gate-0c/`](../scripts/gate-0c/) 下的独立 spike，不是产品 B2。
 - `physical-preferred` 只是标签分类，不是硬件证明，也不能排除未知或伪造标签的虚拟设备；精确 Gate SHA 与匿名 label hash 只防预检后静默换标签。
-- 尚未验证签名打包版、长时 soak、拖动、真实 pause/refine、热插拔、睡眠/唤醒、硬崩溃和两来源性能门槛。
+- 尚未验证签名打包版、长时 soak、拖动、真实 pause/refine、热插拔、睡眠/唤醒、硬崩溃和 I2 性能门槛（当前 loopback/mic P95 分别超线 158ms/5ms）。
 - 不能把 `loopback` 改成会静音用户输出的 `loopbackWithMute`。
 - Electron 43 request 没有 `request.video`；必须显式选择 desktop source。
 - 工具条 trusted-click fallback 没有测试。若未来 hidden host 回归，必须重新实测；工具条应持有 stream/Worklet 并只传 PCM，不能假定 `MediaStreamTrack` 可跨 renderer 转移。
@@ -547,7 +551,7 @@ B2 前必须补回归测试，并明确 recovery cursor contract：保持同一 
 
 ### B2.5 I2 验收
 
-只有以下闭环和性能/交互/恢复门禁全部成立才能标记 I2 PASS；当前 schema v4 重复运行证据不等于整体关闭：
+只有以下闭环和性能/交互/恢复门禁全部成立才能标记 I2 PASS；当前由 schema-v5 child、schema-v1 exact-child-exit sidecar 与 schema-v6 series 组成的退出绑定重复运行证据不等于整体关闭：
 
 ```text
 真实 mic/loopback

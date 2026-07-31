@@ -1,0 +1,1163 @@
+{
+  "schemaVersion": 6,
+  "kind": "i2-live-caption-series",
+  "generatedAt": "2026-07-31T10:01:29.493Z",
+  "sourceId": "loopback",
+  "result": "pass",
+  "runCount": 5,
+  "criteria": {
+    "minimumRuns": 5,
+    "everyRunPassedSchema5": true,
+    "everyRunExitedZeroWithoutRunnerTermination": true,
+    "everyRunLossless": true,
+    "finalCerMax": 0.3,
+    "refinedCerMax": 0.3,
+    "latencyClassification": "observed-series; release threshold remains governed by the frozen Gate 0B speech-onset criterion"
+  },
+  "fixture": null,
+  "distributions": {
+    "firstPartialFromStimulusStartMs": {
+      "p50": 1273,
+      "p95": 1298,
+      "min": 1232,
+      "max": 1298
+    },
+    "firstPartialFromEstimatedSpeechOnsetMs": {
+      "p50": 1133,
+      "p95": 1158,
+      "min": 1092,
+      "max": 1158
+    },
+    "estimatedSpeechOnsetToVadStartFrameAudioHostReceiptMs": {
+      "p50": 706,
+      "p95": 729,
+      "min": 658,
+      "max": 729
+    },
+    "vadStartFrameToPartialTriggerFrameAudioHostMs": {
+      "p50": 400,
+      "p95": 405,
+      "min": 400,
+      "max": 405
+    },
+    "partialTriggerFrameAudioHostToUtilityIngressMs": {
+      "p50": 0,
+      "p95": 1,
+      "min": 0,
+      "max": 1
+    },
+    "partialTriggerUtilityIngressToPublishMs": {
+      "p50": 26,
+      "p95": 33,
+      "min": 24,
+      "max": 33
+    },
+    "partialPublishUtilityToMainWorkerHostMs": {
+      "p50": 0,
+      "p95": 1,
+      "min": 0,
+      "max": 1
+    },
+    "mainWorkerHostToCoordinatorObserverMs": {
+      "p50": 1,
+      "p95": 1,
+      "min": 0,
+      "max": 1
+    },
+    "capturedOnsetMinusFrozenEstimateMs": {
+      "p50": 100,
+      "p95": 140,
+      "min": 60,
+      "max": 140
+    },
+    "capturedOnsetToCoordinatorPartialMs": {
+      "p50": 1032,
+      "p95": 1058,
+      "min": 993,
+      "max": 1058
+    },
+    "audioNeededAfterCapturedOnsetMs": {
+      "p50": 740.562,
+      "p95": 777.937,
+      "min": 717.687,
+      "max": 777.937
+    },
+    "firstFinalAfterStimulusEndMs": {
+      "p50": 658,
+      "p95": 710,
+      "min": 652,
+      "max": 710
+    },
+    "cpuP95Percent": {
+      "p50": 41.531,
+      "p95": 41.682,
+      "min": 40.951,
+      "max": 41.682
+    },
+    "workingSetMaxMiB": {
+      "p50": 1171.082,
+      "p95": 1177.645,
+      "min": 1169.043,
+      "max": 1177.645
+    },
+    "capturedFrames": {
+      "p50": 133,
+      "p95": 134,
+      "min": 132,
+      "max": 134
+    }
+  },
+  "maxima": {
+    "finalCer": 0,
+    "refinedCer": 0,
+    "droppedFrames": 0,
+    "creditStalls": 0,
+    "maxQueuedMsObserved": 0,
+    "lostInFlightFrames": 0,
+    "portReplacements": 0,
+    "queuedFramesAtStop": 0,
+    "queuedMsAtStop": 0,
+    "discardedAtStop": 0,
+    "sequenceGapCount": 0,
+    "missedFrames": 0,
+    "badSampleTypeFrames": 0,
+    "droppedCaptionCount": 0
+  },
+  "runs": [
+    {
+      "ordinal": 1,
+      "reportSha256": "2415d1011852289497ee9b772ad0bf708262b2037dbed0f5cc917ae1ebafb257",
+      "report": {
+        "schemaVersion": 5,
+        "kind": "i2-live-caption-smoke",
+        "executedAt": "2026-07-31T10:00:03.368Z",
+        "environment": {
+          "electron": "43.2.0",
+          "node": "24.18.0"
+        },
+        "sourceId": "loopback",
+        "result": "pass",
+        "model": {
+          "id": "x-asr-160ms",
+          "profile": "fast",
+          "numThreads": 4
+        },
+        "vad": "silero",
+        "refinement": "x-asr-offline",
+        "stimulus": {
+          "kind": "controlled-playback",
+          "corpusId": "zh-en-code-switch",
+          "corpusSha256": "cf741c91fae04e20ae92193065a24248a1f6ecd20a179c3deaf3d69bc9a6febc",
+          "referenceSha256": "524198166c72c7480ec0009f433fa79dbf54b0ea9c76180bf98fa36253701cb2",
+          "durationSeconds": 8.56,
+          "speechOnsetOffsetMs": 140,
+          "outputSampleRate": 48000,
+          "output": {
+            "requested": "default",
+            "selected": "default"
+          }
+        },
+        "preflight": null,
+        "input": {
+          "selection": null,
+          "matchedLabelHashCount": null,
+          "track": {
+            "kind": "audio",
+            "labelSha256": "c14d8013d802d47e23bdcf2b828c2b1c10f7434314683a9a88b5d6e6c2eeec81",
+            "settings": {
+              "autoGainControl": false,
+              "channelCount": 2,
+              "echoCancellation": false,
+              "latency": 0.01,
+              "noiseSuppression": false,
+              "sampleRate": 48000,
+              "sampleSize": 16
+            }
+          }
+        },
+        "failures": [],
+        "phases": [
+          "starting",
+          "listening",
+          "stopping",
+          "idle"
+        ],
+        "counts": {
+          "captions": 17,
+          "partials": 15,
+          "finals": 1,
+          "refined": 1
+        },
+        "accuracy": {
+          "finalCer": 0,
+          "refinedCer": 0,
+          "refinedHasPunctuation": true
+        },
+        "timings": {
+          "firstPartialFromStimulusStartMs": 1240,
+          "firstPartialFromEstimatedSpeechOnsetMs": 1100,
+          "firstFinalFromStimulusStartMs": 9397,
+          "firstRefinedFromStimulusStartMs": 9656,
+          "firstFinalAfterStimulusEndMs": 652,
+          "captionArrivalCount": 17
+        },
+        "latencyTrace": {
+          "estimatedSpeechOnsetToVadStartFrameAudioHostReceiptMs": 675,
+          "vadStartFrameToPartialTriggerFrameAudioHostMs": 400,
+          "partialTriggerFrameAudioHostToUtilityIngressMs": 0,
+          "partialTriggerUtilityIngressToPublishMs": 24,
+          "partialPublishUtilityToMainWorkerHostMs": 0,
+          "mainWorkerHostToCoordinatorObserverMs": 1
+        },
+        "latencyDiagnostics": {
+          "classification": "diagnostic-only NTP-estimated stages; frozen source-start onset remains authoritative",
+          "clockCalibration": {
+            "method": "ntp-min-rtt-monotonic-v1",
+            "mainClockId": "electron-main-performance-v1",
+            "sampleCountPerRemote": 7,
+            "maximumMinimumRoundTripMs": 50,
+            "maximumAgeMs": 30000,
+            "playbackRenderer": {
+              "method": "ntp-min-rtt-monotonic-v1",
+              "sampleCount": 7,
+              "minimumRoundTripMs": 0.174,
+              "uncertaintyMs": 0.587,
+              "ageMs": 1739.707
+            },
+            "audioHostRenderer": {
+              "method": "ntp-min-rtt-monotonic-v1",
+              "sampleCount": 7,
+              "minimumRoundTripMs": 0.271,
+              "uncertaintyMs": 0.635,
+              "ageMs": 2016.392
+            },
+            "realtimeUtility": {
+              "method": "ntp-min-rtt-monotonic-v1",
+              "sampleCount": 7,
+              "minimumRoundTripMs": 0.208,
+              "uncertaintyMs": 0.604,
+              "ageMs": 2017.044
+            }
+          },
+          "onsetRule": {
+            "sampleRate": 16000,
+            "windowMs": 20,
+            "thresholdDbfs": -45,
+            "consecutiveWindows": 2
+          },
+          "playbackClock": {
+            "method": "invalid",
+            "baseLatencyMs": 10,
+            "outputLatencyMs": 40,
+            "validProjectionSampleCount": 0,
+            "projectionSpreadMs": null,
+            "estimatedFirstSamplePresentationFromStimulusStartMs": null,
+            "firstPartialFromEstimatedPresentedSpeechOnsetMs": null
+          },
+          "captureOnset": {
+            "probeArmedBeforeFrozenSpeechOnsetMs": 640,
+            "speechOnsetAudioTimelineMs": 1782.313,
+            "speechOnsetFromStimulusStartMs": 200,
+            "speechOnsetObservedFromStimulusStartMs": 615,
+            "detectionLagMs": 415,
+            "detectionFrameSequence": 18,
+            "discontinuityCount": 0,
+            "invalidSampleCount": 0,
+            "speechOnsetMinusFrozenEstimateMs": 60
+          },
+          "modelAudio": {
+            "vadStartAfterCapturedOnsetMs": 217.687,
+            "audioNeededAfterCapturedOnsetMs": 717.687
+          },
+          "derived": {
+            "capturedOnsetToCoordinatorPartialMs": 1040,
+            "estimatedPresentationToCapturedOnsetMs": null
+          },
+          "acceptanceMetricUnchanged": true
+        },
+        "resources": {
+          "sampleCount": 86,
+          "cpuPercent": {
+            "p50": 11.198,
+            "p95": 41.493,
+            "max": 45.826
+          },
+          "workingSetMiB": {
+            "p50": 1142.66,
+            "p95": 1168.887,
+            "max": 1169.086
+          },
+          "maxProcessCount": 8
+        },
+        "signal": {
+          "peakRms": 0.296947
+        },
+        "transport": {
+          "capturedFrames": 133,
+          "sentFrames": 133,
+          "ingestedFrames": 133,
+          "droppedFrames": 0,
+          "creditStalls": 0,
+          "maxQueuedMsObserved": 0,
+          "acknowledgedFrames": 130,
+          "lostInFlightFrames": 0,
+          "portReplacements": 0,
+          "queuedFramesAtStop": 0,
+          "queuedMsAtStop": 0,
+          "discardedAtStop": 0,
+          "sequenceGapCount": 0,
+          "missedFrames": 0,
+          "badSampleTypeFrames": 0,
+          "droppedCaptionCount": 0
+        },
+        "privacy": {
+          "capturedAudioPersisted": false,
+          "reportContainsTranscriptText": false,
+          "reportContainsAudioPath": false
+        },
+        "limitations": [
+          "This is one real loopback run, not a latency percentile study.",
+          "This source-specific report does not attest a physical-preferred microphone fixture; use the separate --source mic evidence."
+        ]
+      },
+      "exitEvidenceSha256": "e07c5d5c6d90d474e34a83b932e8a126ffbb611b6b024584df12a52290c57f34",
+      "exitEvidence": {
+        "schemaVersion": 1,
+        "kind": "i2-exact-child-exit",
+        "sourceId": "loopback",
+        "reportSha256": "2415d1011852289497ee9b772ad0bf708262b2037dbed0f5cc917ae1ebafb257",
+        "outcome": "exited-zero-without-runner-termination"
+      }
+    },
+    {
+      "ordinal": 2,
+      "reportSha256": "27542009588e3b62e49ce813ab6b807548f4ebf63488b35865e5382e685e2cbc",
+      "report": {
+        "schemaVersion": 5,
+        "kind": "i2-live-caption-smoke",
+        "executedAt": "2026-07-31T10:00:24.718Z",
+        "environment": {
+          "electron": "43.2.0",
+          "node": "24.18.0"
+        },
+        "sourceId": "loopback",
+        "result": "pass",
+        "model": {
+          "id": "x-asr-160ms",
+          "profile": "fast",
+          "numThreads": 4
+        },
+        "vad": "silero",
+        "refinement": "x-asr-offline",
+        "stimulus": {
+          "kind": "controlled-playback",
+          "corpusId": "zh-en-code-switch",
+          "corpusSha256": "cf741c91fae04e20ae92193065a24248a1f6ecd20a179c3deaf3d69bc9a6febc",
+          "referenceSha256": "524198166c72c7480ec0009f433fa79dbf54b0ea9c76180bf98fa36253701cb2",
+          "durationSeconds": 8.56,
+          "speechOnsetOffsetMs": 140,
+          "outputSampleRate": 48000,
+          "output": {
+            "requested": "default",
+            "selected": "default"
+          }
+        },
+        "preflight": null,
+        "input": {
+          "selection": null,
+          "matchedLabelHashCount": null,
+          "track": {
+            "kind": "audio",
+            "labelSha256": "c14d8013d802d47e23bdcf2b828c2b1c10f7434314683a9a88b5d6e6c2eeec81",
+            "settings": {
+              "autoGainControl": false,
+              "channelCount": 2,
+              "echoCancellation": false,
+              "latency": 0.01,
+              "noiseSuppression": false,
+              "sampleRate": 48000,
+              "sampleSize": 16
+            }
+          }
+        },
+        "failures": [],
+        "phases": [
+          "starting",
+          "listening",
+          "stopping",
+          "idle"
+        ],
+        "counts": {
+          "captions": 16,
+          "partials": 14,
+          "finals": 1,
+          "refined": 1
+        },
+        "accuracy": {
+          "finalCer": 0,
+          "refinedCer": 0,
+          "refinedHasPunctuation": true
+        },
+        "timings": {
+          "firstPartialFromStimulusStartMs": 1273,
+          "firstPartialFromEstimatedSpeechOnsetMs": 1133,
+          "firstFinalFromStimulusStartMs": 9423,
+          "firstRefinedFromStimulusStartMs": 9665,
+          "firstFinalAfterStimulusEndMs": 656,
+          "captionArrivalCount": 16
+        },
+        "latencyTrace": {
+          "estimatedSpeechOnsetToVadStartFrameAudioHostReceiptMs": 706,
+          "vadStartFrameToPartialTriggerFrameAudioHostMs": 400,
+          "partialTriggerFrameAudioHostToUtilityIngressMs": 1,
+          "partialTriggerUtilityIngressToPublishMs": 25,
+          "partialPublishUtilityToMainWorkerHostMs": 0,
+          "mainWorkerHostToCoordinatorObserverMs": 1
+        },
+        "latencyDiagnostics": {
+          "classification": "diagnostic-only NTP-estimated stages; frozen source-start onset remains authoritative",
+          "clockCalibration": {
+            "method": "ntp-min-rtt-monotonic-v1",
+            "mainClockId": "electron-main-performance-v1",
+            "sampleCountPerRemote": 7,
+            "maximumMinimumRoundTripMs": 50,
+            "maximumAgeMs": 30000,
+            "playbackRenderer": {
+              "method": "ntp-min-rtt-monotonic-v1",
+              "sampleCount": 7,
+              "minimumRoundTripMs": 0.131,
+              "uncertaintyMs": 0.566,
+              "ageMs": 1773.499
+            },
+            "audioHostRenderer": {
+              "method": "ntp-min-rtt-monotonic-v1",
+              "sampleCount": 7,
+              "minimumRoundTripMs": 0.146,
+              "uncertaintyMs": 0.573,
+              "ageMs": 2055.476
+            },
+            "realtimeUtility": {
+              "method": "ntp-min-rtt-monotonic-v1",
+              "sampleCount": 7,
+              "minimumRoundTripMs": 0.169,
+              "uncertaintyMs": 0.585,
+              "ageMs": 2056.115
+            }
+          },
+          "onsetRule": {
+            "sampleRate": 16000,
+            "windowMs": 20,
+            "thresholdDbfs": -45,
+            "consecutiveWindows": 2
+          },
+          "playbackClock": {
+            "method": "invalid",
+            "baseLatencyMs": 10,
+            "outputLatencyMs": 40,
+            "validProjectionSampleCount": 0,
+            "projectionSpreadMs": null,
+            "estimatedFirstSamplePresentationFromStimulusStartMs": null,
+            "firstPartialFromEstimatedPresentedSpeechOnsetMs": null
+          },
+          "captureOnset": {
+            "probeArmedBeforeFrozenSpeechOnsetMs": 639,
+            "speechOnsetAudioTimelineMs": 1867.625,
+            "speechOnsetFromStimulusStartMs": 280,
+            "speechOnsetObservedFromStimulusStartMs": 647,
+            "detectionLagMs": 367,
+            "detectionFrameSequence": 19,
+            "discontinuityCount": 0,
+            "invalidSampleCount": 0,
+            "speechOnsetMinusFrozenEstimateMs": 140
+          },
+          "modelAudio": {
+            "vadStartAfterCapturedOnsetMs": 232.375,
+            "audioNeededAfterCapturedOnsetMs": 732.375
+          },
+          "derived": {
+            "capturedOnsetToCoordinatorPartialMs": 993,
+            "estimatedPresentationToCapturedOnsetMs": null
+          },
+          "acceptanceMetricUnchanged": true
+        },
+        "resources": {
+          "sampleCount": 82,
+          "cpuPercent": {
+            "p50": 13.459,
+            "p95": 41.68,
+            "max": 46.366
+          },
+          "workingSetMiB": {
+            "p50": 1156.742,
+            "p95": 1168.68,
+            "max": 1169.043
+          },
+          "maxProcessCount": 8
+        },
+        "signal": {
+          "peakRms": 0.310945
+        },
+        "transport": {
+          "capturedFrames": 134,
+          "sentFrames": 134,
+          "ingestedFrames": 134,
+          "droppedFrames": 0,
+          "creditStalls": 0,
+          "maxQueuedMsObserved": 0,
+          "acknowledgedFrames": 130,
+          "lostInFlightFrames": 0,
+          "portReplacements": 0,
+          "queuedFramesAtStop": 0,
+          "queuedMsAtStop": 0,
+          "discardedAtStop": 0,
+          "sequenceGapCount": 0,
+          "missedFrames": 0,
+          "badSampleTypeFrames": 0,
+          "droppedCaptionCount": 0
+        },
+        "privacy": {
+          "capturedAudioPersisted": false,
+          "reportContainsTranscriptText": false,
+          "reportContainsAudioPath": false
+        },
+        "limitations": [
+          "This is one real loopback run, not a latency percentile study.",
+          "This source-specific report does not attest a physical-preferred microphone fixture; use the separate --source mic evidence."
+        ]
+      },
+      "exitEvidenceSha256": "e8aec33a8e3eb10f2ed40d25fd81ff08f38482155c199af58c68d2d785839600",
+      "exitEvidence": {
+        "schemaVersion": 1,
+        "kind": "i2-exact-child-exit",
+        "sourceId": "loopback",
+        "reportSha256": "27542009588e3b62e49ce813ab6b807548f4ebf63488b35865e5382e685e2cbc",
+        "outcome": "exited-zero-without-runner-termination"
+      }
+    },
+    {
+      "ordinal": 3,
+      "reportSha256": "9ca39d4a25f35559a0259cd5f2dd9513a98127b94f6f141c2784d0126fa16846",
+      "report": {
+        "schemaVersion": 5,
+        "kind": "i2-live-caption-smoke",
+        "executedAt": "2026-07-31T10:00:46.008Z",
+        "environment": {
+          "electron": "43.2.0",
+          "node": "24.18.0"
+        },
+        "sourceId": "loopback",
+        "result": "pass",
+        "model": {
+          "id": "x-asr-160ms",
+          "profile": "fast",
+          "numThreads": 4
+        },
+        "vad": "silero",
+        "refinement": "x-asr-offline",
+        "stimulus": {
+          "kind": "controlled-playback",
+          "corpusId": "zh-en-code-switch",
+          "corpusSha256": "cf741c91fae04e20ae92193065a24248a1f6ecd20a179c3deaf3d69bc9a6febc",
+          "referenceSha256": "524198166c72c7480ec0009f433fa79dbf54b0ea9c76180bf98fa36253701cb2",
+          "durationSeconds": 8.56,
+          "speechOnsetOffsetMs": 140,
+          "outputSampleRate": 48000,
+          "output": {
+            "requested": "default",
+            "selected": "default"
+          }
+        },
+        "preflight": null,
+        "input": {
+          "selection": null,
+          "matchedLabelHashCount": null,
+          "track": {
+            "kind": "audio",
+            "labelSha256": "c14d8013d802d47e23bdcf2b828c2b1c10f7434314683a9a88b5d6e6c2eeec81",
+            "settings": {
+              "autoGainControl": false,
+              "channelCount": 2,
+              "echoCancellation": false,
+              "latency": 0.01,
+              "noiseSuppression": false,
+              "sampleRate": 48000,
+              "sampleSize": 16
+            }
+          }
+        },
+        "failures": [],
+        "phases": [
+          "starting",
+          "listening",
+          "stopping",
+          "idle"
+        ],
+        "counts": {
+          "captions": 17,
+          "partials": 15,
+          "finals": 1,
+          "refined": 1
+        },
+        "accuracy": {
+          "finalCer": 0,
+          "refinedCer": 0,
+          "refinedHasPunctuation": true
+        },
+        "timings": {
+          "firstPartialFromStimulusStartMs": 1232,
+          "firstPartialFromEstimatedSpeechOnsetMs": 1092,
+          "firstFinalFromStimulusStartMs": 9375,
+          "firstRefinedFromStimulusStartMs": 9626,
+          "firstFinalAfterStimulusEndMs": 676,
+          "captionArrivalCount": 17
+        },
+        "latencyTrace": {
+          "estimatedSpeechOnsetToVadStartFrameAudioHostReceiptMs": 658,
+          "vadStartFrameToPartialTriggerFrameAudioHostMs": 400,
+          "partialTriggerFrameAudioHostToUtilityIngressMs": 0,
+          "partialTriggerUtilityIngressToPublishMs": 33,
+          "partialPublishUtilityToMainWorkerHostMs": 0,
+          "mainWorkerHostToCoordinatorObserverMs": 1
+        },
+        "latencyDiagnostics": {
+          "classification": "diagnostic-only NTP-estimated stages; frozen source-start onset remains authoritative",
+          "clockCalibration": {
+            "method": "ntp-min-rtt-monotonic-v1",
+            "mainClockId": "electron-main-performance-v1",
+            "sampleCountPerRemote": 7,
+            "maximumMinimumRoundTripMs": 50,
+            "maximumAgeMs": 30000,
+            "playbackRenderer": {
+              "method": "ntp-min-rtt-monotonic-v1",
+              "sampleCount": 7,
+              "minimumRoundTripMs": 0.152,
+              "uncertaintyMs": 0.576,
+              "ageMs": 1732.403
+            },
+            "audioHostRenderer": {
+              "method": "ntp-min-rtt-monotonic-v1",
+              "sampleCount": 7,
+              "minimumRoundTripMs": 0.211,
+              "uncertaintyMs": 0.606,
+              "ageMs": 1881.606
+            },
+            "realtimeUtility": {
+              "method": "ntp-min-rtt-monotonic-v1",
+              "sampleCount": 7,
+              "minimumRoundTripMs": 0.148,
+              "uncertaintyMs": 0.574,
+              "ageMs": 1882.4
+            }
+          },
+          "onsetRule": {
+            "sampleRate": 16000,
+            "windowMs": 20,
+            "thresholdDbfs": -45,
+            "consecutiveWindows": 2
+          },
+          "playbackClock": {
+            "method": "invalid",
+            "baseLatencyMs": 10,
+            "outputLatencyMs": 40,
+            "validProjectionSampleCount": 0,
+            "projectionSpreadMs": null,
+            "estimatedFirstSamplePresentationFromStimulusStartMs": null,
+            "firstPartialFromEstimatedPresentedSpeechOnsetMs": null
+          },
+          "captureOnset": {
+            "probeArmedBeforeFrozenSpeechOnsetMs": 640,
+            "speechOnsetAudioTimelineMs": 1654.625,
+            "speechOnsetFromStimulusStartMs": 200,
+            "speechOnsetObservedFromStimulusStartMs": 498,
+            "detectionLagMs": 298,
+            "detectionFrameSequence": 16,
+            "discontinuityCount": 0,
+            "invalidSampleCount": 0,
+            "speechOnsetMinusFrozenEstimateMs": 60
+          },
+          "modelAudio": {
+            "vadStartAfterCapturedOnsetMs": 245.375,
+            "audioNeededAfterCapturedOnsetMs": 745.375
+          },
+          "derived": {
+            "capturedOnsetToCoordinatorPartialMs": 1032,
+            "estimatedPresentationToCapturedOnsetMs": null
+          },
+          "acceptanceMetricUnchanged": true
+        },
+        "resources": {
+          "sampleCount": 82,
+          "cpuPercent": {
+            "p50": 17.542,
+            "p95": 40.951,
+            "max": 46.213
+          },
+          "workingSetMiB": {
+            "p50": 1154.02,
+            "p95": 1177.41,
+            "max": 1177.645
+          },
+          "maxProcessCount": 8
+        },
+        "signal": {
+          "peakRms": 0.319074
+        },
+        "transport": {
+          "capturedFrames": 132,
+          "sentFrames": 132,
+          "ingestedFrames": 132,
+          "droppedFrames": 0,
+          "creditStalls": 0,
+          "maxQueuedMsObserved": 0,
+          "acknowledgedFrames": 130,
+          "lostInFlightFrames": 0,
+          "portReplacements": 0,
+          "queuedFramesAtStop": 0,
+          "queuedMsAtStop": 0,
+          "discardedAtStop": 0,
+          "sequenceGapCount": 0,
+          "missedFrames": 0,
+          "badSampleTypeFrames": 0,
+          "droppedCaptionCount": 0
+        },
+        "privacy": {
+          "capturedAudioPersisted": false,
+          "reportContainsTranscriptText": false,
+          "reportContainsAudioPath": false
+        },
+        "limitations": [
+          "This is one real loopback run, not a latency percentile study.",
+          "This source-specific report does not attest a physical-preferred microphone fixture; use the separate --source mic evidence."
+        ]
+      },
+      "exitEvidenceSha256": "036d1c3be6f9388e9b3ad91f6a9194bf2774df10111227e0f46fb7d51f1363fd",
+      "exitEvidence": {
+        "schemaVersion": 1,
+        "kind": "i2-exact-child-exit",
+        "sourceId": "loopback",
+        "reportSha256": "9ca39d4a25f35559a0259cd5f2dd9513a98127b94f6f141c2784d0126fa16846",
+        "outcome": "exited-zero-without-runner-termination"
+      }
+    },
+    {
+      "ordinal": 4,
+      "reportSha256": "b5d62f4656c646d2b5e0ccd87fbff6c92df264b919de9fcbe30ee54b9a072414",
+      "report": {
+        "schemaVersion": 5,
+        "kind": "i2-live-caption-smoke",
+        "executedAt": "2026-07-31T10:01:07.563Z",
+        "environment": {
+          "electron": "43.2.0",
+          "node": "24.18.0"
+        },
+        "sourceId": "loopback",
+        "result": "pass",
+        "model": {
+          "id": "x-asr-160ms",
+          "profile": "fast",
+          "numThreads": 4
+        },
+        "vad": "silero",
+        "refinement": "x-asr-offline",
+        "stimulus": {
+          "kind": "controlled-playback",
+          "corpusId": "zh-en-code-switch",
+          "corpusSha256": "cf741c91fae04e20ae92193065a24248a1f6ecd20a179c3deaf3d69bc9a6febc",
+          "referenceSha256": "524198166c72c7480ec0009f433fa79dbf54b0ea9c76180bf98fa36253701cb2",
+          "durationSeconds": 8.56,
+          "speechOnsetOffsetMs": 140,
+          "outputSampleRate": 48000,
+          "output": {
+            "requested": "default",
+            "selected": "default"
+          }
+        },
+        "preflight": null,
+        "input": {
+          "selection": null,
+          "matchedLabelHashCount": null,
+          "track": {
+            "kind": "audio",
+            "labelSha256": "c14d8013d802d47e23bdcf2b828c2b1c10f7434314683a9a88b5d6e6c2eeec81",
+            "settings": {
+              "autoGainControl": false,
+              "channelCount": 2,
+              "echoCancellation": false,
+              "latency": 0.01,
+              "noiseSuppression": false,
+              "sampleRate": 48000,
+              "sampleSize": 16
+            }
+          }
+        },
+        "failures": [],
+        "phases": [
+          "starting",
+          "listening",
+          "stopping",
+          "idle"
+        ],
+        "counts": {
+          "captions": 20,
+          "partials": 18,
+          "finals": 1,
+          "refined": 1
+        },
+        "accuracy": {
+          "finalCer": 0,
+          "refinedCer": 0,
+          "refinedHasPunctuation": true
+        },
+        "timings": {
+          "firstPartialFromStimulusStartMs": 1298,
+          "firstPartialFromEstimatedSpeechOnsetMs": 1158,
+          "firstFinalFromStimulusStartMs": 9448,
+          "firstRefinedFromStimulusStartMs": 9669,
+          "firstFinalAfterStimulusEndMs": 710,
+          "captionArrivalCount": 20
+        },
+        "latencyTrace": {
+          "estimatedSpeechOnsetToVadStartFrameAudioHostReceiptMs": 729,
+          "vadStartFrameToPartialTriggerFrameAudioHostMs": 400,
+          "partialTriggerFrameAudioHostToUtilityIngressMs": 0,
+          "partialTriggerUtilityIngressToPublishMs": 28,
+          "partialPublishUtilityToMainWorkerHostMs": 1,
+          "mainWorkerHostToCoordinatorObserverMs": 0
+        },
+        "latencyDiagnostics": {
+          "classification": "diagnostic-only NTP-estimated stages; frozen source-start onset remains authoritative",
+          "clockCalibration": {
+            "method": "ntp-min-rtt-monotonic-v1",
+            "mainClockId": "electron-main-performance-v1",
+            "sampleCountPerRemote": 7,
+            "maximumMinimumRoundTripMs": 50,
+            "maximumAgeMs": 30000,
+            "playbackRenderer": {
+              "method": "ntp-min-rtt-monotonic-v1",
+              "sampleCount": 7,
+              "minimumRoundTripMs": 0.198,
+              "uncertaintyMs": 0.599,
+              "ageMs": 1798.475
+            },
+            "audioHostRenderer": {
+              "method": "ntp-min-rtt-monotonic-v1",
+              "sampleCount": 7,
+              "minimumRoundTripMs": 0.094,
+              "uncertaintyMs": 0.547,
+              "ageMs": 1976.405
+            },
+            "realtimeUtility": {
+              "method": "ntp-min-rtt-monotonic-v1",
+              "sampleCount": 7,
+              "minimumRoundTripMs": 0.097,
+              "uncertaintyMs": 0.548,
+              "ageMs": 1976.663
+            }
+          },
+          "onsetRule": {
+            "sampleRate": 16000,
+            "windowMs": 20,
+            "thresholdDbfs": -45,
+            "consecutiveWindows": 2
+          },
+          "playbackClock": {
+            "method": "invalid",
+            "baseLatencyMs": 10,
+            "outputLatencyMs": 40,
+            "validProjectionSampleCount": 0,
+            "projectionSpreadMs": null,
+            "estimatedFirstSamplePresentationFromStimulusStartMs": null,
+            "firstPartialFromEstimatedPresentedSpeechOnsetMs": null
+          },
+          "captureOnset": {
+            "probeArmedBeforeFrozenSpeechOnsetMs": 639,
+            "speechOnsetAudioTimelineMs": 1722.063,
+            "speechOnsetFromStimulusStartMs": 240,
+            "speechOnsetObservedFromStimulusStartMs": 568,
+            "detectionLagMs": 328,
+            "detectionFrameSequence": 17,
+            "discontinuityCount": 0,
+            "invalidSampleCount": 0,
+            "speechOnsetMinusFrozenEstimateMs": 100
+          },
+          "modelAudio": {
+            "vadStartAfterCapturedOnsetMs": 277.937,
+            "audioNeededAfterCapturedOnsetMs": 777.937
+          },
+          "derived": {
+            "capturedOnsetToCoordinatorPartialMs": 1058,
+            "estimatedPresentationToCapturedOnsetMs": null
+          },
+          "acceptanceMetricUnchanged": true
+        },
+        "resources": {
+          "sampleCount": 83,
+          "cpuPercent": {
+            "p50": 14.537,
+            "p95": 41.682,
+            "max": 47.975
+          },
+          "workingSetMiB": {
+            "p50": 1145.348,
+            "p95": 1172.367,
+            "max": 1172.586
+          },
+          "maxProcessCount": 8
+        },
+        "signal": {
+          "peakRms": 0.337662
+        },
+        "transport": {
+          "capturedFrames": 132,
+          "sentFrames": 132,
+          "ingestedFrames": 132,
+          "droppedFrames": 0,
+          "creditStalls": 0,
+          "maxQueuedMsObserved": 0,
+          "acknowledgedFrames": 130,
+          "lostInFlightFrames": 0,
+          "portReplacements": 0,
+          "queuedFramesAtStop": 0,
+          "queuedMsAtStop": 0,
+          "discardedAtStop": 0,
+          "sequenceGapCount": 0,
+          "missedFrames": 0,
+          "badSampleTypeFrames": 0,
+          "droppedCaptionCount": 0
+        },
+        "privacy": {
+          "capturedAudioPersisted": false,
+          "reportContainsTranscriptText": false,
+          "reportContainsAudioPath": false
+        },
+        "limitations": [
+          "This is one real loopback run, not a latency percentile study.",
+          "This source-specific report does not attest a physical-preferred microphone fixture; use the separate --source mic evidence."
+        ]
+      },
+      "exitEvidenceSha256": "a058be899ce0f86958c88a36faf245fd2b92c1503af045dd389746baf3a835c5",
+      "exitEvidence": {
+        "schemaVersion": 1,
+        "kind": "i2-exact-child-exit",
+        "sourceId": "loopback",
+        "reportSha256": "b5d62f4656c646d2b5e0ccd87fbff6c92df264b919de9fcbe30ee54b9a072414",
+        "outcome": "exited-zero-without-runner-termination"
+      }
+    },
+    {
+      "ordinal": 5,
+      "reportSha256": "b2e9054324ed418e42fc384bb86ad0e6d3607690607ac02dc491126a9f2e555a",
+      "report": {
+        "schemaVersion": 5,
+        "kind": "i2-live-caption-smoke",
+        "executedAt": "2026-07-31T10:01:29.493Z",
+        "environment": {
+          "electron": "43.2.0",
+          "node": "24.18.0"
+        },
+        "sourceId": "loopback",
+        "result": "pass",
+        "model": {
+          "id": "x-asr-160ms",
+          "profile": "fast",
+          "numThreads": 4
+        },
+        "vad": "silero",
+        "refinement": "x-asr-offline",
+        "stimulus": {
+          "kind": "controlled-playback",
+          "corpusId": "zh-en-code-switch",
+          "corpusSha256": "cf741c91fae04e20ae92193065a24248a1f6ecd20a179c3deaf3d69bc9a6febc",
+          "referenceSha256": "524198166c72c7480ec0009f433fa79dbf54b0ea9c76180bf98fa36253701cb2",
+          "durationSeconds": 8.56,
+          "speechOnsetOffsetMs": 140,
+          "outputSampleRate": 48000,
+          "output": {
+            "requested": "default",
+            "selected": "default"
+          }
+        },
+        "preflight": null,
+        "input": {
+          "selection": null,
+          "matchedLabelHashCount": null,
+          "track": {
+            "kind": "audio",
+            "labelSha256": "c14d8013d802d47e23bdcf2b828c2b1c10f7434314683a9a88b5d6e6c2eeec81",
+            "settings": {
+              "autoGainControl": false,
+              "channelCount": 2,
+              "echoCancellation": false,
+              "latency": 0.01,
+              "noiseSuppression": false,
+              "sampleRate": 48000,
+              "sampleSize": 16
+            }
+          }
+        },
+        "failures": [],
+        "phases": [
+          "starting",
+          "listening",
+          "stopping",
+          "idle"
+        ],
+        "counts": {
+          "captions": 16,
+          "partials": 14,
+          "finals": 1,
+          "refined": 1
+        },
+        "accuracy": {
+          "finalCer": 0,
+          "refinedCer": 0,
+          "refinedHasPunctuation": true
+        },
+        "timings": {
+          "firstPartialFromStimulusStartMs": 1285,
+          "firstPartialFromEstimatedSpeechOnsetMs": 1145,
+          "firstFinalFromStimulusStartMs": 9421,
+          "firstRefinedFromStimulusStartMs": 9650,
+          "firstFinalAfterStimulusEndMs": 658,
+          "captionArrivalCount": 16
+        },
+        "latencyTrace": {
+          "estimatedSpeechOnsetToVadStartFrameAudioHostReceiptMs": 712,
+          "vadStartFrameToPartialTriggerFrameAudioHostMs": 405,
+          "partialTriggerFrameAudioHostToUtilityIngressMs": 1,
+          "partialTriggerUtilityIngressToPublishMs": 26,
+          "partialPublishUtilityToMainWorkerHostMs": 0,
+          "mainWorkerHostToCoordinatorObserverMs": 1
+        },
+        "latencyDiagnostics": {
+          "classification": "diagnostic-only NTP-estimated stages; frozen source-start onset remains authoritative",
+          "clockCalibration": {
+            "method": "ntp-min-rtt-monotonic-v1",
+            "mainClockId": "electron-main-performance-v1",
+            "sampleCountPerRemote": 7,
+            "maximumMinimumRoundTripMs": 50,
+            "maximumAgeMs": 30000,
+            "playbackRenderer": {
+              "method": "ntp-min-rtt-monotonic-v1",
+              "sampleCount": 7,
+              "minimumRoundTripMs": 0.182,
+              "uncertaintyMs": 0.591,
+              "ageMs": 1785.133
+            },
+            "audioHostRenderer": {
+              "method": "ntp-min-rtt-monotonic-v1",
+              "sampleCount": 7,
+              "minimumRoundTripMs": 0.211,
+              "uncertaintyMs": 0.605,
+              "ageMs": 1957.741
+            },
+            "realtimeUtility": {
+              "method": "ntp-min-rtt-monotonic-v1",
+              "sampleCount": 7,
+              "minimumRoundTripMs": 0.166,
+              "uncertaintyMs": 0.583,
+              "ageMs": 1958.266
+            }
+          },
+          "onsetRule": {
+            "sampleRate": 16000,
+            "windowMs": 20,
+            "thresholdDbfs": -45,
+            "consecutiveWindows": 2
+          },
+          "playbackClock": {
+            "method": "invalid",
+            "baseLatencyMs": 10,
+            "outputLatencyMs": 40,
+            "validProjectionSampleCount": 0,
+            "projectionSpreadMs": null,
+            "estimatedFirstSamplePresentationFromStimulusStartMs": null,
+            "firstPartialFromEstimatedPresentedSpeechOnsetMs": null
+          },
+          "captureOnset": {
+            "probeArmedBeforeFrozenSpeechOnsetMs": 640,
+            "speechOnsetAudioTimelineMs": 1759.438,
+            "speechOnsetFromStimulusStartMs": 280,
+            "speechOnsetObservedFromStimulusStartMs": 552,
+            "detectionLagMs": 272,
+            "detectionFrameSequence": 17,
+            "discontinuityCount": 0,
+            "invalidSampleCount": 0,
+            "speechOnsetMinusFrozenEstimateMs": 140
+          },
+          "modelAudio": {
+            "vadStartAfterCapturedOnsetMs": 240.562,
+            "audioNeededAfterCapturedOnsetMs": 740.562
+          },
+          "derived": {
+            "capturedOnsetToCoordinatorPartialMs": 1005,
+            "estimatedPresentationToCapturedOnsetMs": null
+          },
+          "acceptanceMetricUnchanged": true
+        },
+        "resources": {
+          "sampleCount": 85,
+          "cpuPercent": {
+            "p50": 11.739,
+            "p95": 41.531,
+            "max": 47.422
+          },
+          "workingSetMiB": {
+            "p50": 1143.434,
+            "p95": 1170.867,
+            "max": 1171.082
+          },
+          "maxProcessCount": 8
+        },
+        "signal": {
+          "peakRms": 0.305745
+        },
+        "transport": {
+          "capturedFrames": 133,
+          "sentFrames": 133,
+          "ingestedFrames": 133,
+          "droppedFrames": 0,
+          "creditStalls": 0,
+          "maxQueuedMsObserved": 0,
+          "acknowledgedFrames": 130,
+          "lostInFlightFrames": 0,
+          "portReplacements": 0,
+          "queuedFramesAtStop": 0,
+          "queuedMsAtStop": 0,
+          "discardedAtStop": 0,
+          "sequenceGapCount": 0,
+          "missedFrames": 0,
+          "badSampleTypeFrames": 0,
+          "droppedCaptionCount": 0
+        },
+        "privacy": {
+          "capturedAudioPersisted": false,
+          "reportContainsTranscriptText": false,
+          "reportContainsAudioPath": false
+        },
+        "limitations": [
+          "This is one real loopback run, not a latency percentile study.",
+          "This source-specific report does not attest a physical-preferred microphone fixture; use the separate --source mic evidence."
+        ]
+      },
+      "exitEvidenceSha256": "f850fe16d956fb6fabd8a0d2a3ed34355208035785969007e24d932e1ede62a4",
+      "exitEvidence": {
+        "schemaVersion": 1,
+        "kind": "i2-exact-child-exit",
+        "sourceId": "loopback",
+        "reportSha256": "b2e9054324ed418e42fc384bb86ad0e6d3607690607ac02dc491126a9f2e555a",
+        "outcome": "exited-zero-without-runner-termination"
+      }
+    }
+  ],
+  "privacy": {
+    "capturedAudioPersisted": false,
+    "reportContainsTranscriptText": false,
+    "reportContainsAudioPath": false,
+    "reportContainsInputPaths": false
+  },
+  "limitations": [
+    "Runs use one Windows host and one controlled corpus; they are not a cross-hardware benchmark.",
+    "Device change, sleep/wake and user-driven window dragging remain separate I2 acceptance scenarios."
+  ]
+}

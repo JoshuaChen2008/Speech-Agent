@@ -13,6 +13,7 @@ class LiveSubtitlePcmCaptureProcessor extends AudioWorkletProcessor {
     this.assembler = new FrameAssembler({ frameSamples, sampleRate: targetSampleRate })
     this.targetSampleRate = targetSampleRate
     this.active = true
+    this.streamStartContextTimeSeconds = null
     this.port.onmessage = (event) => {
       if (event.data?.type !== 'stop') return
       this.postFrames(this.assembler.push(this.resampler.flush()))
@@ -33,6 +34,7 @@ class LiveSubtitlePcmCaptureProcessor extends AudioWorkletProcessor {
         type: 'frame',
         sequence: frame.sequence,
         timestampSeconds: frame.timestampSeconds,
+        streamStartContextTimeSeconds: this.streamStartContextTimeSeconds,
         samples: frame.samples
       }, [frame.samples.buffer])
     }
@@ -44,6 +46,7 @@ class LiveSubtitlePcmCaptureProcessor extends AudioWorkletProcessor {
 
     const channels = inputs[0] || []
     if (channels.length === 0 || channels[0].length === 0) return true
+    if (this.streamStartContextTimeSeconds === null) this.streamStartContextTimeSeconds = currentTime
     this.postFrames(this.assembler.push(this.resampler.push(downmixToMono(channels))))
     return true
   }

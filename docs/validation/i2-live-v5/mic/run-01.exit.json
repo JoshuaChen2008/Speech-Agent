@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "kind": "i2-exact-child-exit",
+  "sourceId": "mic",
+  "reportSha256": "1000cb132241e5e03a8ce977377f0db811e50e87ace316c76519f659100c0df5",
+  "outcome": "exited-zero-without-runner-termination"
+}

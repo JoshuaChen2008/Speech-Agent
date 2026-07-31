@@ -9,7 +9,9 @@
    adapter 组合本类）、不做自动重启策略（那是 coordinator 的恢复语义）。 */
 
 const path = require('node:path')
+const { performance } = require('node:perf_hooks')
 const { assertSingleSourceIds, isCaptionEvent } = require('../../contracts')
+const { MAIN_CLOCK_ID, selectClockCalibration } = require('../clock-calibration')
 
 const WORKER_PATH = path.join(__dirname, 'realtime-worker.js')
 const SERVICE_NAME = 'Speech Agent realtime ASR'
@@ -20,6 +22,7 @@ const SERVICE_NAME = 'Speech Agent realtime ASR'
    separate, shorter, exact-child reap deadline. */
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30000
 const DEFAULT_FORCE_KILL_TIMEOUT_MS = 5000
+const UTILITY_CLOCK_ID = 'realtime-utility-performance-v1'
 
 function positiveTimeout (value) {
   if (!Number.isInteger(value) || value < 1) throw new RangeError('timeoutMs must be a positive integer')
@@ -35,6 +38,54 @@ function waitWithTimeout (promise, timeoutMs, message) {
     })
   ]).finally(() => {
     if (timer) clearTimeout(timer)
+  })
+}
+
+function finiteClockMs (value) {
+  return Number.isFinite(value) && value >= 0
+}
+
+function sanitizeCaptionTiming (value, event, workerHostMainClockMs) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const keys = [
+    'schemaVersion', 'sourceId', 'segmentId', 'sequence',
+    'audioHostClockId', 'vadStartAudioTimestampMs', 'vadStartFrameAudioHostClockMs',
+    'partialTriggerAudioEndMs', 'partialTriggerFrameAudioHostClockMs',
+    'utilityClockId', 'partialTriggerUtilityIngressClockMs', 'partialPublishUtilityClockMs'
+  ]
+  if (Object.keys(value).sort().join('|') !== keys.sort().join('|')) return null
+  if (value.schemaVersion !== 2 || value.sourceId !== event.sourceId ||
+      value.segmentId !== event.segmentId || value.sequence !== event.sequence) return null
+  if (typeof value.audioHostClockId !== 'string' || value.audioHostClockId.length < 1 ||
+      value.audioHostClockId.length > 120 || value.utilityClockId !== UTILITY_CLOCK_ID) return null
+  if (!Number.isFinite(value.vadStartAudioTimestampMs) || value.vadStartAudioTimestampMs < 0 ||
+      !Number.isFinite(value.partialTriggerAudioEndMs) ||
+      value.partialTriggerAudioEndMs < value.vadStartAudioTimestampMs) return null
+  if (!finiteClockMs(value.vadStartFrameAudioHostClockMs) ||
+      !finiteClockMs(value.partialTriggerFrameAudioHostClockMs) ||
+      !finiteClockMs(value.partialTriggerUtilityIngressClockMs) ||
+      !finiteClockMs(value.partialPublishUtilityClockMs) ||
+      !finiteClockMs(workerHostMainClockMs)) return null
+  /* Each comparison stays inside its sampled clock domain.  The evidence
+     composer may later use separately captured offsets; it must not pretend
+     these monotonic values are directly comparable across processes. */
+  if (value.partialTriggerFrameAudioHostClockMs < value.vadStartFrameAudioHostClockMs ||
+      value.partialPublishUtilityClockMs < value.partialTriggerUtilityIngressClockMs) return null
+  return Object.freeze({
+    schemaVersion: 2,
+    sourceId: event.sourceId,
+    segmentId: event.segmentId,
+    sequence: event.sequence,
+    audioHostClockId: value.audioHostClockId,
+    vadStartAudioTimestampMs: Number(value.vadStartAudioTimestampMs.toFixed(3)),
+    vadStartFrameAudioHostClockMs: Number(value.vadStartFrameAudioHostClockMs.toFixed(3)),
+    partialTriggerAudioEndMs: Number(value.partialTriggerAudioEndMs.toFixed(3)),
+    partialTriggerFrameAudioHostClockMs: Number(value.partialTriggerFrameAudioHostClockMs.toFixed(3)),
+    utilityClockId: value.utilityClockId,
+    partialTriggerUtilityIngressClockMs: Number(value.partialTriggerUtilityIngressClockMs.toFixed(3)),
+    partialPublishUtilityClockMs: Number(value.partialPublishUtilityClockMs.toFixed(3)),
+    mainClockId: MAIN_CLOCK_ID,
+    workerHostMainClockMs: Number(workerHostMainClockMs.toFixed(3))
   })
 }
 
@@ -54,6 +105,9 @@ class RealtimeWorkerHost {
     this.onFatalError = typeof options.onFatalError === 'function' ? options.onFatalError : () => {}
     /* 边界丢弃必须可观测：isCaptionEvent 拒绝的事件计数。 */
     this.droppedCaptionCount = 0
+    this.captionTimings = new Map()
+    this.clockCalibration = null
+    this.clockProbeSequence = 0
     this.disposed = false
   }
 
@@ -92,6 +146,74 @@ class RealtimeWorkerHost {
     return () => this.exitListeners.delete(listener)
   }
 
+  takeCaptionTiming (event) {
+    const key = `${event?.sourceId}:${event?.sequence}`
+    const timing = this.captionTimings.get(key) || null
+    this.captionTimings.delete(key)
+    return timing ? { ...timing } : null
+  }
+
+  async calibrateClock (sampleCount = 7) {
+    if (!Number.isInteger(sampleCount) || sampleCount < 3 || sampleCount > 31) {
+      throw new RangeError('sampleCount must be an integer between 3 and 31')
+    }
+    const child = this.child
+    if (!child) throw new Error('worker is not running')
+    const samples = []
+    for (let index = 0; index < sampleCount; index += 1) {
+      samples.push(await this.probeClock(child))
+    }
+    const calibration = selectClockCalibration(samples, UTILITY_CLOCK_ID, performance.now())
+    if (!calibration) throw new Error('worker clock calibration failed')
+    this.clockCalibration = Object.freeze({ ...calibration })
+    return { ...this.clockCalibration }
+  }
+
+  probeClock (child) {
+    const probeId = `realtime-clock-${++this.clockProbeSequence}`
+    return new Promise((resolve, reject) => {
+      const mainSentClockMs = performance.now()
+      const timer = setTimeout(() => {
+        cleanup()
+        reject(new Error('worker clock probe timed out'))
+      }, 1000)
+      const onExit = (code) => {
+        cleanup()
+        reject(new Error(`worker exited during clock probe (code ${code})`))
+      }
+      const onMessage = (message) => {
+        if (message?.type !== 'clock-probe-result' || message.probeId !== probeId) return
+        const mainReceivedClockMs = performance.now()
+        cleanup()
+        if (message.clockId !== UTILITY_CLOCK_ID || !finiteClockMs(message.r1) || !finiteClockMs(message.r2) ||
+            message.r2 < message.r1) {
+          reject(new Error('worker clock probe returned invalid sample'))
+          return
+        }
+        resolve(Object.freeze({
+          mainSentClockMs,
+          remoteReceivedClockMs: message.r1,
+          remoteSentClockMs: message.r2,
+          mainReceivedClockMs,
+          clockId: message.clockId
+        }))
+      }
+      const cleanup = () => {
+        clearTimeout(timer)
+        child.removeListener('message', onMessage)
+        child.removeListener('exit', onExit)
+      }
+      child.on('message', onMessage)
+      child.once('exit', onExit)
+      try {
+        child.postMessage({ type: 'clock-probe', probeId })
+      } catch (error) {
+        cleanup()
+        reject(error)
+      }
+    })
+  }
+
   emit (listeners, value) {
     for (const listener of listeners) {
       try { listener(value) } catch { /* observer failures stay isolated */ }
@@ -110,12 +232,22 @@ class RealtimeWorkerHost {
     assertSingleSourceIds(config.sourceIds)
     const child = this.electron.utilityProcess.fork(WORKER_PATH, [], { serviceName: SERVICE_NAME })
     this.child = child
+    this.clockCalibration = null
     this.installChild(child)
     child.on('message', (message) => {
       if (message?.type === 'caption') {
         /* 契约边界：worker 是独立进程，事件先过 isCaptionEvent 再进主进程
            路由；非法事件丢弃并计数（coordinator 的 acceptCaption 还会再守一层）。 */
-        if (isCaptionEvent(message.event)) this.emit(this.captionListeners, message.event)
+        if (isCaptionEvent(message.event)) {
+          const receivedAtMainClockMs = performance.now()
+          const timing = sanitizeCaptionTiming(message.timing, message.event, receivedAtMainClockMs)
+          if (timing) {
+            const key = `${message.event.sourceId}:${message.event.sequence}`
+            this.captionTimings.set(key, timing)
+            while (this.captionTimings.size > 256) this.captionTimings.delete(this.captionTimings.keys().next().value)
+          }
+          this.emit(this.captionListeners, message.event)
+        }
         else this.droppedCaptionCount += 1
         return
       }
@@ -323,6 +455,7 @@ class RealtimeWorkerHost {
     this.captionListeners.clear()
     this.statsListeners.clear()
     this.exitListeners.clear()
+    this.captionTimings.clear()
   }
 
   dispose () {
@@ -335,5 +468,7 @@ module.exports = {
   DEFAULT_SHUTDOWN_TIMEOUT_MS,
   RealtimeWorkerHost,
   SERVICE_NAME,
-  WORKER_PATH
+  UTILITY_CLOCK_ID,
+  WORKER_PATH,
+  sanitizeCaptionTiming
 }
