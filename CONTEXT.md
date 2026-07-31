@@ -36,6 +36,11 @@
 | **语义索引（Semantic Index）** | 后期可选的、可重建的当前正文向量表示，用于相似度检索；它不属于字幕 MVP，也不是字幕或摘要的事实来源。 | “向量数据库”——本项目不引入独立远端权威数据源。 |
 | **用户旅程（User Journey）** | 从用户意图开始，跨越多个真实产品模块并得到可观察结果的一条完整路径。 | “接口调通”——单个接口成功不等于旅程成立。 |
 | **确定性联合测试（Deterministic Integration Journey）** | 在 CI 中运行的用户旅程测试，只在声卡、网络、系统权限等不可确定外部边界使用替身，内部产品模块使用真实实现。 | “大单测”“全 mock 集成测试”。 |
+| **打包态确定性资格（Packaged Deterministic Qualification）** | 同一提交生成 Windows x64 ASAR/NSIS，并在受控外部边界下验证 package allowlist、native unpack/实际加载、utility process、SQLite、四窗产品旅程和安装/卸载机械生命周期。 | “干净机发布验收”——它不证明公网、真实权限、物理音源、交互安装向导、SmartScreen 或两小时稳定性。 |
+| **干净机发布验收（Clean-machine Release Acceptance）** | 用 B5 精确安装器及其 SHA，在无仓库、无 Node、无既有 userData/模型的 Win11 机器上完成交互安装、公网资源供给、真实音源、持久化、离线复启与卸载策略验证。 | GitHub hosted runner、`win-unpacked` 启动或受控 fixture 旅程。 |
+| **完整模型供给后离线（Offline After Complete Model Provisioning）** | 新安装首次取得完整字幕模型资源包需要网络；三项严格 ready marker 已成立后，断网且 Agent 不存在时，字幕、SQLite 保存与历史查看仍必须工作。 | “全新缺模型安装可离线首次使用”。 |
+| **程序卸载（Application Uninstall）** | 移除安装目录、快捷方式和卸载登记的程序生命周期动作。MVP 默认不等于清除用户数据。 | “恢复出厂”“删除历史与模型”。 |
+| **用户数据清除（User Data Erasure）** | 由用户明确触发、只针对精确 userData 根的模型、配置和字幕历史删除动作；当前 MVP 不提供。 | NSIS 默认卸载；不得把保留数据称为卸载失败。 |
 | **实机证据（Machine Evidence）** | 在具备真实 Windows 音频、模型、窗口或长稳环境的机器上生成的可追溯 smoke/soak 报告。 | “CI 已通过”——托管 CI 不能替代硬件证据。 |
 | **实现完成（Implementation Complete）** | 代码与局部回归已完成，但联合旅程或实机门禁仍可能未通过。 | 无限定词的“完成”。 |
 | **验收完成（Acceptance Complete）** | 该能力要求的确定性联合旅程和适用的实机证据均已通过。 | “单测全绿”。 |

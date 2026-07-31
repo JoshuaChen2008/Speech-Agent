@@ -474,12 +474,12 @@ function applyLock (on) {
 }
 
 function createCoordinator (persistenceSink) {
-  const devOptions = resolveRuntimeOptions()
+  const devOptions = resolveRuntimeOptions(process.env, { packaged: app.isPackaged })
   if (devOptions.warning) console.warn(`[runtime] ${devOptions.warning}`)
   /* I2.1 结构模式（显式 dev 开关，默认关闭）：真实采集窗 + realtime worker，
      recognizer 为 null——状态机/背压/恢复全真，但不产任何字幕文本。
      仍需 LIVE_SUBTITLE_DEV_MODEL 才能 start。 */
-  const structuralRuntime = process.env.LIVE_SUBTITLE_DEV_RUNTIME === 'structural'
+  const structuralRuntime = !app.isPackaged && process.env.LIVE_SUBTITLE_DEV_RUNTIME === 'structural'
   if (structuralRuntime) {
     console.warn('[runtime] structural runtime enabled: real capture and worker, null recognizer, no captions')
   }
@@ -491,7 +491,7 @@ function createCoordinator (persistenceSink) {
   const approvedRuntime = (!devOptions.modelOverride && !structuralRuntime && managerReady)
     ? createApprovedRuntimeDefinition({
         userDataDir: app.getPath('userData'),
-        allowExternal: allowsExternalModelResources(process.env),
+        allowExternal: allowsExternalModelResources(process.env, { packaged: app.isPackaged }),
         ...runtimeEvidenceOptions
       })
     : null
@@ -588,14 +588,14 @@ async function installModelResources () {
   }
   try {
     const status = await modelManager.install()
-    const devOptions = resolveRuntimeOptions()
-    const structuralRuntime = process.env.LIVE_SUBTITLE_DEV_RUNTIME === 'structural'
+    const devOptions = resolveRuntimeOptions(process.env, { packaged: app.isPackaged })
+    const structuralRuntime = !app.isPackaged && process.env.LIVE_SUBTITLE_DEV_RUNTIME === 'structural'
     if (!devOptions.modelOverride && !structuralRuntime &&
         coordinator.getSnapshot().model.state !== 'ready') {
       activateApprovedRuntime({
         coordinator,
         userDataDir: app.getPath('userData'),
-        allowExternal: allowsExternalModelResources(process.env),
+        allowExternal: allowsExternalModelResources(process.env, { packaged: app.isPackaged }),
         ...runtimeEvidenceOptions
       })
     }
@@ -728,7 +728,7 @@ async function bootstrapApplication () {
   if (quitRequested) return false
   config.load()
   const userDataDir = app.getPath('userData')
-  const externalModelsAllowed = allowsExternalModelResources(process.env)
+  const externalModelsAllowed = allowsExternalModelResources(process.env, { packaged: app.isPackaged })
   modelManager = new ModelManager({
     userDataDir,
     ...(externalModelsAllowed

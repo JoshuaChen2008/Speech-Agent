@@ -43,13 +43,21 @@ mic/loopback，因此只证明活跃 native 工作后的当前收束路径，不
 captured/sent/ingested 一致，dropped、sequence gap、bad sample 均为 0；得到 1 final 和
 1 refined，双 CER 0，refined 含标点。Electron exact process 正常退出且没有强制终止。
 这是当前真实 native 工作路径的单轮证据，但它仍是开发态 loopback，不覆盖
-物理 mic、长时稳定、打包态，也没有生成 native stack。
+物理 mic 或长时稳定，也没有生成 native stack。
 
 受监督多窗口产品壳也已完成首设、开始、字幕 DOM、停止、SQLite 历史翻页、资源页与退出
 联动。产品壳报告为 `pass / partial`；独立 role exit evidence 为 `clean-exit`、主进程状态码
 0、incident 0、未观察到 breakpoint。当前旅程从 settings 缺失态点击安装，使用 fake ASR、
 受控模型 fixture（无真实张量）且无物理音频/真实公网，不能作为真实推理、物理声卡或
 公网下载证据。
+
+B5 又从真实 Windows x64 packaged test executable 重跑同一四窗口旅程；main 与
+storage utility 均从 ASAR 进入，sherpa addon 及相邻 DLL 在独立 utility 中实际加载，
+packaged DB0 完成 WAL、事务、重开与 integrity 资格检查，相关 exact child 均
+`exitCode=0`。外部 supervisor 报告同样为 `clean-exit`、incident `0`、未观察到
+breakpoint。另一份精确、未签名 NSIS 候选的隔离静默安装/卸载机械资格也通过。
+打包产品旅程仍使用受控资源与 fake ASR，而 NSIS 探针未启动已安装应用；它们共同
+取得 B5 打包态确定性资格，不替代干净 Win11、真实音源、公网模型与断网复启的 I4。
 
 `npm start` 现在由 exact-child supervisor 启动 Electron。main、renderer、audio-host、
 realtime、refine、storage 和 Chromium 其他子进程只按固定枚举记录角色、生命周期、退出原因
@@ -75,5 +83,5 @@ realtime、refine、storage 和 Chromium 其他子进程只按固定枚举记录
 - 没有证明异常来自 sherpa/ONNX、GPU、renderer 或 Electron main 中的任意一个角色；
 - 没有证明用户交互问题已复现；
 - 没有证明硬崩溃后的 replacement、字幕恢复或两小时资源稳定性；
-- 没有完成物理 mic I2、两小时 I3 或打包态 I4；
+- 没有完成物理 mic I2、两小时 I3 或干净机发布验收 I4；
 - 没有因为诊断需要改变“永不持久化现场音频”的产品语义。

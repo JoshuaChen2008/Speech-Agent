@@ -42,15 +42,17 @@ function parseArguments (argv) {
     executablePath: null,
     electronMajor: null,
     entryArguments: [],
-    strictReport: false
+    strictReport: false,
+    packaged: false
   }
   const single = new Set()
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index]
-    if (flag === '--strict-report') {
+    if (flag === '--strict-report' || flag === '--packaged') {
       if (single.has(flag)) throw new TypeError('duplicate supervisor argument')
       single.add(flag)
-      options.strictReport = true
+      if (flag === '--strict-report') options.strictReport = true
+      if (flag === '--packaged') options.packaged = true
       continue
     }
     if (!['--report', '--entry', '--electron', '--electron-major', '--entry-arg'].includes(flag) ||
@@ -68,6 +70,9 @@ function parseArguments (argv) {
     if (flag === '--entry') options.entryPath = String(value)
     if (flag === '--electron') options.executablePath = String(value)
     if (flag === '--electron-major') options.electronMajor = positiveElectronMajor(value)
+  }
+  if (options.packaged && (!options.executablePath || options.electronMajor === null || single.has('--entry'))) {
+    throw new TypeError('packaged supervision requires --electron and --electron-major without --entry')
   }
   return options
 }
@@ -178,9 +183,15 @@ function safeEntryArguments (value) {
 
 async function superviseElectron (options = {}) {
   if (typeof options.reportPath !== 'string' || options.reportPath.length === 0 ||
-      typeof options.entryPath !== 'string' || options.entryPath.length === 0 ||
       typeof options.executablePath !== 'string' || options.executablePath.length === 0) {
-    throw new TypeError('executablePath, entryPath and reportPath are required')
+    throw new TypeError('executablePath and reportPath are required')
+  }
+  if (options.packaged !== undefined && typeof options.packaged !== 'boolean') {
+    throw new TypeError('packaged must be boolean')
+  }
+  const packaged = options.packaged === true
+  if (!packaged && (typeof options.entryPath !== 'string' || options.entryPath.length === 0)) {
+    throw new TypeError('entryPath is required for an unpackaged Electron launch')
   }
   const entryArguments = safeEntryArguments(options.entryArguments)
   if (options.strictReport !== undefined && typeof options.strictReport !== 'boolean') {
@@ -205,6 +216,7 @@ async function superviseElectron (options = {}) {
   const accumulator = createEvidenceAccumulator({
     electronMajor: options.electronMajor ?? null,
     platform: options.platform || process.platform,
+    packagedRuntime: packaged,
     now: options.now
   })
   const strictReport = options.strictReport === true
@@ -219,7 +231,7 @@ async function superviseElectron (options = {}) {
   const reportWriter = options.reportWriter || writeReportAtomic
   const spawnProcess = options.spawnProcess || spawn
   const executablePath = path.resolve(options.executablePath)
-  const entryPath = path.resolve(options.entryPath)
+  const entryPath = packaged ? null : path.resolve(options.entryPath)
   const workingDirectory = options.cwd === undefined ? process.cwd() : path.resolve(options.cwd)
   if (options.env !== undefined && (!options.env || typeof options.env !== 'object' || Array.isArray(options.env))) {
     throw new TypeError('env must be an object')
@@ -314,7 +326,7 @@ async function superviseElectron (options = {}) {
     }
 
     try {
-      child = spawnProcess(executablePath, [entryPath, ...entryArguments], {
+      child = spawnProcess(executablePath, packaged ? entryArguments : [entryPath, ...entryArguments], {
         cwd: workingDirectory,
         env: environment,
         windowsHide: true,
@@ -389,6 +401,7 @@ async function runCli () {
     electronMajor: runtime.electronMajor,
     entryPath: parsed.entryPath,
     entryArguments: parsed.entryArguments,
+    packaged: parsed.packaged,
     reportPath,
     lastAbnormalReportPath: defaultLastAbnormalReportPath(reportPath),
     strictReport: parsed.strictReport

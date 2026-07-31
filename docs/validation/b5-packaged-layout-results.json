@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "kind": "packaged-layout-qualification",
+  "generatedAt": "2026-07-31T04:34:30.651Z",
+  "result": "pass",
+  "gateStatus": "packaged-ci-qualified",
+  "artifact": {
+    "variant": "release",
+    "arch": "x64",
+    "appVersion": "0.1.0",
+    "electronVersion": "43.2.0",
+    "builderVersion": "26.15.3",
+    "sherpaWrapperVersion": "1.13.4",
+    "sherpaPlatformVersion": "1.13.4",
+    "mainEntry": "src/main.js",
+    "appExecutableX64": true,
+    "appAsarPresent": true,
+    "asarEntryCount": 163,
+    "installerPresent": true,
+    "installerSha256": "0139c3078de99e11f7e40c6cc7768f4cb493973c1a88becea8860efe5421edd2",
+    "signingStatus": "not-signed"
+  },
+  "layout": {
+    "requiredProductEntryCount": 29,
+    "requiredProductEntriesPresent": true,
+    "forbiddenDevelopmentTreesAbsent": true,
+    "modelTensorsBundled": false,
+    "audioPayloadsBundled": false
+  },
+  "native": {
+    "requiredBinaryCount": 5,
+    "unpackedBinaryCount": 5,
+    "allMarkedUnpacked": true
+  },
+  "limitations": [
+    "unsigned-installer",
+    "not-installed-clean-machine-i4"
+  ]
+}

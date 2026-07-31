@@ -2,9 +2,11 @@
 
 一个由两套能力协作组成的 Win11 桌面产品：**字幕系统**以互斥的 `loopback` 会议字幕或 `mic` 个人听写为输入，负责本地实时 ASR、字幕、自动保存和带时间戳历史；后置的 **Agent 系统**再消费已提交字幕，通过 Pi Agent Core 与第一方插件生成独立增强文本和会后结构化纪要。Agent 只生成内容，不执行外部操作；关闭或失败时，字幕系统仍独立完整工作。产品现在及未来都不保存原始音频。
 
-当前已完成 **B1 应用骨架 + B2 实时链路 + B3 两遍精修/SQLite 历史 + B4 本地模型资源闭环 + 来源 XOR 联合门禁**：透明字幕条、工具栏、点击穿透、亚克力设置窗、单选监听模式、权威会话状态机、隐藏采集窗（回环/麦克风）、realtime worker，以及 Gate 0B 批准的 **160ms 真实模型 + silero VAD + 离线精修**。首次缺模型时可从设置的“模型资源”页一键下载固定三资源 bundle，支持断点续传、哈希/归档审查、原子安装；空闲应用安装后无需重启即可开始真字幕。字幕自动写入 SQLite，工具条可打开独立历史窗查看带时间戳正文并导出 txt/md/srt。确定性多模块 CI 已从真实设置页点击覆盖下载、热启用、字幕、暂停/恢复、停止和本次 SQLite 历史；270,938,600 字节批准模型真实安装/调用也有独立证据。物理 mic、两小时长稳、干净 Win11 公网/打包验收仍待闭环。Agent/翻译未实现，向量检索已后置。
+当前已完成 **B1 应用骨架 + B2 实时链路 + B3 两遍精修/SQLite 历史 + B4 本地模型资源闭环 + B5 打包态确定性资格 + 来源 XOR 联合门禁**：透明字幕条、工具栏、点击穿透、亚克力设置窗、单选监听模式、权威会话状态机、隐藏采集窗（回环/麦克风）、realtime/refine/storage utility，以及 Gate 0B 批准的 **160ms 真实模型 + silero VAD + 离线精修**。首次缺模型时可从设置的“模型资源”页一键下载固定三资源 bundle，支持断点续传、哈希/归档审查、原子安装；空闲应用安装后无需重启即可开始真字幕。字幕自动写入 SQLite，工具条可打开独立历史窗查看带时间戳正文并导出 txt/md/srt。
 
-针对用户看到的 `electron.exe / 0x80000003`，当前没有 dump、发生时间或 native stack，根因仍未获得调用栈级证明。生命周期修复后，批准模型活跃诊断三轮共送入并消费 303 帧，得到 3 条 final、3 条 refined、3 次 offline decode，六个 realtime/refine 子进程均优雅 `exitCode=0`、fatal 为 0；最贴近截图场景的真实 I2 loopback→ASR→offline refine→退出也 PASS：128 帧 captured/sent/ingested 一致，0 dropped/gap/bad sample，1 final + 1 refined、双 CER 0，Electron exact process 正常退出且未强制终止；本轮从设置页下载安装再运行字幕的受监督四窗口产品壳也为 clean exit、0 incident、未观察到 breakpoint。冻结语料诊断和 fake-ASR 产品壳仍只是 diagnostic/partial；真实 loopback 单轮也不替代物理 mic、长时 I3 或打包态 I4。详见 [Electron breakpoint 调查](docs/validation/electron-breakpoint-investigation.md)。
+B5 已生成 Windows x64 ASAR/NSIS，并从真实 packaged exe 复跑设置下载、热启用、字幕、暂停/恢复、停止、SQLite 历史、205 段分页、sherpa native utility 与 clean exit；精确 NSIS 的隔离安装/卸载也通过。该候选未签名，测试 package 使用受控资源/fake ASR，不能冒充 I4。物理 mic、两小时长稳、干净 Win11 的公网/权限/真实音源/ready 后离线复启仍待闭环。Agent/翻译未实现，向量检索已后置。
+
+针对用户看到的 `electron.exe / 0x80000003`，当前没有 dump、发生时间或 native stack，根因仍未获得调用栈级证明。生命周期修复后，批准模型活跃诊断三轮共送入并消费 303 帧，得到 3 条 final、3 条 refined、3 次 offline decode，六个 realtime/refine 子进程均优雅 `exitCode=0`、fatal 为 0；最贴近截图场景的真实 I2 loopback→ASR→offline refine→退出也 PASS：128 帧 captured/sent/ingested 一致，0 dropped/gap/bad sample，1 final + 1 refined、双 CER 0，Electron exact process 正常退出且未强制终止。开发态与打包态四窗口产品壳均为 clean exit、0 incident、未观察到 breakpoint；打包态还实际加载了 unpacked native addon/DLL。上述证据仍不能替代 native stack，也不能声明历史异常已永久修复。详见 [Electron breakpoint 调查](docs/validation/electron-breakpoint-investigation.md)和 [B5 打包证据](docs/validation/b5-packaging.md)。
 
 ## 运行
 
@@ -31,6 +33,9 @@ $env:LIVE_SUBTITLE_ALLOW_EXTERNAL_MODELS='1'
 npm start
 ```
 
+所有 `LIVE_SUBTITLE_*` 开发缝在 packaged 应用中强制失效，不能用环境变量绕过正式
+ModelManager 的 userData ready marker。
+
 开发 B1 状态流仍可显式启用 fake runtime 映射（不加载真实模型，且会绕过真实模型路径）：
 
 ```powershell
@@ -44,6 +49,18 @@ npm start
 npm run test:integration # 会议回环、麦克风用户旅程的跨模块一致性
 npm run test:ci          # CI 门禁：联合旅程 + 完整回归
 ```
+
+打包入口（内部候选尚未签名）：
+
+```powershell
+npm run package:smoke    # 与正式 ASAR/native 布局相同的测试 package
+npm run package:release  # Windows x64 NSIS 候选
+```
+
+正式包只包含产品源码与生产依赖；模型不进入安装包。全新安装首次取得完整
+270,938,600 字节三资源 bundle 需要网络，三项严格 ready marker 成立后才承诺断网且无
+Agent 时字幕、SQLite 保存和历史继续可用。默认卸载移除程序、快捷方式和卸载登记，保留 userData 中的模型、
+配置和字幕历史。证据边界见 [B5 打包态确定性资格](docs/validation/b5-packaging.md)。
 
 真实设备验收必须把两个来源分开运行；报告只保存结构化指标，不保存现场音频：
 
@@ -122,7 +139,7 @@ src/
 
 ## 下一步
 
-见 [PLAN.md](PLAN.md)（Rev.10）：来源互斥、默认 SQLite-only 生命周期、文本历史/导出、ModelManager 与真实产品壳旅程已通过对应门禁；当前按物理 mic I2 → I3 长稳 → I4 干净 Win11 公网/打包验收闭环字幕 MVP。之后才做 Pi Core/Electron 隔离探针、项目自有插件宿主、独立增强文本和会后结构化纪要；向量检索最后评估。任何能力都必须有跨模块用户旅程，不能只交单测。
+见 [PLAN.md](PLAN.md)（Rev.10）：来源互斥、默认 SQLite-only 生命周期、文本历史/导出、ModelManager、真实产品壳与 B5 打包态确定性资格已通过对应门禁；当前按物理 mic I2 → I3 长稳 → I4 精确 NSIS 的干净 Win11 发布验收闭环字幕 MVP。之后才做 Pi Core/Electron 隔离探针、项目自有插件宿主、独立增强文本和会后结构化纪要；向量检索最后评估。任何能力都必须有跨模块用户旅程，不能只交单测。
 
 - 窗口壳和交互不变量：[docs/subtitle-window.md](docs/subtitle-window.md)
 - 视觉/UI 模型交接：[docs/ui-design-brief.md](docs/ui-design-brief.md)

@@ -270,7 +270,7 @@ UI 规则：
 |---|---|---|---|
 | `stop` | stop 命令 | B1 | **完成** |
 | `retry` | retry 命令 | B1 | **完成** |
-| `history` | 可聚焦的历史窗 + 只读终态会话/时间戳正文/导出 contract；搜索可后加 | B3.3 | **联合验收完成/真实 Electron 205 段五页与 DOM≤50 已验；系统对话框、两小时 I3 与 I4 待验** |
+| `history` | 可聚焦的历史窗 + 只读终态会话/时间戳正文/导出 contract；搜索可后加 | B3.3 | **联合验收完成/开发态与 packaged Electron 205 段五页、DOM≤50 已验；系统对话框、两小时 I3 与 I4 待验** |
 | `open-model-manager` | 资源管理页：固定三项本地 ASR 资源的总/分项进度、安全错误与单一下载/重试动作；完整 bundle 才能 start；不接受 URL/hash/path 参数 | B4 | **确定性 UI 联合验收完成**。真实 Electron 产品壳从 `missing` 状态点击下载，贯穿 preload/IPC/生产 Manager、Range、三 marker、热启用、字幕、暂停/恢复、停止和 SQLite 历史；I4 干净机公网下载待验收 |
 | `request-permission` | 权限请求入口 | Gate 0C / B2 | 未实现 |
 
@@ -290,7 +290,7 @@ UI 规则：
 
 ### 6.4 后续顺序
 
-字幕 MVP 的 B4 ModelManager 资源入口已实现，真实 Electron 四窗口产品壳已通过 settings renderer 点击下载→preload/IPC→受控安装→热启用→字幕→SQLite 历史的专门旅程。下一步推进物理 mic、I3 长稳与 I4 干净 Win11 公网安装/打包验收。该受控 UI 旅程使用小型受控资源和 fake ASR，只证明接线与用户交互，不能冒充真实推理、真实公网或物理声卡。Agent UI 等 A1/A2 契约冻结后再做，不在 renderer 内先行伪造能力；当前设置页不展示翻译开关。
+字幕 MVP 的 B4 ModelManager 资源入口已实现，开发态与 packaged Electron 四窗口产品壳均已通过 settings renderer 点击下载→preload/IPC→受控安装→热启用→字幕→SQLite 历史的专门旅程；B5 正式 ASAR/NSIS 和隔离安装卸载也已通过确定性资格。下一步推进物理 mic、I3 长稳与 I4 精确 NSIS 的干净 Win11 公网/权限/真实音源验收。受控 UI 旅程使用小型受控资源和 fake ASR，只证明接线、打包路径与用户交互，不能冒充真实推理、真实公网或物理声卡。Agent UI 等 A1/A2 契约冻结后再做，不在 renderer 内先行伪造能力；当前设置页不展示翻译开关。
 
 ## 7. 每次视觉交接必须包含
 

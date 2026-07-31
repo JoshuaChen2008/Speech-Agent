@@ -1,6 +1,6 @@
 # DB0 SQLite 开发态资格报告
 
-> 状态：**开发态通过；DB0 总门禁 partial**  
+> 状态：**本报告冻结开发态证据；B5 后 DB0 开发态与 ASAR 打包态资格均通过**
 > 日期：2026-07-31  
 > 规范：SEM-F07 / SEM-F14 / SEM-T03 / DB0 / DB6
 
@@ -14,9 +14,12 @@ Electron 43.2.0 的 utility process 已成功加载内置 `node:sqlite`（Node
 
 结构化证据：[`db0-sqlite-development-results.json`](db0-sqlite-development-results.json)
 
-本结果只冻结开发态首选驱动与基础 schema。仓库尚未完成 B5 打包，真实
-ASAR/NSIS 安装态路径必须在 I4 再运行同一资格检查；此前不得把 DB0 总门禁
-标成通过。
+本结果只冻结开发态首选驱动与基础 schema。B5 随后已从真实 packaged exe
+在 ASAR 内 fork storage utility，重跑同一 17 项资格，并取得 WAL、重开、integrity 与
+exact-child `exitCode=0` 的结构化证据。因此 DB0 的开发态与 ASAR 打包态确定性资格
+均已通过；精确 NSIS 在干净 Win11 中的发布环境验收仍属 I4，不反向改变驱动选择。
+打包证据见 [`b5-packaged-product-results.json`](b5-packaged-product-results.json) 与
+[`b5-packaged-exit-results.json`](b5-packaged-exit-results.json)。
 
 Windows CI 不是只读取本机留档：每次运行都会执行
 `scripts/db0-sqlite-smoke.js`，让 Electron main fork 真实 storage utility

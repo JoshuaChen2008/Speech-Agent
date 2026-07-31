@@ -8,15 +8,19 @@
     "test": "node --test --experimental-test-isolation=none",
     "test:integration": "node --test --experimental-test-isolation=none \"test/integration/**/*.test.js\"",
     "test:ci": "npm run test:integration && npm test",
-    "preview:fixtures": "node scripts/build-preview-fixtures.js"
+    "preview:fixtures": "node scripts/build-preview-fixtures.js",
+    "package:smoke": "electron-builder --config electron-builder.smoke.config.cjs --win dir --x64 --publish never",
+    "package:release": "electron-builder --config electron-builder.config.cjs --win nsis --x64 --publish never"
   },
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^43.2.0"
+    "@electron/asar": "3.4.1",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3"
   },
   "dependencies": {
-    "sherpa-onnx-node": "^1.13.4",
-    "sherpa-onnx-win-x64": "^1.13.4"
+    "sherpa-onnx-node": "1.13.4",
+    "sherpa-onnx-win-x64": "1.13.4"
   }
 }

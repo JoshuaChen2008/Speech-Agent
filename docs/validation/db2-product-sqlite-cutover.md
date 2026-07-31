@@ -50,7 +50,7 @@ caption/close ACK、关闭 storage worker，再二次 `app.quit()`。超过有�
 - 当前用户截图中的 `electron.exe 0x80000003` 属于本项目的哪一个进程角色；现有
   Windows 事件与 dump 没有匹配证据。
 - SQLite 历史列表、带时间戳文本复盘与 txt/md/srt 导出 UI。
-- I3 两小时长稳、I4 打包态与干净 Win11 安装旅程。
+- packaged Electron 内旧 JSONL import/二次启动、I3 两小时长稳与 I4 干净 Win11 安装旅程。
 
 因此本阶段允许继续实现历史能力，但不能把完整 J1/J2/J10、字幕 MVP 或发布门禁
 标记为通过。

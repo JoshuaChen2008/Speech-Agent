@@ -53,10 +53,11 @@ function validateProductShellReport (report) {
     'fake-asr-no-physical-audio',
     'controlled-model-fixtures-no-real-tensors',
     'deterministic-205-segment-fixture-not-two-hour-i3',
-    'not-packaged-i4'
+    report.packaging?.appIsPackaged === true ? 'not-clean-machine-i4' : 'not-packaged-i4'
   ]
   if (!Array.isArray(report.limitations) ||
-      requiredLimitations.some((limitation) => !report.limitations.includes(limitation))) {
+      requiredLimitations.some((limitation) => !report.limitations.includes(limitation)) ||
+      (report.packaging?.appIsPackaged === true && report.limitations.includes('not-packaged-i4'))) {
     throw new Error('product-shell report must preserve its external-boundary limitations')
   }
   const serialized = JSON.stringify(report)

@@ -95,7 +95,7 @@ stack、dump 或任意 Error 文本，也不配置 WER/Crashpad 或外部上传�
 - A1 再冻结 Agent 可靠消费采用事务 outbox 还是 durable cursor；两者都必须以已提交字幕水位为边界。
 - FTS5 可按历史搜索需求后加；`sqlite-vec` 明确 Deferred，不进入 B3.3 schema 或加载路径。
 - 默认组合根已以 SQLite 替代 JSONL 权威写入；冷启动先收束 stale-active、再迁移旧档，运行期不构造 JSONL writer。JSONL 只保留为旧数据导入、显式格式兼容和恢复格式，禁止长期双写。
-- 历史 renderer 只得到白名单终态会话列表、固定上限的 keyset 详情页和格式选择能力；每次只持有当前 50 条并通过 cursor 栈前后翻页。完整 transcript 只在 main/storage worker 内供导出与迁移；`firstEventOrder` 仅作为受限 keyset cursor 返回，正文 item 不含内部事件顺序，SQL、数据库路径、文件系统和导出目标路径均不跨 IPC。205 段确定性多模块旅程证明三格式完整导出不受分页截断；真实 Electron 壳另行证明 main/preload/IPC/utility/renderer 的 5 页交互与 DOM 上界 50。两小时数千段资源稳定性 I3 与打包态 I4 仍须单独验收。
+- 历史 renderer 只得到白名单终态会话列表、固定上限的 keyset 详情页和格式选择能力；每次只持有当前 50 条并通过 cursor 栈前后翻页。完整 transcript 只在 main/storage worker 内供导出与迁移；`firstEventOrder` 仅作为受限 keyset cursor 返回，正文 item 不含内部事件顺序，SQL、数据库路径、文件系统和导出目标路径均不跨 IPC。205 段确定性多模块旅程证明三格式完整导出不受分页截断；开发态和 packaged Electron 壳均证明 main/preload/IPC/utility/renderer 的 5 页交互与 DOM 上界 50，packaged storage utility 另通过 DB0/WAL/重开资格。两小时数千段资源稳定性 I3 与干净机 I4 仍须单独验收。
 - schema、表义、迁移与 DB0–DB6 门禁见 [`data-architecture.md`](data-architecture.md)、[ADR 0001](adr/0001-sqlite-authoritative-event-store.md) 和 [ADR 0002](adr/0002-separate-subtitle-and-agent-systems.md)。
 
 `ModelManager`：
@@ -264,7 +264,7 @@ realtime/refine 子进程均优雅 `exitCode=0`、fatal 0。受监督多窗口�
 0 incident、未观察到 breakpoint。另一次修复后真实 I2 loopback 以 128 帧完整通过采集、
 online ASR、offline refine 与正常退出：0 dropped/gap/bad sample、1 final + 1 refined、
 双 CER 0，exact process 未强制终止。冻结语料诊断和 fake-ASR 产品壳只证明当前退出接线
-与活跃 native 收束；真实 loopback 单轮也不证明物理 mic、两小时 I3、打包态 I4，三者
+与活跃 native 收束；真实 loopback 单轮也不证明物理 mic、两小时 I3 或干净机 I4，三者
 均不能证明历史 `0x80000003` 的 native stack 根因。
 
 ## 9. 安全要求
@@ -286,7 +286,8 @@ online ASR、offline refine 与正常退出：0 dropped/gap/bad sample、1 final
 3. 完成 `loopback` 会议字幕与 `mic` 个人听写两种单路路径；配置、UI 和 runtime 都拒绝双路并发，停止后才允许换源。
 4. SessionCoordinator 与可见 UI 接 fake/real CaptionEvent，同时验证 reload、自动存档、时间戳历史与导出。
 5. 独立 refine worker 和事件式 JSONL 过渡基线，验证 pause/resume、迟到修订和进程故障。
-6. B3.3 已在 DB0/DB1 基座上接入产品网关、迁移、默认 SQLite-only 生命周期与历史查询/导出；J1/J2/J10 及真实四窗口 Electron/SQLite 旅程已有证据，I3/I4 继续作为独立门禁。
-7. B4 ModelManager、资源页、空闲热启用和 J14 已完成；生产 Manager 已安装并实际调用固定三资源 bundle。当前按物理 mic → I3 两小时/恢复 → I4 公网干净 Win11/ASAR/NSIS 完成字幕 MVP 发布验收。
+6. B3.3 已在 DB0/DB1 基座上接入产品网关、迁移、默认 SQLite-only 生命周期与历史查询/导出；J1/J2/J10 及开发态/packaged 四窗口 Electron/SQLite 旅程已有证据，I3/I4 继续作为独立门禁。
+7. B4 ModelManager、资源页、空闲热启用和 J14 已完成；生产 Manager 已安装并实际调用固定三资源 bundle。
+8. B5 正式 ASAR/NSIS、native unpack、Electron fuses、packaged DB0/产品旅程及隔离安装卸载已通过确定性资格；测试 package 与正式候选明确分离。当前按物理 mic → I3 两小时/恢复 → I4 精确 NSIS 的公网/权限/真实音源/ready 后离线复启完成字幕 MVP 发布验收。
 8. 字幕 MVP 通过后做 A1：`AgentRuntime` + Pi Core 隔离探针 + 项目自有插件宿主 + 凭据/可靠消费；再以第一方插件实现独立增强文本和会后结构化纪要，并通过 J3–J7/J13。
 9. 只有 X1 明确进入范围时才增加 FTS5/`sqlite-vec`，并执行 J11/DB4。

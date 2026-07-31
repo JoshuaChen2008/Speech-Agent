@@ -1,7 +1,7 @@
 # Live Subtitle Agent · Win11 实时字幕技术规划
 
 > **Rev.10 · 2026-07-31**。初版调研 2026-07-23（版本号、模型名、体积经 GitHub Release API / npm registry / 下载解包核实）。
-> 本次修订：补充 Electron native 生命周期两阶段收束、隐私安全 role evidence、批准模型活跃退出诊断和受监督产品壳证据；并澄清模型资源是约 270.9MB 的三资源原子 bundle。资源管理入口及「设置页点击下载 → preload/IPC → 受控安装 → 热启用 → 字幕 → SQLite 历史」专门 Electron 旅程现均已通过确定性 CI。截图所示 `0x80000003` 仍没有 native stack 级根因证明，但本轮四窗口联动再次得到 `clean-exit`、零 incident、零 breakpoint；这些诊断不改变下一主线：物理 mic I2、I3 长稳和 I4 干净机公网/打包闭环。`loopback`/`mic` 继续产品级互斥，翻译/Agent 与向量继续后置。
+> 本次修订：B5 打包态确定性资格已在本机通过并接入 Windows workflow。正式 Windows x64 ASAR/NSIS 候选、正向内容 allowlist、Electron fuses、五个 unpacked native 二进制、打包态四窗/ModelManager/SQLite/native utility 联合旅程、exact-child clean exit 及隔离安装/卸载均已有结构化证据；精确候选 SHA 已冻结但未签名。B5 与 I4 现明确分层：这些证据不冒充干净 Win11 的公网、权限、真实音源、交互安装或离线复启。截图所示 `0x80000003` 仍没有 native stack 级根因证明；当前打包旅程只说明未复现。下一主线是物理 mic I2 → I3 长稳 → I4 干净机发布验收。`loopback`/`mic` 继续产品级互斥，翻译/Agent 与向量继续后置。
 
 ---
 
@@ -13,14 +13,14 @@
 |---|---|
 | 四窗架构（字幕 / 工具条 / 设置 / 历史）、停靠与脱离；真实 Electron 产品壳旅程 | 物理 mic、透明窗人工视觉与 I3 长稳 |
 | 锁定穿透、逐像素命中测试、主进程手动拖动 | 透明窗 DPI/人工视觉、设备变化与睡眠唤醒实机验收 |
-| 配置持久化（`userData/config.json`）+ 四窗主题联动 | Agent 层（后置）、打包分发 |
+| 配置持久化（`userData/config.json`）+ 四窗主题联动 | Agent 层（后置）、正式代码签名与外部发布身份 |
 | 亚克力设置窗（含模型资源 pane）+ 单路模式 XOR 门禁/J4 | I2 完整指标 |
 | B1 `SessionCoordinator`、状态机、per-window preload 与 contract-valid fake adapter | |
 | Electron 生命周期：30s graceful + 5s exact-child reap、45s 字幕运行时升级触发线（ModelManager 5s 并行）；隐私安全 role evidence | `0x80000003` 的 native stack 级根因、真实硬崩溃恢复 |
 | B2 audio host、PCM 直通/背压、realtime worker、**真实 160ms 模型 + silero VAD** | |
-| B3 **二遍精修 refine worker**（final→refined 自动变准补标点）+ JSONL 旧档迁移；B3.3 DB0/DB1、Gateway 恢复、默认 SQLite-only 生命周期、历史查询/导出 UI 与联合旅程；B4 固定 manifest/续传/校验/白名单解包/marker/资源 UI/热启用 | 物理 mic、I3 与 I4 打包态/公网干净机 |
+| B3 **二遍精修 refine worker**（final→refined 自动变准补标点）+ JSONL 旧档迁移；B3.3 DB0/DB1、Gateway 恢复、默认 SQLite-only 生命周期、历史查询/导出 UI 与联合旅程；B4 固定 manifest/续传/校验/白名单解包/marker/资源 UI/热启用；B5 ASAR/NSIS/native/packaged journey 确定性资格 | 物理 mic、I3 与 I4 公网/权限/真实音源干净机发布验收 |
 
-**Gate 0B 已于 2026-07-27 正式改判通过**（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修，门槛重设留档于 `docs/validation/gate-0b.md` 改判节），**两遍链路已全部接通**：真实 160ms 模型 + silero VAD + 离线精修 worker。2026-07-31 的 I2 schema v2 loopback 实机报告再次得到 final/refined CER 0，并记录 captured/sent/ingested 帧数一致且零丢失/零缺口、CPU/工作集和字幕到达时序；runner 已支持 `loopback`/`mic` 分开执行，物理 mic 证据仍待补。来源 XOR 由 J4 验证；J5/J6 已增加暂停/精修/worker 故障后同会话继续文本持久化的确定性联合旅程。SQLite 默认组合根和历史窗口已接入同一投影。B4 现又以 J14 覆盖 Range 续传→三资源校验/安装→空闲热启用→字幕→终态 SQLite 历史；批准 270,938,600 字节 bundle 已由生产 Manager 真实安装并被在线 ASR、离线精修、VAD 调用。真实 Electron 四窗口/preload/IPC/SQLite/退出的听写旅程同样通过且无 renderer/child crash。当前主线只剩物理 mic、I3 及 I4/ASAR/NSIS；Agent 在字幕闭环后启动，向量检索后置。
+**Gate 0B 已于 2026-07-27 正式改判通过**（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修，门槛重设留档于 `docs/validation/gate-0b.md` 改判节），**两遍链路已全部接通**：真实 160ms 模型 + silero VAD + 离线精修 worker。2026-07-31 的 I2 schema v2 loopback 实机报告再次得到 final/refined CER 0，并记录 captured/sent/ingested 帧数一致且零丢失/零缺口、CPU/工作集和字幕到达时序；runner 已支持 `loopback`/`mic` 分开运行，物理 mic 证据仍待补。来源 XOR 由 J4 验证；J5/J6 已增加暂停/精修/worker 故障后同会话继续文本持久化的确定性联合旅程。SQLite 默认组合根和历史窗口已接入同一投影。B4 以 J14 覆盖 Range 续传→三资源校验/安装→空闲热启用→字幕→终态 SQLite 历史；批准 270,938,600 字节 bundle 已由生产 Manager 真实安装并被在线 ASR、离线精修、VAD 调用。B5 又从真实 packaged exe 复跑四窗口/preload/IPC/SQLite/native load/退出，并生成及隔离安装卸载精确 NSIS。当前主线只剩物理 mic、I3 和 I4 干净机发布验收；Agent 在字幕闭环后启动，向量检索后置。
 
 native 生命周期补丁后，真实模型活跃 smoke 连续三轮累计处理 303 帧，产生 3 final、3 refined、3 次 offline decode，六个 realtime/refine exact child 均优雅 `exitCode=0`、fatal 0；最接近历史场景的真实 I2 loopback 单轮也以 128 帧 captured/sent/ingested 一致、0 dropped/gap/bad sample、1 final + 1 refined、双 CER 0 正常退出且未强制终止；受监督多窗口产品壳为 clean exit、0 incident、未观察到 breakpoint。冻结语料 smoke 与 fake-ASR 产品壳只属 diagnostic/partial；真实 loopback 单轮也不替代物理 mic、I3、I4 或历史异常根因验收。role evidence 不保存正文、音频/PCM、本地路径、stack 或 dump。完整时间线见 `docs/validation/electron-breakpoint-investigation.md`。
 
@@ -28,7 +28,7 @@ native 生命周期补丁后，真实模型活跃 smoke 连续三轮累计处理
 
 | 系统 | 独立承诺 | 输入 | 输出 | 失败边界 |
 |---|---|---|---|---|
-| **字幕系统（MVP）** | 点击运行后监听一个已选择来源，实时显示 ASR 字幕，自动保存定稿及时间戳，并可从历史查看复盘 | `mic` XOR `loopback` PCM | partial、final/refined、SQLite 字幕历史 | 不依赖网络、LLM、Agent Loop 或向量扩展；不保存原始音频 |
+| **字幕系统（MVP）** | 点击运行后监听一个已选择来源，实时显示 ASR 字幕，自动保存定稿及时间戳，并可从历史查看复盘 | `mic` XOR `loopback` PCM | partial、final/refined、SQLite 字幕历史 | 首次供给完整模型需要网络；ready 后运行期不依赖网络、LLM、Agent Loop 或向量扩展；不保存原始音频 |
 | **Agent 系统（后置）** | 基于已提交字幕运行上下文增强和会后结构化纪要插件 | 字幕提交边界之后的当前正文与水位 | 独立增强文本、概要/结论/待办/风险 | 只生成内容；超时、断网、模型或插件失败不得停止字幕或损伤原文 |
 
 两套系统在同一桌面产品内协作，不等于必须拆成两个安装包。唯一允许的主依赖方向是“Agent 系统消费字幕系统已提交事实”；字幕系统不得反向等待 Agent。历史只做带时间戳的文本复盘，产品现在及未来都不保存原始音频。
@@ -380,13 +380,28 @@ Range 断点续传 + SHA256 校验 + 写 `.part`。解压到 staging 目录，�
 
 ### 6.6 打包 —— electron-builder 26.15.3 + NSIS
 
-关键一行：
+正式候选固定 Windows x64、Electron `43.2.0`、sherpa wrapper/platform `1.13.4`，使用
+单击式当前用户 NSIS、`asInvoker` 与 ASAR。`files` 是正向 allowlist：只包含
+`package.json`、`src/**/*` 和生产依赖；工作区模型、测试、文档与产物绝不进入包。
+模型安装在 `userData/models/`，SQLite 在 `userData/data/`。卸载默认保留 userData，
+未来若增加“删除本地数据”必须是单独明确动作。
+
+原生目录必须整体 unpack，而不是只挑 `.node`：
 
 ```json
-"asarUnpack": ["**/node_modules/sherpa-onnx-win-x64/**"]
+"asarUnpack": ["node_modules/sherpa-onnx-win-x64/**/*"]
 ```
 
-`.node` 在 asar 里 `dlopen` 不了，这是必踩的坑。模型不进安装包，装在 `userData/models/`。
+这样 `sherpa-onnx.node` 与 onnxruntime/sherpa 四个伴随 DLL 继续同目录。package verifier
+不仅检查文件存在，还校验 ASAR `unpacked` 元数据；test package 再由 utility process 实际
+`require('sherpa-onnx-node')`。正式包关闭 RunAsNode、NODE_OPTIONS 和 Node inspector，开启
+embedded ASAR integrity 与 only-load-from-ASAR；`app.isPackaged` 时所有
+`LIVE_SUBTITLE_*` 开发缝失效。
+
+B5 与 I4 不再混写。B5 是可重复的打包态确定性资格；I4 才用精确 installer SHA 在无仓库、
+Node、既有 userData/模型的 Win11 上验公网、权限、真实音源、ready 后断网复启及数据保留。
+当前 B5 本机证据见 [`docs/validation/b5-packaging.md`](docs/validation/b5-packaging.md)。候选未签名，
+仅作内部资格包。
 
 ### 6.7 测试 —— 单元、联合 CI 与实机验收分层
 
@@ -466,25 +481,25 @@ node scripts/gate-0b/evaluate-transcripts.js `
 | **B2.3 realtime worker 骨架（完成）** | `src/runtime/realtime-worker/`：per-source 管线（帧→VAD 分段→recognizer adapter→contract-valid partial/final）、可替换 adapter 注册表（默认 `null`——Gate 0B 未过绝不产文本）、EnergyVad 占位（silero 随模型轨替换）、utilityProcess 入口沿用 B2.2 credit 协议、main 侧 `RealtimeWorkerHost`（边界契约校验） | 纯逻辑单测覆盖 VAD/分段/source 隔离/缺口指标/坏帧；多 source fixture 只是底层防御，产品会话仅启用一路；worker 事件全量通过真实 `SessionCoordinator.acceptCaption` 门（集成测试）；实机 smoke 传输与零字幕不变量 PASS，VAD 实音分段因系统静音判 inconclusive（有声复跑即补） |
 | **B2 实时链路** | audio host、MessagePort、互斥单路 realtime worker、VAD/背压 | 真 partial/final 替掉假流；拖动不掉帧；队列深度和丢帧可观测。**模型轨已落地（2026-07-27）**：`sherpa-recognizer.js`（共享 OnlineRecognizer、per-segment stream、0.4s 尾静音冲刷）经 configure 注册；`model-resolver.js` 解析本机模型（env/userData/仓库布局，缺失 fail closed）；组合根默认接真实链路。**silero VAD 已替换 EnergyVad（2026-07-27）**：`silero-vad.js` 包装为同接口经 vadFactory 注入，997Hz 纯音拒识实测通过（能量占位做不到）；收句静音实测定为 1.0s——0.5s 切段时流式模型缺右上下文丢字（「一下」→「一」）且几乎不出标点，1.0s 下整句成段 CER 0。VAD 模型缺失时回退 EnergyVad 并警告。实机 smoke `i2-live-caption-smoke.js` PASS（silero：1 条整句定稿、CER 0；对比 energy：4 条碎片、CER 0.071）。**XOR 门禁与 J4 已完成（2026-07-30）**。剩余：两种来源分别 smoke、拖动/掉帧指标 |
 | **B3 精修与会话** | refine worker、事件式持久化、恢复与导出 | 精修不阻塞实时流；已提交一遍定稿可恢复；SRT 时间轴稳定。**B3.1 已落地（2026-07-27，过渡实现）**：append-only JSONL 事件档（Windows-safe 文件名、排他创建防混档）、坏尾行/坏中间行区分恢复、按 revision 折叠、txt/md/srt 导出（毫秒进位正确、换行注入压平），main 接线为会话自动开/封档。**B3.2 refine worker 已落地（2026-07-27）**：独立 utility process 载离线 X-ASR（t=3，M3 同配置）；realtime worker 是 CaptionEvent 唯一序号权威——段定稿后整段音频经 worker↔worker MessagePort 直达 refine，纯文本结果回来后由 realtime worker 以 base+1 revision 发 refined；请求方有界队列（积压 3 即跳过，绝不反压实时）；精修配置失败/中途退出只降级告警不故障会话；暂停期精修缓冲、resume ack 后补发；停止路径 end 收束的段不发起精修（保持 final，计 skipped）。实机 smoke：final 无标点 → refined 全标点，双 CER 0。B3.3 的确定性实现见下一行，实机/发布门禁仍独立验收 |
-| **B3.3 SQLite 字幕历史（联合验收完成 / I3/I4 待验）** | storage worker、SQLite 字幕事件/segments、JSONL 迁移、终态历史列表/有界详情与 txt/md/srt 导出 UI | DB0/DB1、Gateway 恢复与 DB2 迁移内核、两次冷启动/迁移、历史复盘和三格式安全导出均有确定性证据；205 段真实多模块旅程已验证同时间戳/refined 跨 5 页无缺失重复且全量导出不截断，真实 Electron main/preload/IPC/renderer 已验证 DOM≤50 和前后翻页。Electron 内旧档 import/重启、系统保存对话框、两小时 I3 与打包态仍待验收 |
-| **B4 字幕资源（确定性 UI 联合验收完成；真实模型调用有证据；I4 待验）** | 内置固定 manifest、ModelManager、断点下载、流式 SHA、固定 System32 tar、归档审查/白名单提取、staging 原子安装、严格 marker、资源页与空闲热启用 | 资源页的状态、进度、单一下载/重试动作以及无参数 IPC 已实现；局部失败矩阵和后端受控 J14 均通过，含卡死 fetch/tar 有界退出；批准大模型安装/三运行时调用已留档。Electron 产品壳现从隔离 userData 的 `missing` 状态实际点击设置页下载，经 preload/IPC、生产 ModelManager、Range、三 marker、热启用，完成字幕、暂停/恢复、停止和本次 SQLite 历史复盘。受控资源/fake ASR 不冒充真实张量、公网或物理声卡。当前不提供删除功能；公网干净机/打包态由 I4 关闭 |
-| **B5 字幕 MVP 分发** | electron-builder、NSIS、首启资源检查 | 干净 Win11 机器完成“安装→首设→设置页点击下载完整 bundle→模型就绪→运行→真字幕→自动保存→历史查看”；受控 UI 安装旅程与真实公网/物理声卡证据均不得互相冒充 |
+| **B3.3 SQLite 字幕历史（联合验收完成 / I3/I4 待验）** | storage worker、SQLite 字幕事件/segments、JSONL 迁移、终态历史列表/有界详情与 txt/md/srt 导出 UI | DB0/DB1、Gateway 恢复与 DB2 迁移内核、两次冷启动/迁移、历史复盘和三格式安全导出均有确定性证据；205 段真实多模块旅程已验证同时间戳/refined 跨 5 页无缺失重复且全量导出不截断，开发态与打包态真实 Electron main/preload/IPC/storage utility/renderer 已验证 DOM≤50 和前后翻页。打包内旧档 import/重启、系统保存对话框与两小时 I3 仍待验收 |
+| **B4 字幕资源（确定性 UI 联合验收完成；真实模型调用有证据；I4 待验）** | 内置固定 manifest、ModelManager、断点下载、流式 SHA、固定 System32 tar、归档审查/白名单提取、staging 原子安装、严格 marker、资源页与空闲热启用 | 资源页的状态、进度、单一下载/重试动作以及无参数 IPC 已实现；局部失败矩阵和后端受控 J14 均通过，含卡死 fetch/tar 有界退出；批准大模型安装/三运行时调用已留档。Electron 产品壳现从隔离 userData 的 `missing` 状态实际点击设置页下载，经 preload/IPC、生产 ModelManager、Range、三 marker、热启用，完成字幕、暂停/恢复、停止和本次 SQLite 历史复盘。受控资源/fake ASR 不冒充真实张量、公网或物理声卡。当前不提供删除功能；B5 已关闭打包态确定性资格，I4 只关闭精确 NSIS 的干净机公网/真实音源发布旅程 |
+| **B5 字幕 MVP 分发（打包态确定性联合验收完成；I4 待验）** | electron-builder 26.15.3、ASAR allowlist/fuses、native unpack、packaged product journey、NSIS | 正式 x64 ASAR/unsigned NSIS 已生成并绑定 SHA；29 个关键产品入口、5 个 native 文件、整包无模型/音频/开发树已验证。test package 从真实 packaged exe 完成 settings/preload/IPC→ModelManager→受控 Range/tar→热启用→字幕/暂停恢复/停止→SQLite/history，并由 utility 实际加载 native，supervisor 得到 clean exit/0 incident。精确 NSIS 隔离安装卸载通过。test main/fake ASR/受控网络/静默安装不冒充公网、真实模型/声卡或干净机 I4；远端 workflow 首轮结果待本提交运行 |
 | **A1 Agent 基础（后置）** | `AgentRuntime` 边界、Pi Core 探针、项目自有 `AgentPluginHost`、CredentialStore、ModelGateway、可靠消费水位 | 只静态注册受信任第一方插件；不启用 shell/进程/任意文件写/外部写；key 不进 renderer；Agent 关闭/崩溃不影响字幕；J7/J13 通过 |
 | **A2 Agent 内容能力（后置）** | `TranscriptContextPlugin`、独立增强文本、会后结构化纪要 | 原文与派生文本不混淆；待办只生成内容；字幕→Agent 通过 J3–J7/J13 联合场景 |
 | **X1 可选检索（Deferred）** | FTS5 按需增加；embedding/`sqlite-vec` 最后评估 | 不阻断 B3.3、B5 或 A2；若启用再执行 J11/DB4 |
 
-> 视觉/UI 层已交付 V1–V2；B1 已关闭 [docs/ui-design-brief.md §6](docs/ui-design-brief.md) 的 A1–A3 和 stop/retry 请求。历史与资源管理入口已接产品 contract 并通过真实 Electron 旅程；A4 layout contract、长列表/无障碍与打包态仍按 I3/I4 推进。
+> 视觉/UI 层已交付 V1–V2；B1 已关闭 [docs/ui-design-brief.md §6](docs/ui-design-brief.md) 的 A1–A3 和 stop/retry 请求。历史与资源管理入口已接产品 contract 并通过开发态/打包态 Electron 旅程；A4 layout contract 与长列表/无障碍的两小时稳定性按 I3 推进，精确 NSIS 的干净机发布旅程按 I4 推进。
 > C 类是 UI 对后端的持续契约约束，违反时的症状是「界面上东西不见了」而不是报错；B1 的 coordinator 与 fake adapter 已遵守这些约束。
 
 ### 7.4 Integration Gates
 
 | Gate | 汇合内容 | 验收标准 |
 |---|---|---|
-| **CI0 联合测试基线（持续维护）** | 用户旅程跨越真实产品模块，而非只验证单个函数/类 | Windows workflow 已落地；真实 Electron Gateway 组合覆盖 Coordinator→Recorder→utility process→SQLite、XOR、pause/refine、stop barrier 与故障重放；确定性默认产品/历史旅程覆盖 DB2、SQLite-only/stale-active/退出、205 段 keyset 详情与不截断三格式导出；产品壳覆盖真实 main/preload/IPC/renderer 五页往返和 DOM≤50。J14 现从真实 settings DOM 点击覆盖 `preload/IPC→ModelManager→HTTP/tar→热启用→字幕→SQLite 历史`；J11 后置 |
+| **CI0 联合测试基线（持续维护）** | 用户旅程跨越真实产品模块，而非只验证单个函数/类 | Windows workflow 已落地；真实 Electron Gateway 组合覆盖 Coordinator→Recorder→utility process→SQLite、XOR、pause/refine、stop barrier 与故障重放；确定性默认产品/历史旅程覆盖 DB2、SQLite-only/stale-active/退出、205 段 keyset 详情与不截断三格式导出；开发态及 packaged 产品壳覆盖真实 main/preload/IPC/renderer 五页往返和 DOM≤50。J14/B5 从真实 settings DOM 点击覆盖 `preload/IPC→ModelManager→HTTP/tar→热启用→字幕→SQLite 历史`，B5 再覆盖 ASAR/native/NSIS；J11 后置 |
 | **I1 Contract（完成）** | UI fake adapter ↔ 后端 contract fixtures | coordinator、fake adapter、renderer reducer 和 IPC 共享 v1 validator；默认/dev smoke 均通过 |
 | **I2 Live Caption** | 单路音频 → realtime ASR → SessionCoordinator → 字幕 UI | P50/P95 延迟、CPU、内存、队列深度达标，并完成 J4/J5/J6 联合场景。**I2.1 结构接线已完成（2026-07-27）**：`RealtimeRuntimeAdapter` 实现 B1 冻结接口组合 host/worker/port，coordinator 新增 adapter `onError` 故障入口；实机结构 smoke 覆盖 worker 击杀→error→retry→pause/resume→stop。**I2.2 真字幕已通**：2026-07-31 schema v2 loopback 实机 PASS——真实 160ms 模型 + silero + 离线精修得到 final/refined CER 0；captured/sent/ingested 帧数一致，零丢帧、零 sequence gap、零坏类型，并记录 CPU/工作集与字幕到达时序（`docs/validation/i2-loopback-results.json`）。runner 支持 `--source loopback|mic` 分开执行。**J4/XOR 与 J5/J6 确定性故障旅程已覆盖**。完整 I2 实机验收仍需物理 mic 报告、重复运行形成延迟 P50/P95 门槛、拖动不掉帧、设备变化/睡眠唤醒验证 |
 | **I3 Durable Subtitle Session** | final/refined → SQLite 事件/投影 → 带时间戳历史/导出 | 连续 2 小时不卡；崩溃恢复不丢已一遍定稿的段落；JSONL 迁移通过 J10 |
-| **I4 Packaged Subtitle MVP** | 首启、下载、权限、ASR、持久化、历史与退出清理 | 在干净 Win11 机器完成字幕系统完整用户旅程，断网且无 Agent 时仍成立 |
+| **I4 Packaged Subtitle MVP** | 精确 NSIS 的干净机首启、公网下载、权限、真实 ASR、持久化、历史、离线复启与卸载数据策略 | 在无仓库/Node/既有 userData/模型的 Win11 机器完成完整用户旅程；首次取得完整 bundle 需要网络，三项 ready 后断网且无 Agent 仍成立；installer SHA 必须与 B5 候选一致 |
 | **I5 Agent System（后置）** | committed transcript → TranscriptContextPlugin → Pi Loop → 增强/纪要插件 → 独立产物 → 历史展示 | J3–J7/J13 通过；Agent 失败、取消和恢复不影响 I2–I4 |
 
 ---
@@ -503,7 +518,7 @@ Gate 0B 原门槛于 2026-07-27 经正式改判重设（见 `docs/validation/gat
 
 **决定：接受，且一次性安装完整三资源 bundle。** 当前固定 manifest 包含实时 X-ASR（133,898,007 字节）、离线 X-ASR 精修（136,396,739 字节）和 silero VAD（643,854 字节），合计 **270,938,600 字节**。设置页以一个下载/重试动作展示总进度和三项资源状态；只有三项均通过字节数、SHA-256、归档白名单与 ready marker 校验后，`ModelManager` 才能发布 `ready`，应用才会热启用真实字幕运行时。
 
-离线精修**不是**当前产品里的可选增强，也不存在“只下实时 ASR 就允许开始”的降级承诺：缺任一资源时字幕 start 必须保持不可用。若未来要改为分层下载或首启 0 下载，须先修改 `SEM-F17`、J14/I4 旅程及相应 manifest/运行时原子性，而不能由 UI 单方面显示成可选项。
+离线精修**不是**当前产品里的可选增强，也不存在“只下实时 ASR 就允许开始”的降级承诺：缺任一资源时字幕 start 必须保持不可用。全新安装首次取得三资源 bundle 需要网络；只有完整 ready 后才承诺断网运行。若未来要改为分层下载或首启 0 下载，须先修改 `SEM-F17`、J14/J9-I4 旅程及相应 manifest/运行时原子性，而不能由 UI 单方面显示成可选项。
 
 ### 8.3 字幕 MVP 中“系统音频”具体是哪一路？（已拍板）
 
@@ -538,7 +553,7 @@ Gate 0B 原门槛于 2026-07-27 经正式改判重设（见 `docs/validation/gat
 | PCM 消费低于实时速度 | 延迟无限增长、最终内存爆 | 有界环形缓冲、sequence、丢帧策略和队列指标 |
 | 共享 preload / 未校验 IPC | renderer 越权退出、改配置或控制会话 | per-window API、sender/payload/state validation |
 | 隐藏窗影响应用生命周期判断 | 可见窗消失但应用不退出，或无法重建 | WindowManager 分别追踪 visible/runtime windows，不依赖 `getAllWindows().length` |
-| `.node` 打进 asar | 安装版启动即崩，开发期发现不了 | `asarUnpack`，B5/I4 在干净机器验 |
+| `.node` 打进 asar 或伴随 DLL 不相邻 | 安装版启动即崩，开发期发现不了 | B5 已整目录 `asarUnpack`、结构检查并由 packaged utility 实际加载；I4 再在干净机复跑 |
 | 两小时会话 DOM 膨胀 | 历史面板卡死 | 已用每页 50 条 keyset 视图限制 DOM；I3 继续验 CPU/内存/WAL/查询 P95 与两小时交互 |
 | refined/translation 与可变单记录冲突 | 更新丢失、摘要重复或导出状态错误 | SQLite append-only 事件 + segments 投影，按 revision 折叠；旧事实不覆盖 |
 | SQLite 与 JSONL 长期双写 | 两份权威数据漂移，故障后无法判定以谁为准 | J10 核对后一次性切换；JSONL 降为只读迁移/导出/恢复格式 |

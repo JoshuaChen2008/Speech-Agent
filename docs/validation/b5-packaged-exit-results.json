@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "kind": "electron-role-exit-evidence",
+  "generatedAt": "2026-07-31T04:53:00.823Z",
+  "outcome": "clean-exit",
+  "gateStatus": "diagnostic-only",
+  "runtime": {
+    "electronMajor": 43,
+    "platform": "win32",
+    "supervised": true
+  },
+  "lifecycle": {
+    "mainSpawned": true,
+    "mainStarted": true,
+    "appReady": true,
+    "bootstrapComplete": true,
+    "quitRequested": true,
+    "willQuitObserved": true
+  },
+  "mainExit": {
+    "statusClass": "zero",
+    "cleanIntentObserved": true
+  },
+  "attribution": {
+    "breakpointObserved": false,
+    "role": null,
+    "confidence": "none"
+  },
+  "counters": {
+    "incidentCount": 0,
+    "droppedIncidentCount": 0,
+    "rendererGoneCount": 0,
+    "utilityGoneCount": 0,
+    "mainExitCount": 0,
+    "fatalV8Count": 0,
+    "preloadErrorCount": 0,
+    "unresponsiveCount": 0,
+    "rejectedIpcCount": 0
+  },
+  "incidents": [],
+  "privacy": {
+    "audioPayloadPersisted": false,
+    "subtitleBodyPersisted": false,
+    "localAddressPersisted": false,
+    "diagnosticDumpPersisted": false,
+    "externalUploadEnabled": false
+  },
+  "scope": {
+    "roleAttribution": true,
+    "nativeStackCaptured": false,
+    "rootCauseIdentified": false,
+    "packagedRuntime": true
+  }
+}

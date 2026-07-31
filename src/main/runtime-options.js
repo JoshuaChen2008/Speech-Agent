@@ -13,7 +13,14 @@ const DEV_MODEL_VALUE = 'x-asr-480ms'
  * main/services/model-resolver.js and takes effect only when this dev
  * switch is NOT set.
  */
-function resolveRuntimeOptions (environment = process.env) {
+function resolveRuntimeOptions (environment = process.env, options = {}) {
+  if (!environment || typeof environment !== 'object' || Array.isArray(environment) ||
+      !options || typeof options !== 'object' || Array.isArray(options)) {
+    throw new TypeError('invalid runtime option inputs')
+  }
+  if (options.packaged === true) {
+    return Object.freeze({ modelOverride: null, warning: null })
+  }
   const requested = environment[DEV_MODEL_ENV]
   if (requested === undefined || requested === '') {
     return Object.freeze({ modelOverride: null, warning: null })

@@ -122,6 +122,10 @@ test('external model resources require one explicit development flag', () => {
   assert.equal(allowsExternalModelResources({ LIVE_SUBTITLE_ALLOW_EXTERNAL_MODELS: '' }), false)
   assert.equal(allowsExternalModelResources({ LIVE_SUBTITLE_ALLOW_EXTERNAL_MODELS: 'true' }), false)
   assert.equal(allowsExternalModelResources({ LIVE_SUBTITLE_ALLOW_EXTERNAL_MODELS: '1' }), true)
+  assert.equal(allowsExternalModelResources(
+    { LIVE_SUBTITLE_ALLOW_EXTERNAL_MODELS: '1' },
+    { packaged: true }
+  ), false)
 })
 
 test('runtime uses marker-audited userData unless external resources are explicitly allowed', (t) => {

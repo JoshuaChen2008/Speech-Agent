@@ -64,9 +64,14 @@ node --test --experimental-test-isolation=none test/integration/history-review-j
 四个 renderer 且 `crashEventCount=0`。该 smoke 使用显式 fake-ASR 且没有操作系统保存
 对话框，也不是两小时墙钟/数千段 soak，所以不替代物理 mic、旧档迁移/重启、I3 或 I4。
 
+B5 已从 packaged test executable 对同一四窗口/分页旅程进行重跑，并在 ASAR 中的
+storage utility 完成 DB0 WAL、事务、重开与 integrity 检查，exact child `exitCode=0`。
+这关闭了打包布局与 SQLite utility 可加载的确定性缺口，仍未操作系统保存对话框，
+也不是精确 NSIS 安装后在干净 Win11 上的 I4 用户旅程。
+
 ## 尚未被本证据证明
 
 - 系统保存弹窗、DWM 外观与真实辅助技术行为。
 - 两小时数千段下的 DOM、SQLite WAL、内存和查询延迟（I3/J8）。
-- 打包版 utility process、asar/NSIS 路径和干净 Win11 用户旅程（I4/J9）。
+- 精确 NSIS 安装后的系统保存对话框与干净 Win11 用户旅程（I4/J9-I4）。
 - 物理 mic 实机 ASR。以上边界未通过前，不得声称 I3/I4 或发布验收完成。

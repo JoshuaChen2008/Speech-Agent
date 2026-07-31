@@ -1,8 +1,8 @@
 # B4 模型资源与产品壳验收
 
 - 日期：2026-07-31（报告时间为 UTC）
-- 状态：B4 资源实现、设置页点击下载的确定性 Electron 联合旅程与批准模型本机安装/调用均已有证据；I4 干净机外网安装仍待执行
-- 对应语义：SEM-F00、SEM-F05、SEM-F12、SEM-F14、SEM-F17、SEM-T02、SEM-T03、SEM-T04、SEM-T11
+- 状态：B4 资源实现、设置页点击下载的确定性 Electron 联合旅程与批准模型本机安装/调用均已有证据；B5 打包态资格已由独立证据关闭，I4 干净机外网安装仍待执行
+- 对应语义：SEM-F00、SEM-F05、SEM-F12、SEM-F14、SEM-F17、SEM-F18、SEM-F19、SEM-T02、SEM-T03、SEM-T04、SEM-T11、SEM-T12
 
 ## 确定性联合旅程
 
@@ -90,7 +90,18 @@ main/preload/IPC/四个 renderer/ModelManager/SQLite/退出屏障的组合旅程
 fake-ASR adapter；其余 renderer、preload、IPC、`ModelManager`、热替换、Coordinator、
 StorageGateway、SQLite 与 HistoryService 均为产品实现。该旅程通过后也只能证明
 UI/安装/持久化接线，**不能**证明真实张量推理、真实 GitHub 公网下载、物理 mic/loopback、
-两小时 I3 或打包态 I4。真实模型调用仍由上文 `model-install-live-smoke.js` 的独立证据承担。
+两小时 I3、B5 打包布局或干净机 I4。真实模型调用仍由上文 `model-install-live-smoke.js` 的独立证据承担；B5 由下节的独立打包证据承担。
+
+## B5 打包态补证
+
+B5 使用与正式包相同的 ASAR、native unpack 与 Electron fuse 布局，从真实 packaged
+test executable 重跑设置点击、Range 续传、三资源 marker、热启用、字幕、暂停/恢复、
+停止、SQLite 历史与 205 段分页；另在 packaged utility 中实际加载 sherpa addon/DLL，
+并对 ASAR 中的 storage utility 执行完整 DB0 资格检查。独立 exact-child 证据为
+`clean-exit`、incident `0`、未观察到 breakpoint。正式 x64 ASAR/NSIS 也已通过内容负扫描、
+精确 SHA 绑定与隔离安装/卸载机械资格。该候选未签名，打包旅程是明示的测试
+variant，不是从精确 NSIS 安装后启动；所以只关闭 B5，不关闭 I4。完整证据见
+[B5 打包态确定性资格](b5-packaging.md)。
 
 ## 原生模型进程生命周期诊断
 
@@ -110,13 +121,13 @@ realtime/refine UtilityProcess。三轮累计送入并消费 **303 帧**，得�
 
 该活跃诊断比“只加载模型后退出”多覆盖了真实推理与精修工作态，但仍不开 BrowserWindow，
 也不打开物理 mic/loopback；输入是仓库冻结语料而不是现场采集。因此其 `gateStatus` 固定为
-`diagnostic-only`，不能冒充 I2 物理来源、I3 两小时/恢复或 I4 打包验收。
+`diagnostic-only`，不能冒充 I2 物理来源、I3 两小时/恢复或 I4 干净机验收。
 
 随后又重跑了最贴近历史截图场景的真实 I2 loopback→ASR→offline refine→退出。该轮
 captured/sent/ingested 均为 128 帧，dropped、sequence gap 和 bad sample 均为 0；得到
 1 final + 1 refined，双 CER 0 且 refined 含标点。Electron exact process 正常退出，没有
 走强制终止。该报告仍是单轮开发态实机证据：它没有覆盖物理 mic、重复运行的延迟分位、
-两小时 I3 或打包态 I4，也没有提供历史异常的 native stack。
+两小时 I3 或干净机 I4，也没有提供历史异常的 native stack。
 
 ## `0x80000003` 证据边界
 
@@ -133,6 +144,6 @@ captured/sent/ingested 均为 128 帧，dropped、sequence gap 和 bad sample �
 ## 尚未关闭
 
 - 物理 mic I2、两小时 I3、干净 Win11 公网下载/权限/安装 I4；
-- 打包版 `tar`/native module/asar 路径和卸载清理；
+- 精确 NSIS 安装后的完整应用旅程、旧 userData 保留/重装复用与 SmartScreen/签名（I4）；
 - `0x80000003` 的 native stack 级根因；若隐私安全 role evidence 再次观察到 breakpoint，
   再在冻结输入、无物理音频的隔离环境中按 exact PID 获取一次受控 dump。

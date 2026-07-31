@@ -13,10 +13,10 @@ test('product composition initializes ModelManager before the SQLite application
   const initializeIndex = source.indexOf('await modelManager.initialize()', managerIndex)
   const runtimeIndex = source.indexOf('applicationRuntime = new SubtitleApplicationRuntime({', initializeIndex)
   assert.ok(managerIndex >= 0 && initializeIndex > managerIndex && runtimeIndex > initializeIndex)
-  assert.match(source, /const externalModelsAllowed = allowsExternalModelResources\(process\.env\)/)
+  assert.match(source, /const externalModelsAllowed = allowsExternalModelResources\(process\.env, \{ packaged: app\.isPackaged \}\)/)
   assert.match(source, /\.\.\.\(externalModelsAllowed\s*\? \{ externalReady:/s)
   assert.match(source, /externalReady:\s*\(artifactId\) => isExternalArtifactReady\(artifactId\)/)
-  assert.match(source, /createApprovedRuntimeDefinition\(\{\s*userDataDir: app\.getPath\('userData'\),\s*allowExternal: allowsExternalModelResources\(process\.env\)/s)
+  assert.match(source, /createApprovedRuntimeDefinition\(\{\s*userDataDir: app\.getPath\('userData'\),\s*allowExternal: allowsExternalModelResources\(process\.env, \{ packaged: app\.isPackaged \}\)/s)
   assert.match(source, /await modelManager\.initialize\(\)\s*if \(quitRequested\) return false/s)
   assert.match(source, /await applicationRuntime\.start\(\)\s*if \(quitRequested\) return false/s)
 })
@@ -26,7 +26,7 @@ test('settings-only model IPC accepts no renderer-controlled install parameters'
   assert.match(source, /ipcMain\.handle\(CHANNELS\.MODEL_STATUS_GET, \(event\) => \{\s*requireSender\(event, CHANNELS\.MODEL_STATUS_GET\)/s)
   assert.match(source, /ipcMain\.handle\(CHANNELS\.MODEL_INSTALL, \(event\) => \{\s*requireSender\(event, CHANNELS\.MODEL_INSTALL\)\s*return installModelResources\(\)/s)
   assert.doesNotMatch(source, /ipcMain\.handle\(CHANNELS\.MODEL_INSTALL, \(event,\s*[^)]/)
-  assert.match(source, /activateApprovedRuntime\(\{\s*coordinator,\s*userDataDir: app\.getPath\('userData'\),\s*allowExternal: allowsExternalModelResources\(process\.env\),\s*\.\.\.runtimeEvidenceOptions\s*\}\)/s)
+  assert.match(source, /activateApprovedRuntime\(\{\s*coordinator,\s*userDataDir: app\.getPath\('userData'\),\s*allowExternal: allowsExternalModelResources\(process\.env, \{ packaged: app\.isPackaged \}\),\s*\.\.\.runtimeEvidenceOptions\s*\}\)/s)
 })
 
 test('quit and native-crash diagnostics are wired at the product composition root', () => {

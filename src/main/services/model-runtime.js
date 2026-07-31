@@ -13,8 +13,8 @@ const { RealtimeRuntimeAdapter } = require('../../runtime/realtime-runtime-adapt
 const RUNTIME_TRANSITION_TIMEOUT_MS = 30000
 const EXTERNAL_MODEL_DEVELOPMENT_FLAG = 'LIVE_SUBTITLE_ALLOW_EXTERNAL_MODELS'
 
-function allowsExternalModelResources (env = process.env) {
-  return env && env[EXTERNAL_MODEL_DEVELOPMENT_FLAG] === '1'
+function allowsExternalModelResources (env = process.env, options = {}) {
+  return options.packaged !== true && env && env[EXTERNAL_MODEL_DEVELOPMENT_FLAG] === '1'
 }
 
 function resolverOptions (options, includeUserData) {

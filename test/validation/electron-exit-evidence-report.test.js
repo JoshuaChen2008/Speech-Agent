@@ -197,11 +197,58 @@ test('strict-report is explicit, singular and defaults to fail-open', () => {
     executablePath: null,
     electronMajor: null,
     entryArguments: ['--fixture'],
-    strictReport: true
+    strictReport: true,
+    packaged: false
   })
   assert.equal(parseArguments(['--entry', '.']).strictReport, false)
   assert.throws(() => parseArguments(['--strict-report', '--strict-report']), /duplicate/)
   assert.throws(() => parseArguments(['--strict-report=true']), /invalid/)
+  assert.deepEqual(parseArguments([
+    '--packaged',
+    '--electron', 'C:\\Program Files\\Speech Agent\\SpeechAgent.exe',
+    '--electron-major', '43',
+    '--entry-arg', '--fixture'
+  ]), {
+    reportPath: null,
+    entryPath: '.',
+    executablePath: 'C:\\Program Files\\Speech Agent\\SpeechAgent.exe',
+    electronMajor: 43,
+    entryArguments: ['--fixture'],
+    strictReport: false,
+    packaged: true
+  })
+  assert.throws(() => parseArguments(['--packaged']), /requires --electron/)
+  assert.throws(() => parseArguments([
+    '--packaged', '--electron', 'SpeechAgent.exe', '--electron-major', '43', '--entry', '.'
+  ]), /without --entry/)
+})
+
+test('packaged supervision launches the exact executable without injecting a source entry', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'electron-evidence-packaged-spawn-'))
+  const child = new EventEmitter()
+  let observedArguments = null
+  const report = await superviseElectron({
+    executablePath: path.join(directory, 'SpeechAgent.exe'),
+    packaged: true,
+    entryArguments: ['--fixture', 'value'],
+    reportPath: path.join(directory, 'canonical.json'),
+    spawnProcess: (_executable, args) => {
+      observedArguments = args
+      setImmediate(() => {
+        child.emit('spawn')
+        for (const stage of ['main-started', 'app-ready', 'bootstrap-complete', 'quit-requested', 'will-quit']) {
+          child.emit('message', lifecycleEnvelope(stage))
+        }
+        child.emit('exit', 0, null)
+        child.emit('disconnect')
+        child.emit('close', 0, null)
+      })
+      return child
+    }
+  })
+  assert.deepEqual(observedArguments, ['--fixture', 'value'])
+  assert.equal(report.outcome, 'clean-exit')
+  assert.equal(report.scope.packagedRuntime, true)
 })
 
 test('only completed primaries and abnormal exits qualify for canonical promotion', () => {

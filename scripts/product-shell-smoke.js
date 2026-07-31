@@ -11,7 +11,7 @@
 const fs = require('node:fs')
 const fsp = require('node:fs/promises')
 const path = require('node:path')
-const { app, BrowserWindow } = require('electron')
+const { app, BrowserWindow, utilityProcess } = require('electron')
 const modelManagerModule = require('../src/main/services/model-manager')
 const modelRuntimeModule = require('../src/main/services/model-runtime')
 const { FakeRuntimeAdapter } = require('../src/main/session/fake-runtime-adapter')
@@ -23,6 +23,7 @@ const {
   makeOpenSessionKey
 } = require('../src/runtime/storage-worker/protocol')
 const { StorageWorkerService } = require('../src/runtime/storage-worker/worker-service')
+const { WORKER_PATH: STORAGE_WORKER_PATH } = require('../src/runtime/storage-worker/worker-host')
 const {
   closeFixtureModelServer,
   createFixtureModelBundle,
@@ -41,18 +42,28 @@ function isWithin (parent, child) {
 }
 
 function parseArguments (argv) {
-  const values = { workDir: null, report: null }
+  const values = { artifactsRoot: null, workDir: null, report: null }
   for (let index = 0; index < argv.length; index += 1) {
     const next = argv[index + 1]
-    if (argv[index] === '--work-dir') { values.workDir = next; index += 1 } else if (argv[index] === '--report') { values.report = next; index += 1 } else throw new Error(`unknown argument: ${argv[index]}`)
+    if (argv[index] === '--artifacts-root') { values.artifactsRoot = next; index += 1 } else if (argv[index] === '--work-dir') { values.workDir = next; index += 1 } else if (argv[index] === '--report') { values.report = next; index += 1 } else throw new Error(`unknown argument: ${argv[index]}`)
   }
   if (!values.workDir || !values.report) throw new Error('--work-dir and --report are required')
-  const artifacts = path.join(PROJECT_ROOT, '.artifacts')
-  const workDir = path.resolve(PROJECT_ROOT, values.workDir)
-  const report = path.resolve(PROJECT_ROOT, values.report)
+  if (values.artifactsRoot !== null && (!path.isAbsolute(values.artifactsRoot) ||
+      path.resolve(values.artifactsRoot) === path.parse(path.resolve(values.artifactsRoot)).root)) {
+    throw new Error('--artifacts-root must be an absolute non-root directory')
+  }
+  const artifacts = values.artifactsRoot === null
+    ? path.join(PROJECT_ROOT, '.artifacts')
+    : path.resolve(values.artifactsRoot)
+  const workDir = values.artifactsRoot === null
+    ? path.resolve(PROJECT_ROOT, values.workDir)
+    : path.resolve(artifacts, values.workDir)
+  const report = values.artifactsRoot === null
+    ? path.resolve(PROJECT_ROOT, values.report)
+    : path.resolve(artifacts, values.report)
   if (!isWithin(artifacts, workDir) || !isWithin(artifacts, report)) throw new Error('smoke outputs must stay under .artifacts')
   if (fs.existsSync(workDir)) throw new Error('work directory must not already exist')
-  return { workDir, report }
+  return { artifacts, workDir, report }
 }
 
 function windowFor (suffix) {
@@ -195,7 +206,7 @@ function seedLongHistoryFixture (databasePath) {
   }
 }
 
-const options = parseArguments(process.argv.slice(2))
+const options = parseArguments(process.argv.slice(app.isPackaged ? 1 : 2))
 fs.mkdirSync(options.workDir, { recursive: false })
 const userDataDir = path.join(options.workDir, 'user-data')
 fs.mkdirSync(userDataDir, { recursive: false })
@@ -210,6 +221,147 @@ delete process.env.LIVE_SUBTITLE_DEV_MODEL
 delete process.env.LIVE_SUBTITLE_ALLOW_EXTERNAL_MODELS
 
 let modelTransport = null
+
+function packagedNativeLayout () {
+  if (!app.isPackaged) return null
+  const nativeRoot = path.join(
+    process.resourcesPath,
+    'app.asar.unpacked',
+    'node_modules',
+    'sherpa-onnx-win-x64'
+  )
+  const required = [
+    'sherpa-onnx.node',
+    'onnxruntime.dll',
+    'onnxruntime_providers_shared.dll',
+    'sherpa-onnx-c-api.dll',
+    'sherpa-onnx-cxx-api.dll'
+  ]
+  return {
+    nativeBinaryCount: required.filter((name) => fs.existsSync(path.join(nativeRoot, name))).length,
+    requiredNativeBinaryCount: required.length
+  }
+}
+
+function runPackagedNativeProbe () {
+  if (!app.isPackaged) return Promise.resolve(null)
+  const probePath = path.join(__dirname, 'packaged-native-load-probe.js')
+  return new Promise((resolve, reject) => {
+    let result = null
+    let fatalObserved = false
+    let settled = false
+    const child = utilityProcess.fork(probePath, [], {
+      serviceName: 'Speech Agent packaged native qualification'
+    })
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      try { child.kill() } catch { /* exact disposable probe child */ }
+      reject(new Error('packaged native utility probe timed out'))
+    }, 10000)
+    child.on('error', () => { fatalObserved = true })
+    child.on('message', (message) => {
+      if (message?.type !== 'packaged-native-load-result' ||
+          typeof message.loaded !== 'boolean' ||
+          typeof message.apiSurfaceReady !== 'boolean') return
+      result = {
+        addonLoaded: message.loaded,
+        apiSurfaceReady: message.apiSurfaceReady
+      }
+    })
+    child.once('exit', (code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (code !== 0 || fatalObserved || !result?.addonLoaded || !result?.apiSurfaceReady) {
+        reject(new Error('packaged native utility probe failed'))
+        return
+      }
+      resolve({ ...result, exactExitCode: code, fatalObserved })
+    })
+  })
+}
+
+function packagedStorageRequest (child, operation, requestId, payload = {}) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const cleanup = () => {
+      clearTimeout(timer)
+      child.removeListener('message', onMessage)
+      child.removeListener('exit', onExit)
+    }
+    const finish = (action) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      action()
+    }
+    const timer = setTimeout(() => finish(() => reject(new Error('packaged DB0 request timed out'))), 15000)
+    const onMessage = (message) => {
+      if (message?.type !== 'storage:response' || message.requestId !== requestId) return
+      finish(() => message.ok
+        ? resolve(message.result)
+        : reject(new Error('packaged DB0 worker rejected its fixed request')))
+    }
+    const onExit = () => finish(() => reject(new Error('packaged DB0 worker exited during request')))
+    child.on('message', onMessage)
+    child.once('exit', onExit)
+    child.postMessage({
+      version: PROTOCOL_VERSION,
+      type: 'storage:request',
+      requestId,
+      operation,
+      payload
+    })
+  })
+}
+
+async function runPackagedDb0Qualification () {
+  if (!app.isPackaged) return null
+  const child = utilityProcess.fork(STORAGE_WORKER_PATH, [], {
+    serviceName: 'Speech Agent packaged SQLite qualification'
+  })
+  let exitCode = null
+  const exited = new Promise((resolve) => child.once('exit', (code) => {
+    exitCode = code
+    resolve(code)
+  }))
+  child.on('error', () => {})
+  try {
+    const qualification = await packagedStorageRequest(
+      child,
+      OPERATIONS.DB0_QUALIFY,
+      'packaged-db0-qualify',
+      { databasePath: path.join(options.workDir, 'packaged-db0.sqlite3') }
+    )
+    await packagedStorageRequest(child, OPERATIONS.SHUTDOWN, 'packaged-db0-shutdown')
+    const observedExit = await Promise.race([
+      exited,
+      new Promise((resolve) => setTimeout(() => resolve('timeout'), 5000))
+    ])
+    if (observedExit !== 0 || qualification?.status !== 'pass' ||
+        !Array.isArray(qualification.failedChecks) || qualification.failedChecks.length !== 0 ||
+        qualification.checks?.journalModeWal !== true ||
+        qualification.checks?.reopenPreservesData !== true ||
+        qualification.checks?.integrityAfterReopen !== true) {
+      throw new Error('packaged DB0 qualification failed')
+    }
+    return {
+      status: qualification.status,
+      checkCount: Object.keys(qualification.checks).length,
+      journalModeWal: qualification.checks.journalModeWal,
+      reopenPreservesData: qualification.checks.reopenPreservesData,
+      integrityAfterReopen: qualification.checks.integrityAfterReopen,
+      exactExitCode: observedExit
+    }
+  } catch (error) {
+    if (exitCode === null) {
+      try { child.kill() } catch { /* exact disposable qualification child */ }
+      await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 1000))])
+    }
+    throw error
+  }
+}
 
 /* This boundary double deliberately emits subtitle lifecycle events only.
    It accepts the production fast profile selected by the installed bundle,
@@ -303,10 +455,12 @@ async function closeModelTransport () {
 
 const crashEvents = []
 app.on('child-process-gone', (_event, details) => {
+  if (details.reason === 'clean-exit' && details.exitCode === 0) return
   crashEvents.push({ role: details.type, reason: details.reason, exitCode: details.exitCode })
 })
 app.on('web-contents-created', (_event, contents) => {
   contents.on('render-process-gone', (_goneEvent, details) => {
+    if (details.reason === 'clean-exit' && details.exitCode === 0) return
     crashEvents.push({ role: 'renderer', reason: details.reason, exitCode: details.exitCode })
   })
 })
@@ -337,6 +491,13 @@ app.whenReady().then(() => {
 })
 
 async function runJourney () {
+  const nativeProbe = await runPackagedNativeProbe()
+  const packagedDb0 = await runPackagedDb0Qualification()
+  const nativeLayout = packagedNativeLayout()
+  if (app.isPackaged && (!nativeLayout ||
+      nativeLayout.nativeBinaryCount !== nativeLayout.requiredNativeBinaryCount)) {
+    throw new Error('packaged native binaries are not colocated in app.asar.unpacked')
+  }
   const settings = await waitFor(() => windowFor('/settings/settings.html'), 'settings renderer')
   const toolbar = await waitFor(() => windowFor('/toolbar/index.html'), 'toolbar renderer')
   const caption = await waitFor(() => windowFor('/caption/index.html'), 'caption renderer')
@@ -483,6 +644,30 @@ async function runJourney () {
       rendererCount: BrowserWindow.getAllWindows().filter((win) => !win.isDestroyed()).length,
       crashEventCount: crashEvents.length
     },
+    ...(app.isPackaged
+      ? {
+          packaging: {
+            appIsPackaged: true,
+            defaultApp: process.defaultApp === true,
+            smokeMainFromAsar: __dirname.replace(/\\/g, '/').includes('/app.asar/'),
+            productMainFromAsar: require.resolve('../src/main').replace(/\\/g, '/').includes('/app.asar/'),
+            storageUtilityRoundTrip: true,
+            nativeBinaryCount: nativeLayout.nativeBinaryCount,
+            nativeAddonLoadedInUtility: nativeProbe.addonLoaded,
+            nativeApiSurfaceReady: nativeProbe.apiSurfaceReady,
+            nativeProbeExactExitCode: nativeProbe.exactExitCode,
+            nativeProbeFatalObserved: nativeProbe.fatalObserved,
+            packagedDb0Status: packagedDb0.status,
+            packagedDb0CheckCount: packagedDb0.checkCount,
+            packagedDb0Wal: packagedDb0.journalModeWal,
+            packagedDb0Reopen: packagedDb0.reopenPreservesData,
+            packagedDb0Integrity: packagedDb0.integrityAfterReopen,
+            packagedDb0ExactExitCode: packagedDb0.exactExitCode,
+            releaseCandidate: false,
+            installedViaNsis: false
+          }
+        }
+      : {}),
     journey: {
       onboardingPreset: 'dictation',
       modelInstallClicked: true,
@@ -519,7 +704,9 @@ async function runJourney () {
       'fake-asr-no-physical-audio',
       'controlled-model-fixtures-no-real-tensors',
       'deterministic-205-segment-fixture-not-two-hour-i3',
-      'not-packaged-i4'
+      ...(app.isPackaged
+        ? ['not-clean-machine-i4', 'packaged-test-variant-not-release-installer']
+        : ['not-packaged-i4'])
     ]
   }
   await fsp.writeFile(options.report, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })

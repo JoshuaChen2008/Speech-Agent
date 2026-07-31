@@ -16,7 +16,7 @@ jobs:
   windows-user-journeys:
     name: Windows user journeys and regression suite
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository
@@ -115,6 +115,61 @@ jobs:
           node scripts/verify-electron-exit-evidence.js .artifacts/product-shell-ci/exit-evidence.json
           if ($LASTEXITCODE -ne 0) {
             throw "Electron exit evidence verification failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Build and inspect the packaged test runtime
+        shell: powershell
+        run: |
+          npm run package:smoke
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged smoke build failed with exit code $LASTEXITCODE"
+          }
+          node scripts/verify-package-layout.js `
+            --package-dir .artifacts/packaged-smoke-build/win-unpacked `
+            --variant smoke `
+            --report .artifacts/b5-ci/smoke-layout.json
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged smoke layout verification failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Run packaged ASAR native SQLite and four-window journey
+        shell: powershell
+        run: |
+          $packagedExecutable = (Resolve-Path '.artifacts/packaged-smoke-build/win-unpacked/LiveSubtitlePackagedSmoke.exe').Path
+          $packagedArtifacts = Join-Path $PWD '.artifacts/packaged-product-ci'
+          node scripts/run-packaged-product-shell.js `
+            --executable $packagedExecutable `
+            --artifacts-root $packagedArtifacts `
+            --electron-major 43
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged product journey failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Build and inspect the exact NSIS candidate
+        shell: powershell
+        run: |
+          npm run package:release
+          if ($LASTEXITCODE -ne 0) {
+            throw "NSIS candidate build failed with exit code $LASTEXITCODE"
+          }
+          node scripts/verify-package-layout.js `
+            --package-dir .artifacts/release-package/win-unpacked `
+            --variant release `
+            --installer .artifacts/release-package/Live-Subtitle-0.1.0-x64.exe `
+            --report .artifacts/b5-ci/release-layout.json
+          if ($LASTEXITCODE -ne 0) {
+            throw "NSIS candidate layout verification failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Qualify isolated NSIS install and uninstall mechanics
+        shell: powershell
+        run: |
+          node scripts/qualify-nsis-lifecycle.js `
+            --installer .artifacts/release-package/Live-Subtitle-0.1.0-x64.exe `
+            --artifacts-root .artifacts/nsis-lifecycle-ci `
+            --report .artifacts/nsis-lifecycle-ci/report.json
+          if ($LASTEXITCODE -ne 0) {
+            throw "NSIS lifecycle qualification failed with exit code $LASTEXITCODE"
           }
 
       - name: Run deterministic integration journeys and full regression suite

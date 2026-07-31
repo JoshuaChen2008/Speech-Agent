@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "kind": "product-shell-smoke",
+  "generatedAt": "2026-07-31T04:53:00.560Z",
+  "result": "pass",
+  "gateStatus": "partial",
+  "runtime": {
+    "electron": "43.2.0",
+    "node": "24.18.0",
+    "rendererCount": 4,
+    "crashEventCount": 0
+  },
+  "packaging": {
+    "appIsPackaged": true,
+    "defaultApp": false,
+    "smokeMainFromAsar": true,
+    "productMainFromAsar": true,
+    "storageUtilityRoundTrip": true,
+    "nativeBinaryCount": 5,
+    "nativeAddonLoadedInUtility": true,
+    "nativeApiSurfaceReady": true,
+    "nativeProbeExactExitCode": 0,
+    "nativeProbeFatalObserved": false,
+    "packagedDb0Status": "pass",
+    "packagedDb0CheckCount": 17,
+    "packagedDb0Wal": true,
+    "packagedDb0Reopen": true,
+    "packagedDb0Integrity": true,
+    "packagedDb0ExactExitCode": 0,
+    "releaseCandidate": false,
+    "installedViaNsis": false
+  },
+  "journey": {
+    "onboardingPreset": "dictation",
+    "modelInstallClicked": true,
+    "modelInitialState": "missing",
+    "modelObservedStates": [
+      "missing",
+      "downloading",
+      "verifying",
+      "ready"
+    ],
+    "modelRangeResumeObserved": true,
+    "modelReadyMarkerCount": 3,
+    "modelHotActivation": true,
+    "startListeningStop": true,
+    "pauseResume": true,
+    "finalCaptionRendered": true,
+    "downloadedModelSessionInHistory": true,
+    "terminalHistoryCount": 2,
+    "longHistorySegmentCount": 205,
+    "historyPageCount": 5,
+    "historyPageSize": 50,
+    "historyMaxTimelineNodes": 50,
+    "historyReachedEnd": true,
+    "historyBackForwardNavigation": true,
+    "historyAriaRangeAligned": true,
+    "resourcesPaneOpenedFromToolbar": true,
+    "modelState": "ready",
+    "resourceCount": 3,
+    "modelReadinessSource": "settings-click-controlled-install",
+    "translationAdvertised": false
+  },
+  "privacy": {
+    "physicalAudioSourceOpened": false,
+    "audioPersisted": false,
+    "transcriptTextPersistedInReport": false,
+    "localPathsPersistedInReport": false
+  },
+  "limitations": [
+    "fake-asr-no-physical-audio",
+    "controlled-model-fixtures-no-real-tensors",
+    "deterministic-205-segment-fixture-not-two-hour-i3",
+    "not-clean-machine-i4",
+    "packaged-test-variant-not-release-installer"
+  ]
+}

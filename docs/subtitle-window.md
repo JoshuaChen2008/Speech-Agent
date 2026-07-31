@@ -215,4 +215,4 @@ renderer 在可拖区域发出 `dragStart(role)` 意图，主进程通过全局�
 3. B1 已把字幕接到稳定节点 + CaptionEvent reducer，并移除 renderer 假流。
 4. B1 已把工具条升级为完整 RuntimeSnapshot + CommandResult。
 5. B1 已让设置页识别 Capabilities；默认 Gate 0B profile 为空，开发 profile 只能由显式开关启用。
-6. 视觉/UI 的 V1–V2 方案和状态矩阵已交付；历史窗口和模型资源页均已接真实主进程契约并通过四窗口 Electron 旅程，205 段详情已验证五页往返且 DOM≤50。MVP 不展示翻译开关；物理音频、DPI/人工视觉、两小时 I3 与 I4 继续按发布门禁验收。
+6. 视觉/UI 的 V1–V2 方案和状态矩阵已交付；历史窗口和模型资源页均已接真实主进程契约并通过开发态及 packaged 四窗口 Electron 旅程，205 段详情已验证五页往返且 DOM≤50。MVP 不展示翻译开关；物理音频、DPI/人工视觉、两小时 I3 与 I4 继续按发布门禁验收。

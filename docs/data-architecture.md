@@ -1,6 +1,6 @@
 # 字幕系统持久化与 Agent 派生数据架构
 
-> 状态：SQLite 字幕存储与 Agent 插件宿主语义已接受；DB0 开发态、DB1 原子/幂等、Gateway 恢复、默认产品 SQLite-only 生命周期及历史复盘/导出的确定性门禁已通过（2026-07-31）；真实 Electron fresh SQLite/历史/正常退出 smoke 已通过，旧档 import/重启、I3/I4 与打包态资格尚未完成；向量检索 Deferred
+> 状态：SQLite 字幕存储与 Agent 插件宿主语义已接受；DB0 开发态与 ASAR 打包态、DB1 原子/幂等、Gateway 恢复、默认产品 SQLite-only 生命周期及历史复盘/导出的确定性门禁已通过（2026-07-31）；开发态与 packaged Electron fresh SQLite/历史/正常退出 smoke 均通过，旧档 import/二次启动、I3/I4 尚未完成；向量检索 Deferred
 >
 > 决策依据：[ADR 0001](adr/0001-sqlite-authoritative-event-store.md) / [ADR 0002](adr/0002-separate-subtitle-and-agent-systems.md) / [ADR 0003](adr/0003-project-owned-agent-plugin-host.md)
 >
@@ -65,7 +65,7 @@ flowchart LR
 | `embedding worker`（Deferred） | 未来对指定正文修订生成 embedding | 不在字幕 MVP 或首版摘要中创建 |
 | renderer | 展示快照、字幕、历史和 Agent 派生产物 | 不访问数据库文件、不加载扩展、不自行折叠另一份权威正文 |
 
-SQLite 驱动放在 storage worker 内的适配器后。当前候选为 Electron/Node 内置 `node:sqlite`：Electron 43 utility process 的开发态探针已验证驱动加载、WAL、migration、事务隔离/回滚与重开恢复；它没有外置 native addon 或 `asarUnpack` 需求。真实 ASAR/NSIS 路径仍必须在 B5/I4 复跑，通过前 DB0 总门禁保持 partial。驱动可以替换，本文的数据语义不能随驱动改变。`sqlite-vec` 扩展加载不属于 DB0。
+SQLite 驱动放在 storage worker 内的适配器后。当前选择 Electron/Node 内置 `node:sqlite`：Electron 43 utility process 的开发态探针已验证驱动加载、WAL、migration、事务隔离/回滚与重开恢复；B5 又从真实 ASAR 内的 storage utility 完成同一 17 项资格并 exact exit 0，同时由 production storage utility 写入/读取 packaged 产品会话。它没有外置 native addon 或 `asarUnpack` 需求。DB0 的开发态与打包态确定性资格已通过；精确 NSIS 干净机发布仍归 I4，不反向改变驱动选择。`sqlite-vec` 扩展加载不属于 DB0。
 
 ## 3. 数据权威与逻辑表
 
@@ -147,7 +147,7 @@ B3.1 JSONL 是旧版过渡基线；默认组合根现已按下列顺序切到 SQ
 
 | Gate | 必须证明 | 对应旅程 |
 |---|---|---|
-| **DB0 运行资格** | Electron 43 utility process 可加载选定 SQLite 驱动，WAL、迁移与开发版/asar 打包路径均通过 | J10 / I4 |
+| **DB0 运行资格** | Electron 43 utility process 可加载选定 SQLite 驱动，WAL、迁移与开发版/ASAR 打包路径均通过 | J10 / J9-CI；I4 另验发布环境 |
 | **DB1 原子与幂等** | 字幕事件与 segment 投影同成同败；重复、乱序、迟到事件不回滚正文或制造重复历史 | J1 / J2 / J6 |
 | **DB2 迁移一致** | JSONL 导入可重跑，当前正文与 txt/md/srt 导出 digest 一致，迁移中断可恢复 | J10 |
 | **DB3 Agent 联动（A1/A2）** | 两种单路来源分别验证；refine、暂停恢复、worker/插件崩溃和 AI 失败均满足输入水位、权限与隔离规则 | J3–J7 / J13 |
@@ -160,9 +160,10 @@ B3.1 JSONL 是旧版过渡基线；默认组合根现已按下列顺序切到 SQ
 ### 7.1 当前 DB0 证据
 
 - 开发态报告：[`validation/db0-sqlite-development-results.json`](validation/db0-sqlite-development-results.json)
+- 打包态报告：[`validation/b5-packaged-product-results.json`](validation/b5-packaged-product-results.json) 及 [`validation/b5-packaged-exit-results.json`](validation/b5-packaged-exit-results.json)
 - 已通过：Electron 43.2.0 utility process、内置 SQLite 3.53.1、WAL、`busy_timeout`、checksum migration、双连接提交可见性、会话来源不可变、事务回滚、事件/投影同事务提交、事件不可变触发器、checkpoint、重开与 `integrity_check`。
 - 隐私结构检查：仅有字幕/会话/迁移表，无 BLOB、音频或录音列；没有 Agent、FTS、vector 表。
-- 尚未通过：真实 ASAR/NSIS 打包路径，因此 DB0 总门禁为 **partial**，不能写成验收完成。
+- 打包态：真实 packaged exe 从 ASAR fork 独立 storage utility，17 项检查、WAL、重开与 integrity 全部通过并 exact exit 0；同一旅程的 production storage utility 又完成会话写入和 history 读取。DB0 打包态确定性资格已通过；这不等于 I4 干净机发布验收。
 
 ### 7.2 当前 DB1 / DB6 局部证据
 
@@ -171,8 +172,8 @@ B3.1 JSONL 是旧版过渡基线；默认组合根现已按下列顺序切到 SQ
 - 真实组合：Electron main 使用生产 `StorageWorkerHost`，经 utility process 的 `WorkerService` 串行调用真实 `SqliteSubtitleStore` 和文件 SQLite；loopback/mic 分开建会话并重开查询。
 - DB1 已验证：业务幂等键不依赖 `requestId`；同键同载荷去重，同键异载荷冲突；高 revision 更新投影，迟到低 revision 只保留事实；ghost refined、partial、translated、跨源/关闭后新事件均 fail closed；事件插入后或投影后故障会整事务回滚，commit 后丢回复再提交只保留一份事实。
 - Gateway 组合已验证：`starting` 先等 open ACK 才启动采集，final/refined 先进入持久化 FIFO 再广播 UI，close ACK 前保持 `stopping`；worker 空闲退出、提交前退出及 COMMIT 后 ACK 丢失均在旧 generation 完全退出后以同一载荷恢复，事实/投影不重复；pause/resume 保持同一会话，loopback/mic 顺序会话不串源，translated 不进入字幕事实。
-- DB6 局部已验证：schema 无 BLOB/音频列，RPC 拒绝 `audioPath/samples/sql` 等额外字段且错误不回显正文/路径；默认产品两次冷启动/迁移/XOR 会话/退出以及历史 txt/md/srt 导出均无 JSONL 双写、音频字段/路径或音频产物。完整 DB6 仍需真实产品应用目录与 I4 检查。
-- 默认组合根已经 SQLite-only，并实现单实例锁、stale-active 收束、有界 `before-quit`、终态历史查询和主进程选择路径的安全导出；受控真实 Electron fresh SQLite/历史/正常退出已通过，但这仍不表示 Electron 内旧档 import/二次启动、I3/I4 或打包态已通过。
+- DB6 局部已验证：schema 无 BLOB/音频列，RPC 拒绝 `audioPath/samples/sql` 等额外字段且错误不回显正文/路径；默认产品两次冷启动/迁移/XOR 会话/退出以及历史 txt/md/srt 导出均无 JSONL 双写、音频字段/路径或音频产物；正式 ASAR/win-unpacked 也通过无模型张量与音频载荷负扫描。完整 DB6 仍需 I4 真实打包态 userData 检查。
+- 默认组合根已经 SQLite-only，并实现单实例锁、stale-active 收束、有界 `before-quit`、终态历史查询和主进程选择路径的安全导出；开发态与 packaged Electron fresh SQLite/历史/正常退出均通过，但这仍不表示 Electron 内旧档 import/二次启动、I3 或 I4 已通过。
 
 ### 7.3 当前 DB2 实现证据
 
@@ -182,4 +183,4 @@ B3.1 JSONL 是旧版过渡基线；默认组合根现已按下列顺序切到 SQ
 - 迁移 RPC 只接受已解析的 `final/refined` 白名单载荷与文件名/SHA，拒绝 SQL、绝对路径、音频字段和 translated 字幕事实；原 JSONL 不改写。
 - 默认 `main.js` 通过 `SubtitleApplicationRuntime` 按 `worker ready → stale-active interrupted → JSONL migration → recorder/coordinator` 启动，只把 final/refined 写入 SQLite；退出先收束活动会话并等待存储 ACK，超时后只终止精确持有的 worker。
 - 产品生命周期联合 CI 围绕同一 userData 连续运行两次冷启动，验证旧档只读、SHA 幂等、mic/loopback XOR 新会话、partial 排除、refined 单投影、无 JSONL 双写/音频产物和零 active 遗留。
-- 当前是「联合验收完成 / 发布门禁未完成」：确定性历史/迁移证据已补齐，真实 Electron 已验证 fresh userData 下的 utility process、BrowserWindow 历史读取和正常退出；Electron 内旧 JSONL import/二次启动、系统保存弹窗、I3/I4 与打包态尚未完成，因此不得声称完整 DB2/J10 发布门禁通过。
+- 当前是「联合验收完成 / 发布门禁未完成」：确定性历史/迁移证据已补齐，开发态与 packaged Electron 均验证 fresh userData 下的 utility process、BrowserWindow 历史读取和正常退出；Electron 内旧 JSONL import/二次启动、系统保存弹窗、I3/I4 尚未完成，因此不得声称完整 DB2/J10 发布门禁通过。

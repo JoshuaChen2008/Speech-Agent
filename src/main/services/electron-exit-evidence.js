@@ -438,6 +438,10 @@ function createEvidenceAccumulator (options = {}) {
     throw new TypeError('electronMajor must be null or a positive integer')
   }
   const platform = normalizePlatform(options.platform || process.platform)
+  if (options.packagedRuntime !== undefined && typeof options.packagedRuntime !== 'boolean') {
+    throw new TypeError('packagedRuntime must be boolean')
+  }
+  const packagedRuntime = options.packagedRuntime === true
   const now = typeof options.now === 'function' ? options.now : () => Date.now()
   const lifecycle = emptyLifecycle()
   const counters = emptyCounters()
@@ -628,7 +632,7 @@ function createEvidenceAccumulator (options = {}) {
         roleAttribution: true,
         nativeStackCaptured: false,
         rootCauseIdentified: false,
-        packagedRuntime: false
+        packagedRuntime
       }
     }
   }
@@ -769,7 +773,7 @@ function validateEvidenceReport (report) {
   }
   if (!hasExactKeys(report.scope, SCOPE_KEYS) ||
       report.scope.roleAttribution !== true || report.scope.nativeStackCaptured !== false ||
-      report.scope.rootCauseIdentified !== false || report.scope.packagedRuntime !== false) {
+      report.scope.rootCauseIdentified !== false || typeof report.scope.packagedRuntime !== 'boolean') {
     throw new TypeError('evidence scope overclaim')
   }
 

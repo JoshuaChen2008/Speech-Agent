@@ -163,4 +163,8 @@ test('Gate 0B fails closed unless the exact development override is present', ()
     developmentOnly: true
   })
   assert.match(enabled.warning, /development only/i)
+  assert.equal(resolveRuntimeOptions(
+    { [DEV_MODEL_ENV]: DEV_MODEL_VALUE },
+    { packaged: true }
+  ).modelOverride, null)
 })

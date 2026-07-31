@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "kind": "nsis-lifecycle-qualification",
+  "generatedAt": "2026-07-31T04:37:14.003Z",
+  "result": "pass",
+  "gateStatus": "packaged-ci-qualified",
+  "artifact": {
+    "installerSha256": "0139c3078de99e11f7e40c6cc7768f4cb493973c1a88becea8860efe5421edd2",
+    "target": "nsis",
+    "arch": "x64"
+  },
+  "lifecycle": {
+    "perUserSilentInstall": true,
+    "customIsolatedInstallDirectory": true,
+    "installedApplicationPresent": true,
+    "generatedUninstallerPresent": true,
+    "exactUninstallerExitZero": true,
+    "installDirectoryRemoved": true,
+    "applicationLaunched": false
+  },
+  "dataPolicy": {
+    "configuredToPreserveUserData": true,
+    "userDataTouchedByQualification": false,
+    "userDataPreservationRuntimeVerified": false
+  },
+  "limitations": [
+    "silent-installer-mechanics-only",
+    "application-not-launched",
+    "not-clean-machine-i4"
+  ]
+}
