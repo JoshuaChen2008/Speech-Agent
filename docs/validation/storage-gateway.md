@@ -1,6 +1,6 @@
 # Storage Gateway 与会话持久化屏障
 
-> 状态：Gateway/Recorder/Coordinator 恢复组合通过；默认产品权威未切换
+> 状态：Gateway/Recorder/Coordinator 恢复组合通过；默认产品已切换为 SQLite-only 权威存储
 > 日期：2026-07-31
 
 ## 结论
@@ -30,8 +30,9 @@ stop：终态 close 不会提前入队，retry 必须先按序持久化全部三
 
 - 本阶段证明可切换的产品级组件与真实 worker 恢复，不把测试 fixture 当作产品
   可调用的故障命令。
-- 默认 `main.js` 仍只实例化 JSONL 过渡存储；在 DB2/J10 前不同时写 SQLite，
-  因此没有制造双权威。
-- JSONL 迁移、默认权威切换、历史 UI/导出、冷启动残留 active 会话、产品
-  `before-quit` 与 ASAR/NSIS 仍是后续阻断项。
+- 默认 `main.js` 现通过 `SubtitleApplicationRuntime` 实例化 SQLite recorder/gateway；
+  JSONL 只作为 DB2/J10 **确定性迁移覆盖**中的旧档输入，不再承担产品写入，也不存在双写双权威。
+- 默认权威切换、历史 UI/导出、冷启动残留 active 会话与产品 `before-quit` 已由后续
+  联合旅程覆盖；Electron 内旧 JSONL import/二次启动、完整 J10 发布门禁、I3 两小时稳定性
+  与 ASAR/NSIS I4 仍待验收。
 - 隔离 userData 与报告均无现场音频；结构化报告不含正文或绝对路径。

@@ -11,9 +11,15 @@ const {
 const { RealtimeRuntimeAdapter } = require('../../runtime/realtime-runtime-adapter')
 
 const RUNTIME_TRANSITION_TIMEOUT_MS = 30000
+const EXTERNAL_MODEL_DEVELOPMENT_FLAG = 'LIVE_SUBTITLE_ALLOW_EXTERNAL_MODELS'
+
+function allowsExternalModelResources (env = process.env) {
+  return env && env[EXTERNAL_MODEL_DEVELOPMENT_FLAG] === '1'
+}
 
 function resolverOptions (options, includeUserData) {
   const resolved = {
+    allowExternal: options.allowExternal === true,
     env: options.env || process.env
   }
   if (options.repoRoot !== undefined) resolved.repoRoot = options.repoRoot
@@ -27,7 +33,7 @@ function resolverOptions (options, includeUserData) {
  * resources are accepted only through ModelManager's marker audit.
  */
 function isExternalArtifactReady (artifactId, options = {}) {
-  const external = resolverOptions(options, false)
+  const external = resolverOptions({ ...options, allowExternal: true }, false)
   if (artifactId === 'x-asr-160ms') return resolveApprovedRealtimeModel(external) !== null
   if (artifactId === 'x-asr-offline') return resolveApprovedRefinementModel(external) !== null
   if (artifactId === 'silero-vad') return resolveSileroVadModel(external) !== null
@@ -101,8 +107,10 @@ function activateApprovedRuntime (options = {}) {
 }
 
 module.exports = {
+  EXTERNAL_MODEL_DEVELOPMENT_FLAG,
   RUNTIME_TRANSITION_TIMEOUT_MS,
   activateApprovedRuntime,
+  allowsExternalModelResources,
   createApprovedRuntimeDefinition,
   isExternalArtifactReady
 }

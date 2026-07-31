@@ -1,7 +1,7 @@
 # B4 模型资源与产品壳验收
 
 - 日期：2026-07-31（报告时间为 UTC）
-- 状态：B4 确定性联合验收完成；批准模型本机安装/调用实机验收完成；I4 干净机外网安装仍待执行
+- 状态：B4 资源实现、设置页点击下载的确定性 Electron 联合旅程与批准模型本机安装/调用均已有证据；I4 干净机外网安装仍待执行
 - 对应语义：SEM-F00、SEM-F05、SEM-F12、SEM-F14、SEM-F17、SEM-T02、SEM-T03、SEM-T04、SEM-T11
 
 ## 确定性联合旅程
@@ -15,6 +15,9 @@ SqliteSubtitleStore → HistoryService`。只有外网、真实模型张量、�
 执行 mic XOR 的 start → final → stop，并确认活动会话不进入历史、终态正文进入
 SQLite 历史且目录没有音频文件。活动期 runtime replacement 必须返回
 `SESSION_ACTIVE`。
+
+这里的起点是 `ModelManager`，**不是** settings renderer 的下载按钮；它证明受控
+J14 后端链路，而不单独证明用户点击资源页下载动作已经穿过 preload/IPC。
 
 定向结果：1/1 通过。ModelManager 局部故障矩阵另覆盖越权 URL/路径、坏
 hash/size、归档 traversal/link、幂等、并发安装、退出中断/清 staging 和安全状态。
@@ -47,21 +50,21 @@ WAV 误称为现场录音，但产品仍统一禁止落音频文件。
 ## 真实 Electron 产品壳
 
 `scripts/product-shell-smoke.js` 由 `scripts/run-supervised-electron.js --strict-report`
-启动唯一、隔离 userData 的 Electron 进程；使用显式 fake-ASR 开发缝避免打开物理设备，但其余
-`src/main.js`、四个 renderer、preload/IPC、SQLite utility process 与退出屏障均为
-产品实现。脚本通过真实 DOM 操作完成听写首设、开始、定稿显示、停止、终态历史、
-205 段详情的 5 页前后翻批、工具条打开模型资源页，并由应用自身正常退出，不按
+启动唯一、隔离 userData 的 Electron 进程；只在 HTTP 内容、真实张量/ASR 和物理声卡边界
+使用受控 fixture，但 `src/main.js`、四个 renderer、preload/IPC、生产 `ModelManager`、
+Windows tar、SQLite utility process 与退出屏障均为产品实现。脚本通过真实 DOM 操作完成
+听写首设、资源页点击下载、开始、定稿显示、暂停/恢复、停止、终态历史、
+205 段详情的 5 页前后翻批、工具条再次打开模型资源页，并由应用自身正常退出，不按
 `electron.exe` 名称杀进程。CI 同时严格校验产品旅程报告和隐私安全的 role exit evidence；
-普通 `npm start` 仍使用默认 fail-open 模式，诊断写盘不可阻断字幕产品。
-三项模型 ready 状态来自脚本在隔离 workDir 创建的最小开发文件 fixture，只用于
-证明资源 UI/IPC 与应用组合接线，不加载张量、不冒充真实推理；真实模型调用由上一节
-独立证据承担。该旅程及严格报告 verifier 已接入 Windows push/PR CI。
+普通 `npm start` 默认只认 userData 内严格 marker，不再被仓库模型悄悄遮蔽下载入口；
+外部模型路径必须显式打开开发开关。
 
 结果见 [product-shell-results.json](product-shell-results.json)：Electron 43.2.0，
-四个可见 renderer，`crashEventCount=0`，历史到达第 201–205 条、前后翻批成功且
-`historyMaxTimelineNodes=50`，模型资源三项开发 fixture ready，MVP UI 不再展示翻译
+四个可见 renderer，`crashEventCount=0`；模型从 `missing` 经 `downloading`、`verifying`
+到 `ready`，观察到断点 Range、3 个 marker 与空闲热启用；本次字幕会话进入历史。
+历史到达第 201–205 条、前后翻批成功且 `historyMaxTimelineNodes=50`。MVP UI 不展示翻译
 入口，未打开物理音源且未落音频；报告保持 `gateStatus=partial`，并明确保留
-fake-ASR、开发 fixture、205 段非两小时 I3、非 I4 四项限制。
+fake-ASR、受控模型 fixture 无真实张量、205 段非两小时 I3、非 I4 四项限制。
 
 生命周期补丁后又通过 exact-child supervisor 重跑同一多窗口联动旅程。产品壳报告仍为
 `pass / partial`，同时 role exit evidence 为 `clean-exit`：main 完整经历 ready、bootstrap、
@@ -69,9 +72,25 @@ quit-requested 与 will-quit，主进程状态码为 0，incident 为 0，未观
 supervisor 与 main 只交换固定枚举的生命周期、角色、退出原因和状态码分类；报告不保存
 字幕正文、音频/PCM、本地路径、stack、dump 或 PID，也不上传外部服务。
 
-这项受监督证据仍使用 fake ASR、开发模型 fixture，且没有打开物理音频。它只证明当前
-main/preload/IPC/四个 renderer/SQLite/退出屏障的组合旅程能 clean exit，不能替代物理
-loopback/mic、I3 或 I4。
+这项受监督证据仍使用 fake ASR、受控模型 fixture，且没有打开物理音频。它只证明当前
+main/preload/IPC/四个 renderer/ModelManager/SQLite/退出屏障的组合旅程能 clean exit，
+不能替代真实张量、物理 loopback/mic、I3 或 I4。
+
+## 设置页点击安装 → 热启用 → 字幕历史（通过）
+
+本轮从模型 `missing` 的隔离 userData 启动真实 `src/main.js`，在 settings renderer 点击
+`#modelInstallButton`，并依次验证：
+
+1. `src/settings/settings.js` 调用仅暴露无参数安装能力的 settings preload；
+2. main IPC 将请求交给生产 `ModelManager`，完成 Range/字节/SHA/归档白名单/staging/marker；
+3. 空闲 `SessionCoordinator` 经 `activateApprovedRuntime` 转为可开始；
+4. 工具条开始一次单路会话，字幕事件进入 renderer，停止后写入 SQLite，并可在历史中读取。
+
+为保持 CI 确定性，该旅程只在外网、模型张量和物理声卡边界使用受控小资源与
+fake-ASR adapter；其余 renderer、preload、IPC、`ModelManager`、热替换、Coordinator、
+StorageGateway、SQLite 与 HistoryService 均为产品实现。该旅程通过后也只能证明
+UI/安装/持久化接线，**不能**证明真实张量推理、真实 GitHub 公网下载、物理 mic/loopback、
+两小时 I3 或打包态 I4。真实模型调用仍由上文 `model-install-live-smoke.js` 的独立证据承担。
 
 ## 原生模型进程生命周期诊断
 
@@ -101,12 +120,11 @@ captured/sent/ingested 均为 128 帧，dropped、sequence gap 和 bad sample �
 
 ## `0x80000003` 证据边界
 
-两张用户截图的创建时间分别为 02:04:20 和 02:35:13，均早于生命周期修复提交
-`64b3e55`（06:19:57），所以第二张不是修复后复现。旧 I2/结构诊断与截图时段重合，旧代码
-又存在直接 `kill()`、不等待 exact child 退出的路径；这使 native teardown 竞态成为历史主
-嫌疑，但当时没有 WER、dump 或 native stack，截图也无法区分 main、renderer、GPU、
-realtime、refine 或 storage。相关性不能写成根因证明，不能声称已经修复一个尚未归因的
-间歇性 native 异常，也不能宣称 `0x80000003` 已根治。
+用户截图只证明 `electron.exe` 曾出现 `0x80000003`；临时文件元数据不能证明异常实际
+发生时间，截图也无法区分 main、renderer、GPU、realtime、refine 或 storage。代码审计
+另行发现并修复了 exact-child 收束缺陷，但没有证据能把该缺陷归因为截图中的异常。
+当前受控旅程未观察到 breakpoint 也不能倒推出历史根因，更不能声称已经修复或根治一个
+尚未归因的间歇性 native 异常。
 
 完整时间线、role evidence 的隐私白名单及再次观察到 breakpoint 后的受控取证条件见
 [Electron `0x80000003` 调查记录](electron-breakpoint-investigation.md)。未经角色证据和 GPU A/B，

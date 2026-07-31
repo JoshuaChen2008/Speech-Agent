@@ -64,8 +64,16 @@ test('published product-shell evidence proves the four-window user journey witho
   assert.equal(report.runtime.crashEventCount, 0)
   assert.deepEqual(report.journey, {
     onboardingPreset: 'dictation',
+    modelInstallClicked: true,
+    modelInitialState: 'missing',
+    modelObservedStates: ['missing', 'downloading', 'verifying', 'ready'],
+    modelRangeResumeObserved: true,
+    modelReadyMarkerCount: 3,
+    modelHotActivation: true,
     startListeningStop: true,
+    pauseResume: true,
     finalCaptionRendered: true,
+    downloadedModelSessionInHistory: true,
     terminalHistoryCount: 2,
     longHistorySegmentCount: 205,
     historyPageCount: 5,
@@ -77,7 +85,7 @@ test('published product-shell evidence proves the four-window user journey witho
     resourcesPaneOpenedFromToolbar: true,
     modelState: 'ready',
     resourceCount: 3,
-    modelReadinessSource: 'development-fixture-files',
+    modelReadinessSource: 'settings-click-controlled-install',
     translationAdvertised: false
   })
   assert.deepEqual(report.privacy, {
@@ -94,6 +102,18 @@ test('product-shell report verifier rejects real-model, physical-audio and relea
   assert.throws(() => validateProductShellReport({ ...report, gateStatus: 'pass' }), /overclaimed/)
   assert.throws(() => validateProductShellReport({
     ...report,
+    journey: { ...report.journey, modelObservedStates: ['missing', 'ready'] }
+  }), /journey evidence/)
+  assert.throws(() => validateProductShellReport({
+    ...report,
+    journey: { ...report.journey, modelRangeResumeObserved: false }
+  }), /journey evidence/)
+  assert.throws(() => validateProductShellReport({
+    ...report,
+    journey: { ...report.journey, modelReadyMarkerCount: 2 }
+  }), /journey evidence/)
+  assert.throws(() => validateProductShellReport({
+    ...report,
     journey: { ...report.journey, historyMaxTimelineNodes: 51 }
   }), /journey evidence/)
   assert.throws(() => validateProductShellReport({
@@ -108,6 +128,22 @@ test('product-shell report verifier rejects real-model, physical-audio and relea
     ...report,
     privacy: { ...report.privacy, physicalAudioSourceOpened: true }
   }), /privacy evidence/)
+})
+
+test('product-shell CI keeps the settings-click controlled install rather than external or preseeded readiness', () => {
+  const smoke = fs.readFileSync(path.resolve(__dirname, '../../scripts/product-shell-smoke.js'), 'utf8')
+  const workflow = fs.readFileSync(path.resolve(__dirname, '../../.github/workflows/ci.yml'), 'utf8')
+
+  assert.match(smoke, /externalReady:\s*null/)
+  assert.match(smoke, /seedInterruptedModelDownload\(userDataDir, modelFixtures\)/)
+  assert.match(smoke, /modelInitialState !== 'missing'/)
+  assert.match(smoke, /document\.getElementById\('modelInstallButton'\)\.click\(\)/)
+  assert.match(smoke, /\['missing', 'downloading', 'verifying', 'ready'\]/)
+  assert.match(smoke, /modelRangeResumeObserved/)
+  assert.match(smoke, /modelReadyMarkerCount:\s*3/)
+  assert.match(smoke, /if \(smokeFailed\)[\s\S]*event\.preventDefault\(\)[\s\S]*app\.exit\(1\)/)
+  assert.doesNotMatch(smoke, /createDevelopmentModelFixtures|development-fixture-files/)
+  assert.match(workflow, /--entry scripts\/product-shell-smoke\.js[\s\S]*verify-product-shell-report\.js/)
 })
 
 test('B4 evidence report explicitly preserves the remaining I4 boundary', () => {

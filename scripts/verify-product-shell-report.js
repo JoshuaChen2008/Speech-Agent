@@ -17,9 +17,20 @@ function validateProductShellReport (report) {
     throw new Error('product-shell Electron runtime evidence is incomplete')
   }
   const journey = report.journey || {}
+  const requiredModelStates = ['missing', 'downloading', 'verifying', 'ready']
   if (journey.onboardingPreset !== 'dictation' ||
+      journey.modelInstallClicked !== true ||
+      journey.modelInitialState !== 'missing' ||
+      !Array.isArray(journey.modelObservedStates) ||
+      journey.modelObservedStates.length !== requiredModelStates.length ||
+      journey.modelObservedStates.some((state, index) => state !== requiredModelStates[index]) ||
+      journey.modelRangeResumeObserved !== true ||
+      journey.modelReadyMarkerCount !== 3 ||
+      journey.modelHotActivation !== true ||
       journey.startListeningStop !== true ||
+      journey.pauseResume !== true ||
       journey.finalCaptionRendered !== true ||
+      journey.downloadedModelSessionInHistory !== true ||
       !Number.isSafeInteger(journey.terminalHistoryCount) || journey.terminalHistoryCount < 2 ||
       journey.longHistorySegmentCount !== 205 || journey.historyPageCount !== 5 ||
       journey.historyPageSize !== 50 || journey.historyMaxTimelineNodes > 50 ||
@@ -28,7 +39,7 @@ function validateProductShellReport (report) {
       journey.historyAriaRangeAligned !== true ||
       journey.resourcesPaneOpenedFromToolbar !== true ||
       journey.modelState !== 'ready' || journey.resourceCount !== 3 ||
-      journey.modelReadinessSource !== 'development-fixture-files' ||
+      journey.modelReadinessSource !== 'settings-click-controlled-install' ||
       journey.translationAdvertised !== false) {
     throw new Error('product-shell user journey evidence is incomplete')
   }
@@ -40,7 +51,7 @@ function validateProductShellReport (report) {
   }
   const requiredLimitations = [
     'fake-asr-no-physical-audio',
-    'development-model-fixtures-no-real-inference',
+    'controlled-model-fixtures-no-real-tensors',
     'deterministic-205-segment-fixture-not-two-hour-i3',
     'not-packaged-i4'
   ]

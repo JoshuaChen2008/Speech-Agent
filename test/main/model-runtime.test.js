@@ -9,10 +9,14 @@ const test = require('node:test')
 const { PRODUCTION_MODEL_MANIFEST } = require('../../src/main/services/model-manifest')
 const {
   APPROVED_REALTIME_MODEL,
-  APPROVED_REFINEMENT_MODEL
+  APPROVED_REFINEMENT_MODEL,
+  MODEL_DIR_ENV,
+  REFINE_MODEL_DIR_ENV,
+  VAD_MODEL_ENV
 } = require('../../src/main/services/model-resolver')
 const {
   activateApprovedRuntime,
+  allowsExternalModelResources,
   createApprovedRuntimeDefinition,
   isExternalArtifactReady
 } = require('../../src/main/services/model-runtime')
@@ -111,6 +115,64 @@ test('external readiness only accepts known development or explicit artifacts', 
     assert.equal(isExternalArtifactReady(id, { repoRoot, env: {} }), true)
   }
   assert.equal(isExternalArtifactReady('unknown', { repoRoot, env: {} }), false)
+})
+
+test('external model resources require one explicit development flag', () => {
+  assert.equal(allowsExternalModelResources({}), false)
+  assert.equal(allowsExternalModelResources({ LIVE_SUBTITLE_ALLOW_EXTERNAL_MODELS: '' }), false)
+  assert.equal(allowsExternalModelResources({ LIVE_SUBTITLE_ALLOW_EXTERNAL_MODELS: 'true' }), false)
+  assert.equal(allowsExternalModelResources({ LIVE_SUBTITLE_ALLOW_EXTERNAL_MODELS: '1' }), true)
+})
+
+test('runtime uses marker-audited userData unless external resources are explicitly allowed', (t) => {
+  const root = tempRoot(t)
+  const userDataDir = path.join(root, 'user-data')
+  const installedRealtime = installArtifact(userDataDir, 'x-asr-160ms')
+  const installedRefinement = installArtifact(userDataDir, 'x-asr-offline')
+  const installedVad = installArtifact(userDataDir, 'silero-vad')
+
+  const externalRealtime = path.join(root, 'external', 'realtime')
+  const externalRefinement = path.join(root, 'external', 'refinement')
+  const externalVad = path.join(root, 'external', 'silero_vad.onnx')
+  for (const [directory, artifactId] of [
+    [externalRealtime, 'x-asr-160ms'],
+    [externalRefinement, 'x-asr-offline']
+  ]) {
+    fs.mkdirSync(directory, { recursive: true })
+    for (const name of ARTIFACTS.get(artifactId).requiredFiles) {
+      fs.writeFileSync(path.join(directory, name), 'external-stub')
+    }
+  }
+  fs.mkdirSync(path.dirname(externalVad), { recursive: true })
+  fs.writeFileSync(externalVad, 'external-stub')
+  const env = {
+    [MODEL_DIR_ENV]: externalRealtime,
+    [REFINE_MODEL_DIR_ENV]: externalRefinement,
+    [VAD_MODEL_ENV]: externalVad
+  }
+
+  const defaultDefinition = createApprovedRuntimeDefinition({
+    userDataDir,
+    env,
+    repoRoot: path.join(root, 'external-repo'),
+    Adapter: CapturingAdapter
+  })
+  const defaultAdapter = defaultDefinition.adapterFactory()
+  assert.equal(defaultAdapter.options.recognizer.modelDir, installedRealtime)
+  assert.equal(defaultAdapter.options.refinement.modelDir, installedRefinement)
+  assert.equal(defaultAdapter.options.vad.modelPath, path.join(installedVad, 'silero_vad.onnx'))
+
+  const externalDefinition = createApprovedRuntimeDefinition({
+    userDataDir,
+    allowExternal: true,
+    env,
+    repoRoot: path.join(root, 'external-repo'),
+    Adapter: CapturingAdapter
+  })
+  const externalAdapter = externalDefinition.adapterFactory()
+  assert.equal(externalAdapter.options.recognizer.modelDir, externalRealtime)
+  assert.equal(externalAdapter.options.refinement.modelDir, externalRefinement)
+  assert.equal(externalAdapter.options.vad.modelPath, externalVad)
 })
 
 test('activation delegates an internal runtime definition to the idle coordinator', (t) => {

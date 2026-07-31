@@ -1,7 +1,7 @@
 # Live Subtitle Agent · Win11 实时字幕技术规划
 
-> **Rev.9 · 2026-07-31**。初版调研 2026-07-23（版本号、模型名、体积经 GitHub Release API / npm registry / 下载解包核实）。
-> 本次修订：补充 Electron native 生命周期两阶段收束、隐私安全 role evidence、批准模型活跃退出诊断和受监督产品壳证据。两张 `0x80000003` 截图均早于 `64b3e55`，但根因没有 native stack 级证明；这些诊断不改变下一主线：物理 mic I2、I3 长稳和 I4 干净机公网/打包闭环。`loopback`/`mic` 继续产品级互斥，翻译/Agent 与向量继续后置。
+> **Rev.10 · 2026-07-31**。初版调研 2026-07-23（版本号、模型名、体积经 GitHub Release API / npm registry / 下载解包核实）。
+> 本次修订：补充 Electron native 生命周期两阶段收束、隐私安全 role evidence、批准模型活跃退出诊断和受监督产品壳证据；并澄清模型资源是约 270.9MB 的三资源原子 bundle。资源管理入口及「设置页点击下载 → preload/IPC → 受控安装 → 热启用 → 字幕 → SQLite 历史」专门 Electron 旅程现均已通过确定性 CI。截图所示 `0x80000003` 仍没有 native stack 级根因证明，但本轮四窗口联动再次得到 `clean-exit`、零 incident、零 breakpoint；这些诊断不改变下一主线：物理 mic I2、I3 长稳和 I4 干净机公网/打包闭环。`loopback`/`mic` 继续产品级互斥，翻译/Agent 与向量继续后置。
 
 ---
 
@@ -467,8 +467,8 @@ node scripts/gate-0b/evaluate-transcripts.js `
 | **B2 实时链路** | audio host、MessagePort、互斥单路 realtime worker、VAD/背压 | 真 partial/final 替掉假流；拖动不掉帧；队列深度和丢帧可观测。**模型轨已落地（2026-07-27）**：`sherpa-recognizer.js`（共享 OnlineRecognizer、per-segment stream、0.4s 尾静音冲刷）经 configure 注册；`model-resolver.js` 解析本机模型（env/userData/仓库布局，缺失 fail closed）；组合根默认接真实链路。**silero VAD 已替换 EnergyVad（2026-07-27）**：`silero-vad.js` 包装为同接口经 vadFactory 注入，997Hz 纯音拒识实测通过（能量占位做不到）；收句静音实测定为 1.0s——0.5s 切段时流式模型缺右上下文丢字（「一下」→「一」）且几乎不出标点，1.0s 下整句成段 CER 0。VAD 模型缺失时回退 EnergyVad 并警告。实机 smoke `i2-live-caption-smoke.js` PASS（silero：1 条整句定稿、CER 0；对比 energy：4 条碎片、CER 0.071）。**XOR 门禁与 J4 已完成（2026-07-30）**。剩余：两种来源分别 smoke、拖动/掉帧指标 |
 | **B3 精修与会话** | refine worker、事件式持久化、恢复与导出 | 精修不阻塞实时流；已提交一遍定稿可恢复；SRT 时间轴稳定。**B3.1 已落地（2026-07-27，过渡实现）**：append-only JSONL 事件档（Windows-safe 文件名、排他创建防混档）、坏尾行/坏中间行区分恢复、按 revision 折叠、txt/md/srt 导出（毫秒进位正确、换行注入压平），main 接线为会话自动开/封档。**B3.2 refine worker 已落地（2026-07-27）**：独立 utility process 载离线 X-ASR（t=3，M3 同配置）；realtime worker 是 CaptionEvent 唯一序号权威——段定稿后整段音频经 worker↔worker MessagePort 直达 refine，纯文本结果回来后由 realtime worker 以 base+1 revision 发 refined；请求方有界队列（积压 3 即跳过，绝不反压实时）；精修配置失败/中途退出只降级告警不故障会话；暂停期精修缓冲、resume ack 后补发；停止路径 end 收束的段不发起精修（保持 final，计 skipped）。实机 smoke：final 无标点 → refined 全标点，双 CER 0。B3.3 的确定性实现见下一行，实机/发布门禁仍独立验收 |
 | **B3.3 SQLite 字幕历史（联合验收完成 / I3/I4 待验）** | storage worker、SQLite 字幕事件/segments、JSONL 迁移、终态历史列表/有界详情与 txt/md/srt 导出 UI | DB0/DB1、Gateway 恢复与 DB2 迁移内核、两次冷启动/迁移、历史复盘和三格式安全导出均有确定性证据；205 段真实多模块旅程已验证同时间戳/refined 跨 5 页无缺失重复且全量导出不截断，真实 Electron main/preload/IPC/renderer 已验证 DOM≤50 和前后翻页。Electron 内旧档 import/重启、系统保存对话框、两小时 I3 与打包态仍待验收 |
-| **B4 字幕资源（联合验收完成 / I4 待验）** | 内置固定 manifest、ModelManager、断点下载、流式 SHA、固定 System32 tar、归档审查/白名单提取、staging 原子安装、严格 marker、资源页与空闲热启用 | 局部失败矩阵和 J14 均通过，含卡死 fetch/tar 有界退出；批准大模型安装/三运行时调用与 Electron 资源页旅程已留档。当前不提供删除功能；公网干净机/打包态由 I4 关闭 |
-| **B5 字幕 MVP 分发** | electron-builder、NSIS、首启资源检查 | 干净 Win11 机器完成“安装→模型就绪→运行→真字幕→自动保存→历史查看” |
+| **B4 字幕资源（确定性 UI 联合验收完成；真实模型调用有证据；I4 待验）** | 内置固定 manifest、ModelManager、断点下载、流式 SHA、固定 System32 tar、归档审查/白名单提取、staging 原子安装、严格 marker、资源页与空闲热启用 | 资源页的状态、进度、单一下载/重试动作以及无参数 IPC 已实现；局部失败矩阵和后端受控 J14 均通过，含卡死 fetch/tar 有界退出；批准大模型安装/三运行时调用已留档。Electron 产品壳现从隔离 userData 的 `missing` 状态实际点击设置页下载，经 preload/IPC、生产 ModelManager、Range、三 marker、热启用，完成字幕、暂停/恢复、停止和本次 SQLite 历史复盘。受控资源/fake ASR 不冒充真实张量、公网或物理声卡。当前不提供删除功能；公网干净机/打包态由 I4 关闭 |
+| **B5 字幕 MVP 分发** | electron-builder、NSIS、首启资源检查 | 干净 Win11 机器完成“安装→首设→设置页点击下载完整 bundle→模型就绪→运行→真字幕→自动保存→历史查看”；受控 UI 安装旅程与真实公网/物理声卡证据均不得互相冒充 |
 | **A1 Agent 基础（后置）** | `AgentRuntime` 边界、Pi Core 探针、项目自有 `AgentPluginHost`、CredentialStore、ModelGateway、可靠消费水位 | 只静态注册受信任第一方插件；不启用 shell/进程/任意文件写/外部写；key 不进 renderer；Agent 关闭/崩溃不影响字幕；J7/J13 通过 |
 | **A2 Agent 内容能力（后置）** | `TranscriptContextPlugin`、独立增强文本、会后结构化纪要 | 原文与派生文本不混淆；待办只生成内容；字幕→Agent 通过 J3–J7/J13 联合场景 |
 | **X1 可选检索（Deferred）** | FTS5 按需增加；embedding/`sqlite-vec` 最后评估 | 不阻断 B3.3、B5 或 A2；若启用再执行 J11/DB4 |
@@ -480,7 +480,7 @@ node scripts/gate-0b/evaluate-transcripts.js `
 
 | Gate | 汇合内容 | 验收标准 |
 |---|---|---|
-| **CI0 联合测试基线（持续维护）** | 用户旅程跨越真实产品模块，而非只验证单个函数/类 | Windows workflow 已落地；真实 Electron Gateway 组合覆盖 Coordinator→Recorder→utility process→SQLite、XOR、pause/refine、stop barrier 与故障重放；确定性默认产品/历史旅程覆盖 DB2、SQLite-only/stale-active/退出、205 段 keyset 详情与不截断三格式导出；产品壳再覆盖真实 main/preload/IPC/renderer 五页往返和 DOM≤50。J14 覆盖 ModelManager→HTTP/tar→热启用→字幕→SQLite 历史；J11 后置 |
+| **CI0 联合测试基线（持续维护）** | 用户旅程跨越真实产品模块，而非只验证单个函数/类 | Windows workflow 已落地；真实 Electron Gateway 组合覆盖 Coordinator→Recorder→utility process→SQLite、XOR、pause/refine、stop barrier 与故障重放；确定性默认产品/历史旅程覆盖 DB2、SQLite-only/stale-active/退出、205 段 keyset 详情与不截断三格式导出；产品壳覆盖真实 main/preload/IPC/renderer 五页往返和 DOM≤50。J14 现从真实 settings DOM 点击覆盖 `preload/IPC→ModelManager→HTTP/tar→热启用→字幕→SQLite 历史`；J11 后置 |
 | **I1 Contract（完成）** | UI fake adapter ↔ 后端 contract fixtures | coordinator、fake adapter、renderer reducer 和 IPC 共享 v1 validator；默认/dev smoke 均通过 |
 | **I2 Live Caption** | 单路音频 → realtime ASR → SessionCoordinator → 字幕 UI | P50/P95 延迟、CPU、内存、队列深度达标，并完成 J4/J5/J6 联合场景。**I2.1 结构接线已完成（2026-07-27）**：`RealtimeRuntimeAdapter` 实现 B1 冻结接口组合 host/worker/port，coordinator 新增 adapter `onError` 故障入口；实机结构 smoke 覆盖 worker 击杀→error→retry→pause/resume→stop。**I2.2 真字幕已通**：2026-07-31 schema v2 loopback 实机 PASS——真实 160ms 模型 + silero + 离线精修得到 final/refined CER 0；captured/sent/ingested 帧数一致，零丢帧、零 sequence gap、零坏类型，并记录 CPU/工作集与字幕到达时序（`docs/validation/i2-loopback-results.json`）。runner 支持 `--source loopback|mic` 分开执行。**J4/XOR 与 J5/J6 确定性故障旅程已覆盖**。完整 I2 实机验收仍需物理 mic 报告、重复运行形成延迟 P50/P95 门槛、拖动不掉帧、设备变化/睡眠唤醒验证 |
 | **I3 Durable Subtitle Session** | final/refined → SQLite 事件/投影 → 带时间戳历史/导出 | 连续 2 小时不卡；崩溃恢复不丢已一遍定稿的段落；JSONL 迁移通过 J10 |
@@ -499,11 +499,11 @@ node scripts/gate-0b/evaluate-transcripts.js `
 
 Gate 0B 原门槛于 2026-07-27 经正式改判重设（见 `docs/validation/gate-0b.md` 改判节）：批准机器基线上发布 `fast` profile（x-asr-160ms + 离线精修）。`LIVE_SUBTITLE_DEV_MODEL=x-asr-480ms` 仍是仅供 B1 fake adapter 的开发开关，不加载真实模型，也不得进入生产默认配置；真实 profile 的发布以模型文件实际就位 + 机器基线满足为条件。
 
-### 8.2 接受首启下载 ~400MB 吗？
+### 8.2 接受首启下载约 270.9MB 的完整本地 bundle 吗？（已拍板）
 
-**建议：接受，但分两步下。** 首启只拉 x-asr（~170MB）即可用；SenseVoice 二遍精修（~230MB）做成设置页里的可选增强。首次体验等待砍掉一半，精修从「入场门槛」变成「用着用着发现还能更准」。
+**决定：接受，且一次性安装完整三资源 bundle。** 当前固定 manifest 包含实时 X-ASR（133,898,007 字节）、离线 X-ASR 精修（136,396,739 字节）和 silero VAD（643,854 字节），合计 **270,938,600 字节**。设置页以一个下载/重试动作展示总进度和三项资源状态；只有三项均通过字节数、SHA-256、归档白名单与 ready marker 校验后，`ModelManager` 才能发布 `ready`，应用才会热启用真实字幕运行时。
 
-若要求开箱即用 0 下载，就得砍到 `small-bilingual`（~50MB 级）并放弃二遍精修，准确率有肉眼可见的下降。
+离线精修**不是**当前产品里的可选增强，也不存在“只下实时 ASR 就允许开始”的降级承诺：缺任一资源时字幕 start 必须保持不可用。若未来要改为分层下载或首启 0 下载，须先修改 `SEM-F17`、J14/I4 旅程及相应 manifest/运行时原子性，而不能由 UI 单方面显示成可选项。
 
 ### 8.3 字幕 MVP 中“系统音频”具体是哪一路？（已拍板）
 

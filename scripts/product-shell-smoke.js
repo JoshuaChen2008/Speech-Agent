@@ -3,16 +3,18 @@
 // @ts-check
 
 /* Real Electron product-shell journey. It loads src/main.js with an isolated
-   userData directory and the explicit fake-ASR development seam, then drives
-   the actual settings/toolbar/caption/history renderers through their DOM and
-   preload IPC. It never opens a physical audio source and never kills a
-   process by executable name. */
+   userData directory, drives a real settings click through preload/IPC and the
+   production ModelManager, then hot-activates a controlled subtitle adapter.
+   It never opens a physical audio source and never kills a process by
+   executable name. */
 
 const fs = require('node:fs')
 const fsp = require('node:fs/promises')
 const path = require('node:path')
 const { app, BrowserWindow } = require('electron')
-const { PRODUCTION_MODEL_MANIFEST } = require('../src/main/services/model-manifest')
+const modelManagerModule = require('../src/main/services/model-manager')
+const modelRuntimeModule = require('../src/main/services/model-runtime')
+const { FakeRuntimeAdapter } = require('../src/main/session/fake-runtime-adapter')
 const {
   OPERATIONS,
   PROTOCOL_VERSION,
@@ -21,6 +23,12 @@ const {
   makeOpenSessionKey
 } = require('../src/runtime/storage-worker/protocol')
 const { StorageWorkerService } = require('../src/runtime/storage-worker/worker-service')
+const {
+  closeFixtureModelServer,
+  createFixtureModelBundle,
+  seedInterruptedModelDownload,
+  startFixtureModelServer
+} = require('./model-ui-fixture-support')
 
 const PROJECT_ROOT = path.resolve(__dirname, '..')
 const LONG_HISTORY_SESSION_ID = 'ci-long-history-session'
@@ -111,22 +119,17 @@ function audioFilesUnder (directory) {
   return found
 }
 
-function createDevelopmentModelFixtures (workDir) {
-  const fixtureRoot = path.join(workDir, 'model-fixtures')
-  const realtime = PRODUCTION_MODEL_MANIFEST.artifacts.find((artifact) => artifact.id === 'x-asr-160ms')
-  const refinement = PRODUCTION_MODEL_MANIFEST.artifacts.find((artifact) => artifact.id === 'x-asr-offline')
-  const vad = PRODUCTION_MODEL_MANIFEST.artifacts.find((artifact) => artifact.id === 'silero-vad')
-  if (!realtime || !refinement || !vad) throw new Error('production model manifest is incomplete')
-
-  const realtimeRoot = path.join(fixtureRoot, 'realtime')
-  const refinementRoot = path.join(fixtureRoot, 'refinement')
-  const vadRoot = path.join(fixtureRoot, 'vad')
-  for (const directory of [realtimeRoot, refinementRoot, vadRoot]) fs.mkdirSync(directory, { recursive: true })
-  for (const file of realtime.requiredFiles) fs.writeFileSync(path.join(realtimeRoot, file), 'product-shell-fixture\n')
-  for (const file of refinement.requiredFiles) fs.writeFileSync(path.join(refinementRoot, file), 'product-shell-fixture\n')
-  const vadPath = path.join(vadRoot, vad.fileName)
-  fs.writeFileSync(vadPath, 'product-shell-fixture\n')
-  return { realtimeRoot, refinementRoot, vadPath }
+function readyMarkersUnder (directory) {
+  let count = 0
+  const visit = (current) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const target = path.join(current, entry.name)
+      if (entry.isDirectory()) visit(target)
+      else if (entry.name === '.ready.json') count += 1
+    }
+  }
+  visit(directory)
+  return count
 }
 
 function seedLongHistoryFixture (databasePath) {
@@ -198,11 +201,105 @@ const userDataDir = path.join(options.workDir, 'user-data')
 fs.mkdirSync(userDataDir, { recursive: false })
 app.setPath('userData', userDataDir)
 seedLongHistoryFixture(path.join(userDataDir, 'data', 'speech-agent.sqlite3'))
-const modelFixtures = createDevelopmentModelFixtures(options.workDir)
-process.env.LIVE_SUBTITLE_MODEL_DIR = modelFixtures.realtimeRoot
-process.env.LIVE_SUBTITLE_REFINE_MODEL_DIR = modelFixtures.refinementRoot
-process.env.LIVE_SUBTITLE_VAD_MODEL = modelFixtures.vadPath
-process.env.LIVE_SUBTITLE_DEV_MODEL = 'x-asr-480ms'
+const modelFixtures = createFixtureModelBundle(options.workDir)
+const resumeSeed = seedInterruptedModelDownload(userDataDir, modelFixtures)
+delete process.env.LIVE_SUBTITLE_MODEL_DIR
+delete process.env.LIVE_SUBTITLE_REFINE_MODEL_DIR
+delete process.env.LIVE_SUBTITLE_VAD_MODEL
+delete process.env.LIVE_SUBTITLE_DEV_MODEL
+delete process.env.LIVE_SUBTITLE_ALLOW_EXTERNAL_MODELS
+
+let modelTransport = null
+
+/* This boundary double deliberately emits subtitle lifecycle events only.
+   It accepts the production fast profile selected by the installed bundle,
+   while the shared B1 FakeRuntimeAdapter remains strict about its balanced
+   development profile. No translated/Agent event is emitted here. */
+class ProductShellSubtitleAdapter extends FakeRuntimeAdapter {
+  assertContext (context) {
+    if (!context || context.profile !== 'fast') {
+      throw new TypeError('product-shell subtitle adapter only supports the installed fast profile')
+    }
+    super.assertContext({ ...context, profile: 'balanced' })
+  }
+
+  typeLine (entry) {
+    const current = { entry, length: 0, revision: 0 }
+    this.currentLine = current
+    this.characterTimer = setInterval(() => {
+      if (!this.context || this.paused) return
+      current.length += 1
+      current.revision += 1
+      this.emit('partial', current.revision, entry.text.slice(0, current.length))
+      if (current.length < entry.text.length) return
+
+      clearInterval(this.characterTimer)
+      this.characterTimer = null
+      this.currentLine = null
+      this.emit('final', current.revision + 1, entry.text)
+      this.lineTimer = setTimeout(() => {
+        this.emit('refined', current.revision + 2, entry.text)
+        this.lineTimer = setTimeout(() => this.nextLine(), this.betweenLinesMs)
+      }, this.translationDelayMs)
+    }, this.characterIntervalMs)
+  }
+}
+
+function fixtureRuntimeDefinition () {
+  return Object.freeze({
+    adapterFactory: () => new ProductShellSubtitleAdapter(),
+    runtimeOptions: Object.freeze({
+      modelOverride: Object.freeze({
+        id: 'x-asr-160ms',
+        profile: 'fast',
+        developmentOnly: false
+      }),
+      refinementAvailable: true
+    }),
+    transitionTimeoutMs: 5000
+  })
+}
+
+async function launchSmokeApplication () {
+  modelTransport = await startFixtureModelServer(modelFixtures.payloadByPath)
+  const BaseModelManager = modelManagerModule.ModelManager
+  let randomSequence = 0
+  class ProductShellModelManager extends BaseModelManager {
+    constructor (managerOptions) {
+      super({
+        ...managerOptions,
+        manifest: modelFixtures.manifest,
+        externalReady: null,
+        randomId: () => `product-shell-${++randomSequence}`,
+        fetchImpl: (url, requestOptions = {}) => {
+          const original = new URL(url)
+          if (original.protocol !== 'https:' || original.hostname !== 'github.com' ||
+              !modelFixtures.payloadByPath.has(original.pathname)) {
+            throw new Error('unexpected model manifest URL')
+          }
+          return fetch(`http://127.0.0.1:${modelTransport.port}${original.pathname}`, {
+            method: requestOptions.method,
+            headers: requestOptions.headers,
+            redirect: requestOptions.redirect,
+            signal: requestOptions.signal
+          })
+        }
+      })
+    }
+  }
+  modelManagerModule.ModelManager = ProductShellModelManager
+  modelRuntimeModule.createApprovedRuntimeDefinition = () => fixtureRuntimeDefinition()
+  modelRuntimeModule.activateApprovedRuntime = ({ coordinator }) =>
+    coordinator.replaceRuntime(fixtureRuntimeDefinition())
+  require('../src/main')
+}
+
+async function closeModelTransport () {
+  if (!modelTransport) return
+  const server = modelTransport.server
+  modelTransport = null
+  await closeFixtureModelServer(server)
+}
 
 const crashEvents = []
 app.on('child-process-gone', (_event, details) => {
@@ -233,6 +330,7 @@ app.whenReady().then(() => {
       crashEventCount: crashEvents.length
     }
     await fsp.writeFile(options.report, `${JSON.stringify(failure, null, 2)}\n`, { flag: 'wx' }).catch(() => {})
+    await closeModelTransport().catch(() => {})
     process.exitCode = 1
     app.quit()
   })
@@ -246,12 +344,60 @@ async function runJourney () {
 
   await rendererValue(settings, `document.querySelector('[data-preset="dictation"]').click(); true`)
   await waitFor(() => rendererValue(settings, `document.getElementById('onboarding').hidden`), 'dictation onboarding')
+  await waitFor(() => rendererValue(toolbar,
+    `window.shell.getSnapshot().then(s => s.phase === 'unavailable' && !s.capabilities.canStart)`),
+  'missing-model runtime')
+
+  await rendererValue(settings, `document.querySelector('.nav-item[data-pane="resources"]').click(); true`)
+  await waitFor(() => rendererValue(settings,
+    `document.querySelector('.pane[data-pane="resources"]').classList.contains('active')`),
+  'resource pane before install')
+  const modelInitialState = await rendererValue(settings, `(async () => {
+    window.__modelUiStates = []
+    window.shell.onModelStatus((status) => window.__modelUiStates.push(status.state))
+    const status = await window.shell.getModelStatus()
+    window.__modelUiStates.push(status.state)
+    return status.state
+  })()`)
+  if (modelInitialState !== 'missing') throw new Error(`model UI did not begin missing: ${modelInitialState}`)
+  await waitFor(() => rendererValue(settings,
+    `(() => { const b = document.getElementById('modelInstallButton'); return !b.disabled && b.textContent === '下载模型' })()`),
+  'enabled model download button')
+  await rendererValue(settings, `document.getElementById('modelInstallButton').click(); true`)
+  await waitFor(() => rendererValue(settings,
+    `window.shell.getModelStatus().then(s => s.state === 'ready' &&
+      document.getElementById('modelInstallButton').textContent === '已就绪' &&
+      document.getElementById('modelInstallButton').disabled)`),
+  'model installation through settings', 20000)
+  const observedModelStates = await rendererValue(settings,
+    `[...new Set(window.__modelUiStates)]`)
+  for (const state of ['missing', 'downloading', 'verifying', 'ready']) {
+    if (!observedModelStates.includes(state)) throw new Error(`model UI missed state: ${state}`)
+  }
+  const firstArtifactPath = new URL(modelFixtures.manifest.artifacts[0].url).pathname
+  const rangeResumeObserved = modelTransport.requests.some((request) =>
+    request.pathname === firstArtifactPath && request.range === `bytes=${resumeSeed.resumeBytes}-`)
+  if (!rangeResumeObserved) throw new Error('settings model install did not resume the seeded partial download')
+  if (readyMarkersUnder(path.join(userDataDir, 'models')) !== 3) {
+    throw new Error('settings model install did not create three ready markers')
+  }
+
   await waitFor(() => rendererValue(toolbar, `window.shell.getSnapshot().then(s => s.phase === 'idle' && s.capabilities.canStart)`), 'idle runtime')
   await waitFor(() => rendererValue(toolbar, `!!document.querySelector('button[data-act="start"]:not(:disabled)')`), 'start control')
 
   await rendererValue(toolbar, `document.querySelector('button[data-act="start"]').click(); true`)
-  await waitFor(() => rendererValue(toolbar, `window.shell.getSnapshot().then(s => s.phase === 'listening' && s.sessionId !== null)`), 'listening runtime')
+  const liveSessionId = await waitFor(async () => {
+    const snapshot = await rendererValue(toolbar, `window.shell.getSnapshot()`)
+    return snapshot.phase === 'listening' && snapshot.sessionId !== null ? snapshot.sessionId : null
+  }, 'listening runtime')
   await waitFor(() => rendererValue(caption, `document.getElementById('liveRegion').textContent.length > 0`), 'final caption', 15000)
+
+  await waitFor(() => rendererValue(toolbar, `!!document.querySelector('button[data-act="pause"]:not(:disabled)')`), 'pause control')
+  await rendererValue(toolbar, `document.querySelector('button[data-act="pause"]').click(); true`)
+  await waitFor(() => rendererValue(toolbar, `window.shell.getSnapshot().then(s => s.phase === 'paused')`), 'paused runtime')
+  await waitFor(() => rendererValue(toolbar, `!!document.querySelector('button[data-act="resume"]:not(:disabled)')`), 'resume control')
+  await rendererValue(toolbar, `document.querySelector('button[data-act="resume"]').click(); true`)
+  await waitFor(() => rendererValue(toolbar, `window.shell.getSnapshot().then(s => s.phase === 'listening')`), 'resumed runtime')
 
   await waitFor(() => rendererValue(toolbar, `!!document.querySelector('button[data-act="stop"]:not(:disabled)')`), 'stop control')
   await rendererValue(toolbar, `document.querySelector('button[data-act="stop"]').click(); true`)
@@ -264,6 +410,9 @@ async function runJourney () {
     const count = await rendererValue(history, `document.querySelectorAll('.session-card').length`)
     return count > 0 ? count : 0
   }, 'terminal history')
+  await waitFor(() => rendererValue(history,
+    `!!document.querySelector('.session-card[data-session-id="${liveSessionId}"]')`),
+  'downloaded-model session history card')
   await waitFor(() => rendererValue(history,
     `!!document.querySelector('.session-card[data-session-id="${LONG_HISTORY_SESSION_ID}"]')`),
   'long history fixture card')
@@ -336,8 +485,16 @@ async function runJourney () {
     },
     journey: {
       onboardingPreset: 'dictation',
+      modelInstallClicked: true,
+      modelInitialState,
+      modelObservedStates: observedModelStates,
+      modelRangeResumeObserved: rangeResumeObserved,
+      modelReadyMarkerCount: 3,
+      modelHotActivation: true,
       startListeningStop: true,
+      pauseResume: true,
       finalCaptionRendered: true,
+      downloadedModelSessionInHistory: true,
       terminalHistoryCount: historyCount,
       longHistorySegmentCount: LONG_HISTORY_SEGMENT_COUNT,
       historyPageCount: visitedHistoryPages.length,
@@ -349,7 +506,7 @@ async function runJourney () {
       resourcesPaneOpenedFromToolbar: true,
       modelState,
       resourceCount,
-      modelReadinessSource: 'development-fixture-files',
+      modelReadinessSource: 'settings-click-controlled-install',
       translationAdvertised: false
     },
     privacy: {
@@ -360,20 +517,34 @@ async function runJourney () {
     },
     limitations: [
       'fake-asr-no-physical-audio',
-      'development-model-fixtures-no-real-inference',
+      'controlled-model-fixtures-no-real-tensors',
       'deterministic-205-segment-fixture-not-two-hour-i3',
       'not-packaged-i4'
     ]
   }
   await fsp.writeFile(options.report, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })
   process.stdout.write(`${JSON.stringify(report)}\n`)
+  await closeModelTransport()
   if (watchdog) clearTimeout(watchdog)
   app.quit()
 }
 
-app.on('will-quit', () => {
+app.on('will-quit', (event) => {
   if (watchdog) clearTimeout(watchdog)
-  if (smokeFailed) process.exitCode = 1
+  void closeModelTransport().catch(() => {})
+  if (smokeFailed) {
+    /* Electron's app.quit() may otherwise normalize a failed smoke to status
+       zero after the product's graceful before-quit barrier. Let every
+       will-quit listener record its evidence, then preserve a failing status. */
+    event.preventDefault()
+    setImmediate(() => app.exit(1))
+  }
 })
 
-require('../src/main')
+void launchSmokeApplication().catch(async (error) => {
+  smokeFailed = true
+  console.error(error && error.stack ? error.stack : error)
+  await closeModelTransport().catch(() => {})
+  process.exitCode = 1
+  app.exit(1)
+})

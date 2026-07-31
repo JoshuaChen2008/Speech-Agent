@@ -27,6 +27,7 @@ const {
 } = require('./main/services/model-manager')
 const {
   activateApprovedRuntime,
+  allowsExternalModelResources,
   createApprovedRuntimeDefinition,
   isExternalArtifactReady
 } = require('./main/services/model-runtime')
@@ -483,12 +484,14 @@ function createCoordinator (persistenceSink) {
     console.warn('[runtime] structural runtime enabled: real capture and worker, null recognizer, no captions')
   }
   /* 产品能力只在 ModelManager 审计完整三资源 bundle 后开启。仓库模型和显式
-     env 路径通过 Manager 的 externalReady 开发缝进入；userData 则必须具有
-     清单匹配的 ready marker，不能只凭文件存在冒充安装成功。 */
+     env 路径只有在 LIVE_SUBTITLE_ALLOW_EXTERNAL_MODELS=1 时才通过
+     externalReady 开发缝进入；普通 npm start 与打包应用都必须依赖 userData
+     中清单匹配的 ready marker，不能被工作区模型悄悄遮蔽下载入口。 */
   const managerReady = modelManager?.getStatus().state === 'ready'
   const approvedRuntime = (!devOptions.modelOverride && !structuralRuntime && managerReady)
     ? createApprovedRuntimeDefinition({
         userDataDir: app.getPath('userData'),
+        allowExternal: allowsExternalModelResources(process.env),
         ...runtimeEvidenceOptions
       })
     : null
@@ -592,6 +595,7 @@ async function installModelResources () {
       activateApprovedRuntime({
         coordinator,
         userDataDir: app.getPath('userData'),
+        allowExternal: allowsExternalModelResources(process.env),
         ...runtimeEvidenceOptions
       })
     }
@@ -724,9 +728,12 @@ async function bootstrapApplication () {
   if (quitRequested) return false
   config.load()
   const userDataDir = app.getPath('userData')
+  const externalModelsAllowed = allowsExternalModelResources(process.env)
   modelManager = new ModelManager({
     userDataDir,
-    externalReady: (artifactId) => isExternalArtifactReady(artifactId)
+    ...(externalModelsAllowed
+      ? { externalReady: (artifactId) => isExternalArtifactReady(artifactId) }
+      : {})
   })
   modelManager.onStatus(broadcastModelStatus)
   await modelManager.initialize()

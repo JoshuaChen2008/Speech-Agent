@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "kind": "product-shell-smoke",
-  "generatedAt": "2026-07-30T22:40:15.269Z",
+  "generatedAt": "2026-07-31T04:14:49.212Z",
   "result": "pass",
   "gateStatus": "partial",
   "runtime": {
@@ -12,8 +12,21 @@
   },
   "journey": {
     "onboardingPreset": "dictation",
+    "modelInstallClicked": true,
+    "modelInitialState": "missing",
+    "modelObservedStates": [
+      "missing",
+      "downloading",
+      "verifying",
+      "ready"
+    ],
+    "modelRangeResumeObserved": true,
+    "modelReadyMarkerCount": 3,
+    "modelHotActivation": true,
     "startListeningStop": true,
+    "pauseResume": true,
     "finalCaptionRendered": true,
+    "downloadedModelSessionInHistory": true,
     "terminalHistoryCount": 2,
     "longHistorySegmentCount": 205,
     "historyPageCount": 5,
@@ -25,7 +38,7 @@
     "resourcesPaneOpenedFromToolbar": true,
     "modelState": "ready",
     "resourceCount": 3,
-    "modelReadinessSource": "development-fixture-files",
+    "modelReadinessSource": "settings-click-controlled-install",
     "translationAdvertised": false
   },
   "privacy": {
@@ -36,7 +49,7 @@
   },
   "limitations": [
     "fake-asr-no-physical-audio",
-    "development-model-fixtures-no-real-inference",
+    "controlled-model-fixtures-no-real-tensors",
     "deterministic-205-segment-fixture-not-two-hour-i3",
     "not-packaged-i4"
   ]

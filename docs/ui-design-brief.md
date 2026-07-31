@@ -1,6 +1,6 @@
 # Live Subtitle Agent · 视觉/UI 模型交接说明
 
-> 状态：Rev.3 · 2026-07-31
+> 状态：Rev.4 · 2026-07-31
 > 目的：让擅长视觉设计的模型可以独立改进界面，同时不接触音频、ASR、模型、存储和安全实现。
 
 ## 1. 核心原则
@@ -134,7 +134,7 @@
     { "id": "mic", "label": "麦克风", "state": "active", "level": 0.31 },
     { "id": "loopback", "label": "系统音频", "state": "inactive", "level": 0 }
   ],
-  "model": { "state": "ready", "profile": "balanced" },
+  "model": { "state": "ready", "profile": "fast" },
   "lastError": null
 }
 ```
@@ -184,7 +184,7 @@ UI 规则：
 {
   "ok": false,
   "code": "MODEL_NOT_READY",
-  "message": "需要先下载均衡模型",
+  "message": "需要下载完整本地字幕资源",
   "nextAction": "open-model-manager"
 }
 ```
@@ -216,7 +216,7 @@ UI 规则：
 ### 4.3 设置、历史和首启
 
 - 外观偏好可以即时预览，延迟持久化。
-- 音频和 ASR 模型属于字幕运行配置；AI 属于后置 Agent 配置。二者都需展示 pending/失败/实际生效值，但 Agent 不可用不得禁用字幕入口。
+- 音频和 ASR 模型属于字幕运行配置；AI 属于后置 Agent 配置。模型资源固定为实时 ASR、离线精修和 VAD 的完整原子 bundle：设置页显示总/分项进度，但不把离线精修伪装成可选下载。二者都需展示 pending/失败/实际生效值，但 Agent 不可用不得禁用字幕入口。
 - 不可用能力由 Capabilities 禁用并说明原因。
 - 字幕历史放在可聚焦的正常窗口内，MVP 支持会话列表、滚动、选择、时间戳和导出；搜索是可选能力，不塞进穿透字幕窗。
 - 首启提供「会议字幕 / 个人听写」互斥预设，并明确麦克风、系统音频权限；活动会话不能同时开启两路或直接换源。
@@ -243,7 +243,7 @@ UI 规则：
 ## 6. Contract request 状态
 
 > 提出方：视觉/UI 层 · 2026-07-26 · 对应 V1–V3 已交付的部分
-> 状态：B1 已关闭 A1–A3 以及 stop/retry；B3.3 已关闭 history；A4、资源管理与权限入口仍未实现。
+> 状态：B1 已关闭 A1–A3 以及 stop/retry；B3.3 已关闭 history；B4 已关闭资源管理入口、安全下载/热启用 contract，并已通过设置页点击贯穿 Electron renderer/preload/IPC/安装/字幕/历史的确定性联合旅程。A4 layout contract 与权限入口仍未实现。
 
 ### 6.1 A 类 · 阻塞型
 
@@ -271,10 +271,10 @@ UI 规则：
 | `stop` | stop 命令 | B1 | **完成** |
 | `retry` | retry 命令 | B1 | **完成** |
 | `history` | 可聚焦的历史窗 + 只读终态会话/时间戳正文/导出 contract；搜索可后加 | B3.3 | **联合验收完成/真实 Electron 205 段五页与 DOM≤50 已验；系统对话框、两小时 I3 与 I4 待验** |
-| `open-model-manager` | 资源管理页：固定三项本地 ASR 资源、总/分项进度、安全错误与单一下载/重试动作；不接受 URL/hash/path 参数 | B4 | **实现完成/真实 Electron 产品壳已验收；I4 干净机公网下载待验收** |
+| `open-model-manager` | 资源管理页：固定三项本地 ASR 资源的总/分项进度、安全错误与单一下载/重试动作；完整 bundle 才能 start；不接受 URL/hash/path 参数 | B4 | **确定性 UI 联合验收完成**。真实 Electron 产品壳从 `missing` 状态点击下载，贯穿 preload/IPC/生产 Manager、Range、三 marker、热启用、字幕、暂停/恢复、停止和 SQLite 历史；I4 干净机公网下载待验收 |
 | `request-permission` | 权限请求入口 | Gate 0C / B2 | 未实现 |
 
-四个 `nextAction` 值里 `retry` 与 `open-settings` 已接通；`open-model-manager` 与 `request-permission` 等待后续阶段。
+四个 `nextAction` 值里 `retry`、`open-settings` 与 `open-model-manager` 已接通；只有 `request-permission` 仍等待后续阶段。
 
 ### 6.3 C 类 · UI 对后端的隐含期待
 
@@ -290,7 +290,7 @@ UI 规则：
 
 ### 6.4 后续顺序
 
-字幕 MVP 的 B4 ModelManager 资源入口与真实 Electron 四窗口产品壳旅程已完成；下一门禁是物理 mic、I3 长稳与 I4 干净 Win11 公网安装/打包验收。Agent UI 等 A1/A2 契约冻结后再做，不在 renderer 内先行伪造能力；当前设置页不展示翻译开关。
+字幕 MVP 的 B4 ModelManager 资源入口已实现，真实 Electron 四窗口产品壳已通过 settings renderer 点击下载→preload/IPC→受控安装→热启用→字幕→SQLite 历史的专门旅程。下一步推进物理 mic、I3 长稳与 I4 干净 Win11 公网安装/打包验收。该受控 UI 旅程使用小型受控资源和 fake ASR，只证明接线与用户交互，不能冒充真实推理、真实公网或物理声卡。Agent UI 等 A1/A2 契约冻结后再做，不在 renderer 内先行伪造能力；当前设置页不展示翻译开关。
 
 ## 7. 每次视觉交接必须包含
 
@@ -306,5 +306,5 @@ UI 规则：
 - 视觉模型只看本文件和 contract fixtures，就能完成 UI，不必阅读 ASR 实现。
 - 后端替换模型、provider 或存储实现时，UI 不需要改 DOM/CSS。
 - renderer 重载后从完整快照恢复，不依赖“恰好收到过某个事件”。
-- 未安装模型、权限拒绝、设备拔出和 worker 恢复都有明确界面；Agent 上线后再增加 AI 断网/取消/失败界面，且不遮蔽字幕历史。
+- 未安装模型和 worker 恢复已有明确界面；权限拒绝、设备拔出需在 I4 前随权限入口补成明确界面。Agent 上线后再增加 AI 断网/取消/失败界面，且不遮蔽字幕历史。
 - 任何“看起来已经成功”的视觉状态，都能追溯到后端 RuntimeSnapshot 或 CommandResult。

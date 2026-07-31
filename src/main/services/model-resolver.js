@@ -79,23 +79,26 @@ function hasInstalledArtifact (directory, artifact) {
 }
 
 /**
- * @param {{ env?: *, userDataDir?: string | null, repoRoot?: string }} [options]
+ * @param {{ env?: *, userDataDir?: string | null, repoRoot?: string, allowExternal?: boolean }} [options]
  * @returns {{ id: string, profile: string, kind: string, numThreads: number, modelType: string, modelDir: string } | null}
  */
 function resolveApprovedRealtimeModel (options = {}) {
   const env = options.env || process.env
   const repoRoot = options.repoRoot || path.join(__dirname, '..', '..', '..')
+  const allowExternal = options.allowExternal !== false
   const model = APPROVED_REALTIME_MODEL
   const explicit = env[MODEL_DIR_ENV]
-  if (typeof explicit === 'string' && explicit.length > 0 && hasRequiredFiles(explicit)) {
+  if (allowExternal && typeof explicit === 'string' && explicit.length > 0 && hasRequiredFiles(explicit)) {
     return resolvedRealtime(explicit, model)
   }
   if (typeof options.userDataDir === 'string' && options.userDataDir.length > 0) {
     const installed = path.join(options.userDataDir, 'models', model.id, model.directoryName)
     if (hasInstalledArtifact(installed, REALTIME_ARTIFACT)) return resolvedRealtime(installed, model)
   }
-  const development = path.join(repoRoot, 'models', 'gate-0b', 'extracted', 'x-asr-160', model.directoryName)
-  if (hasRequiredFiles(development)) return resolvedRealtime(development, model)
+  if (allowExternal) {
+    const development = path.join(repoRoot, 'models', 'gate-0b', 'extracted', 'x-asr-160', model.directoryName)
+    if (hasRequiredFiles(development)) return resolvedRealtime(development, model)
+  }
   return null
 }
 
@@ -133,23 +136,26 @@ function hasFiles (directory, files) {
 /**
  * 改判批准的离线精修模型解析（env → userData → 仓库开发布局）。
  * 找不到返回 null——精修保持关闭（canRefine=false），实时字幕不受影响。
- * @param {{ env?: *, userDataDir?: string | null, repoRoot?: string }} [options]
+ * @param {{ env?: *, userDataDir?: string | null, repoRoot?: string, allowExternal?: boolean }} [options]
  * @returns {{ id: string, kind: string, numThreads: number, modelDir: string } | null}
  */
 function resolveApprovedRefinementModel (options = {}) {
   const env = options.env || process.env
   const repoRoot = options.repoRoot || path.join(__dirname, '..', '..', '..')
+  const allowExternal = options.allowExternal !== false
   const model = APPROVED_REFINEMENT_MODEL
   const explicit = env[REFINE_MODEL_DIR_ENV]
-  if (typeof explicit === 'string' && explicit.length > 0 && hasFiles(explicit, REFINEMENT_REQUIRED_FILES)) {
+  if (allowExternal && typeof explicit === 'string' && explicit.length > 0 && hasFiles(explicit, REFINEMENT_REQUIRED_FILES)) {
     return resolvedRefinement(explicit, model)
   }
   if (typeof options.userDataDir === 'string' && options.userDataDir.length > 0) {
     const installed = path.join(options.userDataDir, 'models', model.id, model.directoryName)
     if (hasInstalledArtifact(installed, REFINEMENT_ARTIFACT)) return resolvedRefinement(installed, model)
   }
-  const development = path.join(repoRoot, 'models', 'gate-0b', 'extracted', 'x-asr-offline', model.directoryName)
-  if (hasFiles(development, REFINEMENT_REQUIRED_FILES)) return resolvedRefinement(development, model)
+  if (allowExternal) {
+    const development = path.join(repoRoot, 'models', 'gate-0b', 'extracted', 'x-asr-offline', model.directoryName)
+    if (hasFiles(development, REFINEMENT_REQUIRED_FILES)) return resolvedRefinement(development, model)
+  }
   return null
 }
 
@@ -164,22 +170,27 @@ const VAD_MODEL_FILE = 'silero_vad.onnx'
  * silero VAD 模型解析（与 realtime 模型同序：env → userData → 仓库开发布局）。
  * 找不到返回 null——调用方回退 EnergyVad 并警告，不阻塞字幕，但分段质量
  * 降级（能量占位对音量敏感、纯音也当人声）。
- * @param {{ env?: *, userDataDir?: string | null, repoRoot?: string }} [options]
+ * @param {{ env?: *, userDataDir?: string | null, repoRoot?: string, allowExternal?: boolean }} [options]
  * @returns {{ kind: string, modelPath: string } | null}
  */
 function resolveSileroVadModel (options = {}) {
   const env = options.env || process.env
   const repoRoot = options.repoRoot || path.join(__dirname, '..', '..', '..')
+  const allowExternal = options.allowExternal !== false
   const candidates = []
   const explicit = env[VAD_MODEL_ENV]
-  if (typeof explicit === 'string' && explicit.length > 0) candidates.push({ path: explicit, installed: false })
+  if (allowExternal && typeof explicit === 'string' && explicit.length > 0) {
+    candidates.push({ path: explicit, installed: false })
+  }
   if (typeof options.userDataDir === 'string' && options.userDataDir.length > 0) {
     candidates.push({
       path: path.join(options.userDataDir, 'models', 'silero-vad', VAD_MODEL_FILE),
       installed: true
     })
   }
-  candidates.push({ path: path.join(repoRoot, 'models', 'vad', VAD_MODEL_FILE), installed: false })
+  if (allowExternal) {
+    candidates.push({ path: path.join(repoRoot, 'models', 'vad', VAD_MODEL_FILE), installed: false })
+  }
 
   for (const candidate of candidates) {
     try {
