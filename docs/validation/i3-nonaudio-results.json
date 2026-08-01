@@ -56,7 +56,7 @@
     "virtualDurationMs": 7200000
   },
   "gateStatus": "partial",
-  "generatedAt": "2026-08-01T16:21:04.818Z",
+  "generatedAt": "2026-08-01T16:33:41.004Z",
   "kind": "i3-nonaudio-soak",
   "limits": {
     "maxCpuPercent": 800,
@@ -70,24 +70,24 @@
   "metrics": {
     "captionEventCount": 4000,
     "checkpointedWalFrames": 0,
-    "cpuPercent": 6.981,
-    "cpuSystemMs": 188,
-    "cpuUserMs": 343,
+    "cpuPercent": 11.372,
+    "cpuSystemMs": 328,
+    "cpuUserMs": 531,
     "exportCount": 3,
     "historyDomMaxNodes": 50,
     "historyPageCount": 72,
-    "maxHeapUsedBytes": 14045992,
+    "maxHeapUsedBytes": 14048216,
     "maxQueueDepth": 112,
-    "maxRssBytes": 95969280,
+    "maxRssBytes": 96423936,
     "pageCount": 666,
     "pageQueryCount": 72,
-    "pageQueryP95Ms": 1.647,
+    "pageQueryP95Ms": 1.308,
     "recoveredRefinedSegmentCount": 400,
     "segmentCount": 3600,
     "walBytes": 4173592,
     "walFrames": 879,
     "journalMode": "wal",
-    "wallDurationMs": 7606.125
+    "wallDurationMs": 7553.868
   },
   "privacy": {
     "persistedAudio": false,

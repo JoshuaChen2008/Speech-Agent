@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "kind": "product-shell-smoke",
-  "generatedAt": "2026-07-31T15:50:42.472Z",
+  "generatedAt": "2026-08-01T16:33:24.826Z",
   "result": "pass",
   "gateStatus": "partial",
   "runtime": {
@@ -26,6 +26,8 @@
     "startListeningStop": true,
     "pauseResume": true,
     "finalCaptionRendered": true,
+    "visibleCaptionMatchesFinal": true,
+    "captionFontApplied": true,
     "downloadedModelSessionInHistory": true,
     "terminalHistoryCount": 3,
     "legacyJsonlMigrated": true,

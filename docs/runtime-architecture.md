@@ -288,7 +288,7 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 5. 独立 refine worker 和事件式 JSONL 过渡基线，验证 pause/resume、迟到修订和进程故障。
 6. B3.3 已在 DB0/DB1 基座上接入产品网关、迁移、默认 SQLite-only 生命周期与历史查询/导出；J1/J2/J10 及开发态/packaged 四窗口 Electron/SQLite 旅程已有证据，I3/I4 继续作为独立门禁。
 7. B4 ModelManager、资源页、空闲热启用和 J14 已完成；生产 Manager 已安装并实际调用固定三资源 bundle。
-8. B5 已从当前源码重建正式 x64 ASAR/NSIS，并把 package layout、native/SQLite utility、packaged 首启与同一 userData 离线复启、两次 exact-child clean exit、旧 JSONL 幂等迁移、三格式完整导出和隔离 NSIS 安装/卸载绑定到安装器 SHA `36c75120…95f4ae`。同一 run ID、四份报告 SHA 与 111 文件产品载荷 SHA `6c986613…f577` 由独立 binding 报告闭合并写入 release layout；卸载后与应用无关的隔离 APPDATA 哨兵仍存在且 SHA 不变。正式应用未在 NSIS 机械探针中启动，候选未签名，且 packaged 旅程是测试 variant，不冒充精确 NSIS 安装后的干净机 I4。
+8. B5 已从当前源码重建正式 x64 ASAR/NSIS，并把 package layout、native/SQLite utility、packaged 首启与同一 userData 离线复启、两次 exact-child clean exit、旧 JSONL 幂等迁移、三格式完整导出和隔离 NSIS 安装/卸载绑定到安装器 SHA `4a1deb35…2449dd`。同一 run ID、四份报告 SHA 与 112 文件产品载荷 SHA `503a40df…b93d` 由独立 binding 报告闭合并写入 release layout；卸载后与应用无关的隔离 APPDATA 哨兵仍存在且 SHA 不变。正式应用未在 NSIS 机械探针中启动，候选未签名，且 packaged 旅程是测试 variant，不冒充精确 NSIS 安装后的干净机 I4。
 9. I3 非音频预资格已以 3,600 段/4,000 事件、虚拟两小时、SQLite 重开恢复、72 页有界 DOM 与三格式全量导出通过；真实两小时声源仍随音频测试延期。I4 非音频专用机 runner 已把同一精确安装器的公网首下、系统保存弹窗、正式 userData 卸载保留和离线重装写成严格 `pass/partial` 门禁，但尚无干净 Win11 报告；交互权限、真实来源与 I2 性能/交互/恢复缺口继续归音频测试。
 10. 字幕 MVP 通过后做 A1：`AgentRuntime` + Pi Core 隔离探针 + 项目自有插件宿主 + 凭据/可靠消费；再以第一方插件实现独立增强文本和会后结构化纪要，并通过 J3–J7/J13。
 11. 只有 X1 明确进入范围时才增加 FTS5/`sqlite-vec`，并执行 J11/DB4。

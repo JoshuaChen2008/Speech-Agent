@@ -2,7 +2,7 @@
 
 - 当前状态：执行入口、固定 legacy fixture、严格报告 verifier 与回归契约已完成；尚无合格的专用干净 Win11 执行报告
 - 结论上限：成功报告只能是 `result=pass`、`gateStatus=partial`，不能关闭完整 I4
-- 当前候选：unsigned x64 NSIS SHA-256 `36c7512037720cb50fea98a25ae021e9d5bfcc1a744bbca5d7b4b3e65895f4ae`
+- 当前候选：unsigned x64 NSIS SHA-256 `4a1deb3551ff89758183c527f7a51acc501fddd75e76c1dd950a612d552449dd`
 - 明确排除：物理 mic/loopback、Start/capture 命令、系统声音、扬声器播放、媒体权限批准、真实 ASR 推理
 
 这条子门禁补齐“正式 release main 在真实安装后的非音频生命周期”，不重复 B5 的测试
@@ -91,7 +91,7 @@ node scripts/verify-i4-nonaudio-nsis-report.js .\path\to\i4-nonaudio-report.json
 verifier 使用严格 JSON 解析，拒绝重复键、未知字段、非规范时间、绝对路径、正文、音频扩展名、
 URL/凭据材料和完整 I4 声明。它还会校验带回报告中的 B5 layout 文件 SHA，并要求首次安装和
 离线重装后的 `LiveSubtitle.exe`/`app.asar` SHA 都与 tracked layout 相等；由此再绑定安装器、
-签名状态、release main 和 111 文件产品载荷 identity。三份 ready marker 必须逐项匹配生产
+签名状态、release main 和 112 文件产品载荷 identity。三份 ready marker 必须逐项匹配生产
 manifest 的 artifact ID、字节数、源 SHA 和 marker 文件 SHA；legacy 源 SHA必须匹配仓库
 固定 fixture。GUI 可见性、公网设置点击和“不点击 Start”等无法由 PowerShell直接观察的项
 全部以 `operatorAttested*` 命名，文件/进程/hash 检查则以 `harnessVerified*` 命名。

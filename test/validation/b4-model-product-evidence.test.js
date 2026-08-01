@@ -73,6 +73,8 @@ test('published product-shell evidence proves the four-window user journey witho
     startListeningStop: true,
     pauseResume: true,
     finalCaptionRendered: true,
+    visibleCaptionMatchesFinal: true,
+    captionFontApplied: true,
     downloadedModelSessionInHistory: true,
     terminalHistoryCount: 3,
     legacyJsonlMigrated: true,

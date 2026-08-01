@@ -1,11 +1,11 @@
 {
   "schemaVersion": 2,
   "kind": "nsis-lifecycle-qualification",
-  "generatedAt": "2026-07-31T20:02:46.352Z",
+  "generatedAt": "2026-08-01T16:39:19.225Z",
   "result": "pass",
   "gateStatus": "packaged-ci-qualified",
   "artifact": {
-    "installerSha256": "36c7512037720cb50fea98a25ae021e9d5bfcc1a744bbca5d7b4b3e65895f4ae",
+    "installerSha256": "4a1deb3551ff89758183c527f7a51acc501fddd75e76c1dd950a612d552449dd",
     "target": "nsis",
     "arch": "x64"
   },

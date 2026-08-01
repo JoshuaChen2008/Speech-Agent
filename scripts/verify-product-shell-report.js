@@ -31,6 +31,9 @@ function validateProductShellReport (report) {
       journey.startListeningStop !== true ||
       journey.pauseResume !== true ||
       journey.finalCaptionRendered !== true ||
+      /* J15a：可见字幕必须就是那条定稿，且改字号后视口按整行重算不溢出。 */
+      journey.visibleCaptionMatchesFinal !== true ||
+      journey.captionFontApplied !== true ||
       journey.downloadedModelSessionInHistory !== true ||
       journey.terminalHistoryCount !== 3 ||
       journey.legacyJsonlMigrated !== true || journey.legacySessionVisible !== true ||

@@ -8,7 +8,7 @@
 
 `electron-builder 26.15.3` 以 Electron `43.2.0`、sherpa wrapper/platform
 `1.13.4` 生成 Windows x64 单击式当前用户 NSIS。候选安装器 SHA-256 为
-`36c7512037720cb50fea98a25ae021e9d5bfcc1a744bbca5d7b4b3e65895f4ae`
+`4a1deb3551ff89758183c527f7a51acc501fddd75e76c1dd950a612d552449dd`
 （104,979,011 字节）。
 该内部候选没有 Authenticode 签名；按当前 MVP 决定暂不处理签名，但不能把可安装解释为
 SmartScreen 或公开分发身份已验收。
@@ -17,7 +17,7 @@ SmartScreen 或公开分发身份已验收。
 到正式产品身份的迁移策略；B5 不声称已验证旧版升级连续性。
 
 正式包只允许 `package.json`、`src/**/*` 和生产依赖进入 ASAR。结构检查得到
-165 个 ASAR 条目，29 个动态/静态产品入口全部存在；`models/`、`test/`、`docs/`、
+166 个 ASAR 条目，29 个动态/静态产品入口全部存在；`models/`、`test/`、`docs/`、
 `.artifacts/`、模型张量和音频载荷均未进入 ASAR 或外部 resources。模型仍只能进入
 `userData/models`，SQLite 仍位于 `userData/data`。
 
@@ -58,7 +58,7 @@ Node inspector，开启嵌入式 ASAR 完整性和 only-load-from-ASAR；产品�
 首启产品报告、首启退出、复启产品报告和复启退出的四个 SHA-256 都写入独立 binding 报告；
 复启报告还反向保存首启产品报告 SHA。测试 package 和正式 release ASAR 再分别对完整
 `src/` 树做同一规范哈希，均得到 111 个文件和产品载荷 SHA-256
-`6c986613dc7443db6c9224d92a5e0b5c357ed6d6c24a27d24082e6cdfb87f577`。
+`503a40df18f70c397604bda6a4c3ac909851624ec2129a8db7b690fa610ab93d`。
 正式 layout 报告保存 binding 报告 SHA、test exe SHA 和四份运行报告 SHA，因此仓库测试会拒绝
 旧运行报告、新 release 包或任一单份报告被替换后的证据拼接。
 

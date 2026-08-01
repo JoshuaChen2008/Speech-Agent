@@ -869,6 +869,36 @@ async function runJourney () {
   }, 'listening runtime')
   await waitFor(() => rendererValue(caption, `document.getElementById('liveRegion').textContent.length > 0`), 'final caption', 15000)
 
+  /* J15a：真实产品组合根下的最小字幕断言。最小布局宿主不启动主进程，够不到
+     「设置改配置 → 主进程广播 → 字幕窗重算」这条接线，这两条在这里兜底。
+
+     一、可见字幕就是那条定稿本身：此前 CI 只检查过给屏幕阅读器用的隐藏元素
+     非空，从未断言过一个字符的可见字幕，实时 partial 更是从未被观察。
+     二、改字号后 --fs 生效且仍不横向溢出。
+     按 SEM-F14，比对在进程内完成，报告只落布尔值，不写字幕正文。 */
+  const visibleCaptionMatchesFinal = await waitFor(() => rendererValue(caption, `(() => {
+    const flow = document.getElementById('captionFlow')
+    const announced = document.getElementById('liveRegion').textContent
+    const last = flow.lastElementChild
+    return !!last && last.textContent.length > 0 && last.textContent === announced
+  })()`), 'visible caption equals the announced final', 15000)
+
+  const captionFontApplied = await (async () => {
+    await rendererValue(settings, `window.shell.setConfig({ fontSize: 38 })`)
+    return waitFor(() => rendererValue(caption, `(() => {
+      const root = getComputedStyle(document.documentElement)
+      const flow = document.getElementById('captionFlow')
+      const captions = document.getElementById('captions')
+      const lines = parseInt(root.getPropertyValue('--visible-lines'), 10)
+      const linePx = parseFloat(root.getPropertyValue('--fs')) * parseFloat(root.getPropertyValue('--lh-caption'))
+      return parseFloat(root.getPropertyValue('--fs')) === 38 &&
+        Number.isInteger(lines) && lines >= 1 &&
+        Math.abs(flow.clientHeight - lines * linePx) < 0.6 &&
+        flow.scrollWidth <= flow.clientWidth &&
+        captions.scrollWidth <= captions.clientWidth
+    })()`), 'caption viewport follows the configured font size', 15000)
+  })()
+
   await waitFor(() => rendererValue(toolbar, `!!document.querySelector('button[data-act="pause"]:not(:disabled)')`), 'pause control')
   await rendererValue(toolbar, `document.querySelector('button[data-act="pause"]').click(); true`)
   await waitFor(() => rendererValue(toolbar, `window.shell.getSnapshot().then(s => s.phase === 'paused')`), 'paused runtime')
@@ -1025,6 +1055,8 @@ async function runJourney () {
       startListeningStop: true,
       pauseResume: true,
       finalCaptionRendered: true,
+      visibleCaptionMatchesFinal,
+      captionFontApplied,
       downloadedModelSessionInHistory: true,
       terminalHistoryCount: historyCount,
       legacyJsonlMigrated: true,

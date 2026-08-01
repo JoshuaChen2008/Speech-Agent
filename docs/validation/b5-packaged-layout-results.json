@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "kind": "packaged-layout-qualification",
-  "generatedAt": "2026-07-31T20:01:54.570Z",
+  "generatedAt": "2026-08-01T16:37:50.242Z",
   "result": "pass",
   "gateStatus": "packaged-ci-qualified",
   "artifact": {
@@ -15,14 +15,14 @@
     "mainEntry": "src/main.js",
     "appExecutableX64": true,
     "appAsarPresent": true,
-    "appExecutableSha256": "37c5399099d6f7147fbf0e3e2a6c6bffe3cbd053e67bc99d94d6689e04122e26",
-    "appAsarSha256": "870f7368b8cbc7684b6e22cb89d8d34582d40ff818bcd191ad3349525907afaa",
-    "asarEntryCount": 165,
+    "appExecutableSha256": "7cf695aed63d6d72afd10b874ac554830b2aa789ffb7e18a8563b3c445c52181",
+    "appAsarSha256": "ff4a7f499c506a466e5e624e1998d1dc8faf97b3a00064ffc823828a8f0bd5aa",
+    "asarEntryCount": 166,
     "productPayloadVersion": "live-subtitle-product-payload-v1",
-    "productPayloadFileCount": 111,
-    "productPayloadSha256": "6c986613dc7443db6c9224d92a5e0b5c357ed6d6c24a27d24082e6cdfb87f577",
+    "productPayloadFileCount": 112,
+    "productPayloadSha256": "503a40df18f70c397604bda6a4c3ac909851624ec2129a8db7b690fa610ab93d",
     "installerPresent": true,
-    "installerSha256": "36c7512037720cb50fea98a25ae021e9d5bfcc1a744bbca5d7b4b3e65895f4ae",
+    "installerSha256": "4a1deb3551ff89758183c527f7a51acc501fddd75e76c1dd950a612d552449dd",
     "signingStatus": "not-signed"
   },
   "layout": {
@@ -38,13 +38,13 @@
     "allMarkedUnpacked": true
   },
   "evidenceBinding": {
-    "runId": "b5-04b208a6-4bb9-4294-ae0b-0bed3e00c4ea",
-    "bindingReportSha256": "bc4040478305c91a13f9160cf56ae80d25c56925d4cd0e3c07330cd63613f9f1",
-    "testExecutableSha256": "ed8d34cdfbd385f0bfefbeda23fba48120a272338c5914a5f22a9e93e0f59607",
-    "freshProductReportSha256": "18d9606e2497f2ec2089bde4b8b88595e9da95e23d3d9fa8ff4ed3039ffad00e",
-    "freshExitReportSha256": "8687cad1d65ea13a122ba019d1e38da76a9e99565dcdfe5e04c0cdd4e46b7d44",
-    "restartProductReportSha256": "5cf9ffe2289bdfdaef68a577f51c17bd082fadc37fa6649093eef4dae14b1d89",
-    "restartExitReportSha256": "fbef48768d1fea9f23994eb22a19073a60c5407c8763233c5be266dd8df808fb"
+    "runId": "b5-bb5f34b3-e625-4a9c-b5c1-94055ee6f3e5",
+    "bindingReportSha256": "d9284097eb82640b051684dd5e9b31e2624a2d4fa3426e8784c6052682e3cf8b",
+    "testExecutableSha256": "b46231e61a887c08ce16d042eb6c56998d2dd8c69d7d1bb0fc4cdb143d182965",
+    "freshProductReportSha256": "d7c16956b9133a7dc43558e287e01f5045804910611f64e0dc7f2af5dc0bfb39",
+    "freshExitReportSha256": "450e576dff724566804724aa1fce91fa7f1dc9529ce76a7c28a6514648e16aa7",
+    "restartProductReportSha256": "53274b0351f1e9228b0800b673a874337a777564335edec36a763b474551f355",
+    "restartExitReportSha256": "74057f6bc731f4b14f5685d8bc16c3caa03aa4cb9291350188db45829846515d"
   },
   "limitations": [
     "unsigned-installer",

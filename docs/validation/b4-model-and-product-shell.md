@@ -104,8 +104,8 @@ test executable 重跑设置点击、Range 续传、三资源 marker、热启用
 完全离线启动；另在两次 packaged utility 中实际加载 sherpa addon/DLL，
 并对 ASAR 中的 storage utility 执行完整 DB0 资格检查。独立 exact-child 证据为
 `clean-exit`、incident `0`、未观察到 breakpoint。正式 x64 ASAR/NSIS 也已通过内容负扫描、
-精确 SHA `36c75120…95f4ae` 绑定与隔离安装/卸载机械资格；同一 run ID、四份报告 SHA 与
-111 文件产品载荷 SHA `6c986613…f577` 另由 B5 binding 报告闭合，卸载后隔离 APPDATA 中
+精确 SHA `4a1deb35…2449dd` 绑定与隔离安装/卸载机械资格；同一 run ID、四份报告 SHA 与
+112 文件产品载荷 SHA `503a40df…b93d` 另由 B5 binding 报告闭合，卸载后隔离 APPDATA 中
 与应用无关的固定哨兵 SHA 不变；正式应用未启动，因此不证明真实 userData。该候选未签名，打包旅程是明示的测试
 variant，不是从精确 NSIS 安装后启动；所以只关闭 B5，不关闭 I4。完整证据见
 [B5 打包态确定性资格](b5-packaging.md)。

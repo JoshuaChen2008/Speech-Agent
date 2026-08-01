@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "kind": "product-shell-smoke",
-  "generatedAt": "2026-07-31T16:53:44.540Z",
+  "generatedAt": "2026-08-01T16:36:03.163Z",
   "result": "pass",
   "gateStatus": "partial",
   "runtime": {
@@ -11,12 +11,12 @@
     "crashEventCount": 0
   },
   "qualification": {
-    "runId": "b5-04b208a6-4bb9-4294-ae0b-0bed3e00c4ea",
+    "runId": "b5-bb5f34b3-e625-4a9c-b5c1-94055ee6f3e5",
     "phase": "fresh",
     "freshProductReportSha256": null,
     "productPayloadVersion": "live-subtitle-product-payload-v1",
-    "productPayloadFileCount": 111,
-    "productPayloadSha256": "6c986613dc7443db6c9224d92a5e0b5c357ed6d6c24a27d24082e6cdfb87f577"
+    "productPayloadFileCount": 112,
+    "productPayloadSha256": "503a40df18f70c397604bda6a4c3ac909851624ec2129a8db7b690fa610ab93d"
   },
   "packaging": {
     "appIsPackaged": true,
@@ -54,6 +54,8 @@
     "startListeningStop": true,
     "pauseResume": true,
     "finalCaptionRendered": true,
+    "visibleCaptionMatchesFinal": true,
+    "captionFontApplied": true,
     "downloadedModelSessionInHistory": true,
     "terminalHistoryCount": 3,
     "legacyJsonlMigrated": true,
