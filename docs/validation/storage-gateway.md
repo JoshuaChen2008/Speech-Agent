@@ -33,7 +33,8 @@ stop：终态 close 不会提前入队，retry 必须先按序持久化全部三
 - 默认 `main.js` 现通过 `SubtitleApplicationRuntime` 实例化 SQLite recorder/gateway；
   JSONL 只作为 DB2/J10 **确定性迁移覆盖**中的旧档输入，不再承担产品写入，也不存在双写双权威。
 - 默认权威切换、历史 UI/导出、冷启动残留 active 会话与产品 `before-quit` 已由后续
-  联合旅程覆盖；B5 已在 ASAR 内重跑 fresh SQLite/history 与正常退出。Electron 内旧
-  JSONL import/二次启动、完整 J10 发布门禁、I3 两小时稳定性与精确 NSIS 的干净机 I4
-  仍待验收。
+  联合旅程覆盖；当前 B5 又在 ASAR 内以同一 userData 完成首启与离线复启，证明旧 JSONL
+  只读迁移、SQLite-only 新会话、迁移幂等、205 段三格式导出与两次正常退出，J10 的
+  确定性产品/打包门禁已关闭。I3 的 3,600 段非音频预资格已通过；真实两小时声源和
+  精确 NSIS 的干净机 I4 仍待验收。
 - 隔离 userData 与报告均无现场音频；结构化报告不含正文或绝对路径。

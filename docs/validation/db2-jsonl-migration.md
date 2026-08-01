@@ -38,12 +38,14 @@ CI，不是 Electron utility-process 实机证据。
 - worker 白名单拒绝 SQL、绝对路径、音频字段和 translated CaptionEvent；
   返回报告不含正文或本机绝对路径。
 
-## 尚未证明
+## 本报告阶段尚未证明（后续状态）
 
-- 真实 `StorageWorkerHost → Electron utilityProcess` 执行迁移操作。
-- 默认 `main.js` 的冷启动迁移、stale-active 恢复、`before-quit`、一次性
-  SQLite 权威切换和「切换后不双写」。
-- 历史窗口/导出 UI、打包态迁移、两小时长稳和完整 DB6/I4 数据目录审计。
+- 真实 `StorageWorkerHost → Electron utilityProcess` 执行迁移操作：后续开发态与 packaged
+  产品旅程已关闭。
+- 默认 `main.js` 的冷启动迁移、stale-active 恢复、`before-quit`、一次性 SQLite 权威切换
+  和「切换后不双写」：后续默认组合旅程及同 userData 离线复启已关闭。
+- 历史窗口/导出 UI与打包态迁移：后续已关闭；I3 非音频数据目录/资源预资格已通过，
+  真实两小时声源和完整干净机 I4 仍待。
 
-上述项目继续阻断完整 J10 和字幕 MVP；本阶段不实现 Agent、翻译、
-原始音频保存、FTS 或向量。
+原阶段缺口曾阻断 J10；当前 J10 确定性产品/打包门禁已关闭。Agent、翻译、
+原始音频保存、FTS 或向量仍不属于字幕 MVP。

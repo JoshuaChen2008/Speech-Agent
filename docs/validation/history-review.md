@@ -1,7 +1,7 @@
 # SQLite 历史复盘与安全导出验证
 
 - 日期：2026-07-31
-- 状态：确定性联合验收完成；205 段有界分页与受控真实 Electron DOM 已补证；系统对话框、I3/I4 尚未验收
+- 状态：确定性联合验收完成；205 段有界分页、三格式完整导出、旧档迁移/离线复启与 I3 非音频预资格已补证；真实系统对话框、两小时声源与 I4 尚未验收
 - 语义：SEM-F02/F03/F04/F05/F07/F11/F14，SEM-T01/T02/T04/T05
 - 旅程：J1/J2/J4/J12
 
@@ -59,19 +59,29 @@ node --test --experimental-test-isolation=none test/integration/history-review-j
 2026-07-31 的 [`product-shell-results.json`](product-shell-results.json) 使用真实
 `src/main.js`、四个 BrowserWindow/preload/IPC、SQLite utility process 与退出屏障，
 在隔离 fresh userData 中完成听写首设、开始、final DOM、停止、打开终态历史和正常
-退出；另预置 205 段终态 SQLite fixture，通过真实 main/preload/IPC/renderer 点击 5 页、
-到达第 201–205 条并执行上一批/下一批往返。报告记录 `historyMaxTimelineNodes=50`、
-四个 renderer 且 `crashEventCount=0`。该 smoke 使用显式 fake-ASR 且没有操作系统保存
-对话框，也不是两小时墙钟/数千段 soak，所以不替代后续独立的退出绑定 I2 权威证据、旧档迁移/重启、I3 或 I4。
+退出；另预置 205 段终态 SQLite fixture 和一份只读旧 JSONL，通过真实
+main/preload/IPC/renderer 点击 5 页、到达第 201–205 条并执行上一批/下一批往返，再点击
+txt/md/srt 导出按钮并经主进程受控保存路径写出各 205 段。报告记录
+`historyMaxTimelineNodes=50`、三条终态历史、旧档 SHA 不变、无 JSONL 双写、四个 renderer
+且 `crashEventCount=0`。该 smoke 使用显式 fake-ASR，保存对话框返回值受控，也不是实际
+两小时声源，所以不替代 I2、真实系统对话框、真实两小时 I3 或干净机 I4。
 
-B5 已从 packaged test executable 对同一四窗口/分页旅程进行重跑，并在 ASAR 中的
-storage utility 完成 DB0 WAL、事务、重开与 integrity 检查，exact child `exitCode=0`。
-这关闭了打包布局与 SQLite utility 可加载的确定性缺口，仍未操作系统保存对话框，
-也不是精确 NSIS 安装后在干净 Win11 上的 I4 用户旅程。
+B5 已从 packaged test executable 对同一四窗口/分页/迁移/导出旅程进行重跑，并用相同
+userData 完成不启动 fixture server、模型 fetch 为 0 的离线复启；三条历史、迁移幂等和
+三份导出保留，新会话成为第四条历史。两次 ASAR storage utility 均完成 DB0 WAL、事务、
+重开与 integrity 检查，两个 exact child 都以 0 正常退出。这关闭了打包布局与 SQLite
+utility/重启可加载的确定性缺口，仍未操作真实系统保存对话框，也不是精确 NSIS 安装后
+在干净 Win11 上的 I4 用户旅程。
+
+I3 非音频预资格随后以 3,600 段/4,000 事件、虚拟两小时、SQLite 关闭重开、72 页、
+DOM 最大 50 节点、WAL/内存/CPU/查询/队列上界和 txt/md/srt 各 3,600 段通过。它使用
+真实 Coordinator→SQLite→HistoryService 与实际 `history.js` VM DOM，但没有
+BrowserWindow、speaker、mic 或 loopback，不能替代真实两小时声源。
 
 ## 尚未被本证据证明
 
 - 系统保存弹窗、DWM 外观与真实辅助技术行为。
-- 两小时数千段下的 DOM、SQLite WAL、内存和查询延迟（I3/J8）。
+- 真实两小时声源下的 DOM、SQLite WAL、内存和查询延迟（I3/J8）；对应非音频虚拟时钟
+  预资格已通过。
 - 精确 NSIS 安装后的系统保存对话框与干净 Win11 用户旅程（I4/J9-I4）。
 - 该旅程不含真实音频采集/ASR；后续 I2 只补了 loopback 与 mic 标签启发式声学 fixture 的退出绑定重复运行证据。两来源冻结延迟 P95 分别超线 158ms/5ms，且 mic 结果不是硬件证明；真实 pause/refine、拖动、设备变化、睡眠/唤醒与硬崩溃也未验收。其余边界未通过前，不得声称 I2/I3/I4 或发布验收完成。

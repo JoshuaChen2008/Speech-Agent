@@ -1,6 +1,6 @@
 # DB2 默认产品 SQLite 切换资格
 
-> 状态：**实现完成 / 尚未产品实机验收**
+> 状态：**本报告阶段实现完成；后续开发态与 packaged 产品联合验收已完成，发布实机 I4 待验**
 >
 > 日期：2026-07-31
 >
@@ -44,13 +44,16 @@ caption/close ACK、关闭 storage worker，再二次 `app.quit()`。超过有�
 局部失败回归另覆盖 stale recovery 事务回滚、未知 ACK 的 Gateway 重放、迁移
 失败时终止唯一写者，以及退出超时时强制终止并 dispose coordinator。
 
-## 尚未证明
+## 本报告阶段尚未证明（后续状态）
 
-- 默认产品窗口通过真实 Electron `utilityProcess` 执行冷启动 import 与退出屏障。
+- 默认产品窗口通过真实 Electron `utilityProcess` 执行冷启动 import 与退出屏障：后续开发态
+  与 packaged 首启/离线复启旅程已关闭。
 - 当前用户截图中的 `electron.exe 0x80000003` 属于本项目的哪一个进程角色；现有
   Windows 事件与 dump 没有匹配证据。
-- SQLite 历史列表、带时间戳文本复盘与 txt/md/srt 导出 UI。
-- packaged Electron 内旧 JSONL import/二次启动、I3 两小时长稳与 I4 干净 Win11 安装旅程。
+- SQLite 历史列表、带时间戳文本复盘与 txt/md/srt 导出 UI：后续 205 段有界分页与三格式
+  完整导出已关闭；真实 OS 保存弹窗仍归 I4。
+- packaged Electron 内旧 JSONL import/二次启动：后续已关闭。I3 非音频 3,600 段预资格已
+  通过；真实两小时声源与 I4 干净 Win11 安装旅程仍待。
 
-因此本阶段允许继续实现历史能力，但不能把完整 J1/J2/J10、字幕 MVP 或发布门禁
-标记为通过。
+因此原阶段结论只限制该时点；当前 J1/J2/J10 的确定性产品/打包门禁已通过，但真实音频
+I2/I3 与干净机 I4 未通过前，仍不能标记字幕 MVP 发布验收完成。
