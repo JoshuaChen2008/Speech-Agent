@@ -301,6 +301,28 @@ class RealtimeRuntimeAdapter {
     await session.worker.resume()
   }
 
+  /**
+   * Windows suspend invalidates the live-media continuity guarantee.  Stop the
+   * hidden capture immediately through the same fault path used by a dead
+   * track/worker, then leave recovery to the Coordinator's explicit Retry.
+   *
+   * This is intentionally an internal product boundary rather than a renderer
+   * command: visible pages cannot manufacture a system event or force a media
+   * reacquisition.  Returns false when there is no active generation to
+   * interrupt, which also makes duplicate power notifications harmless.
+   */
+  interruptForSystemSuspend () {
+    const session = this.session
+    if (this.disposed || !session || session.stopping || session.faulted) return false
+    this.fault(session, {
+      scope: 'system',
+      code: 'SYSTEM_SUSPEND',
+      message: '系统休眠，音频会话已中断',
+      recoverable: true
+    })
+    return true
+  }
+
   /** I2-only clock preparation; visible product renderers cannot invoke it. */
   async calibrateTimingProbe () {
     const session = this.requireSession()

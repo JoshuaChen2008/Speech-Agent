@@ -7,6 +7,7 @@ const {
   globalShortcut,
   ipcMain,
   nativeTheme,
+  powerMonitor,
   screen
 } = require('electron')
 const path = require('node:path')
@@ -37,6 +38,7 @@ const {
 } = require('./main/services/subtitle-application-runtime')
 const { HistoryService } = require('./main/services/history-service')
 const { createMainEvidenceBridge } = require('./main/services/electron-exit-evidence')
+const { PowerSessionGuard } = require('./main/services/power-session-guard')
 
 const exitEvidence = createMainEvidenceBridge()
 exitEvidence.markLifecycle('main-started')
@@ -50,6 +52,7 @@ exitEvidence.markLifecycle('main-started')
 /** @type {BrowserWindow | null} */ let historyWin = null
 /** @type {SessionCoordinator | null} */ let coordinator = null
 /** @type {HistoryService | null} */ let historyService = null
+/** @type {PowerSessionGuard | null} */ let powerSessionGuard = null
 
 let quitBarrierComplete = false
 let quitBarrierPromise = null
@@ -747,6 +750,12 @@ async function bootstrapApplication () {
   const started = await applicationRuntime.start()
   if (quitRequested) return false
   coordinator = started.coordinator
+  powerSessionGuard = new PowerSessionGuard({
+    powerMonitor,
+    getCoordinator: () => coordinator,
+    onError: (error) => logError('power.session', error)
+  })
+  powerSessionGuard.start()
   historyService = new HistoryService({
     gateway: applicationRuntime.gateway,
     showSaveDialog: (ownerWindow, options) => ownerWindow
@@ -770,6 +779,10 @@ function cleanupUiRuntime () {
   globalShortcut.unregisterAll()
   stopDrag(null, true)
   stopResize(null, true)
+  if (powerSessionGuard) {
+    powerSessionGuard.stop()
+    powerSessionGuard = null
+  }
 }
 
 function beginQuitBarrier (event) {

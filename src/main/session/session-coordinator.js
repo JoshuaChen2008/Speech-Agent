@@ -11,8 +11,8 @@ const {
   assertRuntimeSnapshot,
   selectedSourceIds
 } = require('../../contracts')
-/* canonical caption state 只服务 renderer 恢复显示，不是会话史（那是 B3 的
-   JSONL）。折叠必须与 renderer 逐事件一致，否则 reload 前后视图会分叉——
+/* canonical caption state 只服务 renderer 恢复显示，不是会话史（权威历史在
+   SQLite）。折叠必须与 renderer 逐事件一致，否则 reload 前后视图会分叉——
    所以这里直接复用同一份纯逻辑折叠实现（caption-reducer 无 DOM 依赖），
    窗口、修订规则、会话切换语义由构造保证相同，而不是靠两套代码手工对齐。
    该文件因此成为 UI 与壳层共享，改动需双侧评审。 */
@@ -774,6 +774,33 @@ class SessionCoordinator {
     }
     this.publish(this.buildSnapshot('error', this.snapshot.sessionId, 'error', error))
     return true
+  }
+
+  /**
+   * The power-monitor bridge is the only caller.  An OS sleep breaks the
+   * promise of uninterrupted capture even if Chromium has not yet emitted a
+   * track-ended event.  Real adapters own media cleanup; structural adapters
+   * still receive the same recoverable UI state so the boundary is testable.
+   */
+  reportSystemSuspend () {
+    if (this.disposed || this.busy || !['listening', 'paused'].includes(this.snapshot.phase)) return false
+    const event = {
+      scope: 'system',
+      code: 'SYSTEM_SUSPEND',
+      message: '系统休眠，音频会话已中断',
+      recoverable: true
+    }
+    const adapter = this.adapter
+    if (!adapter) return false
+    if (typeof adapter.interruptForSystemSuspend === 'function') {
+      try {
+        const interrupted = adapter.interruptForSystemSuspend()
+        if (interrupted === true) return true
+      } catch (error) {
+        this.reportListenerError(error)
+      }
+    }
+    return this.acceptAdapterFault(adapter, event)
   }
 
   quarantineAdapter (adapter) {

@@ -432,6 +432,56 @@ test('runtime faults stop capture immediately even when the user does not retry 
   adapter.dispose()
 })
 
+test('system suspend uses the same immediate capture cleanup path and is idempotent', async () => {
+  const { adapter, worker, host } = makeAdapter()
+  const faults = []
+  adapter.onError((event) => faults.push(event))
+  await adapter.start(START_CONTEXT)
+
+  assert.equal(adapter.interruptForSystemSuspend(), true)
+  assert.deepEqual(faults, [{
+    scope: 'system',
+    code: 'SYSTEM_SUSPEND',
+    message: '系统休眠，音频会话已中断',
+    recoverable: true
+  }])
+  assert.equal(adapter.interruptForSystemSuspend(), false, 'duplicate suspend must not create a second teardown')
+
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(host.calls.map(([name]) => name), ['startCapture', 'stopCapture'])
+  assert.equal(worker.disposed, true)
+  assert.equal(host.disposed, true)
+  assert.deepEqual(adapter.getLastRunDiagnostics().sourceIds, ['mic'])
+
+  await adapter.stop()
+  adapter.dispose()
+})
+
+test('track-ended faults retain a retryable device-removal boundary without accepting late captions', async () => {
+  const { adapter, worker, host } = makeAdapter()
+  const captions = []
+  const faults = []
+  adapter.onCaption((event) => captions.push(event))
+  adapter.onError((event) => faults.push(event))
+  await adapter.start(START_CONTEXT)
+
+  host.emitControl({ type: 'track-ended', sessionId: 'session-1', sourceId: 'mic' })
+  worker.emitCaption({ late: true })
+  assert.deepEqual(faults, [{
+    scope: 'audio',
+    code: 'AUDIO_TRACK_ENDED',
+    message: '音频来源已断开',
+    recoverable: true
+  }])
+  assert.deepEqual(captions, [], 'a device-removal fault must close caption ingress before asynchronous teardown')
+
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(host.calls.map(([name]) => name), ['startCapture', 'stopCapture'])
+  assert.equal(worker.disposed, true)
+  assert.equal(adapter.interruptForSystemSuspend(), false, 'a faulted generation cannot be interrupted a second time')
+  adapter.dispose()
+})
+
 test('audio fault during start fails closed instead of publishing stale listening state', async (t) => {
   const { adapter, host } = makeAdapter()
   host.startCapture = async (options) => {
