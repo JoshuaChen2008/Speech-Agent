@@ -15,14 +15,14 @@
       <div class="tb-hole" id="tbHole" aria-hidden="true"></div>
 
       <!--
-        固定槽位：partial 更新只改 textContent，永不重建 DOM。
+        固定高度字幕流（SEM-F20）：一个稳定视口 + 一个内容节点，段落作为子节点
+        自下而上堆叠，满高后最上方最旧的完整视觉行被裁掉。不再有 previous /
+        current / translation 三个各带行数预算的槽位。partial 更新只改 textContent。
         整块对辅助技术隐藏 —— partial 每秒刷新十几次，逐帧播报会让屏幕阅读器无法使用。
         定稿文本另行送进下面的 live region。
       -->
       <div class="captions" id="captions" aria-hidden="true">
-        <p class="line prev" id="linePrev"></p>
-        <p class="line current" id="lineCurrent">欢迎使用 Live Subtitle Agent</p>
-        <p class="line tr" id="lineTranslation"></p>
+        <div class="caption-flow" id="captionFlow"></div>
       </div>
 
       <!-- 只接收 final / refined / translated，不接收 partial -->

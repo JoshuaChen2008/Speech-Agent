@@ -5,15 +5,13 @@
 /* 字幕窗：命中测试 + 拖动（role=caption）+ 锁定穿透 + 配置应用 + CaptionEvent 渲染。
    状态归并和行数预算都在 ../ui/shared/caption-reducer.js，本文件只做 DOM 落地。 */
 
-const { createState, hydrateState, applyEvent, selectLines, computeLineBudget } = window.CaptionReducer
+const { createState, hydrateState, applyEvent, selectFlow, countVisibleLines } = window.CaptionReducer
 const { applyAppearance } = window.Appearance
 
 const wrap = document.getElementById('wrap')
 const card = document.getElementById('captionCard')
 const captions = document.getElementById('captions')
-const linePrev = document.getElementById('linePrev')
-const lineCurrent = document.getElementById('lineCurrent')
-const lineTranslation = document.getElementById('lineTranslation')
+const captionFlow = document.getElementById('captionFlow')
 const liveRegion = document.getElementById('liveRegion')
 
 /* 壳层 API。在纯浏览器里打开本页做视觉核对时不存在，降级成空操作，
@@ -59,9 +57,8 @@ function edgeAt (x, y) {
   return edge
 }
 
-/** 字幕状态与影响排版的配置。默认值与 src/config.js 的 DEFAULTS 对齐。 */
+/** 字幕状态。排版不再依赖任何配置项——可见行数由实际可用高度与字号决定。 */
 let state = createState()
-let cfg = { bilingual: true, maxLines: 4 }
 
 // --------------------------------------------------------------------------
 // 命中测试：指针在卡片上 → 实心；否则穿透。锁定态由主进程恒穿透，这里不干预。
@@ -162,54 +159,60 @@ async function initLock () {
 }
 
 // --------------------------------------------------------------------------
-// 渲染：固定槽位 + 总高度预算
+// 渲染：固定高度字幕流
+//
+// 职责切得很干净：本文件只决定「哪些段、什么顺序进 DOM」和「视口能放几行」，
+// 换行位置、行盒高度与顶部裁剪全部由 Chromium 完成。绝不在 JS 里重新实现一遍
+// 断行规则 —— 那样只会得到与 CSS 各自为政的第二套规则。
 // --------------------------------------------------------------------------
 function cssNumber (styles, name) {
   return parseFloat(styles.getPropertyValue(name))
 }
 
-/** 只改 textContent 与 --n，永不重建节点。 */
-function applySlot (node, text, lines) {
-  const show = lines > 0 && !!text
-  node.hidden = !show
-  if (!show) return
-  node.style.setProperty('--n', String(lines))
-  if (node.textContent !== text) node.textContent = text
-}
-
-function render () {
-  const lines = selectLines(state, { bilingual: cfg.bilingual })
+/* 视口高度只在可用高度或字号变化时重算。partial 每秒刷新十几次，
+   把 getComputedStyle/clientHeight 放进每帧渲染会产生持续的强制布局。 */
+function applyViewport () {
   const styles = getComputedStyle(document.documentElement)
-
-  const plan = computeLineBudget({
-    /* 可用高度直接量 DOM，不复制一份 110 常量到 JS —— 卡片内边距改了这里自动跟上 */
+  const lines = countVisibleLines({
+    /* 可用高度直接量 DOM，不复制一份常量到 JS —— 卡片内边距改了这里自动跟上 */
     available: captions.clientHeight,
     fontSize: cssNumber(styles, '--fs'),
-    lineHeight: cssNumber(styles, '--lh-caption'),
-    prevRatio: cssNumber(styles, '--fs-caption-ratio-prev'),
-    gap: cssNumber(styles, '--line-gap'),
-    hasPrevious: !!lines.previous,
-    hasTranslation: !!lines.translation,
-    maxCurrentLines: cfg.maxLines
+    lineHeight: cssNumber(styles, '--lh-caption')
   })
+  document.documentElement.style.setProperty('--visible-lines', String(lines))
+}
 
-  applySlot(linePrev, lines.previous, plan.previous)
-  applySlot(lineCurrent, lines.current, plan.current)
-  applySlot(lineTranslation, lines.translation, plan.translation)
-  lineCurrent.classList.toggle('partial', lines.isPartial)
+/** 按需增删节点、只改 textContent；不为一次 partial 刷新重建整棵子树。 */
+function render () {
+  const flow = selectFlow(state)
+  const nodes = captionFlow.children
+
+  while (nodes.length > flow.length) captionFlow.removeChild(captionFlow.lastChild)
+  while (nodes.length < flow.length) {
+    const node = document.createElement('p')
+    node.className = 'seg'
+    captionFlow.appendChild(node)
+  }
+
+  for (let i = 0; i < flow.length; i += 1) {
+    const node = nodes[i]
+    const item = flow[i]
+    if (node.textContent !== item.text) node.textContent = item.text
+    node.classList.toggle('partial', item.isPartial)
+    /* 最后一个是最新段；它永远贴在底部，裁剪只发生在它上方。 */
+    node.classList.toggle('older', i < flow.length - 1)
+  }
 }
 
 /** 只播报定稿。partial 每秒刷新十几次，逐帧播报会让屏幕阅读器无法使用。 */
-function announce (text, translation) {
-  liveRegion.textContent = translation ? text + '。' + translation : text
+function announce (text) {
+  liveRegion.textContent = text
 }
 
 function ingest (event) {
   state = applyEvent(state, event)
   render()
-  if (event.kind !== 'partial') {
-    announce(event.text, cfg.bilingual && event.translation ? event.translation.text : null)
-  }
+  if (event.kind !== 'partial') announce(event.text)
 }
 
 /* Bootstrap 恢复：先订阅（此间事件全部缓冲），再读取主进程 canonical
@@ -238,9 +241,10 @@ async function initCaptions () {
   render()
 }
 
-/* 卡片尺寸随 DPI / 主题字体变化时重算预算 */
+/* 用户手动拉伸窗口、DPI 或主题字体变化时重算视口能放几行。
+   反向不成立：字幕内容再长也不会改变窗口 bounds（SEM-F20）。 */
 if (typeof ResizeObserver === 'function') {
-  new ResizeObserver(render).observe(captions)
+  new ResizeObserver(applyViewport).observe(captions)
 }
 
 // --------------------------------------------------------------------------
@@ -248,11 +252,12 @@ if (typeof ResizeObserver === 'function') {
 // --------------------------------------------------------------------------
 function applyConfig (c) {
   applyAppearance(document.documentElement, c)
-  cfg = { bilingual: !!c.bilingual, maxLines: c.maxLines }
+  /* 字号变化不改变 .captions 的高度，ResizeObserver 不会触发，必须显式重算。 */
+  applyViewport()
   render()
 }
 async function initConfig () {
-  try { applyConfig(await bridge.getConfig()) } catch { render() }
+  try { applyConfig(await bridge.getConfig()) } catch { applyViewport(); render() }
   bridge.onConfig(applyConfig)
 }
 initConfig()

@@ -2,8 +2,10 @@
    字幕窗：仅字幕卡片。窗口四周留白给阴影；卡片居中。
    视觉 token 来自 ../ui/shared/tokens.css，本文件不再自行定义色值/圆角/时长。
 
-   行数由 caption.js 按**整卡总高度预算**分配（见 ui/shared/caption-reducer.js），
-   以 --n 写到每个槽位上。这里不给每行各自一个 maxLines —— 那正是会叠出溢出的写法。
+   字幕是一条固定高度、底部锚定、顶部裁剪的连续流（SEM-F20）。caption.js 只负责
+   量一次可用高度并把「能完整放下几行」写进 --visible-lines；换行、行盒与裁剪全部
+   交给 Chromium。这里不再给任何槽位单独的 line-clamp —— 那会从**开头**保留 N 行，
+   与「保留最新、淘汰最旧」方向相反，正是长 partial 后半段看不见的原因。
    ========================================================================== */
 
 * { box-sizing: border-box; }
@@ -70,17 +72,38 @@ html, body {
 /* 锁定态无洞（整窗都穿透） */
 .wrap[data-locked="on"] .tb-hole { display: none; }
 
-/* 正文区：撑满卡片内容盒，字幕自下而上堆叠。
-   caption.js 用它的 clientHeight 当预算，所以这里不能加额外内边距。 */
+/* 一行的确切高度。字幕流内所有行都用它，段间无外边距 ——
+   只有内容总高恒为行高整数倍，视口取整才能保证「裁掉的永远是整行」。 */
+html { --caption-line: calc(var(--fs) * var(--lh-caption)); }
+
+/* 正文区：撑满卡片内容盒，字幕流贴底。
+   caption.js 用它的 clientHeight 算能放几行，所以这里不能加额外内边距。 */
 .captions {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
+  overflow: hidden;
 }
 
-.line {
+/* 固定高度视口（SEM-F20）。
+   高度由 caption.js 量一次可用高度、向下取整到整行后写进 --visible-lines；
+   内容超出时 flex-end 让溢出发生在**顶部**，overflow:hidden 把最旧的整行裁掉，
+   最新一行永远贴在底部。不做横向跑马、可见滚动条或自动增高。
+   内容更新不触碰窗口 bounds —— 窗口尺寸只能由用户手动拉伸改变。 */
+.caption-flow {
+  max-height: calc(var(--visible-lines, 1) * var(--caption-line));
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+/* 字幕段。同字号、同行高、零外边距是固定高度流的硬前提，
+   视觉层次只能走不影响布局的通道（这里是 opacity）。 */
+.seg {
   margin: 0;
   font-size: var(--fs);
   font-weight: var(--fw-caption);
@@ -88,31 +111,15 @@ html, body {
   color: var(--text-caption);
   text-shadow: var(--text-shadow-caption);
   letter-spacing: var(--ls-caption);
-  display: -webkit-box;
-  -webkit-line-clamp: var(--n, 1);
-  -webkit-box-orient: vertical;
-  overflow: hidden;
   word-break: break-word;
 }
-/* 预算分不到行的槽位。UA 的 [hidden] 规则拗不过上面的 display，得显式写。 */
-.line[hidden] { display: none; }
 
-.line.prev,
-.line.tr {
-  font-size: calc(var(--fs) * var(--fs-caption-ratio-prev));
-}
-.line.prev {
-  opacity: 0.62;
-  margin-bottom: var(--line-gap);
-}
-.line.tr {
-  opacity: 0.78;
-  margin-top: var(--line-gap);
-}
+/* 已定稿的旧段落后退一层，但绝不改变行高 */
+.seg.older { opacity: 0.62; }
 
 /* partial 才画光标；final / refined / translated 都是定稿，不该继续显示“输入中” */
-.line.partial { color: var(--text-caption-partial); }
-.line.partial::after {
+.seg.partial { color: var(--text-caption-partial); }
+.seg.partial::after {
   content: '';
   display: inline-block;
   width: 2px; height: 0.95em;
@@ -155,7 +162,7 @@ html, body {
    动效降级：常驻置顶窗，reduced-motion 下光标停在可见态而不是闪烁
    -------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
-  .line.partial::after { animation: none; }
+  .seg.partial::after { animation: none; }
 }
 
 /* --------------------------------------------------------------------------

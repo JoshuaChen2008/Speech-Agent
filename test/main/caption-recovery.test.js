@@ -15,7 +15,7 @@ const {
   applyEvent,
   createState,
   hydrateState,
-  selectLines
+  selectFlow
 } = require('../../src/ui/shared/caption-reducer')
 
 const DEV_MODEL = resolveRuntimeOptions({ LIVE_SUBTITLE_DEV_MODEL: DEV_MODEL_VALUE })
@@ -104,9 +104,9 @@ test('renderer reload rehydrates exactly the delivered caption view', async (t) 
   for (const event of buffered) applyEvent(rehydrated, event)
 
   assert.deepEqual(rehydrated.segments, live.segments)
-  assert.deepEqual(selectLines(rehydrated, { bilingual: true }), selectLines(live, { bilingual: true }))
-  assert.equal(selectLines(rehydrated, { bilingual: true }).previous, '你好。')
-  assert.equal(selectLines(rehydrated, { bilingual: true }).current, '正在输入')
+  assert.deepEqual(selectFlow(rehydrated), selectFlow(live))
+  assert.equal(selectFlow(rehydrated).at(-2).text, '你好。')
+  assert.equal(selectFlow(rehydrated).at(-1).text, '正在输入')
 })
 
 test('late amendments to evicted segments keep live and reloaded views identical', async (t) => {
@@ -138,10 +138,10 @@ test('late amendments to evicted segments keep live and reloaded views identical
     translation: { language: 'en', text: 'Sentence three.', basedOnRevision: 2 }
   }))
 
-  assert.equal(selectLines(live, { bilingual: true }).current, '句子12')
+  assert.equal(selectFlow(live).at(-1).text, '句子12')
   const rehydrated = hydrateState(coordinator.getCaptionState())
   assert.deepEqual(rehydrated.segments, live.segments)
-  assert.deepEqual(selectLines(rehydrated, { bilingual: true }), selectLines(live, { bilingual: true }))
+  assert.deepEqual(selectFlow(rehydrated), selectFlow(live))
 
   /* canonical 与 renderer 同窗口：seg-3 已淘汰，修订被一致地忽略。 */
   const canonical = coordinator.getCaptionState()

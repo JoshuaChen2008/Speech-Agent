@@ -10,10 +10,11 @@
       文本和译文各自记录 revision —— 迟到的 translated 事件可以补上译文，
       但绝不能把已经更新到更高 revision 的正文回滚。
 
-   2. 行数预算：整张卡片只有一个高度预算，按 current → translation → prev
-      的优先级分配，而不是给每行各发一个 maxLines 然后叠出溢出。
-      分配顺序是产品判断：当前句永远要有一行；开了双语就说明用户要译文；
-      上一句是锦上添花，放不下先牺牲它。
+   2. 固定视口：字幕是一条连续的流，不再有 previous/current/translation 三个
+      各自带行数预算的槽位。这里只回答两个问题——哪些段按什么顺序进入这条流，
+      以及固定高度里能完整放下几行。真正的换行和"最旧行离场"由 Chromium 的
+      布局与 overflow 裁剪完成（见 SEM-F20 与 docs/subtitle-flow-and-transcript-versions.md），
+      本文件不重新实现断行规则。
 
    UMD，理由同 runtime-view.js。 */
 
@@ -130,69 +131,50 @@
   }
 
   /**
-   * 选出要渲染的三个槽位。
-   * @returns {{previous: string, current: string, isPartial: boolean, translation: string|null}}
+   * 选出进入字幕流的段落，按时间升序：最旧在前，最新在后。
+   *
+   * 渲染层把它们依次落进固定高度视口，而视口是从**顶部**裁剪的，所以
+   * SEM-F20 的「当前 partial 始终优先、不得被旧段或精修稿挤掉」由 DOM 顺序
+   * 结构性保证，不需要在这里再做一次优先级判断。空文本段不进流——它只会
+   * 占掉一整行视觉预算却什么都不显示。
+   *
+   * @returns {Array<{segmentId: string, text: string, isPartial: boolean}>}
    */
-  function selectLines (state, options) {
-    const bilingual = !!(options && options.bilingual)
-    const segments = state.segments
-    const current = segments[segments.length - 1] || null
-    const previous = segments[segments.length - 2] || null
-
-    return {
-      previous: previous ? previous.text : '',
-      current: current ? current.text : '',
-      /* partial 才是「还在输入」。final / refined / translated 都是定稿。 */
-      isPartial: !!current && current.kind === 'partial',
-      translation: bilingual && current && current.translation
-        ? current.translation.text
-        : null
+  function selectFlow (state) {
+    const flow = []
+    for (const segment of state.segments) {
+      if (!segment.text) continue
+      flow.push({
+        segmentId: segment.segmentId,
+        text: segment.text,
+        /* partial 才是「还在输入」。final / refined / translated 都是定稿。 */
+        isPartial: segment.kind === 'partial'
+      })
     }
+    return flow
   }
 
   /**
-   * 行数预算。
+   * 固定视口能**完整**容纳多少行。
    *
-   * 分配顺序：current 保底 1 行 → translation 1 行 → previous 1 行
-   *          → 剩余高度再喂给 current，上限 maxCurrentLines。
+   * 只按整行向下取整：留下半行会被顶部裁掉一截，违反 SEM-F20 的
+   * 「只隐藏最上方最旧的完整视觉行」。字幕流内所有行必须同字号同行高、
+   * 段间无外边距，否则内容总高不再是行高的整数倍，取整就失去意义。
    *
-   * @param {{
-   *   available: number,      正文可用高度（px）
-   *   fontSize: number,       当前字号（px）
-   *   lineHeight: number,     行高倍数
-   *   prevRatio: number,      previous / translation 相对当前行的字号比例
-   *   gap: number,            previous 与 translation 各自的外边距（px）
-   *   hasPrevious: boolean,
-   *   hasTranslation: boolean,
-   *   maxCurrentLines: number
-   * }} input
-   * @returns {{previous: number, current: number, translation: number, used: number}}
+   * 一行都放不下时仍返回 1：宁可溢出一点，也不能没有字幕。
+   *
+   * @param {{available: number, fontSize: number, lineHeight: number}} input
+   * @returns {number} 正整数
    */
-  function computeLineBudget (input) {
-    const currentLine = input.fontSize * input.lineHeight
-    const minorLine = input.fontSize * input.prevRatio * input.lineHeight
-
-    const plan = { previous: 0, current: 1, translation: 0, used: currentLine }
-    /* 当前句一行都放不下时也不降到 0：宁可溢出一点，也不能没有字幕。 */
-    if (plan.used > input.available) return plan
-
-    const tryTake = (cost) => {
-      if (plan.used + cost > input.available) return false
-      plan.used += cost
-      return true
-    }
-
-    if (input.hasTranslation && tryTake(minorLine + input.gap)) plan.translation = 1
-    if (input.hasPrevious && tryTake(minorLine + input.gap)) plan.previous = 1
-
-    while (plan.current < input.maxCurrentLines && tryTake(currentLine)) {
-      plan.current += 1
-    }
-
-    return plan
+  function countVisibleLines (input) {
+    const line = Number(input.fontSize) * Number(input.lineHeight)
+    const available = Number(input.available)
+    if (!Number.isFinite(line) || line <= 0) return 1
+    if (!Number.isFinite(available) || available <= 0) return 1
+    return Math.max(1, Math.floor(available / line))
   }
 
-  const api = { KEEP_SEGMENTS, createState, hydrateState, applyEvent, selectLines, computeLineBudget }
+  const api = { KEEP_SEGMENTS, createState, hydrateState, applyEvent, selectFlow, countVisibleLines }
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api
   else root.CaptionReducer = api

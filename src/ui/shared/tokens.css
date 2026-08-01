@@ -258,9 +258,10 @@
 /* config.barColor 非空时，renderer 会把 --bar-bg 和 --toolbar-bg 一起覆盖成
    同一个三元组（两者共享色相，只有 alpha 不同）。留空则由上面的主题默认值决定。 */
 
-/* config.maxLines 不再作为 CSS 变量下发。它现在的含义是「当前句的行数上限」，
-   由 caption.js 传给 computeLineBudget()，实际行数还要受整卡高度预算约束。
-   每个槽位最终的 clamp 值以 --n 写在元素自身上，见 caption.css。 */
+/* config.maxLines 已不参与字幕排版（SEM-F20 / docs/subtitle-window.md §5.0）。
+   固定高度字幕流的可见行数由实际可用高度与当前字号决定：caption.js 调用
+   countVisibleLines() 向下取整到整行，写成 --visible-lines 给 caption.css 的视口用。
+   配置项本身保留，只是不再作为任何槽位的裁剪上限。 */
 
 /* --------------------------------------------------------------------------
    §9 layout contract 镜像
