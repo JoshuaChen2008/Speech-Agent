@@ -68,3 +68,12 @@ test('toolbar forwards the model-manager next action without running a runtime c
   assert.match(toolbar, /'open-model-manager': \(\) => bridge\.action\('open-model-manager'\)/)
   assert.doesNotMatch(toolbar, /runCommand\('open-model-manager'\)/)
 })
+
+test('toolbar accepts the first live runtime snapshot independently of preview fixture revision', () => {
+  const toolbar = read('src/toolbar/toolbar.js')
+
+  assert.match(toolbar, /let runtimeSnapshotAccepted = false/)
+  assert.match(toolbar,
+    /if \(runtimeSnapshotAccepted && snapshot && next\.revision < snapshot\.revision\) return/)
+  assert.match(toolbar, /runtimeSnapshotAccepted = true\s+snapshot = next/)
+})

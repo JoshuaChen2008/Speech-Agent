@@ -38,6 +38,7 @@ let dragging = false
 let ignoring = null
 let lastX = 0, lastY = 0
 let snapshot = window.FIXTURES.runtime.unavailable
+let runtimeSnapshotAccepted = false
 let commandPending = false
 let commandFailure = null
 
@@ -305,7 +306,11 @@ async function initLock () {
 
 function acceptSnapshot (next) {
   if (!next || typeof next.revision !== 'number') return
-  if (snapshot && next.revision < snapshot.revision) return
+  /* The preview fixture has its own illustrative revision. It is not part of
+     the live coordinator sequence, so the first real snapshot must always
+     replace it. Revision ordering only applies after that boundary. */
+  if (runtimeSnapshotAccepted && snapshot && next.revision < snapshot.revision) return
+  runtimeSnapshotAccepted = true
   snapshot = next
   commandFailure = null
   render()
