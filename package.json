@@ -5,9 +5,11 @@
   "main": "src/main.js",
   "scripts": {
     "start": "node scripts/run-supervised-electron.js --entry .",
-    "test": "node --test --experimental-test-isolation=none",
+    "test": "npm run test:core && npm run test:integration && npm run test:evidence",
+    "test:core": "node --test --experimental-test-isolation=none \"test/contracts/**/*.test.js\" \"test/main/**/*.test.js\" \"test/runtime/**/*.test.js\" \"test/storage/**/*.test.js\" \"test/ui/**/*.test.js\"",
     "test:integration": "node --test --experimental-test-isolation=none \"test/integration/**/*.test.js\"",
-    "test:ci": "npm run test:integration && npm test",
+    "test:evidence": "node --test --experimental-test-isolation=none \"test/gate-0b/**/*.test.js\" \"test/gate-0c/**/*.test.js\" \"test/validation/**/*.test.js\"",
+    "test:ci": "npm test",
     "preview:fixtures": "node scripts/build-preview-fixtures.js",
     "package:smoke": "electron-builder --config electron-builder.smoke.config.cjs --win dir --x64 --publish never",
     "package:release": "electron-builder --config electron-builder.config.cjs --win nsis --x64 --publish never"
