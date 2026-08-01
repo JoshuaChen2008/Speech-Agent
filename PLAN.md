@@ -1,7 +1,9 @@
 # Live Subtitle Agent · Win11 实时字幕技术规划
 
-> **Rev.13 · 2026-07-31**。初版调研 2026-07-23（版本号、模型名、体积经 GitHub Release API / npm registry / 下载解包核实）。
-> 本次修订：B5 打包态确定性资格已提交；I2 权威证据升级为退出绑定 bundle：每来源恰好 5 个 schema-v5 child report、5 个 schema-v1 外部 exit sidecar 与 1 份 schema-v6 series。loopback 与 `physical-preferred` 标签启发式声学 mic fixture 各完成 5/5 轮真实 audio-host→online ASR→Silero→offline refine→Coordinator；10 轮均有 final/refined，loopback 最大 final/refined CER=0/0、mic=0.035714/0，帧全等且 12 项丢失峰值全为 0，并由外部运行器证明 exact child `exitCode=0`、无运行器终止。冻结字幕可见延迟 loopback P50/P95/min/max=1133/1158/1092/1158ms，mic=875/1005/822/1005ms；两来源 P95 分别超出冻结 `<1000ms` 线 158ms/5ms，I2 **整体尚未关闭**。final-after-end P95 为 710/792ms；跨时钟六段 P95 为 loopback 729/405/1/33/1/1ms、mic 557/500/1/28/1/1ms，只用于定位，不改验收起点或门槛。拖动、真实 pause/refine、设备变化、睡眠/唤醒、硬崩溃恢复与两来源性能仍属 I2；之后是 I3 长稳与 I4 干净机发布验收。现场证据只把 `PostQueuedCompletionStatus(6) → libuv fatal → DebugBreak` 与截图 `0x80000003` 的即时机制闭环；没有 native stack，具体竞态、发送者与进程角色仍未证明。`loopback`/`mic` 继续产品级 XOR，翻译/Agent 与向量继续后置。
+> **Rev.14 · 2026-08-01**。初版调研 2026-07-23（版本号、模型名、体积经 GitHub Release API / npm registry / 下载解包核实）。
+> 本次修订：测试已拆成 core / integration / evidence 三条无重复 lane；默认产品联合旅程已从遗留 JSONL writer 切到 SQLite，JSONL 只保留迁移解析/导出兼容。当前源码已重建 B5：unsigned installer SHA-256 `36c7512037720cb50fea98a25ae021e9d5bfcc1a744bbca5d7b4b3e65895f4ae`，packaged test exe 首启完成旧档迁移/205 段三格式导出，第二进程在模型 fetch=0 下恢复 ready/历史并新增第 4 条会话，两轮 clean exit；同一 run ID、四份报告 SHA 与 111 文件产品载荷 SHA 已绑定到正式 release layout。NSIS 机械探针只证明安装/卸载 exit 0、安装目录移除及无关 APPDATA 哨兵不变，不冒充正式应用 userData 保留。I3 非音频预资格覆盖 3,600 段/4,000 事件、虚拟两小时、72 页 DOM≤50、WAL/查询/CPU/内存/队列、三格式导出和重开恢复，但固定为 `pass/partial`，不冒充真实两小时音频 soak。I4 非音频专用机 runner、fixture、严格 verifier 与回归契约已完成；当前开发机不满足干净 profile 条件，故尚无执行报告，不能据此关闭 I4。
+>
+> 2026-08-01 音频窗口已执行：Gate 0C 通过；新的 loopback/mic 各五轮结构、准确率、自然退出和 transport 零丢失通过，但冻结 P95=1148/1099ms，仍超 `<1000ms` 线 148/99ms。真实 pause/refine 与 exact worker 硬终止+Retry 通过；DWM 持续字幕零丢失但缺操作者拖动 completion，只能判 inconclusive。I3 在 75 秒、故障前≥12/恢复后≥8/总计≥25 的不降线资格协议下，以 14/17/31 final 和 29 refined 严格通过；两小时验收仍待原生拖动后启动。设备移除、睡眠/唤醒和 I2 原生拖动仍待；干净 Win11 快照与代码签名按本轮内部 MVP 决定暂缓。`loopback`/`mic` 继续产品级 XOR，翻译/Agent 与向量继续后置。
 
 ---
 
@@ -11,20 +13,20 @@
 
 | 已实现 / 已有确定性证据 | 尚未完成 |
 |---|---|
-| 四窗架构（字幕 / 工具条 / 设置 / 历史）、停靠与脱离；真实 Electron 产品壳旅程；mic 标签启发式声学 fixture 的真实 ASR 5 轮 | 透明窗人工视觉、真实 pause/refine 与 I3 长稳 |
+| 四窗架构（字幕 / 工具条 / 设置 / 历史）、停靠与脱离；真实 Electron 产品壳旅程；mic 标签启发式声学 fixture 的真实 ASR 5 轮；真实 pause/refine | 透明窗人工视觉、原生拖动证明与真实两小时音频 soak |
 | 锁定穿透、逐像素命中测试、主进程手动拖动 | 透明窗 DPI/人工视觉、设备变化与睡眠唤醒实机验收 |
-| 配置持久化（`userData/config.json`）+ 四窗主题联动 | Agent 层（后置）、正式代码签名与外部发布身份 |
+| 配置持久化（`userData/config.json`）+ 四窗主题联动 | Agent 层（后置）；正式签名与外部发布身份按内部 MVP 决定暂缓 |
 | 亚克力设置窗（含模型资源 pane）+ 单路模式 XOR 门禁/J4；schema-v6 两来源 I2 退出绑定五轮 P50/P95/资源/传输/跨时钟分段 bundle | loopback 性能与两来源 I2 交互/恢复场景 |
 | B1 `SessionCoordinator`、状态机、per-window preload 与 contract-valid fake adapter | |
-| Electron 生命周期：30s graceful + 5s exact-child reap、45s 字幕运行时升级触发线（ModelManager 5s 并行）；隐私安全 role evidence | `0x80000003` 的 native stack 级根因、真实硬崩溃恢复 |
+| Electron 生命周期：30s graceful + 5s exact-child reap、45s 字幕运行时升级触发线（ModelManager 5s 并行）；隐私安全 role evidence；真实 exact realtime worker 硬终止+Retry | `0x80000003` 的 native stack 级根因 |
 | B2 audio host、PCM 直通/背压、realtime worker、**真实 160ms 模型 + silero VAD** | |
-| B3 **二遍精修 refine worker**（final→refined 自动变准补标点）+ JSONL 旧档迁移；B3.3 DB0/DB1、Gateway 恢复、默认 SQLite-only 生命周期、历史查询/导出 UI 与联合旅程；B4 固定 manifest/续传/校验/白名单解包/marker/资源 UI/热启用；B5 ASAR/NSIS/native/packaged journey 确定性资格；I2 schema-v6 两来源退出绑定重复运行证据 | I2 loopback 性能/两来源交互与恢复、I3 与 I4 公网/权限/真实音源干净机发布验收 |
+| B3 **二遍精修 refine worker** + SQLite-only/旧档迁移/历史导出；B4 资源闭环；当前 B5 ASAR/NSIS/native/packaged 双启动；I3 非音频 3,600 段预资格；I2 schema-v6 重复运行、pause/refine 与 worker crash/Retry 证据 | I2 延迟/原生拖动/设备与睡眠恢复、I3 资格及真实两小时音频；干净机 I4 本轮暂缓 |
 
-**Gate 0B 已于 2026-07-27 正式改判通过**（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修，门槛重设留档于 `docs/validation/gate-0b.md` 改判节），**两遍链路已全部接通**。2026-07-31 的 I2 退出绑定 bundle 使用精确 Gate 0C（SHA-256 `0f9f7668751c64fbce922883421ead41680226126800e0b7f6b3da81b39840ef`，runId `gate-0c-2026-07-31T09-52-00-521Z`，executedAt `2026-07-31T09:52:13.999Z`），让 loopback 与 `physical-preferred-label-heuristic` mic 声学 fixture 各连续跑 5 轮真实 160ms 模型 + Silero + 离线精修。两来源均 5/5 pass、10 个 final + 10 个 refined；loopback 最大 final/refined CER=0/0、mic=0.035714/0，全轮 captured/sent/ingested 一致且 12 项丢失峰值全为 0。每个 schema-v5 child report 都与 schema-v1 exit sidecar 一一绑定，两份 schema-v6 series 只接受外部观察到 exact child `exitCode=0` 且无运行器终止的轮次。mic fixture 的匿名输入/输出标签绑定可阻止预检后静默换标签，但不是硬件证明。严格递归 verifier、runner 自校验与 CI byte-for-byte 重建约束精确 Gate + 10 个 child + 10 个 exit sidecar + 两份 series。两来源冻结 P95=1158/1005ms，均未满足 `<1000ms` 线。诊断先并行校准 audio-host/utility，再用同一未来 source t0 安排播放与探针；captured-energy 探针公开保留 40ms post-source guard，只排除前置环境声与跨时钟不确定区，冻结验收起点仍是 source t0+140ms。六段结果显示主要预算在采集/VAD 与 partial 触发所需音频，不在 IPC。来源 XOR 由 J4 验证；J5/J6 已增加暂停/精修/worker 故障后同会话继续文本持久化的确定性联合旅程。SQLite 默认组合根和历史窗口已接入同一投影。当前主线是按 40ms ASR packet + Silero 权威下候选识别流预热的最小方案关闭两来源性能，再实测交互/恢复，之后做 I3 和 I4；Agent 在字幕闭环后启动，向量检索后置。
+**Gate 0B 已于 2026-07-27 正式改判通过**（批准 `x-asr-160ms` fast profile + 离线 X-ASR 精修，门槛重设留档于 `docs/validation/gate-0b.md` 改判节），**两遍链路已全部接通**。2026-07-31 的受跟踪 I2 权威 bundle 使用精确 Gate 0C（SHA-256 `0f9f7668751c64fbce922883421ead41680226126800e0b7f6b3da81b39840ef`），loopback/mic 各 5/5 结构通过、零 transport 损失且均绑定 exact-exit sidecar，冻结 P95=1158/1005ms。2026-08-01 当前机复跑 Gate 0C 和两来源各五轮，结构、准确率、自然退出、零损失仍通过，冻结 P95=1148/1099ms，仍未满足 `<1000ms`。相同实机窗口已让 loopback pause/refine 与 exact realtime worker 硬终止+Retry 通过；DWM 只取得持续 1,580 帧零损失，缺操作者 completion，设备移除与睡眠/唤醒也未执行。I3 75 秒资格 v5 取得故障前/恢复后/总计 14/17/31 final、29 refined 并严格通过，但两小时正式验收尚未启动。I2/I3 因此仍未关闭；Agent 在字幕闭环后启动，向量检索后置。
 
-native 生命周期补丁后，真实模型活跃 smoke 连续三轮的六个 realtime/refine exact child 均优雅 `exitCode=0`、fatal 0；当前权威 I2 的 10 轮又各自具备外部运行器生成并按 report SHA 绑定的 `exitCode=0`/无运行器终止旁证。另一次非权威诊断在 pass 报告后悬挂并留下 `PostQueuedCompletionStatus: (6) 句柄无效。`；固定 libuv 源码只证明该失败路径会进入 `uv_fatal_error → DebugBreak`，没有 native stack 证明具体竞态、发送者或进程角色。一次性 runner 以 120 秒 exact-process timeout 防无限等待，超时只清理该 process object 并判失败；exit sidecar 只防止“内部 pass 后悬挂/超时”误绿，不是签名、远端、硬件、硬崩溃恢复或根因证明。冻结语料 smoke 与 fake-ASR 产品壳仍只属 diagnostic/partial；退出绑定 bundle 也不替代 loopback 性能、拖动、真实 pause/refine、设备变化、睡眠/唤醒、硬崩溃、I3、I4 或历史异常根因验收。role evidence、I2 child 与 exit sidecar 不保存正文、音频/PCM、本地路径、绝对时钟、偏移、stack 或 dump。完整时间线见 `docs/validation/electron-breakpoint-investigation.md`，I2 当前证据见 `docs/validation/i2-real-source-series.md`。
+native 生命周期补丁后，真实模型活跃 smoke 连续三轮的六个 realtime/refine exact child 均优雅 `exitCode=0`、fatal 0；受跟踪 I2 的 10 轮又各自具备外部运行器生成并按 report SHA 绑定的 `exitCode=0`/无运行器终止旁证。2026-08-01 的真实 worker 强制终止场景进一步证明同一 session/cursor 在显式 Retry 后复用 runtime adapter 并创建新 worker generation，前后都有 final/refined 且损失计数为零。另一次非权威诊断在 pass 报告后悬挂并留下 `PostQueuedCompletionStatus: (6) 句柄无效。`；固定 libuv 源码只证明该失败路径会进入 `uv_fatal_error → DebugBreak`，没有 native stack 证明具体竞态、发送者或进程角色。一次性 runner 以 120 秒 exact-process timeout 防无限等待，超时只清理该 process object 并判失败；exit sidecar 与当前硬终止场景都不能证明历史异常根因已永久修复。完整 I2 仍需延迟、原生拖动、设备变化和睡眠/唤醒；I3 长测也未完成。role evidence 与报告不保存正文、音频/PCM、本地路径、绝对时钟、偏移、stack 或 dump。
 
-> **B5 制品边界：**已冻结的 exact installer/SHA 属于前一候选 `369055a`。本阶段修改了生产 audio-host/runtime，因此 B5 的资格方法仍有效，但旧制品不代表当前新 HEAD；提交本阶段后必须从包含跨时钟观测与退出绑定 I2 证据的新 HEAD 重建打包态组合证据，进入 I4 前再冻结新的 installer SHA。
+> **B5 制品边界：**当前 exact installer SHA-256 已冻结为 `36c7512037720cb50fea98a25ae021e9d5bfcc1a744bbca5d7b4b3e65895f4ae`。它是未签名内部候选；本机 B5 与非音频复启/卸载预资格通过，不等于精确 release main 已在干净 Win11 上通过 I4。
 
 ### 0.1 两套产品系统的边界
 
@@ -69,7 +71,7 @@ native 生命周期补丁后，真实模型活跃 smoke 连续三轮的六个 re
 | 外壳 | **Electron 43.2.0** | 复核：已是 latest，不动 |
 | 构建工具链 | **不引入**（vanilla + JSDoc `@ts-check`） | 见 §6.1 |
 | 模型解压 | **系统自带 `C:\Windows\System32\tar.exe`** | 已实测：bsdtar 3.7.7 带 bz2lib 1.0.8 |
-| 转写存储 | **SQLite 单一权威 + append-only 字幕事件 + segment 投影**；JSONL 仅作迁移/导出/恢复 | 默认组合根、冷启动迁移、退出屏障、历史列表/详情/导出已通过联合 CI；真实 Electron fresh SQLite/历史/正常退出 smoke 已通过，旧档 import/重启、I3/I4 待完成，见 §6.4 / ADR 0001 |
+| 转写存储 | **SQLite 单一权威 + append-only 字幕事件 + segment 投影**；JSONL 仅作迁移解析/导出兼容 | 默认组合根、冷启动迁移、退出屏障、历史/导出、packaged 旧档 import/二次启动及 I3 非音频预资格已通过；真实两小时音频与干净机 I4 待完成，见 §6.4 / ADR 0001 |
 | Agent runtime | **Pi Agent Core + 本项目 AgentPluginHost/存储适配** | 后置；A1 先做 ESM/Electron/打包隔离探针，见 §6.5 |
 | 打包 | **electron-builder 26.15.3 + NSIS** | 见 §6.6 |
 
@@ -365,7 +367,7 @@ Range 断点续传 + SHA256 校验 + 写 `.part`。解压到 staging 目录，�
 
 驱动在 Electron 43 utility process 中通过 DB0 驱动/WAL/打包探针后再冻结；SQLite 的数据语义不依赖某个 Node binding。完整 schema、迁移、降级和门禁见 [`docs/data-architecture.md`](docs/data-architecture.md)；SQLite 权威与双系统边界分别见 [ADR 0001](docs/adr/0001-sqlite-authoritative-event-store.md) / [ADR 0002](docs/adr/0002-separate-subtitle-and-agent-systems.md)。
 
-历史详情已改为 SQLite keyset 分页，renderer 固定只持有当前 50 条并可前后翻批；205 段真实 Electron 旅程测得 DOM 上界 50。两小时会议仍可能有数千条，资源/WAL/查询 P95 与长期交互必须继续由 I3 soak 验收。
+历史详情已改为 SQLite keyset 分页，renderer 固定只持有当前 50 条并可前后翻批；真实 Electron 205 段旅程测得 DOM 上界 50。I3 非音频 runner 以 `FakeRuntimeAdapter` 注入契约合法事件，在同进程存储服务宿主上跑 `Coordinator→SQLite→HistoryService`，并在 VM DOM harness 中执行真实 `history.js`：3,600 段/4,000 事件、72 页 DOM 上界 50，重开后恢复 400 个 refined 投影，三格式各导出 3,600 段。CPU、RSS/heap、队列、WAL、查询与墙钟值由每轮报告动态记录；回归断言冻结资源上界与语义，不再把某次开发机快照硬编码为产品常量。该证据仍是虚拟两小时 `pass/partial`，没有创建 Electron `BrowserWindow`；真实两小时声源与长期 Electron 交互归 I3 音频实机验收。
 
 ### 6.5 Agent 层 —— Pi Agent Core + 项目自有插件宿主，后置实施
 
@@ -400,8 +402,10 @@ Range 断点续传 + SHA256 校验 + 写 `.part`。解压到 staging 目录，�
 embedded ASAR integrity 与 only-load-from-ASAR；`app.isPackaged` 时所有
 `LIVE_SUBTITLE_*` 开发缝失效。
 
-B5 与 I4 不再混写。B5 是可重复的打包态确定性资格；I4 才用精确 installer SHA 在无仓库、
-Node、既有 userData/模型的 Win11 上验公网、权限、真实音源、ready 后断网复启及数据保留。
+B5 与 I4 不再混写。B5 是可重复的打包态确定性资格；当前 test package 已用同一隔离
+`userData` 连续启动两次，验证 ready 后 fetch=0 的复启、SQLite/旧档迁移/导出持久化；当前
+NSIS uninstaller 也不触碰隔离 APPDATA 中与应用无关的哨兵；它未启动正式应用，不能证明真实 userData。I4 仍须用同 SHA 的精确 release main 在无仓库、
+Node、既有 userData/模型的 Win11 上验公网、交互权限、真实音源及完整数据目录。
 当前 B5 本机证据见 [`docs/validation/b5-packaging.md`](docs/validation/b5-packaging.md)。候选未签名，
 仅作内部资格包。
 
@@ -409,7 +413,7 @@ Node、既有 userData/模型的 Win11 上验公网、权限、真实音源、re
 
 **项目级完成规则（2026-07-30 新增）：只有单元测试不能宣称功能完成。** 每项用户能力必须至少有一条跨模块用户旅程在 CI 中通过；涉及真实声卡、模型性能、透明窗口或长稳运行时，还必须补 Windows 实机 smoke/soak 证据。规范状态词、功能含义和禁止误读以 [`docs/semantic-contract.md`](docs/semantic-contract.md) 为准；详细分层、场景 ID 和摘要联动不变量见 [`docs/testing-strategy.md`](docs/testing-strategy.md)。
 
-暂不上 Playwright：透明 + `focusable: false` + 点击穿透的窗口自动化驱动成本高，这部分继续用实机矩阵覆盖置顶、穿透、DPI、多屏、锁定和拖动。Hosted CI 使用确定性替身隔离声卡/网络，但 `SessionCoordinator`、Caption reducer、TranscriptStore、队列和契约校验必须使用真实产品实现，不允许把整条链路全部 mock 掉。
+暂不上 Playwright：透明 + `focusable: false` + 点击穿透的窗口自动化驱动成本高，这部分继续用实机矩阵覆盖置顶、穿透、DPI、多屏、锁定和拖动。Hosted CI 使用确定性替身隔离声卡/公网，但 `SessionCoordinator`、Caption reducer、SQLite Gateway/Recorder、JSONL migration parser、队列和契约校验必须使用真实产品实现，不允许把整条链路全部 mock 掉。
 
 自动化入口：
 
@@ -482,10 +486,10 @@ node scripts/gate-0b/evaluate-transcripts.js `
 | **B2.2 PCM 直通与背压（完成）** | `MessageChannelMain` 直通：host → port → `pcm-sink` utility process；credit 背压（ready 握手 + 窗口式授信）、`FrameFlow` 有界队列（maxQueueMs 丢旧保新）、低频指标控制通道、`replacePort` 中途换消费端 | 实机 smoke 三模式 PASS：normal 40/40/40 帧 0 丢 0 缺口；slow 队列峰值恰好压在预算上、29 丢帧且 sink 观察到对应缺口；crash-replace 消费端 exit(13) 后替换 sink 无缝续流。PCM 不经主进程 JS；帧用结构化克隆（transferable 被桥丢弃，见 §4.2 修正） |
 | **B2.3 realtime worker 骨架（完成）** | `src/runtime/realtime-worker/`：per-source 管线（帧→VAD 分段→recognizer adapter→contract-valid partial/final）、可替换 adapter 注册表（默认 `null`——Gate 0B 未过绝不产文本）、EnergyVad 占位（silero 随模型轨替换）、utilityProcess 入口沿用 B2.2 credit 协议、main 侧 `RealtimeWorkerHost`（边界契约校验） | 纯逻辑单测覆盖 VAD/分段/source 隔离/缺口指标/坏帧；多 source fixture 只是底层防御，产品会话仅启用一路；worker 事件全量通过真实 `SessionCoordinator.acceptCaption` 门（集成测试）；实机 smoke 传输与零字幕不变量 PASS，VAD 实音分段因系统静音判 inconclusive（有声复跑即补） |
 | **B2 实时链路** | audio host、MessagePort、互斥单路 realtime worker、VAD/背压 | 真 partial/final 替掉假流；拖动不掉帧；队列深度和丢帧可观测。**模型轨已落地（2026-07-27）**：`sherpa-recognizer.js`（共享 OnlineRecognizer、per-segment stream、0.4s 尾静音冲刷）经 configure 注册；`model-resolver.js` 解析本机模型（env/userData/仓库布局，缺失 fail closed）；组合根默认接真实链路。**silero VAD 已替换 EnergyVad（2026-07-27）**：`silero-vad.js` 包装为同接口经 vadFactory 注入，997Hz 纯音拒识实测通过（能量占位做不到）；收句静音实测定为 1.0s——0.5s 切段时流式模型缺右上下文丢字（「一下」→「一」）且几乎不出标点，1.0s 下整句成段 CER 0。VAD 模型缺失时回退 EnergyVad 并警告。实机 smoke `i2-live-caption-smoke.js` PASS（silero：1 条整句定稿、CER 0；对比 energy：4 条碎片、CER 0.071）。**XOR 门禁与 J4 已完成（2026-07-30）**。剩余：两种来源分别 smoke、拖动/掉帧指标 |
-| **B3 精修与会话** | refine worker、事件式持久化、恢复与导出 | 精修不阻塞实时流；已提交一遍定稿可恢复；SRT 时间轴稳定。**B3.1 已落地（2026-07-27，过渡实现）**：append-only JSONL 事件档（Windows-safe 文件名、排他创建防混档）、坏尾行/坏中间行区分恢复、按 revision 折叠、txt/md/srt 导出（毫秒进位正确、换行注入压平），main 接线为会话自动开/封档。**B3.2 refine worker 已落地（2026-07-27）**：独立 utility process 载离线 X-ASR（t=3，M3 同配置）；realtime worker 是 CaptionEvent 唯一序号权威——段定稿后整段音频经 worker↔worker MessagePort 直达 refine，纯文本结果回来后由 realtime worker 以 base+1 revision 发 refined；请求方有界队列（积压 3 即跳过，绝不反压实时）；精修配置失败/中途退出只降级告警不故障会话；暂停期精修缓冲、resume ack 后补发；停止路径 end 收束的段不发起精修（保持 final，计 skipped）。实机 smoke：final 无标点 → refined 全标点，双 CER 0。B3.3 的确定性实现见下一行，实机/发布门禁仍独立验收 |
-| **B3.3 SQLite 字幕历史（联合验收完成 / I3/I4 待验）** | storage worker、SQLite 字幕事件/segments、JSONL 迁移、终态历史列表/有界详情与 txt/md/srt 导出 UI | DB0/DB1、Gateway 恢复与 DB2 迁移内核、两次冷启动/迁移、历史复盘和三格式安全导出均有确定性证据；205 段真实多模块旅程已验证同时间戳/refined 跨 5 页无缺失重复且全量导出不截断，开发态与打包态真实 Electron main/preload/IPC/storage utility/renderer 已验证 DOM≤50 和前后翻页。打包内旧档 import/重启、系统保存对话框与两小时 I3 仍待验收 |
+| **B3 精修与会话** | refine worker、事件式持久化、恢复与导出 | 精修不阻塞实时流；已提交 final 可恢复；SRT 时间轴稳定。B3.1 的 JSONL writer 完成迁移过渡职责后已从生产代码删除，只保留坏尾/坏中间行解析、revision 折叠与 txt/md/srt 兼容导出供旧档迁移。默认联合旅程已全部使用 `SqliteSessionRecorder → StorageGateway`。B3.2 refine worker、暂停缓冲、故障降级与真实模型 smoke 保持不变 |
+| **B3.3 SQLite 字幕历史（非音频联合验收完成 / 音频 I3 与 I4 待验）** | storage worker、SQLite 字幕事件/segments、JSONL 迁移、终态历史列表/有界详情与 txt/md/srt 导出 UI | DB0/DB1、Gateway 恢复、DB2、两次冷启动、历史/导出均有确定性证据；packaged Electron 首轮真实迁移只读旧 JSONL 并完整导出 205 段，第二轮验证幂等、SQLite/history/导出保留。I3 非音频 3,600 段资源资格通过。人工系统保存对话框、真实两小时声源和干净机 I4 仍待 |
 | **B4 字幕资源（确定性 UI 联合验收完成；真实模型调用有证据；I4 待验）** | 内置固定 manifest、ModelManager、断点下载、流式 SHA、固定 System32 tar、归档审查/白名单提取、staging 原子安装、严格 marker、资源页与空闲热启用 | 资源页的状态、进度、单一下载/重试动作以及无参数 IPC 已实现；局部失败矩阵和后端受控 J14 均通过，含卡死 fetch/tar 有界退出；批准大模型安装/三运行时调用已留档。Electron 产品壳现从隔离 userData 的 `missing` 状态实际点击设置页下载，经 preload/IPC、生产 ModelManager、Range、三 marker、热启用，完成字幕、暂停/恢复、停止和本次 SQLite 历史复盘。受控资源/fake ASR 不冒充真实张量、公网或物理声卡。当前不提供删除功能；B5 已关闭打包态确定性资格，I4 只关闭精确 NSIS 的干净机公网/真实音源发布旅程 |
-| **B5 字幕 MVP 分发（打包态确定性联合验收完成；I4 待验）** | electron-builder 26.15.3、ASAR allowlist/fuses、native unpack、packaged product journey、NSIS | 正式 x64 ASAR/unsigned NSIS 已生成并绑定 SHA；29 个关键产品入口、5 个 native 文件、整包无模型/音频/开发树已验证。test package 从真实 packaged exe 完成 settings/preload/IPC→ModelManager→受控 Range/tar→热启用→字幕/暂停恢复/停止→SQLite/history，并由 utility 实际加载 native，supervisor 得到 clean exit/0 incident。精确 NSIS 隔离安装卸载通过。test main/fake ASR/受控网络/静默安装不冒充公网、真实模型/声卡或干净机 I4；远端 workflow 首轮结果待本提交运行 |
+| **B5 字幕 MVP 分发（当前候选确定性资格完成；I4 待验）** | electron-builder 26.15.3、ASAR allowlist/fuses、native unpack、packaged 双启动、NSIS | 当前 unsigned NSIS SHA=`36c75120…95f4ae`；165 个 ASAR 条目、111 文件产品载荷 SHA=`6c986613…f577`、29 个关键入口、5 个 native、无模型/音频/开发树。test package 首启覆盖 Range/tar/热启用/字幕/迁移/历史/导出，复启覆盖 fetch=0、ready/历史/迁移幂等及新会话，两轮 clean exit；七份报告以 run ID 和 SHA 闭合绑定到 release layout。NSIS 隔离安装卸载通过，且无关 APPDATA 哨兵不变；正式应用 userData 保留未在 B5 中验证。test main/fake ASR/静默安装不冒充公网、真实声卡或干净机 I4 |
 | **A1 Agent 基础（后置）** | `AgentRuntime` 边界、Pi Core 探针、项目自有 `AgentPluginHost`、CredentialStore、ModelGateway、可靠消费水位 | 只静态注册受信任第一方插件；不启用 shell/进程/任意文件写/外部写；key 不进 renderer；Agent 关闭/崩溃不影响字幕；J7/J13 通过 |
 | **A2 Agent 内容能力（后置）** | `TranscriptContextPlugin`、独立增强文本、会后结构化纪要 | 原文与派生文本不混淆；待办只生成内容；字幕→Agent 通过 J3–J7/J13 联合场景 |
 | **X1 可选检索（Deferred）** | FTS5 按需增加；embedding/`sqlite-vec` 最后评估 | 不阻断 B3.3、B5 或 A2；若启用再执行 J11/DB4 |
@@ -499,9 +503,9 @@ node scripts/gate-0b/evaluate-transcripts.js `
 |---|---|---|
 | **CI0 联合测试基线（持续维护）** | 用户旅程跨越真实产品模块，而非只验证单个函数/类 | Windows workflow 已落地；真实 Electron Gateway 组合覆盖 Coordinator→Recorder→utility process→SQLite、XOR、pause/refine、stop barrier 与故障重放；确定性默认产品/历史旅程覆盖 DB2、SQLite-only/stale-active/退出、205 段 keyset 详情与不截断三格式导出；开发态及 packaged 产品壳覆盖真实 main/preload/IPC/renderer 五页往返和 DOM≤50。J14/B5 从真实 settings DOM 点击覆盖 `preload/IPC→ModelManager→HTTP/tar→热启用→字幕→SQLite 历史`，B5 再覆盖 ASAR/native/NSIS；J11 后置 |
 | **I1 Contract（完成）** | UI fake adapter ↔ 后端 contract fixtures | coordinator、fake adapter、renderer reducer 和 IPC 共享 v1 validator；默认/dev smoke 均通过 |
-| **I2 Live Caption（schema-v6 退出绑定重复运行与分段诊断已验；整体未关闭）** | 单路音频 → realtime ASR → SessionCoordinator → 字幕 UI | **I2.1 结构接线已完成**：worker 击杀→error→retry→pause/resume→stop 及 J4/J5/J6 确定性旅程已覆盖。**I2.2 重复运行已有严格证据**：精确 tracked Gate + loopback/mic 各 5 个 schema-v5 child report、5 个 schema-v1 exit sidecar 和 1 份 schema-v6 series；10 final + 10 refined、loopback 最大 final/refined CER=0/0、mic=0.035714/0、全部帧一致且 12 项丢失峰值全为 0，且每轮外部观察 exact child `exitCode=0`/无运行器终止（见 `docs/validation/i2-live-v5/` 与 `docs/validation/i2-real-source-series.md`）。跨时钟六段在每个 child 内精确 telescope 到 Coordinator accepted partial，且只作诊断；40ms captured-energy guard 不移动 source+140ms 冻结起点。mic 仅为 physical-preferred 标签启发式声学 fixture，不是硬件证明。loopback/mic 冻结 P50/P95/min/max=1133/1158/1092/1158ms 与 875/1005/822/1005ms；两来源均仍高于 `<1000ms` 线。完整 I2 仍需解决两来源性能，并实测拖动不掉帧、真实 pause/refine、设备变化、睡眠/唤醒与硬崩溃恢复。 |
-| **I3 Durable Subtitle Session** | final/refined → SQLite 事件/投影 → 带时间戳历史/导出 | 连续 2 小时不卡；崩溃恢复不丢已一遍定稿的段落；JSONL 迁移通过 J10 |
-| **I4 Packaged Subtitle MVP** | 精确 NSIS 的干净机首启、公网下载、权限、真实 ASR、持久化、历史、离线复启与卸载数据策略 | 在无仓库/Node/既有 userData/模型的 Win11 机器完成完整用户旅程；首次取得完整 bundle 需要网络，三项 ready 后断网且无 Agent 仍成立；installer SHA 必须与 B5 候选一致 |
+| **I2 Live Caption（重复运行、pause/refine、worker crash/Retry 已验；整体未关闭）** | 单路音频 → realtime ASR → SessionCoordinator → 字幕 UI | 受跟踪权威 bundle 的 loopback/mic 各五轮均有 schema-v5 child + exact-exit sidecar + schema-v6 series，冻结 P95=1158/1005ms。2026-08-01 本机复跑同样 5/5 结构/准确率/零损失通过，但冻结 P95=1148/1099ms；两来源仍高于 `<1000ms`。真实 loopback pause/refine 与 exact worker 强制终止+Retry 已通过；DWM 持续 1,580 帧零损失但无操作者 completion，实际设备移除和 Windows 睡眠/唤醒未执行。mic 仍只是 physical-preferred 标签启发式。完整 I2 尚缺延迟、原生拖动及设备/睡眠恢复。 |
+| **I3 Durable Subtitle Session（非音频与真实资格完成 / 正式长测未跑）** | final/refined → SQLite 事件/投影 → 带时间戳历史/导出 | 3,600 段虚拟两小时已验证资源上界、72 页 DOM、完整导出和重开恢复；`gateStatus=partial`。75 秒真实 loopback 资格 v5 在 30 秒强退 worker 后恢复，取得 pre/post/total=14/17/31 final、29 refined，SQLite/导出/资源/transport/worker/storage 恢复全部严格通过且零捕获音频文件。仍需 7,200 秒/3,000 final 正式验收及运行期操作者原生拖动。 |
+| **I4 Packaged Subtitle MVP（非音频入口完成 / 整体未关闭）** | 精确 NSIS 的干净机首启、公网下载、权限、真实 ASR、持久化、历史、离线复启与卸载数据策略 | 非音频 runner/verifier 已能在无仓库/Node/既有 userData/模型的专用 Win11 标准用户中验证同一 installer SHA 的公网首下、断网历史/原生导出、正式 userData 保留及离线重装，但尚无该环境的执行报告。后续音频门禁再验证权限、真实来源/ASR、交互恢复；只有两部分都通过才能关闭 I4 |
 | **I5 Agent System（后置）** | committed transcript → TranscriptContextPlugin → Pi Loop → 增强/纪要插件 → 独立产物 → 历史展示 | J3–J7/J13 通过；Agent 失败、取消和恢复不影响 I2–I4 |
 
 ---
@@ -556,7 +560,7 @@ Gate 0B 原门槛于 2026-07-27 经正式改判重设（见 `docs/validation/gat
 | 共享 preload / 未校验 IPC | renderer 越权退出、改配置或控制会话 | per-window API、sender/payload/state validation |
 | 隐藏窗影响应用生命周期判断 | 可见窗消失但应用不退出，或无法重建 | WindowManager 分别追踪 visible/runtime windows，不依赖 `getAllWindows().length` |
 | `.node` 打进 asar 或伴随 DLL 不相邻 | 安装版启动即崩，开发期发现不了 | B5 已整目录 `asarUnpack`、结构检查并由 packaged utility 实际加载；I4 再在干净机复跑 |
-| 两小时会话 DOM 膨胀 | 历史面板卡死 | 已用每页 50 条 keyset 视图限制 DOM；I3 继续验 CPU/内存/WAL/查询 P95 与两小时交互 |
+| 两小时会话 DOM 膨胀 | 历史面板卡死 | 3,600 段非音频预资格已验证 72 页 DOM≤50、WAL/查询/CPU/内存/队列上界；真实两小时音频与 BrowserWindow 长期交互仍待 |
 | refined/translation 与可变单记录冲突 | 更新丢失、摘要重复或导出状态错误 | SQLite append-only 事件 + segments 投影，按 revision 折叠；旧事实不覆盖 |
 | SQLite 与 JSONL 长期双写 | 两份权威数据漂移，故障后无法判定以谁为准 | J10 核对后一次性切换；JSONL 降为只读迁移/导出/恢复格式 |
 | `sqlite-vec` 版本/打包加载失败（后期） | 可选语义搜索崩溃或返回过期向量 | X1 前不引入；启用时固定版本与可信路径并执行 DB4/J11；失败降级到普通历史 |

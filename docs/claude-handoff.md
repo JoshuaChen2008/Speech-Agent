@@ -6,7 +6,7 @@
 > [`data-architecture.md`](data-architecture.md)。本文后续出现的 Gate 0B、B2/B3、
 > JSONL 或“未实现”描述均只代表交接当日，不得覆盖上述规范文档。
 
-> **当前检查点（2026-07-31）：** B3.3 SQLite、B4 模型资源和 B5 资格方法已有证据；
+> **当前检查点（2026-08-01）：** B3.3 SQLite、B4 模型资源和 B5 资格方法已有证据；
 > I2 权威证据已升级为 `docs/validation/i2-live-v5/` 内精确 Gate，以及 loopback/mic 每来源
 > 5 个 schema-v5 child、5 个 schema-v1 exact-child-exit sidecar 和 1 个 schema-v6 series。
 > 外部 runner 只在 exact child 以 0 退出且没有 timeout/runner termination 后写 sidecar，避免
@@ -14,9 +14,8 @@
 > mic=0.035714/0，帧全等且 12 项丢失峰值全为 0；冻结字幕可见延迟 loopback/mic P95=1158/1005ms。
 > 两来源仍高于未改变的 `<1000ms` 线 158ms/5ms，I2 整体未关闭。
 > 每个 child 的六段 exact accepted-partial trace 与 40ms post-source captured-energy guard 只作诊断，不改写该验收结论。mic 仅为 `physical-preferred-label-heuristic` 声学 fixture，不是硬件证明；sidecar 也不是签名、远端证明、硬件证明或崩溃根因证明。I2 的两来源性能、
-> 拖动、真实 pause/refine、设备变化、睡眠/唤醒和硬崩溃仍未关闭；I3/I4 也待验。
-> B5 exact installer/SHA 属于前一候选 `369055a`，生产 audio-host/runtime 已变化，进入 I4
-> 前必须从新 HEAD 重建、重取证并冻结新 SHA。权威 10 轮均有外部退出 sidecar；另一次未纳入 bundle 的运行
+> 2026-08-01 当前机又完成两来源各五轮、真实 pause/refine 与 exact worker 强制终止+Retry；新冻结 P95=1148/1099ms，仍未过 `<1000ms`。DWM 只证明持续 1,580 帧零损失，缺操作者 completion；实际设备变化、睡眠/唤醒仍未执行。I3 两次资格为 23/25、24/25，正式两小时未启动。干净机 I4 与代码签名按本轮决定暂缓。
+> B5 已从当前源码重建、重取证并冻结安装器 SHA `36c75120…95f4ae`；package layout、native/SQLite utility、packaged 首启/同 userData 离线复启、两次 clean exit、旧档迁移/三格式导出和隔离 NSIS 机械探针均已通过，同一 run ID、四份报告 SHA 与 111 文件产品载荷 SHA `6c986613…f577` 已闭合绑定到 release layout。机械探针只证明无关 APPDATA 哨兵不变，不证明正式应用 userData。权威 I2 10 轮均有外部退出 sidecar；另一次未纳入 bundle 的运行
 > 在报告 `pass` stdout 后悬挂。`PostQueuedCompletionStatus(6)` 到 libuv fatal、`DebugBreak` 的机制已有闭环解释，但无 native stack，具体关闭竞态、发送者与进程角色仍未证明。翻译、Agent 与向量继续后置。
 
 > 交接日期：2026-07-26（Asia/Singapore）
@@ -104,9 +103,9 @@ f6eaa6d  chore: establish project baseline
 | B1 应用骨架 | 已提交 / 恢复缺口已关闭 | ConfigStore、SessionCoordinator、fake adapter、per-window preload、IPC 已接线；caption bootstrap 与 replacement cursor 已由 B2.0 关闭 |
 | I1 Contract | 验收完成 | UI/adapter/coordinator/IPC 共用 v1 契约；renderer reload 的 caption state 已形成订阅/水合/重放闭环 |
 | B2/I2 实时链路 | 实现完成 / I2 未关闭 | hidden audio host、PCM 直通、realtime/refine worker、silero VAD 与真实 ASR 已产品化；退出绑定权威证据以两来源各 5 个 schema-v5 child + 5 个 schema-v1 exit sidecar + 1 个 schema-v6 series 证明准确性、零丢失与 exact-child exit 0。冻结字幕可见 P95=1158/1005ms；两来源超线 158ms/5ms。六段 trace 与 40ms captured-energy guard 只诊断，mic fixture 与 sidecar 都不构成更强证明；交互/恢复待补 |
-| B3 精修/会话 | 实现完成 / I3 待验 | SQLite-only 产品网关、迁移、两遍精修、历史查询与 txt/md/srt 导出已接线；两小时/数千段与真实恢复仍归 I3 |
+| B3 精修/会话 | 联合验收完成 / I3 部分预资格 | SQLite-only 产品网关、迁移、两遍精修、历史查询与 txt/md/srt 导出已接线；3,600 段虚拟两小时、重开恢复、分页/DOM/WAL/资源和全量导出已通过，真实两小时声源仍归 I3 |
 | B4 资源 | 联合验收完成 / I4 待验 | ModelManager、固定资源下载/校验/原子安装、设置页和空闲热启用已接线；干净机公网首次供给与 ready 后离线复启归 I4 |
-| B5 分发 | 资格方法通过 / 当前 HEAD 待重建 | 前一候选 `369055a` 的 ASAR/NSIS/native/packaged journey/隔离安装卸载已取证；生产 runtime 已变化，进入 I4 前须重建并冻结新 SHA |
+| B5 分发 | 当前源码确定性资格通过 / I4 待验 | SHA `36c75120…95f4ae` 的 ASAR/NSIS/native/SQLite、packaged 双启动、旧档迁移/导出、两次 exact-child exit、同轮/载荷 binding 与隔离安装卸载/无关 APPDATA 哨兵已取证；I4 非音频 runner/verifier 已备但没有干净机报告，正式应用 userData 仍未验，且候选未签名、真实权限/物理来源未验 |
 
 ## 5. Gate 0A：冻结的 v1 契约
 

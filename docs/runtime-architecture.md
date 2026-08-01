@@ -79,13 +79,13 @@ stack、dump 或任意 Error 文本，也不配置 WER/Crashpad 或外部上传�
 - 停止路径的取舍（有意为之并披露）：end 收束的段不再发起精修（响应必然晚于收尾，保持 final 并计入 skipped）；更早的在途精修若在 end 处理后返回也被作废。会话最末的少量段可能只有第一遍定稿。
 - `canRefine` 是启动时判定（精修模型就位即为真）；精修 worker 中途降级不回写 capability——运行时能力观测是后续议题（见 handoff §12.4）。
 
-`TranscriptStore`（B3.1 遗留格式实现，默认产品不再写入）：
+`transcript-store` 兼容工具（B3.1 遗留格式的只读边界）：
 
-- 能读取/生成 Windows-safe 文件名的 append-only JSONL 事件日志；仅服务旧数据迁移、显式格式兼容和恢复，不是默认 writer。
-- 处理坏尾行、flush、session close 和导出。
+- 只从调用方提供的不可变 JSONL 字节快照解析旧事件，供一次性迁移与迁移摘要核对；生产 JSONL writer 已删除。
+- 处理坏尾行，保留旧事件折叠与 txt/md/srt 兼容格式化；新会话只写 SQLite。
 - 按 `segmentId + revision` 折叠，不覆盖历史文件中的旧事件。
 
-`StorageGateway / storage-worker / HistoryService`（B3.3 联合验收完成；I3/I4 待验）：
+`StorageGateway / storage-worker / HistoryService`（B3.3 联合验收完成；I3 非音频预资格通过，真实两小时声源与 I4 待验）：
 
 - storage worker 是 SQLite 唯一所有者和写者；主进程与 renderer 不执行同步 SQL、不加载扩展。
 - 在同一短事务中追加字幕 `final/refined` 事实并更新当前 segment 投影；提供只列终态会话的稳定 keyset 分页、按会话/时间戳读取详情和 txt/md/srt 当前正文导出。
@@ -288,6 +288,7 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 5. 独立 refine worker 和事件式 JSONL 过渡基线，验证 pause/resume、迟到修订和进程故障。
 6. B3.3 已在 DB0/DB1 基座上接入产品网关、迁移、默认 SQLite-only 生命周期与历史查询/导出；J1/J2/J10 及开发态/packaged 四窗口 Electron/SQLite 旅程已有证据，I3/I4 继续作为独立门禁。
 7. B4 ModelManager、资源页、空闲热启用和 J14 已完成；生产 Manager 已安装并实际调用固定三资源 bundle。
-8. B5 正式 ASAR/NSIS、native unpack、Electron fuses、packaged DB0/产品旅程及隔离安装卸载的方法已通过确定性资格；但冻结的 exact installer/SHA 来自前一候选 `369055a`，本阶段修改了生产 audio-host/runtime，进入 I4 前必须从含跨时钟观测与 exit-bound I2 证据钩子的新版 HEAD 重建、重取证并冻结新的 installer SHA。I2 的 schema-v5 child + schema-v1 exit sidecar + schema-v6 series 重复运行证据通过，但 loopback 性能、交互与恢复仍使整体未关闭；当前先关闭这些缺口，再做 I3 两小时/恢复和 I4 新精确 NSIS 的公网/权限/真实音源/ready 后离线复启。
-8. 字幕 MVP 通过后做 A1：`AgentRuntime` + Pi Core 隔离探针 + 项目自有插件宿主 + 凭据/可靠消费；再以第一方插件实现独立增强文本和会后结构化纪要，并通过 J3–J7/J13。
-9. 只有 X1 明确进入范围时才增加 FTS5/`sqlite-vec`，并执行 J11/DB4。
+8. B5 已从当前源码重建正式 x64 ASAR/NSIS，并把 package layout、native/SQLite utility、packaged 首启与同一 userData 离线复启、两次 exact-child clean exit、旧 JSONL 幂等迁移、三格式完整导出和隔离 NSIS 安装/卸载绑定到安装器 SHA `36c75120…95f4ae`。同一 run ID、四份报告 SHA 与 111 文件产品载荷 SHA `6c986613…f577` 由独立 binding 报告闭合并写入 release layout；卸载后与应用无关的隔离 APPDATA 哨兵仍存在且 SHA 不变。正式应用未在 NSIS 机械探针中启动，候选未签名，且 packaged 旅程是测试 variant，不冒充精确 NSIS 安装后的干净机 I4。
+9. I3 非音频预资格已以 3,600 段/4,000 事件、虚拟两小时、SQLite 重开恢复、72 页有界 DOM 与三格式全量导出通过；真实两小时声源仍随音频测试延期。I4 非音频专用机 runner 已把同一精确安装器的公网首下、系统保存弹窗、正式 userData 卸载保留和离线重装写成严格 `pass/partial` 门禁，但尚无干净 Win11 报告；交互权限、真实来源与 I2 性能/交互/恢复缺口继续归音频测试。
+10. 字幕 MVP 通过后做 A1：`AgentRuntime` + Pi Core 隔离探针 + 项目自有插件宿主 + 凭据/可靠消费；再以第一方插件实现独立增强文本和会后结构化纪要，并通过 J3–J7/J13。
+11. 只有 X1 明确进入范围时才增加 FTS5/`sqlite-vec`，并执行 J11/DB4。

@@ -4,7 +4,13 @@
 
 当前已完成 **B1 应用骨架 + B2 实时链路 + B3 两遍精修/SQLite 历史 + B4 本地模型资源闭环 + B5 打包态确定性资格 + 来源 XOR 联合门禁**：透明字幕条、工具栏、点击穿透、亚克力设置窗、单选监听模式、权威会话状态机、隐藏采集窗（回环/麦克风）、realtime/refine/storage utility，以及 Gate 0B 批准的 **160ms 真实模型 + silero VAD + 离线精修**。首次缺模型时可从设置的“模型资源”页一键下载固定三资源 bundle，支持断点续传、哈希/归档审查、原子安装；空闲应用安装后无需重启即可开始真字幕。字幕自动写入 SQLite，工具条可打开独立历史窗查看带时间戳正文并导出 txt/md/srt。
 
-B5 已生成 Windows x64 ASAR/NSIS，并从真实 packaged exe 复跑设置下载、热启用、字幕、暂停/恢复、停止、SQLite 历史、205 段分页、sherpa native utility 与 clean exit；精确 NSIS 的隔离安装/卸载也通过。当前 I2 权威 bundle 由 **schema-v5 child report + schema-v1 外部退出旁证 + schema-v6 series** 组成：loopback 与 `physical-preferred-label-heuristic` 声学 mic fixture 各有 5 份 report、5 份一一绑定的 exit sidecar 和 1 份 series，10 轮均由外部运行器观察到 exact child `exitCode=0` 且未触发运行器终止。10 轮都有 final/refined、帧全等、12 项丢失峰值全为 0；loopback 最大 final/refined CER 为 0/0，mic 为 0.035714/0。冻结字幕可见延迟 P50/P95/min/max：loopback 1133/1158/1092/1158ms，mic 875/1005/822/1005ms；两者 P95 分别高于未改变的 `<1000ms` 线 158ms 与 5ms，因此 I2 性能未关闭，交互/恢复场景也仍待。final-after-end P95 分别为 710/792ms；六段跨时钟诊断 P95 分别为 loopback 729/405/1/33/1/1ms、mic 557/500/1/28/1/1ms，它们不改变验收起点、终点或门槛。B5 exact installer/SHA 属于前一候选 `369055a`；本阶段已修改生产 audio-host/runtime，所以旧制品不代表新 HEAD，进入 I4 前必须重建、重取证并冻结新 SHA。测试 package 仍不能冒充 I4；I2 性能/交互/恢复、两小时长稳、干净 Win11 公网/权限/ready 后离线复启仍待。Agent/翻译未实现，向量检索已后置。
+B5 已从当前源码重建 Windows x64 ASAR/NSIS，精确 unsigned installer SHA-256 为 `36c7512037720cb50fea98a25ae021e9d5bfcc1a744bbca5d7b4b3e65895f4ae`。真实 packaged test exe 首轮完成设置下载、热启用、字幕、暂停/恢复、停止、旧 JSONL 冷启动迁移、SQLite 历史、205 段分页与三格式完整导出；第二轮复用同一 `userData`，不创建下载服务且模型 fetch 为 0，仍恢复三项 ready、旧历史和迁移幂等，再持久化第 4 条会话。两轮均 clean exit/0 incident。七份 B5 报告现由同一 run ID、四份报告 SHA 和完整 111 文件产品载荷 SHA `6c986613…f577` 闭合绑定，正式 release ASAR 的载荷与被运行的 test package 完全一致。精确 NSIS 隔离安装/卸载通过，且 uninstaller 不触碰隔离 APPDATA 中与应用无关的哨兵；正式应用没有在该机械探针中启动，真实 userData 保留仍归 I4。代码签名按当前决定暂不作为内部 MVP 阻断项。
+
+I3 非音频预资格以 `FakeRuntimeAdapter` 注入契约合法字幕事件，经真实 `Coordinator → SQLite → HistoryService → history.js` 链路写入 3,600 段/4,000 事件（400 次 refined）；它覆盖虚拟两小时、72 页 DOM≤50、三格式完整导出、数据库重开恢复及 CPU/RSS/heap/队列/WAL/查询上界。动态性能值以 [`docs/validation/i3-nonaudio-results.json`](docs/validation/i3-nonaudio-results.json) 为准，回归只断言语义和冻结上界，不再硬编码某次机器快照。报告固定 `pass/partial`，没有访问 mic/loopback/扬声器，也不冒充真实两小时音频 soak。
+
+2026-08-01 已恢复实机音频：Gate 0C 通过；新的 loopback/mic 各五轮均结构、准确率、自然退出与 transport 零丢失通过，但冻结 P95=`1148/1099ms`，仍高于 `<1000ms` 线。真实 loopback pause/refine 与 exact worker 硬终止+Retry 已通过；DWM 运行新增 1,580 帧且零丢失，但因操作者 completion 未写入只能判 `inconclusive`。I3 最初两次 60 秒资格为 `23/25`、`24/25`；改为不降低 25 门槛的 75 秒分阶段协议后，v5 以 31 final（故障前 14、恢复后 17）和 29 refined 严格通过，SQLite/导出/资源/transport/worker 与存储恢复也全部通过。两小时验收仍需运行期间的操作者原生拖动，尚未启动。实际设备移除、Windows 睡眠/唤醒和 I2 原生拖动证明仍待。代码签名和干净 Windows 快照按当前决定不阻断本轮内部 MVP，但这不会把未执行的音频步骤改写成通过。详见 [I2 交互/恢复](docs/validation/i2-interaction-recovery.md) 与 [I3 real-audio soak](docs/validation/i3-live-audio-soak.md)。
+
+I4 非音频子门禁现已有专用机 runner、固定旧档 fixture、严格 JSON verifier 和回归契约。它要求真正干净的 Windows 11 标准用户交互安装精确 NSIS、从正式设置页公网首下、断网复启、真实系统保存对话框、正式 `userData` 卸载保留及离线重装；全程不得点击 Start。当前开发机已有仓库、Node 与旧 `userData`，所以尚无合格执行报告，状态仍为“入口完成 / 专用机待跑”。即使取得报告也只能是 `pass/partial`，媒体权限、真实声源、真实 ASR 与完整 I4 仍留在白天音频验收。详见 [I4 非音频 NSIS 子门禁](docs/validation/i4-nonaudio-nsis.md)。
 
 针对用户看到的 `electron.exe / 0x80000003`，当前没有 dump、发生时间或 native stack。现场 stderr 与固定 Node/libuv 源码只证明了 `PostQueuedCompletionStatus(6) → uv_fatal_error → DebugBreak` 能直接产生该异常的即时机制；具体关闭竞态、发送者和进程角色仍没有调用栈级证明。批准模型活跃诊断的六个 realtime/refine 子进程均优雅 `exitCode=0`、fatal 为 0；当前权威 I2 的 10 轮又分别绑定了外部观察的 exact child `exitCode=0`/无运行器终止旁证。另有一次未纳入权威 bundle 的运行，在报告 `pass` stdout 完成后悬挂，正是退出旁证要排除的误绿情形。sidecar 只证明本轮内部 `pass` 后没有悬挂到超时或被运行器终止，不是签名、远端执行、硬件身份、硬崩溃恢复或历史异常根因证明；开发态与打包态的 clean exit 也不能声明异常已永久修复。详见 [Electron breakpoint 调查](docs/validation/electron-breakpoint-investigation.md)、[I2 exit-bound bundle](docs/validation/i2-real-source-series.md)和 [B5 打包证据](docs/validation/b5-packaging.md)。
 
@@ -43,11 +49,29 @@ $env:LIVE_SUBTITLE_DEV_MODEL='x-asr-480ms'
 npm start
 ```
 
-测试按“局部回归 / 联合 CI / 实机验收”分层；单元测试通过不等于功能完成：
+测试按 core / integration / evidence 三条非交互 lane 与独立实机验收分层；`test:ci` 只调用一次完整回归，不再重复运行 integration：
 
 ```powershell
-npm run test:integration # 会议回环、麦克风用户旅程的跨模块一致性
-npm run test:ci          # CI 门禁：联合旅程 + 完整回归
+npm run test:core        # 契约、main、runtime、storage、UI 局部不变量
+npm run test:integration # 跨模块确定性用户旅程
+npm run test:evidence    # Gate、verifier 与结构化证据
+npm test                 # 依次运行上述三条 lane
+npm run test:ci          # CI 别名；不重复 integration
+```
+
+I3 非音频预资格可单独复跑；它不会打开任何音频设备：
+
+```powershell
+node scripts/i3-nonaudio-soak.js --report .artifacts/i3-nonaudio/report.json
+node scripts/verify-i3-nonaudio-report.js .artifacts/i3-nonaudio/report.json
+```
+
+I4 非音频入口不能在普通开发机或 CI 冒充运行；把安装器、runner 和 fixture 单独复制到
+专用干净 Win11 标准用户快照后，按 [I4 非音频 NSIS 子门禁](docs/validation/i4-nonaudio-nsis.md)
+执行。带回的报告在仓库内用下式严格校验：
+
+```powershell
+node scripts/verify-i4-nonaudio-nsis-report.js .\path\to\i4-nonaudio-report.json
 ```
 
 打包入口（内部候选尚未签名）：
@@ -149,7 +173,7 @@ src/
 
 ## 下一步
 
-见 [PLAN.md](PLAN.md)（Rev.13）：来源互斥、默认 SQLite-only 生命周期、文本历史/导出、ModelManager、真实产品壳、B5 打包态资格及 I2 schema-v6 退出绑定重复运行证据已通过各自门禁；但 I2 本身仍未关闭。当前按 I2 loopback 性能/两来源交互与恢复 → I3 长稳 → I4 精确 NSIS 的干净 Win11 发布验收闭环字幕 MVP。之后才做 Pi Core/Electron 隔离探针、项目自有插件宿主、独立增强文本和会后结构化纪要；向量检索最后评估。任何能力都必须有跨模块用户旅程，不能只交单测。
+见 [PLAN.md](PLAN.md)（Rev.14）：来源互斥、SQLite-only 生命周期、旧档迁移、历史/导出、ModelManager、当前 B5 候选、packaged 离线复启及 I3 非音频预资格已有确定性证据。2026-08-01 的实机音频已关闭 Gate 0C、pause/refine 与 worker crash/Retry，但 I2 延迟、原生拖动、设备/睡眠操作、I3 资格与两小时长测仍未关闭；干净 Windows 快照与代码签名暂不纳入本轮。之后才做 Pi Core/Agent 能力；向量检索最后评估。
 
 - 窗口壳和交互不变量：[docs/subtitle-window.md](docs/subtitle-window.md)
 - 视觉/UI 模型交接：[docs/ui-design-brief.md](docs/ui-design-brief.md)
