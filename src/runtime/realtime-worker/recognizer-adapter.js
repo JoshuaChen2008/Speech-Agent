@@ -15,6 +15,8 @@
      adapter.endSegment(): string | null
        — 段收束时调用；返回定稿文本并复位内部流状态；null/空串表示放弃
          本段（不发 final）。
+     adapter.discardProvisional?(): void
+       — 可选。丢弃尚未获 Silero 确认的能量候选，不产生 final 或任何事件。
      adapter.dispose(): void
 
    默认注册表里只有 NullRecognizerAdapter——它消费帧但永不产出文本，
@@ -39,6 +41,8 @@ class NullRecognizerAdapter {
   endSegment () {
     return null
   }
+
+  discardProvisional () {}
 
   dispose () {}
 }

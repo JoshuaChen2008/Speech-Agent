@@ -696,7 +696,29 @@ test('completed sessions expose text-free I2 diagnostics from the real compositi
   worker.emitStats({
     endReceived: false,
     badSampleTypeFrames: 0,
-    sources: { mic: { framesIngested: 12, sequenceGapCount: 0, missedFrames: 0, captionsEmitted: 2 } }
+    sources: {
+      mic: {
+        framesIngested: 12,
+        sequenceGapCount: 0,
+        missedFrames: 0,
+        captionsEmitted: 2,
+        provisionalCandidatesStarted: 1,
+        provisionalFramesFed: 7,
+        provisionalAudioMsFed: 280,
+        provisionalHangoverFramesFed: 1,
+        provisionalDiscards: 0,
+        provisionalSuppressions: 0,
+        provisionalConfirmed: 1,
+        provisionalConfirmedAfterSuppression: 0,
+        provisionalFirstCandidateFrameSequence: 4,
+        provisionalFirstCandidateAudioTimestampMs: 160,
+        provisionalLastCandidateFirstFrameSequence: 4,
+        provisionalLastCandidateFirstAudioTimestampMs: 160,
+        provisionalLastCandidateFramesFed: 7,
+        provisionalLastCandidateAudioMs: 280,
+        provisionalMaxCandidateAudioMs: 280
+      }
+    }
   })
   worker.droppedCaptionCount = 1
   host.stopCapture = async () => ({
@@ -713,6 +735,8 @@ test('completed sessions expose text-free I2 diagnostics from the real compositi
   assert.equal(diagnostics.input.sources.mic.track.labelSha256, 'a'.repeat(64))
   assert.equal(diagnostics.capture.mic.capturedFrames, 14)
   assert.equal(diagnostics.worker.sources.mic.framesIngested, 12)
+  assert.equal(diagnostics.worker.sources.mic.provisionalConfirmed, 1)
+  assert.equal(diagnostics.worker.sources.mic.provisionalLastCandidateAudioMs, 280)
   assert.equal(diagnostics.droppedCaptionCount, 1)
   assert.deepEqual(diagnostics.timingCalibrations, { audioHost: null, utility: null })
   assert.equal(JSON.stringify(diagnostics).includes('samples'), false)

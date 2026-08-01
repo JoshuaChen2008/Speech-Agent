@@ -65,6 +65,7 @@ const BASE_OPTIONS = { kind: 'silero', modelPath: 'unused-with-fake' }
 
 test('silero wrapper maps isDetected transitions to start/end events', () => {
   const vad = new SileroVad(BASE_OPTIONS, fakeNative([false, true, true, false, false]))
+  assert.equal(vad.provisionalRecognizerFeed, true)
   assert.equal(vad.push(speechFrame()).event, null)
   const start = vad.push(speechFrame())
   assert.equal(start.event, 'speech-start')
@@ -103,6 +104,7 @@ test('silero option validation rejects malformed configurations', () => {
   assert.throws(() => assertSileroVadOptions({ kind: 'silero', modelPath: 'x', threshold: 0 }), /threshold/)
   const normalized = assertSileroVadOptions({ kind: 'silero', modelPath: 'x' })
   assert.equal(normalized.threshold, 0.5)
+  assert.equal(normalized.minSpeechDuration, 0.25)
   assert.equal(normalized.minSilenceDuration, 1.0, 'the measured sentence-level default (see silero-vad.js rationale)')
   assert.ok(Object.isFrozen(normalized))
 })
@@ -139,6 +141,45 @@ test('real silero detects corpus speech segments and rejects a pure tone', { ski
     if (vad.push(tone).event === 'speech-start') toneSpeech = true
   }
   assert.equal(toneSpeech, false, 'a 997Hz pure tone must not be detected as speech (the energy placeholder fails this)')
+})
+
+test('product candidate prefeed reaches real Silero confirmation before its bounded cap', { skip: skipVad }, () => {
+  const sherpa = require('sherpa-onnx-node')
+  const { WorkerCore, SAMPLE_RATE } = require('../../src/runtime/realtime-worker/worker-core')
+  const core = new WorkerCore({
+    sessionId: 'silero-product-candidate-diagnostic',
+    sourceIds: ['loopback'],
+    vadFactory: () => new SileroVad({ kind: 'silero', modelPath: VAD_MODEL }),
+    preRollLimit: 6
+  })
+  const wave = sherpa.readWave(WAV_PATH)
+  let sequence = 0
+  let samplesFed = 0
+  const feed = (samples) => {
+    core.ingestFrame({
+      sourceId: 'loopback',
+      sequence: sequence++,
+      timestampSeconds: samplesFed / SAMPLE_RATE,
+      sampleCount: samples.length,
+      samples
+    })
+    samplesFed += samples.length
+  }
+
+  for (let offset = 0; offset < wave.samples.length; offset += 1600) {
+    feed(wave.samples.subarray(offset, Math.min(wave.samples.length, offset + 1600)))
+  }
+  for (let index = 0; index < 16; index += 1) feed(new Float32Array(1600))
+
+  const metrics = core.metrics().loopback
+  assert.equal(metrics.segmentsDetected, 1)
+  assert.equal(metrics.provisionalCandidatesStarted, 1)
+  assert.equal(metrics.provisionalDiscards, 0)
+  assert.equal(metrics.provisionalSuppressions, 0)
+  assert.equal(metrics.provisionalConfirmed, 1)
+  assert.ok(metrics.provisionalLastCandidateFramesFed >= 2)
+  assert.ok(metrics.provisionalLastCandidateAudioMs >= 200)
+  core.dispose()
 })
 
 test('silero plus the real recognizer keeps words the energy placeholder used to cut', { skip: skipFull }, () => {

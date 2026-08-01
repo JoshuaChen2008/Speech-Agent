@@ -87,6 +87,10 @@ class SileroVad {
   constructor (rawOptions, nativeVad) {
     const options = assertSileroVadOptions(rawOptions)
     this.maxSegmentFrames = options.maxSegmentFrames
+    /* WorkerCore may pre-feed only this VAD's energy-gated candidate frames
+       into the recognizer. Silero remains the sole authority that opens a
+       segment or permits a caption to leave the worker. */
+    this.provisionalRecognizerFeed = true
     this.vad = nativeVad || createNativeVad(options)
     this.inSpeech = false
     this.segmentFrames = 0

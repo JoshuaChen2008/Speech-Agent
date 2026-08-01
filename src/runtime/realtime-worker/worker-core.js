@@ -26,6 +26,10 @@ class SourcePipeline {
     this.sourceId = options.sourceId
     this.adapter = options.adapter
     this.vad = options.vad
+    /* Only a real Silero pipeline opts in: energy-gated candidate frames may
+       warm the recognizer, but Silero speech-start still owns segment creation
+       and every externally visible caption. */
+    this.provisionalRecognizerFeed = options.provisionalRecognizerFeed === true
     this.preRollLimit = options.preRollLimit === undefined ? 4 : options.preRollLimit
     /* B3：段定稿后把整段音频交给精修请求方（realtime-worker 决定是否发给
        refine worker）。null = 不保留段音频（结构模式零额外内存）。 */
@@ -38,6 +42,11 @@ class SourcePipeline {
     this.segmentOrdinal = 0
     this.segment = null
     this.preRoll = []
+    this.provisionalFramesFed = 0
+    this.provisionalFeedSuppressed = false
+    this.provisionalCandidateSamplesFed = 0
+    this.provisionalCandidateFirstFrameSequence = null
+    this.provisionalCandidateFirstAudioTimestampMs = null
     this.expectedFrameSequence = null
     this.metricsState = {
       framesIngested: 0,
@@ -49,7 +58,24 @@ class SourcePipeline {
       refinedEmitted: 0,
       peakRms: 0,
       firstSpeechStartFrameSequence: null,
-      firstSpeechStartAudioTimestampMs: null
+      firstSpeechStartAudioTimestampMs: null,
+      /* Text-free candidate-feed audit for real Silero sessions.  These are
+         source-relative sequence/duration counters only: no PCM, caption or
+         clock-domain scalar is retained in worker diagnostics. */
+      provisionalCandidatesStarted: 0,
+      provisionalFramesFed: 0,
+      provisionalAudioMsFed: 0,
+      provisionalDiscards: 0,
+      provisionalSuppressions: 0,
+      provisionalConfirmed: 0,
+      provisionalConfirmedAfterSuppression: 0,
+      provisionalFirstCandidateFrameSequence: null,
+      provisionalFirstCandidateAudioTimestampMs: null,
+      provisionalLastCandidateFirstFrameSequence: null,
+      provisionalLastCandidateFirstAudioTimestampMs: null,
+      provisionalLastCandidateFramesFed: 0,
+      provisionalLastCandidateAudioMs: 0,
+      provisionalMaxCandidateAudioMs: 0
     }
   }
 
@@ -72,6 +98,76 @@ class SourcePipeline {
       segment.chunks = []
       try { this.onSegmentFinalized(info) } catch { /* requester failures stay isolated */ }
     }
+  }
+
+  beginProvisionalCandidate (frame) {
+    if (this.provisionalFramesFed > 0) return
+    this.provisionalCandidateSamplesFed = 0
+    this.provisionalCandidateFirstFrameSequence = frame.sequence
+    this.provisionalCandidateFirstAudioTimestampMs = Number((frame.timestampSeconds * 1000).toFixed(3))
+    this.metricsState.provisionalCandidatesStarted += 1
+    if (this.metricsState.provisionalFirstCandidateFrameSequence === null) {
+      this.metricsState.provisionalFirstCandidateFrameSequence = frame.sequence
+      this.metricsState.provisionalFirstCandidateAudioTimestampMs = this.provisionalCandidateFirstAudioTimestampMs
+    }
+  }
+
+  finishProvisionalCandidate (outcome) {
+    if (!this.provisionalRecognizerFeed || this.provisionalFramesFed === 0) return false
+    const candidateAudioMs = Number(((this.provisionalCandidateSamplesFed / SAMPLE_RATE) * 1000).toFixed(3))
+    this.metricsState.provisionalLastCandidateFirstFrameSequence = this.provisionalCandidateFirstFrameSequence
+    this.metricsState.provisionalLastCandidateFirstAudioTimestampMs = this.provisionalCandidateFirstAudioTimestampMs
+    this.metricsState.provisionalLastCandidateFramesFed = this.provisionalFramesFed
+    this.metricsState.provisionalLastCandidateAudioMs = candidateAudioMs
+    this.metricsState.provisionalMaxCandidateAudioMs = Math.max(
+      this.metricsState.provisionalMaxCandidateAudioMs,
+      candidateAudioMs
+    )
+    if (outcome === 'confirmed') {
+      this.metricsState.provisionalConfirmed += 1
+    } else {
+      if (typeof this.adapter.discardProvisional === 'function') this.adapter.discardProvisional()
+      else this.adapter.endSegment()
+      this.metricsState.provisionalDiscards += 1
+      if (outcome === 'suppressed') this.metricsState.provisionalSuppressions += 1
+    }
+    this.provisionalFramesFed = 0
+    this.provisionalCandidateSamplesFed = 0
+    this.provisionalCandidateFirstFrameSequence = null
+    this.provisionalCandidateFirstAudioTimestampMs = null
+    return true
+  }
+
+  resetProvisionalCandidate () {
+    this.finishProvisionalCandidate('discarded')
+    this.provisionalFeedSuppressed = false
+  }
+
+  bufferPreRollFrame (frame) {
+    this.preRoll.push(frame)
+    if (this.preRoll.length > this.preRollLimit) this.preRoll.shift()
+  }
+
+  feedProvisionalFrame (frame) {
+    if (!this.provisionalRecognizerFeed || this.provisionalFeedSuppressed) return false
+    this.beginProvisionalCandidate(frame)
+    this.adapter.acceptFrame(frame.samples, frame.timestampSeconds)
+    /* Decode eagerly, but never retain or publish candidate text before
+       Silero confirms the same candidate as a real speech segment. */
+    this.adapter.poll()
+    this.provisionalFramesFed += 1
+    this.provisionalCandidateSamplesFed += frame.sampleCount
+    this.metricsState.provisionalFramesFed += 1
+    this.metricsState.provisionalAudioMsFed = Number((
+      this.metricsState.provisionalAudioMsFed + ((frame.sampleCount / SAMPLE_RATE) * 1000)
+    ).toFixed(3))
+    if (this.provisionalFramesFed >= this.preRollLimit) {
+      /* Cap rejection cost at the pre-roll window.  A continuing non-speech
+         sound (for example a pure tone) cannot keep a recognizer stream hot. */
+      this.finishProvisionalCandidate('suppressed')
+      this.provisionalFeedSuppressed = true
+    }
+    return true
   }
 
   frameEndSeconds (frame) {
@@ -175,17 +271,31 @@ class SourcePipeline {
             })
           } catch { /* observability must not affect recognition */ }
         }
-        for (const buffered of opening) {
-          this.adapter.acceptFrame(buffered.samples, buffered.timestampSeconds)
-          if (this.onSegmentFinalized) this.segment.chunks.push(buffered.samples)
+        const hadProvisionalFeed = this.provisionalFramesFed > 0 && !this.provisionalFeedSuppressed
+        if (hadProvisionalFeed) this.finishProvisionalCandidate('confirmed')
+        else if (this.provisionalFeedSuppressed) this.metricsState.provisionalConfirmedAfterSuppression += 1
+        if (hadProvisionalFeed) {
+          /* Candidate frames in preRoll reached this stream exactly once
+             already; this speech-start frame has not yet been pre-fed. */
+          this.adapter.acceptFrame(frame.samples, frame.timestampSeconds)
+          if (this.onSegmentFinalized) {
+            for (const buffered of opening) this.segment.chunks.push(buffered.samples)
+          }
+        } else {
+          for (const buffered of opening) {
+            this.adapter.acceptFrame(buffered.samples, buffered.timestampSeconds)
+            if (this.onSegmentFinalized) this.segment.chunks.push(buffered.samples)
+          }
         }
+        this.provisionalFeedSuppressed = false
         this.maybeEmitPartial(events, this.frameEndSeconds(frame))
       } else if (verdict.voiced) {
         /* VAD 确认前的 voiced 帧：入段前缓冲，开段时补喂。 */
-        this.preRoll.push(frame)
-        if (this.preRoll.length > this.preRollLimit) this.preRoll.shift()
+        this.bufferPreRollFrame(frame)
+        this.feedProvisionalFrame(frame)
       } else {
         this.preRoll = []
+        this.resetProvisionalCandidate()
       }
       return events
     }
@@ -214,6 +324,8 @@ class SourcePipeline {
     const events = []
     if (this.segment) {
       this.finalizeSegment(events, Math.max(timestampSeconds, this.segment.t0))
+    } else {
+      this.resetProvisionalCandidate()
     }
     this.vad.reset()
     this.preRoll = []
@@ -266,11 +378,13 @@ class WorkerCore {
       if (!Number.isInteger(sequenceBase) || sequenceBase < 0) {
         throw new TypeError(`sequenceBases.${sourceId} must be a non-negative integer`)
       }
+      const vad = vadFactory(sourceId)
       this.sources.set(sourceId, new SourcePipeline({
         sessionId: options.sessionId,
         sourceId,
         adapter: adapterFactory(sourceId),
-        vad: vadFactory(sourceId),
+        vad,
+        provisionalRecognizerFeed: vad?.provisionalRecognizerFeed === true,
         preRollLimit: options.preRollLimit,
         onSegmentStarted: options.onSegmentStarted,
         onSegmentFinalized: options.onSegmentFinalized,

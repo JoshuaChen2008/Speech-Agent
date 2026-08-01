@@ -298,7 +298,7 @@ process.parentPort.on('message', (event) => {
         registerSherpaRecognizer(config.recognizerProfile, message.recognizer)
       }
       /* 真实 VAD（silero）：有选项才 require 原生实现；否则 EnergyVad 兜底。
-         段前缓冲放宽到 6 帧（600ms）补偿 silero 的起点判定滞后。 */
+         段前缓冲/候选预热窗口为 6 帧（600ms），不改变 Silero 的时间阈值。 */
       let vadFactory
       let preRollLimit
       if (message.vad && typeof message.vad === 'object') {

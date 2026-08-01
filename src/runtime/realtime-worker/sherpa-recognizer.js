@@ -144,6 +144,14 @@ class SherpaOnlineRecognizerAdapter {
     return typeof text === 'string' ? text.trim() : null
   }
 
+  /* 能量候选尚未被 Silero 确认时只允许预热流式模型，不可形成段或文本。
+     丢掉当前 stream 与正常 endSegment 后的不可复用语义相同，但不注入尾静音
+     也不进行 final decode。 */
+  discardProvisional () {
+    if (this.disposed) return
+    this.stream = null
+  }
+
   dispose () {
     this.disposed = true
     this.stream = null

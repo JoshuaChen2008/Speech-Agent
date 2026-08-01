@@ -46,6 +46,47 @@ function scriptedAdapter () {
   }
 }
 
+function scriptedProvisionalVad (verdicts) {
+  let index = 0
+  return {
+    provisionalRecognizerFeed: true,
+    push () {
+      const verdict = verdicts[index++] || { event: null, voiced: false, forced: false, rms: 0 }
+      return { forced: false, rms: 0.2, ...verdict }
+    },
+    reset () {}
+  }
+}
+
+function provisionalAdapter () {
+  let buffered = []
+  return {
+    accepted: [],
+    polls: 0,
+    discarded: 0,
+    finalized: 0,
+    acceptFrame (_samples, timestampSeconds) {
+      buffered.push(timestampSeconds)
+      this.accepted.push(timestampSeconds)
+    },
+    poll () {
+      this.polls += 1
+      return buffered.length > 0 ? `candidate@${buffered[0].toFixed(1)}` : null
+    },
+    endSegment () {
+      this.finalized += 1
+      const text = buffered.length > 0 ? `final@${buffered[0].toFixed(1)}` : null
+      buffered = []
+      return text
+    },
+    discardProvisional () {
+      this.discarded += 1
+      buffered = []
+    },
+    dispose () {}
+  }
+}
+
 test('energy vad opens on sustained voice, closes on silence, and force-ends long segments', () => {
   const vad = new EnergyVad({ threshold: 0.05, voicedFramesToStart: 2, silentFramesToEnd: 3, maxSegmentFrames: 6 })
   const loud = new Float32Array(FRAME_SAMPLES).fill(0.3)
@@ -80,6 +121,100 @@ test('null recognizer adapter consumes frames but never produces text', () => {
 
   assert.throws(() => createRecognizerAdapter('balanced'), /unknown recognizer profile/)
   assert.throws(() => registerRecognizerAdapter('null', () => null), /already registered/)
+})
+
+test('Silero-only provisional feed warms a candidate but never publishes before confirmation', () => {
+  const adapter = provisionalAdapter()
+  const core = new WorkerCore({
+    sessionId: 'silero-provisional',
+    sourceIds: ['loopback'],
+    adapterFactory: () => adapter,
+    vadFactory: () => scriptedProvisionalVad([
+      { event: null, voiced: true },
+      { event: 'speech-start', voiced: true }
+    ]),
+    preRollLimit: 6
+  })
+
+  assert.deepEqual(core.ingestFrame(frame('loopback', 0, 0.3)), [], 'energy-only candidate must remain invisible')
+  const events = core.ingestFrame(frame('loopback', 1, 0.3))
+
+  assert.equal(events.length, 1)
+  assert.equal(events[0].kind, 'partial')
+  assert.equal(events[0].text, 'candidate@0.0', 'candidate text may release only after Silero start')
+  assert.equal(events[0].t0, 0, 'the confirmed segment retains its pre-roll origin')
+  assert.deepEqual(adapter.accepted, [0, 0.1], 'candidate audio must reach the recognizer exactly once')
+  assert.equal(adapter.discarded, 0)
+  assert.equal(adapter.finalized, 0)
+})
+
+test('unconfirmed energy candidates are discarded and cannot contaminate a later Silero segment', () => {
+  const adapter = provisionalAdapter()
+  const core = new WorkerCore({
+    sessionId: 'silero-provisional-reject',
+    sourceIds: ['loopback'],
+    adapterFactory: () => adapter,
+    vadFactory: () => scriptedProvisionalVad([
+      { event: null, voiced: true },
+      { event: null, voiced: false },
+      { event: null, voiced: true },
+      { event: 'speech-start', voiced: true }
+    ]),
+    preRollLimit: 6
+  })
+
+  assert.deepEqual(core.ingestFrame(frame('loopback', 0, 0.3)), [])
+  assert.deepEqual(core.ingestFrame(frame('loopback', 1, 0)), [])
+  assert.deepEqual(core.ingestFrame(frame('loopback', 2, 0.3)), [])
+  const events = core.ingestFrame(frame('loopback', 3, 0.3))
+
+  assert.equal(adapter.discarded, 1, 'rejected candidate must reset without a final caption')
+  assert.equal(adapter.finalized, 0)
+  assert.equal(events.length, 1)
+  assert.equal(events[0].text, 'candidate@0.2', 'a later segment cannot reuse rejected candidate state')
+  assert.equal(events[0].t0, 0.2)
+  const metrics = core.metrics().loopback
+  assert.equal(metrics.provisionalCandidatesStarted, 2)
+  assert.equal(metrics.provisionalDiscards, 1)
+  assert.equal(metrics.provisionalSuppressions, 0)
+  assert.equal(metrics.provisionalConfirmed, 1)
+  assert.equal(metrics.provisionalFirstCandidateFrameSequence, 0)
+  assert.equal(metrics.provisionalLastCandidateFirstFrameSequence, 2)
+  assert.equal(metrics.provisionalLastCandidateAudioMs, 100)
+  assert.doesNotMatch(JSON.stringify(metrics), /candidate@|"text"/)
+})
+
+test('provisional recognizer work is bounded when Silero keeps rejecting sustained energy', () => {
+  const adapter = provisionalAdapter()
+  const core = new WorkerCore({
+    sessionId: 'silero-provisional-bound',
+    sourceIds: ['loopback'],
+    adapterFactory: () => adapter,
+    vadFactory: () => scriptedProvisionalVad([
+      { event: null, voiced: true },
+      { event: null, voiced: true },
+      { event: null, voiced: true },
+      { event: null, voiced: true }
+    ]),
+    preRollLimit: 2
+  })
+
+  for (let sequence = 0; sequence < 4; sequence += 1) {
+    assert.deepEqual(core.ingestFrame(frame('loopback', sequence, 0.3)), [])
+  }
+
+  assert.equal(adapter.discarded, 1)
+  assert.equal(adapter.polls, 2, 'after one pre-roll window no more model work is allowed for the rejected sound')
+  assert.equal(adapter.finalized, 0)
+  const metrics = core.metrics().loopback
+  assert.equal(metrics.provisionalCandidatesStarted, 1)
+  assert.equal(metrics.provisionalFramesFed, 2)
+  assert.equal(metrics.provisionalAudioMsFed, 200)
+  assert.equal(metrics.provisionalDiscards, 1)
+  assert.equal(metrics.provisionalSuppressions, 1)
+  assert.equal(metrics.provisionalConfirmed, 0)
+  assert.equal(metrics.provisionalLastCandidateFramesFed, 2)
+  assert.equal(metrics.provisionalLastCandidateAudioMs, 200)
 })
 
 test('worker core with the null adapter detects segments but emits zero captions', () => {
@@ -219,7 +354,11 @@ test('worker clock calibration performs serial parent/utility probes and selects
       probeId: message.probeId,
       clockId: UTILITY_CLOCK_ID,
       r1: clockMs,
-      r2: clockMs + 0.01
+      /* This is a zero-work fake responder.  Giving it a synthetic 0.01ms
+         remote interval can exceed an actually sub-0.01ms parent round trip
+         when the full core suite is warm, producing a negative corrected RTT
+         unrelated to the serial-probe behavior under test. */
+      r2: clockMs
     }))
   }
   const host = new RealtimeWorkerHost({ electron: { utilityProcess: {} } })
