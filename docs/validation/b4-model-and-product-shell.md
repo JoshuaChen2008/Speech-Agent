@@ -53,20 +53,24 @@ WAV 误称为现场录音，但产品仍统一禁止落音频文件。
 启动唯一、隔离 userData 的 Electron 进程；只在 HTTP 内容、真实张量/ASR 和物理声卡边界
 使用受控 fixture，但 `src/main.js`、四个 renderer、preload/IPC、生产 `ModelManager`、
 Windows tar、SQLite utility process 与退出屏障均为产品实现。脚本通过真实 DOM 操作完成
-听写首设、资源页点击下载、开始、定稿显示、暂停/恢复、停止、终态历史、
-205 段详情的 5 页前后翻批、工具条再次打开模型资源页，并由应用自身正常退出，不按
+听写首设、资源页点击下载、开始、定稿显示、暂停/恢复、停止、终态历史、只读旧 JSONL
+冷启动迁移、205 段详情的 5 页前后翻批、经真实 renderer/preload/IPC/main 保存三格式完整导出、
+工具条再次打开模型资源页，并由应用自身正常退出，不按
 `electron.exe` 名称杀进程。CI 同时严格校验产品旅程报告和隐私安全的 role exit evidence；
 普通 `npm start` 默认只认 userData 内严格 marker，不再被仓库模型悄悄遮蔽下载入口；
 外部模型路径必须显式打开开发开关。
 
 结果见 [product-shell-results.json](product-shell-results.json)：Electron 43.2.0，
 四个可见 renderer，`crashEventCount=0`；模型从 `missing` 经 `downloading`、`verifying`
-到 `ready`，观察到断点 Range、3 个 marker 与空闲热启用；本次字幕会话进入历史。
-历史到达第 201–205 条、前后翻批成功且 `historyMaxTimelineNodes=50`。MVP UI 不展示翻译
+到 `ready`，观察到断点 Range、3 个 marker 与空闲热启用；旧档、205 段记录和本次会话共
+3 条终态历史，旧 JSONL SHA 不变且没有第二个 JSONL。历史到达第 201–205 条、前后翻批成功，
+`historyMaxTimelineNodes=50`；受控保存路径下 txt/md/srt 各含完整 205 段。MVP UI 不展示翻译
 入口，未打开物理音源且未落音频；报告保持 `gateStatus=partial`，并明确保留
 fake-ASR、受控模型 fixture 无真实张量、205 段非两小时 I3、非 I4 四项限制。
 
-生命周期补丁后又通过 exact-child supervisor 重跑同一多窗口联动旅程。产品壳报告仍为
+生命周期补丁后又通过 exact-child supervisor 重跑同一多窗口联动旅程。另用完全相同的
+userData 离线复启，未启动 fixture server、模型 fetch 尝试为 0，三个 ready marker、三条既有
+历史、迁移幂等性和三份导出均保留；新会话停止后成为第四条历史。产品壳报告仍为
 `pass / partial`，同时 role exit evidence 为 `clean-exit`：main 完整经历 ready、bootstrap、
 quit-requested 与 will-quit，主进程状态码为 0，incident 为 0，未观察到 breakpoint。
 supervisor 与 main 只交换固定枚举的生命周期、角色、退出原因和状态码分类；报告不保存
@@ -96,10 +100,13 @@ UI/安装/持久化接线，**不能**证明真实张量推理、真实 GitHub �
 
 B5 使用与正式包相同的 ASAR、native unpack 与 Electron fuse 布局，从真实 packaged
 test executable 重跑设置点击、Range 续传、三资源 marker、热启用、字幕、暂停/恢复、
-停止、SQLite 历史与 205 段分页；另在 packaged utility 中实际加载 sherpa addon/DLL，
+停止、旧 JSONL 迁移、SQLite 历史、205 段分页与三格式导出，并从同一 userData 做第二次
+完全离线启动；另在两次 packaged utility 中实际加载 sherpa addon/DLL，
 并对 ASAR 中的 storage utility 执行完整 DB0 资格检查。独立 exact-child 证据为
 `clean-exit`、incident `0`、未观察到 breakpoint。正式 x64 ASAR/NSIS 也已通过内容负扫描、
-精确 SHA 绑定与隔离安装/卸载机械资格。该候选未签名，打包旅程是明示的测试
+精确 SHA `36c75120…95f4ae` 绑定与隔离安装/卸载机械资格；同一 run ID、四份报告 SHA 与
+111 文件产品载荷 SHA `6c986613…f577` 另由 B5 binding 报告闭合，卸载后隔离 APPDATA 中
+与应用无关的固定哨兵 SHA 不变；正式应用未启动，因此不证明真实 userData。该候选未签名，打包旅程是明示的测试
 variant，不是从精确 NSIS 安装后启动；所以只关闭 B5，不关闭 I4。完整证据见
 [B5 打包态确定性资格](b5-packaging.md)。
 
@@ -143,7 +150,9 @@ captured/sent/ingested 均为 128 帧，dropped、sequence gap 和 bad sample �
 
 ## 尚未关闭
 
-- 物理 mic I2、两小时 I3、干净 Win11 公网下载/权限/安装 I4；
-- 精确 NSIS 安装后的完整应用旅程、旧 userData 保留/重装复用与 SmartScreen/签名（I4）；
+- 物理来源 I2、真实两小时声源 I3、干净 Win11 公网下载/权限/安装 I4；3,600 段虚拟两小时、
+  SQLite 重开、WAL/资源/分页/DOM 与全量导出的 I3 非音频预资格已通过；
+- 精确 NSIS 安装后的完整应用旅程、应用实际产生 userData 后的重装复用与 SmartScreen；
+  代码签名按当前 MVP 决策暂缓，不阻断内部候选，但对外分发前仍需单独决策；
 - `0x80000003` 的 native stack 级根因；若隐私安全 role evidence 再次观察到 breakpoint，
   再在冻结输入、无物理音频的隔离环境中按 exact PID 获取一次受控 dump。

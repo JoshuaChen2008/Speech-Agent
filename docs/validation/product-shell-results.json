@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "kind": "product-shell-smoke",
-  "generatedAt": "2026-07-31T04:14:49.212Z",
+  "generatedAt": "2026-07-31T15:50:42.472Z",
   "result": "pass",
   "gateStatus": "partial",
   "runtime": {
@@ -27,7 +27,10 @@
     "pauseResume": true,
     "finalCaptionRendered": true,
     "downloadedModelSessionInHistory": true,
-    "terminalHistoryCount": 2,
+    "terminalHistoryCount": 3,
+    "legacyJsonlMigrated": true,
+    "legacySessionVisible": true,
+    "legacySourceReadOnly": true,
     "longHistorySegmentCount": 205,
     "historyPageCount": 5,
     "historyPageSize": 50,
@@ -35,6 +38,14 @@
     "historyReachedEnd": true,
     "historyBackForwardNavigation": true,
     "historyAriaRangeAligned": true,
+    "historyExportDialogCount": 3,
+    "historyExportFormats": [
+      "txt",
+      "md",
+      "srt"
+    ],
+    "historyExportArtifactCount": 3,
+    "historyExportFullSegmentCount": 205,
     "resourcesPaneOpenedFromToolbar": true,
     "modelState": "ready",
     "resourceCount": 3,

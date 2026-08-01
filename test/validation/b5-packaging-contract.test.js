@@ -16,6 +16,9 @@ const {
   validatePackagedProductShellReport
 } = require('../../scripts/verify-packaged-product-shell-report')
 const {
+  validateProductShellRestartReport
+} = require('../../scripts/verify-product-shell-restart-report')
+const {
   validateElectronExitEvidence
 } = require('../../scripts/verify-electron-exit-evidence')
 const {
@@ -26,12 +29,23 @@ const {
   parseArguments: parseNsisArguments,
   validateNsisLifecycleReport
 } = require('../../scripts/qualify-nsis-lifecycle')
+const { IDENTITY_VERSION } = require('../../src/main/services/product-payload-identity')
+const {
+  readAndValidatePackagedRunBindingReport,
+  sha256File
+} = require('../../scripts/verify-packaged-run-binding')
 
 const ROOT = path.resolve(__dirname, '../..')
 const VALIDATION_DIR = path.join(ROOT, 'docs', 'validation')
+const SAMPLE_RUN_ID = 'b5-00000000-0000-4000-8000-000000000000'
+const SAMPLE_PAYLOAD_SHA256 = 'b'.repeat(64)
 
 function readValidationReport (name) {
   return JSON.parse(fs.readFileSync(path.join(VALIDATION_DIR, name), 'utf8'))
+}
+
+function validationReportPath (name) {
+  return path.join(VALIDATION_DIR, name)
 }
 
 test('release package uses an explicit ASAR allowlist, hardened fuses and per-user NSIS', () => {
@@ -92,7 +106,7 @@ test('packaged runner strips Node and every subtitle development environment sea
 
 test('layout report validator separates the release installer from the test package', () => {
   const base = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: 'packaged-layout-qualification',
     generatedAt: '2026-07-31T00:00:00.000Z',
     result: 'pass',
@@ -108,7 +122,12 @@ test('layout report validator separates the release installer from the test pack
       mainEntry: 'scripts/product-shell-smoke.js',
       appExecutableX64: true,
       appAsarPresent: true,
+      appExecutableSha256: 'c'.repeat(64),
+      appAsarSha256: 'd'.repeat(64),
       asarEntryCount: 100,
+      productPayloadVersion: IDENTITY_VERSION,
+      productPayloadFileCount: 80,
+      productPayloadSha256: SAMPLE_PAYLOAD_SHA256,
       installerPresent: false,
       installerSha256: null,
       signingStatus: 'not-assessed'
@@ -125,6 +144,7 @@ test('layout report validator separates the release installer from the test pack
       unpackedBinaryCount: REQUIRED_NATIVE_FILES.length,
       allMarkedUnpacked: true
     },
+    evidenceBinding: null,
     limitations: ['test-only-main-entry', 'win-unpacked-not-nsis-installed', 'not-clean-machine-i4']
   }
   assert.equal(validatePackageLayoutReport(base, 'smoke'), base)
@@ -134,7 +154,21 @@ test('layout report validator separates the release installer from the test pack
   }, 'release'), /installer/)
   assert.deepEqual(parseLayoutArguments([
     '--package-dir', 'package', '--variant', 'smoke', '--report', 'report.json'
-  ]), { packageDir: 'package', variant: 'smoke', report: 'report.json', installer: null })
+  ]), {
+    packageDir: 'package',
+    variant: 'smoke',
+    report: 'report.json',
+    installer: null,
+    qualificationBinding: null
+  })
+  assert.throws(() => parseLayoutArguments([
+    '--package-dir', 'package', '--variant', 'release', '--report', 'report.json',
+    '--installer', 'candidate.exe'
+  ]), /requires --qualification-binding/)
+  assert.throws(() => parseLayoutArguments([
+    '--package-dir', 'package', '--variant', 'smoke', '--report', 'report.json',
+    '--qualification-binding', 'binding.json'
+  ]), /cannot claim a release qualification binding/)
 })
 
 test('packaged product report requires ASAR, native utility and SQLite round-trip evidence', () => {
@@ -158,6 +192,14 @@ test('packaged product report requires ASAR, native utility and SQLite round-tri
     packagedDb0ExactExitCode: 0,
     releaseCandidate: false,
     installedViaNsis: false
+  }
+  report.qualification = {
+    runId: SAMPLE_RUN_ID,
+    phase: 'fresh',
+    freshProductReportSha256: null,
+    productPayloadVersion: IDENTITY_VERSION,
+    productPayloadFileCount: 80,
+    productPayloadSha256: SAMPLE_PAYLOAD_SHA256
   }
   report.limitations = report.limitations
     .filter((limitation) => limitation !== 'not-packaged-i4')
@@ -184,7 +226,7 @@ test('packaged smoke source starts at packaged argv and probes native code in a 
 test('NSIS lifecycle report binds install/uninstall mechanics without claiming an app journey', () => {
   const installerSha256 = 'a'.repeat(64)
   const report = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: 'nsis-lifecycle-qualification',
     generatedAt: '2026-07-31T00:00:00.000Z',
     result: 'pass',
@@ -201,15 +243,33 @@ test('NSIS lifecycle report binds install/uninstall mechanics without claiming a
     },
     dataPolicy: {
       configuredToPreserveUserData: true,
-      userDataTouchedByQualification: false,
-      userDataPreservationRuntimeVerified: false
+      isolatedAppDataEnvironment: true,
+      preservationProbeKind: 'unrelated-isolated-appdata-sentinel',
+      preservationProbeOwnedByApplication: false,
+      preservationProbeUnchanged: true,
+      applicationUserDataPathObserved: false,
+      applicationUserDataWriteExercised: false
     },
-    limitations: ['silent-installer-mechanics-only', 'application-not-launched', 'not-clean-machine-i4']
+    limitations: [
+      'silent-installer-mechanics-only',
+      'application-not-launched',
+      'application-userdata-path-not-observed',
+      'application-userdata-write-not-exercised',
+      'not-clean-machine-i4'
+    ]
   }
   assert.equal(validateNsisLifecycleReport(report, installerSha256), report)
   assert.throws(() => validateNsisLifecycleReport({
     ...report,
     lifecycle: { ...report.lifecycle, applicationLaunched: true }
+  }), /invalid NSIS/)
+  assert.throws(() => validateNsisLifecycleReport({
+    ...report,
+    dataPolicy: { ...report.dataPolicy, preservationProbeUnchanged: false }
+  }), /invalid NSIS/)
+  assert.throws(() => validateNsisLifecycleReport({
+    ...report,
+    dataPolicy: { ...report.dataPolicy, applicationUserDataPathObserved: true }
   }), /invalid NSIS/)
 
   const installer = path.join(ROOT, '.artifacts', 'release', 'candidate.exe')
@@ -223,6 +283,11 @@ test('NSIS lifecycle report binds install/uninstall mechanics without claiming a
 })
 
 test('tracked B5 evidence is mutually consistent and preserves the I4 boundary', () => {
+  const productPath = validationReportPath('b5-packaged-product-results.json')
+  const exitPath = validationReportPath('b5-packaged-exit-results.json')
+  const restartPath = validationReportPath('b5-packaged-restart-results.json')
+  const restartExitPath = validationReportPath('b5-packaged-restart-exit-results.json')
+  const bindingPath = validationReportPath('b5-packaged-run-binding-results.json')
   const layout = validatePackageLayoutReport(
     readValidationReport('b5-packaged-layout-results.json'),
     'release'
@@ -230,9 +295,16 @@ test('tracked B5 evidence is mutually consistent and preserves the I4 boundary',
   const product = validatePackagedProductShellReport(
     readValidationReport('b5-packaged-product-results.json')
   )
+  const restart = validateProductShellRestartReport(
+    readValidationReport('b5-packaged-restart-results.json')
+  )
   const exit = validateElectronExitEvidence(
     readValidationReport('b5-packaged-exit-results.json')
   )
+  const restartExit = validateElectronExitEvidence(
+    readValidationReport('b5-packaged-restart-exit-results.json')
+  )
+  const binding = readAndValidatePackagedRunBindingReport(bindingPath)
   const lifecycle = validateNsisLifecycleReport(
     readValidationReport('b5-nsis-lifecycle-results.json'),
     layout.artifact.installerSha256
@@ -242,16 +314,47 @@ test('tracked B5 evidence is mutually consistent and preserves the I4 boundary',
   assert.equal(layout.artifact.installerSha256, lifecycle.artifact.installerSha256)
   assert.equal(layout.artifact.signingStatus, 'not-signed')
   assert.match(evidenceDocument, new RegExp(layout.artifact.installerSha256))
+  assert.equal(product.qualification.runId, binding.run.runId)
+  assert.equal(restart.qualification.runId, binding.run.runId)
+  assert.equal(layout.evidenceBinding.runId, binding.run.runId)
+  assert.equal(product.qualification.phase, 'fresh')
+  assert.equal(restart.qualification.phase, 'restart')
+  assert.equal(restart.qualification.freshProductReportSha256, binding.fresh.productReportSha256)
+  assert.equal(sha256File(productPath), binding.fresh.productReportSha256)
+  assert.equal(sha256File(exitPath), binding.fresh.exitReportSha256)
+  assert.equal(sha256File(restartPath), binding.restart.productReportSha256)
+  assert.equal(sha256File(restartExitPath), binding.restart.exitReportSha256)
+  assert.equal(sha256File(bindingPath), layout.evidenceBinding.bindingReportSha256)
+  assert.equal(layout.evidenceBinding.testExecutableSha256, binding.run.testExecutableSha256)
+  assert.equal(layout.evidenceBinding.freshProductReportSha256, binding.fresh.productReportSha256)
+  assert.equal(layout.evidenceBinding.freshExitReportSha256, binding.fresh.exitReportSha256)
+  assert.equal(layout.evidenceBinding.restartProductReportSha256, binding.restart.productReportSha256)
+  assert.equal(layout.evidenceBinding.restartExitReportSha256, binding.restart.exitReportSha256)
+  for (const qualification of [product.qualification, restart.qualification]) {
+    assert.equal(qualification.productPayloadVersion, binding.run.productPayloadVersion)
+    assert.equal(qualification.productPayloadFileCount, binding.run.productPayloadFileCount)
+    assert.equal(qualification.productPayloadSha256, binding.run.productPayloadSha256)
+  }
+  assert.equal(layout.artifact.productPayloadVersion, binding.run.productPayloadVersion)
+  assert.equal(layout.artifact.productPayloadFileCount, binding.run.productPayloadFileCount)
+  assert.equal(layout.artifact.productPayloadSha256, binding.run.productPayloadSha256)
   assert.equal(product.packaging.releaseCandidate, false)
   assert.equal(product.packaging.installedViaNsis, false)
   assert.ok(product.limitations.includes('not-clean-machine-i4'))
   assert.ok(product.limitations.includes('packaged-test-variant-not-release-installer'))
+  assert.equal(restart.journey.modelFetchAttemptCount, 0)
+  assert.equal(restart.journey.legacyMigrationIdempotent, true)
+  assert.equal(restart.journey.historyExportFullSegmentCount, 205)
+  assert.equal(restart.journey.terminalHistoryCountAfterRestart, 4)
   assert.equal(exit.outcome, 'clean-exit')
   assert.equal(exit.counters.incidentCount, 0)
   assert.equal(exit.attribution.breakpointObserved, false)
   assert.equal(exit.scope.packagedRuntime, true)
   assert.equal(exit.scope.nativeStackCaptured, false)
   assert.equal(exit.scope.rootCauseIdentified, false)
+  assert.equal(restartExit.outcome, 'clean-exit')
+  assert.equal(restartExit.counters.incidentCount, 0)
+  assert.equal(restartExit.scope.packagedRuntime, true)
   assert.ok(lifecycle.limitations.includes('not-clean-machine-i4'))
 })
 
@@ -264,6 +367,7 @@ test('Windows CI keeps packaged layout product and NSIS lifecycle gates in order
     'npm run package:release',
     '--variant release',
     '--installer .artifacts/release-package/Live-Subtitle-0.1.0-x64.exe',
+    '--qualification-binding .artifacts/packaged-product-ci/qualification-binding.json',
     'node scripts/qualify-nsis-lifecycle.js',
     'run: npm run test:ci'
   ]
@@ -298,5 +402,5 @@ test('semantic table freezes package release and uninstall boundaries', () => {
   assert.match(uninstall, /单独、明确的用户动作/)
   assert.match(evidenceLevels, /B5/)
   assert.match(evidenceLevels, /I4/)
-  assert.match(evidenceLevels, /四份结构化报告/)
+  assert.match(evidenceLevels, /七份结构化报告/)
 })

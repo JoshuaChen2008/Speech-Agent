@@ -7,6 +7,14 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 const { spawnSync } = require('node:child_process')
 const asar = require('@electron/asar')
+const {
+  IDENTITY_VERSION,
+  hashProductPayloadEntries
+} = require('../src/main/services/product-payload-identity')
+const {
+  RUN_ID_PATTERN,
+  readAndValidatePackagedRunBindingReport
+} = require('./verify-packaged-run-binding')
 
 const REQUIRED_ASAR_ENTRIES = Object.freeze([
   '/package.json',
@@ -53,11 +61,17 @@ const SMOKE_SCRIPTS = Object.freeze([
 ])
 
 function parseArguments (argv) {
-  const values = { packageDir: null, variant: null, report: null, installer: null }
+  const values = {
+    packageDir: null,
+    variant: null,
+    report: null,
+    installer: null,
+    qualificationBinding: null
+  }
   const seen = new Set()
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index]
-    if (!['--package-dir', '--variant', '--report', '--installer'].includes(flag) ||
+    if (!['--package-dir', '--variant', '--report', '--installer', '--qualification-binding'].includes(flag) ||
         seen.has(flag) || index + 1 >= argv.length) {
       throw new Error('invalid package layout arguments')
     }
@@ -67,15 +81,29 @@ function parseArguments (argv) {
     if (flag === '--variant') values.variant = value
     if (flag === '--report') values.report = value
     if (flag === '--installer') values.installer = value
+    if (flag === '--qualification-binding') values.qualificationBinding = value
   }
   if (!values.packageDir || !values.report || !['release', 'smoke'].includes(values.variant)) {
     throw new Error('--package-dir, --variant release|smoke and --report are required')
+  }
+  if (values.variant === 'release' && !values.qualificationBinding) {
+    throw new Error('release layout requires --qualification-binding')
+  }
+  if (values.variant === 'smoke' && values.qualificationBinding) {
+    throw new Error('smoke layout cannot claim a release qualification binding')
   }
   return values
 }
 
 function sha256File (filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
+}
+
+function hasExactKeys (value, expected) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const actual = Object.keys(value).sort()
+  const wanted = [...expected].sort()
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index])
 }
 
 function peMachine (filePath) {
@@ -153,6 +181,13 @@ function inspectPackageLayout (options) {
     throw new Error('packaged app.asar is missing')
   }
   const entries = asar.listPackage(asarPath).map((entry) => entry.replace(/\\/g, '/'))
+  const productPayload = hashProductPayloadEntries(entries
+    .filter((entry) => entry.startsWith('/src/'))
+    .filter((entry) => !asar.statFile(asarPath, entry.slice(1).replace(/\//g, path.sep)).files)
+    .map((entry) => ({
+      name: entry.slice(1),
+      bytes: asar.extractFile(asarPath, entry.slice(1).replace(/\//g, path.sep))
+    })))
   const packagedMetadata = JSON.parse(asar.extractFile(asarPath, 'package.json').toString('utf8'))
   const expectedMain = options.variant === 'release'
     ? 'src/main.js'
@@ -207,6 +242,25 @@ function inspectPackageLayout (options) {
   if (options.variant === 'release' && installerSha256 === null) {
     throw new Error('release layout qualification requires the exact NSIS installer')
   }
+  let evidenceBinding = null
+  if (options.variant === 'release') {
+    const bindingPath = path.resolve(options.qualificationBinding)
+    const binding = readAndValidatePackagedRunBindingReport(bindingPath)
+    if (binding.run.productPayloadVersion !== productPayload.version ||
+        binding.run.productPayloadFileCount !== productPayload.fileCount ||
+        binding.run.productPayloadSha256 !== productPayload.sha256) {
+      throw new Error('release product payload differs from the exercised packaged runtime')
+    }
+    evidenceBinding = {
+      runId: binding.run.runId,
+      bindingReportSha256: sha256File(bindingPath),
+      testExecutableSha256: binding.run.testExecutableSha256,
+      freshProductReportSha256: binding.fresh.productReportSha256,
+      freshExitReportSha256: binding.fresh.exitReportSha256,
+      restartProductReportSha256: binding.restart.productReportSha256,
+      restartExitReportSha256: binding.restart.exitReportSha256
+    }
+  }
   const appExecutable = path.join(
     packageDir,
     options.variant === 'release' ? 'LiveSubtitle.exe' : 'LiveSubtitlePackagedSmoke.exe'
@@ -216,7 +270,7 @@ function inspectPackageLayout (options) {
   }
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: 'packaged-layout-qualification',
     generatedAt: new Date().toISOString(),
     result: 'pass',
@@ -238,7 +292,12 @@ function inspectPackageLayout (options) {
       mainEntry: packagedMetadata.main,
       appExecutableX64: true,
       appAsarPresent: true,
+      appExecutableSha256: sha256File(appExecutable),
+      appAsarSha256: sha256File(asarPath),
       asarEntryCount: entries.length,
+      productPayloadVersion: productPayload.version,
+      productPayloadFileCount: productPayload.fileCount,
+      productPayloadSha256: productPayload.sha256,
       installerPresent: installerSha256 !== null,
       installerSha256,
       signingStatus
@@ -255,6 +314,7 @@ function inspectPackageLayout (options) {
       unpackedBinaryCount: REQUIRED_NATIVE_FILES.length,
       allMarkedUnpacked: true
     },
+    evidenceBinding,
     limitations: options.variant === 'release'
       ? [signingStatus === 'valid' ? 'signing-valid-not-smartscreen-qualified' : 'unsigned-installer', 'not-installed-clean-machine-i4']
       : ['test-only-main-entry', 'win-unpacked-not-nsis-installed', 'not-clean-machine-i4']
@@ -262,7 +322,7 @@ function inspectPackageLayout (options) {
 }
 
 function validatePackageLayoutReport (report, expectedVariant) {
-  if (!report || report.schemaVersion !== 1 || report.kind !== 'packaged-layout-qualification' ||
+  if (!report || report.schemaVersion !== 2 || report.kind !== 'packaged-layout-qualification' ||
       report.result !== 'pass' || report.gateStatus !== 'packaged-ci-qualified' ||
       report.artifact?.variant !== expectedVariant || report.artifact?.arch !== 'x64' ||
       report.artifact?.appVersion !== '0.1.0' || report.artifact?.electronVersion !== '43.2.0' ||
@@ -272,7 +332,13 @@ function validatePackageLayoutReport (report, expectedVariant) {
       report.artifact?.mainEntry !== (expectedVariant === 'release' ? 'src/main.js' : 'scripts/product-shell-smoke.js') ||
       report.artifact?.appExecutableX64 !== true ||
       report.artifact?.appAsarPresent !== true ||
+      !/^[a-f0-9]{64}$/.test(String(report.artifact?.appExecutableSha256 || '')) ||
+      !/^[a-f0-9]{64}$/.test(String(report.artifact?.appAsarSha256 || '')) ||
       !Number.isSafeInteger(report.artifact?.asarEntryCount) || report.artifact.asarEntryCount < 1 ||
+      report.artifact?.productPayloadVersion !== IDENTITY_VERSION ||
+      !Number.isSafeInteger(report.artifact?.productPayloadFileCount) ||
+      report.artifact.productPayloadFileCount < 1 ||
+      !/^[a-f0-9]{64}$/.test(String(report.artifact?.productPayloadSha256 || '')) ||
       report.layout?.requiredProductEntryCount !== REQUIRED_ASAR_ENTRIES.length ||
       report.layout?.requiredProductEntriesPresent !== true ||
       report.layout?.forbiddenDevelopmentTreesAbsent !== true ||
@@ -286,11 +352,21 @@ function validatePackageLayoutReport (report, expectedVariant) {
     if (report.artifact.installerPresent !== true ||
         !/^[a-f0-9]{64}$/.test(String(report.artifact.installerSha256 || '')) ||
         !['valid', 'not-signed'].includes(report.artifact.signingStatus) ||
+        !hasExactKeys(report.evidenceBinding, [
+          'runId', 'bindingReportSha256', 'testExecutableSha256',
+          'freshProductReportSha256', 'freshExitReportSha256',
+          'restartProductReportSha256', 'restartExitReportSha256'
+        ]) ||
+        !RUN_ID_PATTERN.test(String(report.evidenceBinding.runId || '')) ||
+        ['bindingReportSha256', 'testExecutableSha256', 'freshProductReportSha256',
+          'freshExitReportSha256', 'restartProductReportSha256', 'restartExitReportSha256']
+          .some((key) => !/^[a-f0-9]{64}$/.test(String(report.evidenceBinding[key] || ''))) ||
         !report.limitations?.includes('not-installed-clean-machine-i4')) {
       throw new Error('release layout report is not bound to an installer or overclaims I4')
     }
   } else if (report.artifact.installerPresent !== false || report.artifact.installerSha256 !== null ||
       report.artifact.signingStatus !== 'not-assessed' ||
+      report.evidenceBinding !== null ||
       !report.limitations?.includes('test-only-main-entry')) {
     throw new Error('smoke layout report overclaims the release package')
   }

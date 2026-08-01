@@ -156,6 +156,7 @@ jobs:
             --package-dir .artifacts/release-package/win-unpacked `
             --variant release `
             --installer .artifacts/release-package/Live-Subtitle-0.1.0-x64.exe `
+            --qualification-binding .artifacts/packaged-product-ci/qualification-binding.json `
             --report .artifacts/b5-ci/release-layout.json
           if ($LASTEXITCODE -ne 0) {
             throw "NSIS candidate layout verification failed with exit code $LASTEXITCODE"
@@ -172,5 +173,5 @@ jobs:
             throw "NSIS lifecycle qualification failed with exit code $LASTEXITCODE"
           }
 
-      - name: Run deterministic integration journeys and full regression suite
+      - name: Run non-interactive core integration and evidence regression lanes
         run: npm run test:ci

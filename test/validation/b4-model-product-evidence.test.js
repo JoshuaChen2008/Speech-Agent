@@ -74,7 +74,10 @@ test('published product-shell evidence proves the four-window user journey witho
     pauseResume: true,
     finalCaptionRendered: true,
     downloadedModelSessionInHistory: true,
-    terminalHistoryCount: 2,
+    terminalHistoryCount: 3,
+    legacyJsonlMigrated: true,
+    legacySessionVisible: true,
+    legacySourceReadOnly: true,
     longHistorySegmentCount: 205,
     historyPageCount: 5,
     historyPageSize: 50,
@@ -82,6 +85,10 @@ test('published product-shell evidence proves the four-window user journey witho
     historyReachedEnd: true,
     historyBackForwardNavigation: true,
     historyAriaRangeAligned: true,
+    historyExportDialogCount: 3,
+    historyExportFormats: ['txt', 'md', 'srt'],
+    historyExportArtifactCount: 3,
+    historyExportFullSegmentCount: 205,
     resourcesPaneOpenedFromToolbar: true,
     modelState: 'ready',
     resourceCount: 3,
@@ -115,6 +122,10 @@ test('product-shell report verifier rejects real-model, physical-audio and relea
   assert.throws(() => validateProductShellReport({
     ...report,
     journey: { ...report.journey, historyMaxTimelineNodes: 51 }
+  }), /journey evidence/)
+  assert.throws(() => validateProductShellReport({
+    ...report,
+    journey: { ...report.journey, historyExportFullSegmentCount: 50 }
   }), /journey evidence/)
   assert.throws(() => validateProductShellReport({
     ...report,

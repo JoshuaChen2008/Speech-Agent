@@ -11,10 +11,14 @@
 const fs = require('node:fs')
 const fsp = require('node:fs/promises')
 const path = require('node:path')
-const { app, BrowserWindow, utilityProcess } = require('electron')
+const crypto = require('node:crypto')
+const { app, BrowserWindow, dialog, utilityProcess } = require('electron')
 const modelManagerModule = require('../src/main/services/model-manager')
 const modelRuntimeModule = require('../src/main/services/model-runtime')
 const { FakeRuntimeAdapter } = require('../src/main/session/fake-runtime-adapter')
+const {
+  computeProductPayloadIdentity
+} = require('../src/main/services/product-payload-identity')
 const {
   OPERATIONS,
   PROTOCOL_VERSION,
@@ -33,8 +37,12 @@ const {
 
 const PROJECT_ROOT = path.resolve(__dirname, '..')
 const LONG_HISTORY_SESSION_ID = 'ci-long-history-session'
+const LEGACY_HISTORY_SESSION_ID = 'ci-legacy-history-session'
 const LONG_HISTORY_SEGMENT_COUNT = 205
 const HISTORY_PAGE_SIZE = 50
+const EXPORT_FORMATS = Object.freeze(['txt', 'md', 'srt'])
+const B5_RUN_ID_PATTERN = /^b5-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+const SHA256_PATTERN = /^[a-f0-9]{64}$/
 
 function isWithin (parent, child) {
   const relative = path.relative(path.resolve(parent), path.resolve(child))
@@ -42,12 +50,20 @@ function isWithin (parent, child) {
 }
 
 function parseArguments (argv) {
-  const values = { artifactsRoot: null, workDir: null, report: null }
+  const values = {
+    artifactsRoot: null,
+    workDir: null,
+    report: null,
+    mode: 'fresh',
+    qualificationRunId: null,
+    freshProductReportSha256: null
+  }
   for (let index = 0; index < argv.length; index += 1) {
     const next = argv[index + 1]
-    if (argv[index] === '--artifacts-root') { values.artifactsRoot = next; index += 1 } else if (argv[index] === '--work-dir') { values.workDir = next; index += 1 } else if (argv[index] === '--report') { values.report = next; index += 1 } else throw new Error(`unknown argument: ${argv[index]}`)
+    if (argv[index] === '--artifacts-root') { values.artifactsRoot = next; index += 1 } else if (argv[index] === '--work-dir') { values.workDir = next; index += 1 } else if (argv[index] === '--report') { values.report = next; index += 1 } else if (argv[index] === '--mode') { values.mode = next; index += 1 } else if (argv[index] === '--qualification-run-id') { values.qualificationRunId = next; index += 1 } else if (argv[index] === '--fresh-product-report-sha256') { values.freshProductReportSha256 = next; index += 1 } else throw new Error(`unknown argument: ${argv[index]}`)
   }
   if (!values.workDir || !values.report) throw new Error('--work-dir and --report are required')
+  if (!['fresh', 'restart'].includes(values.mode)) throw new Error('--mode must be fresh or restart')
   if (values.artifactsRoot !== null && (!path.isAbsolute(values.artifactsRoot) ||
       path.resolve(values.artifactsRoot) === path.parse(path.resolve(values.artifactsRoot)).root)) {
     throw new Error('--artifacts-root must be an absolute non-root directory')
@@ -62,8 +78,33 @@ function parseArguments (argv) {
     ? path.resolve(PROJECT_ROOT, values.report)
     : path.resolve(artifacts, values.report)
   if (!isWithin(artifacts, workDir) || !isWithin(artifacts, report)) throw new Error('smoke outputs must stay under .artifacts')
-  if (fs.existsSync(workDir)) throw new Error('work directory must not already exist')
-  return { artifacts, workDir, report }
+  if (values.mode === 'fresh' && fs.existsSync(workDir)) throw new Error('work directory must not already exist')
+  if (values.mode === 'restart' && !fs.statSync(workDir, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new Error('restart work directory must already exist')
+  }
+  if (fs.existsSync(report)) throw new Error('smoke report must not already exist')
+  if (app.isPackaged && !B5_RUN_ID_PATTERN.test(String(values.qualificationRunId || ''))) {
+    throw new Error('packaged smoke requires a valid qualification run id')
+  }
+  if (app.isPackaged && values.mode === 'restart' &&
+      !SHA256_PATTERN.test(String(values.freshProductReportSha256 || ''))) {
+    throw new Error('packaged restart requires the exact fresh product report digest')
+  }
+  if (values.mode === 'fresh' && values.freshProductReportSha256 !== null) {
+    throw new Error('fresh smoke cannot accept a previous product report digest')
+  }
+  return {
+    artifacts,
+    workDir,
+    report,
+    mode: values.mode,
+    qualificationRunId: values.qualificationRunId,
+    freshProductReportSha256: values.freshProductReportSha256
+  }
+}
+
+function sha256File (filePath) {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
 }
 
 function windowFor (suffix) {
@@ -206,14 +247,107 @@ function seedLongHistoryFixture (databasePath) {
   }
 }
 
+function seedLegacyHistoryFixture (directory) {
+  fs.mkdirSync(directory, { recursive: true })
+  const startedAt = 1700000100000
+  const filePath = path.join(directory, 'legacy-meeting.jsonl')
+  const records = [
+    JSON.stringify({
+      v: 1,
+      event: 'session.open',
+      sessionId: LEGACY_HISTORY_SESSION_ID,
+      at: new Date(startedAt).toISOString()
+    }),
+    JSON.stringify({
+      v: 1,
+      event: 'segment.final',
+      sessionId: LEGACY_HISTORY_SESSION_ID,
+      sourceId: 'loopback',
+      segmentId: 'ci-legacy-segment',
+      sequence: 1,
+      revision: 1,
+      t0: 0,
+      t1: 1,
+      text: 'legacy product shell fixture'
+    }),
+    JSON.stringify({
+      v: 1,
+      event: 'session.close',
+      sessionId: LEGACY_HISTORY_SESSION_ID,
+      at: new Date(startedAt + 1000).toISOString()
+    }),
+    ''
+  ]
+  fs.writeFileSync(filePath, records.join('\n'), { encoding: 'utf8', flag: 'wx' })
+  return Object.freeze({ filePath, sha256: sha256File(filePath) })
+}
+
+function inspectExportArtifacts (directory) {
+  const contents = Object.fromEntries(EXPORT_FORMATS.map((format) => [
+    format,
+    fs.readFileSync(path.join(directory, `history.${format}`), 'utf8')
+  ]))
+  const counts = {
+    txt: contents.txt.trimEnd().split(/\r?\n/).length,
+    md: contents.md.split(/\r?\n/).filter((line) => line.startsWith('- ')).length,
+    srt: (contents.srt.match(/^\d+$/gm) || []).length
+  }
+  if (EXPORT_FORMATS.some((format) => counts[format] !== LONG_HISTORY_SEGMENT_COUNT)) {
+    throw new Error(`history export was truncated: ${JSON.stringify(counts)}`)
+  }
+  return Object.freeze({ artifactCount: EXPORT_FORMATS.length, fullSegmentCount: counts.txt })
+}
+
 const options = parseArguments(process.argv.slice(app.isPackaged ? 1 : 2))
-fs.mkdirSync(options.workDir, { recursive: false })
+const productPayloadIdentity = app.isPackaged ? computeProductPayloadIdentity() : null
 const userDataDir = path.join(options.workDir, 'user-data')
-fs.mkdirSync(userDataDir, { recursive: false })
+const legacyDirectory = path.join(userDataDir, 'sessions')
+const exportDirectory = path.join(options.workDir, 'exports')
+if (options.mode === 'fresh') {
+  fs.mkdirSync(options.workDir, { recursive: false })
+  fs.mkdirSync(userDataDir, { recursive: false })
+} else if (!fs.statSync(userDataDir, { throwIfNoEntry: false })?.isDirectory()) {
+  throw new Error('restart userData directory is missing')
+}
 app.setPath('userData', userDataDir)
-seedLongHistoryFixture(path.join(userDataDir, 'data', 'speech-agent.sqlite3'))
-const modelFixtures = createFixtureModelBundle(options.workDir)
-const resumeSeed = seedInterruptedModelDownload(userDataDir, modelFixtures)
+let legacyFixture
+if (options.mode === 'fresh') {
+  seedLongHistoryFixture(path.join(userDataDir, 'data', 'speech-agent.sqlite3'))
+  legacyFixture = seedLegacyHistoryFixture(legacyDirectory)
+  fs.mkdirSync(exportDirectory, { recursive: false })
+} else {
+  const filePath = path.join(legacyDirectory, 'legacy-meeting.jsonl')
+  if (!fs.statSync(filePath, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error('restart legacy fixture is missing')
+  }
+  legacyFixture = Object.freeze({ filePath, sha256: sha256File(filePath) })
+}
+const fixtureManifestPath = path.join(options.workDir, 'fixture-model-manifest.json')
+let modelFixtures
+if (options.mode === 'fresh') {
+  modelFixtures = createFixtureModelBundle(options.workDir)
+  fs.writeFileSync(fixtureManifestPath, `${JSON.stringify(modelFixtures.manifest, null, 2)}\n`, {
+    encoding: 'utf8',
+    flag: 'wx'
+  })
+} else {
+  const manifest = JSON.parse(fs.readFileSync(fixtureManifestPath, 'utf8'))
+  modelFixtures = Object.freeze({ manifest, payloadByPath: new Map() })
+}
+const resumeSeed = options.mode === 'fresh'
+  ? seedInterruptedModelDownload(userDataDir, modelFixtures)
+  : null
+const saveDialogFormats = []
+dialog.showSaveDialog = async (...args) => {
+  const dialogOptions = args.at(-1)
+  const format = dialogOptions?.filters?.[0]?.extensions?.[0]
+  if (options.mode !== 'fresh' || !EXPORT_FORMATS.includes(format) ||
+      saveDialogFormats.includes(format)) {
+    throw new Error('unexpected product-shell save dialog request')
+  }
+  saveDialogFormats.push(format)
+  return { canceled: false, filePath: path.join(exportDirectory, `history.${format}`) }
+}
 delete process.env.LIVE_SUBTITLE_MODEL_DIR
 delete process.env.LIVE_SUBTITLE_REFINE_MODEL_DIR
 delete process.env.LIVE_SUBTITLE_VAD_MODEL
@@ -221,6 +355,7 @@ delete process.env.LIVE_SUBTITLE_DEV_MODEL
 delete process.env.LIVE_SUBTITLE_ALLOW_EXTERNAL_MODELS
 
 let modelTransport = null
+let offlineModelFetchAttemptCount = 0
 
 function packagedNativeLayout () {
   if (!app.isPackaged) return null
@@ -332,7 +467,12 @@ async function runPackagedDb0Qualification () {
       child,
       OPERATIONS.DB0_QUALIFY,
       'packaged-db0-qualify',
-      { databasePath: path.join(options.workDir, 'packaged-db0.sqlite3') }
+      {
+        databasePath: path.join(
+          options.workDir,
+          options.mode === 'restart' ? 'packaged-db0-restart.sqlite3' : 'packaged-db0.sqlite3'
+        )
+      }
     )
     await packagedStorageRequest(child, OPERATIONS.SHUTDOWN, 'packaged-db0-shutdown')
     const observedExit = await Promise.race([
@@ -413,7 +553,9 @@ function fixtureRuntimeDefinition () {
 }
 
 async function launchSmokeApplication () {
-  modelTransport = await startFixtureModelServer(modelFixtures.payloadByPath)
+  if (options.mode === 'fresh') {
+    modelTransport = await startFixtureModelServer(modelFixtures.payloadByPath)
+  }
   const BaseModelManager = modelManagerModule.ModelManager
   let randomSequence = 0
   class ProductShellModelManager extends BaseModelManager {
@@ -424,6 +566,10 @@ async function launchSmokeApplication () {
         externalReady: null,
         randomId: () => `product-shell-${++randomSequence}`,
         fetchImpl: (url, requestOptions = {}) => {
+          if (options.mode === 'restart') {
+            offlineModelFetchAttemptCount += 1
+            throw new Error('offline restart attempted a model download')
+          }
           const original = new URL(url)
           if (original.protocol !== 'https:' || original.hostname !== 'github.com' ||
               !modelFixtures.payloadByPath.has(original.pathname)) {
@@ -473,12 +619,15 @@ app.whenReady().then(() => {
     console.error('product shell smoke watchdog expired')
     app.exit(1)
   }, 45000)
-  void runJourney().catch(async (error) => {
+  const journey = options.mode === 'restart' ? runRestartJourney : runJourney
+  void journey().catch(async (error) => {
     smokeFailed = true
     console.error(error && error.stack ? error.stack : error)
     const failure = {
       schemaVersion: 1,
-      kind: 'product-shell-smoke',
+      kind: options.mode === 'restart'
+        ? 'product-shell-offline-restart-smoke'
+        : 'product-shell-smoke',
       result: 'fail',
       errorCode: 'PRODUCT_SHELL_SMOKE_FAILED',
       crashEventCount: crashEvents.length
@@ -489,6 +638,173 @@ app.whenReady().then(() => {
     app.quit()
   })
 })
+
+async function runRestartJourney () {
+  const nativeProbe = await runPackagedNativeProbe()
+  const packagedDb0 = await runPackagedDb0Qualification()
+  const nativeLayout = packagedNativeLayout()
+  if (app.isPackaged && (!nativeLayout ||
+      nativeLayout.nativeBinaryCount !== nativeLayout.requiredNativeBinaryCount)) {
+    throw new Error('packaged native binaries are not colocated in app.asar.unpacked')
+  }
+
+  const toolbar = await waitFor(() => windowFor('/toolbar/index.html'), 'restart toolbar renderer')
+  const caption = await waitFor(() => windowFor('/caption/index.html'), 'restart caption renderer')
+  await Promise.all([toolbar, caption].map((win) =>
+    waitFor(() => !win.webContents.isLoading(), 'restart renderer load')))
+  await waitFor(() => rendererValue(toolbar,
+    `window.shell.getSnapshot().then(s => s.phase === 'idle' && s.capabilities.canStart)`),
+  'offline-ready runtime')
+
+  await rendererValue(toolbar, `window.shell.action('open-model-manager'); true`)
+  const settings = await waitFor(() => windowFor('/settings/settings.html'), 'restart settings renderer')
+  await waitFor(() => !settings.webContents.isLoading(), 'restart settings load')
+  await waitFor(() => rendererValue(settings,
+    `window.shell.getModelStatus().then(s => s.state === 'ready' &&
+      document.getElementById('modelInstallButton').textContent === '已就绪')`),
+  'offline model readiness')
+  const resourceCount = await rendererValue(settings,
+    `document.querySelectorAll('[data-resource-id]').length`)
+  if (offlineModelFetchAttemptCount !== 0 || readyMarkersUnder(path.join(userDataDir, 'models')) !== 3 ||
+      resourceCount !== 3 || modelTransport !== null) {
+    throw new Error('offline restart attempted transport or lost ready model resources')
+  }
+
+  await rendererValue(toolbar, `document.querySelector('button[data-act="history"]').click(); true`)
+  const history = await waitFor(() => windowFor('/history/index.html'), 'restart history renderer')
+  await waitFor(() => !history.webContents.isLoading(), 'restart history load')
+  const persistedSessionIds = await waitFor(async () => {
+    const ids = await rendererValue(history,
+      `[...document.querySelectorAll('.session-card')].map(card => card.dataset.sessionId)`)
+    return ids.length === 3 ? ids : null
+  }, 'persisted restart history')
+  if (!persistedSessionIds.includes(LONG_HISTORY_SESSION_ID) ||
+      !persistedSessionIds.includes(LEGACY_HISTORY_SESSION_ID)) {
+    throw new Error('persisted restart history lost a seeded session')
+  }
+  const previousLiveSessionVisible = persistedSessionIds.some((sessionId) =>
+    ![LONG_HISTORY_SESSION_ID, LEGACY_HISTORY_SESSION_ID].includes(sessionId))
+  if (!previousLiveSessionVisible) throw new Error('fresh-run session did not survive restart')
+
+  await rendererValue(history,
+    `document.querySelector('.session-card[data-session-id="${LONG_HISTORY_SESSION_ID}"]').click(); true`)
+  const firstHistoryPage = await waitForHistoryPage(history, 1, 50)
+  const exportQualification = inspectExportArtifacts(exportDirectory)
+  const legacyJsonlFiles = fs.readdirSync(legacyDirectory)
+    .filter((name) => name.toLowerCase().endsWith('.jsonl'))
+  const legacyMigrationIdempotent = legacyJsonlFiles.length === 1 &&
+    sha256File(legacyFixture.filePath) === legacyFixture.sha256
+  if (!legacyMigrationIdempotent) throw new Error('legacy import was not read-only across restart')
+
+  await waitFor(() => rendererValue(toolbar,
+    `!!document.querySelector('button[data-act="start"]:not(:disabled)')`),
+  'restart start control')
+  await rendererValue(toolbar, `document.querySelector('button[data-act="start"]').click(); true`)
+  const restartSessionId = await waitFor(async () => {
+    const snapshot = await rendererValue(toolbar, `window.shell.getSnapshot()`)
+    return snapshot.phase === 'listening' && snapshot.sessionId !== null ? snapshot.sessionId : null
+  }, 'restart listening runtime')
+  await waitFor(() => rendererValue(caption,
+    `document.getElementById('liveRegion').textContent.length > 0`),
+  'restart final caption', 15000)
+  await rendererValue(toolbar, `document.querySelector('button[data-act="stop"]').click(); true`)
+  await waitFor(() => rendererValue(toolbar,
+    `window.shell.getSnapshot().then(s => s.phase === 'idle' && s.sessionId === null)`),
+  'restart stopped runtime')
+  await rendererValue(history, `document.getElementById('refresh').click(); true`)
+  await waitFor(() => rendererValue(history,
+    `document.querySelectorAll('.session-card').length === 4 &&
+      !!document.querySelector('.session-card[data-session-id="${restartSessionId}"]')`),
+  'restart session persisted to history')
+
+  if (crashEvents.length > 0) throw new Error('Electron child process crashed during offline restart')
+  if (audioFilesUnder(options.workDir).length > 0) throw new Error('offline restart persisted audio')
+  const report = {
+    schemaVersion: 1,
+    kind: 'product-shell-offline-restart-smoke',
+    generatedAt: new Date().toISOString(),
+    result: 'pass',
+    gateStatus: 'partial',
+    runtime: {
+      electron: process.versions.electron,
+      node: process.versions.node,
+      rendererCount: BrowserWindow.getAllWindows().filter((win) => !win.isDestroyed()).length,
+      crashEventCount: crashEvents.length
+    },
+    ...(app.isPackaged
+      ? {
+          qualification: {
+            runId: options.qualificationRunId,
+            phase: 'restart',
+            freshProductReportSha256: options.freshProductReportSha256,
+            productPayloadVersion: productPayloadIdentity.version,
+            productPayloadFileCount: productPayloadIdentity.fileCount,
+            productPayloadSha256: productPayloadIdentity.sha256
+          }
+        }
+      : {}),
+    ...(app.isPackaged
+      ? {
+          packaging: {
+            appIsPackaged: true,
+            defaultApp: process.defaultApp === true,
+            smokeMainFromAsar: __dirname.replace(/\\/g, '/').includes('/app.asar/'),
+            productMainFromAsar: require.resolve('../src/main').replace(/\\/g, '/').includes('/app.asar/'),
+            storageUtilityRoundTrip: true,
+            nativeBinaryCount: nativeLayout.nativeBinaryCount,
+            nativeAddonLoadedInUtility: nativeProbe.addonLoaded,
+            nativeApiSurfaceReady: nativeProbe.apiSurfaceReady,
+            nativeProbeExactExitCode: nativeProbe.exactExitCode,
+            nativeProbeFatalObserved: nativeProbe.fatalObserved,
+            packagedDb0Status: packagedDb0.status,
+            packagedDb0CheckCount: packagedDb0.checkCount,
+            packagedDb0Wal: packagedDb0.journalModeWal,
+            packagedDb0Reopen: packagedDb0.reopenPreservesData,
+            packagedDb0Integrity: packagedDb0.integrityAfterReopen,
+            packagedDb0ExactExitCode: packagedDb0.exactExitCode,
+            releaseCandidate: false,
+            installedViaNsis: false
+          }
+        }
+      : {}),
+    journey: {
+      readyModelSurvivedRestart: true,
+      modelFetchAttemptCount: offlineModelFetchAttemptCount,
+      fixtureServerStarted: false,
+      modelReadyMarkerCount: 3,
+      resourceCount,
+      persistedTerminalHistoryCount: persistedSessionIds.length,
+      previousLiveSessionVisible,
+      legacySessionVisible: true,
+      legacyMigrationIdempotent,
+      longHistorySegmentCount: LONG_HISTORY_SEGMENT_COUNT,
+      historyPageSize: firstHistoryPage.count,
+      historyExportArtifactCount: exportQualification.artifactCount,
+      historyExportFullSegmentCount: exportQualification.fullSegmentCount,
+      restartCaptionRendered: true,
+      restartSessionPersisted: true,
+      terminalHistoryCountAfterRestart: 4
+    },
+    privacy: {
+      physicalAudioSourceOpened: false,
+      audioPersisted: false,
+      transcriptTextPersistedInReport: false,
+      localPathsPersistedInReport: false
+    },
+    limitations: [
+      'fake-asr-no-physical-audio',
+      'controlled-ready-model-fixtures-no-real-tensors',
+      'deterministic-205-segment-fixture-not-two-hour-i3',
+      ...(app.isPackaged
+        ? ['not-clean-machine-i4', 'packaged-test-variant-not-release-installer']
+        : ['not-packaged-i4'])
+    ]
+  }
+  await fsp.writeFile(options.report, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })
+  process.stdout.write(`${JSON.stringify(report)}\n`)
+  if (watchdog) clearTimeout(watchdog)
+  app.quit()
+}
 
 async function runJourney () {
   const nativeProbe = await runPackagedNativeProbe()
@@ -569,7 +885,7 @@ async function runJourney () {
   await waitFor(() => !history.webContents.isLoading(), 'history load')
   const historyCount = await waitFor(async () => {
     const count = await rendererValue(history, `document.querySelectorAll('.session-card').length`)
-    return count > 0 ? count : 0
+    return count === 3 ? count : 0
   }, 'terminal history')
   await waitFor(() => rendererValue(history,
     `!!document.querySelector('.session-card[data-session-id="${liveSessionId}"]')`),
@@ -577,6 +893,9 @@ async function runJourney () {
   await waitFor(() => rendererValue(history,
     `!!document.querySelector('.session-card[data-session-id="${LONG_HISTORY_SESSION_ID}"]')`),
   'long history fixture card')
+  await waitFor(() => rendererValue(history,
+    `!!document.querySelector('.session-card[data-session-id="${LEGACY_HISTORY_SESSION_ID}"]')`),
+  'migrated legacy history fixture card')
   await rendererValue(history, `(() => {
     const timeline = document.getElementById('timeline')
     const probe = { maxNodes: timeline.childElementCount, appendCalls: 0 }
@@ -623,6 +942,21 @@ async function runJourney () {
       `maxNodes=${historyProbe.maxNodes} appendCalls=${historyProbe.appendCalls}`)
   }
 
+  for (const format of EXPORT_FORMATS) {
+    await rendererValue(history,
+      `document.querySelector('[data-export="${format}"]').click(); true`)
+    const target = path.join(exportDirectory, `history.${format}`)
+    await waitFor(() => saveDialogFormats.includes(format) &&
+      fs.statSync(target, { throwIfNoEntry: false })?.size > 0,
+    `history ${format} export`)
+  }
+  const exportQualification = inspectExportArtifacts(exportDirectory)
+  const legacyJsonlFiles = fs.readdirSync(legacyDirectory)
+    .filter((name) => name.toLowerCase().endsWith('.jsonl'))
+  const legacySourceReadOnly = legacyJsonlFiles.length === 1 &&
+    sha256File(legacyFixture.filePath) === legacyFixture.sha256
+  if (!legacySourceReadOnly) throw new Error('legacy JSONL changed or SQLite runtime created a second JSONL')
+
   await rendererValue(toolbar, `window.shell.action('open-model-manager'); true`)
   await waitFor(() => rendererValue(settings, `document.querySelector('.pane[data-pane="resources"]').classList.contains('active')`), 'resource navigation')
   const modelState = await rendererValue(settings, `window.shell.getModelStatus().then(s => s.state)`)
@@ -644,6 +978,18 @@ async function runJourney () {
       rendererCount: BrowserWindow.getAllWindows().filter((win) => !win.isDestroyed()).length,
       crashEventCount: crashEvents.length
     },
+    ...(app.isPackaged
+      ? {
+          qualification: {
+            runId: options.qualificationRunId,
+            phase: 'fresh',
+            freshProductReportSha256: null,
+            productPayloadVersion: productPayloadIdentity.version,
+            productPayloadFileCount: productPayloadIdentity.fileCount,
+            productPayloadSha256: productPayloadIdentity.sha256
+          }
+        }
+      : {}),
     ...(app.isPackaged
       ? {
           packaging: {
@@ -681,6 +1027,9 @@ async function runJourney () {
       finalCaptionRendered: true,
       downloadedModelSessionInHistory: true,
       terminalHistoryCount: historyCount,
+      legacyJsonlMigrated: true,
+      legacySessionVisible: true,
+      legacySourceReadOnly,
       longHistorySegmentCount: LONG_HISTORY_SEGMENT_COUNT,
       historyPageCount: visitedHistoryPages.length,
       historyPageSize: HISTORY_PAGE_SIZE,
@@ -688,6 +1037,10 @@ async function runJourney () {
       historyReachedEnd: reachedHistoryEnd,
       historyBackForwardNavigation,
       historyAriaRangeAligned,
+      historyExportDialogCount: saveDialogFormats.length,
+      historyExportFormats: [...saveDialogFormats],
+      historyExportArtifactCount: exportQualification.artifactCount,
+      historyExportFullSegmentCount: exportQualification.fullSegmentCount,
       resourcesPaneOpenedFromToolbar: true,
       modelState,
       resourceCount,

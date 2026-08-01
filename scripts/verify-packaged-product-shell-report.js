@@ -5,6 +5,8 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { validateProductShellReport } = require('./verify-product-shell-report')
+const { parseStrictEvidenceJson } = require('./strict-evidence-json')
+const { IDENTITY_VERSION } = require('../src/main/services/product-payload-identity')
 
 const PACKAGING_KEYS = Object.freeze([
   'appIsPackaged',
@@ -26,6 +28,16 @@ const PACKAGING_KEYS = Object.freeze([
   'releaseCandidate',
   'installedViaNsis'
 ])
+const QUALIFICATION_KEYS = Object.freeze([
+  'runId',
+  'phase',
+  'freshProductReportSha256',
+  'productPayloadVersion',
+  'productPayloadFileCount',
+  'productPayloadSha256'
+])
+const RUN_ID_PATTERN = /^b5-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+const SHA256_PATTERN = /^[a-f0-9]{64}$/
 
 function hasExactKeys (value, keys) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
@@ -34,9 +46,7 @@ function hasExactKeys (value, keys) {
   return actual.length === expected.length && actual.every((key, index) => key === expected[index])
 }
 
-function validatePackagedProductShellReport (report) {
-  validateProductShellReport(report)
-  const packaging = report.packaging
+function validatePackagedRuntimeEvidence (packaging) {
   if (!hasExactKeys(packaging, PACKAGING_KEYS) ||
       packaging.appIsPackaged !== true || packaging.defaultApp !== false ||
       packaging.smokeMainFromAsar !== true || packaging.productMainFromAsar !== true ||
@@ -50,6 +60,30 @@ function validatePackagedProductShellReport (report) {
       packaging.releaseCandidate !== false || packaging.installedViaNsis !== false) {
     throw new Error('packaged product-shell evidence is incomplete or overclaims the release candidate')
   }
+  return packaging
+}
+
+function validatePackagedQualification (qualification, expectedPhase) {
+  if (!hasExactKeys(qualification, QUALIFICATION_KEYS) ||
+      !RUN_ID_PATTERN.test(String(qualification.runId || '')) ||
+      qualification.phase !== expectedPhase ||
+      qualification.productPayloadVersion !== IDENTITY_VERSION ||
+      !Number.isSafeInteger(qualification.productPayloadFileCount) ||
+      qualification.productPayloadFileCount < 1 ||
+      !SHA256_PATTERN.test(String(qualification.productPayloadSha256 || '')) ||
+      (expectedPhase === 'fresh'
+        ? qualification.freshProductReportSha256 !== null
+        : !SHA256_PATTERN.test(String(qualification.freshProductReportSha256 || '')))) {
+    throw new Error('packaged product-shell qualification identity is incomplete')
+  }
+  return qualification
+}
+
+function validatePackagedProductShellReport (report) {
+  validateProductShellReport(report)
+  const packaging = report.packaging
+  validatePackagedRuntimeEvidence(packaging)
+  validatePackagedQualification(report.qualification, 'fresh')
   if (!report.limitations.includes('packaged-test-variant-not-release-installer') ||
       !report.limitations.includes('not-clean-machine-i4')) {
     throw new Error('packaged product-shell report must preserve its test-variant boundary')
@@ -58,7 +92,11 @@ function validatePackagedProductShellReport (report) {
 }
 
 function readAndValidatePackagedProductShellReport (reportPath) {
-  return validatePackagedProductShellReport(JSON.parse(fs.readFileSync(path.resolve(reportPath), 'utf8')))
+  const resolved = path.resolve(reportPath)
+  return validatePackagedProductShellReport(parseStrictEvidenceJson(
+    fs.readFileSync(resolved),
+    `packaged product-shell report ${path.basename(resolved)}`
+  ))
 }
 
 if (require.main === module) {
@@ -78,6 +116,9 @@ if (require.main === module) {
 
 module.exports = {
   PACKAGING_KEYS,
+  QUALIFICATION_KEYS,
   readAndValidatePackagedProductShellReport,
+  validatePackagedQualification,
+  validatePackagedRuntimeEvidence,
   validatePackagedProductShellReport
 }

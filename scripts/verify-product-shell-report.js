@@ -4,6 +4,7 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
+const { parseStrictEvidenceJson } = require('./strict-evidence-json')
 
 function validateProductShellReport (report) {
   if (!report || report.schemaVersion !== 1 || report.kind !== 'product-shell-smoke') {
@@ -31,12 +32,20 @@ function validateProductShellReport (report) {
       journey.pauseResume !== true ||
       journey.finalCaptionRendered !== true ||
       journey.downloadedModelSessionInHistory !== true ||
-      !Number.isSafeInteger(journey.terminalHistoryCount) || journey.terminalHistoryCount < 2 ||
+      journey.terminalHistoryCount !== 3 ||
+      journey.legacyJsonlMigrated !== true || journey.legacySessionVisible !== true ||
+      journey.legacySourceReadOnly !== true ||
       journey.longHistorySegmentCount !== 205 || journey.historyPageCount !== 5 ||
       journey.historyPageSize !== 50 || journey.historyMaxTimelineNodes > 50 ||
       !Number.isSafeInteger(journey.historyMaxTimelineNodes) || journey.historyMaxTimelineNodes < 1 ||
       journey.historyReachedEnd !== true || journey.historyBackForwardNavigation !== true ||
       journey.historyAriaRangeAligned !== true ||
+      journey.historyExportDialogCount !== 3 ||
+      !Array.isArray(journey.historyExportFormats) ||
+      journey.historyExportFormats.length !== 3 ||
+      journey.historyExportFormats.some((format, index) => format !== ['txt', 'md', 'srt'][index]) ||
+      journey.historyExportArtifactCount !== 3 ||
+      journey.historyExportFullSegmentCount !== 205 ||
       journey.resourcesPaneOpenedFromToolbar !== true ||
       journey.modelState !== 'ready' || journey.resourceCount !== 3 ||
       journey.modelReadinessSource !== 'settings-click-controlled-install' ||
@@ -70,7 +79,11 @@ function validateProductShellReport (report) {
 }
 
 function readAndValidateProductShellReport (reportPath) {
-  return validateProductShellReport(JSON.parse(fs.readFileSync(path.resolve(reportPath), 'utf8')))
+  const resolved = path.resolve(reportPath)
+  return validateProductShellReport(parseStrictEvidenceJson(
+    fs.readFileSync(resolved),
+    `product-shell report ${path.basename(resolved)}`
+  ))
 }
 
 if (require.main === module) {

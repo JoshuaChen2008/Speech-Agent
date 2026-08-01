@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "kind": "product-shell-smoke",
-  "generatedAt": "2026-07-31T16:53:44.540Z",
+  "kind": "product-shell-offline-restart-smoke",
+  "generatedAt": "2026-07-31T16:53:48.093Z",
   "result": "pass",
   "gateStatus": "partial",
   "runtime": {
@@ -12,8 +12,8 @@
   },
   "qualification": {
     "runId": "b5-04b208a6-4bb9-4294-ae0b-0bed3e00c4ea",
-    "phase": "fresh",
-    "freshProductReportSha256": null,
+    "phase": "restart",
+    "freshProductReportSha256": "18d9606e2497f2ec2089bde4b8b88595e9da95e23d3d9fa8ff4ed3039ffad00e",
     "productPayloadVersion": "live-subtitle-product-payload-v1",
     "productPayloadFileCount": 111,
     "productPayloadSha256": "6c986613dc7443db6c9224d92a5e0b5c357ed6d6c24a27d24082e6cdfb87f577"
@@ -39,46 +39,22 @@
     "installedViaNsis": false
   },
   "journey": {
-    "onboardingPreset": "dictation",
-    "modelInstallClicked": true,
-    "modelInitialState": "missing",
-    "modelObservedStates": [
-      "missing",
-      "downloading",
-      "verifying",
-      "ready"
-    ],
-    "modelRangeResumeObserved": true,
+    "readyModelSurvivedRestart": true,
+    "modelFetchAttemptCount": 0,
+    "fixtureServerStarted": false,
     "modelReadyMarkerCount": 3,
-    "modelHotActivation": true,
-    "startListeningStop": true,
-    "pauseResume": true,
-    "finalCaptionRendered": true,
-    "downloadedModelSessionInHistory": true,
-    "terminalHistoryCount": 3,
-    "legacyJsonlMigrated": true,
+    "resourceCount": 3,
+    "persistedTerminalHistoryCount": 3,
+    "previousLiveSessionVisible": true,
     "legacySessionVisible": true,
-    "legacySourceReadOnly": true,
+    "legacyMigrationIdempotent": true,
     "longHistorySegmentCount": 205,
-    "historyPageCount": 5,
     "historyPageSize": 50,
-    "historyMaxTimelineNodes": 50,
-    "historyReachedEnd": true,
-    "historyBackForwardNavigation": true,
-    "historyAriaRangeAligned": true,
-    "historyExportDialogCount": 3,
-    "historyExportFormats": [
-      "txt",
-      "md",
-      "srt"
-    ],
     "historyExportArtifactCount": 3,
     "historyExportFullSegmentCount": 205,
-    "resourcesPaneOpenedFromToolbar": true,
-    "modelState": "ready",
-    "resourceCount": 3,
-    "modelReadinessSource": "settings-click-controlled-install",
-    "translationAdvertised": false
+    "restartCaptionRendered": true,
+    "restartSessionPersisted": true,
+    "terminalHistoryCountAfterRestart": 4
   },
   "privacy": {
     "physicalAudioSourceOpened": false,
@@ -88,7 +64,7 @@
   },
   "limitations": [
     "fake-asr-no-physical-audio",
-    "controlled-model-fixtures-no-real-tensors",
+    "controlled-ready-model-fixtures-no-real-tensors",
     "deterministic-205-segment-fixture-not-two-hour-i3",
     "not-clean-machine-i4",
     "packaged-test-variant-not-release-installer"

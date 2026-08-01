@@ -1,11 +1,11 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "kind": "nsis-lifecycle-qualification",
-  "generatedAt": "2026-07-31T04:37:14.003Z",
+  "generatedAt": "2026-07-31T20:02:46.352Z",
   "result": "pass",
   "gateStatus": "packaged-ci-qualified",
   "artifact": {
-    "installerSha256": "0139c3078de99e11f7e40c6cc7768f4cb493973c1a88becea8860efe5421edd2",
+    "installerSha256": "36c7512037720cb50fea98a25ae021e9d5bfcc1a744bbca5d7b4b3e65895f4ae",
     "target": "nsis",
     "arch": "x64"
   },
@@ -20,12 +20,18 @@
   },
   "dataPolicy": {
     "configuredToPreserveUserData": true,
-    "userDataTouchedByQualification": false,
-    "userDataPreservationRuntimeVerified": false
+    "isolatedAppDataEnvironment": true,
+    "preservationProbeKind": "unrelated-isolated-appdata-sentinel",
+    "preservationProbeOwnedByApplication": false,
+    "preservationProbeUnchanged": true,
+    "applicationUserDataPathObserved": false,
+    "applicationUserDataWriteExercised": false
   },
   "limitations": [
     "silent-installer-mechanics-only",
     "application-not-launched",
+    "application-userdata-path-not-observed",
+    "application-userdata-write-not-exercised",
     "not-clean-machine-i4"
   ]
 }

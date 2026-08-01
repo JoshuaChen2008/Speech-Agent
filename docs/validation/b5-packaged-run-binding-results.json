@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "kind": "b5-packaged-run-binding",
+  "generatedAt": "2026-07-31T16:53:48.269Z",
+  "result": "pass",
+  "gateStatus": "packaged-ci-qualified",
+  "run": {
+    "runId": "b5-04b208a6-4bb9-4294-ae0b-0bed3e00c4ea",
+    "electronMajor": 43,
+    "testExecutableSha256": "ed8d34cdfbd385f0bfefbeda23fba48120a272338c5914a5f22a9e93e0f59607",
+    "productPayloadVersion": "live-subtitle-product-payload-v1",
+    "productPayloadFileCount": 111,
+    "productPayloadSha256": "6c986613dc7443db6c9224d92a5e0b5c357ed6d6c24a27d24082e6cdfb87f577"
+  },
+  "fresh": {
+    "productReportSha256": "18d9606e2497f2ec2089bde4b8b88595e9da95e23d3d9fa8ff4ed3039ffad00e",
+    "exitReportSha256": "8687cad1d65ea13a122ba019d1e38da76a9e99565dcdfe5e04c0cdd4e46b7d44"
+  },
+  "restart": {
+    "productReportSha256": "5cf9ffe2289bdfdaef68a577f51c17bd082fadc37fa6649093eef4dae14b1d89",
+    "exitReportSha256": "fbef48768d1fea9f23994eb22a19073a60c5407c8763233c5be266dd8df808fb"
+  },
+  "limitations": [
+    "test-package-not-release-installer",
+    "not-clean-machine-i4"
+  ]
+}

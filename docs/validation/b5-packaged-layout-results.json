@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "kind": "packaged-layout-qualification",
-  "generatedAt": "2026-07-31T04:34:30.651Z",
+  "generatedAt": "2026-07-31T20:01:54.570Z",
   "result": "pass",
   "gateStatus": "packaged-ci-qualified",
   "artifact": {
@@ -15,9 +15,14 @@
     "mainEntry": "src/main.js",
     "appExecutableX64": true,
     "appAsarPresent": true,
-    "asarEntryCount": 163,
+    "appExecutableSha256": "37c5399099d6f7147fbf0e3e2a6c6bffe3cbd053e67bc99d94d6689e04122e26",
+    "appAsarSha256": "870f7368b8cbc7684b6e22cb89d8d34582d40ff818bcd191ad3349525907afaa",
+    "asarEntryCount": 165,
+    "productPayloadVersion": "live-subtitle-product-payload-v1",
+    "productPayloadFileCount": 111,
+    "productPayloadSha256": "6c986613dc7443db6c9224d92a5e0b5c357ed6d6c24a27d24082e6cdfb87f577",
     "installerPresent": true,
-    "installerSha256": "0139c3078de99e11f7e40c6cc7768f4cb493973c1a88becea8860efe5421edd2",
+    "installerSha256": "36c7512037720cb50fea98a25ae021e9d5bfcc1a744bbca5d7b4b3e65895f4ae",
     "signingStatus": "not-signed"
   },
   "layout": {
@@ -31,6 +36,15 @@
     "requiredBinaryCount": 5,
     "unpackedBinaryCount": 5,
     "allMarkedUnpacked": true
+  },
+  "evidenceBinding": {
+    "runId": "b5-04b208a6-4bb9-4294-ae0b-0bed3e00c4ea",
+    "bindingReportSha256": "bc4040478305c91a13f9160cf56ae80d25c56925d4cd0e3c07330cd63613f9f1",
+    "testExecutableSha256": "ed8d34cdfbd385f0bfefbeda23fba48120a272338c5914a5f22a9e93e0f59607",
+    "freshProductReportSha256": "18d9606e2497f2ec2089bde4b8b88595e9da95e23d3d9fa8ff4ed3039ffad00e",
+    "freshExitReportSha256": "8687cad1d65ea13a122ba019d1e38da76a9e99565dcdfe5e04c0cdd4e46b7d44",
+    "restartProductReportSha256": "5cf9ffe2289bdfdaef68a577f51c17bd082fadc37fa6649093eef4dae14b1d89",
+    "restartExitReportSha256": "fbef48768d1fea9f23994eb22a19073a60c5407c8763233c5be266dd8df808fb"
   },
   "limitations": [
     "unsigned-installer",
