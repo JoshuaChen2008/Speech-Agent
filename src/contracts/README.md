@@ -95,7 +95,7 @@ Gate 0A 冻结的四类对象（RuntimeSnapshot / Capabilities / CaptionEvent / 
 
 保留语义：pause/error/stop 都保留段落；只有新会话第一条已广播字幕、或 coordinator dispose 才清空。被丢弃的 pending 缓冲（start/retry 失败时）从不进入本状态。
 
-修订规则：`refined` / `translated` 只能修订既有段（`basedOnRevision` 必然指向更早的正文版本），目标段已被淘汰出窗口时一致地忽略开新段；`partial` / `final` 落在已淘汰段上则两侧一致地按重开新段处理。注意：事件被广播不等于被显示——窗口外的修订会到达订阅者但不进入折叠状态，B3 历史消费者必须走 JSONL 而不是本状态。
+修订规则：`refined` / `translated` 只能修订既有段（`basedOnRevision` 必然指向更早的正文版本），目标段已被淘汰出窗口时一致地忽略开新段；`partial` / `final` 落在已淘汰段上则两侧一致地按重开新段处理。注意：事件被广播不等于被显示——窗口外的修订会到达订阅者但不进入折叠状态，B3 历史消费者必须查询 SQLite 权威投影，而不是依赖本状态。
 
 ## CommandResult
 

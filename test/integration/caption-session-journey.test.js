@@ -9,28 +9,29 @@ const test = require('node:test')
 
 const { createState, applyEvent, hydrateState, selectLines } = require('../../src/ui/shared/caption-reducer')
 const { resolveRuntimeOptions, DEV_MODEL_VALUE } = require('../../src/main/runtime-options')
-const { SessionTranscriptRecorder } = require('../../src/main/services/session-transcript-recorder')
-const {
-  TranscriptStore,
-  exportMarkdown,
-  exportSrt,
-  exportText,
-  foldSegments,
-  readSessionFile
-} = require('../../src/main/services/transcript-store')
+const { SqliteSessionRecorder } = require('../../src/main/services/sqlite-session-recorder')
+const { StorageGateway } = require('../../src/main/services/storage-gateway')
 const { FakeRuntimeAdapter } = require('../../src/main/session/fake-runtime-adapter')
 const { SessionCoordinator } = require('../../src/main/session/session-coordinator')
 const { ConfigStore } = require('../../src/main/services/config-store')
 const { RealtimeRuntimeAdapter } = require('../../src/runtime/realtime-runtime-adapter')
 const { AudioHostController } = require('../../src/runtime/audio-host/audio-host-controller')
 const { RealtimeWorkerHost, sanitizeCaptionTiming } = require('../../src/runtime/realtime-worker/worker-host')
+const {
+  OPERATIONS,
+  PROTOCOL_VERSION,
+  StorageError,
+  makeCaptionEventId,
+  makeCloseSessionKey,
+  makeOpenSessionKey
+} = require('../../src/runtime/storage-worker/protocol')
+const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
+const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
 
 const DEV_RUNTIME = resolveRuntimeOptions({ LIVE_SUBTITLE_DEV_MODEL: DEV_MODEL_VALUE })
 
-function tempDirectory (t, scenario) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), `caption-journey-${scenario}-`))
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
-  return directory
+function tempDirectory (scenario) {
+  return fs.mkdtempSync(path.join(os.tmpdir(), `caption-journey-${scenario}-`))
 }
 
 function audioFilesUnder (directory) {
@@ -44,6 +45,76 @@ function audioFilesUnder (directory) {
   }
   visit(directory)
   return found
+}
+
+/* The production gateway still crosses the storage-worker protocol here. Only
+   Electron's utility-process boundary is substituted so the J1/J2/J4/J5/J6
+   journeys can deterministically use a temporary SQLite database. */
+function serviceBackedHost (service, databasePath) {
+  let sequence = 0
+  let started = false
+
+  function call (operation, payload, idempotencyKey) {
+    const response = service.handle({
+      version: PROTOCOL_VERSION,
+      type: 'storage:request',
+      requestId: `caption-journey-${++sequence}`,
+      operation,
+      payload,
+      ...(idempotencyKey ? { idempotencyKey } : {})
+    })
+    if (!response.ok) throw new StorageError(response.error.code)
+    return response.result
+  }
+
+  return {
+    async start () {
+      if (started) return
+      call(OPERATIONS.INITIALIZE, { databasePath })
+      started = true
+    },
+    async openSession (input) {
+      return call(OPERATIONS.OPEN_SESSION, input, makeOpenSessionKey(input.sessionId))
+    },
+    async appendCaption (event) {
+      return call(OPERATIONS.APPEND_CAPTION, { event }, makeCaptionEventId(event))
+    },
+    async closeSession (input) {
+      return call(OPERATIONS.CLOSE_SESSION, input, makeCloseSessionKey(input.sessionId))
+    },
+    async getSessionTranscript (sessionId) {
+      return call(OPERATIONS.GET_SESSION, { sessionId })
+    },
+    async getSessionPage (input) {
+      return call(OPERATIONS.GET_SESSION_PAGE, input)
+    },
+    async listSessions (input) {
+      return call(OPERATIONS.LIST_SESSIONS, input)
+    },
+    async getStats () {
+      return call(OPERATIONS.GET_STATS, {})
+    },
+    async shutdown () {
+      if (!service.shuttingDown) call(OPERATIONS.SHUTDOWN, {})
+    },
+    async terminateAndWait () {
+      if (!service.shuttingDown) call(OPERATIONS.SHUTDOWN, {})
+      return 0
+    }
+  }
+}
+
+function createGateway (directory) {
+  const databasePath = path.join(directory, 'data', 'speech-agent.sqlite3')
+  const service = new StorageWorkerService({
+    storeFactory: (options) => new SqliteSubtitleStore(options)
+  })
+  const gateway = new StorageGateway({
+    databasePath,
+    hostFactory: () => serviceBackedHost(service, databasePath),
+    maxRestarts: 0
+  })
+  return { gateway, databasePath }
 }
 
 /* Production runtime composition with only the non-deterministic Electron,
@@ -196,19 +267,18 @@ function captionTiming (event, base) {
 }
 
 async function runCaptionJourney (t, scenario) {
-  const directory = tempDirectory(t, scenario.id)
+  const directory = tempDirectory(scenario.id)
+  const { gateway } = createGateway(directory)
   const adapter = new FakeRuntimeAdapter({ autoEmit: false })
+  let clock = 1785396000000
+  const recorder = new SqliteSessionRecorder({ gateway, now: () => clock++ })
   const coordinator = new SessionCoordinator({
     adapter,
+    persistenceSink: recorder,
     runtimeOptions: DEV_RUNTIME,
     configuration: scenario.configuration,
     idFactory: () => `ci-${scenario.id}-session`
   })
-  const store = new TranscriptStore({
-    directory,
-    now: () => new Date(2026, 6, 30, 10, 0, 0)
-  })
-  const recorder = new SessionTranscriptRecorder({ coordinator, store })
   const liveRendererState = createState()
   const delivered = []
   const unsubscribeRenderer = coordinator.onCaption((event) => {
@@ -218,11 +288,12 @@ async function runCaptionJourney (t, scenario) {
 
   t.after(async () => {
     unsubscribeRenderer()
-    recorder.dispose()
-    store.dispose()
-    await coordinator.dispose()
+    await coordinator.dispose().catch(() => {})
+    await gateway.shutdown().catch(() => gateway.terminate())
+    fs.rmSync(directory, { recursive: true, force: true })
   })
 
+  await gateway.start()
   assert.equal((await coordinator.command('start')).ok, true)
   const sessionId = coordinator.getSnapshot().sessionId
   assert.equal(sessionId, `ci-${scenario.id}-session`)
@@ -273,27 +344,31 @@ async function runCaptionJourney (t, scenario) {
   })
 
   assert.equal((await coordinator.command('stop')).ok, true)
-  const files = fs.readdirSync(directory).filter((name) => name.endsWith('.jsonl'))
-  assert.equal(files.length, 1)
-  const report = readSessionFile(path.join(directory, files[0]))
-  assert.equal(report.corruptLineCount, 0)
-  assert.equal(report.truncatedTail, false)
-  assert.deepEqual(report.events.map((event) => event.event), [
-    'session.open',
-    'segment.final',
-    'segment.refined',
-    'segment.translated',
-    'session.close'
-  ], 'partial 只用于实时 UI，不能进入会话档案')
-
-  const durableSegments = foldSegments(report.events)
-  assert.equal(durableSegments.length, 1)
-  assert.equal(durableSegments[0].sourceId, scenario.sourceId)
-  assert.equal(durableSegments[0].text, scenario.refined)
-  assert.equal(durableSegments[0].translation.text, scenario.translation)
-  assert.equal(exportText(durableSegments), `${scenario.refined}\n`)
-  assert.ok(exportMarkdown(durableSegments, { title: scenario.id }).includes(scenario.translation))
-  assert.ok(exportSrt(durableSegments).includes(scenario.refined))
+  await gateway.flush()
+  const durable = await gateway.getSessionTranscript(sessionId)
+  assert.deepEqual(durable.session, {
+    sessionId,
+    mode: scenario.sourceId === 'mic' ? 'dictation' : 'meeting',
+    sourceId: scenario.sourceId,
+    startedAt: 1785396000000,
+    endedAt: 1785396000001,
+    state: 'closed'
+  })
+  assert.deepEqual(durable.segments.map((segment) => ({
+    segmentId: segment.segmentId,
+    sourceId: segment.sourceId,
+    text: segment.text,
+    textRevision: segment.textRevision,
+    t0Ms: segment.t0Ms,
+    t1Ms: segment.t1Ms
+  })), [{
+    segmentId: `segment-${scenario.sourceId}-1`,
+    sourceId: scenario.sourceId,
+    text: scenario.refined,
+    textRevision: 3,
+    t0Ms: 400,
+    t1Ms: 2800
+  }], 'partial and translated events must not enter the SQLite subtitle facts')
   assert.deepEqual(audioFilesUnder(directory), [], '字幕、历史和导出旅程不得生成现场音频文件')
 }
 
@@ -325,7 +400,8 @@ for (const scenario of scenarios) {
 }
 
 test('CI journey J4/J12: source switch requires stop, creates a new isolated text-only session', async (t) => {
-  const directory = tempDirectory(t, 'xor-source-switch')
+  const directory = tempDirectory('xor-source-switch')
+  const { gateway } = createGateway(directory)
   const configStore = new ConfigStore(path.join(directory, 'config.json'))
   configStore.load()
   configStore.applyPreset('meeting')
@@ -335,17 +411,18 @@ test('CI journey J4/J12: source switch requires stop, creates a new isolated tex
   const adapter = new RealtimeRuntimeAdapter({ electron: runtimeBoundary.electron })
   const coordinator = new SessionCoordinator({
     adapter,
+    persistenceSink: new SqliteSessionRecorder({ gateway, now: () => 1785396100000 }),
     runtimeOptions: DEV_RUNTIME,
     configuration: configStore.get(),
     idFactory: () => sessionIds.shift()
   })
-  const transcriptStore = new TranscriptStore({ directory })
-  const recorder = new SessionTranscriptRecorder({ coordinator, store: transcriptStore })
   t.after(async () => {
-    recorder.dispose()
-    transcriptStore.dispose()
-    await coordinator.dispose()
+    await coordinator.dispose().catch(() => {})
+    await gateway.shutdown().catch(() => gateway.terminate())
+    fs.rmSync(directory, { recursive: true, force: true })
   })
+
+  await gateway.start()
 
   assert.throws(
     () => configStore.update({ mic: true }),
@@ -396,14 +473,14 @@ test('CI journey J4/J12: source switch requires stop, creates a new isolated tex
     '每个会话都必须把 PCM port 交给 realtime worker'
   )
 
-  const reports = fs.readdirSync(directory)
-    .filter((name) => name.endsWith('.jsonl'))
-    .map((name) => readSessionFile(path.join(directory, name)))
-  assert.equal(reports.length, 2)
-  const segments = reports.flatMap((report) => {
-    const sessionId = report.events.find((event) => event.event === 'session.open')?.sessionId
-    return foldSegments(report.events).map((segment) => ({ ...segment, sessionId }))
-  })
+  await gateway.flush()
+  const transcripts = await Promise.all([loopbackSessionId, micSessionId]
+    .map((id) => gateway.getSessionTranscript(id)))
+  const segments = transcripts.flatMap((transcript) => transcript.segments.map((segment) => ({
+    sessionId: transcript.session.sessionId,
+    sourceId: segment.sourceId,
+    text: segment.text
+  })))
   assert.deepEqual(
     segments.map((segment) => [segment.sessionId, segment.sourceId, segment.text]).sort(),
     [
@@ -534,7 +611,8 @@ test('CI journey I2: production runtime composition retains timing only for the 
 })
 
 test('CI journey J5/J6/J12: pause-refine and worker recovery preserve one durable session', async (t) => {
-  const directory = tempDirectory(t, 'pause-fault-recovery')
+  const directory = tempDirectory('pause-fault-recovery')
+  const { gateway } = createGateway(directory)
   const runtimeBoundary = simulatedElectronRuntime()
   const adapters = []
   const coordinator = new SessionCoordinator({
@@ -544,17 +622,17 @@ test('CI journey J5/J6/J12: pause-refine and worker recovery preserve one durabl
       return adapter
     },
     runtimeOptions: DEV_RUNTIME,
+    persistenceSink: new SqliteSessionRecorder({ gateway, now: () => 1785396200000 }),
     configuration: { onboardingCompleted: true, onboardingPreset: 'meeting', mic: false, loopback: true },
     idFactory: () => 'ci-pause-fault-session'
   })
-  const transcriptStore = new TranscriptStore({ directory })
-  const recorder = new SessionTranscriptRecorder({ coordinator, store: transcriptStore })
   t.after(async () => {
-    recorder.dispose()
-    transcriptStore.dispose()
-    await coordinator.dispose()
+    await coordinator.dispose().catch(() => {})
+    await gateway.shutdown().catch(() => gateway.terminate())
+    fs.rmSync(directory, { recursive: true, force: true })
   })
 
+  await gateway.start()
   assert.equal((await coordinator.command('start')).ok, true)
   const sessionId = coordinator.getSnapshot().sessionId
   const firstChild = runtimeBoundary.children[0]
@@ -605,17 +683,12 @@ test('CI journey J5/J6/J12: pause-refine and worker recovery preserve one durabl
   assert.equal(runtimeBoundary.captureStops.length, 2, 'final stop closes only the replacement capture')
   assert.deepEqual(adapters[0].getLastRunDiagnostics().sourceIds, ['loopback'])
 
-  const files = fs.readdirSync(directory).filter((name) => name.endsWith('.jsonl'))
-  assert.equal(files.length, 1, 'pause/retry must not split one session into multiple archives')
-  const report = readSessionFile(path.join(directory, files[0]))
-  assert.equal(report.corruptLineCount, 0)
-  assert.equal(report.truncatedTail, false)
-  const segments = foldSegments(report.events)
-  assert.deepEqual(segments.map((segment) => [segment.segmentId, segment.text]), [
+  await gateway.flush()
+  const durable = await gateway.getSessionTranscript(sessionId)
+  assert.equal(durable.session.state, 'closed')
+  assert.deepEqual(durable.segments.map((segment) => [segment.segmentId, segment.text]), [
     ['segment-before-pause', '暂停前的一遍定稿。'],
     ['segment-after-recovery', '恢复后的字幕继续保存。']
   ])
-  assert.equal(report.events.filter((event) => event.event === 'session.open').length, 1)
-  assert.equal(report.events.filter((event) => event.event === 'session.close').length, 1)
   assert.deepEqual(audioFilesUnder(directory), [], 'pause/recovery diagnostics and history must remain text-only')
 })

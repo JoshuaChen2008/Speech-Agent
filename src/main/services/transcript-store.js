@@ -2,136 +2,12 @@
 
 // @ts-check
 
-/* 事件式 JSONL 转写存储（B3.1，PLAN §6.4）。
+/* Legacy JSONL compatibility and shared transcript formatting.
    --------------------------------------------------------------------------
-   - append-only：保存事件而不是可变记录；refined/translated 可以晚到，
-     崩溃前已写入的 final 不丢。
-   - 文件名 Windows-safe：ISO 时间戳的 ':' 非法，使用 yyyyMMdd-HHmmss。
-   - 每行独立 JSON；进程崩溃可能留下半行，读取时容忍坏尾行并如实报告。
-   - 读取/导出按 segmentId + revision 折叠为当前状态；折叠排序按
-     (t0, 首见顺序)，与显示层解耦。
-   - 只收 final/refined/translated（partial 是显示态，不入档）。
-   - 低频写入（每句一条），appendFileSync 保证崩溃一致性；本模块不做
-     跨行事务。API Key/模型路径等敏感信息永不出现在事件里（契约字段白名单）。 */
-
-const fs = require('node:fs')
-const path = require('node:path')
-
-const PERSISTED_KINDS = Object.freeze(['final', 'refined', 'translated'])
-const EVENT_NAMES = Object.freeze({
-  final: 'segment.final',
-  refined: 'segment.refined',
-  translated: 'segment.translated'
-})
-
-function windowsSafeTimestamp (date) {
-  const pad = (value) => String(value).padStart(2, '0')
-  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
-    `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
-}
-
-function sanitizeSessionId (sessionId) {
-  /* 白名单后再折叠点号连跑：'..' 不可出现在文件名里（防路径歧义）。 */
-  return String(sessionId).replace(/[^A-Za-z0-9._-]/g, '_').replace(/\.{2,}/g, '_').slice(0, 80)
-}
-
-class TranscriptStore {
-  constructor (options) {
-    if (!options || typeof options.directory !== 'string' || options.directory.length === 0) {
-      throw new TypeError('directory is required')
-    }
-    this.directory = options.directory
-    this.now = options.now || (() => new Date())
-    this.onError = options.onError || (() => {})
-    this.active = null
-  }
-
-  reportError (error) {
-    try { this.onError(error) } catch { /* observer failures stay isolated */ }
-  }
-
-  /** 会话开始：创建 append-only 事件文件。重复 open 同一会话是 no-op。 */
-  openSession (sessionId) {
-    if (typeof sessionId !== 'string' || sessionId.length === 0) throw new TypeError('sessionId is required')
-    if (this.active && this.active.sessionId === sessionId) return this.active.filePath
-    this.closeSession()
-    fs.mkdirSync(this.directory, { recursive: true })
-    const openedAt = this.now()
-    const base = `${windowsSafeTimestamp(openedAt)}_${sanitizeSessionId(sessionId)}`
-    /* 排他创建 + 序号后缀：同秒且清洗后同名的会话绝不混入同一文件。 */
-    let filePath = null
-    for (let suffix = 0; suffix < 100; suffix += 1) {
-      const candidate = path.join(this.directory, suffix === 0 ? `${base}.jsonl` : `${base}.${suffix}.jsonl`)
-      try {
-        fs.closeSync(fs.openSync(candidate, 'ax'))
-        filePath = candidate
-        break
-      } catch (error) {
-        if (error.code !== 'EEXIST') throw error
-      }
-    }
-    if (!filePath) throw new Error('could not allocate a unique session file name')
-    this.active = { sessionId, filePath }
-    this.appendLine({ v: 1, event: 'session.open', sessionId, at: openedAt.toISOString() })
-    return filePath
-  }
-
-  appendLine (record) {
-    if (!this.active) return false
-    try {
-      fs.appendFileSync(this.active.filePath, JSON.stringify(record) + '\n')
-      return true
-    } catch (error) {
-      this.reportError(error)
-      return false
-    }
-  }
-
-  /**
-   * 收录一条已定稿 CaptionEvent（final/refined/translated）。
-   * partial、会话不匹配或未开档一律拒绝（返回 false）。
-   */
-  append (event) {
-    if (!this.active || !event || event.sessionId !== this.active.sessionId) return false
-    if (!PERSISTED_KINDS.includes(event.kind)) return false
-    const record = {
-      v: 1,
-      event: EVENT_NAMES[event.kind],
-      sessionId: event.sessionId,
-      sourceId: event.sourceId,
-      segmentId: event.segmentId,
-      sequence: event.sequence,
-      revision: event.revision,
-      t0: event.t0,
-      t1: event.t1,
-      text: event.text
-    }
-    if (event.kind === 'translated' && event.translation) {
-      record.lang = event.translation.language
-      record.translation = event.translation.text
-      record.basedOnRevision = event.translation.basedOnRevision
-    }
-    return this.appendLine(record)
-  }
-
-  closeSession () {
-    if (!this.active) return
-    this.appendLine({ v: 1, event: 'session.close', sessionId: this.active.sessionId, at: this.now().toISOString() })
-    this.active = null
-  }
-
-  dispose () {
-    this.closeSession()
-  }
-}
-
-/**
- * 读取一个会话文件。坏尾行（崩溃截断）被容忍并报告；
- * 中间行损坏同样跳过计数——绝不因单行损坏丢弃整个文件。
- */
-function readSessionFile (filePath) {
-  return parseSessionText(fs.readFileSync(filePath, 'utf8'))
-}
+   JSONL is read solely for one-shot migration. New subtitle facts are
+   SQLite-only. Parsing remains here because the migration digest must be
+   derived from exactly the archived bytes. Export helpers remain shared with
+   HistoryService. */
 
 /* Parse a caller-owned immutable text snapshot. Migration uses this entry
    point so the SHA-256 and parsed records come from the exact same bytes. */
@@ -246,15 +122,10 @@ function exportSrt (segments) {
 }
 
 module.exports = {
-  EVENT_NAMES,
-  PERSISTED_KINDS,
-  TranscriptStore,
   exportMarkdown,
   exportSrt,
   exportText,
   foldSegments,
   formatSrtTime,
-  parseSessionText,
-  readSessionFile,
-  windowsSafeTimestamp
+  parseSessionText
 }

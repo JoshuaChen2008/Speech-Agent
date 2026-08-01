@@ -4,8 +4,9 @@
 
 /* JSONL -> SQLite one-shot migration coordinator.
    -------------------------------------------------------------------------
-   This main-process service is deliberately not wired into main.js yet. It
-   reads the legacy files, reduces them to the narrow subtitle-fact payload
+   The application runtime invokes this service during startup before opening
+   the SQLite-only session recorder. It reads legacy files without modifying
+   them, reduces them to the narrow subtitle-fact payload
    accepted by the storage worker, then independently compares the old and
    new *original-text* projections. Legacy translations are counted only;
    they never cross this API boundary. */
@@ -179,9 +180,9 @@ function prepareLegacyBatch (events, report, options) {
   if (events.some((record) => !KNOWN_LEGACY_EVENTS.has(record.event))) {
     throw new LegacyMigrationError('INVALID_LEGACY_FILE')
   }
-  /* TranscriptStore always writes one open first and, when present, one close
-     last. Accepting records outside that lifetime would turn a corrupt file
-     into a plausible but false session history. */
+  /* Legacy JSONL archives begin with one open record and, when present, end
+     with one close record. Accepting records outside that lifetime would turn
+     a corrupt file into a plausible but false session history. */
   if (events.length === 0 || events[0].event !== 'session.open') {
     throw new LegacyMigrationError('INVALID_LEGACY_FILE')
   }
