@@ -5,6 +5,8 @@
 >
 > 2026-08-01 音频窗口已执行：Gate 0C 通过；新的 loopback/mic 各五轮结构、准确率、自然退出和 transport 零丢失通过，但冻结 P95=1148/1099ms，仍超 `<1000ms` 线 148/99ms。真实 pause/refine 与 exact worker 硬终止+Retry 通过；DWM 持续字幕零丢失但缺操作者拖动 completion，只能判 inconclusive。I3 在 75 秒、故障前≥12/恢复后≥8/总计≥25 的不降线资格协议下，以 14/17/31 final 和 29 refined 严格通过；两小时验收仍待原生拖动后启动。设备移除、睡眠/唤醒和 I2 原生拖动仍待；干净 Win11 快照与代码签名按本轮内部 MVP 决定暂缓。`loopback`/`mic` 继续产品级 XOR，翻译/Agent 与向量继续后置。
 
+> 2026-08-01 追加（B6 排期）：ADR 0004 的落地已拆成 J15a（固定高度字幕流）、J15b（转写版本隔离）、J15c（精修可选化）三条旅程，本轮只做 J15a + J15b，**因此本轮结束后字幕 MVP 仍未齐**——J15c 与 I2 延迟/原生拖动/设备与睡眠、I3 两小时、I4 干净机都仍未关闭。§8.2 的三资源原子 bundle 决定已被 ADR 0004 部分取代，见该节 superseded 提示。仓库根新增 [`AGENTS.md`](AGENTS.md) 作为改动前的文档路由表：全部文档读一遍约 11 万 token，路由表把单次改动的固定文档开销压到约 1.3 万，其中 `CONTEXT.md` 术语为每次必读、不可跳过。
+
 ---
 
 ## 0. 现状盘点
@@ -490,6 +492,7 @@ node scripts/gate-0b/evaluate-transcripts.js `
 | **B3.3 SQLite 字幕历史（非音频联合验收完成 / 音频 I3 与 I4 待验）** | storage worker、SQLite 字幕事件/segments、JSONL 迁移、终态历史列表/有界详情与 txt/md/srt 导出 UI | DB0/DB1、Gateway 恢复、DB2、两次冷启动、历史/导出均有确定性证据；packaged Electron 首轮真实迁移只读旧 JSONL 并完整导出 205 段，第二轮验证幂等、SQLite/history/导出保留。I3 非音频 3,600 段资源资格通过。人工系统保存对话框、真实两小时声源和干净机 I4 仍待 |
 | **B4 字幕资源（确定性 UI 联合验收完成；真实模型调用有证据；I4 待验）** | 内置固定 manifest、ModelManager、断点下载、流式 SHA、固定 System32 tar、归档审查/白名单提取、staging 原子安装、严格 marker、资源页与空闲热启用 | 资源页的状态、进度、单一下载/重试动作以及无参数 IPC 已实现；局部失败矩阵和后端受控 J14 均通过，含卡死 fetch/tar 有界退出；批准大模型安装/三运行时调用已留档。Electron 产品壳现从隔离 userData 的 `missing` 状态实际点击设置页下载，经 preload/IPC、生产 ModelManager、Range、三 marker、热启用，完成字幕、暂停/恢复、停止和本次 SQLite 历史复盘。受控资源/fake ASR 不冒充真实张量、公网或物理声卡。当前不提供删除功能；B5 已关闭打包态确定性资格，I4 只关闭精确 NSIS 的干净机公网/真实音源发布旅程 |
 | **B5 字幕 MVP 分发（当前候选确定性资格完成；I4 待验）** | electron-builder 26.15.3、ASAR allowlist/fuses、native unpack、packaged 双启动、NSIS | 当前 unsigned NSIS SHA=`36c75120…95f4ae`；165 个 ASAR 条目、111 文件产品载荷 SHA=`6c986613…f577`、29 个关键入口、5 个 native、无模型/音频/开发树。test package 首启覆盖 Range/tar/热启用/字幕/迁移/历史/导出，复启覆盖 fetch=0、ready/历史/迁移幂等及新会话，两轮 clean exit；七份报告以 run ID 和 SHA 闭合绑定到 release layout。NSIS 隔离安装卸载通过，且无关 APPDATA 哨兵不变；正式应用 userData 保留未在 B5 中验证。test main/fake ASR/静默安装不冒充公网、真实声卡或干净机 I4 |
+| **B6 固定高度字幕流与转写版本（进行中）** | J15a：字幕窗改为固定 bounds 的连续字幕流（CSS 底部锚定 + 溢出裁剪，容器高度取整到整行），JS 只决定入流段落与顺序；新增 `scripts/caption-layout-smoke.js` 布局资格。J15b：首次 `final` 与精修稿版本隔离，历史详情一次返回两版、导出按版本参数分别核对 digest。J15c 精修可选化本轮不做 | J15a 分两层证据：纯逻辑层验证入流段落/顺序/`partial` 最高优先级/全程无 resize 调用；布局 smoke 在最小 Electron 宿主中验证 24/30/38px × 中文/英文/混排/长单词的四条不变量，并排在 CI 全部重步骤之前。J15b 必须**先**补测试锁定 `segments.first_event_order` 恒指向首次 `final`（覆盖乱序到达、同段多个 final、旧档迁移），再改读取路径——既有迁移/导出测试校验的是折叠后单投影，语义换了仍会全绿。产品壳旅程另加两条最小断言：可见字幕正文等值、改 `fontSize` 后生效且不溢出（报告只落 boolean/digest，不写正文）。CI 增加失败也上传 `.artifacts` 报告与日志 |
 | **A1 Agent 基础（后置）** | `AgentRuntime` 边界、Pi Core 探针、项目自有 `AgentPluginHost`、CredentialStore、ModelGateway、可靠消费水位 | 只静态注册受信任第一方插件；不启用 shell/进程/任意文件写/外部写；key 不进 renderer；Agent 关闭/崩溃不影响字幕；J7/J13 通过 |
 | **A2 Agent 内容能力（后置）** | `TranscriptContextPlugin`、独立增强文本、会后结构化纪要 | 原文与派生文本不混淆；待办只生成内容；字幕→Agent 通过 J3–J7/J13 联合场景 |
 | **X1 可选检索（Deferred）** | FTS5 按需增加；embedding/`sqlite-vec` 最后评估 | 不阻断 B3.3、B5 或 A2；若启用再执行 J11/DB4 |
@@ -520,7 +523,9 @@ node scripts/gate-0b/evaluate-transcripts.js `
 
 Gate 0B 原门槛于 2026-07-27 经正式改判重设（见 `docs/validation/gate-0b.md` 改判节）：批准机器基线上发布 `fast` profile（x-asr-160ms + 离线精修）。`LIVE_SUBTITLE_DEV_MODEL=x-asr-480ms` 仍是仅供 B1 fake adapter 的开发开关，不加载真实模型，也不得进入生产默认配置；真实 profile 的发布以模型文件实际就位 + 机器基线满足为条件。
 
-### 8.2 接受首启下载约 270.9MB 的完整本地 bundle 吗？（已拍板）
+### 8.2 接受首启下载约 270.9MB 的完整本地 bundle 吗？（旧决定 · 2026-08-01 已被 ADR 0004 部分取代）
+
+> **Superseded 提示：**本节以下两段描述的是 ADR 0004 之前的旧候选。[ADR 0004](docs/adr/0004-immutable-first-pass-and-optional-refinement.md) 与 `SEM-F17` 已接受新的边界——**核心字幕 ready 只依赖实时 ASR 与 VAD；离线精修改为默认不下载、由未监听状态下明确用户动作按需安装的可选资源，缺失或失败只降级精修能力。**新的实现与验收按 J15c 执行，本轮不做。保留下文只为记录旧决定及其证据，**不得据此写测试，也不得再用"三项资源缺一不可"阻塞默认字幕**。
 
 **决定：接受，且一次性安装完整三资源 bundle。** 当前固定 manifest 包含实时 X-ASR（133,898,007 字节）、离线 X-ASR 精修（136,396,739 字节）和 silero VAD（643,854 字节），合计 **270,938,600 字节**。设置页以一个下载/重试动作展示总进度和三项资源状态；只有三项均通过字节数、SHA-256、归档白名单与 ready marker 校验后，`ModelManager` 才能发布 `ready`，应用才会热启用真实字幕运行时。
 

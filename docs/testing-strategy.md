@@ -22,6 +22,7 @@
 | 确定性联合测试 | `npm run test:integration` | 每次 push / PR 的 Windows CI | 多个真实产品模块围绕同一用户旅程协作，且不依赖声卡、网络或本机模型 |
 | evidence 回归 | `npm run test:evidence` | 本机 / Windows hosted runner | Gate、严格报告 verifier、tracked evidence 与打包/测试分层结构契约；含约 7 秒的 I3 非音频预资格复跑 |
 | Electron 产品壳联合旅程 | `scripts/product-shell-smoke.js` + verifiers | 每次 push / PR 的 Windows CI | 首进程完成四 renderer、ModelManager、旧 JSONL→SQLite、205 段分页与三格式完整导出；packaged runner 再以同一 `userData`、fetch=0 第二进程验证 ready/历史/迁移幂等及新会话。fake-ASR 与受控小资源替代音频、真实张量和公网；两轮另记 exact-child exit evidence |
+| 字幕布局资格 | `scripts/caption-layout-smoke.js` + `verify-caption-layout-report.js` | 每次 push / PR 的 Windows CI 首个质量步骤，排在全部重步骤之前（由 `test/validation/caption-layout-evidence.test.js` 强制该顺序） | 最小 Electron 宿主只启字幕窗与真实 preload，注入超长 `partial`，在 24/30/38px × 中文/英文/中英混排/超长单词下验证四条布局不变量：无横向溢出、最新视觉行始终在视口内、最旧完整视觉行退出、顶部不出现半行。它不启动主进程组合根、模型与存储，因此不证明 config 广播接线（由产品壳旅程两条最小断言兜底）、真实 ASR，也不替代 DPI/主题/透明窗的人工视觉验收 |
 | 打包态确定性资格 | `package:smoke` / `package:release` + package/product/restart/exit/binding/NSIS verifiers | 每次 push / PR 的 Windows CI | 正式 ASAR/NSIS allowlist、fuses、x64、native unpack；测试 package 双启动；同轮 run ID、四份报告 SHA 与完整产品载荷 SHA 闭合；精确候选静默安装/卸载及无关 APPDATA 哨兵保留。只取得 B5 机械预资格，不证明正式应用 userData 或替代 I4 |
 | I4 非音频发布子门禁 | `scripts/qualify-i4-nonaudio-nsis.ps1` + `verify-i4-nonaudio-nsis-report.js` | 无仓库/Node/旧数据的专用 Win11 标准用户快照 | 精确 NSIS 的交互安装、正式 release main、公网生产 bundle、断网复启、真实保存对话框、动态发现的正式 userData、卸载保留及离线重装；全程不发 capture。报告上限固定 `pass/partial`，当前入口已完成但尚无专用机报告 |
 | CI 总门禁 | `npm test` / `npm run test:ci` | `.github/workflows/ci.yml` | 依次运行 core/integration/evidence；`test:ci` 只调用一次 `npm test`，不重复 integration |
@@ -31,7 +32,7 @@
 
 Hosted CI 不声称验证真实 WASAPI/回环、物理麦克风、DWM 窗口行为、模型性能、交互安装/权限、SmartScreen 或干净机。此类证据必须由实机 lane 生成结构化报告；没有报告就是未验收，而不是跳过后视为通过。
 
-> 2026-08-01 的 [ADR 0004](adr/0004-immutable-first-pass-and-optional-refinement.md) 已重新定义首次 `final`、可选精修与模型资源边界。下表中既有 `final→refined`、三资源 bundle 和单投影“已通过”状态只描述旧候选；J1/J2/J10/J14 的相关部分必须由新增 J15 重新对齐后才能用于新方案验收。
+> 2026-08-01 的 [ADR 0004](adr/0004-immutable-first-pass-and-optional-refinement.md) 已重新定义首次 `final`、可选精修与模型资源边界。下表中既有 `final→refined`、三资源 bundle 和单投影“已通过”状态只描述旧候选；J1/J2/J10/J14 的相关部分必须由新增 J15a/J15b/J15c 重新对齐后才能用于新方案验收。这三条按 2026-08-01 的排期决定拆分执行：本轮实现 J15a 与 J15b，J15c 单独一轮，因此本轮结束后字幕 MVP 仍未齐。
 
 ## 3. 用户旅程矩阵
 
@@ -52,7 +53,9 @@ Hosted CI 不声称验证真实 WASAPI/回环、物理麦克风、DWM 窗口行�
 | J12 | 隐私负证据：正常停止、崩溃恢复、诊断 smoke、迁移、模型安装和导出后，SQLite、应用数据目录、日志、测试产物与 Agent 上下文均不存在现场采集 PCM/WAV、录音片段或音频路径 | 字幕 MVP PR schema/文件检查 + J14 安装目录检查 + I2 diagnostic + I4 打包版数据目录检查；测试语料只跟踪 generator/reference，生成 WAV 被忽略 | schema/RPC/Gateway、默认产品与 packaged 双冷启动、迁移、历史导出、I3 非音频 3,600 段和批准大模型安装均无现场音频产物/字段/路径且不创建新 JSONL；I2 报告只绑定生成语料 digest。正式 release 的干净机数据目录仍归 I4 |
 | J13 | 内容型插件权限：真实 PluginHost 装载字幕上下文/增强文本/纪要插件；只允许读已提交正文、调用 ModelGateway、写 `agent_artifacts`；外部操作请求被拒绝且不影响字幕 | A1/A2 PR 阻断；契约 provider 替身 + 真实 SQLite/宿主 | 宿主与插件未实现 |
 | J14 | 模型资源：缺模型 → 用户在真实设置 renderer 打开资源管理并点击下载 → 受控中断后 Range 续传 → 固定 manifest 字节/SHA/归档/文件校验 → staging 原子安装/ready marker → 空闲 runtime 发布字幕 capability → 工具条开始字幕 → 字幕窗显示定稿 → 暂停/恢复 → 停止并进入 SQLite 历史 | B4 每次 PR 使用真实 Electron settings DOM、受限 preload/IPC、真实 ModelManager/Windows tar/SQLite；仅 HTTP 内容、真实张量/ASR 和声卡使用受控替身。批准大模型另走实机 lane；公网/干净机归 I4 | UI 联合旅程已通过：真实 settings DOM 点击、preload/IPC、生产 ModelManager、loopback HTTP/Range、Windows tar、三资源 marker、空闲热替换、工具条开始/暂停/恢复/停止、字幕 renderer、本次 SQLite 终态历史与零音频；局部矩阵覆盖坏 hash/size、越权 URL/path、traversal/link、活动拒绝及退出续传。批准 270,938,600 字节 bundle 已真实安装并被在线 ASR、离线精修、VAD 调用。受控资源/fake ASR 不证明真实张量、物理声卡或公网；I4 公网干净机仍待补。 |
-| J15 | 固定高度字幕与版本隔离：长 `partial` 自然换行→满高逐行淘汰→回改重排但不触发分段/持久化→`final` 原始版落盘→下一段逐行接续/停顿保留；默认核心模型不含精修，按会话开启后独立保存精修稿，历史/导出可切换且原始版默认 | 字幕 MVP PR 阻断；DOM/reducer/config/model/storage/history/export 使用确定性边界，不需要真实音频；真实 ASR/VAD/可选精修另沿 I2 | 需求与设计已冻结，尚未实现；当前 line-clamp、refined 单投影和三资源原子 bundle 均不满足。 |
+| J15a | 固定高度字幕流：长 `partial` 在用户设定的固定 bounds 内自然换行 → 满高后最旧完整视觉行退出、最新行留在底部 → 回改重排但不改识别文本、不触发分段/持久化/窗口 resize → `final` 到下一段 `partial` 逐行接续、停顿保留 | 字幕 MVP PR 阻断；证据分两层：纯逻辑层验证进入字幕流的段落与顺序、当前 `partial` 最高显示优先级、全程无 resize 调用；`scripts/caption-layout-smoke.js` 在最小 Electron 宿主中以真实 Chromium 布局验证 24/30/38px × 中文/英文/混排/长单词的四条不变量。不需要真实音频 | 实现完成 / 尚未验收。`line-clamp` 与三槽位行预算已由单一 `.caption-flow`、CSS 底部锚定 + 顶部裁剪、视口高度按整行取整取代；纯逻辑层 6 条与 15 例真实 Chromium 布局资格（24/30/38px × 中文/英文/混排/长单词 + 回改/跨段/停顿）已通过并接入 CI 首步。仍缺：产品壳的 config 广播兜底断言；人工视觉、DPI 矩阵与透明窗仍归实机门禁，故 J15a 未关闭。 |
+| J15b | 转写版本隔离：首次 `final` 落盘后不可变，精修稿独立保存；历史与 txt/md/srt 导出默认原始版并可明确切换回原始版；旧 JSONL 迁移后两版分别核对 digest | 字幕 MVP PR 阻断；存储/历史/导出/迁移使用确定性边界，不需要真实音频 | 设计已冻结（ADR 0004 + SEM-F04/F11/T08），尚未实现。当前 `segments.text` 会被 `refined` 覆盖，历史与导出读的是折叠后的单一投影；原始版只能经 `segments.first_event_order` 指针回到 `caption_events` 取回，而该不变量目前没有任何测试保护，必须先补测试再改实现。 |
+| J15c | 精修可选化：核心字幕 ready 只依赖实时 ASR 与 VAD；精修模型默认不下载，仅由未监听状态下的明确用户动作按需安装，策略按会话冻结；精修缺失或失败只降级精修能力，不阻止实时字幕、首次 `final`、历史与导出 | 字幕 MVP PR 阻断；沿用 J14 的确定性模型边界；真实模型调用另沿 I2/I4 | 设计已冻结（ADR 0004 + SEM-F17/T11），**本轮不实现**。当前 ModelManager、ready marker 与设置页仍把实时 ASR、离线精修、VAD 当作三项原子 bundle，也没有精修策略开关。 |
 
 新增功能必须在本表增加或更新场景；只有单元测试、没有对应用户旅程时，状态最多写“实现完成 / 尚未验收”。
 
