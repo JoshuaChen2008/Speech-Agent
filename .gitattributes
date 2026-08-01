@@ -3,3 +3,13 @@ docs/validation/i2-live-v4/*.json text eol=lf
 docs/validation/i2-live-v4/**/*.json text eol=lf
 docs/validation/i2-live-v5/*.json text eol=lf
 docs/validation/i2-live-v5/**/*.json text eol=lf
+
+# B5 evidence uses exact-byte SHA-256 links between fresh/restart reports,
+# the run binding, and the release layout. Keep those links checkout-stable.
+docs/validation/b5-*.json text eol=lf
+docs/validation/i3-nonaudio-results.json text eol=lf
+
+# I4 non-audio reports bind an exact fixture and may be collected on another
+# Windows snapshot. Keep both the source fixture and any future report stable.
+scripts/fixtures/i4-nonaudio-legacy-session.jsonl text eol=lf
+docs/validation/i4-nonaudio-*.json text eol=lf
