@@ -14,6 +14,7 @@ const {
   DEFAULT_FORCE_KILL_TIMEOUT_MS: REFINE_FORCE_KILL_TIMEOUT_MS,
   DEFAULT_SHUTDOWN_TIMEOUT_MS: REFINE_SHUTDOWN_TIMEOUT_MS,
   RefineWorkerHost,
+  acceptanceResponseDelayMs,
   SERVICE_NAME: REFINE_SERVICE_NAME
 } = require('../../src/runtime/refine-worker/worker-host')
 
@@ -88,6 +89,14 @@ test('native utility defaults reserve model/decode grace before exact-child kill
   assert.equal(REFINE_SHUTDOWN_TIMEOUT_MS, 30000)
   assert.equal(REALTIME_FORCE_KILL_TIMEOUT_MS, 5000)
   assert.equal(REFINE_FORCE_KILL_TIMEOUT_MS, 5000)
+})
+
+test('refinement acceptance reply delay is bounded and opt-in', () => {
+  assert.equal(acceptanceResponseDelayMs(undefined), 0)
+  assert.equal(acceptanceResponseDelayMs(1200), 1200)
+  assert.throws(() => acceptanceResponseDelayMs(99), /between 100 and 5000/)
+  assert.throws(() => acceptanceResponseDelayMs(5001), /between 100 and 5000/)
+  assert.throws(() => acceptanceResponseDelayMs('1200'), /between 100 and 5000/)
 })
 
 for (const entry of CASES) {

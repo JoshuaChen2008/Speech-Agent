@@ -23,6 +23,17 @@ function positiveTimeout (value) {
   return value
 }
 
+/* This value is intentionally accepted only through the I2 acceptance
+ * composition.  It delays a real decoded reply so pause/resume can observe a
+ * pending refinement request; production configuration never supplies it. */
+function acceptanceResponseDelayMs (value) {
+  if (value === undefined) return 0
+  if (!Number.isInteger(value) || value < 100 || value > 5000) {
+    throw new RangeError('acceptanceResponseDelayMs must be an integer between 100 and 5000')
+  }
+  return value
+}
+
 function waitWithTimeout (promise, timeoutMs, message) {
   let timer = null
   return Promise.race([
@@ -87,6 +98,7 @@ class RefineWorkerHost {
   async start (config) {
     if (this.disposed) throw new Error('refine worker host is disposed')
     if (this.child) throw new Error('refine worker is already running')
+    const responseDelayMs = acceptanceResponseDelayMs(config?.acceptanceResponseDelayMs)
     const child = this.electron.utilityProcess.fork(WORKER_PATH, [], { serviceName: SERVICE_NAME })
     this.child = child
     this.installChild(child)
@@ -111,7 +123,7 @@ class RefineWorkerHost {
           if (message?.type === 'configured') resolve()
           else reject(new Error(`refine worker configure failed: ${String(message?.message || message?.type || 'unknown').slice(0, 200)}`))
         })
-        child.postMessage({ type: 'configure', model: config.model })
+        child.postMessage({ type: 'configure', model: config.model, acceptanceResponseDelayMs: responseDelayMs })
       })
     } catch (error) {
       try {
@@ -231,6 +243,7 @@ class RefineWorkerHost {
 }
 
 module.exports = {
+  acceptanceResponseDelayMs,
   DEFAULT_FORCE_KILL_TIMEOUT_MS,
   DEFAULT_SHUTDOWN_TIMEOUT_MS,
   RefineWorkerHost,

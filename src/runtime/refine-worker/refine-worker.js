@@ -20,6 +20,11 @@ const state = {
   recognizer: null,
   port: null,
   shuttingDown: false,
+  /* I2 interaction acceptance only: a real offline decode still happens
+     synchronously, but its reply can be held briefly so realtime's pending
+     request is observable at the pause boundary.  Normal product starts
+     configure this to zero. */
+  acceptanceResponseDelayMs: 0,
   stats: { refined: 0, failed: 0, emptyResults: 0, lastDecodeMs: null }
 }
 
@@ -36,6 +41,18 @@ function toFloat32 (samples, sampleCount) {
   throw new TypeError(`unusable samples payload (${Object.prototype.toString.call(samples)}, expected ${sampleCount} samples)`)
 }
 
+function publishRefined (requestId, text) {
+  const publishReply = () => {
+    if (!state.port || state.shuttingDown) return
+    try { state.port.postMessage({ type: 'refined', requestId, text }) } catch { /* port closing */ }
+  }
+  if (state.acceptanceResponseDelayMs > 0) {
+    setTimeout(publishReply, state.acceptanceResponseDelayMs)
+  } else {
+    publishReply()
+  }
+}
+
 function onPortMessage (message) {
   if (message?.type !== 'refine' || !state.recognizer || !state.port) return
   const requestId = message.requestId
@@ -46,7 +63,7 @@ function onPortMessage (message) {
     state.stats.lastDecodeMs = Date.now() - startedAt
     if (text.length === 0) state.stats.emptyResults += 1
     state.stats.refined += 1
-    state.port.postMessage({ type: 'refined', requestId, text })
+    publishRefined(requestId, text)
   } catch (error) {
     state.stats.failed += 1
     try {
@@ -83,7 +100,12 @@ process.parentPort.on('message', (event) => {
     }
     try {
       const options = assertRefinementOptions(message.model)
+      const acceptanceResponseDelayMs = message.acceptanceResponseDelayMs
+      if (!Number.isInteger(acceptanceResponseDelayMs) || acceptanceResponseDelayMs < 0 || acceptanceResponseDelayMs > 5000) {
+        throw new TypeError('invalid acceptance response delay')
+      }
       state.recognizer = loadOfflineRecognizer(options)
+      state.acceptanceResponseDelayMs = acceptanceResponseDelayMs
       publish({ type: 'configured' })
     } catch (error) {
       publish({ type: 'configure-failed', message: String(error?.message || error).slice(0, 200) })

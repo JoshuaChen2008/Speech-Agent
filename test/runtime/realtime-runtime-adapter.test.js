@@ -286,6 +286,21 @@ test('refinement worker wires only for real profiles and degrades without failin
   structural.adapter.dispose()
 })
 
+test('I2 acceptance composition can delay only a real refine reply while production defaults stay immediate', async () => {
+  const accepted = makeAdapterWith({
+    profileMap: { fast: 'x-asr-160ms' },
+    recognizer: { kind: 'sherpa-online-transducer', modelDir: 'm', numThreads: 4 },
+    refinement: REFINEMENT,
+    acceptanceRefineResponseDelayMs: 1200
+  })
+  await accepted.adapter.start({ sessionId: 'session-acceptance-delay', sourceIds: ['mic'], profile: 'fast' })
+  assert.deepEqual(accepted.refineWorker.calls.find(([name]) => name === 'start')[1], {
+    model: REFINEMENT,
+    acceptanceResponseDelayMs: 1200
+  })
+  await accepted.adapter.stop()
+})
+
 test('start orchestrates worker-first wiring and maps the resume cursor', async () => {
   const { adapter, worker, host } = makeAdapter()
   await adapter.start(START_CONTEXT)
@@ -746,6 +761,42 @@ test('completed sessions expose text-free I2 diagnostics from the real compositi
   diagnostics.input.sources.mic.track.labelSha256 = 'mutated'
   assert.equal(adapter.getLastRunDiagnostics().capture.mic.capturedFrames, 14, 'caller cannot mutate stored diagnostics')
   assert.equal(adapter.getLastRunDiagnostics().input.sources.mic.track.labelSha256, 'a'.repeat(64), 'input evidence is cloned')
+  adapter.dispose()
+})
+
+test('active sessions expose a bounded cloned transport view for interaction observation', async () => {
+  const { adapter, host, worker } = makeAdapter()
+  await adapter.start(START_CONTEXT)
+  host.emitControl({
+    type: 'metrics',
+    sources: {
+      mic: {
+        capturedFrames: 12,
+        sentFrames: 12,
+        droppedFrames: 0,
+        acknowledgedFrames: 11,
+        queuedFrames: 1
+      }
+    }
+  })
+  worker.emitStats({
+    sources: { mic: { framesIngested: 11, sequenceGapCount: 0 } },
+    badSampleTypeFrames: 0
+  })
+  worker.droppedCaptionCount = 0
+
+  const diagnostics = adapter.getLiveDiagnostics()
+  assert.deepEqual(diagnostics.sourceIds, ['mic'])
+  assert.equal(diagnostics.capture.mic.capturedFrames, 12)
+  assert.equal(diagnostics.worker.sources.mic.framesIngested, 11)
+  assert.equal(diagnostics.droppedCaptionCount, 0)
+  assert.equal(Object.hasOwn(diagnostics, 'input'), false)
+  assert.equal(Object.hasOwn(diagnostics, 'workerHost'), false)
+
+  diagnostics.capture.mic.capturedFrames = 999
+  assert.equal(adapter.getLiveDiagnostics().capture.mic.capturedFrames, 12, 'callers cannot mutate active transport state')
+  await adapter.stop()
+  assert.equal(adapter.getLiveDiagnostics(), null)
   adapter.dispose()
 })
 

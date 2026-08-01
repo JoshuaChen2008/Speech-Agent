@@ -48,6 +48,11 @@ class RealtimeRuntimeAdapter {
        null = 无二遍精修。精修是增强路径：refine worker 起不来或中途退出都
        只降级（无 refined 事件），绝不影响实时字幕。 */
     this.refinement = options.refinement || null
+    /* 仅 I2 交互验收 runner 可传的真实 refine 回包延迟。它不参与任何产品
+       配置、IPC 或持久化；默认 null，运行期不会注入延迟。这样可在真实
+       offline decode 已完成、回包仍在 realtime worker pending 队列时验证
+       pause/resume 的缓冲边界，而不是伪造 refined caption。 */
+    this.acceptanceRefineResponseDelayMs = options.acceptanceRefineResponseDelayMs ?? null
     this.refineWorkerFactory = options.refineWorkerFactory || (() => new RefineWorkerHost({
       electron: this.electron,
       onFatalError: options.onRefineUtilityFatal
@@ -228,8 +233,12 @@ class RealtimeRuntimeAdapter {
         attempt: resume ? resume.attempt : 0,
         sequenceBases: resume ? resume.sourceSequences : {}
       })
+      const refineStartOptions = { model: this.refinement }
+      if (this.acceptanceRefineResponseDelayMs !== null) {
+        refineStartOptions.acceptanceResponseDelayMs = this.acceptanceRefineResponseDelayMs
+      }
       const refineStart = session.refineWorker
-        ? session.refineWorker.start({ model: this.refinement }).then(() => true, (error) => {
+        ? session.refineWorker.start(refineStartOptions).then(() => true, (error) => {
             this.onDegraded(`refinement unavailable for this session: ${String(error?.message || error).slice(0, 160)}`)
             return false
           })
@@ -408,6 +417,27 @@ class RealtimeRuntimeAdapter {
 
   getLastRunDiagnostics () {
     return structuredCloneSafe(this.lastRunDiagnostics)
+  }
+
+  /**
+   * A bounded, text-free view for a currently active acceptance scenario.
+   * It is deliberately narrower than the session object: callers receive only
+   * already-sanitized capture counters and worker statistics, never PCM,
+   * device names, model paths or caption text.  It lets a DWM drag observer
+   * compare transport before/after a visible interaction without waiting for
+   * stopCapture() to retire the session.
+   */
+  getLiveDiagnostics () {
+    const session = this.session
+    if (!session || this.disposed) return null
+    return {
+      schemaVersion: 1,
+      sourceIds: [...session.sourceIds],
+      capture: structuredCloneSafe(session.captureMetrics || {}),
+      worker: structuredCloneSafe(session.worker.lastStats || session.workerStats || null),
+      droppedCaptionCount: session.worker.droppedCaptionCount,
+      refinementEnabled: session.refineReady === true
+    }
   }
 
   requireSession () {
