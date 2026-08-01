@@ -55,6 +55,22 @@ const CLOCK_CALIBRATION_SAMPLES = 7
 const CLOCK_CALIBRATION_MAX_RTT_MS = 50
 const CLOCK_CALIBRATION_MAX_AGE_MS = 30000
 const PLAYBACK_SCHEDULE_LEAD_MS = 500
+const PROVISIONAL_DIAGNOSTIC_KEYS = Object.freeze([
+  'provisionalCandidatesStarted',
+  'provisionalFramesFed',
+  'provisionalAudioMsFed',
+  'provisionalDiscards',
+  'provisionalSuppressions',
+  'provisionalConfirmed',
+  'provisionalConfirmedAfterSuppression',
+  'provisionalFirstCandidateFrameSequence',
+  'provisionalFirstCandidateAudioTimestampMs',
+  'provisionalLastCandidateFirstFrameSequence',
+  'provisionalLastCandidateFirstAudioTimestampMs',
+  'provisionalLastCandidateFramesFed',
+  'provisionalLastCandidateAudioMs',
+  'provisionalMaxCandidateAudioMs'
+])
 
 function parseArguments (argv) {
   const options = {
@@ -103,6 +119,19 @@ function buildMicPromptNotice (listenSeconds) {
     seconds: listenSeconds,
     promptId: REFERENCE_CASE.id
   }
+}
+
+/* Debug-only terminal projection of worker diagnostics.  It is deliberately
+   not added to the closed acceptance report schema: every value is a finite
+   counter or source-relative duration, and no transcript, PCM, path, device
+   identity, or absolute clock value may leave the worker. */
+function provisionalDiagnosticsSummary (diagnostics, sourceId) {
+  const source = diagnostics?.worker?.sources?.[sourceId] || {}
+  const summary = {}
+  for (const key of PROVISIONAL_DIAGNOSTIC_KEYS) {
+    summary[key] = Number.isFinite(source[key]) ? source[key] : null
+  }
+  return summary
 }
 
 function buildFailureReport ({ sourceId, phases }) {
@@ -965,7 +994,8 @@ async function main () {
       counts: report.counts,
       accuracy: report.accuracy,
       timings: report.timings,
-      transport: report.transport
+      transport: report.transport,
+      provisionalDiagnostics: provisionalDiagnosticsSummary(diagnostics, options.source)
     }) + '\n')
     await coordinator.dispose()
     if (result === 'pass') app.quit()
@@ -984,8 +1014,14 @@ async function main () {
 }
 
 /* Electron 启动主脚本时 require.main 并不可靠；Node 测试 require 本文件时
-   又必须保持纯导入，所以用 Electron main-process 身份作为入口守卫。 */
-if (process.versions.electron && process.type === 'browser') {
+   又必须保持纯导入。仅凭 browser process 也不够，因为其他 Electron 验收
+   入口会复用本文件的纯函数。argv[1] 必须精确指向本文件才可启动 smoke。 */
+function isDirectElectronMainEntry (argv = process.argv, versions = process.versions, processType = process.type) {
+  if (!versions.electron || processType !== 'browser' || typeof argv[1] !== 'string') return false
+  return path.resolve(argv[1]).toLowerCase() === path.resolve(__filename).toLowerCase()
+}
+
+if (isDirectElectronMainEntry()) {
   main().catch(() => {
     console.error(JSON.stringify({ result: 'error', errorCode: 'i2-live-entry-failed' }))
     app.exit(1)
@@ -998,10 +1034,15 @@ module.exports = {
   buildMicPromptNotice,
   buildReport,
   findSpeechOnsetMsPcm16,
+  isDirectElectronMainEntry,
   normalizeFailureCodes,
   parseArguments,
+  playWave,
+  provisionalDiagnosticsSummary,
   readPhysicalMicPreflight,
+  readPcm16MonoWav,
   safeInputEvidence,
   safeTrackEvidence,
-  startPreparedPlaybackAfterProbe
+  startPreparedPlaybackAfterProbe,
+  WAV_PATH
 }

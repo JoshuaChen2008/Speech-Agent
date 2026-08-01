@@ -16,8 +16,10 @@ const {
   buildFailureReport,
   buildMicPromptNotice,
   buildReport,
+  isDirectElectronMainEntry,
   normalizeFailureCodes,
   parseArguments,
+  provisionalDiagnosticsSummary,
   readPhysicalMicPreflight,
   startPreparedPlaybackAfterProbe
 } = require('../../scripts/i2-live-caption-smoke')
@@ -74,6 +76,24 @@ function injectDuplicateKey (bytes, key, hiddenValue) {
   assert.ok(source.includes(needle), `fixture must contain ${key}`)
   return Buffer.from(source.replace(needle, `"${key}": ${JSON.stringify(hiddenValue)},\n    ${needle}`))
 }
+
+test('live smoke starts only when it is the direct Electron main entry', () => {
+  assert.equal(isDirectElectronMainEntry(
+    ['electron.exe', RUNNER_PATH],
+    { electron: '43.2.0' },
+    'browser'
+  ), true)
+  assert.equal(isDirectElectronMainEntry(
+    ['electron.exe', path.resolve(__dirname, '../../scripts/i2-live-interaction.js')],
+    { electron: '43.2.0' },
+    'browser'
+  ), false)
+  assert.equal(isDirectElectronMainEntry(
+    ['node.exe', RUNNER_PATH],
+    {},
+    undefined
+  ), false)
+})
 
 test('exact-byte v5 evidence is pinned to LF across Windows checkouts', () => {
   const attributes = fs.readFileSync(path.resolve(__dirname, '../../.gitattributes'), 'utf8')
@@ -426,6 +446,49 @@ test('I2 live runner requires exactly one explicit source and self-validates bef
   assert.deepEqual(normalizeFailureCodes(['listener-error', 'final-cer-exceeded']), ['listener-error', 'final-cer-exceeded'])
   assert.throws(() => normalizeFailureCodes(['transcript: private words']), /fixed codes/)
   assert.throws(() => normalizeFailureCodes(['C:/private/recording.wav']), /fixed codes/)
+})
+
+test('I2 runner can print only the text-free provisional worker counters for diagnosis', () => {
+  const summary = provisionalDiagnosticsSummary({
+    worker: {
+      sources: {
+        loopback: {
+          provisionalCandidatesStarted: 1,
+          provisionalFramesFed: 8,
+          provisionalAudioMsFed: 320,
+          provisionalDiscards: 0,
+          provisionalSuppressions: 0,
+          provisionalConfirmed: 1,
+          provisionalConfirmedAfterSuppression: 0,
+          provisionalFirstCandidateFrameSequence: 15,
+          provisionalFirstCandidateAudioTimestampMs: 600,
+          provisionalLastCandidateFirstFrameSequence: 15,
+          provisionalLastCandidateFirstAudioTimestampMs: 600,
+          provisionalLastCandidateFramesFed: 8,
+          provisionalLastCandidateAudioMs: 320,
+          provisionalMaxCandidateAudioMs: 320,
+          text: 'must never leave worker diagnostics'
+        }
+      }
+    }
+  }, 'loopback')
+  assert.deepEqual(summary, {
+    provisionalCandidatesStarted: 1,
+    provisionalFramesFed: 8,
+    provisionalAudioMsFed: 320,
+    provisionalDiscards: 0,
+    provisionalSuppressions: 0,
+    provisionalConfirmed: 1,
+    provisionalConfirmedAfterSuppression: 0,
+    provisionalFirstCandidateFrameSequence: 15,
+    provisionalFirstCandidateAudioTimestampMs: 600,
+    provisionalLastCandidateFirstFrameSequence: 15,
+    provisionalLastCandidateFirstAudioTimestampMs: 600,
+    provisionalLastCandidateFramesFed: 8,
+    provisionalLastCandidateAudioMs: 320,
+    provisionalMaxCandidateAudioMs: 320
+  })
+  assert.doesNotMatch(JSON.stringify(summary), /text|pcm|audio path/i)
 })
 
 test('a delayed timing probe arm must settle before controlled playback is scheduled', async () => {
