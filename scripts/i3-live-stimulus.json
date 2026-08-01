@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "i3-roadmap-prefix-v1",
+  "sourceCorpus": {
+    "id": "gate-0b-zh-roadmap",
+    "file": "zh-roadmap.wav",
+    "sha256": "1971223a71ebbd178ffba7d5a69d75e9cda0220f39dd6ec0cb1c9e4bd9823dcb",
+    "referenceSha256": "3cdd1b9f6290201ed9c8c2afcffade4f180974e2bfd5e46a889b935dad69c07e"
+  },
+  "referenceSha256": "526e578fc5adf81953558ce881aa771f5f5a7c93ed9215b4e9e8b1073a47c2db",
+  "sampleRate": 16000,
+  "bitsPerSample": 16,
+  "channels": 1,
+  "sliceStartMs": 0,
+  "sliceLengthMs": 1000,
+  "sliceLeadingSilenceMs": 140,
+  "silenceDurationMs": 1100,
+  "maximumCycleDurationMs": 2200,
+  "expectedDerivedWavSha256": "fe5910b176ed91fe44c5d8ca10ba6a2f403536663b6db9b6f753f56cfdeac538"
+}

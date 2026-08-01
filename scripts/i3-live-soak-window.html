@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>I3 Audio Soak</title>
+  <style>
+    :root { color-scheme: dark; font-family: "Segoe UI", sans-serif; }
+    body { margin: 0; background: #18212b; color: #edf4fa; user-select: none; }
+    header { -webkit-app-region: drag; background: #243342; padding: 12px 16px; font-weight: 600; }
+    main { padding: 14px 16px 16px; font-size: 13px; line-height: 1.45; }
+    #phase { color: #9ed0ff; font-variant-numeric: tabular-nums; }
+    .note { color: #b5c4d2; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <header>I3 Audio Soak — drag this window once</header>
+  <main>
+    <div id="phase">Preparing real audio pipeline…</div>
+    <div class="note">This visible status window must remain open for the full soak.</div>
+  </main>
+  <script>
+    let heartbeat = 0
+    globalThis.updateI3SoakWindow = (phase, elapsedSeconds) => {
+      heartbeat += 1
+      document.getElementById('phase').textContent = `${phase} · ${Math.floor(elapsedSeconds)}s · render heartbeat ${heartbeat}`
+      return { heartbeat, rendered: document.readyState === 'complete' }
+    }
+  </script>
+</body>
+</html>
