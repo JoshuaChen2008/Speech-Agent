@@ -28,6 +28,7 @@ const retryPageButton = document.getElementById('retryPage')
 const rangeStatus = document.getElementById('rangeStatus')
 const timeline = document.getElementById('timeline')
 const exportButtons = [...document.querySelectorAll('[data-export]')]
+const versionButtons = [...document.querySelectorAll('[data-version]')]
 
 let sessions = []
 let sessionButtons = new Map()
@@ -146,6 +147,18 @@ function selectSessionButton (sessionId) {
   sessionButtons.get(selectedSessionId)?.setAttribute('aria-current', 'true')
 }
 
+/* 当前查看/导出的转写版本。默认原始版（SEM-F11）；切换只改渲染与导出参数，
+   不重新请求分页——两份文本已经在同一页数据里（J15b 的接口形状）。 */
+let selectedVersion = 'original'
+
+/* 精修稿缺失的段落回落到原始版：宁可显示原文，也不留空行。 */
+function segmentBody (segment) {
+  if (selectedVersion === 'refined' && typeof segment.refinedText === 'string' && segment.refinedText.length > 0) {
+    return segment.refinedText
+  }
+  return segment.text
+}
+
 function assertHistoryPage (value, sessionId) {
   if (!value || typeof value !== 'object' || !value.session || value.session.sessionId !== sessionId) {
     throw new Error('历史记录分页响应无效')
@@ -171,6 +184,9 @@ function updateDetailControls () {
   retryPageButton.hidden = detailError === null
   retryPageButton.disabled = detailPending
   exportButtons.forEach((button) => {
+    button.disabled = detailPending || exportPending || detailPage === null
+  })
+  versionButtons.forEach((button) => {
     button.disabled = detailPending || exportPending || detailPage === null
   })
 }
@@ -219,7 +235,7 @@ function renderTimeline (page, offset) {
     time.appendChild(element('strong', null, relativeTime(segment.t0Ms)))
     time.appendChild(element('span', null, wallTime(page.session.startedAt, segment.t0Ms)))
     item.appendChild(time)
-    item.appendChild(element('div', 'caption-text', segment.text))
+    item.appendChild(element('div', 'caption-text', segmentBody(segment)))
     timeline.appendChild(item)
   })
   rangeStatus.textContent = `第 ${offset + 1}–${offset + page.items.length} 条，共 ${page.totalCount} 条`
@@ -343,9 +359,11 @@ async function exportSelected (format) {
   exportStatus.textContent = '正在准备导出…'
   updateDetailControls()
   try {
-    const result = unwrap(await api.exportSession(sessionId, format))
+    const result = unwrap(await api.exportSession(sessionId, format, selectedVersion))
     if (request !== exportRequest || generation !== detailGeneration || sessionId !== selectedSessionId) return
-    exportStatus.textContent = result.status === 'saved' ? '字幕原文已导出' : '已取消导出'
+    exportStatus.textContent = result.status === 'saved'
+      ? (selectedVersion === 'refined' ? '字幕精修稿已导出' : '字幕原文已导出')
+      : '已取消导出'
   } catch (error) {
     if (request !== exportRequest || generation !== detailGeneration || sessionId !== selectedSessionId) return
     exportStatus.textContent = error.message
@@ -396,6 +414,21 @@ retryPageButton.addEventListener('click', () => {
 })
 exportButtons.forEach((button) => {
   button.addEventListener('click', () => { void exportSelected(button.dataset.export) })
+})
+
+versionButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    const version = button.dataset.version
+    if (version !== 'original' && version !== 'refined' || version === selectedVersion) return
+    selectedVersion = version
+    for (const other of versionButtons) {
+      other.setAttribute('aria-checked', other.dataset.version === selectedVersion ? 'true' : 'false')
+    }
+    exportStatus.textContent = ''
+    /* 只重排已有数据：两个版本都在同一页响应里，切换不重新请求分页，
+       也不移动游标——用户切回原始版时看到的仍是同一批字幕。 */
+    if (detailPage) renderTimeline(detailPage, detailCursorStack[detailPageIndex]?.offset || 0)
+  })
 })
 
 updateDetailControls()

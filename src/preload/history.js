@@ -25,8 +25,11 @@ contextBridge.exposeInMainWorld('historyApi', {
       firstEventOrder: Number(cursor?.firstEventOrder)
     }
   }),
-  exportSession: (sessionId, format) => ipcRenderer.invoke(CHANNELS.HISTORY_EXPORT, {
+  /* version 是用户在历史页明确选择的转写版本；省略即原始版（SEM-F11）。
+     这里仍然只传会话标识、格式与版本三个受控值。 */
+  exportSession: (sessionId, format, version) => ipcRenderer.invoke(CHANNELS.HISTORY_EXPORT, {
     sessionId: String(sessionId || ''),
-    format: String(format || '')
+    format: String(format || ''),
+    ...(version === undefined ? {} : { version: String(version) })
   })
 })

@@ -30,9 +30,9 @@
   },
   "exports": {
     "markdown": {
-      "bytes": 108034,
+      "bytes": 108050,
       "recordCount": 3600,
-      "sha256": "47fbd593b74fb8157414470ced58fb5872b3742431068b46ea385af10b202d19"
+      "sha256": "5a604f77c3a31198d99e506f21e9dd1b25d90c9dd657e0768e1d29712be5ae8b"
     },
     "srt": {
       "bytes": 229292,
@@ -56,7 +56,7 @@
     "virtualDurationMs": 7200000
   },
   "gateStatus": "partial",
-  "generatedAt": "2026-08-01T12:40:37.389Z",
+  "generatedAt": "2026-08-01T16:21:04.818Z",
   "kind": "i3-nonaudio-soak",
   "limits": {
     "maxCpuPercent": 800,
@@ -70,24 +70,24 @@
   "metrics": {
     "captionEventCount": 4000,
     "checkpointedWalFrames": 0,
-    "cpuPercent": 10.496,
-    "cpuSystemMs": 328,
-    "cpuUserMs": 484,
+    "cpuPercent": 6.981,
+    "cpuSystemMs": 188,
+    "cpuUserMs": 343,
     "exportCount": 3,
     "historyDomMaxNodes": 50,
     "historyPageCount": 72,
-    "maxHeapUsedBytes": 13874976,
+    "maxHeapUsedBytes": 14045992,
     "maxQueueDepth": 112,
-    "maxRssBytes": 90066944,
+    "maxRssBytes": 95969280,
     "pageCount": 666,
     "pageQueryCount": 72,
-    "pageQueryP95Ms": 1.465,
+    "pageQueryP95Ms": 1.647,
     "recoveredRefinedSegmentCount": 400,
     "segmentCount": 3600,
     "walBytes": 4173592,
     "walFrames": 879,
     "journalMode": "wal",
-    "wallDurationMs": 7736.208
+    "wallDurationMs": 7606.125
   },
   "privacy": {
     "persistedAudio": false,
@@ -95,8 +95,8 @@
     "reportContainsTranscriptText": false
   },
   "provenance": {
-    "historyRendererSha256": "bde018f456c42f63a8e45e8dd1307b8d1d8828fc875f8cb45e7dadffe4e8c623",
-    "historyServiceSha256": "6f6f064022aac0dbbbad6030d5f508de8c5f7858356be9707e7771dc8aabf5fa",
+    "historyRendererSha256": "268d8c9e9d106aa14976cf36318ea66c588e8d72414b678821edb992cf71a729",
+    "historyServiceSha256": "61931ddefd478f4123de7bf5841414cffb3efb746a3c99b74808be674bed5733",
     "runnerSha256": "cb6b07a4f2cdc1d18922fefd584a69150ce4abc2c6924d7e89c3d897bada9740",
     "sessionCoordinatorSha256": "4bd78a2975f98fc0cb2b03eaa2a9730cd568c48cc0ad3b71edf83c024d210ecf",
     "sqliteSessionRecorderSha256": "df349722de85f2ee2bf99259af3c9da52f81219bb659187ca36b0c5c73897e53",
@@ -105,7 +105,7 @@
     "storageGatewaySha256": "94b75575bba5e94d58ef05f0adfa153192ee05df551bb19fb8e1edc134a57bd7",
     "storageWorkerServiceSha256": "f7dd0916aa34ae0d9129633c3533d4153dfd5f2be29496c21f73b119e60903c5",
     "verifierSha256": "8014be2efdbd0d63a99a4de1a9f24ccb70eddcb158cc89b46d2d7bb731ed6ff1",
-    "productPayloadSha256": "61301c9db8d565a7b9eb54b50e61345e251ee7a561865eca4fff34d725149689"
+    "productPayloadSha256": "503a40df18f70c397604bda6a4c3ac909851624ec2129a8db7b690fa610ab93d"
   },
   "result": "pass",
   "schemaVersion": 1

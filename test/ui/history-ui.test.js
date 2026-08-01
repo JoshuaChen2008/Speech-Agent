@@ -86,6 +86,12 @@ function createHistoryHarness () {
     button.dataset.export = format
     return button
   })
+  const versionButtons = ['original', 'refined'].map((version) => {
+    const button = new FakeElement('button')
+    button.dataset.version = version
+    button.setAttribute('aria-checked', version === 'original' ? 'true' : 'false')
+    return button
+  })
   const pageRequests = []
   const exportRequests = []
   const sessions = [
@@ -104,9 +110,9 @@ function createHistoryHarness () {
       pageRequests.push({ cursor, limit, request, sessionId })
       return request.promise
     },
-    exportSession (sessionId, format) {
+    exportSession (sessionId, format, version) {
       const request = deferred()
-      exportRequests.push({ format, request, sessionId })
+      exportRequests.push({ format, request, sessionId, version })
       return request.promise
     }
   }
@@ -114,7 +120,11 @@ function createHistoryHarness () {
     documentElement: new FakeElement('html'),
     createElement: (tagName) => new FakeElement(tagName),
     getElementById: (id) => elements.get(id),
-    querySelectorAll: (selector) => selector === '[data-export]' ? exportButtons : []
+    querySelectorAll: (selector) => {
+      if (selector === '[data-export]') return exportButtons
+      if (selector === '[data-version]') return versionButtons
+      return []
+    }
   }
   document.documentElement.dataset = {}
   const window = { addEventListener () {}, historyApi }
@@ -167,7 +177,10 @@ test('history window exposes terminal text review and txt/md/srt export without 
   assert.match(script, /value\.items\.length > PAGE_SIZE/)
   assert.match(script, /detailCursorStack\.push\(/)
   assert.match(script, /generation !== detailGeneration \|\| sessionId !== selectedSessionId/)
-  assert.match(script, /api\.exportSession\(sessionId, format\)/)
+  /* 导出必须带上用户选定的版本；默认是原始版（SEM-F11 / J15b）。 */
+  assert.match(script, /api\.exportSession\(sessionId, format, selectedVersion\)/)
+  assert.match(script, /let selectedVersion = 'original'/)
+  assert.match(script, /selectedVersion === 'refined' && typeof segment\.refinedText === 'string'/)
   assert.match(script, /request !== exportRequest \|\| generation !== detailGeneration \|\| sessionId !== selectedSessionId/)
   assert.match(script, /listItem\.setAttribute\('role', 'listitem'\)/)
   assert.match(script, /item\.setAttribute\('aria-posinset'/)

@@ -49,7 +49,15 @@
             <h2 id="detailTitle"></h2>
             <p id="detailMeta"></p>
           </div>
-          <div class="export-actions" aria-label="导出字幕原文">
+          <!--
+            转写版本选择（SEM-F11）：默认原始版，用户可以明确切换到精修稿，
+            并随时切回。查看与导出共用同一个选择，不额外再问一次。
+          -->
+          <div class="version-actions" role="radiogroup" aria-label="转写版本">
+            <button type="button" data-version="original" role="radio" aria-checked="true">原始版</button>
+            <button type="button" data-version="refined" role="radio" aria-checked="false">精修稿</button>
+          </div>
+          <div class="export-actions" aria-label="导出当前所选转写版本">
             <button type="button" data-export="txt">导出 TXT</button>
             <button type="button" data-export="md">导出 Markdown</button>
             <button type="button" data-export="srt">导出 SRT</button>

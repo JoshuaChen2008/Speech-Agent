@@ -27,9 +27,9 @@ class HistoryError extends Error {
   }
 }
 
-function exactObject (value, keys, code = 'INVALID_HISTORY_REQUEST') {
+function exactObject (value, keys, code = 'INVALID_HISTORY_REQUEST', optionalKeys = []) {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).some((key) => !keys.includes(key)) ||
+      Object.keys(value).some((key) => !keys.includes(key) && !optionalKeys.includes(key)) ||
       keys.some((key) => !Object.hasOwn(value, key))) {
     throw new HistoryError(code, code === 'INVALID_HISTORY_DATA' ? '历史记录数据无效' : '历史记录请求无效')
   }
@@ -283,11 +283,24 @@ function terminalTranscript (transcript) {
   return transcript
 }
 
-function originalSegments (transcript) {
+/* 导出必须声明版本（SEM-F11 / SEM-T08）：默认原始版，精修版只有用户明确选择
+   时才使用。没有精修稿的段落在精修版里回落到原始版——否则导出会出现空洞，
+   两版的段落数也不再可比。 */
+function versionValue (value) {
+  if (value === undefined) return 'original'
+  if (value !== 'original' && value !== 'refined') {
+    throw new HistoryError('INVALID_EXPORT_VERSION', '不支持这个转写版本')
+  }
+  return value
+}
+
+function versionedSegments (transcript, version) {
   return transcript.segments.map((segment) => ({
     segmentId: segment.segmentId,
     sourceId: segment.sourceId,
-    text: segment.text,
+    text: version === 'refined' && typeof segment.refinedText === 'string' && segment.refinedText.length > 0
+      ? segment.refinedText
+      : segment.text,
     textRevision: segment.textRevision,
     t0: segment.t0Ms / 1000,
     t1: segment.t1Ms / 1000,
@@ -307,11 +320,13 @@ function safeSessionPart (sessionId) {
   return sessionId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 36) || 'session'
 }
 
-function buildExport (transcript, format) {
+function buildExport (transcript, format, version) {
   const terminal = terminalTranscript(transcript)
   const selectedFormat = formatValue(format)
-  const segments = originalSegments(terminal)
-  const title = `字幕记录 ${new Date(terminal.session.startedAt).toLocaleString('zh-CN')}`
+  const selectedVersion = versionValue(version)
+  const segments = versionedSegments(terminal, selectedVersion)
+  const versionLabel = selectedVersion === 'refined' ? '精修稿' : '原始转写'
+  const title = `字幕记录 ${new Date(terminal.session.startedAt).toLocaleString('zh-CN')} · ${versionLabel}`
   let content
   if (selectedFormat === 'txt') content = exportText(segments)
   else if (selectedFormat === 'md') content = exportMarkdown(segments, { title })
@@ -320,9 +335,10 @@ function buildExport (transcript, format) {
   return Object.freeze({
     content,
     format: selectedFormat,
+    version: selectedVersion,
     mimeType: metadata.mimeType,
     suggestedName: `${safeStamp(terminal.session.startedAt)}_${terminal.session.sourceId}_` +
-      `${safeSessionPart(terminal.session.sessionId)}.${metadata.extension}`
+      `${safeSessionPart(terminal.session.sessionId)}_${selectedVersion}.${metadata.extension}`
   })
 }
 
@@ -356,22 +372,24 @@ class HistoryService {
   }
 
   async exportSession (input, ownerWindow = null) {
-    exactObject(input, ['sessionId', 'format'])
+    /* version 可选：省略即原始版，明确传入才导出精修稿。 */
+    exactObject(input, ['sessionId', 'format'], 'INVALID_HISTORY_REQUEST', ['version'])
     const sessionId = sessionIdValue(input.sessionId)
     const format = formatValue(input.format)
-    const built = buildExport(await this.gateway.getSessionTranscript(sessionId), format)
+    const version = versionValue(input.version)
+    const built = buildExport(await this.gateway.getSessionTranscript(sessionId), format, version)
     const metadata = EXPORT_FORMATS[format]
     const dialogResult = await this.showSaveDialog(ownerWindow, {
-      title: '导出字幕原文',
+      title: version === 'refined' ? '导出字幕精修稿' : '导出字幕原文',
       defaultPath: built.suggestedName,
       filters: [{ name: metadata.name, extensions: [metadata.extension] }],
       properties: ['createDirectory', 'showOverwriteConfirmation']
     })
     if (!dialogResult || dialogResult.canceled || typeof dialogResult.filePath !== 'string') {
-      return Object.freeze({ status: 'cancelled', format })
+      return Object.freeze({ status: 'cancelled', format, version })
     }
     await this.writeFile(dialogResult.filePath, built.content, { encoding: 'utf8' })
-    return Object.freeze({ status: 'saved', format })
+    return Object.freeze({ status: 'saved', format, version })
   }
 }
 
@@ -380,5 +398,5 @@ module.exports = {
   HistoryError,
   HistoryService,
   buildExport,
-  originalSegments
+  versionedSegments
 }

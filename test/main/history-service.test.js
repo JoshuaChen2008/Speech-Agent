@@ -7,7 +7,7 @@ const {
   HistoryError,
   HistoryService,
   buildExport,
-  originalSegments
+  versionedSegments
 } = require('../../src/main/services/history-service')
 
 function transcript (overrides = {}) {
@@ -25,8 +25,9 @@ function transcript (overrides = {}) {
       {
         segmentId: 'segment-1',
         sourceId: 'loopback',
-        text: '精修后的当前字幕。',
-        textRevision: 2,
+        text: '第一次定稿的字幕。',
+        refinedText: '精修后的字幕。',
+        textRevision: 1,
         t0Ms: 250,
         t1Ms: 1800,
         firstEventOrder: 1,
@@ -298,28 +299,50 @@ test('history service constructor requires both paged reads and private full exp
   }), /history storage gateway is required/)
 })
 
-test('txt, markdown and srt exports contain only the current subtitle projection', () => {
+test('exports default to the first-pass original version in all three formats', () => {
   const value = transcript()
-  const projected = originalSegments(value)
+  const projected = versionedSegments(value, 'original')
   assert.deepEqual(projected.map((segment) => [segment.text, segment.t0, segment.t1, segment.translation]), [
-    ['精修后的当前字幕。', 0.25, 1.8, null],
+    ['第一次定稿的字幕。', 0.25, 1.8, null],
     ['第二条字幕', 2, 4.75, null]
   ])
 
   const txt = buildExport(value, 'txt')
   const md = buildExport(value, 'md')
   const srt = buildExport(value, 'srt')
-  assert.equal(txt.content, '精修后的当前字幕。\n第二条字幕\n')
-  assert.match(md.content, /- 精修后的当前字幕。\n- 第二条字幕/)
+  assert.equal(txt.content, '第一次定稿的字幕。\n第二条字幕\n')
+  assert.match(md.content, /- 第一次定稿的字幕。\n- 第二条字幕/)
   assert.equal(srt.content,
-    '1\n00:00:00,250 --> 00:00:01,800\n精修后的当前字幕。\n\n' +
+    '1\n00:00:00,250 --> 00:00:01,800\n第一次定稿的字幕。\n\n' +
     '2\n00:00:02,000 --> 00:00:04,750\n第二条字幕\n')
   for (const output of [txt, md, srt]) {
-    assert.doesNotMatch(output.content, /must not escape|capture\.wav/i)
-    assert.match(output.suggestedName, /^\d{8}-\d{6}_loopback_session_history_1\.(?:txt|md|srt)$/)
+    assert.equal(output.version, 'original')
+    assert.doesNotMatch(output.content, /must not escape|capture\.wav|精修后的字幕/i)
+    assert.match(output.suggestedName, /^\d{8}-\d{6}_loopback_session_history_1_original\.(?:txt|md|srt)$/)
   }
   assert.throws(() => buildExport(value, 'html'),
     (error) => error instanceof HistoryError && error.code === 'INVALID_EXPORT_FORMAT')
+})
+
+test('an explicitly selected refined export carries the refined body and its own name', () => {
+  const value = transcript()
+  const original = buildExport(value, 'txt', 'original')
+  const refined = buildExport(value, 'txt', 'refined')
+
+  /* 精修版只替换有精修稿的段落；没有精修的段落回落到原始版，两版段落数
+     必须保持可比——SEM-T08 要求两版的导出 digest 分别核对。 */
+  assert.equal(refined.content, '精修后的字幕。\n第二条字幕\n')
+  assert.equal(refined.version, 'refined')
+  assert.notEqual(refined.content, original.content)
+  assert.equal(refined.content.trimEnd().split('\n').length, original.content.trimEnd().split('\n').length)
+  assert.match(refined.suggestedName, /_refined\.txt$/)
+
+  /* 未声明版本时永远是原始版；未知版本必须 fail closed。 */
+  assert.equal(buildExport(value, 'txt').content, original.content)
+  for (const bad of ['REFINED', 'latest', '', null, 1]) {
+    assert.throws(() => buildExport(value, 'txt', bad),
+      (error) => error instanceof HistoryError && error.code === 'INVALID_EXPORT_VERSION')
+  }
 })
 
 test('cancelled export writes nothing and does not expose a filesystem path', async () => {
@@ -337,7 +360,7 @@ test('cancelled export writes nothing and does not expose a filesystem path', as
   })
 
   const result = await service.exportSession({ sessionId: 'session:history/1', format: 'txt' }, owner)
-  assert.deepEqual(result, { status: 'cancelled', format: 'txt' })
+  assert.deepEqual(result, { status: 'cancelled', format: 'txt', version: 'original' })
   assert.equal(Object.hasOwn(result, 'filePath'), false)
   assert.equal(writeCount, 0)
   assert.equal(dialogOwner, owner)
@@ -353,11 +376,11 @@ test('successful export writes only to the main-selected path and returns a path
   })
 
   const result = await service.exportSession({ sessionId: 'session:history/1', format: 'srt' })
-  assert.deepEqual(result, { status: 'saved', format: 'srt' })
+  assert.deepEqual(result, { status: 'saved', format: 'srt', version: 'original' })
   assert.equal(Object.hasOwn(result, 'filePath'), false)
   assert.equal(writes.length, 1)
   assert.equal(writes[0][0], 'D:\\chosen-by-os\\meeting.srt')
-  assert.match(writes[0][1], /精修后的当前字幕。/)
+  assert.match(writes[0][1], /第一次定稿的字幕。/)
   assert.deepEqual(writes[0][2], { encoding: 'utf8' })
 
   await assert.rejects(

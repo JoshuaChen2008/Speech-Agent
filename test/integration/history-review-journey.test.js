@@ -306,9 +306,9 @@ test('CI journey: review completed SQLite sessions, their detail, and text-only 
   const txtResult = await history.exportSession({ sessionId: micSessionId, format: 'txt' }, ownerWindow)
   const mdResult = await history.exportSession({ sessionId: micSessionId, format: 'md' }, ownerWindow)
   const srtResult = await history.exportSession({ sessionId: micSessionId, format: 'srt' }, ownerWindow)
-  assert.deepEqual(txtResult, { status: 'saved', format: 'txt' })
-  assert.deepEqual(mdResult, { status: 'saved', format: 'md' })
-  assert.deepEqual(srtResult, { status: 'saved', format: 'srt' })
+  assert.deepEqual(txtResult, { status: 'saved', format: 'txt', version: 'original' })
+  assert.deepEqual(mdResult, { status: 'saved', format: 'md', version: 'original' })
+  assert.deepEqual(srtResult, { status: 'saved', format: 'srt', version: 'original' })
   assert.equal(JSON.stringify(txtResult).includes(txtPath), false)
   assert.equal(JSON.stringify(mdResult).includes(mdPath), false)
   assert.equal(JSON.stringify(srtResult).includes(srtPath), false)
@@ -355,6 +355,7 @@ test('CI journey: 205 refined captions page through the real durability stack wi
   const exportDirectory = path.join(root, 'exports')
   const exportPaths = ['txt', 'md', 'srt'].map((extension) =>
     path.join(exportDirectory, `long-session.${extension}`))
+  const refinedExportPath = path.join(exportDirectory, 'long-session-refined.txt')
   const operations = []
   const { gateway } = createGateway(databasePath, operations)
   const adapter = new FakeRuntimeAdapter({ autoEmit: false })
@@ -372,7 +373,7 @@ test('CI journey: 205 refined captions page through the real durability stack wi
     },
     idFactory: () => 'long-history-session'
   })
-  const chosenPaths = [...exportPaths]
+  const chosenPaths = [...exportPaths, refinedExportPath]
   const history = new HistoryService({
     gateway,
     showSaveDialog: async () => ({ canceled: false, filePath: chosenPaths.shift() })
@@ -469,7 +470,7 @@ test('CI journey: 205 refined captions page through the real durability stack wi
   }
 
   for (const format of ['txt', 'md', 'srt']) {
-    assert.deepEqual(await history.exportSession({ sessionId, format }), { status: 'saved', format })
+    assert.deepEqual(await history.exportSession({ sessionId, format }), { status: 'saved', format, version: 'original' })
   }
   const txt = fs.readFileSync(exportPaths[0], 'utf8')
   const md = fs.readFileSync(exportPaths[1], 'utf8')
@@ -481,6 +482,23 @@ test('CI journey: 205 refined captions page through the real durability stack wi
   assert.match(txt, /final subtitle 050/)
   assert.doesNotMatch(txt, /refined subtitle 050/)
   assert.match(srt, /\n205\n[^\n]+\nfinal subtitle 205\n$/)
+
+  /* SEM-T08：原始版与精修版的导出必须分别核对，而不是核对一份折叠后的投影。
+     精修过的段落在精修版里换成精修稿，其余段落回落到原始版，所以两份内容
+     不同但段落数相同。 */
+  assert.deepEqual(await history.exportSession({ sessionId, format: 'txt', version: 'refined' }),
+    { status: 'saved', format: 'txt', version: 'refined' })
+  const refinedTxt = fs.readFileSync(refinedExportPath, 'utf8')
+  assert.notEqual(digest(refinedTxt), digest(txt), '两个版本的导出 digest 必须不同')
+  assert.equal(refinedTxt.trimEnd().split('\n').length, 205)
+  assert.match(refinedTxt, /refined subtitle 050/)
+  assert.doesNotMatch(refinedTxt, /final subtitle 050/)
+  assert.match(refinedTxt, /final subtitle 002/, '没有精修稿的段落在精修版里回落到原始版')
+  await assert.rejects(
+    history.exportSession({ sessionId, format: 'txt', version: 'latest' }),
+    (error) => error.code === 'INVALID_EXPORT_VERSION'
+  )
+
   assert.ok(operations.includes(OPERATIONS.OPEN_SESSION))
   assert.ok(operations.includes(OPERATIONS.APPEND_CAPTION))
   assert.ok(operations.includes(OPERATIONS.CLOSE_SESSION))
