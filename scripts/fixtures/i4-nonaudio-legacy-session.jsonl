@@ -1,0 +1,3 @@
+{"v":1,"event":"session.open","sessionId":"i4-nonaudio-legacy-session","at":"2026-01-01T00:00:00.000Z"}
+{"v":1,"event":"segment.final","sessionId":"i4-nonaudio-legacy-session","sourceId":"loopback","segmentId":"i4-nonaudio-legacy-segment","sequence":1,"revision":1,"t0":0,"t1":1,"text":"I4 non-audio migration fixture"}
+{"v":1,"event":"session.close","sessionId":"i4-nonaudio-legacy-session","at":"2026-01-01T00:00:01.000Z"}
