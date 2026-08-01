@@ -246,11 +246,12 @@ test('CI journey: review completed SQLite sessions, their detail, and text-only 
   assert.deepEqual(micDetail.items, [{
     segmentId: 'segment-1',
     sourceId: 'mic',
-    text: 'refined transcript body',
-    textRevision: 3,
+    text: 'final transcript body',
+    refinedText: 'refined transcript body',
+    textRevision: 2,
     t0Ms: 0,
     t1Ms: 1000
-  }], 'partial captions are not persisted and refined text projects as the body')
+  }], 'partial 不落盘；默认正文是首次 final，精修稿作为独立版本并存（SEM-F04/F11）'),
   assert.equal(Object.hasOwn(micDetail, 'translation'), false)
   assert.equal(Object.hasOwn(micDetail, 'audioPath'), false)
   assert.equal(Object.hasOwn(micDetail.session, 'audioPath'), false)
@@ -313,10 +314,11 @@ test('CI journey: review completed SQLite sessions, their detail, and text-only 
   assert.equal(JSON.stringify(srtResult).includes(srtPath), false)
   assert.deepEqual(saveDialogCalls.map(({ owner }) => owner), [ownerWindow, ownerWindow, ownerWindow])
   assert.deepEqual(saveDialogCalls.map(({ options }) => options.filters[0].extensions), [['txt'], ['md'], ['srt']])
-  assert.equal(fs.readFileSync(txtPath, 'utf8'), 'refined transcript body\n')
-  assert.match(fs.readFileSync(mdPath, 'utf8'), /- refined transcript body\n$/)
+  /* 导出默认原始版（SEM-F11）：精修稿必须由用户明确选择才会被导出。 */
+  assert.equal(fs.readFileSync(txtPath, 'utf8'), 'final transcript body\n')
+  assert.match(fs.readFileSync(mdPath, 'utf8'), /- final transcript body\n$/)
   assert.equal(fs.readFileSync(srtPath, 'utf8'),
-    '1\n00:00:00,000 --> 00:00:01,000\nrefined transcript body\n')
+    '1\n00:00:00,000 --> 00:00:01,000\nfinal transcript body\n')
 
   assert.ok(operations.includes(OPERATIONS.LIST_SESSIONS),
     'HistoryService listing must cross the real storage-worker list-sessions operation')
@@ -330,6 +332,7 @@ function publicProjection (segment) {
     segmentId: segment.segmentId,
     sourceId: segment.sourceId,
     text: segment.text,
+    refinedText: segment.refinedText,
     textRevision: segment.textRevision,
     t0Ms: segment.t0Ms,
     t1Ms: segment.t1Ms
@@ -433,7 +436,8 @@ test('CI journey: 205 refined captions page through the real durability stack wi
     assert.equal(page.totalCount, 205)
     assert.ok(page.items.length > 0 && page.items.length <= 50)
     for (const item of page.items) {
-      assert.deepEqual(Object.keys(item).sort(), ['segmentId', 'sourceId', 't0Ms', 't1Ms', 'text', 'textRevision'])
+      assert.deepEqual(Object.keys(item).sort(),
+        ['refinedText', 'segmentId', 'sourceId', 't0Ms', 't1Ms', 'text', 'textRevision'])
       assert.doesNotMatch(JSON.stringify(item), /audio|path|sql|translation|eventOrder/i)
     }
     if (collected.length > 0 && collected.at(-1).t0Ms === page.items[0].t0Ms) {
@@ -457,9 +461,11 @@ test('CI journey: 205 refined captions page through the real durability stack wi
   assert.equal(digest(collected), digest(expected))
   assert.equal(pageOperations.every((operation) => operation === OPERATIONS.GET_SESSION_PAGE), true,
     'the renderer-facing page loop cannot fall back to the private full transcript operation')
+  /* 版本隔离（SEM-F04/F11）：精修过的段落默认仍呈现首次 final，精修稿并存。 */
   for (const index of refinedIndexes) {
-    assert.equal(collected[index].textRevision, 2)
-    assert.match(collected[index].text, /^refined subtitle /)
+    assert.equal(collected[index].textRevision, 1)
+    assert.match(collected[index].text, /^final subtitle /)
+    assert.match(collected[index].refinedText, /^refined subtitle /)
   }
 
   for (const format of ['txt', 'md', 'srt']) {
@@ -471,9 +477,10 @@ test('CI journey: 205 refined captions page through the real durability stack wi
   assert.equal(txt.trimEnd().split('\n').length, 205)
   assert.equal((md.match(/^- /gm) || []).length, 205)
   assert.equal((srt.match(/^\d+$/gm) || []).length, 205)
-  assert.match(txt, /refined subtitle 050/)
-  assert.doesNotMatch(txt, /final subtitle 050/)
-  assert.match(srt, /\n205\n[^\n]+\n(?:final|refined) subtitle 205\n$/)
+  /* 完整导出默认取原始版：精修过的第 50 段也必须导出首次 final。 */
+  assert.match(txt, /final subtitle 050/)
+  assert.doesNotMatch(txt, /refined subtitle 050/)
+  assert.match(srt, /\n205\n[^\n]+\nfinal subtitle 205\n$/)
   assert.ok(operations.includes(OPERATIONS.OPEN_SESSION))
   assert.ok(operations.includes(OPERATIONS.APPEND_CAPTION))
   assert.ok(operations.includes(OPERATIONS.CLOSE_SESSION))

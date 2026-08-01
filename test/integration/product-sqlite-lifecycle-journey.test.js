@@ -350,7 +350,8 @@ test('CI journey: product SQLite cold start recovers, migrates and quits without
     assert.equal(mic.session.state, 'interrupted',
       'an operating-system quit closes the durable session as interrupted, never as a normal user stop')
     assert.deepEqual(mic.segments.map((segment) => [segment.segmentId, segment.text]), [
-      ['live-segment', '实时字幕已落盘。']
+      /* 冷启动后默认正文仍是首次 final，不是被精修覆盖的投影（SEM-F04）。 */
+      ['live-segment', '实时字幕已落盘']
     ])
   })
 

@@ -7,7 +7,7 @@ const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 
-const { createState, applyEvent, hydrateState, selectLines } = require('../../src/ui/shared/caption-reducer')
+const { createState, applyEvent, hydrateState, selectFlow } = require('../../src/ui/shared/caption-reducer')
 const { resolveRuntimeOptions, DEV_MODEL_VALUE } = require('../../src/main/runtime-options')
 const { SqliteSessionRecorder } = require('../../src/main/services/sqlite-session-recorder')
 const { StorageGateway } = require('../../src/main/services/storage-gateway')
@@ -336,11 +336,12 @@ async function runCaptionJourney (t, scenario) {
   const canonical = coordinator.getCaptionState()
   const reloadedRendererState = hydrateState(canonical)
   assert.deepEqual(reloadedRendererState, liveRendererState, 'reload 后字幕视图必须与实时视图一致')
-  assert.deepEqual(selectLines(reloadedRendererState, { bilingual: true }), {
-    previous: '',
-    current: scenario.refined,
-    isPartial: false,
-    translation: scenario.translation
+  const reloadedFlow = selectFlow(reloadedRendererState)
+  assert.equal(reloadedFlow.length, 1, '同一段的多次修订不得在字幕流里叠成多行')
+  assert.deepEqual(reloadedFlow.at(-1), {
+    segmentId: reloadedRendererState.segments.at(-1).segmentId,
+    text: scenario.refined,
+    isPartial: false
   })
 
   assert.equal((await coordinator.command('stop')).ok, true)
@@ -354,18 +355,22 @@ async function runCaptionJourney (t, scenario) {
     endedAt: 1785396000001,
     state: 'closed'
   })
+  /* 版本隔离（SEM-F04）：默认正文恒为首次 `final` 的原始转写，精修稿独立保存。
+     精修覆盖原文的旧语义已由 ADR 0004 作废。 */
   assert.deepEqual(durable.segments.map((segment) => ({
     segmentId: segment.segmentId,
     sourceId: segment.sourceId,
     text: segment.text,
+    refinedText: segment.refinedText,
     textRevision: segment.textRevision,
     t0Ms: segment.t0Ms,
     t1Ms: segment.t1Ms
   })), [{
     segmentId: `segment-${scenario.sourceId}-1`,
     sourceId: scenario.sourceId,
-    text: scenario.refined,
-    textRevision: 3,
+    text: scenario.final,
+    refinedText: scenario.refined,
+    textRevision: 2,
     t0Ms: 400,
     t1Ms: 2800
   }], 'partial and translated events must not enter the SQLite subtitle facts')
@@ -687,7 +692,8 @@ test('CI journey J5/J6/J12: pause-refine and worker recovery preserve one durabl
   const durable = await gateway.getSessionTranscript(sessionId)
   assert.equal(durable.session.state, 'closed')
   assert.deepEqual(durable.segments.map((segment) => [segment.segmentId, segment.text]), [
-    ['segment-before-pause', '暂停前的一遍定稿。'],
+    /* 默认正文是首次 final；暂停期间到达的精修稿不覆盖它（SEM-F04）。 */
+    ['segment-before-pause', '暂停前的一遍定稿'],
     ['segment-after-recovery', '恢复后的字幕继续保存。']
   ])
   assert.deepEqual(audioFilesUnder(directory), [], 'pause/recovery diagnostics and history must remain text-only')

@@ -188,9 +188,15 @@ function pageSession (value, expectedSessionId) {
 }
 
 function pageItem (value, sourceId) {
-  exactObject(value, ['segmentId', 'sourceId', 'text', 'textRevision', 't0Ms', 't1Ms'], 'INVALID_HISTORY_DATA')
+  exactObject(value, ['segmentId', 'sourceId', 'text', 'refinedText', 'textRevision', 't0Ms', 't1Ms'], 'INVALID_HISTORY_DATA')
   if (typeof value.segmentId !== 'string' || value.segmentId.length < 1 || value.segmentId.length > 240 ||
       value.sourceId !== sourceId || typeof value.text !== 'string' || value.text.length < 1) {
+    throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+  }
+  /* 精修稿是可选派生版本：要么不存在，要么是一段非空文本。它永远不能替代
+     `text` —— 后者恒为首次 final 的原始转写（SEM-F04 / SEM-F11）。 */
+  if (value.refinedText !== null &&
+      (typeof value.refinedText !== 'string' || value.refinedText.length < 1)) {
     throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
   }
   const textRevision = safeInteger(value.textRevision, {
@@ -206,6 +212,7 @@ function pageItem (value, sourceId) {
     segmentId: value.segmentId,
     sourceId: value.sourceId,
     text: value.text,
+    refinedText: value.refinedText,
     textRevision,
     t0Ms,
     t1Ms

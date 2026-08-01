@@ -64,8 +64,10 @@ function sessionPage (overrides = {}) {
       {
         segmentId: 'segment-1',
         sourceId: 'loopback',
-        text: '精修后的当前字幕。',
-        textRevision: 2,
+        /* 默认正文恒为首次 final；精修稿并存但不遮蔽它（SEM-F04/F11）。 */
+        text: '第一次定稿的字幕。',
+        refinedText: '精修后的字幕。',
+        textRevision: 1,
         t0Ms: 250,
         t1Ms: 1800
       },
@@ -73,6 +75,7 @@ function sessionPage (overrides = {}) {
         segmentId: 'segment-2',
         sourceId: 'loopback',
         text: '第二条字幕',
+        refinedText: null,
         textRevision: 1,
         t0Ms: 2000,
         t1Ms: 4750
@@ -197,7 +200,7 @@ test('history detail page is detached, terminal and accepts only its exact keyse
   result.session.state = 'interrupted'
   result.items[0].text = 'renderer mutation'
   assert.equal(stored.session.state, 'closed')
-  assert.equal(stored.items[0].text, '精修后的当前字幕。')
+  assert.equal(stored.items[0].text, '第一次定稿的字幕。')
   await assert.rejects(
     service.getSessionPage({ sessionId: '', limit: 2, cursor: null }),
     (error) => error instanceof HistoryError && error.code === 'INVALID_SESSION'

@@ -229,7 +229,8 @@ test('J10 DB2: JSONL migration preserves original projections and raw export dig
 
   const transcript = await gateway.getSessionTranscript('legacy-meeting')
   assert.deepEqual(transcript.segments.map((segment) => [segment.segmentId, segment.text]), [
-    ['segment-a', '精修后的原文。'],
+    /* 迁移后默认可见的是每段最早的有效 final，精修稿只作独立版本保留（SEM-T08）。 */
+    ['segment-a', '第一版正文'],
     ['segment-b', '第二段原文。']
   ])
   const interruptedTranscript = await gateway.getSessionTranscript('legacy-dictation')

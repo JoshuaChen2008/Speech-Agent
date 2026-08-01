@@ -132,7 +132,7 @@ test('service composes protocol, real SQLite and subtitle semantics without SQL 
     totalCount: 1,
     items: [{
       segmentId: 'segment-1', sourceId: 'loopback', text: '协议字幕。',
-      textRevision: 1, t0Ms: 0, t1Ms: 1000
+      refinedText: null, textRevision: 1, t0Ms: 0, t1Ms: 1000
     }],
     nextCursor: null
   })

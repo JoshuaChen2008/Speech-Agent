@@ -30,19 +30,19 @@
   },
   "exports": {
     "markdown": {
-      "bytes": 108834,
+      "bytes": 108034,
       "recordCount": 3600,
-      "sha256": "189072cf02f73ad73b8cc156f1a88c2c988a34505928bd9e7fe7394e896cb9e8"
+      "sha256": "47fbd593b74fb8157414470ced58fb5872b3742431068b46ea385af10b202d19"
     },
     "srt": {
-      "bytes": 230092,
+      "bytes": 229292,
       "recordCount": 3600,
-      "sha256": "536f1d8ca9c0b24ae8366fed8290695b3a462d14fa0b74a180649366fd32f8ff"
+      "sha256": "870bd8db55634841bd7e17651b2229fa04c5a08b691dab4d390200d5807fb9f9"
     },
     "text": {
-      "bytes": 101600,
+      "bytes": 100800,
       "recordCount": 3600,
-      "sha256": "166b397372685a122e2ba8b0156145b466a71e6bd97a61ff76107fd4f65ed1f2"
+      "sha256": "61d756bba55ad1d6dcf37d31114f898607223d88dd9cadd767888c0a2015ca2e"
     }
   },
   "fixture": {
@@ -56,7 +56,7 @@
     "virtualDurationMs": 7200000
   },
   "gateStatus": "partial",
-  "generatedAt": "2026-08-01T07:16:02.506Z",
+  "generatedAt": "2026-08-01T12:40:37.389Z",
   "kind": "i3-nonaudio-soak",
   "limits": {
     "maxCpuPercent": 800,
@@ -70,24 +70,24 @@
   "metrics": {
     "captionEventCount": 4000,
     "checkpointedWalFrames": 0,
-    "cpuPercent": 9.48,
-    "cpuSystemMs": 250,
-    "cpuUserMs": 421,
+    "cpuPercent": 10.496,
+    "cpuSystemMs": 328,
+    "cpuUserMs": 484,
     "exportCount": 3,
     "historyDomMaxNodes": 50,
     "historyPageCount": 72,
-    "maxHeapUsedBytes": 14792744,
+    "maxHeapUsedBytes": 13874976,
     "maxQueueDepth": 112,
-    "maxRssBytes": 97001472,
+    "maxRssBytes": 90066944,
     "pageCount": 666,
     "pageQueryCount": 72,
-    "pageQueryP95Ms": 0.732,
+    "pageQueryP95Ms": 1.465,
     "recoveredRefinedSegmentCount": 400,
     "segmentCount": 3600,
     "walBytes": 4173592,
     "walFrames": 879,
     "journalMode": "wal",
-    "wallDurationMs": 7077.943
+    "wallDurationMs": 7736.208
   },
   "privacy": {
     "persistedAudio": false,
@@ -96,16 +96,16 @@
   },
   "provenance": {
     "historyRendererSha256": "bde018f456c42f63a8e45e8dd1307b8d1d8828fc875f8cb45e7dadffe4e8c623",
-    "historyServiceSha256": "324da8318d610701c0590ca1bc388799ed91363017b7dbed2caae48c445e0713",
-    "runnerSha256": "ed6aee17d5f0ad910319c2962d1f8fa8eee4401373a819d2b19108ee3b709660",
+    "historyServiceSha256": "6f6f064022aac0dbbbad6030d5f508de8c5f7858356be9707e7771dc8aabf5fa",
+    "runnerSha256": "cb6b07a4f2cdc1d18922fefd584a69150ce4abc2c6924d7e89c3d897bada9740",
     "sessionCoordinatorSha256": "4bd78a2975f98fc0cb2b03eaa2a9730cd568c48cc0ad3b71edf83c024d210ecf",
     "sqliteSessionRecorderSha256": "df349722de85f2ee2bf99259af3c9da52f81219bb659187ca36b0c5c73897e53",
-    "sqliteSubtitleStoreSha256": "8c2c25ff943594b21ff852aa00724995869a12fa36ac715ba1e5690cc22c52e5",
+    "sqliteSubtitleStoreSha256": "f717ce90c7c979c9cf902b1b7f1cc56a4ddbe9a72bb560cdebf2c329d340e3b3",
     "strictEvidenceParserSha256": "5155fc8df5449133a8d9710a581fbd03bedfb44729da3c5d910a81df74b5e63e",
     "storageGatewaySha256": "94b75575bba5e94d58ef05f0adfa153192ee05df551bb19fb8e1edc134a57bd7",
     "storageWorkerServiceSha256": "f7dd0916aa34ae0d9129633c3533d4153dfd5f2be29496c21f73b119e60903c5",
     "verifierSha256": "8014be2efdbd0d63a99a4de1a9f24ccb70eddcb158cc89b46d2d7bb731ed6ff1",
-    "productPayloadSha256": "649fb524d25e4c5e308155a110c007c58b962d1811e5e5d8badcfe9f5f747af0"
+    "productPayloadSha256": "61301c9db8d565a7b9eb54b50e61345e251ee7a561865eca4fff34d725149689"
   },
   "result": "pass",
   "schemaVersion": 1

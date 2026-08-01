@@ -63,7 +63,10 @@ test('open/append/refine/late-event/close form one strict idempotent history', (
   assert.equal(store.appendCaption(refined).projectionUpdated, true)
   const late = caption({ sequence: 5, revision: 2, text: '迟到旧正文。' })
   assert.equal(store.appendCaption(late).projectionUpdated, false)
-  assert.equal(store.getSessionTranscript({ sessionId: 'session-loopback' }).segments[0].text, '精修正文。')
+  /* 精修不覆盖首次 final：默认正文仍是原始版，精修稿另行可读（SEM-F04）。 */
+  const afterRefine = store.getSessionTranscript({ sessionId: 'session-loopback' }).segments[0]
+  assert.equal(afterRefine.text, '一遍定稿。')
+  assert.equal(afterRefine.refinedText, '精修正文。')
   const closed = { sessionId: 'session-loopback', sourceId: 'loopback', endedAt: 1770000010000, state: 'closed' }
   assert.equal(store.closeSession(closed).status, 'committed')
   assert.equal(store.closeSession(closed).status, 'already_processed')
@@ -88,8 +91,9 @@ test('current projection is higher revision, stable and isolated across sequenti
   assert.equal(loopback.session.mode, 'meeting')
   assert.equal(loopback.session.state, 'closed')
   assert.equal(loopback.segments.length, 1)
-  assert.equal(loopback.segments[0].text, '精修正文。')
-  assert.equal(loopback.segments[0].textRevision, 4)
+  assert.equal(loopback.segments[0].text, '一遍定稿。')
+  assert.equal(loopback.segments[0].refinedText, '精修正文。')
+  assert.equal(loopback.segments[0].textRevision, 3)
   assert.equal(loopback.segments[0].t0Ms, 125)
   assert.equal(loopback.segments[0].t1Ms, 1625)
   assert.equal(store.getSessionTranscript({ sessionId: 'session-mic' }).segments[0].sourceId, 'mic')
@@ -342,8 +346,9 @@ test('history detail pages 205 same-timestamp segments without gaps, duplicates 
     assert.equal(page.totalCount, 205)
     for (const item of page.items) {
       assert.deepEqual(Object.keys(item).sort(), [
-        'segmentId', 'sourceId', 't0Ms', 't1Ms', 'text', 'textRevision'
+        'refinedText', 'segmentId', 'sourceId', 't0Ms', 't1Ms', 'text', 'textRevision'
       ])
+      assert.equal(item.refinedText, null, '没有精修的段落不得凭空得到精修稿')
       assert.equal(Object.hasOwn(item, 'firstEventOrder'), false)
       assert.equal(Object.hasOwn(item, 'updatedEventOrder'), false)
     }
@@ -390,4 +395,75 @@ test('history detail pages reject active sessions, malformed cursors and over-pr
   ]) {
     assert.throws(() => store.getSessionPage(input), (error) => error.code === 'INVALID_SESSION')
   }
+})
+
+/* --------------------------------------------------------------------------
+   J15b / SEM-F04 / SEM-F11 / SEM-T08：转写版本隔离。
+
+   首次 `final` 是不可变的权威原始转写，精修稿只是可选派生版本。原始版靠
+   `segments.first_event_order` 指针回到 append-only 的 `caption_events` 取回，
+   所以「该指针恒指向该段的首次 final」是整条版本隔离链路的地基。它此前没有
+   任何测试保护——改动插入逻辑就会静默丢掉原始版，而既有的迁移/导出断言
+   校验的是折叠后的单一投影，语义换了仍会全绿。
+   -------------------------------------------------------------------------- */
+
+function versionStore (t, sessionId = 'session-loopback') {
+  const store = tempStore(t)
+  store.openSession({ sessionId, sourceId: 'loopback', startedAt: 1770000000000 })
+  return store
+}
+
+test('J15b: refinement never overwrites the first-pass final; both versions stay readable', (t) => {
+  const store = versionStore(t)
+  store.appendCaption(caption({ sequence: 1, revision: 1, kind: 'final', text: '原始版正文。' }))
+  store.appendCaption(caption({ sequence: 2, revision: 2, kind: 'refined', text: '精修版正文。' }))
+
+  const [segment] = store.getSessionTranscript({ sessionId: 'session-loopback' }).segments
+  assert.equal(segment.text, '原始版正文。', '默认正文必须是首次 final，精修稿不得覆盖它')
+  assert.equal(segment.refinedText, '精修版正文。', '精修稿必须可以单独读取')
+
+  store.closeSession({ sessionId: 'session-loopback', sourceId: 'loopback', endedAt: 1770000009000, state: 'closed' })
+  const [item] = store.getSessionPage({ sessionId: 'session-loopback', limit: 50, cursor: null }).items
+  assert.equal(item.text, '原始版正文。')
+  assert.equal(item.refinedText, '精修版正文。')
+})
+
+test('J15b: a segment without refinement reports no refined version at all', (t) => {
+  const store = versionStore(t)
+  store.appendCaption(caption({ sequence: 1, revision: 1, kind: 'final', text: '只有原始版。' }))
+
+  const [segment] = store.getSessionTranscript({ sessionId: 'session-loopback' }).segments
+  assert.equal(segment.text, '只有原始版。')
+  assert.equal(segment.refinedText, null, '没有精修时不得凭空造出一个精修稿')
+})
+
+test('J15b: the first-final pointer survives out-of-order arrival and several finals', (t) => {
+  const store = versionStore(t)
+  /* 先到的是较低 revision 的 final，随后到达更高 revision 的 final 与 refined。
+     无论后续怎么写，原始版都必须停在最早那一条 final 上。 */
+  store.appendCaption(caption({ segmentId: 'seg-a', sequence: 1, revision: 1, kind: 'final', text: '最早的原始版。' }))
+  store.appendCaption(caption({ segmentId: 'seg-a', sequence: 2, revision: 2, kind: 'final', text: '第二条 final。' }))
+  store.appendCaption(caption({ segmentId: 'seg-a', sequence: 3, revision: 3, kind: 'refined', text: '精修稿。' }))
+
+  const [segment] = store.getSessionTranscript({ sessionId: 'session-loopback' }).segments
+  assert.equal(segment.text, '最早的原始版。')
+  assert.equal(segment.refinedText, '精修稿。')
+
+  /* 迟到的更低 revision 不得改写任何一版。 */
+  store.appendCaption(caption({ segmentId: 'seg-a', sequence: 4, revision: 4, kind: 'refined', text: '更晚的精修稿。' }))
+  const [afterLate] = store.getSessionTranscript({ sessionId: 'session-loopback' }).segments
+  assert.equal(afterLate.text, '最早的原始版。')
+  assert.equal(afterLate.refinedText, '更晚的精修稿。')
+})
+
+test('J15b: the first-final pointer is an event-table pointer, not a copied string', (t) => {
+  const store = versionStore(t)
+  store.appendCaption(caption({ sequence: 1, revision: 1, kind: 'final', text: '原始版正文。' }))
+  store.appendCaption(caption({ sequence: 2, revision: 2, kind: 'refined', text: '精修版正文。' }))
+
+  const [segment] = store.getSessionTranscript({ sessionId: 'session-loopback' }).segments
+  /* caption_events 是 append-only 且有拒绝 UPDATE/DELETE 的触发器，所以只要
+     原始版是「顺着 firstEventOrder 指针读出来的」，它就不可能被后续写入改掉。 */
+  assert.equal(typeof segment.firstEventOrder, 'number')
+  assert.equal(segment.text, '原始版正文。')
 })

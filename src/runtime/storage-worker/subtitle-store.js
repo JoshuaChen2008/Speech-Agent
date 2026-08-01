@@ -159,6 +159,33 @@ function sameEvent (row, event) {
     row.text === event.text
 }
 
+/* 转写版本隔离（SEM-F04 / SEM-F11 / SEM-T08）。
+   --------------------------------------------------------------------------
+   `segments.text` 是「当前投影」，精修到达时会被更高 revision 覆盖。首次 `final`
+   的原文并没有丢：`segments.first_event_order` 指向该段的第一条事件，而
+   `caption_events` 是 append-only 且带有拒绝 UPDATE/DELETE 的触发器，
+   加上 refined 必须有 base（MISSING_BASE_SEGMENT），所以那条事件必然是首次 final。
+
+   对外只暴露两个语义明确的版本，且 `text` 恒为原始版——历史与导出默认必须
+   呈现它，精修稿只有在用户明确选择时才使用。 */
+function versionedSegment (row) {
+  const originalRevision = Number(row.original_revision)
+  const currentRevision = Number(row.text_revision)
+  return {
+    segmentId: row.segment_id,
+    sourceId: row.source_id,
+    text: row.original_text,
+    textRevision: originalRevision,
+    refinedText: currentRevision > originalRevision ? row.current_text : null,
+    /* 时间戳同样取自那条首次 final：原始版必须自洽，不能正文来自原始事件、
+       时间来自被精修更新过的投影，否则两版的导出 digest 无法分别核对。 */
+    t0Ms: Number(row.origin_t0_ms),
+    t1Ms: Number(row.origin_t1_ms),
+    firstEventOrder: Number(row.first_event_order),
+    ...(row.updated_event_order === undefined ? {} : { updatedEventOrder: Number(row.updated_event_order) })
+  }
+}
+
 class SqliteSubtitleStore {
   constructor (options = {}) {
     this.database = openSubtitleDatabase(options.databasePath, options)
@@ -523,21 +550,15 @@ class SqliteSubtitleStore {
     `).get(sessionId)
     if (!session) throw new StorageError('SESSION_NOT_FOUND')
     const segments = this.database.prepare(`
-      SELECT segment_id, source_id, text, text_revision, t0_ms, t1_ms,
-             first_event_order, updated_event_order
-      FROM segments
-      WHERE session_id = ?
-      ORDER BY t0_ms, first_event_order, id
-    `).all(sessionId).map((row) => ({
-      segmentId: row.segment_id,
-      sourceId: row.source_id,
-      text: row.text,
-      textRevision: Number(row.text_revision),
-      t0Ms: Number(row.t0_ms),
-      t1Ms: Number(row.t1_ms),
-      firstEventOrder: Number(row.first_event_order),
-      updatedEventOrder: Number(row.updated_event_order)
-    }))
+      SELECT s.segment_id, s.source_id, s.text AS current_text, s.text_revision,
+             s.t0_ms, s.t1_ms, s.first_event_order, s.updated_event_order,
+             origin.text AS original_text, origin.revision AS original_revision,
+             origin.t0_ms AS origin_t0_ms, origin.t1_ms AS origin_t1_ms
+      FROM segments s
+      JOIN caption_events origin ON origin.event_order = s.first_event_order
+      WHERE s.session_id = ?
+      ORDER BY s.t0_ms, s.first_event_order, s.id
+    `).all(sessionId).map(versionedSegment)
     return {
       session: {
         sessionId: session.session_id,
@@ -582,30 +603,29 @@ class SqliteSubtitleStore {
     let afterCursor = ''
     if (cursor) {
       afterCursor = `
-        AND (t0_ms > ? OR (t0_ms = ? AND first_event_order > ?))
+        AND (s.t0_ms > ? OR (s.t0_ms = ? AND s.first_event_order > ?))
       `
       params.push(cursor.t0Ms, cursor.t0Ms, cursor.firstEventOrder)
     }
     params.push(limit + 1)
     const rows = this.database.prepare(`
-      SELECT segment_id, source_id, text, text_revision, t0_ms, t1_ms,
-             first_event_order
-      FROM segments
-      WHERE session_id = ?
+      SELECT s.segment_id, s.source_id, s.text AS current_text, s.text_revision,
+             s.t0_ms, s.t1_ms, s.first_event_order,
+             origin.text AS original_text, origin.revision AS original_revision,
+             origin.t0_ms AS origin_t0_ms, origin.t1_ms AS origin_t1_ms
+      FROM segments s
+      JOIN caption_events origin ON origin.event_order = s.first_event_order
+      WHERE s.session_id = ?
       ${afterCursor}
-      ORDER BY t0_ms, first_event_order
+      ORDER BY s.t0_ms, s.first_event_order
       LIMIT ?
     `).all(...params)
     const hasMore = rows.length > limit
     const pageRows = rows.slice(0, limit)
-    const items = pageRows.map((row) => ({
-      segmentId: row.segment_id,
-      sourceId: row.source_id,
-      text: row.text,
-      textRevision: Number(row.text_revision),
-      t0Ms: Number(row.t0_ms),
-      t1Ms: Number(row.t1_ms)
-    }))
+    const items = pageRows.map((row) => {
+      const { firstEventOrder, updatedEventOrder, ...item } = versionedSegment(row)
+      return item
+    })
     const last = pageRows.at(-1)
     return {
       session: {

@@ -495,7 +495,10 @@ async function runI3NonAudioSoak (options = {}) {
     })
     const fullTranscript = await recovered.gateway.getSessionTranscript(sessionId)
     if (fullTranscript.segments.length !== segmentCount) throw new Error('reopened transcript projection is incomplete')
-    const recoveredRefinedSegmentCount = fullTranscript.segments.filter((segment) => segment.textRevision === 2).length
+    /* 版本隔离（SEM-F04）：重开后默认正文恒为首次 final，精修稿以独立版本并存。
+       因此「恢复了多少精修」要数 refinedText，而不是数被覆盖成 revision 2 的投影。 */
+    const recoveredRefinedSegmentCount = fullTranscript.segments
+      .filter((segment) => typeof segment.refinedText === 'string' && segment.refinedText.length > 0).length
     if (recoveredRefinedSegmentCount !== refinedSegmentCount) {
       throw new Error('reopened refined projection count is incomplete')
     }
@@ -503,9 +506,12 @@ async function runI3NonAudioSoak (options = {}) {
       const segment = fullTranscript.segments[index]
       if (!segment) throw new Error('reopened projection unexpectedly lacks a checked segment')
       const shouldBeRefined = index % REFINE_EVERY === 0
-      if (segment.textRevision !== (shouldBeRefined ? 2 : 1) ||
-          !segment.text.startsWith(shouldBeRefined ? 'refined fixture subtitle ' : 'final fixture subtitle ')) {
-        throw new Error('reopened final/refined projection differs from the deterministic fixture')
+      const refinedMatches = shouldBeRefined
+        ? typeof segment.refinedText === 'string' && segment.refinedText.startsWith('refined fixture subtitle ')
+        : segment.refinedText === null
+      if (segment.textRevision !== 1 ||
+          !segment.text.startsWith('final fixture subtitle ') || !refinedMatches) {
+        throw new Error('reopened original/refined versions differ from the deterministic fixture')
       }
     }
     for (const format of ['txt', 'md', 'srt']) {
@@ -523,8 +529,9 @@ async function runI3NonAudioSoak (options = {}) {
     if (Object.values(exports).some((entry) => entry.recordCount !== segmentCount)) {
       throw new Error('complete export did not preserve all fixture segments')
     }
-    if (txt.includes('final fixture subtitle 0001') || !txt.includes('refined fixture subtitle 0001')) {
-      throw new Error('text export did not retain the current refined projection')
+    /* 完整导出默认取原始版（SEM-F11）：即使第 1 段有精修稿，导出的也必须是首次 final。 */
+    if (!txt.includes('final fixture subtitle 0001') || txt.includes('refined fixture subtitle 0001')) {
+      throw new Error('text export did not default to the first-pass original version')
     }
     sampleProcess(recovered.gateway)
     const cpu = process.cpuUsage(cpuBefore)
