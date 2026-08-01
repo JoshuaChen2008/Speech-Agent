@@ -31,6 +31,29 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      # 排在所有重步骤之前：字幕排版是本阶段改动最频繁的部分，而这一步只要一两分钟。
+      # 它只启动最小字幕宿主，不证明产品组合根、真实 ASR 或人工视觉验收（见报告 boundaries）。
+      - name: Qualify fixed-height caption layout
+        shell: powershell
+        run: |
+          $layoutDir = Join-Path $PWD '.artifacts/caption-layout-ci'
+          New-Item -ItemType Directory -Force -Path $layoutDir | Out-Null
+          $layoutStdout = Join-Path $layoutDir 'stdout.log'
+          $layoutStderr = Join-Path $layoutDir 'stderr.log'
+          $layoutElectron = Join-Path $PWD 'node_modules/electron/dist/electron.exe'
+          $layoutProcess = Start-Process -FilePath $layoutElectron `
+            -ArgumentList @('scripts/caption-layout-smoke.js','--report','.artifacts/caption-layout-ci/report.json') `
+            -WorkingDirectory $PWD `
+            -RedirectStandardOutput $layoutStdout `
+            -RedirectStandardError $layoutStderr `
+            -WindowStyle Hidden -Wait -PassThru
+          Get-Content -Raw -ErrorAction SilentlyContinue $layoutStdout
+          if ($layoutProcess.ExitCode -ne 0) {
+            Get-Content -Raw -ErrorAction SilentlyContinue $layoutStderr
+            throw "Caption layout qualification failed with exit code $($layoutProcess.ExitCode)"
+          }
+          node scripts/verify-caption-layout-report.js .artifacts/caption-layout-ci/report.json
+
       - name: Qualify Electron SQLite storage worker composition
         shell: powershell
         run: |
@@ -175,3 +198,17 @@ jobs:
 
       - name: Run non-interactive core integration and evidence regression lanes
         run: npm run test:ci
+
+      # 结构化报告与 stdout/stderr 都写在 .artifacts（gitignored）里，跑完即随 runner 销毁。
+      # 失败时不上传就只剩「第 N 步失败了」，无法定位是哪个字段不满足。
+      # 报告本身按 SEM-F14 不含字幕正文、PCM 或音频路径。
+      - name: Upload structured qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qualification-evidence
+          path: |
+            .artifacts/**/*.json
+            .artifacts/**/*.log
+          if-no-files-found: warn
+          retention-days: 14
