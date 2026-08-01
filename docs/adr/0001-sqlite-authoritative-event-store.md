@@ -5,6 +5,7 @@
 - 决策者：项目负责人
 - 替代：`PLAN.md` Rev.3 中“JSONL，不上数据库”的决定
 - 范围修订：[ADR 0002](0002-separate-subtitle-and-agent-systems.md) 将 `translated`、Agent outbox 和向量索引移出字幕事实与字幕 MVP；SQLite 单一权威、append-only 字幕事件、segments 投影、单写者和 JSONL 迁移决定继续有效。
+- 局部替代：[ADR 0004](0004-immutable-first-pass-and-optional-refinement.md) 将首次 `final` 冻结为权威原始转写，并把 `refined` 移为独立可选派生版本；本 ADR 的 SQLite 单一权威与 append-only 原始事实决定继续有效。
 
 ## 背景
 

@@ -58,7 +58,7 @@
 - 主题在 token 层切换：`:root` 是深色默认，`:root[data-theme="light"]` 覆盖。**组件 CSS 里不应再出现 `[data-theme]` 分支**；工具条和设置窗已完全去除，字幕窗仅保留结构性规则。
 - 需要在组件里再复合透明度的 token 保持 RGB 三元组（当前是 `--bar-bg` / `--toolbar-bg` / `--fg` / `--text-accent`），其余是可直接赋值的完整颜色。
 - `§8` 是外观运行时变量 `--fs / --radius / --bar-alpha / --toolbar-alpha`，外加自定义底色时才写入的 `--bar-bg` / `--toolbar-bg`。统一由 `src/ui/shared/appearance.js` 的 `applyAppearance()` 以内联样式写到 `:root` —— 字幕窗和工具条窗共用同一份映射，避免「留空要回退到主题默认」这类细节在两边走岔。默认值与 `src/config.js` 的 `DEFAULTS` 对齐，只用于配置到达前的首帧。
-- 行数不再走 CSS 变量：`config.maxLines` 现在是「当前句行数上限」，实际行数由整卡高度预算算出，逐槽位以 `--n` 写在元素自身上。见 `caption-reducer.js` 的 `computeLineBudget()`。
+- 字幕采用固定高度的统一视觉行流：内容按当前宽度自然换行，满高后淘汰最旧完整行并保持最新行可见。现有逐槽位 `--n`/`computeLineBudget()` 是待替换的旧实现，不能继续把长 `partial` 裁在第一行。
 - `§9` 是 `main.js` 尺寸常量的**只读镜像**（`--margin` / `--tb-margin`）。改这里不会移动窗口；消除双重真相是 B1 待办，在那之前两处必须同步改。
 - `§10/§11` 是 `:focus-visible` 与 `forced-colors` 基线，用零特异性 `:where()` 声明，组件可直接覆盖。
 
@@ -197,8 +197,9 @@ UI 规则：
 
 目标是可读性，不是视觉表演。可自由调整字体、层级、背景和克制的动效，但必须满足：
 
-- previous/current/translation 使用稳定节点，partial 更新不重建整棵 DOM。
-- 定义**总行数预算**，而不是给每个段落各自分配 `maxLines`。
+- 使用稳定的字幕视口/内容节点，`partial` 高频更新不重建整棵 DOM。
+- 定义一个固定高度的**总视觉容量**；自然换行，溢出时从顶部逐行淘汰，不横向移动、不自动改变窗口 bounds。
+- 当前 `partial` 优先；布局不修改识别文本或分段。精修开启时只更新仍可见旧段，不能复活已淘汰段或覆盖首次 `final`。
 - 覆盖 24/30/38px、中文/英文/中英混排、超长单词和双语副行。
 - 在浅色文档、深色视频和复杂桌面背景上均清晰。
 - 锁定、穿透和录制状态不能只依赖颜色。
@@ -270,7 +271,7 @@ UI 规则：
 |---|---|---|---|
 | `stop` | stop 命令 | B1 | **完成** |
 | `retry` | retry 命令 | B1 | **完成** |
-| `history` | 可聚焦的历史窗 + 只读终态会话/时间戳正文/导出 contract；搜索可后加 | B3.3 | **联合验收完成/开发态与 packaged Electron 205 段五页、DOM≤50 已验；系统对话框、两小时 I3 与 I4 待验** |
+| `history` | 可聚焦的历史窗 + 只读终态会话/时间戳正文/导出 contract；搜索可后加 | B3.3 | **联合验收完成/开发态与 packaged Electron 205 段五页、三格式完整导出及离线复启已验；I3 非音频 3,600 段仍保持 DOM≤50。真实系统对话框、两小时声源与 I4 待验** |
 | `open-model-manager` | 资源管理页：固定三项本地 ASR 资源的总/分项进度、安全错误与单一下载/重试动作；完整 bundle 才能 start；不接受 URL/hash/path 参数 | B4 | **确定性 UI 联合验收完成**。真实 Electron 产品壳从 `missing` 状态点击下载，贯穿 preload/IPC/生产 Manager、Range、三 marker、热启用、字幕、暂停/恢复、停止和 SQLite 历史；I4 干净机公网下载待验收 |
 | `request-permission` | 权限请求入口 | Gate 0C / B2 | 未实现 |
 

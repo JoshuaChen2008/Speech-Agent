@@ -120,7 +120,7 @@ Electron 壳层负责：
 - 拉伸带优先于工具条「洞」，否则洞盖住的右上角就再也拉不动。
 - 结束时把尺寸写回 `config.captionWidth / captionHeight` 并广播。
 
-**字号不随窗口缩放。** 窗口变大只意味着一行能放下更多字、能分到更多行 —— 字幕本身的字号仍由 `config.fontSize` 决定。行数由整卡高度预算实时算出（`captions.clientHeight`），所以拉高窗口自动多分行，上限是 `config.maxLines`。
+**字号不随窗口缩放。** 用户手动改变窗口后，新宽高决定一行能放下多少字和固定视口能容纳多少行；字幕内容本身绝不能自动 resize 窗口。可见行数由实际内容高度与字号计算，`config.maxLines` 不再作为 previous/current 各槽位的独立裁剪上限；满高后按 [固定高度字幕流设计](subtitle-flow-and-transcript-versions.md) 淘汰最旧视觉行。
 
 ### 5.1 手动拖动
 
@@ -148,20 +148,19 @@ renderer 在可拖区域发出 `dragStart(role)` 意图，主进程通过全局�
 
 ## 6. 字幕渲染不变量
 
-推荐固定槽位：
+推荐保留稳定的视口和内容节点，而不是让每个语义段各自获得一份行数预算：
 
 ```html
-<div class="captions">
-  <p class="line previous"></p>
-  <p class="line current" aria-live="polite"></p>
-  <p class="line translation"></p>
+<div class="captions" aria-live="polite">
+  <div class="caption-flow"></div>
 </div>
 ```
 
-- partial 只更新 `.current.textContent` 和状态 class。
-- final/refined 根据 `segmentId + revision` 更新，禁止 `innerHTML = ''` 全量重建。
-- translation 可晚到，不改变主字幕的 final 状态。
-- 定义整个字幕卡的总行数/高度预算，不能让 previous/current 各自都使用同一个 maxLines 后叠成四行。
+- `partial` 在状态层保留完整假设并允许回改；DOM 重新排版不得改写识别文本或触发 `final`。
+- 文字按当前宽度自然换行；总高度满后裁掉最上方最旧的完整视觉行，最新行保持在底部，不出现横向跑马、可见滚动条或自动增高。
+- `final → 下一段 partial` 不整窗清空，旧段随新行进入逐行淘汰；没有新文本时保留现有字幕。
+- 首次 `final` 与可选精修稿是不同版本。启用精修时只更新仍可见旧段，已淘汰段不重新插入，当前 `partial` 始终优先。
+- translation 可晚到，但仍是独立派生文本，不能改变首次 `final` 的原始版本。
 - 需要覆盖 24/30/38px、双语、长英文单词和中英混排。
 
 视觉基线仍是“字幕优先可读、设置页承载品质感”，但具体颜色、圆角、材质和工具条外观不再在本文锁死，由视觉模型根据设计 brief 提案。
@@ -215,4 +214,4 @@ renderer 在可拖区域发出 `dragStart(role)` 意图，主进程通过全局�
 3. B1 已把字幕接到稳定节点 + CaptionEvent reducer，并移除 renderer 假流。
 4. B1 已把工具条升级为完整 RuntimeSnapshot + CommandResult。
 5. B1 已让设置页识别 Capabilities；默认 Gate 0B profile 为空，开发 profile 只能由显式开关启用。
-6. 视觉/UI 的 V1–V2 方案和状态矩阵已交付；历史窗口和模型资源页均已接真实主进程契约并通过开发态及 packaged 四窗口 Electron 旅程，205 段详情已验证五页往返且 DOM≤50。MVP 不展示翻译开关；物理音频、DPI/人工视觉、两小时 I3 与 I4 继续按发布门禁验收。
+6. 视觉/UI 的 V1–V2 方案和状态矩阵已交付；历史窗口和模型资源页均已接真实主进程契约并通过开发态及 packaged 四窗口 Electron 旅程，205 段详情已验证五页往返且 DOM≤50。I3 非音频预资格又在 3,600 段/72 页下保持 DOM≤50；MVP 不展示翻译开关。物理音频、DPI/人工视觉、真实两小时声源与 I4 继续按发布门禁验收。
