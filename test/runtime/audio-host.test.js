@@ -31,6 +31,8 @@ const {
 const { MAIN_CLOCK_ID } = require('../../src/runtime/clock-calibration')
 const { SpeechOnsetProbe } = require('../../src/runtime/audio-host/speech-onset-probe')
 
+const PRODUCT_FRAME_SAMPLES = 1600
+
 /* 假 electron：让 controller 生命周期与 IPC sender 校验可以脱离 Electron 测试。 */
 function fakeElectron (overrides = {}) {
   return {
@@ -53,19 +55,19 @@ function validSavePayload (sessionId, sourceId) {
   return {
     sessionId,
     sourceId,
-    samples: new Float32Array(26 * 1600 + 1000).fill(0.1),
+    samples: new Float32Array(26 * PRODUCT_FRAME_SAMPLES + 1000).fill(0.1),
     pipeline: {
       inputSampleRate: 48000,
       outputSampleRate: 16000,
-      frameSamples: 1600,
+      frameSamples: PRODUCT_FRAME_SAMPLES,
       frameCount: 27,
       fullFrameCount: 26,
       tailFrameSamples: 1000,
       sequenceGapCount: 0,
       timestampRegressionCount: 0,
-      sampleCount: 26 * 1600 + 1000,
-      wallElapsedSeconds: 2.66,
-      audioContextElapsedSeconds: 2.66
+      sampleCount: 26 * PRODUCT_FRAME_SAMPLES + 1000,
+      wallElapsedSeconds: 2.6,
+      audioContextElapsedSeconds: 2.6
     }
   }
 }
@@ -85,15 +87,15 @@ function validPipeline (overrides = {}) {
   return {
     inputSampleRate: 48000,
     outputSampleRate: 16000,
-    frameSamples: 1600,
+    frameSamples: PRODUCT_FRAME_SAMPLES,
     frameCount: 27,
     fullFrameCount: 26,
     tailFrameSamples: 1000,
     sequenceGapCount: 0,
     timestampRegressionCount: 0,
-    sampleCount: 26 * 1600 + 1000,
-    wallElapsedSeconds: 2.66,
-    audioContextElapsedSeconds: 2.66,
+    sampleCount: 26 * PRODUCT_FRAME_SAMPLES + 1000,
+    wallElapsedSeconds: 2.6,
+    audioContextElapsedSeconds: 2.6,
     ...overrides
   }
 }
@@ -121,15 +123,15 @@ test('product resampler matches one-shot resampling across arbitrary block bound
 
 test('frame assembler produces monotonic fixed frames with a flushed tail', async () => {
   const { FrameAssembler } = await import(moduleUrl('frame-assembler.mjs'))
-  const assembler = new FrameAssembler({ frameSamples: 1600, sampleRate: 16000 })
+  const assembler = new FrameAssembler({ frameSamples: PRODUCT_FRAME_SAMPLES, sampleRate: 16000 })
 
-  const first = assembler.push(new Float32Array(1599))
+  const first = assembler.push(new Float32Array(PRODUCT_FRAME_SAMPLES - 1))
   assert.deepEqual(first, [])
-  const second = assembler.push(new Float32Array(1601))
+  const second = assembler.push(new Float32Array(PRODUCT_FRAME_SAMPLES + 1))
   assert.equal(second.length, 2)
   assert.deepEqual(second.map((frame) => frame.sequence), [0, 1])
   assert.deepEqual(second.map((frame) => frame.timestampSeconds), [0, 0.1])
-  assert.ok(second.every((frame) => frame.samples.length === 1600))
+  assert.ok(second.every((frame) => frame.samples.length === PRODUCT_FRAME_SAMPLES))
 
   const tail = assembler.flush()
   assert.equal(tail.length, 0)
@@ -140,7 +142,13 @@ test('frame assembler produces monotonic fixed frames with a flushed tail', asyn
   assert.equal(flushed[0].sequence, 2)
   assert.equal(flushed[0].samples.length, 900)
   assert.equal(flushed[0].timestampSeconds, 0.2)
-  assert.equal(assembler.totalSamples, 1600 * 2 + 900)
+  assert.equal(assembler.totalSamples, PRODUCT_FRAME_SAMPLES * 2 + 900)
+})
+
+test('frame assembler defaults to the product 100 ms frame size', async () => {
+  const { FrameAssembler } = await import(moduleUrl('frame-assembler.mjs'))
+  const assembler = new FrameAssembler()
+  assert.equal(assembler.frameSamples, PRODUCT_FRAME_SAMPLES)
 })
 
 test('frame assembler rejects invalid configuration', async () => {
@@ -283,7 +291,7 @@ test('diagnostic evaluation passes clean pipelines and fails each broken axis', 
   assert.equal(evaluateDiagnostic(validPipeline({ wallElapsedSeconds: 3.5 }), cleanLevels, 2600).pass, false, '时钟覆盖过低')
   assert.equal(evaluateDiagnostic(validPipeline({ wallElapsedSeconds: 2.0 }), cleanLevels, 2600).pass, false, '时钟覆盖过高')
   assert.equal(evaluateDiagnostic(validPipeline({ tailFrameSamples: 0 }), cleanLevels, 2600).pass, false)
-  assert.equal(evaluateDiagnostic(validPipeline({ tailFrameSamples: 1601 }), cleanLevels, 2600).pass, false)
+  assert.equal(evaluateDiagnostic(validPipeline({ tailFrameSamples: PRODUCT_FRAME_SAMPLES + 1 }), cleanLevels, 2600).pass, false)
   assert.equal(evaluateDiagnostic(validPipeline({ frameCount: 28 }), cleanLevels, 2600).pass, false, 'frameCount 与 full+tail 不符')
   assert.equal(evaluateDiagnostic(validPipeline({ frameSamples: 800 }), cleanLevels, 2600).pass, false)
   assert.equal(evaluateDiagnostic(validPipeline({ inputSampleRate: 0 }), cleanLevels, 2600).pass, false)
