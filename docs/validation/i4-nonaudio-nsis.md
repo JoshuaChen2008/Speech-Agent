@@ -7,7 +7,8 @@
 
 本子门禁是完整 I4 strict summary 的一个 child。后续两个音频 child 必须分别以 `loopback` 与
 `mic` 互斥顺序执行，并与本报告绑定同一 B5 installer、release layout 和本报告摘要；任一 child
-都不能单独形成完整 I4 结论。音频 child、strict summary 与干净机移交包当前为已决定，尚未实现。
+都不能单独形成完整 I4 结论。音频 child、strict summary 与干净机移交包入口现为
+**实现完成·尚未验收**，执行顺序见 [`i4-audio-release.md`](i4-audio-release.md)。
 
 此子门禁补齐“B5 绑定的正式 release main 在真实交互安装后的非音频生命周期”，不重复 B5 的静默 NSIS
 探针。它在专用标准用户的干净 Windows 11 快照中交互安装精确候选，启动正式 `src/main.js`，

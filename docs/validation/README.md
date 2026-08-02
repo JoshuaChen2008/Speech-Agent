@@ -18,7 +18,7 @@
 | I2 真实来源与交互恢复 | 实现完成·尚未验收 | `run-i2-live-series.ps1`、`run-i2-interaction.ps1` | 具备真实 `loopback`/`mic`、设备控制权与睡眠权限的 Win11 | 是 | [`i2-real-source-series.md`](i2-real-source-series.md)、[`i2-interaction-recovery.md`](i2-interaction-recovery.md) | 优化冻结字幕可见延迟；完成原生拖动、设备移除/Retry、睡眠/唤醒/Retry 与物理麦克风证据 |
 | I3 两小时字幕会话 | 实现完成·尚未验收 | `run-i3-live-audio-soak.ps1` | 可连续运行 7,200 秒的 Win11 | 是 | [`i3-live-audio-soak.md`](i3-live-audio-soak.md)；75 秒资格已有证据 | 完成原生拖动后执行 7,200 秒、至少 3,000 段的正式 soak |
 | I4 非音频子门禁 | 实现完成·尚未验收 | `qualify-i4-nonaudio-nsis.ps1` | 无仓库、无 Node、无既有数据的 Win11 标准用户快照 | 否 | [`i4-nonaudio-nsis.md`](i4-nonaudio-nsis.md)；尚无专用机报告 | 在专用快照执行并带回 `pass/partial` 报告 |
-| I4 完整干净机发布验收 | 已决定 | 非音频报告 + `loopback`/`mic` 音频 child + strict summary | 同一专用 Win11 标准用户候选环境 | 是，两个来源互斥顺序执行 | 音频 child、summary 与移交包要求已决定，尚未实现 | 实现入口后依次执行三个 child 并形成严格 summary |
+| I4 完整干净机发布验收 | 实现完成·尚未验收 | 非音频报告 + `loopback`/`mic` 音频 child + strict summary | 同一专用 Win11 标准用户候选环境 | 是，两个来源互斥顺序执行 | [`i4-audio-release.md`](i4-audio-release.md)；音频 child、strict summary、六项载荷移交包构建器与两套 verifier 入口已实现，尚无专用机报告 | 在专用快照依次执行非音频、`loopback`、`mic`，带回三份 child 后形成严格 summary |
 | Agent 系统 | 已决定 | 后置 | 后续阶段 | 不拥有采集 | 尚未实现 | 不阻断字幕 MVP |
 
 ## 历史证据策略

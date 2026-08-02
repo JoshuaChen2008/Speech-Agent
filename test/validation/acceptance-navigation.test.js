@@ -94,7 +94,7 @@ test('J9-CI status projects the authoritative deterministic joint acceptance bou
   }
 })
 
-test('I4 projections separate the implemented non-audio child from the decided complete gate', () => {
+test('I4 projections keep implemented report entry points separate from unaccepted clean-machine evidence', () => {
   const navigation = fs.readFileSync(path.join(ROOT, 'docs', 'validation', 'README.md'), 'utf8')
   const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8')
   const plan = fs.readFileSync(path.join(ROOT, 'PLAN.md'), 'utf8')
@@ -109,9 +109,12 @@ test('I4 projections separate the implemented non-audio child from the decided c
 
   assert.match(navigationChildRow, /^\| I4 非音频子门禁 \| 实现完成·尚未验收 \|/)
   assert.match(readmeChildRow, /^\| I4 非音频干净 Windows 子门禁 \| 实现完成·尚未验收 \|/)
-  assert.match(navigationCompleteRow, /^\| I4 完整干净机发布验收 \| 已决定 \|/)
-  assert.match(readmeCompleteRow, /^\| 完整 I4 干净机发布验收 \| 已决定 \|/)
-  assert.match(planRow, /^\| \*\*I4 Packaged Subtitle MVP（已决定）\*\* \|/)
-  assert.match(strategyRow, /非音频子门禁为实现完成·尚未验收/)
-  assert.match(strategyRow, /完整 I4 为已决定/)
+  assert.match(navigationCompleteRow, /^\| I4 完整干净机发布验收 \| 实现完成·尚未验收 \|/)
+  assert.match(readmeCompleteRow, /^\| 完整 I4 干净机发布验收 \| 实现完成·尚未验收 \|/)
+  assert.match(planRow, /^\| \*\*I4 Packaged Subtitle MVP（实现完成·尚未验收）\*\* \|/)
+  assert.match(strategyRow, /入口现均为实现完成·尚未验收/)
+  assert.match(navigationCompleteRow, /尚无专用机报告/)
+  assert.match(readmeCompleteRow, /尚无专用干净 Win11 三份 child 报告/)
+  assert.match(planRow, /尚无专用干净 Win11 的三份 child 报告/)
+  assert.match(strategyRow, /尚无合格干净机三份 child 报告/)
 })
