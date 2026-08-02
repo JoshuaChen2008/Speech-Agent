@@ -1,15 +1,15 @@
 # B5 打包态确定性资格
 
 - 日期：2026-08-02
-- 状态：当前源码的构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；远端 run `30760407160` 已在 revision `0d0cd9f91cfd5136bbd5d3fec44e636da04b4e21` 证明显式 Electron runtime 供给、版本校验、字幕布局与 DB0，随后因 DB1 旧 fixture 与可选精修语义漂移而失败；DB1 与 hidden artifact 修复为实现完成·尚未验收
+- 状态：当前源码的构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；远端 run `30761472817` 已在 revision `811fc6d14e927305588cf3e1603a9d09f7186e18` 通过 Electron、存储、四窗口产品壳、packaged 双启动、release NSIS 与隔离安装卸载，hidden artifact 已上传；末端 I3 模型 fixture 与 LF provenance 修复为实现完成·尚未验收
 - 发布边界：同一隔离 `userData` 的离线复启发生在测试 package；NSIS 卸载只验证隔离安装目录与无关 APPDATA 哨兵。正式 release 的 I4 非音频专用干净机尚未执行，因此尚未达到实机验收完成或发布验收完成
 
 ## 精确候选
 
 `electron-builder 26.15.3` 以 Electron `43.2.0`、sherpa wrapper/platform
 `1.13.4` 生成 Windows x64 单击式当前用户 NSIS。候选安装器 SHA-256 为
-`4abc23bc4f0ab0307d551a5c59c834009d3d48953810f6c864c485db73db31de`
-（104,996,979 字节）。
+`1d51dbdb787f5594d790b4aa234950b82d35625d207504a6a813aa11224b9e6d`
+（104,996,315 字节）。
 
 该内部候选的 Authenticode 状态是 `not-signed`。按当前 MVP 决定暂不处理代码签名，但不能把
 可安装解释为 SmartScreen 或公开分发身份已经验收。当前
@@ -22,9 +22,9 @@
 `userData/models`，SQLite 仍位于 `userData/data`。
 
 layout schema-v2 冻结了 `win-unpacked/LiveSubtitle.exe` SHA-256
-`6a38d9fc6cbf09893702dfa78c2e1c22339f4391cadc0b49a5c855111df5d03e` 与
+`ed972d66eec3102d412dada6d5af2ab1e7cccaa456faa4f39b984a5dad0598e1` 与
 `resources/app.asar` SHA-256
-`72f23ae31de1cb173a41e9d4fb46251bb32d3e20403018aacf1b2599a908d22b`。
+`cee0a7d749315f65cde59f32739d68029a825654d79412132e25cf80bb782882`。
 I4 非音频专用机必须让首次安装和离线重装后的实际文件分别等于这两个 digest，不能只抄写
 调用者提供的字段。
 
@@ -53,10 +53,10 @@ Node inspector，开启嵌入式 ASAR 完整性和 only-load-from-ASAR；产品�
 同一真实 packaged Electron 双启动旅程中闭合；报告 schema-v3 分别记录首轮取消事实和第二轮继续事实。
 
 本轮两次 packaged 启动的唯一 run ID 为
-`b5-2bd0dc7a-e233-41a5-a41b-65d04344b0aa`。首启产品、首启退出、复启产品和复启退出的
+`b5-0fc36b16-d73d-43e7-9894-8305c679315f`。首启产品、首启退出、复启产品和复启退出的
 四个 SHA-256 写入独立 binding 报告；复启报告反向保存首启产品报告 SHA。测试 package 与正式
 release ASAR 对完整 `src/` 树做同一规范哈希，均得到 114 个文件和产品载荷 SHA-256
-`b6503ca26c3f59bb0b5c15acfa6c2ceec0d2eaff3a540bf5f56016032c1a0bbd`。
+`704a3c6f183761482d129317d39e6d918f670cd12f23a152d62849e84a0d7520`。
 正式 layout 报告同时保存 binding 报告 SHA、test exe SHA 和四份运行报告 SHA，仓库门禁会拒绝
 旧运行报告、新 release 包或任一单份报告被替换后的证据拼接。
 
@@ -72,14 +72,15 @@ release layout 和 NSIS 报告 SHA；strict verifier 随后重新读取关键报
 
 writer/verifier、workflow 顺序与本地当前候选的交叉哈希探针为实现完成·尚未验收。远端 run
 `30750568366` 精确绑定 revision `2242103eb917f2afbfe81c7c8df788852bb36ebc`，因 Electron runtime
-未供给而止于首个字幕布局步骤。修复后的 run `30760407160` 精确绑定 revision
-`0d0cd9f91cfd5136bbd5d3fec44e636da04b4e21`：显式 runtime 安装、package/lock/runtime `43.2.0`
-前置校验、字幕布局与 DB0 均已执行；DB1 随后正确拒绝未冻结精修偏好的旧 fixture 写入 `refined`，
-因此后续门禁与最终索引仍未执行。该 smoke 已改为显式冻结精修偏好，并分别核对首次稳定转写与
-独立精修稿。相同 run 的上传步骤还因 `.artifacts` 是点目录而未收集已有报告；workflow 现显式
-`include-hidden-files=true` 且在无文件时 fail closed。只有新 revision 的完整 workflow 成功并产生
-可下载 artifact，才可取得对应远端索引；本地构造相同 JSON 也不带远端来源语境或签名，不能冒充
-GitHub run 证据。
+未供给而止于首个字幕布局步骤；run `30760407160` 精确绑定 revision
+`0d0cd9f91cfd5136bbd5d3fec44e636da04b4e21`，通过 runtime、布局与 DB0 后暴露 DB1 fixture
+漂移及 hidden artifact 未上传。run `30761472817` 精确绑定 revision
+`811fc6d14e927305588cf3e1603a9d09f7186e18`，已通过 Electron、DB0/DB1/Gateway、四窗口产品壳、
+packaged 双启动、release NSIS 与隔离安装卸载，hidden artifact 也已上传；末端 evidence 回归因
+I3 测试读取开发机模型目录及文本源码行尾导致 3 项失败，最终索引按设计跳过。当前模型解析测试改用
+工作区内受控模型就绪证明 fixture，I3 文本源码输入由 `.gitattributes` 固定 LF 并仅规范 CRLF；
+该修复为实现完成·尚未验收。只有新 revision 的完整 workflow 成功并产生可下载 artifact，才可取得
+对应远端索引；本地构造相同 JSON 也不带远端来源语境或签名，不能冒充 GitHub run 证据。
 
 这条旅程使用受控小资源和 fake ASR，不访问物理声卡、不保存音频，也不冒充公网真实张量、
 I2、真实两小时 I3 或 I4。

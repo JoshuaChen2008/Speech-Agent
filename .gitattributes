@@ -9,6 +9,20 @@ docs/validation/i2-live-v5/**/*.json text eol=lf
 docs/validation/b5-*.json text eol=lf
 docs/validation/i3-nonaudio-results.json text eol=lf
 
+# I3 non-audio source provenance is compared across developer and hosted
+# Windows worktrees. Pin every text input to LF; the runner also canonicalizes
+# legacy CRLF worktrees before hashing, without normalizing binary evidence.
+src/history/history.js text eol=lf
+src/main/services/history-service.js text eol=lf
+scripts/i3-nonaudio-soak.js text eol=lf
+src/main/session/session-coordinator.js text eol=lf
+src/main/services/sqlite-session-recorder.js text eol=lf
+src/runtime/storage-worker/subtitle-store.js text eol=lf
+scripts/strict-evidence-json.js text eol=lf
+src/main/services/storage-gateway.js text eol=lf
+src/runtime/storage-worker/worker-service.js text eol=lf
+scripts/verify-i3-nonaudio-report.js text eol=lf
+
 # I4 non-audio reports bind an exact fixture and may be collected on another
 # Windows snapshot. Keep both the source fixture and any future report stable.
 scripts/fixtures/i4-nonaudio-legacy-session.jsonl text eol=lf

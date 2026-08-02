@@ -6,13 +6,36 @@ const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 
-const { DEFAULT_SEGMENT_COUNT, runI3NonAudioSoak } = require('../../scripts/i3-nonaudio-soak')
+const {
+  DEFAULT_SEGMENT_COUNT,
+  PROVENANCE_FILES,
+  canonicalTextProvenanceDigest,
+  runI3NonAudioSoak
+} = require('../../scripts/i3-nonaudio-soak')
 const {
   readAndValidateI3NonAudioReport,
   validateI3NonAudioReport
 } = require('../../scripts/verify-i3-nonaudio-report')
 
 const ROOT = path.resolve(__dirname, '../..')
+
+test('I3 文本源码 provenance 固定 LF 并只规范 CRLF 行尾', () => {
+  const attributes = fs.readFileSync(path.join(ROOT, '.gitattributes'), 'utf8')
+  for (const relativePath of Object.values(PROVENANCE_FILES)) {
+    const escaped = relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    assert.match(attributes, new RegExp(`^${escaped} text eol=lf$`, 'm'), `${relativePath} must be pinned to LF`)
+  }
+  assert.equal(
+    canonicalTextProvenanceDigest(Buffer.from('alpha\r\nbeta\r\n')),
+    canonicalTextProvenanceDigest(Buffer.from('alpha\nbeta\n'))
+  )
+  assert.notEqual(
+    canonicalTextProvenanceDigest(Buffer.from('alpha\rbeta\n')),
+    canonicalTextProvenanceDigest(Buffer.from('alpha\nbeta\n'))
+  )
+  assert.throws(() => canonicalTextProvenanceDigest(Buffer.from([0xff])), /valid UTF-8/)
+})
+
 test('tracked I3 non-audio evidence remains strict, reproducible in shape, and explicitly partial', () => {
   const report = readAndValidateI3NonAudioReport(
     path.join(ROOT, 'docs', 'validation', 'i3-nonaudio-results.json')

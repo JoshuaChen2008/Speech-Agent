@@ -1,5 +1,8 @@
 # B4 模型资源与产品壳验收
 
+> **历史快照。** 本文保留 B4 取证时的后续 B5 候选引用；当前 B5 精确候选与状态以
+> [`b5-packaging.md`](b5-packaging.md) 和 [`../semantic-contract.md`](../semantic-contract.md) 为准。
+
 - 日期：2026-07-31（报告时间为 UTC）
 - 状态：B4 资源实现、设置页点击下载的确定性 Electron 联合旅程与批准模型本机安装/调用均已有证据；B5 打包态资格已由独立证据关闭，I4 干净机外网安装仍待执行
 - 对应语义：SEM-F00、SEM-F05、SEM-F12、SEM-F14、SEM-F17、SEM-F18、SEM-F19、SEM-T02、SEM-T03、SEM-T04、SEM-T11、SEM-T12

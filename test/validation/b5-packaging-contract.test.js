@@ -440,10 +440,13 @@ test('tracked B5 evidence is mutually consistent and preserves the I4 boundary',
     layout.artifact.installerSha256
   )
   const evidenceDocument = fs.readFileSync(path.join(VALIDATION_DIR, 'b5-packaging.md'), 'utf8')
+  const runtimeArchitecture = fs.readFileSync(path.join(ROOT, 'docs', 'runtime-architecture.md'), 'utf8')
+  const abbreviatedSha = (sha256) => `${sha256.slice(0, 8)}…${sha256.slice(-5)}`
 
   assert.equal(layout.artifact.installerSha256, lifecycle.artifact.installerSha256)
   assert.equal(layout.artifact.signingStatus, 'not-signed')
   assert.match(evidenceDocument, new RegExp(layout.artifact.installerSha256))
+  assert.match(runtimeArchitecture, new RegExp(abbreviatedSha(layout.artifact.installerSha256)))
   assert.equal(product.qualification.runId, binding.run.runId)
   assert.equal(restart.qualification.runId, binding.run.runId)
   assert.equal(layout.evidenceBinding.runId, binding.run.runId)
@@ -468,6 +471,7 @@ test('tracked B5 evidence is mutually consistent and preserves the I4 boundary',
   assert.equal(layout.artifact.productPayloadVersion, binding.run.productPayloadVersion)
   assert.equal(layout.artifact.productPayloadFileCount, binding.run.productPayloadFileCount)
   assert.equal(layout.artifact.productPayloadSha256, binding.run.productPayloadSha256)
+  assert.match(runtimeArchitecture, new RegExp(abbreviatedSha(binding.run.productPayloadSha256)))
   assert.equal(product.packaging.releaseCandidate, false)
   assert.equal(product.packaging.installedViaNsis, false)
   assert.ok(product.limitations.includes('not-clean-machine-i4'))

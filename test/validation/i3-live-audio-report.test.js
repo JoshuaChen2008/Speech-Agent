@@ -7,6 +7,7 @@ const path = require('node:path')
 const test = require('node:test')
 const { PRODUCTION_MODEL_MANIFEST } = require('../../src/main/services/model-manifest')
 const I3_STIMULUS_DEFINITION = require('../../scripts/i3-live-stimulus.json')
+const ROOT = path.resolve(__dirname, '../..')
 
 const {
   DEFAULT_DURATION_SECONDS,
@@ -257,13 +258,39 @@ test('I3 scheduled playback retains explicit two-hour and qualification segment 
     MIN_QUALIFICATION_POST_RECOVERY_FINAL_SEGMENTS)
 })
 
-test('I3 resolves all approved models from a workspace-local audited model root, not its fresh run profile', () => {
-  const models = resolveAuditedModels()
+function createModelReadinessFixture (userDataDir) {
+  for (const artifact of PRODUCTION_MODEL_MANIFEST.artifacts) {
+    const directory = artifact.directoryName
+      ? path.join(userDataDir, 'models', artifact.id, artifact.directoryName)
+      : path.join(userDataDir, 'models', artifact.id)
+    fs.mkdirSync(directory, { recursive: true })
+    for (const name of artifact.requiredFiles) fs.writeFileSync(path.join(directory, name), '')
+    fs.writeFileSync(path.join(directory, '.ready.json'), JSON.stringify({
+      artifactId: artifact.id,
+      bytes: artifact.bytes,
+      manifestVersion: PRODUCTION_MODEL_MANIFEST.version,
+      sha256: artifact.sha256
+    }))
+  }
+}
+
+test('I3 只从工作区内受控模型就绪证明解析已批准资源，不依赖开发机模型目录', (t) => {
+  const artifactRoot = path.join(ROOT, '.artifacts')
+  fs.mkdirSync(artifactRoot, { recursive: true })
+  const fixtureRoot = fs.mkdtempSync(path.join(artifactRoot, 'i3-model-readiness-fixture-'))
+  t.after(() => fs.rmSync(fixtureRoot, { recursive: true, force: true }))
+  createModelReadinessFixture(fixtureRoot)
+
+  const models = resolveAuditedModels(fixtureRoot)
   assert.deepEqual(Object.fromEntries(Object.entries(models.evidence).map(([key, value]) => [key, value.artifactId])), {
     realtime: 'x-asr-160ms',
     refinement: 'x-asr-offline',
     vad: 'silero-vad'
   })
+  assert.ok(models.model.modelDir.startsWith(fixtureRoot))
+  assert.ok(models.refinement.modelDir.startsWith(fixtureRoot))
+  assert.ok(models.vad.modelPath.startsWith(fixtureRoot))
+  assert.throws(() => resolveAuditedModels(path.join(fixtureRoot, 'missing')), /APPROVED_REALTIME_MODEL_MISSING/)
   assert.throws(() => resolveAuditedModels('C:\\outside-model-root'), /project workspace/)
 })
 

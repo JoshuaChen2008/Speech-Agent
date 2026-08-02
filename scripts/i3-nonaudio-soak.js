@@ -101,11 +101,20 @@ function sha256 (value) {
   return crypto.createHash('sha256').update(value).digest('hex')
 }
 
+function canonicalTextProvenanceDigest (value) {
+  if (!Buffer.isBuffer(value)) throw new TypeError('text provenance input must be a Buffer')
+  const decoded = value.toString('utf8')
+  if (!Buffer.from(decoded, 'utf8').equals(value)) {
+    throw new Error('text provenance input must be valid UTF-8')
+  }
+  return sha256(Buffer.from(decoded.replace(/\r\n/g, '\n'), 'utf8'))
+}
+
 function currentProvenance () {
   return {
     ...Object.fromEntries(Object.entries(PROVENANCE_FILES).map(([name, relativePath]) => [
       name,
-      sha256(fs.readFileSync(path.join(PROJECT_ROOT, relativePath)))
+      canonicalTextProvenanceDigest(fs.readFileSync(path.join(PROJECT_ROOT, relativePath)))
     ])),
     productPayloadSha256: computeProductPayloadIdentity(path.join(PROJECT_ROOT, 'src')).sha256
   }
@@ -680,6 +689,7 @@ module.exports = {
   MIN_VIRTUAL_DURATION_MS,
   PAGE_SIZE,
   PROVENANCE_FILES,
+  canonicalTextProvenanceDigest,
   currentProvenance,
   parseArguments,
   runI3NonAudioSoak
