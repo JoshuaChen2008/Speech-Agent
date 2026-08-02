@@ -435,12 +435,19 @@ test('I4 packaged PowerShell verifier rejects renamed runners and swapped path r
 
 test('I4 clean-machine runners remain operator-driven and contain no product test backdoor', () => {
   const audioRunner = fs.readFileSync(path.join(ROOT, 'scripts', 'qualify-i4-audio-child.ps1'), 'utf8')
+  const nonAudioRunner = fs.readFileSync(
+    path.join(ROOT, 'scripts', 'qualify-i4-nonaudio-nsis.ps1'), 'utf8')
   const handoffVerifier = fs.readFileSync(
     path.join(ROOT, 'scripts', 'verify-i4-clean-machine-handoff.ps1'), 'utf8')
   assert.match(audioRunner, /Start-Process/)
   assert.match(audioRunner, /PERMISSION-DENIED/)
   assert.match(audioRunner, /SOURCE-JOURNEY/)
-  assert.match(audioRunner, /Get-FileHash/)
+  assert.match(audioRunner, /Security\.Cryptography\.SHA256/)
+  assert.doesNotMatch(audioRunner, /Get-FileHash/)
+  assert.match(nonAudioRunner, /Security\.Cryptography\.SHA256/)
+  assert.doesNotMatch(nonAudioRunner, /Get-FileHash/)
+  assert.match(handoffVerifier, /Security\.Cryptography\.SHA256/)
+  assert.doesNotMatch(handoffVerifier, /Get-FileHash/)
   assert.match(audioRunner, /SQLite format 3/)
   assert.match(audioRunner, /\$Source -ceq 'loopback'/)
   assert.doesNotMatch(audioRunner, /SendKeys|UIAutomation|taskkill|Stop-Process|--test-main|node\.exe/i)

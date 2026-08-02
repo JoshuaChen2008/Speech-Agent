@@ -25,6 +25,18 @@ function Assert-Sha256 {
   }
 }
 
+function Get-Sha256 {
+  param([string]$Path)
+  $stream = [IO.File]::OpenRead($Path)
+  $algorithm = [Security.Cryptography.SHA256]::Create()
+  try {
+    return ([BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+  } finally {
+    $algorithm.Dispose()
+    $stream.Dispose()
+  }
+}
+
 $root = [System.IO.Path]::GetFullPath($BundleRoot)
 $manifestPath = Join-Path $root 'handoff-manifest.json'
 if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
@@ -168,7 +180,7 @@ foreach ($relative in $manifestFiles.Keys) {
   if ($item.Length -ne $entry.bytes) {
     throw "Byte count mismatch for $relative."
   }
-  $digest = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+  $digest = Get-Sha256 $item.FullName
   if ($digest -cne $entry.sha256) {
     throw "SHA-256 mismatch for $relative."
   }
