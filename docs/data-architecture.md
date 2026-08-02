@@ -1,10 +1,10 @@
 # 字幕系统持久化与 Agent 派生数据架构
 
-> 状态：SQLite 字幕存储与 Agent 插件宿主语义已接受；DB0/DB1、Gateway 恢复、SQLite-only 生命周期、历史/导出及 DB2/J10 已通过确定性门禁（2026-07-31）。packaged Electron 已完成旧 JSONL 首启迁移与同 `userData` 二次启动幂等；I3 非音频 3,600 段资源预资格为 `pass/partial`。真实两小时音频与干净机 I4 尚未完成；向量检索 Deferred
+> 状态：SQLite 字幕存储与 Agent 插件宿主语义已接受；DB0/DB1、Gateway 恢复、SQLite-only 生命周期、历史/导出、DB2/J10 与 J15b/J15c 文本版本结果已达到确定性联合验收完成（2026-08-02）。packaged Electron 已完成旧 JSONL 首启迁移、同 `userData` 二次启动幂等、跨会话版本重置以及精修故障/覆盖复读；I3 非音频 3,600 段资源预资格为 `pass/partial`。真实两小时音频与干净机 I4 尚未达到实机验收完成；向量检索 Deferred
 >
 > 决策依据：[ADR 0001](adr/0001-sqlite-authoritative-event-store.md) / [ADR 0002](adr/0002-separate-subtitle-and-agent-systems.md) / [ADR 0003](adr/0003-project-owned-agent-plugin-host.md) / [ADR 0004](adr/0004-immutable-first-pass-and-optional-refinement.md)
 >
-> 迁移提示：ADR 0004 已接受、实现尚未对齐。本文后续仍出现的 `final/refined → segments 当前投影` 描述的是现有数据库与旧验证候选，不再是目标语义；目标必须让首次 `final` 成为默认原始投影，并把精修稿保存为可区分、可选择且不能覆盖原始版的派生版本。
+> J15b/J15c 对齐提示：为避免破坏既有 SQLite，schema v2 仍以 append-only 兼容事件日志和 `segments` 当前投影保存 `final/refined`；读取契约用 `first_event_order` 取回不可变首次 `final`，并把精修稿作为独立 `refinedText` 暴露。历史 renderer 的版本选择按会话作用：同会话翻页保留选择，切换会话恢复原始版。`refinement_session_results` 独立保存会话开始时冻结的精修启用值和稳定故障事实，整场 `N/M` 从权威行派生；零精修、不完整精修、空会话与旧会话均有显式语义。v2 是追加 migration，既有 v1 SQL/checksum 保持逐字节不变；既有 SQLite 会话和后续导入的旧 JSONL 只能标记 `not_recorded`，不得反推为无故障。
 >
 > 规范语义：[`semantic-contract.md`](semantic-contract.md)
 
@@ -33,7 +33,7 @@ flowchart LR
     MODE{"监听模式\nXOR"}
     LOOPBACK["loopback\n会议字幕"] --> MODE
     MIC["mic\n个人听写"] --> MODE
-    MODE --> ASR["VAD + 实时 ASR + 离线精修"]
+    MODE --> ASR["VAD + 实时 ASR\n可选离线精修"]
     ASR --> COORD["SessionCoordinator"]
     COORD -->|"partial：只显示"| UI["实时字幕 UI"]
     COORD -->|"final / refined"| STORE["storage-worker\n唯一 SQLite 所有者"]
@@ -77,16 +77,19 @@ SQLite 驱动放在 storage worker 内的适配器后。当前选择 Electron/No
 |---|---|---|---|
 | `schema_migrations` | 运维事实 | `version, checksum, applied_at` | 每次迁移只执行一次；checksum 不匹配必须 fail closed。 |
 | `sessions` | 权威会话数据 | `session_id, mode, source_id, started_at, ended_at, state` | 定义会话隔离边界；`source_id` 只能是 `loopback` 或 `mic` 且会话期间不可变；结束会话不删除其历史。 |
-| `caption_events` | **字幕权威不可变事实** | `event_order, event_id, session_id, source_id, segment_id, sequence, revision, kind, t0_ms, t1_ms, text, created_at` | 字幕 MVP 只持久化 `final/refined`；`event_id` 与 `(session_id, source_id, sequence)` 唯一，用于幂等。已提交行不得原地改写正文。 |
-| `segments` | 字幕物化投影 | `id, session_id, source_id, segment_id, text, text_revision, t0_ms, t1_ms, first_event_order, updated_event_order` | 每段的当前权威正文；仅更高有效修订可替换，历史/UI/导出从这里读取。可由事件重建。 |
+| `caption_events` | **追加事件日志（兼容存放原始事实与精修版本）** | `event_order, event_id, session_id, source_id, segment_id, sequence, revision, kind, t0_ms, t1_ms, text, created_at` | 当前零迁移 schema 继续持久化 `final/refined`；首次 `final` 是唯一权威原始转写，`refined` 行只是独立精修稿的兼容存储表示，不构成新的原始字幕事实。`event_id` 与 `(session_id, source_id, sequence)` 唯一，已提交行不得原地改写正文。 |
+| `segments` | 字幕可重建兼容投影与版本锚点 | `id, session_id, source_id, segment_id, text, text_revision, t0_ms, t1_ms, first_event_order, updated_event_order` | `first_event_order` 恒指向首次 `final`；`text` 可随更高有效 revision 更新，但不再决定默认显示正文。对外读取必须联结首次事件并分别返回原始 `text` 与可选 `refinedText`；`refinedText=null` 表示该段没有精修稿，是整场精修覆盖判断的有效状态。关闭全局精修偏好不得修改或删除任何既有行。`0 < N < M` 时 UI 与导出回退必须统一标记 `[原始版回退]`；`N = 0` 时不得提供精修视图或精修导出。原始版导出不得因此改变。历史/UI/导出不得直接把兼容投影当作权威原始转写。 |
+| `refinement_session_results`（schema v2） | 会话级精修运行事实 | `session_id, result_status, refinement_enabled, fault_code, fault_stage, fault_at_ms` | 每个会话至多一行。`result_status` 只允许 `known/not_recorded`：新会话写 `known`；既有 SQLite 会话与旧 JSONL 导入写 `not_recorded`，此时 `refinement_enabled` 和故障字段为空。`known` 行的 `refinement_enabled` 是会话开始时冻结的全局偏好快照；`fault_code` 可空且只允许 `REFINE_WORKER_START_FAILED`、`REFINE_WORKER_EXITED`、`REFINE_DECODE_FAILED`、`REFINE_INVALID_RESPONSE`、`REFINE_INTERNAL_FAILURE`，`fault_at_ms` 是会话内相对时点。故障确认后必须立即持久化，关闭会话、应用重启或最终 `N=M` 都不得清除。该表不保存正文、音频、路径、原始 Error/stack 或可变覆盖计数；`N/M` 继续从权威字幕行派生。 |
 | `agent_artifacts`（A1/A2） | 版本化派生产物 | `artifact_id, session_id, plugin_id, type, content_json, input_through_event_order, input_digest, provider, model, created_at` | 增强文本、翻译或会后纪要声明插件、类型、覆盖水位和输入 digest；不能伪装成字幕正文。纪要结构至少包含概要、结论、待办、风险。字段在 A1 探针后冻结。 |
 | `agent_jobs` / consumer cursor（A1） | 可靠消费状态 | 待 A1 探针冻结 | 必须能按字幕提交水位去重、恢复和取消；具体采用事务 outbox 还是 durable cursor 尚未决定。 |
 | `segments_fts`（可选） | **可重建索引** | `rowid -> segments.id, text` | 只有历史关键字搜索进入范围时才创建；不阻断 SQLite 历史。 |
 | `segment_embedding_state`（Deferred） | 派生版本元数据 | `segment_id, text_revision, model_id, dimensions, content_hash, indexed_at` | X1 前不创建。启用后只有 revision、模型和内容哈希都匹配当前正文时才可检索。 |
 | `segment_vectors`（Deferred） | **可重建索引** | `rowid -> segment_id, embedding` | X1 前不创建；启用后不得混放不同维度。 |
-| `legacy_imports` | 迁移审计 | `source_path, source_sha256, imported_at, event_count, segment_count, result` | 保证同一 JSONL 不重复导入，并可核对迁移结果；其中 `event_count` 只记实际导入的 `final/refined` 字幕事实，源文件总记录数、translated/partial 与损坏行计数只出现在结构化迁移报告。 |
+| `legacy_imports` | 迁移审计 | `source_path, source_sha256, imported_at, event_count, segment_count, result` | 保证同一 JSONL 不重复导入，并可核对迁移结果；其中 `event_count` 只记实际导入的 `final/refined` 兼容事件，源文件总记录数、translated/partial 与损坏行计数只出现在结构化迁移报告。 |
 
 `event_order` 是数据库提交顺序，不取代 `sequence/revision` 的有效性判断；统一时间线展示仍按会话时间、来源与稳定的 tie-break 规则生成。
+
+终态历史列表或详情 envelope 必须返回会话级 `segmentCount=M`、`refinedSegmentCount=N`、`refinementResultStatus`、可空的 `refinementEnabled` 与 `refinementFaultCode`。`M` 从全部权威首次 `final` 锚点聚合，包含停止收尾、队列限界或精修故障未覆盖段；`N` 从独立精修稿聚合，`partial` 不进入任一计数。这两个计数可由有界 `COUNT` 查询派生，不要求增加可变计数列；它们不能从当前最多 50 条的详情页计算。HistoryService、工具条会话状态通知、renderer 和 exporter 必须使用同一组覆盖元数据与独立故障事实，决定完整精修、`refined-incomplete`、零精修、空会话和故障文案，避免各自推断。该通知只报告处理状态，不概括或改写字幕内容。`M=0` 且无故障时不返回 `0/0` 展示状态；有故障时显示“精修进程异常结束；本会话未产生可精修的已定稿字幕”。`not_recorded` 只在精修详情显示“未记录精修运行状态”，不进入普通历史列表。MVP 不增加逐段技术故障原因或回退筛选字段；`N < M` 不能证明 worker 崩溃，`N = M` 也不能清除已确认故障。后者必须明确显示“精修进程异常结束，但本次已生成 N/N 段精修稿”。
 
 ## 4. 写入与派生规则
 
@@ -96,7 +99,7 @@ SQLite 驱动放在 storage worker 内的适配器后。当前选择 Electron/No
 
 1. 校验 schema、会话、来源、`sequence/revision` 和 event idempotency。
 2. 以 `INSERT ... ON CONFLICT DO NOTHING` 语义追加 `caption_events`；重复事件返回“已处理”，不能再次触发副作用。
-3. 只有有效更高修订才更新 `segments`。
+3. 只有有效更高修订才更新 `segments` 兼容投影；`first_event_order` 一经建立不得改变，必须始终锚定首次 `final`。
 4. 提交成功后才向历史订阅者发布持久化确认；事务失败不伪装成功。
 5. Agent 系统上线时，可靠消费标记必须与字幕提交边界保持原子或可证明不丢；Agent job 创建失败不能回滚已经成功的字幕事实，也不能阻塞实时显示。
 
@@ -104,8 +107,8 @@ SQLite 驱动放在 storage worker 内的适配器后。当前选择 Electron/No
 
 ### 4.2 Agent 派生产物水位（A1/A2）
 
-- 插件输入必须把 `caption_events.event_order <= input_through_event_order` 折叠成该水位时的正文，或使用 outbox 中不可变的段落修订清单；不得在稍后执行时直接读取已经超前的 `segments` 当前行。partial 永不进入输入。
-- 同一段 refined 产生新的事件边界；后续摘要必须看到新正文，旧 final 不得重复计入。
+- 插件输入必须声明 `transcriptVersion`，默认按 `first_event_order` 读取权威原始转写；只有用户明确选择精修稿时才能读取独立精修版本。不得在稍后执行时直接把已经超前的 `segments.text` 当作输入。partial 永不进入输入。
+- 同一段 refined 产生新的精修版本边界，但不改变权威原始转写；后续摘要必须记录实际使用的文本版本、水位与 digest，不能把精修稿伪装成新的原始事实。
 - 增强文本和纪要结果同时保存输入水位、输入 digest、provider、model 与 `plugin_id`；UI 必须与权威原文分层显示。
 - job 的 dedupe key 至少包含 `session_id + plugin_id + artifact_kind + input_watermark + input_digest`。
 - pause/resume、renderer reload 或 worker replacement 不创建新摘要会话；`session_id` 变化才创建新边界。
@@ -117,18 +120,19 @@ SQLite 驱动放在 storage worker 内的适配器后。当前选择 Electron/No
 
 本节仅保留后期约束，不进入当前 schema、依赖、DB0 或字幕/Agent 首版验收：
 
-- embedding 输入是当前正文及其 `text_revision/content_hash`。结果回写时再次比较；已经过期的结果直接丢弃或登记为 superseded。
+- embedding 输入必须绑定明确的文本版本及其 `text_revision/content_hash`，默认使用权威原始转写。结果回写时再次比较；已经过期的结果直接丢弃或登记为 superseded。
 - `sqlite-vec` 扩展版本、embedding 模型 id、维度和归一化方式必须随索引版本记录。任一项变化均创建新索引代际并重建，不能混查。
 - 默认混合检索先按 `session_id/source_id/time range` 过滤，再分别取得 FTS5 与向量候选，最后用可测试的 rank fusion 合并；权重属于产品配置，不能改变事实排序规则。
 - 扩展缺失、加载失败或索引重建中时，能力降级为 FTS5；FTS5 也不可用时仍可按时间读取历史。降级必须可见，不能让搜索返回静默不完整结果。
-- FTS 和向量均可从 `segments` 重建；删除索引不得损伤会话正文。
+- FTS 和向量均可从声明版本的读取视图重建，不得直接把 `segments.text` 等同于权威原始转写；删除索引不得损伤任何文本版本。
 
 ## 5. SQLite 运行规则
 
 - 使用 WAL 以允许读写并发，但全应用仍只有一个写者；设置 `busy_timeout` 并记录锁等待指标。
 - 事务只包含数据库工作，禁止在事务中执行网络请求、模型推理或等待 renderer。
 - 每个 storage command 都带 `requestId`，写命令还带幂等键；worker 重启后调用方可以安全重试。
-- schema migration 在无活动会话时执行；失败保留原库并阻止使用半迁移 schema。
+- schema migration 在无活动会话时执行；失败保留原库并阻止使用半迁移 schema。J15c 已以追加 v2 migration 新增精修会话结果，既有 v1 SQL/checksum 保持逐字节不变。
+- v2 migration 为所有既有会话补 `not_recorded` 结果行；新会话创建 `known` 行并在故障确认时更新稳定故障字段。覆盖计数保持查询派生，不把 `N/M` 写成可漂移列。
 - 定期 checkpoint 由 storage worker 控制，退出时做有界 flush；不能因等待 Agent 无限阻塞退出。
 - API Key 继续由 `safeStorage` 单独保存，不进入字幕 SQLite、日志或字幕事件。
 - SQLite schema 不包含音频 BLOB、录音路径或录音恢复表；临时 PCM 不进入数据库、日志、Agent 上下文、导出或诊断产物。测试只可读取来源明确的静态合成语料，不得把现场采集音频写盘。
@@ -139,8 +143,8 @@ SQLite 驱动放在 storage worker 内的适配器后。当前选择 Electron/No
 B3.1 JSONL 是旧版过渡基线；默认组合根现已按下列顺序切到 SQLite，真实产品 Electron/I4 验收前不得把完整 DB2/J10 写成发布通过。迁移步骤：
 
 1. 在没有活动会话时创建数据库与 schema，先保留原 JSONL 不动。
-2. 逐文件解析并按现有 `segmentId + revision` 规则导入 `final/refined`；坏尾行继续容忍并记录，坏中间行要求显式报告。遗留 `translated` 只计入迁移报告并保留原 JSONL，不导入字幕 `caption_events`；未来由 Agent 迁移进入独立派生表。
-3. 以文件 SHA256、原文事件数、折叠段数、原文当前正文 digest 和 txt/md/srt **原文导出** digest 做前后核对；不要求旧双语导出与新字幕原文导出逐字节相等。
+2. 逐文件解析并按现有 `segmentId + revision` 规则导入 `final/refined` 兼容事件；每段最早有效 `final` 必须成为 `first_event_order` 锚定的权威原始转写，遗留 `refined` 作为独立精修稿保留。导入会话的 `refinement_session_results.result_status` 必须为 `not_recorded`，不得从事件覆盖反推当时运行状态。坏尾行继续容忍并记录，坏中间行要求显式报告。遗留 `translated` 只计入迁移报告并保留原 JSONL，不导入字幕 `caption_events`；未来由 Agent 迁移进入独立派生表。
+3. 以文件 SHA256、兼容事件数、折叠段数、原始版/精修版正文 digest 和 txt/md/srt 分版本导出 digest 做前后核对；不要求旧双语导出与新字幕原文导出逐字节相等。
 4. 重跑导入必须命中 `legacy_imports` 幂等记录，不增加字幕事件、segment 或迁移副作用。
 5. 全部核对通过后，下一次会话只写 SQLite；旧 JSONL 保留为只读恢复材料，不再双写。
 6. 回滚只能切回迁移前备份或只读旧格式，不能合并两个写入分支。
@@ -184,5 +188,5 @@ B3.1 JSONL 是旧版过渡基线；默认组合根现已按下列顺序切到 SQ
 - 已覆盖：逐文件原子事务；第二文件中断时不影响已提交第一文件、本文件无半导入；恢复后以同一队首和 SHA-256 幂等记录重放；SHA 与解析共用一份不可变字节快照；原文投影、txt/md/srt digest 一致；不可无损表达的亚毫秒时间 fail closed；缺失 close 记为 interrupted；坏中间行、截断尾、partial 与 translated 只计入无路径报告。
 - 迁移 RPC 只接受已解析的 `final/refined` 白名单载荷与文件名/SHA，拒绝 SQL、绝对路径、音频字段和 translated 字幕事实；原 JSONL 不改写。
 - 默认 `main.js` 通过 `SubtitleApplicationRuntime` 按 `worker ready → stale-active interrupted → JSONL migration → recorder/coordinator` 启动，只把 final/refined 写入 SQLite；退出先收束活动会话并等待存储 ACK，超时后只终止精确持有的 worker。
-- 产品生命周期联合 CI 围绕同一 userData 连续运行两次冷启动，验证旧档只读、SHA 幂等、mic/loopback XOR 新会话、partial 排除、refined 单投影、无 JSONL 双写/音频产物和零 active 遗留。
-- 当前是「DB2/J10 确定性联合验收完成 / 发布门禁未完成」：packaged Electron 旧档 import/二次启动、BrowserWindow 历史读取、受控保存路径下三格式完整导出和正常退出均通过。I3 非音频资源预资格也通过；I4 非音频 runner 已覆盖人工系统保存弹窗与正式 userData 卸载/重装的收证流程，但尚无专用干净机报告，真实两小时声源与完整 I4 也未完成。
+- 产品生命周期联合 CI 围绕同一 userData 连续运行两次冷启动，验证旧档只读、SHA 幂等、mic/loopback XOR 新会话、partial 排除、首次 `final` 锚定、原始版/精修版分离、无 JSONL 双写/音频产物和零 active 遗留。
+- DB2/J10 与 J15b/J15c 文本存储路径已达到确定性联合验收完成：真实 packaged Electron 完成旧档 import/二次启动、BrowserWindow 历史读取、会话 A 原始版→精修版→跨页→精修导出、切换会话 B 自动恢复原始版→原始导出，并复读独立精修故障与整场覆盖。I3 非音频资源预资格也已有报告；I4 尚无专用干净机报告，真实两小时声源与完整 I4 尚未达到实机验收完成。

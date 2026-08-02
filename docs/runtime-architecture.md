@@ -74,10 +74,12 @@ stack、dump 或任意 Error 文本，也不配置 WER/Crashpad 或外部上传�
 - 只加载改判批准的离线 X-ASR OfflineRecognizer（t=3，M3 同配置；SenseVoice 已被改判替换）。
 - 纯文本服务：经主进程建立的 worker↔worker MessagePort 收 `{requestId, sampleCount, samples}`，同步解码后回 `{requestId, text}`——CaptionEvent 的组装与 sequence/revision 分配都留在 realtime worker（单一序号权威，精修晚到不会与实时流打架）。
 - 有界队列在请求方（realtime worker）：在途精修 >3 即跳过（段保持 final），绝不反压实时。
-- configure 失败或中途退出只降级（console 告警 + 无 refined），不故障会话；实时字幕不受影响。
+- configure 失败或中途退出只降级精修、不故障字幕会话；realtime worker 发结构化故障，Coordinator 拒绝该世代的后续 `refined`，恢复仍可见首次稳定转写并让后续段继续走原始字幕。
 - 暂停期到达的精修结果在 worker 内缓冲，resume ack 之后补发（paused 相位的 caption 会被 coordinator 拒收）。
 - 停止路径的取舍（有意为之并披露）：end 收束的段不再发起精修（响应必然晚于收尾，保持 final 并计入 skipped）；更早的在途精修若在 end 处理后返回也被作废。会话最末的少量段可能只有第一遍定稿。
-- `canRefine` 是启动时判定（精修模型就位即为真）；精修 worker 中途降级不回写 capability——运行时能力观测是后续议题（见 handoff §12.4）。
+- 是否启动精修由“精修模型 ready + 会话开始时冻结的全局精修偏好”共同决定；活动会话内修改偏好只影响未来会话。worker 运行故障不改写全局偏好，本会话也不自动重启或补跑。
+
+> J15c 故障边界已实现并达到确定性联合验收完成：中途失败不删除此前已持久化的精修稿，也不在同会话自动重启或补跑。故障确认时，caption 投影丢弃该 worker 世代的后续精修输入，把所有仍可见的已定稿段恢复为各自首次稳定转写并在相同固定视口内重新排版；当前 `partial` 原样保留，已淘汰段不复活，后续段继续显示首次稳定转写。MVP 运行中不提示、不变色、不 resize；正常停止后工具条在既有 bounds 内显示不抢焦点的会话状态通知和“查看历史”，通知只报告处理状态、不概括或改写字幕内容，关闭/进入历史/下一会话会清除，应用重启不重放。五值稳定故障事实在确认时独立持久化并与权威 `N/M` 一起复读，二者不能互相推断。结构化本地 JSONL 只含稳定错误码、阶段、会话内相对时点和无正文计数，按 5×1 MiB/7 天滚动且不自动上传。真实 packaged Electron 已覆盖故障静默期、main→IPC→toolbar 会话状态通知、历史跳转与重启不重放；真实模型故障仍归 I2/I4。
 
 `transcript-store` 兼容工具（B3.1 遗留格式的只读边界）：
 
@@ -85,7 +87,7 @@ stack、dump 或任意 Error 文本，也不配置 WER/Crashpad 或外部上传�
 - 处理坏尾行，保留旧事件折叠与 txt/md/srt 兼容格式化；新会话只写 SQLite。
 - 按 `segmentId + revision` 折叠，不覆盖历史文件中的旧事件。
 
-`StorageGateway / storage-worker / HistoryService`（B3.3 联合验收完成；I3 非音频预资格通过，真实两小时声源与 I4 待验）：
+`StorageGateway / storage-worker / HistoryService`（B3.3、J15b/J15c 文本结果已达到确定性联合验收完成；I3 非音频预资格通过，真实两小时声源与 I4 待验）：
 
 - storage worker 是 SQLite 唯一所有者和写者；主进程与 renderer 不执行同步 SQL、不加载扩展。
 - 在同一短事务中追加字幕 `final/refined` 事实并更新当前 segment 投影；提供只列终态会话的稳定 keyset 分页、按会话/时间戳读取详情和 txt/md/srt 当前正文导出。
@@ -95,17 +97,22 @@ stack、dump 或任意 Error 文本，也不配置 WER/Crashpad 或外部上传�
 - A1 再冻结 Agent 可靠消费采用事务 outbox 还是 durable cursor；两者都必须以已提交字幕水位为边界。
 - FTS5 可按历史搜索需求后加；`sqlite-vec` 明确 Deferred，不进入 B3.3 schema 或加载路径。
 - 默认组合根已以 SQLite 替代 JSONL 权威写入；冷启动先收束 stale-active、再迁移旧档，运行期不构造 JSONL writer。JSONL 只保留为旧数据导入、显式格式兼容和恢复格式，禁止长期双写。
-- 历史 renderer 只得到白名单终态会话列表、固定上限的 keyset 详情页和格式选择能力；每次只持有当前 50 条并通过 cursor 栈前后翻页。完整 transcript 只在 main/storage worker 内供导出与迁移；`firstEventOrder` 仅作为受限 keyset cursor 返回，正文 item 不含内部事件顺序，SQL、数据库路径、文件系统和导出目标路径均不跨 IPC。205 段确定性多模块旅程证明三格式完整导出不受分页截断；开发态和 packaged Electron 壳均证明 main/preload/IPC/utility/renderer 的 5 页交互与 DOM 上界 50，packaged storage utility 另通过 DB0/WAL/重开资格。两小时数千段资源稳定性 I3 与干净机 I4 仍须单独验收。
+- 历史 renderer 只得到白名单终态会话列表、固定上限的 keyset 详情页和格式选择能力；每次只持有当前 50 条并通过 cursor 栈前后翻页。详情/列表契约以有界元数据返回整个会话的 `segmentCount` 与 `refinedSegmentCount`：前者统计全部已持久化首次 `final`，后者统计已有独立精修稿，`partial` 不进入任一值。覆盖数由 storage/main 对权威行聚合，renderer 不从当前页估算。完整 transcript 只在 main/storage worker 内供导出与迁移；SQL、数据库路径、文件系统和导出目标路径均不跨 IPC。205 段确定性多模块旅程与真实 packaged Electron 均证明五页交互、DOM 上界 50、会话级版本选择和完整导出。两小时数千段资源稳定性 I3 与干净机 I4 仍须单独验收。
+- 列表/详情返回有界的会话级精修结果：`refinementResultStatus` 只允许 `known/not_recorded`；`known` 携带会话冻结的 `refinementEnabled` 与可空、五值枚举的 `refinementFaultCode`。既有会话与旧 JSONL 导入使用 `not_recorded`，不从 `N/M` 推断故障。故障一经确认就持久化，关闭会话或最终覆盖达到 `N=M` 都不清除；`N<M` 也不自动生成故障。正常停止后的工具条会话状态通知和重启后的历史详情消费同一后端事实。
+
+> J15b/J15c 历史导出边界已达到确定性联合验收完成：切换不同会话重置为原始版，同一会话翻页保留选择；`N = 0` 时禁用精修查看/导出，`0 < N < M` 时使用 `refined-incomplete`，txt/md 文件头写整场覆盖提示，txt/md 行首与 srt cue 正文统一使用 `[原始版回退]`，原始版导出名称和正文 digest 保持不变。真实 packaged Electron 已执行会话 A 精修版跨页/导出，再切换会话 B 自动回原始版/导出。
 - schema、表义、迁移与 DB0–DB6 门禁见 [`data-architecture.md`](data-architecture.md)、[ADR 0001](adr/0001-sqlite-authoritative-event-store.md) 和 [ADR 0002](adr/0002-separate-subtitle-and-agent-systems.md)。
 
 `ModelManager`：
 
-- 内置不可由 renderer 修改的三资源 manifest；每个资源固定 HTTPS URL、字节数、SHA-256、安装目录和允许运行文件。
+- 内置不可由 renderer 修改的固定 manifest，并把资源分为核心实时 ASR+VAD 与独立可选精修两组；每个资源固定 HTTPS URL、字节数、SHA-256、安装目录和允许运行文件。
 - 逐跳校验 HTTPS 下载主机，使用 `.part` + Range 续传并对完整字节流做 SHA-256；重定向、长度或摘要不符时 fail closed。
 - 归档固定调用 Windows `System32\tar.exe`（不走可被抢占的 PATH），先审查全部路径和条目类型，只从通过审查的归档提取 `requiredFiles`，因此上游示例 WAV 和非运行材料不会进入 `userData`；随后在同卷 staging 校验普通文件并原子安装。
-- 安装态由严格四字段 `.ready.json` 与期望文件共同证明；实时 ASR、离线精修和 VAD 三者完整才发布 bundle ready，空闲 Coordinator 可原子替换运行时而无需重启。
-- 当前只提供下载、安全重试和退出收束，不提供删除；合法 `.part` 可跨重启续传。退出先 abort/kill 并等待，5 秒仍不收束则 fail closed 放行应用退出，下次初始化清理残留 staging，避免卡死 `before-quit`。
+- 安装态由严格四字段 `.ready.json` 与期望文件共同证明；核心 ready 只依赖实时 ASR 与 VAD，精修 ready 独立发布。空闲 Coordinator 可在核心安装完成后原子替换运行时而无需重启。
+- 提供核心下载、精修独立下载、取消与显式继续；取消保留合法 `.part`，初始化或网络恢复不自动续传。退出先 abort/kill 并等待，5 秒仍不收束则 fail closed 放行应用退出，下次初始化清理残留 staging，避免卡死 `before-quit`。
 - UI 只得到结构化资源状态、字节进度和安全错误码，不得到 URL、SHA、模型路径、归档参数或底层 Error。
+
+> 三资源原子 bundle 已被 J15c 实现替代。精修模型缺失时点开关保持关闭且 fetch=0；明确下载完成后仍关闭，用户再次明确开启才影响未来会话。活动会话中禁止模型安装，但允许修改全局偏好且不改变本会话冻结值。全局偏好跨重启前复核精修 ready，缺失/损坏时把持久与有效开关回落关闭并通知；重新下载后仍不自动开启。真实 packaged 双启动已验证核心/精修分离、下载中取消、连接关闭、合法 `.part` 保留、复启 fetch=0、明确 Range 继续、安装后仍关闭、再次开启以及会话冻结。
 
 `CredentialStore / AgentRuntime / AgentPluginHost`（A1 后置）：
 
@@ -243,6 +250,7 @@ realtime/refine worker
 - `appearancePreferences`：字号、主题、透明度、圆角、双语布局。
 - `capturePreferences`：首选音频源和设备。
 - `asrPreferences`：产品级 profile、语言/分段偏好。
+- `refinementPreferences`：一个不区分 `mic`/`loopback`、决定未来新会话是否启用精修的全局偏好；可持久化，但启动时必须以精修模型就绪证明校正。会话开始时复制到不可变的 session context；修改或关闭不能改变活动会话，也不能删除旧会话精修稿。运行中 worker 故障只写该会话的结果，不回写全局偏好；只有应用启动时发现模型缺失或损坏才把持久偏好与有效值一起明确回落为关闭。
 - `aiPreferences`：是否启用、目标语言、provider 非敏感信息。
 - `effectiveRuntimeConfig`：后端根据 Capabilities 校验后的实际值，只读发布给 UI。
 
@@ -252,7 +260,7 @@ realtime/refine worker
 
 - audio host 崩溃：关闭旧 port，RuntimeSnapshot → recovering，按上限重建；不能无提示无限重试权限请求。
 - realtime worker 崩溃：停止送帧或进入有界暂存，清理旧 stream 后重新建 port。I2.1 落地：`RealtimeRuntimeAdapter` 把 worker 退出/track-ended/host-gone 经 adapter `onError` 上报，coordinator 进入可重试 error，retry 走 stop+start 重建全链路（fresh host+worker）。
-- refine worker 崩溃：实时字幕继续；未完成 segment 标记 refinement unavailable，可稍后重试。
+- refine worker 崩溃：实时字幕继续；立即把仍可见的已定稿段恢复为首次稳定转写，当前 `partial` 不变；本会话不重启、不补跑，故障事实立即持久化，正常停止后通过工具条会话状态通知显式报告。模型仍 ready 且全局偏好仍开启时，只允许下一新会话重新尝试启动一次。若应用在正常停止前异常退出，重启后该会话进入中断状态，不重放旧的工具条会话状态通知；历史仍显示已持久化故障与最终可计算的覆盖。
 - realtime/refine worker 的正常停止通过窄 `shutdown` 消息释放端口、timer、recognizer/VAD 引用，再由宿主等待该 exact child 的 `exit`。当前期限固定为 **30 秒 graceful window + 5 秒 exact-child force/reap window**；强制终止后仍必须等同一 child 的退出确认。无法确认退出时 adapter 永久失效且 Coordinator 不允许 replacement 开始，避免两代 sherpa/ONNX native runtime 重叠。
 - 字幕应用运行时以 **45 秒**作为优雅收束结束/升级触发线，用于容纳 worker 的两阶段收束、字幕 flush 与 storage shutdown；ModelManager 的 **5 秒**收束与它并行。触线后进入 termination，但仍必须等待 exact child 收殓，因此 45 秒不是硬退出上限。迟到的原始 shutdown 会加入同一 termination promise，不得再次 flush/关闭或启动第二条退出路径。
 - 所有 UtilityProcess 都必须注册 `error` listener；fatal 诊断只发布固定角色和类型，不保存 Electron/V8 report、location、本地路径、stack、字幕或 PCM。`serviceName` 用于主进程的角色级 `child-process-gone` 归因，不把原始 details 透给 renderer；可见 renderer 与隐藏 audio host 由各自 WebContents role 归因。
@@ -275,6 +283,7 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 - 导航和新窗口默认拒绝；本地 UI 不加载远程脚本。
 - API Key 不进日志、错误消息、config、fixture 或 renderer。
 - 现场采集 PCM 不进入数据库、文件、日志、诊断产物、导出或 Agent 上下文；smoke 只输出指标。
+- 精修故障日志使用本地滚动 JSONL，最多 5 个文件、每个 1 MiB、最长保留 7 天，任一上限先到即清理；不自动上传。字段禁止字幕正文、现场音频、路径、原始 Error/stack。手动诊断导出入口后置，不阻断当前 MVP。
 - 模型下载必须有固定 manifest/SHA256；归档先做路径/类型审查且只提取运行白名单，随后在 staging 验证期望文件并写严格 ready marker。
 
 ## 10. 后端验收顺序
@@ -287,8 +296,8 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 4. SessionCoordinator 与可见 UI 接 fake/real CaptionEvent，同时验证 reload、自动存档、时间戳历史与导出。
 5. 独立 refine worker 和事件式 JSONL 过渡基线，验证 pause/resume、迟到修订和进程故障。
 6. B3.3 已在 DB0/DB1 基座上接入产品网关、迁移、默认 SQLite-only 生命周期与历史查询/导出；J1/J2/J10 及开发态/packaged 四窗口 Electron/SQLite 旅程已有证据，I3/I4 继续作为独立门禁。
-7. B4 ModelManager、资源页、空闲热启用和 J14 已完成；生产 Manager 已安装并实际调用固定三资源 bundle。
-8. B5 已从当前源码重建正式 x64 ASAR/NSIS，并把 package layout、native/SQLite utility、packaged 首启与同一 userData 离线复启、两次 exact-child clean exit、旧 JSONL 幂等迁移、三格式完整导出和隔离 NSIS 安装/卸载绑定到安装器 SHA `4a1deb35…2449dd`。同一 run ID、四份报告 SHA 与 112 文件产品载荷 SHA `503a40df…b93d` 由独立 binding 报告闭合并写入 release layout；卸载后与应用无关的隔离 APPDATA 哨兵仍存在且 SHA 不变。正式应用未在 NSIS 机械探针中启动，候选未签名，且 packaged 旅程是测试 variant，不冒充精确 NSIS 安装后的干净机 I4。
+7. B4/J15c ModelManager、资源页与空闲热启用已实现核心 ASR+VAD 和独立可选精修两组资源；全局偏好默认关闭、按会话冻结，缺失精修不阻止核心字幕。
+8. B5 已从当前源码重建正式 x64 ASAR/NSIS，并把 package layout、native/SQLite utility、packaged 首启与同一 `userData` 离线复启、两次 exact-child clean exit、J15b 跨会话版本选择、J15c 故障回退/工具条会话状态通知、旧 JSONL 幂等迁移、三格式完整导出和隔离 NSIS 安装/卸载绑定到安装器 SHA `4abc23bc…b31de`。同一 run ID、四份报告 SHA 与 114 文件产品载荷 SHA `b6503ca2…a0bbd` 由独立 binding 报告闭合并写入 release layout；卸载后与应用无关的隔离 APPDATA 哨兵仍存在且 SHA 不变。正式应用未在 NSIS 机械探针中启动，候选未签名，且 packaged 旅程是测试 variant，不冒充精确 NSIS 安装后的干净机 I4。
 9. I3 非音频预资格已以 3,600 段/4,000 事件、虚拟两小时、SQLite 重开恢复、72 页有界 DOM 与三格式全量导出通过；真实两小时声源仍随音频测试延期。I4 非音频专用机 runner 已把同一精确安装器的公网首下、系统保存弹窗、正式 userData 卸载保留和离线重装写成严格 `pass/partial` 门禁，但尚无干净 Win11 报告；交互权限、真实来源与 I2 性能/交互/恢复缺口继续归音频测试。
 10. 字幕 MVP 通过后做 A1：`AgentRuntime` + Pi Core 隔离探针 + 项目自有插件宿主 + 凭据/可靠消费；再以第一方插件实现独立增强文本和会后结构化纪要，并通过 J3–J7/J13。
 11. 只有 X1 明确进入范围时才增加 FTS5/`sqlite-vec`，并执行 J11/DB4。

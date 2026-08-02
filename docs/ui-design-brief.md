@@ -1,6 +1,6 @@
 # Live Subtitle Agent · 视觉/UI 模型交接说明
 
-> 状态：Rev.4 · 2026-07-31
+> 状态：Rev.7 · 2026-08-02
 > 目的：让擅长视觉设计的模型可以独立改进界面，同时不接触音频、ASR、模型、存储和安全实现。
 
 ## 1. 核心原则
@@ -36,7 +36,7 @@
 | 路径/内容 | 原因 |
 |---|---|
 | `src/caption/caption.js` | 只允许 caption reducer、DOM 渲染、ARIA 和纯展示逻辑；不接 sherpa 原始结果 |
-| `src/ui/shared/caption-reducer.js` | B2.0 起 `createState/applyEvent/KEEP_SEGMENTS` 被主进程 canonical CaptionState 折叠复用（单一折叠真相），窗口/修订/会话切换语义改动会静默改变壳层行为；`selectLines/computeLineBudget` 属视觉决策但同文件，一并共同评审 |
+| `src/ui/shared/caption-reducer.js` | B2.0 起 `createState/applyEvent/KEEP_SEGMENTS` 被主进程 canonical CaptionState 折叠复用（单一折叠真相），窗口/修订/会话切换语义改动会静默改变壳层行为；`selectFlow/countVisibleLines/evictCaptionPrefix` 属视觉决策但同文件，一并共同评审 |
 | `src/toolbar/toolbar.js` | 只允许把用户意图交给 `toolbarApi`，并根据 RuntimeSnapshot 渲染 |
 | `src/settings/settings.js` | 只允许表单/view-model 逻辑；运行配置必须等待 CommandResult |
 | `src/history/history.js` | 只允许历史列表/详情/导出交互和 DOM 渲染；终态过滤、投影和文件写由主进程/SQLite 决定 |
@@ -58,7 +58,7 @@
 - 主题在 token 层切换：`:root` 是深色默认，`:root[data-theme="light"]` 覆盖。**组件 CSS 里不应再出现 `[data-theme]` 分支**；工具条和设置窗已完全去除，字幕窗仅保留结构性规则。
 - 需要在组件里再复合透明度的 token 保持 RGB 三元组（当前是 `--bar-bg` / `--toolbar-bg` / `--fg` / `--text-accent`），其余是可直接赋值的完整颜色。
 - `§8` 是外观运行时变量 `--fs / --radius / --bar-alpha / --toolbar-alpha`，外加自定义底色时才写入的 `--bar-bg` / `--toolbar-bg`。统一由 `src/ui/shared/appearance.js` 的 `applyAppearance()` 以内联样式写到 `:root` —— 字幕窗和工具条窗共用同一份映射，避免「留空要回退到主题默认」这类细节在两边走岔。默认值与 `src/config.js` 的 `DEFAULTS` 对齐，只用于配置到达前的首帧。
-- 字幕采用固定高度的统一视觉行流：内容按当前宽度自然换行，满高后淘汰最旧完整行并保持最新行可见。现有逐槽位 `--n`/`computeLineBudget()` 是待替换的旧实现，不能继续把长 `partial` 裁在第一行。
+- 字幕采用固定高度的单一 `.caption-flow`：内容按当前宽度自然换行，满高后淘汰最旧完整视觉行并保持最新行可见；当某段最后一行退出后，renderer 只回报会话/段身份，canonical 在本会话永久淘汰该段，迟到修订、回退和 reload 均不得复活。`selectFlow/countVisibleLines/evictCaptionPrefix` 是当前实现，不能退回逐槽位裁切。
 - `§9` 是 `main.js` 尺寸常量的**只读镜像**（`--margin` / `--tb-margin`）。改这里不会移动窗口；消除双重真相是 B1 待办，在那之前两处必须同步改。
 - `§10/§11` 是 `:focus-visible` 与 `forced-colors` 基线，用零特异性 `:where()` 声明，组件可直接覆盖。
 
@@ -99,6 +99,8 @@
 - **动效只给过渡态**：仅 `starting` / `recovering` 转圈。`listening` 可能持续两小时，刻意不给图标无限动画。
 - **`aria-pressed` 只给锁定按钮**。主按钮的可及名称在「开始 / 暂停 / 继续」间切换，再叠 pressed 语义会让屏幕阅读器读出两份互相矛盾的状态。这是对 §4.2 原文的修订。
 - **说明条不放交互控件**：字幕窗 `focusable: false`，那里的按钮键盘够不到。可执行的下一步一律由工具条承载。
+
+精修 worker 故障不进入上述 8 个主 phase。当前 MVP 运行中不显示精修故障提示：所有仍可见的已定稿段立即恢复各自首次稳定转写并在原固定视口内重新排版，当前 `partial` 原样保留且仍优先，已淘汰段不复活；工具条、设置窗和字幕窗都不因该故障变色、增高或增加徽标。正常停止后，工具条在既有 bounds 内显示一条不抢焦点的会话状态通知，例如“精修异常，已精修 73/100 段”，并提供“查看历史”。它只报告运行结果，不是字幕内容摘要、系统通知或弹窗，也不概括或改写字幕内容，不能抢焦点、改变窗口几何或发出声音；通知保持到用户关闭或进入历史，开始下一会话时自动清除，应用重启不重放。详细故障事实与整场覆盖由后端持久化，重启后仍从历史可见；若应用在正常停止前异常退出，重启后会话标为中断且不重放旧通知。覆盖与故障独立：`N<M` 不足以证明故障；即使 `N=M`，也必须显示“精修进程异常结束，但本次已生成 N/N 段精修稿”。历史回退行统一显示 `[原始版回退]`；视觉层不得用当前分页或缺少 `refinedText` 伪造结果。用户期望的状态/颜色提醒属于后续设计且不阻断当前 MVP；届时必须补状态矩阵、形状/文案等非颜色冗余通道和 contract request，不能由 renderer 自行推断。
 
 ### 2.5 视觉模型禁止修改
 
@@ -199,7 +201,7 @@ UI 规则：
 
 - 使用稳定的字幕视口/内容节点，`partial` 高频更新不重建整棵 DOM。
 - 定义一个固定高度的**总视觉容量**；自然换行，溢出时从顶部逐行淘汰，不横向移动、不自动改变窗口 bounds。
-- 当前 `partial` 优先；布局不修改识别文本或分段。精修开启时只更新仍可见旧段，不能复活已淘汰段或覆盖首次 `final`。
+- 当前 `partial` 优先；布局不修改识别文本或分段。精修开启时只更新仍可见旧段，不能复活已淘汰段或覆盖首次 `final`。精修 worker 故障确认后，所有仍可见的已定稿段立即恢复各自首次稳定转写并重新换行；当前 `partial` 不变，已淘汰段不复活，后续段继续使用首次稳定转写。运行中不增加提示或改变窗口几何，停止后再报告。
 - 覆盖 24/30/38px、中文/英文/中英混排、超长单词和双语副行。
 - 在浅色文档、深色视频和复杂桌面背景上均清晰。
 - 锁定、穿透和录制状态不能只依赖颜色。
@@ -211,15 +213,17 @@ UI 规则：
 - `starting/stopping/recovering` 时禁止重复提交冲突命令。
 - `error` 提供可执行的下一步，而不是只变红。
 - 主按钮的可及名称随状态在「开始 / 暂停 / 继续」之间切换；`aria-pressed` 只给锁定按钮。修订理由见 §2.4。
+- 工具条会话状态通知不打开 modal、不抢焦点、不扩张工具条 bounds，也不发出声音；它只报告处理状态，不概括或改写字幕内容。“查看历史”和关闭都是工具条内可聚焦的明确动作，详细内容由历史窗承载。通知保持到用户关闭或进入历史，开始下一会话时自动清除，应用重启不重放。
 - 支持键盘、`:focus-visible` 和 `prefers-reduced-motion`。
 - 可以重新设计常态透明度，但关键操作在复杂背景上仍需可发现。
 
 ### 4.3 设置、历史和首启
 
 - 外观偏好可以即时预览，延迟持久化。
-- 音频和 ASR 模型属于字幕运行配置；AI 属于后置 Agent 配置。模型资源固定为实时 ASR、离线精修和 VAD 的完整原子 bundle：设置页显示总/分项进度，但不把离线精修伪装成可选下载。二者都需展示 pending/失败/实际生效值，但 Agent 不可用不得禁用字幕入口。
+- 音频和 ASR 模型属于字幕运行配置；AI 属于后置 Agent 配置。核心字幕资源只包含实时 ASR 与 VAD；精修模型是默认不下载的独立可选资源。设置页必须分开表达核心 ready、精修模型缺失/下载/校验/ready，以及一个不区分 `mic`/`loopback`、只影响未来新会话的全局精修偏好。精修下载可取消并保留合法 `.part`，但只有明确点击“继续下载”才恢复网络；模型 ready 后仍需再次明确开启。关闭偏好不删除模型或旧会话精修稿。当前三资源原子 bundle 是 J15c 之前的旧候选，不得继续作为目标 UI 语义。字幕资源与 Agent 配置都需展示 pending/失败/实际生效值，但 Agent 不可用不得禁用字幕入口。
 - 不可用能力由 Capabilities 禁用并说明原因。
 - 字幕历史放在可聚焦的正常窗口内，MVP 支持会话列表、滚动、选择、时间戳和导出；搜索是可选能力，不塞进穿透字幕窗。
+- 历史精修详情按整场 `N/M` 与独立故障事实展示。`M > 0, N = 0` 禁用精修查看/导出；`M = 0` 且无故障时不显示 `0/0` 或精修结果，有故障时显示“精修进程异常结束；本会话未产生可精修的已定稿字幕”。旧会话的“未记录精修运行状态”只放在精修详情，不进入普通历史列表。
 - 首启提供「会议字幕 / 个人听写」互斥预设，并明确麦克风、系统音频权限；活动会话不能同时开启两路或直接换源。
 - Agent 上线后，开启上下文增强、翻译或摘要前明确告知：哪些定稿文本将发送到哪个用户配置的服务；原文与 Agent 派生文本分层展示。
 
@@ -244,7 +248,7 @@ UI 规则：
 ## 6. Contract request 状态
 
 > 提出方：视觉/UI 层 · 2026-07-26 · 对应 V1–V3 已交付的部分
-> 状态：B1 已关闭 A1–A3 以及 stop/retry；B3.3 已关闭 history；B4 已关闭资源管理入口、安全下载/热启用 contract，并已通过设置页点击贯穿 Electron renderer/preload/IPC/安装/字幕/历史的确定性联合旅程。A4 layout contract 与权限入口仍未实现。
+> 状态：B1 已关闭 A1–A3 以及 stop/retry；B3.3 已关闭 history；B4 已关闭资源管理入口、安全下载/热启用 contract，并已通过设置页点击贯穿 Electron renderer/preload/IPC/安装/字幕/历史的确定性联合旅程。A4 实际 overlap rect 已明确为 MVP 后交互质量项；当前最坏情况洞已知且可用。权限入口仍随音频门禁延期。
 
 ### 6.1 A 类 · 阻塞型
 
@@ -259,7 +263,7 @@ UI 规则：
 - `resume ≠ start`。有真会话状态后，把两者压成同一个 toggle 会产生错误的状态迁移。
 - UI **刻意不做乐观更新**（§8 要求任何"看起来已成功"都能追溯到后端）。所以在回执到位前，点击的表现是"看起来没反应"——这是设计使然，不是 bug。
 
-**A4（半个请求）**：`onOverlap(cb)` 推送工具条实际停靠矩形（字幕窗 CSS px）。目前 `caption.css` 的 `.tb-hole` 硬编码 `584 × 64`，按最坏情况多盖。需要后端加一条只读通道，但驱动方是 UI。见 [subtitle-window.md §3](subtitle-window.md)。
+**A4（MVP 后交互质量项）**：`onOverlap(cb)` 推送工具条实际停靠矩形（字幕窗 CSS px）。目前 `caption.css` 的 `.tb-hole` 固定为 `584 × 64`，按最坏情况多盖，能够保证停靠工具条不被字幕窗吞掉点击；代价是透明穿透区会比常态工具条略大。它不阻断当前 MVP，后续若优化，必须由主进程下发实际矩形并同步更新命中测试。见 [subtitle-window.md §3](subtitle-window.md)。
 
 ### 6.2 B 类 · 已实现但没有对应能力的入口
 
@@ -272,7 +276,9 @@ UI 规则：
 | `stop` | stop 命令 | B1 | **完成** |
 | `retry` | retry 命令 | B1 | **完成** |
 | `history` | 可聚焦的历史窗 + 只读终态会话/时间戳正文/导出 contract；搜索可后加 | B3.3 | **联合验收完成/开发态与 packaged Electron 205 段五页、三格式完整导出及离线复启已验；I3 非音频 3,600 段仍保持 DOM≤50。真实系统对话框、两小时声源与 I4 待验** |
-| `open-model-manager` | 资源管理页：固定三项本地 ASR 资源的总/分项进度、安全错误与单一下载/重试动作；完整 bundle 才能 start；不接受 URL/hash/path 参数 | B4 | **确定性 UI 联合验收完成**。真实 Electron 产品壳从 `missing` 状态点击下载，贯穿 preload/IPC/生产 Manager、Range、三 marker、热启用、字幕、暂停/恢复、停止和 SQLite 历史；I4 干净机公网下载待验收 |
+| `open-model-manager` | 资源管理页：核心实时 ASR+VAD 与可选精修资源分层；只接受固定动作，不接受 URL/hash/path 参数；精修支持明确下载、取消、继续，安装完成不自动开启 | B4 / J15c | 核心/可选拆分、下载/取消/继续、独立 ready 与热启用已达到确定性联合验收完成；真实 packaged Electron 覆盖下载中取消、连接关闭、合法 `.part` 保留、复启 fetch=0 与明确 Range 继续。I4 干净机公网下载待验收 |
+| `refinement-preference` | 一个全局精修偏好；新会话开始时冻结，关闭只影响未来会话且不删除旧稿；ready 校验失败时回落关闭 | J15c | 配置、Capability、设置控件、会话冻结和跨重启复核已达到确定性联合验收完成；活动会话可以修改未来偏好，但当前会话保持冻结值 |
+| `refinement-session-result` | 精修 worker 故障后立即把所有仍可见 final 恢复为原始版且不动当前 partial；独立持久化冻结启用值、五值故障码与整场覆盖；正常停止后工具条显示不抢焦点的会话状态通知和“查看历史”，异常退出则只在中断会话历史中保留结果；`N=M` 不掩盖故障，旧会话不得从覆盖反推运行状态 | J15c | 结果 contract、schema v2 migration、滚动结构化日志、caption/toolbar/history UI 与真实 packaged main→IPC→renderer 旅程已达到确定性联合验收完成。状态/颜色实时提醒后置且不阻断当前 MVP |
 | `request-permission` | 权限请求入口 | Gate 0C / B2 | 未实现 |
 
 四个 `nextAction` 值里 `retry`、`open-settings` 与 `open-model-manager` 已接通；只有 `request-permission` 仍等待后续阶段。
@@ -291,7 +297,7 @@ UI 规则：
 
 ### 6.4 后续顺序
 
-字幕 MVP 的 B4 ModelManager 资源入口已实现，开发态与 packaged Electron 四窗口产品壳均已通过 settings renderer 点击下载→preload/IPC→受控安装→热启用→字幕→SQLite 历史的专门旅程；B5 正式 ASAR/NSIS 和隔离安装卸载的方法也已通过确定性资格。退出绑定 I2 权威证据已记录 loopback 与 mic 标签启发式声学 fixture 各 5 轮：每来源由 5 个 schema-v5 child、5 个 schema-v1 exact-child-exit sidecar 和 1 个 schema-v6 series 组成；外部 runner 的 sidecar 防止 child 先写内部 pass、随后悬挂或超时仍被误判为绿色。冻结字幕可见延迟 P95 分别为 1158/1005ms，两来源分别超过未改变的 `<1000ms` 线 158ms/5ms，I2 整体仍未关闭。每轮 exact accepted partial 的六段 trace 与 40ms post-source captured-energy guard 只作诊断，不能改写该 UI/产品验收结论；sidecar 也不是签名、远端证明、硬件证明或崩溃根因证明。下一步推进两来源性能、拖动/DPI/权限/真实 pause/refine/设备变化/睡眠唤醒/硬崩溃等 I2 实机交互，再做 I3 长稳与 I4。前一 B5 exact installer/SHA 不代表当前含 audio-host/runtime 改动的新 HEAD，进入 I4 前必须重建、重取证并冻结新 SHA。受控 UI 旅程使用小型受控资源和 fake ASR，只证明接线、打包路径与用户交互，不能冒充真实推理、真实公网或硬件身份。Agent UI 等 A1/A2 契约冻结后再做，不在 renderer 内先行伪造能力；当前设置页不展示翻译开关。
+字幕 MVP 的 B4 ModelManager 资源入口已实现，开发态与 packaged Electron 四窗口产品壳均已通过 settings renderer 点击下载→preload/IPC→受控安装→热启用→字幕→SQLite 历史的专门旅程；当前 B5 正式 ASAR/NSIS 和隔离安装卸载也已从同一源码重建并通过确定性资格。退出绑定 I2 权威证据已记录 loopback 与 mic 标签启发式声学 fixture 各 5 轮：每来源由 5 个 schema-v5 child、5 个 schema-v1 exact-child-exit sidecar 和 1 个 schema-v6 series 组成；外部 runner 的 sidecar 防止 child 先写内部 pass、随后悬挂或超时仍被误判为绿色。冻结字幕可见延迟 P95 分别为 1158/1005ms，两来源分别超过未改变的 `<1000ms` 线 158ms/5ms，I2 整体仍未关闭。每轮 exact accepted partial 的六段 trace 与 40ms post-source captured-energy guard 只作诊断，不能改写该 UI/产品验收结论；sidecar 也不是签名、远端证明、硬件证明或崩溃根因证明。下一步推进两来源性能、拖动/DPI/权限/真实 pause/refine/设备变化/睡眠唤醒/硬崩溃等 I2 实机交互，再做 I3 长稳与 I4。当前 B5 候选已精确绑定但仍未签名，也没有干净机 I4；受控 UI 旅程使用小型受控资源和 fake ASR，只证明接线、打包路径与用户交互，不能冒充真实推理、真实公网或硬件身份。Agent UI 等 A1/A2 契约冻结后再做，不在 renderer 内先行伪造能力；当前设置页不展示翻译开关。
 
 ## 7. 每次视觉交接必须包含
 
