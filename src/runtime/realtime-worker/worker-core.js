@@ -19,6 +19,16 @@ const { createRecognizerAdapter } = require('./recognizer-adapter')
 const { assertSingleSourceIds } = require('../../contracts')
 
 const SAMPLE_RATE = 16000
+const DEFAULT_PRE_ROLL_FRAMES = 4
+const DEFAULT_PROVISIONAL_FEED_FRAMES = 12
+
+function positiveFrameLimit (value, fallback, label) {
+  const normalized = value === undefined ? fallback : value
+  if (!Number.isInteger(normalized) || normalized <= 0) {
+    throw new TypeError(`${label} must be a positive integer`)
+  }
+  return normalized
+}
 
 class SourcePipeline {
   constructor (options) {
@@ -30,7 +40,16 @@ class SourcePipeline {
        warm the recognizer, but Silero speech-start still owns segment creation
        and every externally visible caption. */
     this.provisionalRecognizerFeed = options.provisionalRecognizerFeed === true
-    this.preRollLimit = options.preRollLimit === undefined ? 4 : options.preRollLimit
+    this.preRollLimit = positiveFrameLimit(
+      options.preRollLimit,
+      DEFAULT_PRE_ROLL_FRAMES,
+      'preRollLimit'
+    )
+    this.provisionalFeedLimit = positiveFrameLimit(
+      options.provisionalFeedLimit,
+      DEFAULT_PROVISIONAL_FEED_FRAMES,
+      'provisionalFeedLimit'
+    )
     /* B3：段定稿后把整段音频交给精修请求方（realtime-worker 决定是否发给
        refine worker）。null = 不保留段音频（结构模式零额外内存）。 */
     this.onSegmentFinalized = options.onSegmentFinalized || null
@@ -161,9 +180,10 @@ class SourcePipeline {
     this.metricsState.provisionalAudioMsFed = Number((
       this.metricsState.provisionalAudioMsFed + ((frame.sampleCount / SAMPLE_RATE) * 1000)
     ).toFixed(3))
-    if (this.provisionalFramesFed >= this.preRollLimit) {
-      /* Cap rejection cost at the pre-roll window.  A continuing non-speech
-         sound (for example a pure tone) cannot keep a recognizer stream hot. */
+    if (this.provisionalFramesFed >= this.provisionalFeedLimit) {
+      /* Cap rejection cost independently from the four-frame segment
+         pre-roll. A continuing non-speech sound (for example a pure tone)
+         cannot keep a recognizer stream hot beyond twelve 100ms frames. */
       this.finishProvisionalCandidate('suppressed')
       this.provisionalFeedSuppressed = true
     }
@@ -351,6 +371,7 @@ class WorkerCore {
    *   vadFactory?: (sourceId: string) => *,
    *   adapterFactory?: (sourceId: string) => *,
    *   preRollLimit?: number,
+   *   provisionalFeedLimit?: number,
    *   onSegmentStarted?: (info: *) => void,
    *   onSegmentFinalized?: (info: *) => void
    * }} options
@@ -386,6 +407,7 @@ class WorkerCore {
         vad,
         provisionalRecognizerFeed: vad?.provisionalRecognizerFeed === true,
         preRollLimit: options.preRollLimit,
+        provisionalFeedLimit: options.provisionalFeedLimit,
         onSegmentStarted: options.onSegmentStarted,
         onSegmentFinalized: options.onSegmentFinalized,
         attempt,
@@ -435,4 +457,10 @@ class WorkerCore {
   }
 }
 
-module.exports = { SAMPLE_RATE, SourcePipeline, WorkerCore }
+module.exports = {
+  DEFAULT_PRE_ROLL_FRAMES,
+  DEFAULT_PROVISIONAL_FEED_FRAMES,
+  SAMPLE_RATE,
+  SourcePipeline,
+  WorkerCore
+}

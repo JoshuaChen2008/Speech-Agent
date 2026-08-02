@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "kind": "product-shell-offline-restart-smoke",
-  "generatedAt": "2026-08-02T19:29:57.084Z",
+  "generatedAt": "2026-08-02T21:23:09.422Z",
   "result": "pass",
   "gateStatus": "partial",
   "runtime": {
@@ -11,12 +11,12 @@
     "crashEventCount": 0
   },
   "qualification": {
-    "runId": "b5-4dac9934-7e7c-44f7-b5c9-bca9ac5b2a70",
+    "runId": "b5-283eafb3-18bd-4e5b-ae6f-1bdf1caada6d",
     "phase": "restart",
-    "freshProductReportSha256": "e5ddb9adc2db944cbc8065f839406bc808d1f67efec7fbf06c838ed56ed7e612",
+    "freshProductReportSha256": "415173f88d6d93d37b7136d2cd49a5109ba1df1e5ceba091802d1df3891f3770",
     "productPayloadVersion": "live-subtitle-product-payload-v1",
     "productPayloadFileCount": 114,
-    "productPayloadSha256": "2045fb2c7f834fabf315b4f38d6e4f17d8d0be23dd2df96fbb59e53d72c5d459"
+    "productPayloadSha256": "a1f03ed65dea8af26190ab463660e8840270eacd50022528cbbe79b8b379accc"
   },
   "packaging": {
     "appIsPackaged": true,

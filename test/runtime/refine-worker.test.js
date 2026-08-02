@@ -182,7 +182,8 @@ test('realtime plus refinement full chain produces a punctuated refined caption'
     sourceIds: ['loopback'],
     recognizerProfile: 'test-refine-chain-x160',
     vadFactory: () => new SileroVad({ kind: 'silero', modelPath: VAD_MODEL }),
-    preRollLimit: 6,
+    preRollLimit: 4,
+    provisionalFeedLimit: 12,
     onSegmentFinalized: (info) => {
       let sampleCount = 0
       for (const chunk of info.chunks) sampleCount += chunk.length

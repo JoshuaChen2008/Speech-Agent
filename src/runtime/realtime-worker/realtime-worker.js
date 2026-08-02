@@ -9,7 +9,11 @@
    携带 recognizer 选项时才注册真实 sherpa adapter——模型在回 'configured'
    前同步载入，宿主的 configure 超时因此覆盖模型载入。 */
 
-const { WorkerCore } = require('./worker-core')
+const {
+  DEFAULT_PRE_ROLL_FRAMES,
+  DEFAULT_PROVISIONAL_FEED_FRAMES,
+  WorkerCore
+} = require('./worker-core')
 const { RefinementController } = require('./refinement-controller')
 const { performance } = require('node:perf_hooks')
 
@@ -305,14 +309,17 @@ process.parentPort.on('message', (event) => {
         registerSherpaRecognizer(config.recognizerProfile, message.recognizer)
       }
       /* 真实 VAD（silero）：有选项才 require 原生实现；否则 EnergyVad 兜底。
-         段前缓冲/候选预热窗口为 6 帧（600ms），不改变 Silero 的时间阈值。 */
+         段前缓冲固定为 4 帧（400ms），候选预热独立限于 12 帧
+         （1200ms），不改变 Silero 的时间阈值。 */
       let vadFactory
       let preRollLimit
+      let provisionalFeedLimit
       if (message.vad && typeof message.vad === 'object') {
         const { SileroVad } = require('./silero-vad')
         const vadConfig = message.vad
         vadFactory = () => new SileroVad(vadConfig)
-        preRollLimit = 6
+        preRollLimit = DEFAULT_PRE_ROLL_FRAMES
+        provisionalFeedLimit = DEFAULT_PROVISIONAL_FEED_FRAMES
       }
       /* 精修：configure 声明 refinement 才保留段音频（结构/无精修模式零
          额外内存）；实际请求还要等 refine-port 到达。 */
@@ -324,6 +331,7 @@ process.parentPort.on('message', (event) => {
         vadOptions: config.vadOptions,
         vadFactory,
         preRollLimit,
+        provisionalFeedLimit,
         onSegmentStarted: (info) => {
           const current = state.currentFrameTiming
           if (!current || current.sourceId !== info.sourceId || current.sequence !== info.frameSequence) return

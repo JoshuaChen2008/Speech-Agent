@@ -10,7 +10,11 @@ const {
   createRecognizerAdapter,
   registerRecognizerAdapter
 } = require('../../src/runtime/realtime-worker/recognizer-adapter')
-const { WorkerCore } = require('../../src/runtime/realtime-worker/worker-core')
+const {
+  DEFAULT_PRE_ROLL_FRAMES,
+  DEFAULT_PROVISIONAL_FEED_FRAMES,
+  WorkerCore
+} = require('../../src/runtime/realtime-worker/worker-core')
 const { RealtimeWorkerHost, sanitizeCaptionTiming, UTILITY_CLOCK_ID } = require('../../src/runtime/realtime-worker/worker-host')
 const { MAIN_CLOCK_ID } = require('../../src/runtime/clock-calibration')
 const { FakeRuntimeAdapter } = require('../../src/main/session/fake-runtime-adapter')
@@ -133,7 +137,8 @@ test('Silero-only provisional feed warms a candidate but never publishes before 
       { event: null, voiced: true },
       { event: 'speech-start', voiced: true }
     ]),
-    preRollLimit: 6
+    preRollLimit: 4,
+    provisionalFeedLimit: 12
   })
 
   assert.deepEqual(core.ingestFrame(frame('loopback', 0, 0.3)), [], 'energy-only candidate must remain invisible')
@@ -148,6 +153,42 @@ test('Silero-only provisional feed warms a candidate but never publishes before 
   assert.equal(adapter.finalized, 0)
 })
 
+test('Silero candidate keeps four pre-roll frames while reusing a stream confirmed within twelve', () => {
+  const adapter = provisionalAdapter()
+  const candidateFrames = 8
+  const core = new WorkerCore({
+    sessionId: 'silero-provisional-decoupled',
+    sourceIds: ['loopback'],
+    adapterFactory: () => adapter,
+    vadFactory: () => scriptedProvisionalVad([
+      ...Array.from({ length: candidateFrames }, () => ({ event: null, voiced: true })),
+      { event: 'speech-start', voiced: true }
+    ])
+  })
+
+  assert.equal(DEFAULT_PRE_ROLL_FRAMES, 4)
+  assert.equal(DEFAULT_PROVISIONAL_FEED_FRAMES, 12)
+  for (let sequence = 0; sequence < candidateFrames; sequence += 1) {
+    assert.deepEqual(core.ingestFrame(frame('loopback', sequence, 0.3)), [],
+      'Silero confirmation must own the first visible caption')
+  }
+  const events = core.ingestFrame(frame('loopback', candidateFrames, 0.3))
+
+  assert.equal(events.length, 1)
+  assert.equal(events[0].kind, 'partial')
+  assert.equal(events[0].text, 'candidate@0.0', 'the recognizer must reuse all pre-confirmation work')
+  assert.equal(events[0].t0, 0.4, 'the segment identity retains only the newest four 100ms pre-roll frames')
+  assert.deepEqual(
+    adapter.accepted.map((timestamp) => Number(timestamp.toFixed(1))),
+    Array.from({ length: candidateFrames + 1 }, (_, index) => index / 10)
+  )
+  assert.equal(adapter.discarded, 0)
+  const metrics = core.metrics().loopback
+  assert.equal(metrics.provisionalConfirmed, 1)
+  assert.equal(metrics.provisionalLastCandidateFramesFed, candidateFrames)
+  assert.equal(metrics.provisionalLastCandidateAudioMs, candidateFrames * 100)
+})
+
 test('unconfirmed energy candidates are discarded and cannot contaminate a later Silero segment', () => {
   const adapter = provisionalAdapter()
   const core = new WorkerCore({
@@ -160,7 +201,8 @@ test('unconfirmed energy candidates are discarded and cannot contaminate a later
       { event: null, voiced: true },
       { event: 'speech-start', voiced: true }
     ]),
-    preRollLimit: 6
+    preRollLimit: 4,
+    provisionalFeedLimit: 12
   })
 
   assert.deepEqual(core.ingestFrame(frame('loopback', 0, 0.3)), [])
@@ -190,31 +232,84 @@ test('provisional recognizer work is bounded when Silero keeps rejecting sustain
     sessionId: 'silero-provisional-bound',
     sourceIds: ['loopback'],
     adapterFactory: () => adapter,
-    vadFactory: () => scriptedProvisionalVad([
-      { event: null, voiced: true },
-      { event: null, voiced: true },
-      { event: null, voiced: true },
-      { event: null, voiced: true }
-    ]),
-    preRollLimit: 2
+    vadFactory: () => scriptedProvisionalVad(
+      Array.from({ length: 16 }, () => ({ event: null, voiced: true }))
+    ),
+    preRollLimit: 4,
+    provisionalFeedLimit: 12
   })
 
-  for (let sequence = 0; sequence < 4; sequence += 1) {
+  for (let sequence = 0; sequence < 16; sequence += 1) {
     assert.deepEqual(core.ingestFrame(frame('loopback', sequence, 0.3)), [])
   }
 
   assert.equal(adapter.discarded, 1)
-  assert.equal(adapter.polls, 2, 'after one pre-roll window no more model work is allowed for the rejected sound')
+  assert.equal(adapter.polls, 12, 'after the independent provisional window no more model work is allowed')
   assert.equal(adapter.finalized, 0)
   const metrics = core.metrics().loopback
   assert.equal(metrics.provisionalCandidatesStarted, 1)
-  assert.equal(metrics.provisionalFramesFed, 2)
-  assert.equal(metrics.provisionalAudioMsFed, 200)
+  assert.equal(metrics.provisionalFramesFed, 12)
+  assert.equal(metrics.provisionalAudioMsFed, 1200)
   assert.equal(metrics.provisionalDiscards, 1)
   assert.equal(metrics.provisionalSuppressions, 1)
   assert.equal(metrics.provisionalConfirmed, 0)
-  assert.equal(metrics.provisionalLastCandidateFramesFed, 2)
-  assert.equal(metrics.provisionalLastCandidateAudioMs, 200)
+  assert.equal(metrics.segmentsDetected, 0)
+  assert.equal(metrics.captionsEmitted, 0)
+  assert.equal(metrics.provisionalLastCandidateFramesFed, 12)
+  assert.equal(metrics.provisionalLastCandidateAudioMs, 1200)
+})
+
+test('a suppressed non-speech candidate cannot publish and a later new speech candidate recovers', () => {
+  const adapter = provisionalAdapter()
+  const core = new WorkerCore({
+    sessionId: 'silero-provisional-recovery',
+    sourceIds: ['loopback'],
+    adapterFactory: () => adapter,
+    vadFactory: () => scriptedProvisionalVad([
+      ...Array.from({ length: 14 }, () => ({ event: null, voiced: true })),
+      { event: null, voiced: false },
+      { event: null, voiced: true },
+      { event: null, voiced: true },
+      { event: 'speech-start', voiced: true }
+    ]),
+    preRollLimit: 4,
+    provisionalFeedLimit: 12
+  })
+
+  for (let sequence = 0; sequence < 17; sequence += 1) {
+    assert.deepEqual(core.ingestFrame(frame('loopback', sequence, sequence === 14 ? 0 : 0.3)), [],
+      'neither rejected energy nor an unconfirmed new candidate may publish a caption')
+  }
+  const events = core.ingestFrame(frame('loopback', 17, 0.3))
+
+  assert.equal(events.length, 1)
+  assert.equal(events[0].kind, 'partial')
+  assert.equal(events[0].text, 'candidate@1.5')
+  assert.equal(events[0].t0, 1.5)
+  assert.equal(adapter.polls, 15,
+    'twelve rejected frames, two recovered candidate polls, then one visible poll after confirmation')
+  assert.equal(adapter.discarded, 1)
+  assert.equal(adapter.finalized, 0)
+  const metrics = core.metrics().loopback
+  assert.equal(metrics.provisionalCandidatesStarted, 2)
+  assert.equal(metrics.provisionalSuppressions, 1)
+  assert.equal(metrics.provisionalDiscards, 1)
+  assert.equal(metrics.provisionalConfirmed, 1)
+})
+
+test('worker core rejects invalid independent pre-roll and provisional limits', () => {
+  for (const options of [
+    { preRollLimit: 0 },
+    { preRollLimit: 1.5 },
+    { provisionalFeedLimit: 0 },
+    { provisionalFeedLimit: 12.5 }
+  ]) {
+    assert.throws(() => new WorkerCore({
+      sessionId: 'silero-invalid-window',
+      sourceIds: ['loopback'],
+      ...options
+    }), /preRollLimit|provisionalFeedLimit/)
+  }
 })
 
 test('worker core with the null adapter detects segments but emits zero captions', () => {

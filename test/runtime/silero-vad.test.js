@@ -11,6 +11,11 @@ const path = require('node:path')
 const test = require('node:test')
 
 const { PRE_ROLL_RMS, SileroVad, assertSileroVadOptions } = require('../../src/runtime/realtime-worker/silero-vad')
+const {
+  DEFAULT_PRE_ROLL_FRAMES,
+  DEFAULT_PROVISIONAL_FEED_FRAMES,
+  WorkerCore
+} = require('../../src/runtime/realtime-worker/worker-core')
 
 const VAD_MODEL = path.resolve(__dirname, '../../models/vad/silero_vad.onnx')
 const ASR_MODEL_DIR = path.resolve(
@@ -41,6 +46,30 @@ function speechFrame (level = 0.1) {
   const samples = new Float32Array(FRAME)
   for (let index = 0; index < samples.length; index += 1) samples[index] = level
   return samples
+}
+
+function candidateAuditAdapter () {
+  return {
+    accepted: 0,
+    polls: 0,
+    discarded: 0,
+    finalized: 0,
+    acceptFrame () { this.accepted += 1 },
+    poll () { this.polls += 1; return 'unconfirmed candidate' },
+    discardProvisional () { this.discarded += 1 },
+    endSegment () { this.finalized += 1; return null },
+    dispose () {}
+  }
+}
+
+function workerFrame (sequence, samples) {
+  return {
+    sourceId: 'loopback',
+    sequence,
+    timestampSeconds: sequence * 0.1,
+    sampleCount: samples.length,
+    samples
+  }
 }
 
 /* -------- 纯逻辑（替身 nativeVad）-------- */
@@ -76,6 +105,32 @@ test('silero wrapper maps isDetected transitions to start/end events', () => {
   assert.equal(end.forced, false)
   assert.equal(end.voiced, false, 'digital silence must not enter the pre-roll buffer')
   assert.equal(vad.push(new Float32Array(FRAME)).event, null)
+})
+
+test('continuous low-energy noise neither starts a segment nor warms the recognizer', () => {
+  const adapter = candidateAuditAdapter()
+  const core = new WorkerCore({
+    sessionId: 'silero-low-energy-noise',
+    sourceIds: ['loopback'],
+    adapterFactory: () => adapter,
+    vadFactory: () => new SileroVad(
+      BASE_OPTIONS,
+      fakeNative(Array.from({ length: 24 }, () => false))
+    )
+  })
+  const noise = speechFrame(PRE_ROLL_RMS / 2)
+  for (let sequence = 0; sequence < 24; sequence += 1) {
+    assert.deepEqual(core.ingestFrame(workerFrame(sequence, noise)), [])
+  }
+
+  assert.equal(adapter.accepted, 0)
+  assert.equal(adapter.polls, 0)
+  assert.equal(adapter.discarded, 0)
+  const metrics = core.metrics().loopback
+  assert.equal(metrics.provisionalCandidatesStarted, 0)
+  assert.equal(metrics.segmentsDetected, 0)
+  assert.equal(metrics.captionsEmitted, 0)
+  core.dispose()
 })
 
 test('silero wrapper forces segment end at the frame cap and re-opens immediately', () => {
@@ -141,16 +196,43 @@ test('real silero detects corpus speech segments and rejects a pure tone', { ski
     if (vad.push(tone).event === 'speech-start') toneSpeech = true
   }
   assert.equal(toneSpeech, false, 'a 997Hz pure tone must not be detected as speech (the energy placeholder fails this)')
+
+  const adapter = candidateAuditAdapter()
+  const toneCore = new WorkerCore({
+    sessionId: 'silero-real-tone-bound',
+    sourceIds: ['loopback'],
+    adapterFactory: () => adapter,
+    vadFactory: () => new SileroVad({ kind: 'silero', modelPath: VAD_MODEL })
+  })
+  for (let sequence = 0; sequence < 30; sequence += 1) {
+    const candidateTone = new Float32Array(FRAME)
+    for (let index = 0; index < candidateTone.length; index += 1) {
+      candidateTone[index] = 0.5 * Math.sin(2 * Math.PI * 997 * ((sequence * FRAME) + index) / 16000)
+    }
+    assert.deepEqual(toneCore.ingestFrame(workerFrame(sequence, candidateTone)), [],
+      'a rejected pure tone must never create a caption')
+  }
+  assert.equal(adapter.accepted, DEFAULT_PROVISIONAL_FEED_FRAMES)
+  assert.equal(adapter.polls, DEFAULT_PROVISIONAL_FEED_FRAMES)
+  assert.equal(adapter.discarded, 1)
+  assert.equal(adapter.finalized, 0)
+  const toneMetrics = toneCore.metrics().loopback
+  assert.equal(toneMetrics.provisionalSuppressions, 1)
+  assert.equal(toneMetrics.provisionalMaxCandidateAudioMs, 1200)
+  assert.equal(toneMetrics.segmentsDetected, 0)
+  assert.equal(toneMetrics.captionsEmitted, 0)
+  toneCore.dispose()
 })
 
 test('product candidate prefeed reaches real Silero confirmation before its bounded cap', { skip: skipVad }, () => {
   const sherpa = require('sherpa-onnx-node')
-  const { WorkerCore, SAMPLE_RATE } = require('../../src/runtime/realtime-worker/worker-core')
+  const { SAMPLE_RATE } = require('../../src/runtime/realtime-worker/worker-core')
   const core = new WorkerCore({
     sessionId: 'silero-product-candidate-diagnostic',
     sourceIds: ['loopback'],
     vadFactory: () => new SileroVad({ kind: 'silero', modelPath: VAD_MODEL }),
-    preRollLimit: 6
+    preRollLimit: DEFAULT_PRE_ROLL_FRAMES,
+    provisionalFeedLimit: DEFAULT_PROVISIONAL_FEED_FRAMES
   })
   const wave = sherpa.readWave(WAV_PATH)
   let sequence = 0
@@ -178,13 +260,14 @@ test('product candidate prefeed reaches real Silero confirmation before its boun
   assert.equal(metrics.provisionalSuppressions, 0)
   assert.equal(metrics.provisionalConfirmed, 1)
   assert.ok(metrics.provisionalLastCandidateFramesFed >= 2)
+  assert.ok(metrics.provisionalLastCandidateFramesFed <= DEFAULT_PROVISIONAL_FEED_FRAMES)
   assert.ok(metrics.provisionalLastCandidateAudioMs >= 200)
   core.dispose()
 })
 
 test('silero plus the real recognizer keeps words the energy placeholder used to cut', { skip: skipFull }, () => {
   const sherpa = require('sherpa-onnx-node')
-  const { WorkerCore, SAMPLE_RATE } = require('../../src/runtime/realtime-worker/worker-core')
+  const { SAMPLE_RATE } = require('../../src/runtime/realtime-worker/worker-core')
   const { registerRecognizerAdapter } = require('../../src/runtime/realtime-worker/recognizer-adapter')
   const { SherpaOnlineRecognizerAdapter } = require('../../src/runtime/realtime-worker/sherpa-recognizer')
   const { characterErrorRate } = require('../../scripts/gate-0b/metrics')
@@ -201,7 +284,8 @@ test('silero plus the real recognizer keeps words the energy placeholder used to
     sourceIds: ['loopback'],
     recognizerProfile: 'test-silero-x160',
     vadFactory: () => new SileroVad({ kind: 'silero', modelPath: VAD_MODEL }),
-    preRollLimit: 6
+    preRollLimit: DEFAULT_PRE_ROLL_FRAMES,
+    provisionalFeedLimit: DEFAULT_PROVISIONAL_FEED_FRAMES
   })
 
   const wave = sherpa.readWave(WAV_PATH)

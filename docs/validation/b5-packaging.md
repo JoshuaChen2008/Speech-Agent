@@ -1,15 +1,15 @@
 # B5 打包态确定性资格
 
 - 日期：2026-08-02
-- 状态：当前源码的构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；远端 run `30766172580` 已在 revision `f05f3f9537d0200b63b2e28bb79846ced74f827d` 完成全部 workflow steps、605 项回归、provenance 绑定与 artifact 上传，下载复核与隐私负扫描均闭合，J9-CI 已达到确定性联合验收完成
+- 状态：当前源码的构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；远端 run `30766172580` 在 revision `f05f3f9537d0200b63b2e28bb79846ced74f827d` 上完成全部 workflow steps、605 项回归、provenance 绑定与 artifact 上传，下载复核与隐私负扫描均闭合，J9-CI 已达到确定性联合验收完成。该远端证据只绑定其精确 revision/旧候选，当前 revision 的远端 provenance 为实现完成·尚未验收
 - 发布边界：同一隔离 `userData` 的离线复启发生在测试 package；NSIS 卸载只验证隔离安装目录与无关 APPDATA 哨兵。正式 release 的 I4 非音频专用干净机尚未执行，因此尚未达到实机验收完成或发布验收完成
 
 ## 精确候选
 
 `electron-builder 26.15.3` 以 Electron `43.2.0`、sherpa wrapper/platform
 `1.13.4` 生成 Windows x64 单击式当前用户 NSIS。候选安装器 SHA-256 为
-`5681f0173d3cbe8b516fb40cca03a2a1130f5e0826003e0a417b436c7ca58cc3`
-（104,994,965 字节）。
+`d862c5fca0e477abc2d636573e1dd41aef564ed0c82def3bd469966db7b0de10`
+（104,995,193 字节）。
 
 该内部候选的 Authenticode 状态是 `not-signed`。按当前 MVP 决定暂不处理代码签名，但不能把
 可安装解释为 SmartScreen 或公开分发身份已经验收。当前
@@ -22,9 +22,9 @@
 `userData/models`，SQLite 仍位于 `userData/data`。
 
 layout schema-v2 冻结了 `win-unpacked/LiveSubtitle.exe` SHA-256
-`34ee5f442a4223c1417fa478f5ce4db21e974beec024200e1d2f21377ea61042` 与
+`dec824e8e48a00dfbde66f1c176b924c241583c7f66869f7a791843f7bd01369` 与
 `resources/app.asar` SHA-256
-`8efcc673f45c5041ab1721695547f5832934bd70814e574a132971cb3dc7e07a`。
+`b39986ef23453b28da291085d82e876189cb170c507968da527cd02f3dffe7a7`。
 I4 非音频专用机必须让首次安装和离线重装后的实际文件分别等于这两个 digest，不能只抄写
 调用者提供的字段。
 
@@ -53,10 +53,10 @@ Node inspector，开启嵌入式 ASAR 完整性和 only-load-from-ASAR；产品�
 同一真实 packaged Electron 双启动旅程中闭合；报告 schema-v3 分别记录首轮取消事实和第二轮继续事实。
 
 本轮两次 packaged 启动的唯一 run ID 为
-`b5-4dac9934-7e7c-44f7-b5c9-bca9ac5b2a70`。首启产品、首启退出、复启产品和复启退出的
+`b5-283eafb3-18bd-4e5b-ae6f-1bdf1caada6d`。首启产品、首启退出、复启产品和复启退出的
 四个 SHA-256 写入独立 binding 报告；复启报告反向保存首启产品报告 SHA。测试 package 与正式
 release ASAR 对完整 `src/` 树做同一规范哈希，均得到 114 个文件和产品载荷 SHA-256
-`2045fb2c7f834fabf315b4f38d6e4f17d8d0be23dd2df96fbb59e53d72c5d459`。
+`a1f03ed65dea8af26190ab463660e8840270eacd50022528cbbe79b8b379accc`。
 正式 layout 报告同时保存 binding 报告 SHA、test exe SHA 和四份运行报告 SHA，仓库门禁会拒绝
 旧运行报告、新 release 包或任一单份报告被替换后的证据拼接。
 
@@ -92,8 +92,9 @@ revision `f05f3f9537d0200b63b2e28bb79846ced74f827d` 完成全部 workflow steps 
 GitHub ZIP digest `33bddcb065f5297ab9b244c60455dda798d5415abab1b213d0c1fac65a537017`）下载后通过五个
 strict readers、四份报告与 lockfile/workflow SHA、跨报告绑定及 41 文件/29 JSON 隐私负扫描，
 J9-CI 已达到确定性联合验收完成。下载包不含 installer 字节；同轮 workflow step 17 已在索引生成前
-复核精确 installer SHA。该结论不改变当前 B5 候选字节；本地构造相同 JSON 也不带远端来源语境或
-签名，不能冒充 GitHub run 证据。
+复核其精确 installer SHA。该结论只绑定 run `30766172580` 的精确 revision 与旧候选，不绑定本页
+当前 B5 候选字节；本地构造相同 JSON 也不带远端来源语境或签名，不能冒充 GitHub run 证据。当前
+revision 仍须在推送后取得新的完整 workflow、provenance index 与下载复核。
 
 这条旅程使用受控小资源和 fake ASR，不访问物理声卡、不保存音频，也不冒充公网真实张量、
 I2、真实两小时 I3 或 I4。
