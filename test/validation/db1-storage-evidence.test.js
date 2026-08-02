@@ -32,3 +32,17 @@ test('DB1 verifier rejects product-authority and privacy overclaims', () => {
     /privacy/
   )
 })
+
+test('DB1 旅程按会话冻结精修偏好并独立保存首次稳定转写与精修稿', () => {
+  const smoke = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'db1-storage-smoke.js'), 'utf8')
+
+  assert.match(smoke,
+    /const loopbackOpen = \{[\s\S]*?sessionId: 'db1-loopback'[\s\S]*?refinementEnabled: true[\s\S]*?\}/)
+  assert.match(smoke,
+    /host\.openSession\(\{[\s\S]*?sessionId: 'db1-mic'[\s\S]*?refinementEnabled: false[\s\S]*?\}\)/)
+  assert.match(smoke, /loopbackHistory\.refinement\.refinementEnabled === true/)
+  assert.match(smoke, /micHistory\.refinement\.refinementEnabled === false/)
+  assert.match(smoke, /loopbackHistory\.segments\[0\]\.text === 'DB1 synthetic final'/)
+  assert.match(smoke, /loopbackHistory\.segments\[0\]\.refinedText === 'DB1 synthetic refined'/)
+  assert.match(smoke, /micHistory\.segments\[0\]\.refinedText === null/)
+})

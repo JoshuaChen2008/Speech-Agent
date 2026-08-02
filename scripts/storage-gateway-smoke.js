@@ -16,6 +16,7 @@ const { StorageWorkerHost } = require('../src/runtime/storage-worker/worker-host
 
 const FAULT_WORKER_PATH = path.join(__dirname, 'fixtures', 'storage-worker-drop-once.js')
 const DEV_RUNTIME = resolveRuntimeOptions({ LIVE_SUBTITLE_DEV_MODEL: DEV_MODEL_VALUE })
+const DEV_RUNTIME_WITH_REFINEMENT = Object.freeze({ ...DEV_RUNTIME, refinementAvailable: true })
 
 function parseArguments (argv) {
   const options = {
@@ -144,8 +145,14 @@ async function runCoordinatorJourney (userData) {
   const sessionIds = ['gateway-loopback', 'gateway-mic']
   const coordinator = new SessionCoordinator({
     adapter,
-    runtimeOptions: DEV_RUNTIME,
-    configuration: { onboardingCompleted: true, onboardingPreset: 'meeting', mic: false, loopback: true },
+    runtimeOptions: DEV_RUNTIME_WITH_REFINEMENT,
+    configuration: {
+      onboardingCompleted: true,
+      onboardingPreset: 'meeting',
+      mic: false,
+      loopback: true,
+      refinementEnabled: true
+    },
     idFactory: () => sessionIds.shift(),
     persistenceSink: recorder
   })
@@ -205,7 +212,8 @@ async function runCoordinatorJourney (userData) {
       onboardingCompleted: true,
       onboardingPreset: 'dictation',
       mic: true,
-      loopback: false
+      loopback: false,
+      refinementEnabled: false
     })
     if (!(await coordinator.command('start')).ok) throw new Error('mic start failed')
     const micId = coordinator.getSnapshot().sessionId
@@ -233,14 +241,20 @@ async function runCoordinatorJourney (userData) {
           sourceId: loopbackHistory.session.sourceId,
           state: loopbackHistory.session.state,
           segments: loopbackHistory.segments.length,
-          revision: loopbackHistory.segments[0]?.textRevision || 0
+          revision: loopbackHistory.segments[0]?.textRevision || 0,
+          refinementEnabled: loopbackHistory.refinement.refinementEnabled === true,
+          originalFinalPreserved: loopbackHistory.segments[0]?.text === 'synthetic loopback final',
+          hasRefinedVersion: loopbackHistory.segments[0]?.refinedText !== null
         },
         mic: {
           mode: micHistory.session.mode,
           sourceId: micHistory.session.sourceId,
           state: micHistory.session.state,
           segments: micHistory.segments.length,
-          revision: micHistory.segments[0]?.textRevision || 0
+          revision: micHistory.segments[0]?.textRevision || 0,
+          refinementDisabled: micHistory.refinement.refinementEnabled === false,
+          originalFinalPreserved: micHistory.segments[0]?.text === 'synthetic mic final',
+          hasNoRefinedVersion: micHistory.segments[0]?.refinedText === null
         }
       },
       stopped: gateway.stopped && gateway.host === null
@@ -275,10 +289,13 @@ async function main () {
       idleWorkerExitRecovered: journey.idleExitRecovered,
       xorSessionsIsolated: journey.histories.loopback.mode === 'meeting' &&
         journey.histories.loopback.sourceId === 'loopback' && journey.histories.loopback.state === 'closed' &&
-        journey.histories.loopback.segments === 1 && journey.histories.loopback.revision === 3 &&
+        journey.histories.loopback.segments === 1 && journey.histories.loopback.revision === 2 &&
+        journey.histories.loopback.refinementEnabled && journey.histories.loopback.originalFinalPreserved &&
+        journey.histories.loopback.hasRefinedVersion &&
         journey.histories.mic.mode === 'dictation' && journey.histories.mic.sourceId === 'mic' &&
         journey.histories.mic.state === 'closed' && journey.histories.mic.segments === 1 &&
-        journey.histories.mic.revision === 2,
+        journey.histories.mic.revision === 2 && journey.histories.mic.refinementDisabled &&
+        journey.histories.mic.originalFinalPreserved && journey.histories.mic.hasNoRefinedVersion,
       partialAndTranslatedExcluded: journey.stats.captionEvents === 3 && journey.stats.segments === 2,
       databaseHealthy: journey.stats.sessions === 2 && journey.stats.activeSessions === 0 &&
         journey.stats.journalMode === 'wal' && journey.stats.integrity === 'ok',

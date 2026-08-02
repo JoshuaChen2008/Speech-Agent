@@ -9,7 +9,7 @@
 | DB0 / DB1 / DB2 / J10 SQLite 与迁移 | 联合验收完成 | `npm run test:integration`、`npm run test:evidence` | 本机或 Windows CI | 否 | [`db0-sqlite.md`](db0-sqlite.md)、[`db1-storage.md`](db1-storage.md)、[`db2-product-sqlite-cutover.md`](db2-product-sqlite-cutover.md) | 持续回归；I4 再复核正式 `userData` |
 | J14 核心字幕模型资源包与精修模型资源 | 联合验收完成 | `model-install-caption-journey.test.js`、产品壳旅程 | Windows CI；公网供给另归 I4 | 否 | [`b4-model-and-product-shell.md`](b4-model-and-product-shell.md) | 在 I4 干净机复核真实公网供给与离线复启 |
 | B5 打包态确定性资格 | 联合验收完成 | `npm run package:release` 与 B5 verifiers | 允许 Electron/NSIS 子进程的 Windows | 否 | [`b5-packaging.md`](b5-packaging.md) 与七份 B5 JSON | 新候选产生后重建并绑定全部报告 |
-| J9-CI 远端资格 | 实现完成·尚未验收 | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | GitHub Windows hosted runner | 否 | provenance/workflow 资格链路及显式 Electron `43.2.0` runtime 供给/前置版本校验已实现；run `30750568366` 绑定 revision `2242103…`，因旧 revision 的 Electron runtime 缺失失败 | 推送新 revision，取得成功 workflow 与 provenance artifact |
+| J9-CI 远端资格 | 实现完成·尚未验收 | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | GitHub Windows hosted runner | 否 | run `30760407160` 绑定 revision `0d0cd9f…`，显式 Electron `43.2.0` 供给、版本校验、字幕布局与 DB0 均已执行，随后因 DB1 旧 fixture 未冻结精修偏好失败；隐藏目录证据也未上传 | 推送 DB1 语义对齐与 hidden artifact 修复，取得成功 workflow 与 provenance artifact |
 | J15a 固定高度字幕流 | 联合验收完成 | `caption-layout-smoke.js` + reducer/IPC/产品壳旅程 | Windows CI | 否 | `caption-layout-report@v2` 与确定性回归 | 保持每次 CI 回归 |
 | J15a 可见 DWM 矩阵 | 实现完成·尚未验收 | `caption-visual-review.js` + matrix verifier | 交互式 Win11，四档真实 DPI 与异缩放双屏 | 否 | runner/verifier 已就位；尚无 36 例闭合矩阵 | 完成 36/36 observation 与一次异缩放双屏移动 |
 | J15b / J15c 版本隔离与可选精修 | 联合验收完成 | core、integration、packaged 双启动 | Windows CI | 否 | [`b5-packaging.md`](b5-packaging.md) | I2/I4 再复核真实模型与音频边界 |

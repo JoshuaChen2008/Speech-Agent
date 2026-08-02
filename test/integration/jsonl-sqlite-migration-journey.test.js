@@ -106,7 +106,7 @@ function writeLegacyFile (directory, name, records, tail = '') {
   return filePath
 }
 
-test('J10 DB2: JSONL migration preserves original projections and raw export digests, without importing translations', async (t) => {
+test('J10 DB2：JSONL 迁移保留权威原始转写与独立精修稿，分别核对导出 digest 且不导入翻译', async (t) => {
   const directory = temporaryDirectory()
   const legacyDirectory = path.join(directory, 'legacy')
   fs.mkdirSync(legacyDirectory)

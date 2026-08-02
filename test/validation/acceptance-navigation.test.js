@@ -26,18 +26,28 @@ test('acceptance navigation projects every remaining subtitle MVP machine gate',
   assert.match(strategy, /I4 音频发布子门禁/)
 })
 
-test('current acceptance projections record the exact failed CI run instead of the stale no-run claim', () => {
-  const files = [
-    'README.md',
+test('current acceptance projections record both exact failed CI revisions instead of the stale no-run claim', () => {
+  const historicalFiles = [
     'PLAN.md',
     path.join('docs', 'semantic-contract.md'),
+    path.join('docs', 'validation', 'b5-packaging.md')
+  ]
+  for (const file of historicalFiles) {
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
+    assert.match(source, /30750568366/, `${file} must retain the original prerequisite failure`)
+    assert.match(source, /30760407160/, `${file} must name the latest exact failed run`)
+  }
+  const projectionFiles = [
+    'README.md',
     path.join('docs', 'testing-strategy.md'),
-    path.join('docs', 'validation', 'b5-packaging.md'),
     path.join('docs', 'validation', 'README.md')
   ]
-  for (const file of files) {
+  for (const file of projectionFiles) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
-    assert.match(source, /30750568366/, `${file} must name the exact failed run`)
+    assert.match(source, /30760407160/, `${file} must project the latest exact failed run`)
+  }
+  for (const file of [...historicalFiles, ...projectionFiles]) {
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
     assert.doesNotMatch(source, /尚未提交\/推送|尚未在本工作树对应提交上取得 GitHub Actions 结果/,
       `${file} must not keep the superseded no-run status`)
   }
@@ -56,10 +66,10 @@ test('J9-CI status projects the authoritative implemented-but-unaccepted qualifi
 
   for (const row of [navigationRow, readmeRow, semanticRow, strategyRow]) {
     assert.match(row, /实现完成·尚未验收/)
-    assert.match(row, /30750568366/)
+    assert.match(row, /30760407160/)
   }
   assert.match(navigationRow, /Electron `43\.2\.0`/)
-  assert.match(readmeRow, /修复为实现完成·尚未验收/)
+  assert.match(readmeRow, /当前已修正并等待新 revision 复验/)
 })
 
 test('I4 projections separate the implemented non-audio child from the decided complete gate', () => {

@@ -241,4 +241,6 @@ test('CI uploads structured evidence even when a step fails', () => {
   const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8')
   assert.match(workflow, /actions\/upload-artifact/)
   assert.match(workflow, /if:\s*always\(\)/)
+  assert.match(workflow, /include-hidden-files:\s*true/)
+  assert.match(workflow, /if-no-files-found:\s*error/)
 })

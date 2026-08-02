@@ -74,7 +74,9 @@ async function main () {
     await host.start()
     checks.initialized = true
 
-    const loopbackOpen = { sessionId: 'db1-loopback', sourceId: 'loopback', startedAt: 1770000100000 }
+    const loopbackOpen = {
+      sessionId: 'db1-loopback', sourceId: 'loopback', startedAt: 1770000100000, refinementEnabled: true
+    }
     const opened = await host.openSession(loopbackOpen)
     const alreadyOpened = await host.openSession(loopbackOpen)
     checks.openIdempotent = opened.status === 'committed' && alreadyOpened.status === 'already_processed'
@@ -118,7 +120,9 @@ async function main () {
       'SESSION_NOT_ACTIVE'
     )
 
-    await host.openSession({ sessionId: 'db1-mic', sourceId: 'mic', startedAt: 1770000120000 })
+    await host.openSession({
+      sessionId: 'db1-mic', sourceId: 'mic', startedAt: 1770000120000, refinementEnabled: false
+    })
     const micFinal = event({
       sessionId: 'db1-mic', sourceId: 'mic', segmentId: 'mic-segment',
       sequence: 1, revision: 1, t0: 2, t1: 3, text: 'DB1 synthetic mic'
@@ -129,11 +133,15 @@ async function main () {
     const loopbackHistory = await host.getSessionTranscript('db1-loopback')
     const micHistory = await host.getSessionTranscript('db1-mic')
     checks.xorSessionsIsolated = loopbackHistory.session.mode === 'meeting' &&
-      loopbackHistory.session.sourceId === 'loopback' && loopbackHistory.segments.length === 1 &&
-      loopbackHistory.segments[0].textRevision === 4 &&
-      loopbackHistory.segments[0].text === 'DB1 synthetic refined' &&
+      loopbackHistory.session.sourceId === 'loopback' &&
+      loopbackHistory.refinement.refinementEnabled === true && loopbackHistory.segments.length === 1 &&
+      loopbackHistory.segments[0].textRevision === 3 &&
+      loopbackHistory.segments[0].text === 'DB1 synthetic final' &&
+      loopbackHistory.segments[0].refinedText === 'DB1 synthetic refined' &&
       micHistory.session.mode === 'dictation' && micHistory.session.sourceId === 'mic' &&
-      micHistory.segments.length === 1 && micHistory.segments[0].text === 'DB1 synthetic mic'
+      micHistory.refinement.refinementEnabled === false &&
+      micHistory.segments.length === 1 && micHistory.segments[0].text === 'DB1 synthetic mic' &&
+      micHistory.segments[0].refinedText === null
 
     const stats = await host.getStats()
     checks.realDatabaseCounts = stats.sessions === 2 && stats.activeSessions === 0 &&

@@ -187,7 +187,7 @@ test('Windows CI installs and verifies the locked Electron runtime before every 
   }
 })
 
-test('SEM-T03 and J9-CI register the failed exact revision and Electron runtime prerequisite', () => {
+test('SEM-T03 and J9-CI register both exact failed revisions and their current prerequisites', () => {
   const semantic = fs.readFileSync(path.join(ROOT, 'docs', 'semantic-contract.md'), 'utf8')
   const strategy = fs.readFileSync(path.join(ROOT, 'docs', 'testing-strategy.md'), 'utf8')
   const semT03 = semantic.split(/\r?\n/).find((line) => line.includes('**SEM-T03**'))
@@ -198,7 +198,9 @@ test('SEM-T03 and J9-CI register the failed exact revision and Electron runtime 
   assert.match(semT03, /不带签名/)
   assert.match(semT03, /electron\.exe/)
   assert.match(semT03, /30750568366/)
+  assert.match(semT03, /30760407160/)
+  assert.match(semT03, /hidden files/)
   assert.match(j9Ci, /exact checkout revision/)
-  assert.match(j9Ci, /30750568366/)
-  assert.match(j9Ci, /electron\.exe/)
+  assert.match(j9Ci, /30760407160/)
+  assert.match(j9Ci, /Electron `43\.2\.0`/)
 })
