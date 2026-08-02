@@ -30,6 +30,19 @@ function currentProvenance () {
   return provenance
 }
 
+test('caption layout text provenance is pinned to LF checkout bytes', () => {
+  const attributes = fs.readFileSync(path.join(ROOT, '.gitattributes'), 'utf8')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+  for (const relativePath of Object.values(PROVENANCE_FILES)) {
+    const extension = path.extname(relativePath)
+    const acceptedRules = [`${relativePath} text eol=lf`]
+    if (relativePath.startsWith('src/')) acceptedRules.push(`src/**/*${extension} text eol=lf`)
+    assert.equal(acceptedRules.some((rule) => attributes.includes(rule)), true,
+      `${relativePath} must be pinned to LF before its provenance SHA is compared across checkouts`)
+  }
+})
+
 function layoutCase (id, textKind, fontSizePx) {
   const lineHeightPx = fontSizePx * 1.35
   const visibleLines = Math.max(1, Math.floor(112 / lineHeightPx))

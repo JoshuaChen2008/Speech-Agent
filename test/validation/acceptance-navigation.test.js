@@ -26,7 +26,7 @@ test('acceptance navigation projects every remaining subtitle MVP machine gate',
   assert.match(strategy, /I4 音频发布子门禁/)
 })
 
-test('current acceptance projections record all five exact failed CI revisions instead of the stale no-run claim', () => {
+test('current acceptance projections retain five failed CI revisions and record the successful run pending artifact verification', () => {
   const historicalFiles = [
     'PLAN.md',
     path.join('docs', 'semantic-contract.md'),
@@ -38,7 +38,8 @@ test('current acceptance projections record all five exact failed CI revisions i
     assert.match(source, /30760407160/, `${file} must retain the refinement fixture failure`)
     assert.match(source, /30761472817/, `${file} must retain the first evidence portability failure`)
     assert.match(source, /30763123116/, `${file} must retain the product payload portability failure`)
-    assert.match(source, /30764235663/, `${file} must name the latest exact failed run`)
+    assert.match(source, /30764235663/, `${file} must retain the latest exact failed run`)
+    assert.match(source, /30765231206/, `${file} must name the successful workflow whose artifact exposed the checkout drift`)
   }
   const projectionFiles = [
     'README.md',
@@ -47,7 +48,7 @@ test('current acceptance projections record all five exact failed CI revisions i
   ]
   for (const file of projectionFiles) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
-    assert.match(source, /30764235663/, `${file} must project the latest exact failed run`)
+    assert.match(source, /30765231206/, `${file} must project the successful workflow pending downloaded-artifact re-verification`)
   }
   for (const file of [...historicalFiles, ...projectionFiles]) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
@@ -69,14 +70,14 @@ test('J9-CI status projects the authoritative implemented-but-unaccepted qualifi
 
   for (const row of [navigationRow, readmeRow, semanticRow, strategyRow]) {
     assert.match(row, /实现完成·尚未验收/)
-    assert.match(row, /30764235663/)
+    assert.match(row, /30765231206/)
   }
-  assert.match(semanticRow, /完整产品文本 LF checkout 修复与新候选 B5 重建为实现完成·尚未验收/)
-  assert.match(strategyRow, /完整产品文本 LF checkout 修复与新候选 B5 重建为实现完成·尚未验收/)
+  assert.match(semanticRow, /两份脚本及索引复算的 lockfile\/workflow LF checkout 修复为实现完成·尚未验收/)
+  assert.match(strategyRow, /两份脚本及索引复算的 lockfile\/workflow LF checkout 修复为实现完成·尚未验收/)
   assert.match(navigationRow, /\| J9-CI 远端资格 \| 实现完成·尚未验收 \|/)
   assert.match(readmeRow, /\| 远端 Windows CI 资格 \| 实现完成·尚未验收 \|/)
   assert.match(navigationRow, /Electron `43\.2\.0`/)
-  assert.match(readmeRow, /I3 fixture 已改由固定 `TZ=UTC` 的独立 Node child 执行，等待新 revision 复验/)
+  assert.match(readmeRow, /两份脚本及索引复算的 lockfile\/workflow 现已固定 LF，等待新 revision 的 workflow 与下载 artifact 复验/)
   assert.match(readmeRow, /产品导出仍跟随 Windows 系统时区/)
 })
 

@@ -19,6 +19,13 @@ src/**/*.json text eol=lf
 src/**/*.md text eol=lf
 src/**/*.mjs text eol=lf
 
+# Downloaded CI evidence recomputes these exact text provenance inputs
+# together with the product files above.
+scripts/caption-layout-smoke.js text eol=lf
+scripts/verify-caption-layout-report.js text eol=lf
+package-lock.json text eol=lf
+.github/workflows/ci.yml text eol=lf
+
 # I3 non-audio source provenance is compared across developer and hosted
 # Windows worktrees. Pin every text input to LF; the runner also canonicalizes
 # legacy CRLF worktrees before hashing, without normalizing binary evidence.

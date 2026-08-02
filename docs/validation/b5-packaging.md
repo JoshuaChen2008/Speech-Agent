@@ -1,7 +1,7 @@
 # B5 打包态确定性资格
 
 - 日期：2026-08-02
-- 状态：当前源码的构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；远端 run `30764235663` 已在 revision `92a968a0bae405226fe7a9baa6fd1dd168f7cbe2` 通过 Electron、存储、四窗口产品壳、packaged 双启动、release NSIS 与隔离安装卸载，hidden artifact 已上传；末端 evidence 回归的外部时区漂移不改变 B5 候选结论，J9-CI provenance 仍为实现完成·尚未验收
+- 状态：当前源码的构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；远端 run `30765231206` 已在 revision `3b4b0db2f56f57e3d0e7500c77593b406a5dd857` 完成 workflow、provenance 绑定与 artifact 上传；下载后的 strict reader 暴露 caption layout runner/verifier 的 hosted CRLF 与本机 LF 差异，两份脚本及索引复算的 lockfile/workflow LF checkout 修复为实现完成·尚未验收，J9-CI provenance 仍待新 revision 与下载 artifact 复验
 - 发布边界：同一隔离 `userData` 的离线复启发生在测试 package；NSIS 卸载只验证隔离安装目录与无关 APPDATA 哨兵。正式 release 的 I4 非音频专用干净机尚未执行，因此尚未达到实机验收完成或发布验收完成
 
 ## 精确候选
@@ -79,12 +79,16 @@ run `30763123116` 精确绑定 revision `2efb8969ec0608dd44695586ef70255f01c79fa
 前置后暴露完整产品载荷 checkout 行尾漂移。修复模型、文本 provenance 与完整产品载荷 checkout 后，
 run `30764235663` 精确绑定 revision
 `92a968a0bae405226fe7a9baa6fd1dd168f7cbe2`，已通过 Electron、DB0/DB1/Gateway、四窗口产品壳、
-packaged 双启动、release NSIS 与隔离安装卸载，hidden artifact 也已上传；末端完整回归仅 I3 非音频
-Markdown 标题因本机与 hosted Windows 外部时区不同而有 1 项实际字节 SHA 漂移，最终索引按设计
-跳过。I3 fixture 现以独立 Node child 执行并在加载 runner 与产品模块前固定 UTC，产品导出继续跟随 Windows 系统时区，
-实际导出、产品载荷、ASAR、installer 与报告 SHA 均不做内容规范化；该修复为实现完成·尚未验收，且不改变当前 B5 候选字节。
-只有新 revision 的完整 workflow 成功并产生可下载 artifact，才可取得
-对应远端索引；本地构造相同 JSON 也不带远端来源语境或签名，不能冒充 GitHub run 证据。
+packaged 双启动、release NSIS 与隔离安装卸载；末端完整回归仅 I3 非音频 Markdown 标题因外部时区
+不同而有 1 项实际字节 SHA 漂移，最终索引按设计跳过。I3 fixture child UTC 前置随后由 run
+`30765231206` 在 revision `3b4b0db2f56f57e3d0e7500c77593b406a5dd857` 验证：完整 workflow、
+provenance 绑定与 artifact 上传均成功。artifact
+`qualification-evidence-3b4b0db2f56f57e3d0e7500c77593b406a5dd857-30765231206-1` 的 GitHub ZIP
+digest 为 `2df032ffb1c4d7f3da3130cce240b617559947f8b4cef0c63d8cf8b0ca33698c`。下载后 strict reader
+因 caption layout runner/verifier 在 hosted checkout 为 CRLF、本机为 LF 而拒绝当前工作树复算；
+两份脚本及索引复算的 lockfile/workflow 现由 `.gitattributes` 固定 LF，该修复为实现完成·尚未验收，且不改变当前 B5 候选字节。
+只有新 revision 的完整 workflow 成功且下载 artifact 通过 strict reader 与隐私复核，才可关闭 J9-CI；
+本地构造相同 JSON 也不带远端来源语境或签名，不能冒充 GitHub run 证据。
 
 这条旅程使用受控小资源和 fake ASR，不访问物理声卡、不保存音频，也不冒充公网真实张量、
 I2、真实两小时 I3 或 I4。
