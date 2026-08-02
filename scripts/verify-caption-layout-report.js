@@ -16,12 +16,14 @@ const path = require('node:path')
 const { parseStrictEvidenceJson } = require('./strict-evidence-json')
 
 const ROOT = path.resolve(__dirname, '..')
-const SCHEMA = 'caption-layout-report@v1'
+const SCHEMA = 'caption-layout-report@v2'
 
 const PROVENANCE_FILES = Object.freeze({
   captionMarkupSha256: 'src/caption/index.html',
   captionRendererSha256: 'src/caption/caption.js',
   captionStyleSha256: 'src/caption/caption.css',
+  captionStateContractSha256: 'src/contracts/caption-state.js',
+  ipcChannelsSha256: 'src/main/ipc/channels.js',
   preloadSha256: 'src/preload/caption.js',
   reducerSha256: 'src/ui/shared/caption-reducer.js',
   runnerSha256: 'scripts/caption-layout-smoke.js',
@@ -42,9 +44,11 @@ const REQUIRED_INVARIANTS = Object.freeze([
   'bottomAnchored',
   'clippedIsWholeLines',
   'clipsFromTopOnly',
-  'crossSegmentKeepsBothSegments',
+  'crossSegmentKeepsCurrentSegment',
   'everyGrowthCaseOverflowed',
   'largerFontShowsFewerLines',
+  'fullyClippedPrefixReported',
+  'lateAmendmentDoesNotRevive',
   'newestLineVisible',
   'noHorizontalOverflow',
   'noWindowDragRequested',
@@ -223,7 +227,9 @@ function validateCaptionLayoutReport (report) {
 
   assertCurrentProvenance(report.provenance)
 
-  exactKeys(report.intents, ['dragEnd', 'dragStart', 'mouseThrough', 'resizeEnd', 'resizeStart'], 'intents')
+  exactKeys(report.intents, [
+    'captionViewportEviction', 'dragEnd', 'dragStart', 'mouseThrough', 'resizeEnd', 'resizeStart'
+  ], 'intents')
   for (const key of ['dragEnd', 'dragStart', 'resizeEnd', 'resizeStart']) {
     if (report.intents[key] !== 0) {
       throw new Error(`intents.${key} must be 0; caption content must never move or resize the window`)
@@ -231,6 +237,10 @@ function validateCaptionLayoutReport (report) {
   }
   if (!Number.isSafeInteger(report.intents.mouseThrough) || report.intents.mouseThrough < 0) {
     throw new TypeError('intents.mouseThrough must be a non-negative integer')
+  }
+  if (!Number.isSafeInteger(report.intents.captionViewportEviction) ||
+      report.intents.captionViewportEviction < 1) {
+    throw new TypeError('intents.captionViewportEviction must be a positive integer')
   }
 
   exactKeys(report.invariants, REQUIRED_INVARIANTS, 'invariants')

@@ -290,7 +290,7 @@ async function exerciseBoundedHistoryDom ({ history, sessionId, segmentCount, pa
   const ids = [
     'titlebar', 'close', 'refresh', 'globalStatus', 'sessionCount', 'sessionList',
     'loadMore', 'emptyState', 'sessionDetail', 'detailSource', 'detailTitle',
-    'detailMeta', 'exportStatus', 'previousPage', 'nextPage', 'retryPage',
+    'detailMeta', 'detailRefinement', 'exportStatus', 'previousPage', 'nextPage', 'retryPage',
     'rangeStatus', 'timeline'
   ]
   const elements = new Map(ids.map((id) => [id, new FakeElement(id.includes('Page') ? 'button' : 'div')]))
@@ -434,12 +434,13 @@ async function runI3NonAudioSoak (options = {}) {
   const coordinator = new SessionCoordinator({
     adapter,
     persistenceSink: recorder,
-    runtimeOptions: DEV_RUNTIME,
+    runtimeOptions: { ...DEV_RUNTIME, refinementAvailable: true },
     configuration: {
       onboardingCompleted: true,
       onboardingPreset: 'dictation',
       mic: true,
-      loopback: false
+      loopback: false,
+      refinementEnabled: true
     },
     idFactory: () => 'i3-nonaudio-accelerated-session'
   })

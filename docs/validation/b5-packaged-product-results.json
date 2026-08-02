@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "kind": "product-shell-smoke",
-  "generatedAt": "2026-08-01T16:36:03.163Z",
+  "generatedAt": "2026-08-02T10:37:54.675Z",
   "result": "pass",
   "gateStatus": "partial",
   "runtime": {
@@ -11,12 +11,12 @@
     "crashEventCount": 0
   },
   "qualification": {
-    "runId": "b5-bb5f34b3-e625-4a9c-b5c1-94055ee6f3e5",
+    "runId": "b5-2bd0dc7a-e233-41a5-a41b-65d04344b0aa",
     "phase": "fresh",
     "freshProductReportSha256": null,
     "productPayloadVersion": "live-subtitle-product-payload-v1",
-    "productPayloadFileCount": 112,
-    "productPayloadSha256": "503a40df18f70c397604bda6a4c3ac909851624ec2129a8db7b690fa610ab93d"
+    "productPayloadFileCount": 114,
+    "productPayloadSha256": "b6503ca26c3f59bb0b5c15acfa6c2ceec0d2eaff3a540bf5f56016032c1a0bbd"
   },
   "packaging": {
     "appIsPackaged": true,
@@ -40,17 +40,27 @@
   },
   "journey": {
     "onboardingPreset": "dictation",
-    "modelInstallClicked": true,
-    "modelInitialState": "missing",
-    "modelObservedStates": [
+    "coreInstallClicked": true,
+    "coreInitialState": "missing",
+    "refinementInitialState": "missing",
+    "refinementPreferenceInitiallyDisabled": true,
+    "refinementPreferenceRejectedWhileMissing": true,
+    "refinementFetchAttemptCountBeforeExplicitDownload": 0,
+    "coreObservedStates": [
       "missing",
       "downloading",
       "verifying",
       "ready"
     ],
-    "modelRangeResumeObserved": true,
-    "modelReadyMarkerCount": 3,
-    "modelHotActivation": true,
+    "coreRangeResumeObserved": true,
+    "coreReadyMarkerCount": 2,
+    "refinementReadyMarkerCountBeforeExplicitDownload": 0,
+    "coreHotActivation": true,
+    "refinementDownloadStartedBeforeCancellation": true,
+    "refinementCancellationClosedFetchStream": true,
+    "refinementCancellationRetainedPart": true,
+    "refinementReadyMarkerCount": 0,
+    "rawSessionFrozenOriginal": true,
     "startListeningStop": true,
     "pauseResume": true,
     "finalCaptionRendered": true,
@@ -68,18 +78,27 @@
     "historyReachedEnd": true,
     "historyBackForwardNavigation": true,
     "historyAriaRangeAligned": true,
-    "historyExportDialogCount": 3,
-    "historyExportFormats": [
+    "historyVersionStartsOriginal": true,
+    "historyRefinedVersionSelected": true,
+    "historyRefinedVersionPersistsAcrossPaging": true,
+    "historyRefinedExportHonored": true,
+    "historySessionChangeResetsOriginal": true,
+    "historyOriginalExportHonored": true,
+    "historyExportDialogCount": 5,
+    "historyOriginalExportFormats": [
       "txt",
       "md",
       "srt"
     ],
-    "historyExportArtifactCount": 3,
-    "historyExportFullSegmentCount": 205,
+    "historyOriginalExportArtifactCount": 3,
+    "historyOriginalExportFullSegmentCount": 205,
+    "historyRefinedExportArtifactCount": 1,
+    "historyRawOriginalExportArtifactCount": 1,
     "resourcesPaneOpenedFromToolbar": true,
-    "modelState": "ready",
+    "coreState": "ready",
+    "refinementState": "missing",
     "resourceCount": 3,
-    "modelReadinessSource": "settings-click-controlled-install",
+    "coreReadinessSource": "settings-click-controlled-install",
     "translationAdvertised": false
   },
   "privacy": {

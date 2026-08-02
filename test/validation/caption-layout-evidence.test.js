@@ -66,7 +66,7 @@ function validReport () {
   cases.push(layoutCase('pause@30', 'zh', 30))
 
   return {
-    schema: 'caption-layout-report@v1',
+    schema: 'caption-layout-report@v2',
     generatedAt: '2026-08-01T12:00:00.000Z',
     result: 'pass',
     gateStatus: 'partial',
@@ -88,7 +88,14 @@ function validReport () {
       windowHeight: 190
     },
     provenance: currentProvenance(),
-    intents: { mouseThrough: 1, dragStart: 0, dragEnd: 0, resizeStart: 0, resizeEnd: 0 },
+    intents: {
+      captionViewportEviction: 1,
+      mouseThrough: 1,
+      dragStart: 0,
+      dragEnd: 0,
+      resizeStart: 0,
+      resizeEnd: 0
+    },
     invariants: {
       everyGrowthCaseOverflowed: true,
       noHorizontalOverflow: true,
@@ -100,7 +107,9 @@ function validReport () {
       largerFontShowsFewerLines: true,
       rewriteKeepsFullHypothesis: true,
       rewriteDidNotGrowContent: true,
-      crossSegmentKeepsBothSegments: true,
+      crossSegmentKeepsCurrentSegment: true,
+      fullyClippedPrefixReported: true,
+      lateAmendmentDoesNotRevive: true,
       pauseRetainsCaptions: true,
       noWindowResizeRequested: true,
       noWindowDragRequested: true
@@ -135,6 +144,8 @@ test('the verifier refuses a report whose layout invariants did not hold', () =>
   rejects((report) => { report.invariants.newestLineVisible = false }, /invariants.newestLineVisible must be true/)
   rejects((report) => { report.invariants.clipsFromTopOnly = false }, /invariants.clipsFromTopOnly must be true/)
   rejects((report) => { report.invariants.viewportIsWholeLines = false }, /invariants.viewportIsWholeLines must be true/)
+  rejects((report) => { report.invariants.fullyClippedPrefixReported = false }, /invariants.fullyClippedPrefixReported must be true/)
+  rejects((report) => { report.invariants.lateAmendmentDoesNotRevive = false }, /invariants.lateAmendmentDoesNotRevive must be true/)
   rejects((report) => { report.cases[0].newestLineVisible = false }, /cases\[0\].newestLineVisible must be true/)
 })
 
@@ -154,6 +165,12 @@ test('the verifier refuses any caption-driven window movement or resize', () => 
   rejects((report) => { report.intents.dragStart = 1 }, /intents.dragStart must be 0/)
   rejects((report) => { report.invariants.noWindowResizeRequested = false },
     /invariants.noWindowResizeRequested must be true/)
+})
+
+test('the verifier requires an identity-only viewport eviction observation', () => {
+  rejects((report) => { report.intents.captionViewportEviction = 0 }, /must be a positive integer/)
+  rejects((report) => { report.intents.captionViewportEviction = 1.5 }, /must be a positive integer/)
+  rejects((report) => { report.intents.evictedText = 'leak' }, /intents keys must be exactly/)
 })
 
 test('the verifier requires the full font-size by text-kind matrix plus the three scenarios', () => {
@@ -185,7 +202,7 @@ test('the verifier refuses unknown, missing, or duplicated report structure', ()
   rejects((report) => { delete report.intents }, /caption layout report keys must be exactly/)
   rejects((report) => { report.cases[0].extra = 1 }, /cases\[0\] keys must be exactly/)
   rejects((report) => { report.cases[1].id = report.cases[0].id }, /duplicate case id/)
-  rejects((report) => { report.schema = 'caption-layout-report@v2' }, /schema must be caption-layout-report@v1/)
+  rejects((report) => { report.schema = 'caption-layout-report@v1' }, /schema must be caption-layout-report@v2/)
   rejects((report) => { report.generatedAt = '2026-08-01T12:00:00Z' }, /canonical UTC ISO-8601/)
 })
 

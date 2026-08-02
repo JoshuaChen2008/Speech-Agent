@@ -41,6 +41,8 @@ const LEGACY_HISTORY_SESSION_ID = 'ci-legacy-history-session'
 const LONG_HISTORY_SEGMENT_COUNT = 205
 const HISTORY_PAGE_SIZE = 50
 const EXPORT_FORMATS = Object.freeze(['txt', 'md', 'srt'])
+const CORE_RESOURCE_IDS = Object.freeze(['x-asr-160ms', 'silero-vad'])
+const REFINEMENT_RESOURCE_IDS = Object.freeze(['x-asr-offline'])
 const B5_RUN_ID_PATTERN = /^b5-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 
@@ -171,17 +173,23 @@ function audioFilesUnder (directory) {
   return found
 }
 
-function readyMarkersUnder (directory) {
-  let count = 0
-  const visit = (current) => {
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      const target = path.join(current, entry.name)
-      if (entry.isDirectory()) visit(target)
-      else if (entry.name === '.ready.json') count += 1
+function readyMarkerCountFor (directory, artifactIds) {
+  const countMarkers = (root) => {
+    let count = 0
+    const visit = (current) => {
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        const target = path.join(current, entry.name)
+        if (entry.isDirectory()) visit(target)
+        else if (entry.name === '.ready.json') count += 1
+      }
     }
+    visit(root)
+    return count
   }
-  visit(directory)
-  return count
+  return artifactIds.reduce((count, artifactId) => {
+    const root = path.join(directory, artifactId)
+    return count + (fs.statSync(root, { throwIfNoEntry: false })?.isDirectory() ? countMarkers(root) : 0)
+  }, 0)
 }
 
 function seedLongHistoryFixture (databasePath) {
@@ -206,7 +214,8 @@ function seedLongHistoryFixture (databasePath) {
     call(OPERATIONS.OPEN_SESSION, {
       sessionId: LONG_HISTORY_SESSION_ID,
       sourceId: 'mic',
-      startedAt
+      startedAt,
+      refinementEnabled: true
     }, makeOpenSessionKey(LONG_HISTORY_SESSION_ID))
     for (let index = 0; index < LONG_HISTORY_SEGMENT_COUNT; index += 1) {
       const t0 = Math.floor(index / 7) / 10
@@ -282,20 +291,50 @@ function seedLegacyHistoryFixture (directory) {
   return Object.freeze({ filePath, sha256: sha256File(filePath) })
 }
 
-function inspectExportArtifacts (directory) {
+function exportSegmentCount (format, content) {
+  if (format === 'txt') return content.trimEnd().split(/\r?\n/).length
+  if (format === 'md') return content.split(/\r?\n/).filter((line) => line.startsWith('- ')).length
+  return (content.match(/^\d+$/gm) || []).length
+}
+
+function inspectOriginalExportArtifacts (directory, key) {
   const contents = Object.fromEntries(EXPORT_FORMATS.map((format) => [
     format,
-    fs.readFileSync(path.join(directory, `history.${format}`), 'utf8')
+    fs.readFileSync(path.join(directory, `${key}.${format}`), 'utf8')
   ]))
   const counts = {
-    txt: contents.txt.trimEnd().split(/\r?\n/).length,
-    md: contents.md.split(/\r?\n/).filter((line) => line.startsWith('- ')).length,
-    srt: (contents.srt.match(/^\d+$/gm) || []).length
+    txt: exportSegmentCount('txt', contents.txt),
+    md: exportSegmentCount('md', contents.md),
+    srt: exportSegmentCount('srt', contents.srt)
   }
   if (EXPORT_FORMATS.some((format) => counts[format] !== LONG_HISTORY_SEGMENT_COUNT)) {
     throw new Error(`history export was truncated: ${JSON.stringify(counts)}`)
   }
   return Object.freeze({ artifactCount: EXPORT_FORMATS.length, fullSegmentCount: counts.txt })
+}
+
+function inspectRefinedExportArtifact (filePath) {
+  const content = fs.readFileSync(filePath, 'utf8')
+  /* An incomplete refined TXT export deliberately begins with its one-line
+     coverage disclosure and one blank separator. They are metadata, not
+     subtitle rows, so exclude them from the segment-count evidence. */
+  const lines = content.trimEnd().split(/\r?\n/)
+  const fullSegmentCount = lines.length - 2
+  const containsRefinedFixture = content.includes('fixture refined subtitle')
+  const containsOriginalFallback = content.includes('[原始版回退]')
+  if (fullSegmentCount !== LONG_HISTORY_SEGMENT_COUNT || !containsRefinedFixture || !containsOriginalFallback) {
+    throw new Error('history refinement export did not retain both selected drafts and original fallback')
+  }
+  return Object.freeze({ fullSegmentCount, containsRefinedFixture, containsOriginalFallback })
+}
+
+function inspectRawOriginalExportArtifact (filePath) {
+  const content = fs.readFileSync(filePath, 'utf8')
+  const segmentCount = exportSegmentCount('txt', content)
+  if (segmentCount < 1 || content.includes('fixture refined subtitle') || content.includes('[原始版回退]')) {
+    throw new Error('history session B did not export its original transcript')
+  }
+  return Object.freeze({ segmentCount })
 }
 
 const options = parseArguments(process.argv.slice(app.isPackaged ? 1 : 2))
@@ -332,21 +371,36 @@ if (options.mode === 'fresh') {
   })
 } else {
   const manifest = JSON.parse(fs.readFileSync(fixtureManifestPath, 'utf8'))
-  modelFixtures = Object.freeze({ manifest, payloadByPath: new Map() })
+  const payloadRoot = path.join(options.workDir, 'fixture-model-downloads')
+  const payloadByPath = new Map(manifest.artifacts.map((artifact) => {
+    const extension = artifact.artifactKind === 'archive' ? 'tar' : 'bin'
+    const payload = fs.readFileSync(path.join(payloadRoot, `${artifact.id}.${extension}`))
+    return [new URL(artifact.url).pathname, payload]
+  }))
+  modelFixtures = Object.freeze({ manifest, payloadByPath })
+}
+const refinementFixtureArtifact = modelFixtures.manifest.artifacts.find((artifact) =>
+  artifact.resourceGroup === 'refinement'
+)
+if (!refinementFixtureArtifact || refinementFixtureArtifact.id !== REFINEMENT_RESOURCE_IDS[0]) {
+  throw new Error('fixture manifest refinement resource is not aligned')
 }
 const resumeSeed = options.mode === 'fresh'
   ? seedInterruptedModelDownload(userDataDir, modelFixtures)
   : null
-const saveDialogFormats = []
+const saveDialogEvents = []
+let expectedExportTarget = null
 dialog.showSaveDialog = async (...args) => {
   const dialogOptions = args.at(-1)
   const format = dialogOptions?.filters?.[0]?.extensions?.[0]
-  if (options.mode !== 'fresh' || !EXPORT_FORMATS.includes(format) ||
-      saveDialogFormats.includes(format)) {
+  if (options.mode !== 'fresh' || !EXPORT_FORMATS.includes(format) || !expectedExportTarget ||
+      expectedExportTarget.format !== format) {
     throw new Error('unexpected product-shell save dialog request')
   }
-  saveDialogFormats.push(format)
-  return { canceled: false, filePath: path.join(exportDirectory, `history.${format}`) }
+  const target = expectedExportTarget
+  expectedExportTarget = null
+  saveDialogEvents.push(Object.freeze({ key: target.key, format: target.format, version: target.version }))
+  return { canceled: false, filePath: path.join(exportDirectory, `${target.key}.${format}`) }
 }
 delete process.env.LIVE_SUBTITLE_MODEL_DIR
 delete process.env.LIVE_SUBTITLE_REFINE_MODEL_DIR
@@ -503,6 +557,15 @@ async function runPackagedDb0Qualification () {
   }
 }
 
+const fixtureRuntimeTelemetry = {
+  firstPostFinalCycle: new Set(),
+  refinedSessionIds: new Set(),
+  sessionRefinementEnabled: new Map(),
+  injectFaultForNextRefinedSession: false,
+  faultTargetSessionId: null,
+  faultedSessionIds: new Set()
+}
+
 /* This boundary double deliberately emits subtitle lifecycle events only.
    It accepts the production fast profile selected by the installed bundle,
    while the shared B1 FakeRuntimeAdapter remains strict about its balanced
@@ -513,6 +576,15 @@ class ProductShellSubtitleAdapter extends FakeRuntimeAdapter {
       throw new TypeError('product-shell subtitle adapter only supports the installed fast profile')
     }
     super.assertContext({ ...context, profile: 'balanced' })
+  }
+
+  async start (context) {
+    await super.start(context)
+    fixtureRuntimeTelemetry.sessionRefinementEnabled.set(context.sessionId, context.refinementEnabled === true)
+    if (context.refinementEnabled === true && fixtureRuntimeTelemetry.injectFaultForNextRefinedSession) {
+      fixtureRuntimeTelemetry.injectFaultForNextRefinedSession = false
+      fixtureRuntimeTelemetry.faultTargetSessionId = context.sessionId
+    }
   }
 
   typeLine (entry) {
@@ -530,7 +602,31 @@ class ProductShellSubtitleAdapter extends FakeRuntimeAdapter {
       this.currentLine = null
       this.emit('final', current.revision + 1, entry.text)
       this.lineTimer = setTimeout(() => {
-        this.emit('refined', current.revision + 2, entry.text)
+        /* The double is intentionally governed by the frozen context, not
+           the mutable global preference. This mirrors the real adapter
+           boundary while keeping B5 free from physical audio and tensors. */
+        if (this.context?.refinementEnabled === true) {
+          fixtureRuntimeTelemetry.refinedSessionIds.add(this.context.sessionId)
+          this.emit('refined', current.revision + 2, entry.text)
+          if (fixtureRuntimeTelemetry.faultTargetSessionId === this.context.sessionId &&
+              !fixtureRuntimeTelemetry.faultedSessionIds.has(this.context.sessionId)) {
+            /* Let the accepted refined event reach the durable FIFO before the
+               controlled worker-exit signal. This is still entirely within
+               the fake adapter boundary: no audio host or native worker is
+               created by B5. */
+            setTimeout(() => {
+              if (!this.context || this.context.sessionId !== fixtureRuntimeTelemetry.faultTargetSessionId) return
+              fixtureRuntimeTelemetry.faultedSessionIds.add(this.context.sessionId)
+              this.emitRefinementFault({
+                sessionId: this.context.sessionId,
+                code: 'REFINE_WORKER_EXITED',
+                stage: 'fixture',
+                faultAtMs: 1
+              })
+            }, 60)
+          }
+        }
+        fixtureRuntimeTelemetry.firstPostFinalCycle.add(this.context?.sessionId)
         this.lineTimer = setTimeout(() => this.nextLine(), this.betweenLinesMs)
       }, this.translationDelayMs)
     }, this.characterIntervalMs)
@@ -566,7 +662,7 @@ async function launchSmokeApplication () {
         externalReady: null,
         randomId: () => `product-shell-${++randomSequence}`,
         fetchImpl: (url, requestOptions = {}) => {
-          if (options.mode === 'restart') {
+          if (modelTransport === null) {
             offlineModelFetchAttemptCount += 1
             throw new Error('offline restart attempted a model download')
           }
@@ -597,6 +693,41 @@ async function closeModelTransport () {
   const server = modelTransport.server
   modelTransport = null
   await closeFixtureModelServer(server)
+}
+
+async function exportHistorySelection (history, target) {
+  if (!target || typeof target.key !== 'string' || !EXPORT_FORMATS.includes(target.format) ||
+      !['original', 'refined'].includes(target.version) || expectedExportTarget !== null) {
+    throw new Error('invalid controlled history export target')
+  }
+  await waitFor(() => rendererValue(history,
+    `document.querySelector('[data-version="${target.version}"]').getAttribute('aria-checked') === 'true' &&
+      document.querySelector('[data-export="${target.format}"]').disabled === false`),
+  `history ${target.key} export readiness`)
+  expectedExportTarget = Object.freeze({ ...target })
+  await rendererValue(history,
+    `document.querySelector('[data-export="${target.format}"]').click(); true`)
+  const filePath = path.join(exportDirectory, `${target.key}.${target.format}`)
+  await waitFor(() => saveDialogEvents.some((entry) => entry.key === target.key) &&
+    fs.statSync(filePath, { throwIfNoEntry: false })?.size > 0,
+  `history ${target.key} export`)
+  return filePath
+}
+
+async function getSessionRefinementEvidence (history, sessionId) {
+  const literalSessionId = JSON.stringify(sessionId)
+  return rendererValue(history, `window.historyApi.getSessionPage(${literalSessionId}, 1, null).then((result) => {
+    const value = result && result.ok === true ? result.value : null
+    const refinement = value && value.refinement
+    return refinement && typeof refinement === 'object'
+      ? {
+          refinementEnabled: refinement.refinementEnabled,
+          refinedSegmentCount: refinement.refinedSegmentCount,
+          refinementResultStatus: refinement.refinementResultStatus,
+          refinementFaultCode: refinement.refinementFaultCode
+        }
+      : null
+  })`)
 }
 
 const crashEvents = []
@@ -655,20 +786,66 @@ async function runRestartJourney () {
   await waitFor(() => rendererValue(toolbar,
     `window.shell.getSnapshot().then(s => s.phase === 'idle' && s.capabilities.canStart)`),
   'offline-ready runtime')
+  const refinementNoticeNotReplayed = await rendererValue(toolbar,
+    `window.shell.getRefinementNotice().then(notice => notice === null &&
+      document.querySelector('.refinement-notice') === null)`)
+  if (!refinementNoticeNotReplayed) {
+    throw new Error('post-session refinement notice replayed after application restart')
+  }
 
   await rendererValue(toolbar, `window.shell.action('open-model-manager'); true`)
   const settings = await waitFor(() => windowFor('/settings/settings.html'), 'restart settings renderer')
   await waitFor(() => !settings.webContents.isLoading(), 'restart settings load')
-  await waitFor(() => rendererValue(settings,
-    `window.shell.getModelStatus().then(s => s.state === 'ready' &&
-      document.getElementById('modelInstallButton').textContent === '已就绪')`),
-  'offline model readiness')
-  const resourceCount = await rendererValue(settings,
-    `document.querySelectorAll('[data-resource-id]').length`)
-  if (offlineModelFetchAttemptCount !== 0 || readyMarkersUnder(path.join(userDataDir, 'models')) !== 3 ||
+  const restartReadiness = await waitFor(() => rendererValue(settings, `(async () => {
+    const status = await window.shell.getModelStatus()
+    const cfg = await window.shell.getConfig()
+    const coreReady = status.core?.state === 'ready'
+    const refinementMissing = status.refinement?.state === 'missing'
+    return coreReady && refinementMissing && cfg.refinementEnabled === false &&
+      document.getElementById('modelInstallButton').textContent === '已就绪' &&
+      document.getElementById('refinementInstallButton').textContent === '继续下载'
+      ? {
+          resourceCount: status.resources.length,
+          refinementDownloadedBytes: status.refinement.downloadedBytes,
+          refinementTotalBytes: status.refinement.totalBytes
+        }
+      : null
+  })()`), 'offline core readiness and retained refinement part')
+  const resourceCount = restartReadiness.resourceCount
+  const retainedRefinementPartOnRestart = restartReadiness.refinementDownloadedBytes > 0 &&
+    restartReadiness.refinementDownloadedBytes < restartReadiness.refinementTotalBytes
+  const modelFetchAttemptCountBeforeExplicitContinue = offlineModelFetchAttemptCount
+  if (modelFetchAttemptCountBeforeExplicitContinue !== 0 ||
+      readyMarkerCountFor(path.join(userDataDir, 'models'), CORE_RESOURCE_IDS) !== CORE_RESOURCE_IDS.length ||
+      readyMarkerCountFor(path.join(userDataDir, 'models'), REFINEMENT_RESOURCE_IDS) !== 0 ||
+      !retainedRefinementPartOnRestart ||
       resourceCount !== 3 || modelTransport !== null) {
-    throw new Error('offline restart attempted transport or lost ready model resources')
+    throw new Error('restart did not preserve offline core readiness and the cancelled refinement part')
   }
+
+  modelTransport = await startFixtureModelServer(modelFixtures.payloadByPath)
+  await rendererValue(settings, `document.getElementById('refinementInstallButton').click(); true`)
+  await waitFor(() => rendererValue(settings,
+    `window.shell.getModelStatus().then(s => s.refinement?.state === 'ready' &&
+      document.getElementById('refinementInstallButton').textContent === '已就绪')`),
+  'explicit refinement download continuation after restart', 20000)
+  const refinementPath = new URL(refinementFixtureArtifact.url).pathname
+  const refinementContinueRangeObserved = modelTransport.requests.filter((request) =>
+    request.pathname === refinementPath &&
+    request.range === `bytes=${restartReadiness.refinementDownloadedBytes}-`
+  ).length === 1
+  const refinementPreferenceStillDisabledAfterDownload = await rendererValue(settings,
+    `window.shell.getConfig().then(cfg => cfg.refinementEnabled === false &&
+      document.getElementById('refinementPreferenceToggle').checked === false)`)
+  if (!refinementContinueRangeObserved || !refinementPreferenceStillDisabledAfterDownload ||
+      readyMarkerCountFor(path.join(userDataDir, 'models'), REFINEMENT_RESOURCE_IDS) !== REFINEMENT_RESOURCE_IDS.length) {
+    throw new Error('explicit post-restart refinement continuation is not independently ready')
+  }
+  await rendererValue(settings, `document.getElementById('refinementPreferenceToggle').click(); true`)
+  const refinementPreferenceExplicitlyEnabled = await waitFor(() => rendererValue(settings,
+    `window.shell.getConfig().then(cfg => cfg.refinementEnabled === true &&
+      document.getElementById('refinementPreferenceToggle').checked === true)`),
+  'explicit refinement preference enablement after resource installation')
 
   await rendererValue(toolbar, `document.querySelector('button[data-act="history"]').click(); true`)
   const history = await waitFor(() => windowFor('/history/index.html'), 'restart history renderer')
@@ -686,10 +863,25 @@ async function runRestartJourney () {
     ![LONG_HISTORY_SESSION_ID, LEGACY_HISTORY_SESSION_ID].includes(sessionId))
   if (!previousLiveSessionVisible) throw new Error('fresh-run session did not survive restart')
 
+  const persistedRefinementFreeze = await rendererValue(history, `Promise.all(
+    [...document.querySelectorAll('.session-card')].map(async (card) => {
+      const result = await window.historyApi.getSessionPage(card.dataset.sessionId, 1, null)
+      return result && result.ok === true ? result.value.refinement : null
+    })
+  ).then((entries) => ({
+    rawSessionFrozenOriginal: entries.some((entry) => entry?.refinementResultStatus === 'known' &&
+      entry.refinementEnabled === false && entry.refinedSegmentCount === 0),
+    legacyResultNotRecorded: entries.some((entry) => entry?.refinementResultStatus === 'not_recorded')
+  }))`)
+  if (!persistedRefinementFreeze.rawSessionFrozenOriginal ||
+      !persistedRefinementFreeze.legacyResultNotRecorded) {
+    throw new Error('restart history lost frozen refinement facts')
+  }
+
   await rendererValue(history,
     `document.querySelector('.session-card[data-session-id="${LONG_HISTORY_SESSION_ID}"]').click(); true`)
   const firstHistoryPage = await waitForHistoryPage(history, 1, 50)
-  const exportQualification = inspectExportArtifacts(exportDirectory)
+  const exportQualification = inspectOriginalExportArtifacts(exportDirectory, 'long-original')
   const legacyJsonlFiles = fs.readdirSync(legacyDirectory)
     .filter((name) => name.toLowerCase().endsWith('.jsonl'))
   const legacyMigrationIdempotent = legacyJsonlFiles.length === 1 &&
@@ -699,6 +891,9 @@ async function runRestartJourney () {
   await waitFor(() => rendererValue(toolbar,
     `!!document.querySelector('button[data-act="start"]:not(:disabled)')`),
   'restart start control')
+  fixtureRuntimeTelemetry.injectFaultForNextRefinedSession = true
+  const toolbarBoundsBeforeRefinementFault = toolbar.getBounds()
+  const captionBoundsBeforeRefinementFault = caption.getBounds()
   await rendererValue(toolbar, `document.querySelector('button[data-act="start"]').click(); true`)
   const restartSessionId = await waitFor(async () => {
     const snapshot = await rendererValue(toolbar, `window.shell.getSnapshot()`)
@@ -707,20 +902,76 @@ async function runRestartJourney () {
   await waitFor(() => rendererValue(caption,
     `document.getElementById('liveRegion').textContent.length > 0`),
   'restart final caption', 15000)
+  await waitFor(() => fixtureRuntimeTelemetry.firstPostFinalCycle.has(restartSessionId) &&
+    fixtureRuntimeTelemetry.refinedSessionIds.has(restartSessionId),
+  'restart session uses the explicitly enabled refinement preference', 15000)
+  await waitFor(() => fixtureRuntimeTelemetry.faultedSessionIds.has(restartSessionId),
+    'controlled refinement worker fault after restart', 15000)
+  const refinementFaultSilentDuringSession = await waitFor(async () => {
+    const noNotice = await rendererValue(toolbar,
+      `window.shell.getRefinementNotice().then(notice => notice === null &&
+        document.querySelector('.refinement-notice') === null)`)
+    const toolbarBounds = toolbar.getBounds()
+    const captionBounds = caption.getBounds()
+    const boundsStable = toolbarBounds.x === toolbarBoundsBeforeRefinementFault.x &&
+      toolbarBounds.y === toolbarBoundsBeforeRefinementFault.y &&
+      toolbarBounds.width === toolbarBoundsBeforeRefinementFault.width &&
+      toolbarBounds.height === toolbarBoundsBeforeRefinementFault.height &&
+      captionBounds.x === captionBoundsBeforeRefinementFault.x &&
+      captionBounds.y === captionBoundsBeforeRefinementFault.y &&
+      captionBounds.width === captionBoundsBeforeRefinementFault.width &&
+      captionBounds.height === captionBoundsBeforeRefinementFault.height
+    return noNotice && boundsStable
+  }, 'no modal notice or resize during refinement fault')
+  await rendererValue(settings, `document.getElementById('refinementPreferenceToggle').click(); true`)
+  await waitFor(() => rendererValue(settings,
+    `window.shell.getConfig().then(cfg => cfg.refinementEnabled === false &&
+      document.getElementById('refinementPreferenceToggle').checked === false)`),
+  'refinement preference changed for a future session')
+  await waitFor(() => fixtureRuntimeTelemetry.firstPostFinalCycle.has(restartSessionId) &&
+    fixtureRuntimeTelemetry.refinedSessionIds.has(restartSessionId),
+  'restart session retains its frozen refinement preference', 15000)
   await rendererValue(toolbar, `document.querySelector('button[data-act="stop"]').click(); true`)
   await waitFor(() => rendererValue(toolbar,
     `window.shell.getSnapshot().then(s => s.phase === 'idle' && s.sessionId === null)`),
   'restart stopped runtime')
+  const postSessionRefinementNoticeShown = await waitFor(() => rendererValue(toolbar,
+    `window.shell.getRefinementNotice().then(notice => notice !== null &&
+      !!document.querySelector('.refinement-notice .notice-history'))`),
+  'post-session refinement status notice')
+  await rendererValue(toolbar, `document.querySelector('.refinement-notice .notice-history').click(); true`)
+  const refinementNoticeClearedByHistory = await waitFor(() => rendererValue(toolbar,
+    `window.shell.getRefinementNotice().then(notice => notice === null &&
+      document.querySelector('.refinement-notice') === null)`),
+  'history action clears the post-session refinement notice')
   await rendererValue(history, `document.getElementById('refresh').click(); true`)
   await waitFor(() => rendererValue(history,
     `document.querySelectorAll('.session-card').length === 4 &&
       !!document.querySelector('.session-card[data-session-id="${restartSessionId}"]')`),
   'restart session persisted to history')
+  const restartSessionRefinement = await getSessionRefinementEvidence(history, restartSessionId)
+  const restartSessionFrozenWithPersistedPreference =
+    restartSessionRefinement?.refinementResultStatus === 'known' &&
+    restartSessionRefinement.refinementEnabled === true &&
+    restartSessionRefinement.refinedSegmentCount > 0
+  if (!restartSessionFrozenWithPersistedPreference) {
+    throw new Error('restart session did not keep its start-time refinement preference')
+  }
+  await rendererValue(history,
+    `document.querySelector('.session-card[data-session-id="${restartSessionId}"]').click(); true`)
+  const historyRefinementFaultVisible = await waitFor(() => rendererValue(history,
+    `document.getElementById('detailRefinement').textContent.length > 0 &&
+      document.querySelector('[data-version="refined"]').disabled === false`),
+  'post-restart refinement fault history detail')
+  if (!refinementFaultSilentDuringSession || !postSessionRefinementNoticeShown ||
+      !refinementNoticeClearedByHistory || !historyRefinementFaultVisible) {
+    throw new Error('post-restart refinement fault evidence is incomplete')
+  }
 
   if (crashEvents.length > 0) throw new Error('Electron child process crashed during offline restart')
   if (audioFilesUnder(options.workDir).length > 0) throw new Error('offline restart persisted audio')
   const report = {
-    schemaVersion: 1,
+    schemaVersion: 3,
     kind: 'product-shell-offline-restart-smoke',
     generatedAt: new Date().toISOString(),
     result: 'pass',
@@ -768,20 +1019,34 @@ async function runRestartJourney () {
         }
       : {}),
     journey: {
-      readyModelSurvivedRestart: true,
-      modelFetchAttemptCount: offlineModelFetchAttemptCount,
-      fixtureServerStarted: false,
-      modelReadyMarkerCount: 3,
+      coreReadySurvivedRestart: true,
+      refinementMissingWithRetainedPart: retainedRefinementPartOnRestart,
+      modelFetchAttemptCountBeforeExplicitContinue,
+      fixtureServerStartedBeforeExplicitContinue: false,
+      coreReadyMarkerCount: CORE_RESOURCE_IDS.length,
+      refinementReadyMarkerCount: REFINEMENT_RESOURCE_IDS.length,
       resourceCount,
+      refinementContinueRangeObserved,
+      refinementExplicitDownloadReady: true,
+      refinementPreferenceStillDisabledAfterDownload,
+      refinementPreferenceExplicitlyEnabled,
+      refinementNoticeNotReplayed,
       persistedTerminalHistoryCount: persistedSessionIds.length,
       previousLiveSessionVisible,
       legacySessionVisible: true,
       legacyMigrationIdempotent,
+      persistedRawSessionFrozenOriginal: persistedRefinementFreeze.rawSessionFrozenOriginal,
       longHistorySegmentCount: LONG_HISTORY_SEGMENT_COUNT,
       historyPageSize: firstHistoryPage.count,
-      historyExportArtifactCount: exportQualification.artifactCount,
-      historyExportFullSegmentCount: exportQualification.fullSegmentCount,
+      historyOriginalExportArtifactCount: exportQualification.artifactCount,
+      historyOriginalExportFullSegmentCount: exportQualification.fullSegmentCount,
       restartCaptionRendered: true,
+      restartSessionFrozenWithPersistedPreference,
+      refinementPreferenceChangedForFutureSessions: true,
+      refinementFaultSilentDuringSession,
+      postSessionRefinementNoticeShown,
+      refinementNoticeClearedByHistory,
+      historyRefinementFaultVisible,
       restartSessionPersisted: true,
       terminalHistoryCountAfterRestart: 4
     },
@@ -829,45 +1094,105 @@ async function runJourney () {
   await waitFor(() => rendererValue(settings,
     `document.querySelector('.pane[data-pane="resources"]').classList.contains('active')`),
   'resource pane before install')
-  const modelInitialState = await rendererValue(settings, `(async () => {
+  const initialModelState = await rendererValue(settings, `(async () => {
     window.__modelUiStates = []
-    window.shell.onModelStatus((status) => window.__modelUiStates.push(status.state))
+    window.shell.onModelStatus((status) => window.__modelUiStates.push({
+      core: status.core?.state,
+      refinement: status.refinement?.state
+    }))
     const status = await window.shell.getModelStatus()
-    window.__modelUiStates.push(status.state)
-    return status.state
+    const cfg = await window.shell.getConfig()
+    window.__modelUiStates.push({ core: status.core?.state, refinement: status.refinement?.state })
+    return { core: status.core?.state, refinement: status.refinement?.state, enabled: cfg.refinementEnabled === true }
   })()`)
-  if (modelInitialState !== 'missing') throw new Error(`model UI did not begin missing: ${modelInitialState}`)
+  if (initialModelState.core !== 'missing' || initialModelState.refinement !== 'missing' || initialModelState.enabled) {
+    throw new Error('model resources did not begin with core missing and refinement disabled')
+  }
+
+  await rendererValue(settings, `document.getElementById('refinementPreferenceToggle').click(); true`)
+  const refinementPreferenceRejectedWhileMissing = await waitFor(() => rendererValue(settings,
+    `Promise.all([window.shell.getConfig(), window.shell.getModelStatus()]).then(([cfg, status]) =>
+      cfg.refinementEnabled === false && status.refinement?.state === 'missing' &&
+      document.getElementById('refinementPreferenceToggle').checked === false)`),
+  'missing refinement preference remains disabled')
+  const refinementFetchAttemptCountBeforeExplicitDownload = modelTransport.requests.length
+  if (!refinementPreferenceRejectedWhileMissing || refinementFetchAttemptCountBeforeExplicitDownload !== 0) {
+    throw new Error('missing refinement preference attempted an implicit download')
+  }
+
   await waitFor(() => rendererValue(settings,
-    `(() => { const b = document.getElementById('modelInstallButton'); return !b.disabled && b.textContent === '下载模型' })()`),
-  'enabled model download button')
+    `(() => { const b = document.getElementById('modelInstallButton'); return !b.disabled && b.textContent === '下载核心模型' })()`),
+  'enabled core model download button')
   await rendererValue(settings, `document.getElementById('modelInstallButton').click(); true`)
   await waitFor(() => rendererValue(settings,
-    `window.shell.getModelStatus().then(s => s.state === 'ready' &&
+    `window.shell.getModelStatus().then(s => s.core?.state === 'ready' && s.refinement?.state === 'missing' &&
       document.getElementById('modelInstallButton').textContent === '已就绪' &&
       document.getElementById('modelInstallButton').disabled)`),
-  'model installation through settings', 20000)
-  const observedModelStates = await rendererValue(settings,
-    `[...new Set(window.__modelUiStates)]`)
+  'core model installation through settings', 20000)
+  const observedCoreStates = await rendererValue(settings,
+    `[...new Set(window.__modelUiStates.map((status) => status.core))]`)
   for (const state of ['missing', 'downloading', 'verifying', 'ready']) {
-    if (!observedModelStates.includes(state)) throw new Error(`model UI missed state: ${state}`)
+    if (!observedCoreStates.includes(state)) throw new Error(`core model UI missed state: ${state}`)
   }
   const firstArtifactPath = new URL(modelFixtures.manifest.artifacts[0].url).pathname
-  const rangeResumeObserved = modelTransport.requests.some((request) =>
+  const coreRangeResumeObserved = modelTransport.requests.some((request) =>
     request.pathname === firstArtifactPath && request.range === `bytes=${resumeSeed.resumeBytes}-`)
-  if (!rangeResumeObserved) throw new Error('settings model install did not resume the seeded partial download')
-  if (readyMarkersUnder(path.join(userDataDir, 'models')) !== 3) {
-    throw new Error('settings model install did not create three ready markers')
+  if (!coreRangeResumeObserved) throw new Error('settings core install did not resume the seeded partial download')
+  if (readyMarkerCountFor(path.join(userDataDir, 'models'), CORE_RESOURCE_IDS) !== CORE_RESOURCE_IDS.length ||
+      readyMarkerCountFor(path.join(userDataDir, 'models'), REFINEMENT_RESOURCE_IDS) !== 0) {
+    throw new Error('core installation did not preserve independent refinement readiness')
   }
 
   await waitFor(() => rendererValue(toolbar, `window.shell.getSnapshot().then(s => s.phase === 'idle' && s.capabilities.canStart)`), 'idle runtime')
   await waitFor(() => rendererValue(toolbar, `!!document.querySelector('button[data-act="start"]:not(:disabled)')`), 'start control')
 
+  const refinementResumeSeed = seedInterruptedModelDownload(
+    userDataDir,
+    modelFixtures,
+    refinementFixtureArtifact.id
+  )
+  const refinementPath = new URL(refinementFixtureArtifact.url).pathname
+  const heldRefinementResponse = modelTransport.holdNextResponse({
+    pathname: refinementPath,
+    range: `bytes=${refinementResumeSeed.resumeBytes}-`,
+    prefixBytes: 1
+  })
+  await rendererValue(settings, `document.getElementById('refinementInstallButton').click(); true`)
+  await waitFor(() => rendererValue(settings,
+    `window.shell.getModelStatus().then(s => s.refinement?.state === 'downloading' &&
+      s.refinement.downloadedBytes > ${refinementResumeSeed.resumeBytes} && s.canCancelInstall === true)`),
+  'explicit refinement download started before cancellation', 20000)
+  if (!heldRefinementResponse.started) throw new Error('controlled refinement response did not start')
+  await rendererValue(settings, `document.getElementById('refinementCancelButton').click(); true`)
+  await waitFor(() => heldRefinementResponse.connectionClosed,
+    'Electron fetch stream closed after explicit refinement cancellation', 12000)
+  const cancelledRefinementStatus = await waitFor(() => rendererValue(settings,
+    `window.shell.getModelStatus().then(s => s.refinement?.state === 'missing' &&
+      s.refinement.downloadedBytes > ${refinementResumeSeed.resumeBytes} &&
+      s.refinement.downloadedBytes < s.refinement.totalBytes && s.canCancelInstall === false
+        ? s.refinement : null)`),
+  'cancelled refinement download retained a resumable part', 12000)
+  const cancelledRefinementPart = path.join(
+    userDataDir,
+    'models',
+    '.downloads',
+    `${refinementFixtureArtifact.id}.part`
+  )
+  const refinementCancellationRetainedPart = fs.statSync(cancelledRefinementPart).isFile() &&
+    fs.statSync(cancelledRefinementPart).size === cancelledRefinementStatus.downloadedBytes
+  if (!heldRefinementResponse.requestAborted || !refinementCancellationRetainedPart) {
+    throw new Error('explicit refinement cancellation did not preserve the streamed resumable part')
+  }
+
   await rendererValue(toolbar, `document.querySelector('button[data-act="start"]').click(); true`)
-  const liveSessionId = await waitFor(async () => {
+  const rawSessionId = await waitFor(async () => {
     const snapshot = await rendererValue(toolbar, `window.shell.getSnapshot()`)
     return snapshot.phase === 'listening' && snapshot.sessionId !== null ? snapshot.sessionId : null
   }, 'listening runtime')
   await waitFor(() => rendererValue(caption, `document.getElementById('liveRegion').textContent.length > 0`), 'final caption', 15000)
+  await waitFor(() => fixtureRuntimeTelemetry.firstPostFinalCycle.has(rawSessionId) &&
+    !fixtureRuntimeTelemetry.refinedSessionIds.has(rawSessionId),
+  'raw session keeps the missing-model refinement preference frozen', 15000)
 
   /* J15a：真实产品组合根下的最小字幕断言。最小布局宿主不启动主进程，够不到
      「设置改配置 → 主进程广播 → 字幕窗重算」这条接线，这两条在这里兜底。
@@ -918,8 +1243,8 @@ async function runJourney () {
     return count === 3 ? count : 0
   }, 'terminal history')
   await waitFor(() => rendererValue(history,
-    `!!document.querySelector('.session-card[data-session-id="${liveSessionId}"]')`),
-  'downloaded-model session history card')
+    `!!document.querySelector('.session-card[data-session-id="${rawSessionId}"]')`),
+  'raw session history card')
   await waitFor(() => rendererValue(history,
     `!!document.querySelector('.session-card[data-session-id="${LONG_HISTORY_SESSION_ID}"]')`),
   'long history fixture card')
@@ -944,6 +1269,13 @@ async function runJourney () {
 
   const visitedHistoryPages = []
   visitedHistoryPages.push(await waitForHistoryPage(history, 1, 50))
+  const historyVersionStartsOriginal = await rendererValue(history,
+    `document.querySelector('[data-version="original"]').getAttribute('aria-checked') === 'true' &&
+      document.querySelector('[data-version="refined"]').getAttribute('aria-checked') === 'false'`)
+  await rendererValue(history, `document.querySelector('[data-version="refined"]').click(); true`)
+  const historyRefinedVersionSelected = await waitFor(() => rendererValue(history,
+    `document.querySelector('[data-version="refined"]').getAttribute('aria-checked') === 'true'`),
+  'history refinement version selection')
   for (const [first, last] of [[51, 100], [101, 150], [151, 200], [201, 205]]) {
     await rendererValue(history, `document.getElementById('nextPage').click(); true`)
     visitedHistoryPages.push(await waitForHistoryPage(history, first, last))
@@ -972,15 +1304,40 @@ async function runJourney () {
       `maxNodes=${historyProbe.maxNodes} appendCalls=${historyProbe.appendCalls}`)
   }
 
+  const historyRefinedVersionPersistsAcrossPaging = await rendererValue(history,
+    `document.querySelector('[data-version="refined"]').getAttribute('aria-checked') === 'true'`)
+  const refinedExportPath = await exportHistorySelection(history, {
+    key: 'long-refined', format: 'txt', version: 'refined'
+  })
+  const refinedExportQualification = inspectRefinedExportArtifact(refinedExportPath)
+  await rendererValue(history, `document.querySelector('[data-version="original"]').click(); true`)
+  await waitFor(() => rendererValue(history,
+    `document.querySelector('[data-version="original"]').getAttribute('aria-checked') === 'true'`),
+  'history original version reselection')
   for (const format of EXPORT_FORMATS) {
-    await rendererValue(history,
-      `document.querySelector('[data-export="${format}"]').click(); true`)
-    const target = path.join(exportDirectory, `history.${format}`)
-    await waitFor(() => saveDialogFormats.includes(format) &&
-      fs.statSync(target, { throwIfNoEntry: false })?.size > 0,
-    `history ${format} export`)
+    await exportHistorySelection(history, {
+      key: 'long-original', format, version: 'original'
+    })
   }
-  const exportQualification = inspectExportArtifacts(exportDirectory)
+  const exportQualification = inspectOriginalExportArtifacts(exportDirectory, 'long-original')
+  await rendererValue(history,
+    `document.querySelector('.session-card[data-session-id="${rawSessionId}"]').click(); true`)
+  await waitFor(() => rendererValue(history,
+    `document.querySelector('[data-version="original"]').getAttribute('aria-checked') === 'true' &&
+      document.querySelector('[data-version="refined"]').disabled === true`),
+  'session change resets history to original version')
+  const historySessionChangeResetsOriginal = true
+  const rawOriginalExportPath = await exportHistorySelection(history, {
+    key: 'raw-original', format: 'txt', version: 'original'
+  })
+  const rawOriginalExportQualification = inspectRawOriginalExportArtifact(rawOriginalExportPath)
+  const rawSessionRefinement = await getSessionRefinementEvidence(history, rawSessionId)
+  const rawSessionFrozenOriginal = rawSessionRefinement?.refinementResultStatus === 'known' &&
+    rawSessionRefinement.refinementEnabled === false && rawSessionRefinement.refinedSegmentCount === 0
+  if (!historyVersionStartsOriginal || !historyRefinedVersionSelected || !historyRefinedVersionPersistsAcrossPaging ||
+      !rawSessionFrozenOriginal) {
+    throw new Error('history version selection or frozen refinement session evidence is incomplete')
+  }
   const legacyJsonlFiles = fs.readdirSync(legacyDirectory)
     .filter((name) => name.toLowerCase().endsWith('.jsonl'))
   const legacySourceReadOnly = legacyJsonlFiles.length === 1 &&
@@ -989,15 +1346,20 @@ async function runJourney () {
 
   await rendererValue(toolbar, `window.shell.action('open-model-manager'); true`)
   await waitFor(() => rendererValue(settings, `document.querySelector('.pane[data-pane="resources"]').classList.contains('active')`), 'resource navigation')
-  const modelState = await rendererValue(settings, `window.shell.getModelStatus().then(s => s.state)`)
-  const resourceCount = await rendererValue(settings, `document.querySelectorAll('[data-resource-id]').length`)
+  const finalModelState = await rendererValue(settings, `window.shell.getModelStatus().then(s => ({
+    core: s.core?.state,
+    refinement: s.refinement?.state,
+    resourceCount: s.resources.length
+  }))`)
+  const resourceCount = finalModelState.resourceCount
   const translationTogglePresent = await rendererValue(settings, `document.body.textContent.includes('显示双语译文')`)
-  if (modelState !== 'ready' || resourceCount !== 3 || translationTogglePresent) throw new Error('model resources UI contract is not aligned')
+  if (finalModelState.core !== 'ready' || finalModelState.refinement !== 'missing' ||
+      resourceCount !== 3 || translationTogglePresent) throw new Error('model resources UI contract is not aligned')
   if (crashEvents.length > 0) throw new Error('Electron child process crashed during the product journey')
   if (audioFilesUnder(options.workDir).length > 0) throw new Error('product shell smoke persisted audio')
 
   const report = {
-    schemaVersion: 1,
+    schemaVersion: 3,
     kind: 'product-shell-smoke',
     generatedAt: new Date().toISOString(),
     result: 'pass',
@@ -1046,12 +1408,22 @@ async function runJourney () {
       : {}),
     journey: {
       onboardingPreset: 'dictation',
-      modelInstallClicked: true,
-      modelInitialState,
-      modelObservedStates: observedModelStates,
-      modelRangeResumeObserved: rangeResumeObserved,
-      modelReadyMarkerCount: 3,
-      modelHotActivation: true,
+      coreInstallClicked: true,
+      coreInitialState: initialModelState.core,
+      refinementInitialState: initialModelState.refinement,
+      refinementPreferenceInitiallyDisabled: initialModelState.enabled === false,
+      refinementPreferenceRejectedWhileMissing,
+      refinementFetchAttemptCountBeforeExplicitDownload,
+      coreObservedStates: observedCoreStates,
+      coreRangeResumeObserved,
+      coreReadyMarkerCount: CORE_RESOURCE_IDS.length,
+      refinementReadyMarkerCountBeforeExplicitDownload: 0,
+      coreHotActivation: true,
+      refinementDownloadStartedBeforeCancellation: heldRefinementResponse.started,
+      refinementCancellationClosedFetchStream: heldRefinementResponse.connectionClosed,
+      refinementCancellationRetainedPart,
+      refinementReadyMarkerCount: 0,
+      rawSessionFrozenOriginal,
       startListeningStop: true,
       pauseResume: true,
       finalCaptionRendered: true,
@@ -1069,14 +1441,26 @@ async function runJourney () {
       historyReachedEnd: reachedHistoryEnd,
       historyBackForwardNavigation,
       historyAriaRangeAligned,
-      historyExportDialogCount: saveDialogFormats.length,
-      historyExportFormats: [...saveDialogFormats],
-      historyExportArtifactCount: exportQualification.artifactCount,
-      historyExportFullSegmentCount: exportQualification.fullSegmentCount,
+      historyVersionStartsOriginal,
+      historyRefinedVersionSelected,
+      historyRefinedVersionPersistsAcrossPaging,
+      historyRefinedExportHonored: refinedExportQualification.containsRefinedFixture &&
+        refinedExportQualification.containsOriginalFallback &&
+        refinedExportQualification.fullSegmentCount === LONG_HISTORY_SEGMENT_COUNT,
+      historySessionChangeResetsOriginal,
+      historyOriginalExportHonored: rawOriginalExportQualification.segmentCount > 0 &&
+        exportQualification.fullSegmentCount === LONG_HISTORY_SEGMENT_COUNT,
+      historyExportDialogCount: saveDialogEvents.length,
+      historyOriginalExportFormats: [...EXPORT_FORMATS],
+      historyOriginalExportArtifactCount: exportQualification.artifactCount,
+      historyOriginalExportFullSegmentCount: exportQualification.fullSegmentCount,
+      historyRefinedExportArtifactCount: 1,
+      historyRawOriginalExportArtifactCount: 1,
       resourcesPaneOpenedFromToolbar: true,
-      modelState,
+      coreState: finalModelState.core,
+      refinementState: finalModelState.refinement,
       resourceCount,
-      modelReadinessSource: 'settings-click-controlled-install',
+      coreReadinessSource: 'settings-click-controlled-install',
       translationAdvertised: false
     },
     privacy: {

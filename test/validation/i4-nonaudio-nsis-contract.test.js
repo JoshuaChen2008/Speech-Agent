@@ -9,11 +9,16 @@ const test = require('node:test')
 
 const { PRODUCTION_MODEL_MANIFEST } = require('../../src/main/services/model-manifest')
 const {
+  CORE_ARTIFACTS,
+  REFINEMENT_ARTIFACTS,
   EXPECTED_ALLOWED_HOSTS,
   EXPECTED_LIMITATIONS,
-  EXPECTED_MODEL_BYTES,
+  EXPECTED_CORE_MODEL_BYTES,
+  EXPECTED_CORE_MODEL_FILE_COUNT,
   EXPECTED_MODEL_FILE_COUNT,
   EXPECTED_PRESERVATION_ENTRY_COUNT,
+  EXPECTED_REFINEMENT_MODEL_BYTES,
+  EXPECTED_REFINEMENT_MODEL_FILE_COUNT,
   TRACKED_FIXTURE_PATH,
   expectedMarkerDigest,
   readAndValidateI4NonAudioNsisReport,
@@ -38,7 +43,7 @@ function exportSet () {
 function validReport (layoutEvidence = readTrackedLayoutEvidence()) {
   const layout = layoutEvidence.layout
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: 'i4-nonaudio-nsis-qualification',
     generatedAt: '2026-08-01T00:00:00.000Z',
     result: 'pass',
@@ -70,36 +75,72 @@ function validReport (layoutEvidence = readTrackedLayoutEvidence()) {
       productPayloadSha256: layout.artifact.productPayloadSha256,
       productPayloadIdentitySource: 'tracked-b5-layout-installed-asar-binding',
       installedViaNsis: true,
-      releaseMain: 'src/main.js',
+      releaseMain: layout.artifact.mainEntry,
       signingStatus: layout.artifact.signingStatus,
       exactCandidateBound: true
     },
     firstLaunch: {
       harnessLaunchedBoundReleaseExecutable: true,
       operatorAttestedInteractiveInstall: true,
-      harnessVerifiedProductionReadyMarkers: true,
-      operatorAttestedPublicHttpsDownloadFromSettings: true,
+      harnessVerifiedCoreReadyMarkers: true,
+      harnessVerifiedCoreModelFilesPresent: true,
+      harnessVerifiedRefinementReadyMarkersAbsent: true,
+      harnessVerifiedRefinementModelFilesAbsent: true,
+      refinementPreferenceInitiallyDisabled: true,
+      operatorAttestedMissingRefinementPreferenceAttempted: true,
+      operatorAttestedMissingRefinementPreferenceStayedDisabled: true,
+      harnessVerifiedRefinementPreferenceDisabled: true,
+      operatorAttestedPublicHttpsCoreDownloadFromSettings: true,
       downloadHostReachabilityVerified: true,
       modelTransportEvidence: 'operator-attested-settings-public-https',
       manifestAllowedDownloadHosts: [...EXPECTED_ALLOWED_HOSTS],
-      downloadedBytesFromReadyMarkers: EXPECTED_MODEL_BYTES,
-      readyMarkerCount: 3,
-      modelArtifactCount: 3,
-      modelFileCount: EXPECTED_MODEL_FILE_COUNT,
-      harnessVerifiedModelFilesPresent: true,
+      coreDownloadedBytesFromReadyMarkers: EXPECTED_CORE_MODEL_BYTES,
+      coreReadyMarkerCount: CORE_ARTIFACTS.length,
+      coreModelArtifactCount: CORE_ARTIFACTS.length,
+      coreModelFileCount: EXPECTED_CORE_MODEL_FILE_COUNT,
+      refinementReadyMarkerCount: 0,
+      refinementModelFileCount: 0,
+      refinementNetworkAttemptCountAssessed: false,
       harnessVerifiedStagingClean: true,
-      operatorAttestedRuntimeReadyBeforeCapture: true,
+      operatorAttestedRuntimeCoreReadyBeforeCapture: true,
       operatorAttestedNoCaptureCommand: true,
       operatorAttestedNoMediaPermissionPrompt: true,
       harnessObservedNormalExit: true
+    },
+    refinementSetup: {
+      harnessLaunchedBoundReleaseExecutable: true,
+      harnessObservedRefinementDownloadNormalExit: true,
+      harnessObservedPreferenceEnableNormalExit: true,
+      operatorAttestedPublicHttpsRefinementDownloadFromSettings: true,
+      downloadHostReachabilityVerified: true,
+      modelTransportEvidence: 'operator-attested-settings-public-https',
+      manifestAllowedDownloadHosts: [...EXPECTED_ALLOWED_HOSTS],
+      harnessVerifiedCoreReadyMarkers: true,
+      harnessVerifiedRefinementReadyMarkers: true,
+      harnessVerifiedRefinementModelFilesPresent: true,
+      harnessVerifiedStagingClean: true,
+      refinementDownloadedBytesFromReadyMarkers: EXPECTED_REFINEMENT_MODEL_BYTES,
+      refinementReadyMarkerCount: REFINEMENT_ARTIFACTS.length,
+      refinementModelArtifactCount: REFINEMENT_ARTIFACTS.length,
+      refinementModelFileCount: EXPECTED_REFINEMENT_MODEL_FILE_COUNT,
+      operatorAttestedRefinementPreferenceStayedDisabledAfterDownload: true,
+      harnessVerifiedRefinementPreferenceDisabledAfterDownload: true,
+      operatorAttestedRefinementPreferenceExplicitlyEnabled: true,
+      harnessVerifiedRefinementPreferenceEnabled: true,
+      operatorAttestedNoCaptureCommand: true,
+      operatorAttestedNoMediaPermissionPrompt: true
     },
     offlineRestart: {
       downloadHostsUnreachableAtRestart: true,
       offlineControl: 'vm-host-vnic-disconnect',
       networkAttemptCountAssessed: false,
       harnessLaunchedBoundReleaseExecutable: true,
-      operatorAttestedModelReady: true,
-      readyMarkerCount: 3,
+      operatorAttestedCoreReady: true,
+      operatorAttestedRefinementReady: true,
+      operatorAttestedRefinementPreferenceEnabledAfterRestart: true,
+      harnessVerifiedRefinementPreferencePersisted: true,
+      coreReadyMarkerCount: CORE_ARTIFACTS.length,
+      refinementReadyMarkerCount: REFINEMENT_ARTIFACTS.length,
       operatorAttestedLegacySessionCount: 1,
       operatorAttestedNativeSaveDialogs: true,
       exportFormats: ['txt', 'md', 'srt'],
@@ -123,6 +164,8 @@ function validReport (layoutEvidence = readTrackedLayoutEvidence()) {
         sourceSha256: artifact.sha256,
         markerSha256: expectedMarkerDigest(artifact)
       })),
+      coreReadyMarkerCount: CORE_ARTIFACTS.length,
+      refinementReadyMarkerCount: REFINEMENT_ARTIFACTS.length,
       modelFileCount: EXPECTED_MODEL_FILE_COUNT,
       applicationDataWritten: true,
       preservationScope: 'config-sqlite-legacy-ready-markers-and-model-files',
@@ -136,7 +179,10 @@ function validReport (layoutEvidence = readTrackedLayoutEvidence()) {
       downloadHostsUnreachableAtReinstall: true,
       operatorAttestedInteractiveReinstall: true,
       reinstallExitCode: 0,
-      operatorAttestedModelReadyAfterReinstall: true,
+      operatorAttestedCoreReadyAfterReinstall: true,
+      operatorAttestedRefinementReadyAfterReinstall: true,
+      operatorAttestedRefinementPreferenceEnabledAfterReinstall: true,
+      harnessVerifiedRefinementPreferencePreservedAfterReinstall: true,
       operatorAttestedLegacySessionCountAfterReinstall: 1,
       harnessVerifiedSelectedDataPresentAfterReinstall: true,
       preservationManifestSha256AfterReinstall: '3'.repeat(64),
@@ -185,15 +231,30 @@ test('strict I4 non-audio report binds installed and reinstalled files but remai
   }, layoutEvidence), /installed files/)
   assert.throws(() => validateI4NonAudioNsisReport({
     ...report,
-    firstLaunch: { ...report.firstLaunch, operatorAttestedPublicHttpsDownloadFromSettings: false }
-  }, layoutEvidence), /operatorAttestedPublicHttpsDownloadFromSettings/)
+    firstLaunch: { ...report.firstLaunch, operatorAttestedPublicHttpsCoreDownloadFromSettings: false }
+  }, layoutEvidence), /operatorAttestedPublicHttpsCoreDownloadFromSettings/)
+  assert.throws(() => validateI4NonAudioNsisReport({
+    ...report,
+    firstLaunch: { ...report.firstLaunch, refinementReadyMarkerCount: 1 }
+  }, layoutEvidence), /core-resource evidence/)
+  assert.throws(() => validateI4NonAudioNsisReport({
+    ...report,
+    refinementSetup: {
+      ...report.refinementSetup,
+      harnessVerifiedRefinementPreferenceDisabledAfterDownload: false
+    }
+  }, layoutEvidence), /harnessVerifiedRefinementPreferenceDisabledAfterDownload/)
+  assert.throws(() => validateI4NonAudioNsisReport({
+    ...report,
+    refinementSetup: { ...report.refinementSetup, refinementModelFileCount: 0 }
+  }, layoutEvidence), /explicit refinement-resource evidence/)
   assert.throws(() => validateI4NonAudioNsisReport({
     ...report,
     firstLaunch: {
       ...report.firstLaunch,
       manifestAllowedDownloadHosts: report.firstLaunch.manifestAllowedDownloadHosts.slice(0, 2)
     }
-  }, layoutEvidence), /production-model evidence/)
+  }, layoutEvidence), /core-resource evidence/)
   assert.throws(() => validateI4NonAudioNsisReport({
     ...report,
     offlineRestart: { ...report.offlineRestart, networkAttemptCountAssessed: true }
@@ -225,7 +286,7 @@ test('I4 non-audio report reader rejects duplicate JSON keys', (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'i4-nonaudio-report-'))
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
   const reportPath = path.join(directory, 'duplicate.json')
-  fs.writeFileSync(reportPath, '{"schemaVersion":2,"schemaVersion":2}', 'utf8')
+  fs.writeFileSync(reportPath, '{"schemaVersion":3,"schemaVersion":3}', 'utf8')
   assert.throws(() => readAndValidateI4NonAudioNsisReport(reportPath), /duplicate object key/)
 })
 
@@ -239,7 +300,12 @@ test('dedicated-machine harness distinguishes observed checks from operator atte
   assert.match(source, /appAsarSha256/)
   assert.match(source, /Assert-AllDownloadHostsUnreachable/)
   for (const host of EXPECTED_ALLOWED_HOSTS) assert.match(source, new RegExp(host.replaceAll('.', '\\.')))
-  assert.match(source, /operatorAttestedPublicHttpsDownloadFromSettings/)
+  assert.match(source, /operatorAttestedPublicHttpsCoreDownloadFromSettings/)
+  assert.match(source, /REFINEMENT-DOWNLOAD-READY-NO-CAPTURE/)
+  assert.match(source, /REFINEMENT-PREFERENCE-ENABLED-NO-CAPTURE/)
+  assert.match(source, /Get-RefinementPreference/)
+  assert.match(source, /ExpectedCoreDownloadedBytes/)
+  assert.match(source, /ExpectedRefinementDownloadedBytes/)
   assert.match(source, /operatorAttestedLegacySessionCountAfterReinstall/)
   assert.match(source, /harnessVerifiedReinstallExportsMatch/)
   assert.match(source, /FIRST-LAUNCH-NO-CAPTURE/)
@@ -247,6 +313,7 @@ test('dedicated-machine harness distinguishes observed checks from operator atte
   assert.match(source, /REINSTALL-READY-NO-CAPTURE/)
   assert.match(source, /Get-AuthenticodeSignature/)
   assert.doesNotMatch(source, /applicationDataPreservedAfterUninstall|publicModelDownloadFromSettings/)
+  assert.doesNotMatch(source, /all three resources/)
   assert.doesNotMatch(source, /Stop-Process|taskkill|SendKeys|UIAutomation/)
   assert.doesNotMatch(source, /Start-Process[^\r\n]*(?:node|npm)|(?:^|\s)&\s*(?:node|npm)(?:\.exe)?(?:\s|$)/im)
 })

@@ -6,8 +6,250 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { parseStrictEvidenceJson } = require('./strict-evidence-json')
 
+const PRODUCT_SHELL_V2_JOURNEY_KEYS = Object.freeze([
+  'onboardingPreset',
+  'coreInstallClicked',
+  'coreInitialState',
+  'refinementInitialState',
+  'refinementPreferenceInitiallyDisabled',
+  'refinementPreferenceRejectedWhileMissing',
+  'refinementFetchAttemptCountBeforeExplicitDownload',
+  'coreObservedStates',
+  'coreRangeResumeObserved',
+  'coreReadyMarkerCount',
+  'refinementReadyMarkerCountBeforeExplicitDownload',
+  'coreHotActivation',
+  'refinementContinueRangeObserved',
+  'refinementExplicitDownloadReady',
+  'refinementReadyMarkerCount',
+  'refinementPreferenceStillDisabledAfterDownload',
+  'refinementPreferenceExplicitlyEnabled',
+  'rawSessionFrozenOriginal',
+  'futureSessionFrozenRefinementEnabled',
+  'refinementFaultSilentDuringSession',
+  'postSessionRefinementNoticeShown',
+  'refinementNoticeClearedByHistory',
+  'historyRefinementFaultVisible',
+  'startListeningStop',
+  'pauseResume',
+  'finalCaptionRendered',
+  'visibleCaptionMatchesFinal',
+  'captionFontApplied',
+  'downloadedModelSessionInHistory',
+  'terminalHistoryCount',
+  'legacyJsonlMigrated',
+  'legacySessionVisible',
+  'legacySourceReadOnly',
+  'longHistorySegmentCount',
+  'historyPageCount',
+  'historyPageSize',
+  'historyMaxTimelineNodes',
+  'historyReachedEnd',
+  'historyBackForwardNavigation',
+  'historyAriaRangeAligned',
+  'historyVersionStartsOriginal',
+  'historyRefinedVersionSelected',
+  'historyRefinedVersionPersistsAcrossPaging',
+  'historyRefinedExportHonored',
+  'historySessionChangeResetsOriginal',
+  'historyOriginalExportHonored',
+  'historyExportDialogCount',
+  'historyOriginalExportFormats',
+  'historyOriginalExportArtifactCount',
+  'historyOriginalExportFullSegmentCount',
+  'historyRefinedExportArtifactCount',
+  'historyRawOriginalExportArtifactCount',
+  'resourcesPaneOpenedFromToolbar',
+  'coreState',
+  'refinementState',
+  'resourceCount',
+  'coreReadinessSource',
+  'translationAdvertised'
+])
+
+const PRODUCT_SHELL_V3_JOURNEY_KEYS = Object.freeze([
+  'onboardingPreset',
+  'coreInstallClicked',
+  'coreInitialState',
+  'refinementInitialState',
+  'refinementPreferenceInitiallyDisabled',
+  'refinementPreferenceRejectedWhileMissing',
+  'refinementFetchAttemptCountBeforeExplicitDownload',
+  'coreObservedStates',
+  'coreRangeResumeObserved',
+  'coreReadyMarkerCount',
+  'refinementReadyMarkerCountBeforeExplicitDownload',
+  'coreHotActivation',
+  'refinementDownloadStartedBeforeCancellation',
+  'refinementCancellationClosedFetchStream',
+  'refinementCancellationRetainedPart',
+  'refinementReadyMarkerCount',
+  'rawSessionFrozenOriginal',
+  'startListeningStop',
+  'pauseResume',
+  'finalCaptionRendered',
+  'visibleCaptionMatchesFinal',
+  'captionFontApplied',
+  'downloadedModelSessionInHistory',
+  'terminalHistoryCount',
+  'legacyJsonlMigrated',
+  'legacySessionVisible',
+  'legacySourceReadOnly',
+  'longHistorySegmentCount',
+  'historyPageCount',
+  'historyPageSize',
+  'historyMaxTimelineNodes',
+  'historyReachedEnd',
+  'historyBackForwardNavigation',
+  'historyAriaRangeAligned',
+  'historyVersionStartsOriginal',
+  'historyRefinedVersionSelected',
+  'historyRefinedVersionPersistsAcrossPaging',
+  'historyRefinedExportHonored',
+  'historySessionChangeResetsOriginal',
+  'historyOriginalExportHonored',
+  'historyExportDialogCount',
+  'historyOriginalExportFormats',
+  'historyOriginalExportArtifactCount',
+  'historyOriginalExportFullSegmentCount',
+  'historyRefinedExportArtifactCount',
+  'historyRawOriginalExportArtifactCount',
+  'resourcesPaneOpenedFromToolbar',
+  'coreState',
+  'refinementState',
+  'resourceCount',
+  'coreReadinessSource',
+  'translationAdvertised'
+])
+
+function hasExactKeys (value, keys) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const actual = Object.keys(value).sort()
+  const expected = [...keys].sort()
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index])
+}
+
+function isExactArray (value, expected) {
+  return Array.isArray(value) && value.length === expected.length &&
+    value.every((item, index) => item === expected[index])
+}
+
+function validateProductShellV2Journey (journey) {
+  const requiredCoreStates = ['missing', 'downloading', 'verifying', 'ready']
+  const trueFields = [
+    'coreInstallClicked',
+    'refinementPreferenceInitiallyDisabled',
+    'refinementPreferenceRejectedWhileMissing',
+    'coreRangeResumeObserved',
+    'coreHotActivation',
+    'refinementContinueRangeObserved',
+    'refinementExplicitDownloadReady',
+    'refinementPreferenceStillDisabledAfterDownload',
+    'refinementPreferenceExplicitlyEnabled',
+    'rawSessionFrozenOriginal',
+    'futureSessionFrozenRefinementEnabled',
+    'refinementFaultSilentDuringSession',
+    'postSessionRefinementNoticeShown',
+    'refinementNoticeClearedByHistory',
+    'historyRefinementFaultVisible',
+    'startListeningStop',
+    'pauseResume',
+    'finalCaptionRendered',
+    'visibleCaptionMatchesFinal',
+    'captionFontApplied',
+    'downloadedModelSessionInHistory',
+    'legacyJsonlMigrated',
+    'legacySessionVisible',
+    'legacySourceReadOnly',
+    'historyReachedEnd',
+    'historyBackForwardNavigation',
+    'historyAriaRangeAligned',
+    'historyVersionStartsOriginal',
+    'historyRefinedVersionSelected',
+    'historyRefinedVersionPersistsAcrossPaging',
+    'historyRefinedExportHonored',
+    'historySessionChangeResetsOriginal',
+    'historyOriginalExportHonored',
+    'resourcesPaneOpenedFromToolbar'
+  ]
+  if (!hasExactKeys(journey, PRODUCT_SHELL_V2_JOURNEY_KEYS) ||
+      journey.onboardingPreset !== 'dictation' ||
+      journey.coreInitialState !== 'missing' || journey.refinementInitialState !== 'missing' ||
+      journey.refinementFetchAttemptCountBeforeExplicitDownload !== 0 ||
+      !isExactArray(journey.coreObservedStates, requiredCoreStates) ||
+      journey.coreReadyMarkerCount !== 2 || journey.refinementReadyMarkerCountBeforeExplicitDownload !== 0 ||
+      journey.refinementReadyMarkerCount !== 1 || journey.terminalHistoryCount !== 4 ||
+      journey.longHistorySegmentCount !== 205 || journey.historyPageCount !== 5 ||
+      journey.historyPageSize !== 50 || !Number.isSafeInteger(journey.historyMaxTimelineNodes) ||
+      journey.historyMaxTimelineNodes < 1 || journey.historyMaxTimelineNodes > 50 ||
+      journey.historyExportDialogCount !== 5 ||
+      !isExactArray(journey.historyOriginalExportFormats, ['txt', 'md', 'srt']) ||
+      journey.historyOriginalExportArtifactCount !== 3 || journey.historyOriginalExportFullSegmentCount !== 205 ||
+      journey.historyRefinedExportArtifactCount !== 1 || journey.historyRawOriginalExportArtifactCount !== 1 ||
+      journey.coreState !== 'ready' || journey.refinementState !== 'ready' || journey.resourceCount !== 3 ||
+      journey.coreReadinessSource !== 'settings-click-controlled-install' ||
+      journey.translationAdvertised !== false ||
+      trueFields.some((field) => journey[field] !== true)) {
+    throw new Error('product-shell v2 user journey evidence is incomplete')
+  }
+}
+
+function validateProductShellV3Journey (journey) {
+  const requiredCoreStates = ['missing', 'downloading', 'verifying', 'ready']
+  const trueFields = [
+    'coreInstallClicked',
+    'refinementPreferenceInitiallyDisabled',
+    'refinementPreferenceRejectedWhileMissing',
+    'coreRangeResumeObserved',
+    'coreHotActivation',
+    'refinementDownloadStartedBeforeCancellation',
+    'refinementCancellationClosedFetchStream',
+    'refinementCancellationRetainedPart',
+    'rawSessionFrozenOriginal',
+    'startListeningStop',
+    'pauseResume',
+    'finalCaptionRendered',
+    'visibleCaptionMatchesFinal',
+    'captionFontApplied',
+    'downloadedModelSessionInHistory',
+    'legacyJsonlMigrated',
+    'legacySessionVisible',
+    'legacySourceReadOnly',
+    'historyReachedEnd',
+    'historyBackForwardNavigation',
+    'historyAriaRangeAligned',
+    'historyVersionStartsOriginal',
+    'historyRefinedVersionSelected',
+    'historyRefinedVersionPersistsAcrossPaging',
+    'historyRefinedExportHonored',
+    'historySessionChangeResetsOriginal',
+    'historyOriginalExportHonored',
+    'resourcesPaneOpenedFromToolbar'
+  ]
+  if (!hasExactKeys(journey, PRODUCT_SHELL_V3_JOURNEY_KEYS) ||
+      journey.onboardingPreset !== 'dictation' ||
+      journey.coreInitialState !== 'missing' || journey.refinementInitialState !== 'missing' ||
+      journey.refinementFetchAttemptCountBeforeExplicitDownload !== 0 ||
+      !isExactArray(journey.coreObservedStates, requiredCoreStates) ||
+      journey.coreReadyMarkerCount !== 2 || journey.refinementReadyMarkerCountBeforeExplicitDownload !== 0 ||
+      journey.refinementReadyMarkerCount !== 0 || journey.terminalHistoryCount !== 3 ||
+      journey.longHistorySegmentCount !== 205 || journey.historyPageCount !== 5 ||
+      journey.historyPageSize !== 50 || !Number.isSafeInteger(journey.historyMaxTimelineNodes) ||
+      journey.historyMaxTimelineNodes < 1 || journey.historyMaxTimelineNodes > 50 ||
+      journey.historyExportDialogCount !== 5 ||
+      !isExactArray(journey.historyOriginalExportFormats, ['txt', 'md', 'srt']) ||
+      journey.historyOriginalExportArtifactCount !== 3 || journey.historyOriginalExportFullSegmentCount !== 205 ||
+      journey.historyRefinedExportArtifactCount !== 1 || journey.historyRawOriginalExportArtifactCount !== 1 ||
+      journey.coreState !== 'ready' || journey.refinementState !== 'missing' || journey.resourceCount !== 3 ||
+      journey.coreReadinessSource !== 'settings-click-controlled-install' ||
+      journey.translationAdvertised !== false ||
+      trueFields.some((field) => journey[field] !== true)) {
+    throw new Error('product-shell v3 user journey evidence is incomplete')
+  }
+}
+
 function validateProductShellReport (report) {
-  if (!report || report.schemaVersion !== 1 || report.kind !== 'product-shell-smoke') {
+  if (!report || ![1, 2, 3].includes(report.schemaVersion) || report.kind !== 'product-shell-smoke') {
     throw new Error('invalid product-shell report envelope')
   }
   if (report.result !== 'pass' || report.gateStatus !== 'partial') {
@@ -19,7 +261,7 @@ function validateProductShellReport (report) {
   }
   const journey = report.journey || {}
   const requiredModelStates = ['missing', 'downloading', 'verifying', 'ready']
-  if (journey.onboardingPreset !== 'dictation' ||
+  if (report.schemaVersion === 1 && (journey.onboardingPreset !== 'dictation' ||
       journey.modelInstallClicked !== true ||
       journey.modelInitialState !== 'missing' ||
       !Array.isArray(journey.modelObservedStates) ||
@@ -52,9 +294,11 @@ function validateProductShellReport (report) {
       journey.resourcesPaneOpenedFromToolbar !== true ||
       journey.modelState !== 'ready' || journey.resourceCount !== 3 ||
       journey.modelReadinessSource !== 'settings-click-controlled-install' ||
-      journey.translationAdvertised !== false) {
+      journey.translationAdvertised !== false)) {
     throw new Error('product-shell user journey evidence is incomplete')
   }
+  if (report.schemaVersion === 2) validateProductShellV2Journey(journey)
+  if (report.schemaVersion === 3) validateProductShellV3Journey(journey)
   if (report.privacy?.physicalAudioSourceOpened !== false ||
       report.privacy?.audioPersisted !== false ||
       report.privacy?.transcriptTextPersistedInReport !== false ||
@@ -105,6 +349,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  PRODUCT_SHELL_V2_JOURNEY_KEYS,
+  PRODUCT_SHELL_V3_JOURNEY_KEYS,
   readAndValidateProductShellReport,
   validateProductShellReport
 }

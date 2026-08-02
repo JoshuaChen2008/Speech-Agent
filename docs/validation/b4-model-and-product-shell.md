@@ -99,13 +99,13 @@ UI/安装/持久化接线，**不能**证明真实张量推理、真实 GitHub �
 ## B5 打包态补证
 
 B5 使用与正式包相同的 ASAR、native unpack 与 Electron fuse 布局，从真实 packaged
-test executable 重跑设置点击、Range 续传、三资源 marker、热启用、字幕、暂停/恢复、
-停止、旧 JSONL 迁移、SQLite 历史、205 段分页与三格式导出，并从同一 userData 做第二次
-完全离线启动；另在两次 packaged utility 中实际加载 sherpa addon/DLL，
+test executable 重跑核心 ASR+VAD 两 marker 安装、精修独立 `.part` Range 继续与一 marker、
+显式偏好、会话冻结、故障回退/工具条会话状态通知、旧 JSONL 迁移、SQLite 历史、会话 A 精修版跨页/导出
+再切换会话 B 自动原始版/导出，并从同一 `userData` 做第二次完全离线启动；另在两次 packaged utility 中实际加载 sherpa addon/DLL，
 并对 ASAR 中的 storage utility 执行完整 DB0 资格检查。独立 exact-child 证据为
 `clean-exit`、incident `0`、未观察到 breakpoint。正式 x64 ASAR/NSIS 也已通过内容负扫描、
-精确 SHA `4a1deb35…2449dd` 绑定与隔离安装/卸载机械资格；同一 run ID、四份报告 SHA 与
-112 文件产品载荷 SHA `503a40df…b93d` 另由 B5 binding 报告闭合，卸载后隔离 APPDATA 中
+精确 SHA `4abc23bc…b31de` 绑定与隔离安装/卸载机械资格；同一 run ID、四份报告 SHA 与
+114 文件产品载荷 SHA `b6503ca2…a0bbd` 另由 B5 binding 报告闭合，卸载后隔离 APPDATA 中
 与应用无关的固定哨兵 SHA 不变；正式应用未启动，因此不证明真实 userData。该候选未签名，打包旅程是明示的测试
 variant，不是从精确 NSIS 安装后启动；所以只关闭 B5，不关闭 I4。完整证据见
 [B5 打包态确定性资格](b5-packaging.md)。

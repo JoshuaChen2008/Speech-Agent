@@ -25,10 +25,10 @@ const path = require('node:path')
 
 const CHANNELS = require('../src/main/ipc/channels')
 const { DEFAULT_CONFIG } = require('../src/main/services/config-store')
-const { assertCaptionEvent } = require('../src/contracts')
+const { assertCaptionEvent, assertCaptionViewportEviction } = require('../src/contracts')
 
 const ROOT = path.resolve(__dirname, '..')
-const SCHEMA = 'caption-layout-report@v1'
+const SCHEMA = 'caption-layout-report@v2'
 const FONT_SIZES = Object.freeze([24, 30, 38])
 
 /* 语料只用于制造溢出，不进报告。四类分别针对不同的断行规则：
@@ -48,6 +48,8 @@ const PROVENANCE_FILES = Object.freeze({
   captionMarkupSha256: 'src/caption/index.html',
   captionRendererSha256: 'src/caption/caption.js',
   captionStyleSha256: 'src/caption/caption.css',
+  captionStateContractSha256: 'src/contracts/caption-state.js',
+  ipcChannelsSha256: 'src/main/ipc/channels.js',
   preloadSha256: 'src/preload/caption.js',
   reducerSha256: 'src/ui/shared/caption-reducer.js',
   runnerSha256: 'scripts/caption-layout-smoke.js',
@@ -153,12 +155,26 @@ async function main () {
   await app.whenReady()
 
   let config = { ...DEFAULT_CONFIG, systemDark: true }
-  const intents = { mouseThrough: 0, dragStart: 0, dragEnd: 0, resizeStart: 0, resizeEnd: 0 }
+  const intents = {
+    captionViewportEviction: 0,
+    mouseThrough: 0,
+    dragStart: 0,
+    dragEnd: 0,
+    resizeStart: 0,
+    resizeEnd: 0
+  }
+  const viewportEvictions = []
 
   ipcMain.handle(CHANNELS.LOCK_GET, () => false)
   ipcMain.handle(CHANNELS.CONFIG_GET, () => config)
   /* 空闲状态：没有历史字幕可水合，renderer 从零开始。 */
   ipcMain.handle(CHANNELS.CAPTION_STATE_GET, () => null)
+  ipcMain.handle(CHANNELS.CAPTION_VIEWPORT_EVICT, (_event, report) => {
+    const accepted = structuredClone(assertCaptionViewportEviction(report))
+    viewportEvictions.push(accepted)
+    intents.captionViewportEviction += 1
+    return true
+  })
   ipcMain.on(CHANNELS.MOUSE_THROUGH, () => { intents.mouseThrough += 1 })
   ipcMain.on(CHANNELS.DRAG_START, () => { intents.dragStart += 1 })
   ipcMain.on(CHANNELS.DRAG_END, () => { intents.dragEnd += 1 })
@@ -291,8 +307,23 @@ async function main () {
   for (let step = 1; step <= GROWTH_STEPS; step += 1) {
     emit({ sessionId: crossSession, segmentId: 'segment-2', revision: step, kind: 'partial', t0: 1000, t1: 1000 + step * 500, text: grow('zh', step) })
   }
+  await win.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
   const afterSecondGrows = await measure()
   cases.push({ id: 'cross-segment@30', textKind: 'zh', ...afterSecondGrows })
+
+  /* 已整段离场的 segment-1 即使收到更短的迟到精修，也不能重新出现在 flow。 */
+  const beforeLateAmendment = await flowDigest()
+  emit({
+    sessionId: crossSession,
+    segmentId: 'segment-1',
+    revision: 2,
+    kind: 'refined',
+    t0: 0,
+    t1: 1000,
+    text: '短'
+  })
+  await win.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+  const afterLateAmendment = await flowDigest()
 
   /* ---- 停顿：没有新事件时字幕必须原样保留 ---- */
   const pausedBefore = await flowDigest()
@@ -317,7 +348,13 @@ async function main () {
       Math.max(...cases.filter((item) => item.id.endsWith('@38')).map((item) => item.visibleLines)),
     rewriteKeepsFullHypothesis: afterRewrite.textLength === rewrittenText.length,
     rewriteDidNotGrowContent: afterRewrite.contentPx <= beforeRewrite.contentPx,
-    crossSegmentKeepsBothSegments: afterFirstFinal.nodeCount === 1 && afterSecondGrows.nodeCount === 2,
+    crossSegmentKeepsCurrentSegment:
+      afterFirstFinal.nodeCount === 1 &&
+      afterSecondGrows.nodeCount === 1 &&
+      afterSecondGrows.textLength === grow('zh', GROWTH_STEPS).length,
+    fullyClippedPrefixReported: viewportEvictions.some((report) =>
+      report.sessionId === crossSession && report.throughSegmentId === 'segment-1'),
+    lateAmendmentDoesNotRevive: beforeLateAmendment === afterLateAmendment,
     pauseRetainsCaptions: pausedBefore === pausedAfter,
     noWindowResizeRequested: intents.resizeStart === 0 && intents.resizeEnd === 0,
     noWindowDragRequested: intents.dragStart === 0 && intents.dragEnd === 0

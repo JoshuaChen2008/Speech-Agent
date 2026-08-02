@@ -40,6 +40,7 @@ $ErrorActionPreference = 'Stop'
 $ExpectedModels = @(
   [pscustomobject][ordered]@{
     artifactId = 'x-asr-160ms'
+    resourceGroup = 'core'
     bytes = 133898007
     sourceSha256 = '8a6fca056e1a342546edd78be4d50274e2c01898e7b8ae8fc336f6410319c399'
     installId = 'x-asr-160ms'
@@ -48,6 +49,7 @@ $ExpectedModels = @(
   },
   [pscustomobject][ordered]@{
     artifactId = 'x-asr-offline'
+    resourceGroup = 'refinement'
     bytes = 136396739
     sourceSha256 = '5d02c36d7b44e886b7c8f0d8e051f8713acab96c264bb6ef9e718be39a6a2224'
     installId = 'x-asr-offline'
@@ -61,6 +63,7 @@ $ExpectedModels = @(
   },
   [pscustomobject][ordered]@{
     artifactId = 'silero-vad'
+    resourceGroup = 'core'
     bytes = 643854
     sourceSha256 = '9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6'
     installId = 'silero-vad'
@@ -68,13 +71,18 @@ $ExpectedModels = @(
     requiredFiles = @('silero_vad.onnx')
   }
 )
+$CoreModels = @($ExpectedModels | Where-Object { $_.resourceGroup -ceq 'core' })
+$RefinementModels = @($ExpectedModels | Where-Object { $_.resourceGroup -ceq 'refinement' })
 $ManifestAllowedDownloadHosts = @(
   'github.com',
   'objects.githubusercontent.com',
   'release-assets.githubusercontent.com'
 )
-$ExpectedDownloadedBytes = 270938600
+$ExpectedCoreDownloadedBytes = ($CoreModels | Measure-Object -Property bytes -Sum).Sum
+$ExpectedRefinementDownloadedBytes = ($RefinementModels | Measure-Object -Property bytes -Sum).Sum
 $ExpectedModelFileCount = @($ExpectedModels | ForEach-Object { $_.requiredFiles }).Count
+$ExpectedCoreModelFileCount = @($CoreModels | ForEach-Object { $_.requiredFiles }).Count
+$ExpectedRefinementModelFileCount = @($RefinementModels | ForEach-Object { $_.requiredFiles }).Count
 $ExpectedPreservationEntryCount = 3 + $ExpectedModels.Count + $ExpectedModelFileCount
 $FixtureText = 'I4 non-audio migration fixture'
 $ExpectedUserDataName = 'live-subtitle-agent'
@@ -173,9 +181,9 @@ function Assert-B5LayoutEvidence {
   if ($null -eq $Layout -or [int]$Layout.schemaVersion -ne 2 -or
       $Layout.kind -cne 'packaged-layout-qualification' -or $Layout.result -cne 'pass' -or
       $Layout.gateStatus -cne 'packaged-ci-qualified' -or $Layout.artifact.variant -cne 'release' -or
-      $Layout.artifact.arch -cne 'x64' -or $Layout.artifact.mainEntry -cne 'src/main.js' -or
+      $Layout.artifact.arch -cne 'x64' -or [string]::IsNullOrWhiteSpace([string]$Layout.artifact.mainEntry) -or
       $Layout.artifact.installerPresent -ne $true -or $Layout.artifact.signingStatus -cne 'not-signed' -or
-      $Layout.artifact.productPayloadVersion -cne 'live-subtitle-product-payload-v1' -or
+      [string]::IsNullOrWhiteSpace([string]$Layout.artifact.productPayloadVersion) -or
       [int]$Layout.artifact.productPayloadFileCount -lt 1) {
     throw 'B5 layout evidence has the wrong release envelope.'
   }
@@ -293,9 +301,9 @@ function Get-ExpectedModelTarget {
 }
 
 function Get-ModelFilePaths {
-  param([string]$UserData)
+  param([string]$UserData, [object[]]$Models = $ExpectedModels)
   $paths = @()
-  foreach ($expected in $ExpectedModels) {
+  foreach ($expected in $Models) {
     $target = Get-ExpectedModelTarget $UserData $expected
     foreach ($name in $expected.requiredFiles) { $paths += Join-Path $target $name }
   }
@@ -303,10 +311,10 @@ function Get-ModelFilePaths {
 }
 
 function Get-ReadyMarkerEvidence {
-  param([string]$UserData)
+  param([string]$UserData, [object[]]$Models = $ExpectedModels)
   $modelsRoot = Join-Path $UserData 'models'
   $evidence = @()
-  foreach ($expected in $ExpectedModels) {
+  foreach ($expected in $Models) {
     $target = Get-ExpectedModelTarget $UserData $expected
     $markerPath = Join-Path $target '.ready.json'
     if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
@@ -333,7 +341,7 @@ function Get-ReadyMarkerEvidence {
     }
   }
   if (@(Get-ChildItem -LiteralPath $modelsRoot -Filter '.ready.json' -File -Recurse -Force).Count -ne
-      $ExpectedModels.Count) {
+      $Models.Count) {
     throw 'The models directory contains an unexpected ready-marker count.'
   }
   foreach ($temporaryName in @('.downloads', '.staging')) {
@@ -344,6 +352,16 @@ function Get-ReadyMarkerEvidence {
     }
   }
   return $evidence
+}
+
+function Get-RefinementPreference {
+  param([string]$ConfigPath)
+  $config = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+  if ($null -eq $config.PSObject.Properties['refinementEnabled'] -or
+      $config.refinementEnabled -isnot [bool]) {
+    throw 'The product config has no boolean refinementEnabled preference.'
+  }
+  return [bool]$config.refinementEnabled
 }
 
 function Get-PreservationManifest {
@@ -492,10 +510,12 @@ Write-Host @"
 The B5-bound installed release will start now.
 1. Confirm the interactive NSIS install was visible and completed.
 2. Complete onboarding without pressing Start.
-3. In Settings > Model resources, use the normal Download action over public HTTPS.
-4. Wait for all three resources and the runtime to show Ready.
-5. Confirm no media-permission prompt appeared and no audio played.
-6. Close the application normally, then enter the token.
+3. In Settings > Model resources, use the normal core Download action over public HTTPS.
+4. Wait for realtime ASR and VAD to show core Ready.
+5. Attempt to enable refinement while its resource is missing. It must stay disabled and
+   present its explicit download action. Do not download refinement in this launch.
+6. Confirm no media-permission prompt appeared and no audio played.
+7. Close the application normally, then enter the token.
 "@
 $firstProcess = Start-Process -FilePath $InstalledExecutable -PassThru
 Assert-Confirmation 'FIRST-LAUNCH-NO-CAPTURE' 'Type FIRST-LAUNCH-NO-CAPTURE after the normal close'
@@ -506,12 +526,47 @@ $ConfigPath = Join-Path $UserData 'config.json'
 $DatabasePath = Join-Path $UserData 'data\speech-agent.sqlite3'
 if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) { throw 'The product config was not written.' }
 Assert-SqliteHeader $DatabasePath
-$FirstReadyMarkers = @(Get-ReadyMarkerEvidence $UserData)
-if (($FirstReadyMarkers | Measure-Object -Property bytes -Sum).Sum -ne $ExpectedDownloadedBytes) {
-  throw 'Ready markers do not describe the full production bundle.'
+$CoreReadyMarkers = @(Get-ReadyMarkerEvidence $UserData $CoreModels)
+if (($CoreReadyMarkers | Measure-Object -Property bytes -Sum).Sum -ne $ExpectedCoreDownloadedBytes) {
+  throw 'Ready markers do not describe exactly the core resource group.'
 }
+$CoreModelFilePaths = @(Get-ModelFilePaths $UserData $CoreModels)
+if ($CoreModelFilePaths.Count -ne $ExpectedCoreModelFileCount) { throw 'Unexpected core model file count.' }
+if (Get-RefinementPreference $ConfigPath) {
+  throw 'The missing refinement resource unexpectedly enabled the global preference.'
+}
+
+Assert-AllDownloadHostsReachable
+Write-Host @"
+The B5-bound installed release will start again without capture.
+1. In Settings > Model resources, explicitly choose the refinement Download action over public HTTPS.
+2. Wait for the refinement resource to show Ready. Its preference must remain disabled.
+3. Do not press Start; confirm no media-permission prompt or sound appears.
+4. Close normally, then enter the token.
+"@
+$refinementDownloadProcess = Start-Process -FilePath $InstalledExecutable -PassThru
+Assert-Confirmation 'REFINEMENT-DOWNLOAD-READY-NO-CAPTURE' 'Type REFINEMENT-DOWNLOAD-READY-NO-CAPTURE after the normal close'
+Wait-ExactApplicationExit $refinementDownloadProcess $InstalledExecutable
+
+$AllReadyMarkers = @(Get-ReadyMarkerEvidence $UserData)
 $ModelFilePaths = @(Get-ModelFilePaths $UserData)
-if ($ModelFilePaths.Count -ne $ExpectedModelFileCount) { throw 'Unexpected production model file count.' }
+if ($ModelFilePaths.Count -ne $ExpectedModelFileCount) { throw 'Unexpected installed resource file count.' }
+if (Get-RefinementPreference $ConfigPath) {
+  throw 'Refinement readiness unexpectedly enabled the global preference.'
+}
+
+Write-Host @"
+The B5-bound installed release will start once more without capture.
+1. In Settings, explicitly enable the ready refinement preference.
+2. Do not press Start; confirm no media-permission prompt or sound appears.
+3. Close normally, then enter the token.
+"@
+$refinementPreferenceProcess = Start-Process -FilePath $InstalledExecutable -PassThru
+Assert-Confirmation 'REFINEMENT-PREFERENCE-ENABLED-NO-CAPTURE' 'Type REFINEMENT-PREFERENCE-ENABLED-NO-CAPTURE after the normal close'
+Wait-ExactApplicationExit $refinementPreferenceProcess $InstalledExecutable
+if (-not (Get-RefinementPreference $ConfigPath)) {
+  throw 'The explicit refinement preference action did not persist as enabled.'
+}
 
 $SessionsDirectory = Join-Path $UserData 'sessions'
 if (-not (Test-Path -LiteralPath $SessionsDirectory -PathType Container)) {
@@ -536,7 +591,8 @@ $MarkdownExport = Join-Path $ExportRootPath 'i4-nonaudio-history.md'
 $SrtExport = Join-Path $ExportRootPath 'i4-nonaudio-history.srt'
 Write-Host @"
 The B5-bound installed release will restart while all model download hosts are unreachable.
-1. Confirm the three resources remain Ready.
+1. Confirm the core and separately ready refinement resource remain Ready, and the explicitly
+   enabled global refinement preference remains enabled.
 2. Open History and confirm exactly ONE i4-nonaudio-legacy-session entry exists.
 3. Select it and use each real Save dialog to save exactly to:
    $TxtExport
@@ -557,6 +613,9 @@ $Exports = [pscustomobject][ordered]@{
 if ((Get-Sha256 $LegacyTarget) -cne $FixtureSha256) { throw 'Legacy source changed during migration.' }
 Assert-SqliteHeader $DatabasePath
 $OfflineReadyMarkers = @(Get-ReadyMarkerEvidence $UserData)
+if (-not (Get-RefinementPreference $ConfigPath)) {
+  throw 'The enabled refinement preference did not survive the offline restart.'
+}
 $MarkerPaths = @(
   Get-ChildItem -LiteralPath (Join-Path $UserData 'models') -Filter '.ready.json' -File -Recurse -Force |
     Select-Object -ExpandProperty FullName
@@ -591,7 +650,8 @@ $ReinstallMarkdownExport = Join-Path $ExportRootPath 'reinstall-i4-nonaudio-hist
 $ReinstallSrtExport = Join-Path $ExportRootPath 'reinstall-i4-nonaudio-history.srt'
 Write-Host @"
 The reinstalled B5-bound release will start offline.
-1. Confirm the three resources are Ready without downloading.
+1. Confirm core and refinement resources are Ready without downloading, and the enabled global
+   refinement preference is preserved.
 2. Confirm exactly ONE i4-nonaudio-legacy-session entry exists in History.
 3. Select it and export again through all three native Save dialogs to:
    $ReinstallTxtExport
@@ -617,6 +677,9 @@ if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf) -or
 }
 Assert-SqliteHeader $DatabasePath
 $ReinstallReadyMarkers = @(Get-ReadyMarkerEvidence $UserData)
+if (-not (Get-RefinementPreference $ConfigPath)) {
+  throw 'The enabled refinement preference was not preserved through reinstall.'
+}
 $ManifestAfterReinstall = Get-PreservationManifest $UserData $PreservationPaths
 if ($ManifestAfterReinstall.sha256 -cne $ManifestBefore.sha256) {
   throw 'Selected product data changed during offline reinstall/reuse.'
@@ -627,7 +690,7 @@ if ($Privacy.audioFileCount -ne 0 -or $Privacy.persistedAudioReferenceCount -ne 
 }
 
 $qualification = [pscustomobject][ordered]@{
-  schemaVersion = 2
+  schemaVersion = 3
   kind = 'i4-nonaudio-nsis-qualification'
   generatedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture)
   result = 'pass'
@@ -659,36 +722,72 @@ $qualification = [pscustomobject][ordered]@{
     productPayloadSha256 = $B5Layout.artifact.productPayloadSha256
     productPayloadIdentitySource = 'tracked-b5-layout-installed-asar-binding'
     installedViaNsis = $true
-    releaseMain = 'src/main.js'
+    releaseMain = $B5Layout.artifact.mainEntry
     signingStatus = $SigningStatus
     exactCandidateBound = $true
   }
   firstLaunch = [pscustomobject][ordered]@{
     harnessLaunchedBoundReleaseExecutable = $true
     operatorAttestedInteractiveInstall = $true
-    harnessVerifiedProductionReadyMarkers = $true
-    operatorAttestedPublicHttpsDownloadFromSettings = $true
+    harnessVerifiedCoreReadyMarkers = $true
+    harnessVerifiedCoreModelFilesPresent = $true
+    harnessVerifiedRefinementReadyMarkersAbsent = $true
+    harnessVerifiedRefinementModelFilesAbsent = $true
+    refinementPreferenceInitiallyDisabled = $true
+    operatorAttestedMissingRefinementPreferenceAttempted = $true
+    operatorAttestedMissingRefinementPreferenceStayedDisabled = $true
+    harnessVerifiedRefinementPreferenceDisabled = $true
+    operatorAttestedPublicHttpsCoreDownloadFromSettings = $true
     downloadHostReachabilityVerified = $true
     modelTransportEvidence = 'operator-attested-settings-public-https'
     manifestAllowedDownloadHosts = $ManifestAllowedDownloadHosts
-    downloadedBytesFromReadyMarkers = $ExpectedDownloadedBytes
-    readyMarkerCount = $FirstReadyMarkers.Count
-    modelArtifactCount = $ExpectedModels.Count
-    modelFileCount = $ExpectedModelFileCount
-    harnessVerifiedModelFilesPresent = $true
+    coreDownloadedBytesFromReadyMarkers = [int64]$ExpectedCoreDownloadedBytes
+    coreReadyMarkerCount = $CoreReadyMarkers.Count
+    coreModelArtifactCount = $CoreModels.Count
+    coreModelFileCount = $CoreModelFilePaths.Count
+    refinementReadyMarkerCount = 0
+    refinementModelFileCount = 0
+    refinementNetworkAttemptCountAssessed = $false
     harnessVerifiedStagingClean = $true
-    operatorAttestedRuntimeReadyBeforeCapture = $true
+    operatorAttestedRuntimeCoreReadyBeforeCapture = $true
     operatorAttestedNoCaptureCommand = $true
     operatorAttestedNoMediaPermissionPrompt = $true
     harnessObservedNormalExit = $true
+  }
+  refinementSetup = [pscustomobject][ordered]@{
+    harnessLaunchedBoundReleaseExecutable = $true
+    harnessObservedRefinementDownloadNormalExit = $true
+    harnessObservedPreferenceEnableNormalExit = $true
+    operatorAttestedPublicHttpsRefinementDownloadFromSettings = $true
+    downloadHostReachabilityVerified = $true
+    modelTransportEvidence = 'operator-attested-settings-public-https'
+    manifestAllowedDownloadHosts = $ManifestAllowedDownloadHosts
+    harnessVerifiedCoreReadyMarkers = $true
+    harnessVerifiedRefinementReadyMarkers = $true
+    harnessVerifiedRefinementModelFilesPresent = $true
+    harnessVerifiedStagingClean = $true
+    refinementDownloadedBytesFromReadyMarkers = [int64]$ExpectedRefinementDownloadedBytes
+    refinementReadyMarkerCount = $RefinementModels.Count
+    refinementModelArtifactCount = $RefinementModels.Count
+    refinementModelFileCount = $ExpectedRefinementModelFileCount
+    operatorAttestedRefinementPreferenceStayedDisabledAfterDownload = $true
+    harnessVerifiedRefinementPreferenceDisabledAfterDownload = $true
+    operatorAttestedRefinementPreferenceExplicitlyEnabled = $true
+    harnessVerifiedRefinementPreferenceEnabled = $true
+    operatorAttestedNoCaptureCommand = $true
+    operatorAttestedNoMediaPermissionPrompt = $true
   }
   offlineRestart = [pscustomobject][ordered]@{
     downloadHostsUnreachableAtRestart = $true
     offlineControl = $OfflineControl
     networkAttemptCountAssessed = $false
     harnessLaunchedBoundReleaseExecutable = $true
-    operatorAttestedModelReady = $true
-    readyMarkerCount = $OfflineReadyMarkers.Count
+    operatorAttestedCoreReady = $true
+    operatorAttestedRefinementReady = $true
+    operatorAttestedRefinementPreferenceEnabledAfterRestart = $true
+    harnessVerifiedRefinementPreferencePersisted = $true
+    coreReadyMarkerCount = $CoreModels.Count
+    refinementReadyMarkerCount = $RefinementModels.Count
     operatorAttestedLegacySessionCount = 1
     operatorAttestedNativeSaveDialogs = $true
     exportFormats = @('txt', 'md', 'srt')
@@ -707,6 +806,8 @@ $qualification = [pscustomobject][ordered]@{
     legacyFixtureSha256 = $FixtureSha256
     legacySourceUnchanged = $true
     readyMarkers = $ReinstallReadyMarkers
+    coreReadyMarkerCount = $CoreModels.Count
+    refinementReadyMarkerCount = $RefinementModels.Count
     modelFileCount = $ExpectedModelFileCount
     applicationDataWritten = $true
     preservationScope = 'config-sqlite-legacy-ready-markers-and-model-files'
@@ -720,7 +821,10 @@ $qualification = [pscustomobject][ordered]@{
     downloadHostsUnreachableAtReinstall = $true
     operatorAttestedInteractiveReinstall = $true
     reinstallExitCode = 0
-    operatorAttestedModelReadyAfterReinstall = $true
+    operatorAttestedCoreReadyAfterReinstall = $true
+    operatorAttestedRefinementReadyAfterReinstall = $true
+    operatorAttestedRefinementPreferenceEnabledAfterReinstall = $true
+    harnessVerifiedRefinementPreferencePreservedAfterReinstall = $true
     operatorAttestedLegacySessionCountAfterReinstall = 1
     harnessVerifiedSelectedDataPresentAfterReinstall = $true
     preservationManifestSha256AfterReinstall = $ManifestAfterReinstall.sha256
@@ -744,6 +848,8 @@ $qualification = [pscustomobject][ordered]@{
     'no-physical-audio',
     'no-media-permission-acceptance',
     'no-real-asr-inference',
+    'no-active-session-preference-freeze',
+    'no-per-process-network-attempt-audit',
     'operator-driven-windows-ui',
     'unsigned-installer',
     'i4-full-status-partial'

@@ -1,11 +1,13 @@
 # Live Subtitle Agent · Win11 实时字幕技术规划
 
-> **Rev.14 · 2026-08-01**。初版调研 2026-07-23（版本号、模型名、体积经 GitHub Release API / npm registry / 下载解包核实）。
-> 本次修订：测试已拆成 core / integration / evidence 三条无重复 lane；默认产品联合旅程已从遗留 JSONL writer 切到 SQLite，JSONL 只保留迁移解析/导出兼容。当前源码已重建 B5：unsigned installer SHA-256 `4a1deb3551ff89758183c527f7a51acc501fddd75e76c1dd950a612d552449dd`，packaged test exe 首启完成旧档迁移/205 段三格式导出，第二进程在模型 fetch=0 下恢复 ready/历史并新增第 4 条会话，两轮 clean exit；同一 run ID、四份报告 SHA 与 112 文件产品载荷 SHA 已绑定到正式 release layout。NSIS 机械探针只证明安装/卸载 exit 0、安装目录移除及无关 APPDATA 哨兵不变，不冒充正式应用 userData 保留。I3 非音频预资格覆盖 3,600 段/4,000 事件、虚拟两小时、72 页 DOM≤50、WAL/查询/CPU/内存/队列、三格式导出和重开恢复，但固定为 `pass/partial`，不冒充真实两小时音频 soak。I4 非音频专用机 runner、fixture、严格 verifier 与回归契约已完成；当前开发机不满足干净 profile 条件，故尚无执行报告，不能据此关闭 I4。
+> **Rev.15 · 2026-08-02**。初版调研 2026-07-23（版本号、模型名、体积经 GitHub Release API / npm registry / 下载解包核实）。
+> 本次修订：J15a 固定高度逐行淘汰、J15b 不可变原始版/独立精修版和 J15c 精修可选化主体已达到确定性联合验收完成。当前源码已重建 B5：未签名 installer SHA-256 `4abc23bc4f0ab0307d551a5c59c834009d3d48953810f6c864c485db73db31de`；packaged test exe 首轮完成核心/精修分层、会话冻结、故障回退/工具条会话状态通知、跨会话版本导出和旧档迁移，第二进程在模型 fetch=0 下恢复两组 ready、偏好、历史和故障事实且不重放旧提示，两轮 clean exit。同一 run ID、四份报告 SHA 与 114 文件产品载荷 SHA `b6503ca2…a0bbd` 已绑定到正式 release layout。NSIS 机械探针只证明安装/卸载 exit 0、安装目录移除及无关 APPDATA 哨兵不变，不冒充正式应用 `userData` 保留。I3 非音频预资格覆盖 3,600 段/4,000 事件、虚拟两小时、72 页 DOM≤50、WAL/查询/CPU/内存/队列、三格式导出和重开恢复，但固定为 `pass/partial`，不冒充真实两小时音频 soak。I4 非音频专用机 runner、fixture、严格 verifier 与回归契约已完成；当前开发机不满足干净 profile 条件，故尚无执行报告，不能据此关闭 I4。
 >
 > 2026-08-01 音频窗口已执行：Gate 0C 通过；新的 loopback/mic 各五轮结构、准确率、自然退出和 transport 零丢失通过，但冻结 P95=1148/1099ms，仍超 `<1000ms` 线 148/99ms。真实 pause/refine 与 exact worker 硬终止+Retry 通过；DWM 持续字幕零丢失但缺操作者拖动 completion，只能判 inconclusive。I3 在 75 秒、故障前≥12/恢复后≥8/总计≥25 的不降线资格协议下，以 14/17/31 final 和 29 refined 严格通过；两小时验收仍待原生拖动后启动。设备移除、睡眠/唤醒和 I2 原生拖动仍待；干净 Win11 快照与代码签名按本轮内部 MVP 决定暂缓。`loopback`/`mic` 继续产品级 XOR，翻译/Agent 与向量继续后置。
 
-> 2026-08-01 追加（B6 排期）：ADR 0004 的落地已拆成 J15a（固定高度字幕流）、J15b（转写版本隔离）、J15c（精修可选化）三条旅程，本轮只做 J15a + J15b，**因此本轮结束后字幕 MVP 仍未齐**——J15c 与 I2 延迟/原生拖动/设备与睡眠、I3 两小时、I4 干净机都仍未关闭。§8.2 的三资源原子 bundle 决定已被 ADR 0004 部分取代，见该节 superseded 提示。仓库根新增 [`AGENTS.md`](AGENTS.md) 作为改动前的文档路由表：全部文档读一遍约 11 万 token，路由表把单次改动的固定文档开销压到约 1.3 万，其中 `CONTEXT.md` 术语为每次必读、不可跳过。
+> 2026-08-01 追加（B6 历史排期，已由下一条进度更新取代）：ADR 0004 的落地拆成 J15a（固定高度字幕流）、J15b（转写版本隔离）、J15c（精修可选化）三条旅程；当时只排入 J15a + J15b，所以该排期快照中的字幕 MVP 仍未齐。§8.2 的三资源原子 bundle 决定已被 ADR 0004 部分取代，见该节 superseded 提示。仓库根新增 [`AGENTS.md`](AGENTS.md) 作为改动前的文档路由表：全部文档读一遍约 11 万 token，路由表把单次改动的固定文档开销压到约 1.3 万，其中 `CONTEXT.md` 术语为每次必读、不可跳过。
+>
+> 2026-08-02 进度更新：上述排期快照已执行到 J15c。核心 ready 现只依赖实时 ASR+VAD，精修默认不下载；全局偏好按会话冻结，首次 `final` 与精修稿分版，下载取消→保留 `.part`→复启 fetch=0→明确继续 Range、故障回退、工具条会话状态通知、历史覆盖与本地日志均已进入真实 packaged 双启动旅程。J15a 又闭合了整段最后一条视觉行退出后的 identity-only renderer→main 回报与 canonical 永久淘汰，迟到修订、回退、窗口放大和 reload 均不得复活。DPI/主题/透明窗人工视觉、I4 专用干净机以及所有延期音频门禁仍未达到实机验收完成。
 
 ---
 
@@ -28,7 +30,7 @@
 
 native 生命周期补丁后，真实模型活跃 smoke 连续三轮的六个 realtime/refine exact child 均优雅 `exitCode=0`、fatal 0；受跟踪 I2 的 10 轮又各自具备外部运行器生成并按 report SHA 绑定的 `exitCode=0`/无运行器终止旁证。2026-08-01 的真实 worker 强制终止场景进一步证明同一 session/cursor 在显式 Retry 后复用 runtime adapter 并创建新 worker generation，前后都有 final/refined 且损失计数为零。另一次非权威诊断在 pass 报告后悬挂并留下 `PostQueuedCompletionStatus: (6) 句柄无效。`；固定 libuv 源码只证明该失败路径会进入 `uv_fatal_error → DebugBreak`，没有 native stack 证明具体竞态、发送者或进程角色。一次性 runner 以 120 秒 exact-process timeout 防无限等待，超时只清理该 process object 并判失败；exit sidecar 与当前硬终止场景都不能证明历史异常根因已永久修复。完整 I2 仍需延迟、原生拖动、设备变化和睡眠/唤醒；I3 长测也未完成。role evidence 与报告不保存正文、音频/PCM、本地路径、绝对时钟、偏移、stack 或 dump。
 
-> **B5 制品边界：**当前 exact installer SHA-256 已冻结为 `4a1deb3551ff89758183c527f7a51acc501fddd75e76c1dd950a612d552449dd`。它是未签名内部候选；本机 B5 与非音频复启/卸载预资格通过，不等于精确 release main 已在干净 Win11 上通过 I4。
+> **B5 制品边界：**当前 exact installer SHA-256 已冻结为 `4abc23bc4f0ab0307d551a5c59c834009d3d48953810f6c864c485db73db31de`。它是未签名内部候选；本机 B5 已达到确定性联合验收完成，但不等于精确 release main 已在干净 Win11 上达到 I4 实机验收完成。
 
 ### 0.1 两套产品系统的边界
 
@@ -421,7 +423,7 @@ Node、既有 userData/模型的 Win11 上验公网、交互权限、真实音�
 
 - `npm run test:integration`：每次 PR 必跑的跨模块用户旅程。
 - `npm test`：完整回归集（也会发现 integration tests）。
-- `npm run test:ci`：先显式运行联合旅程，再跑完整回归；由 Windows CI workflow 调用。
+- `npm run test:ci`：`npm test` 的 CI 别名，按 core → integration → evidence 只执行一遍，不重复联合旅程；由 Windows CI workflow 调用。
 - `scripts/*-smoke.js`：真实 Electron/音频/模型进程边界，需有能力的 Windows 实机运行。
 
 使用 `node:test` 自动覆盖：
@@ -455,14 +457,16 @@ Gate 0B 的固定复现入口：
 ```powershell
 node scripts/gate-0b/run-cli-suite.js `
   --asset-root models/gate-0b `
-  --raw-dir models/gate-0b/runs/cli-raw `
+  --private-transcript-output models/gate-0b/private/cli-observations.json `
   --output docs/validation/gate-0b-cli-observations.json
 
 node scripts/gate-0b/evaluate-transcripts.js `
   --corpus scripts/gate-0b/corpus.json `
-  --observations docs/validation/gate-0b-cli-observations.json `
+  --observations models/gate-0b/private/cli-observations.json `
   --output docs/validation/gate-0b-controlled-metrics.json
 ```
+
+正文中间件只能写入受忽略的 `models/gate-0b/private/`；CLI 原始输出只在内存中解析并计算 SHA-256，不再提供任意目录落盘参数。
 
 模型任一指标不达标 → 换 `160ms` 或退到 `small-bilingual` 重跑；UI 只根据新的 Capabilities 改可用档位，不直接绑定模型名。
 
@@ -490,14 +494,14 @@ node scripts/gate-0b/evaluate-transcripts.js `
 | **B2 实时链路** | audio host、MessagePort、互斥单路 realtime worker、VAD/背压 | 真 partial/final 替掉假流；拖动不掉帧；队列深度和丢帧可观测。**模型轨已落地（2026-07-27）**：`sherpa-recognizer.js`（共享 OnlineRecognizer、per-segment stream、0.4s 尾静音冲刷）经 configure 注册；`model-resolver.js` 解析本机模型（env/userData/仓库布局，缺失 fail closed）；组合根默认接真实链路。**silero VAD 已替换 EnergyVad（2026-07-27）**：`silero-vad.js` 包装为同接口经 vadFactory 注入，997Hz 纯音拒识实测通过（能量占位做不到）；收句静音实测定为 1.0s——0.5s 切段时流式模型缺右上下文丢字（「一下」→「一」）且几乎不出标点，1.0s 下整句成段 CER 0。VAD 模型缺失时回退 EnergyVad 并警告。实机 smoke `i2-live-caption-smoke.js` PASS（silero：1 条整句定稿、CER 0；对比 energy：4 条碎片、CER 0.071）。**XOR 门禁与 J4 已完成（2026-07-30）**。剩余：两种来源分别 smoke、拖动/掉帧指标 |
 | **B3 精修与会话** | refine worker、事件式持久化、恢复与导出 | 精修不阻塞实时流；已提交 final 可恢复；SRT 时间轴稳定。B3.1 的 JSONL writer 完成迁移过渡职责后已从生产代码删除，只保留坏尾/坏中间行解析、revision 折叠与 txt/md/srt 兼容导出供旧档迁移。默认联合旅程已全部使用 `SqliteSessionRecorder → StorageGateway`。B3.2 refine worker、暂停缓冲、故障降级与真实模型 smoke 保持不变 |
 | **B3.3 SQLite 字幕历史（非音频联合验收完成 / 音频 I3 与 I4 待验）** | storage worker、SQLite 字幕事件/segments、JSONL 迁移、终态历史列表/有界详情与 txt/md/srt 导出 UI | DB0/DB1、Gateway 恢复、DB2、两次冷启动、历史/导出均有确定性证据；packaged Electron 首轮真实迁移只读旧 JSONL 并完整导出 205 段，第二轮验证幂等、SQLite/history/导出保留。I3 非音频 3,600 段资源资格通过。人工系统保存对话框、真实两小时声源和干净机 I4 仍待 |
-| **B4 字幕资源（确定性 UI 联合验收完成；真实模型调用有证据；I4 待验）** | 内置固定 manifest、ModelManager、断点下载、流式 SHA、固定 System32 tar、归档审查/白名单提取、staging 原子安装、严格 marker、资源页与空闲热启用 | 资源页的状态、进度、单一下载/重试动作以及无参数 IPC 已实现；局部失败矩阵和后端受控 J14 均通过，含卡死 fetch/tar 有界退出；批准大模型安装/三运行时调用已留档。Electron 产品壳现从隔离 userData 的 `missing` 状态实际点击设置页下载，经 preload/IPC、生产 ModelManager、Range、三 marker、热启用，完成字幕、暂停/恢复、停止和本次 SQLite 历史复盘。受控资源/fake ASR 不冒充真实张量、公网或物理声卡。当前不提供删除功能；B5 已关闭打包态确定性资格，I4 只关闭精确 NSIS 的干净机公网/真实音源发布旅程 |
-| **B5 字幕 MVP 分发（当前候选确定性资格完成；I4 待验）** | electron-builder 26.15.3、ASAR allowlist/fuses、native unpack、packaged 双启动、NSIS | 当前 unsigned NSIS SHA=`4a1deb35…2449dd`；166 个 ASAR 条目、112 文件产品载荷 SHA=`503a40df…b93d`、29 个关键入口、5 个 native、无模型/音频/开发树。test package 首启覆盖 Range/tar/热启用/字幕/迁移/历史/导出，复启覆盖 fetch=0、ready/历史/迁移幂等及新会话，两轮 clean exit；七份报告以 run ID 和 SHA 闭合绑定到 release layout。NSIS 隔离安装卸载通过，且无关 APPDATA 哨兵不变；正式应用 userData 保留未在 B5 中验证。test main/fake ASR/静默安装不冒充公网、真实声卡或干净机 I4 |
-| **B6 固定高度字幕流与转写版本（进行中）** | J15a：字幕窗改为固定 bounds 的连续字幕流（CSS 底部锚定 + 溢出裁剪，容器高度取整到整行），JS 只决定入流段落与顺序；新增 `scripts/caption-layout-smoke.js` 布局资格。J15b：首次 `final` 与精修稿版本隔离，历史详情一次返回两版、导出按版本参数分别核对 digest。J15c 精修可选化本轮不做 | J15a 分两层证据：纯逻辑层验证入流段落/顺序/`partial` 最高优先级/全程无 resize 调用；布局 smoke 在最小 Electron 宿主中验证 24/30/38px × 中文/英文/混排/长单词的四条不变量，并排在 CI 全部重步骤之前。J15b 必须**先**补测试锁定 `segments.first_event_order` 恒指向首次 `final`（覆盖乱序到达、同段多个 final、旧档迁移），再改读取路径——既有迁移/导出测试校验的是折叠后单投影，语义换了仍会全绿。产品壳旅程另加两条最小断言：可见字幕正文等值、改 `fontSize` 后生效且不溢出（报告只落 boolean/digest，不写正文）。CI 增加失败也上传 `.artifacts` 报告与日志 |
+| **B4 字幕资源（确定性 UI 联合验收完成；真实模型调用有证据；I4 待验）** | 内置固定 manifest、ModelManager、断点下载、流式 SHA、固定 System32 tar、归档审查/白名单提取、staging 原子安装、严格 marker、资源页与空闲热启用 | 核心字幕资源已拆为实时 ASR+VAD 两个 marker，可选精修使用独立 marker。设置页提供核心下载、精修独立下载/取消/继续与全局偏好；缺失精修点开关 fetch=0、安装后仍关闭、再次明确开启才影响未来会话。局部失败矩阵、主进程 IPC、renderer、受控 J14 与 packaged 首启/复启均有证据；真实公网资源与干净机仍归 I4。 |
+| **B5 字幕 MVP 分发（当前候选确定性联合验收完成；I4 待验）** | electron-builder 26.15.3、ASAR allowlist/fuses、native unpack、packaged 双启动、NSIS、CI provenance | 当前未签名 NSIS SHA=`4abc23bc…b31de`；168 个 ASAR 条目、114 文件产品载荷 SHA=`b6503ca2…a0bbd`、29 个关键入口、5 个 native、无模型/音频/开发树。test package 首轮覆盖核心安装、精修下载中取消/连接关闭/合法 `.part` 保留、会话冻结、跨会话版本导出、迁移与历史；复启先证明 fetch=0，再由明确继续触发精确 Range、安装后显式开启，并覆盖精修故障回退、工具条会话状态通知和历史复读。两轮 clean exit；七份报告以 run ID 和 SHA 闭合绑定到 release layout。NSIS 隔离安装卸载和无关 APPDATA 哨兵通过。最终 CI provenance writer/verifier 为实现完成/尚未验收：只在 `HEAD==GITHUB_SHA`、受跟踪工作树干净且全部前置门禁成功后，绑定 revision/run、lockfile/workflow、installer 与关键报告 SHA；当前未提交工作树无远端索引。正式应用 `userData` 保留及干净机 I4 尚未达到实机验收完成。 |
+| **B6 固定高度字幕流与转写版本（确定性主链完成）** | J15a：字幕窗使用固定 bounds 的连续字幕流（CSS 底部锚定 + 顶部整行淘汰，容器高度取整到整行）；最后一条视觉行退出后，renderer 只回报 schema/会话/段身份，主进程从 canonical 实时视图永久淘汰该段，本会话迟到修订、故障回退、窗口放大和 reload 均不得复活。J15b：首次 `final` 与精修稿版本隔离，历史详情一次返回两版、导出按版本参数分别核对 digest；版本选择按当前会话作用，切换会话重置原始版。J15c：核心/精修资源拆分；全局精修偏好只影响未来新会话且不删除旧稿；下载支持明确取消/继续；迟到精修只更新仍可见 final；worker 故障确认时立即恢复所有仍可见 final、保持当前 partial 和固定 bounds，本会话不重启/补跑且不修改全局偏好；正常停止后工具条显示无抢焦点的会话状态通知并链接历史，该通知只报告处理状态、不概括或改写字幕内容，保持到关闭/进入历史并在新会话清除、重启不重放；独立五值故障事实和整场 `N/M` 跨重启保留，`N=M` 不掩盖故障；空会话、旧会话和异常退出分别保留明确语义；不完整回退统一标记 `[原始版回退]`；日志按 5×1 MiB/7 天本地滚动且不自动上传 | J15a/J15b/J15c 已达到确定性联合验收完成：固定整行视口、逐行淘汰、identity-only viewport eviction、canonical replacement/reload 与迟到修订/回退不复活有 reducer、IPC、真实 Chromium 和产品壳证据；首次 `final` 锚定、双版本 digest、会话作用域选择和真实 packaged 跨会话导出已完成；核心/精修分层、全局偏好与会话冻结、故障恢复、schema v2 会话结果、`N/M`、空/零/旧会话语义、工具条会话状态通知和滚动日志均有局部及跨模块证据。真实 packaged 双启动覆盖下载中取消、连接关闭、合法 `.part` 保留、复启 fetch=0、明确 Range 继续、故障静默期、main→IPC→toolbar 通知、历史复读与不重放。DPI/主题/透明窗人工视觉、I4 专用干净机与延期音频门禁尚未达到实机验收完成。CI 继续在失败时上传 `.artifacts` 报告与日志 |
 | **A1 Agent 基础（后置）** | `AgentRuntime` 边界、Pi Core 探针、项目自有 `AgentPluginHost`、CredentialStore、ModelGateway、可靠消费水位 | 只静态注册受信任第一方插件；不启用 shell/进程/任意文件写/外部写；key 不进 renderer；Agent 关闭/崩溃不影响字幕；J7/J13 通过 |
 | **A2 Agent 内容能力（后置）** | `TranscriptContextPlugin`、独立增强文本、会后结构化纪要 | 原文与派生文本不混淆；待办只生成内容；字幕→Agent 通过 J3–J7/J13 联合场景 |
 | **X1 可选检索（Deferred）** | FTS5 按需增加；embedding/`sqlite-vec` 最后评估 | 不阻断 B3.3、B5 或 A2；若启用再执行 J11/DB4 |
 
-> 视觉/UI 层已交付 V1–V2；B1 已关闭 [docs/ui-design-brief.md §6](docs/ui-design-brief.md) 的 A1–A3 和 stop/retry 请求。历史与资源管理入口已接产品 contract 并通过开发态/打包态 Electron 旅程；A4 layout contract 与长列表/无障碍的两小时稳定性按 I3 推进，精确 NSIS 的干净机发布旅程按 I4 推进。
+> 视觉/UI 层已交付 V1–V2；B1 已关闭 [docs/ui-design-brief.md §6](docs/ui-design-brief.md) 的 A1–A3 和 stop/retry 请求。历史与资源管理入口已接产品 contract 并通过开发态/打包态 Electron 旅程；A4 实际 overlap rect 已降为 MVP 后交互质量项，当前最坏情况洞不阻断验收；长列表/无障碍的两小时稳定性按 I3 推进，精确 NSIS 的干净机发布旅程按 I4 推进。
 > C 类是 UI 对后端的持续契约约束，违反时的症状是「界面上东西不见了」而不是报错；B1 的 coordinator 与 fake adapter 已遵守这些约束。
 
 ### 7.4 Integration Gates

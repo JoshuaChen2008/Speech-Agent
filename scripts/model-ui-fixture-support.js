@@ -63,6 +63,7 @@ function createFixtureModelBundle (root) {
       payload = fs.readFileSync(archivePath)
     } else {
       payload = Buffer.from('deterministic silero VAD UI fixture\n', 'utf8')
+      fs.writeFileSync(path.join(downloadRoot, `${productionArtifact.id}.bin`), payload)
     }
     payloadByPath.set(new URL(productionArtifact.url).pathname, payload)
     return Object.freeze({
@@ -81,6 +82,30 @@ function createFixtureModelBundle (root) {
 function startFixtureModelServer (payloadByPath) {
   if (!(payloadByPath instanceof Map)) throw new TypeError('payloadByPath must be a Map')
   const requests = []
+  let heldResponse = null
+
+  /* Keep exactly one response open after a small prefix has reached the
+     client. Product-shell smoke uses this external-boundary control to prove
+     that an explicit cancel interrupts Electron's real fetch stream, rather
+     than merely cancelling a request before it starts. */
+  function holdNextResponse ({ pathname, range, prefixBytes = 1 }) {
+    if (heldResponse !== null) throw new Error('a fixture response is already held')
+    if (typeof pathname !== 'string' || typeof range !== 'string' ||
+        !Number.isSafeInteger(prefixBytes) || prefixBytes < 1) {
+      throw new TypeError('held fixture response requires pathname, range and positive prefixBytes')
+    }
+    const control = {
+      pathname,
+      range,
+      prefixBytes,
+      started: false,
+      requestAborted: false,
+      connectionClosed: false
+    }
+    heldResponse = control
+    return control
+  }
+
   const server = http.createServer((request, response) => {
     const pathname = new URL(request.url || '/', 'http://127.0.0.1').pathname
     const payload = payloadByPath.get(pathname)
@@ -105,6 +130,16 @@ function startFixtureModelServer (payloadByPath) {
         'Content-Range': `bytes ${offset}-${payload.length - 1}/${payload.length}`,
         'Content-Type': 'application/octet-stream'
       })
+      const held = heldResponse
+      if (held !== null && held.pathname === pathname && held.range === range) {
+        heldResponse = null
+        const prefixBytes = Math.min(held.prefixBytes, body.length)
+        response.write(Buffer.from(body.subarray(0, prefixBytes)))
+        held.started = true
+        request.once('aborted', () => { held.requestAborted = true })
+        response.once('close', () => { held.connectionClosed = true })
+        return
+      }
       response.end(body)
       return
     }
@@ -123,7 +158,7 @@ function startFixtureModelServer (payloadByPath) {
         reject(new Error('fixture server address is unavailable'))
         return
       }
-      resolve(Object.freeze({ server, port: address.port, requests }))
+      resolve(Object.freeze({ server, port: address.port, requests, holdNextResponse }))
     })
   })
 }
@@ -134,8 +169,11 @@ async function closeFixtureModelServer (server) {
   await new Promise((resolve) => server.close(resolve))
 }
 
-function seedInterruptedModelDownload (userDataDir, bundle) {
-  const artifact = bundle.manifest.artifacts[0]
+function seedInterruptedModelDownload (userDataDir, bundle, artifactId = null) {
+  const artifact = artifactId === null
+    ? bundle.manifest.artifacts[0]
+    : bundle.manifest.artifacts.find((candidate) => candidate.id === artifactId)
+  if (!artifact) throw new Error('fixture artifact is unavailable')
   const payload = bundle.payloadByPath.get(new URL(artifact.url).pathname)
   if (!payload || payload.length < 3) throw new Error('first fixture artifact is too small')
   const resumeBytes = Math.max(1, Math.floor(payload.length / 3))

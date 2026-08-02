@@ -1,24 +1,24 @@
 {
   "schemaVersion": 1,
   "kind": "b5-packaged-run-binding",
-  "generatedAt": "2026-08-01T16:36:07.308Z",
+  "generatedAt": "2026-08-02T10:37:59.208Z",
   "result": "pass",
   "gateStatus": "packaged-ci-qualified",
   "run": {
-    "runId": "b5-bb5f34b3-e625-4a9c-b5c1-94055ee6f3e5",
+    "runId": "b5-2bd0dc7a-e233-41a5-a41b-65d04344b0aa",
     "electronMajor": 43,
-    "testExecutableSha256": "b46231e61a887c08ce16d042eb6c56998d2dd8c69d7d1bb0fc4cdb143d182965",
+    "testExecutableSha256": "c16a09e4067423f2ec5fa28bf627f7db31f2e9fbe3d0599f7ce6dcafe9d74f77",
     "productPayloadVersion": "live-subtitle-product-payload-v1",
-    "productPayloadFileCount": 112,
-    "productPayloadSha256": "503a40df18f70c397604bda6a4c3ac909851624ec2129a8db7b690fa610ab93d"
+    "productPayloadFileCount": 114,
+    "productPayloadSha256": "b6503ca26c3f59bb0b5c15acfa6c2ceec0d2eaff3a540bf5f56016032c1a0bbd"
   },
   "fresh": {
-    "productReportSha256": "d7c16956b9133a7dc43558e287e01f5045804910611f64e0dc7f2af5dc0bfb39",
-    "exitReportSha256": "450e576dff724566804724aa1fce91fa7f1dc9529ce76a7c28a6514648e16aa7"
+    "productReportSha256": "9ad795e7d1a55f54e73baebaedeac20e0f1e5ae943e91df22abfea27aec8a003",
+    "exitReportSha256": "b032bc680bf01ba4c843a587acebdbd409e3e0517dd0a0f7e28a516569a671c1"
   },
   "restart": {
-    "productReportSha256": "53274b0351f1e9228b0800b673a874337a777564335edec36a763b474551f355",
-    "exitReportSha256": "74057f6bc731f4b14f5685d8bc16c3caa03aa4cb9291350188db45829846515d"
+    "productReportSha256": "90f0363f54de039d3a06f31fad15b8476b40add7142a881060305dd7ba219001",
+    "exitReportSha256": "3b30ea96b34ee5133a522074f5b9bdcda985c43ee4b36cba23ed23430c06e352"
   },
   "limitations": [
     "test-package-not-release-installer",

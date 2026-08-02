@@ -8,7 +8,6 @@ const path = require('node:path')
 
 const packageJson = require('../package.json')
 const { PRODUCTION_MODEL_MANIFEST } = require('../src/main/services/model-manifest')
-const { IDENTITY_VERSION } = require('../src/main/services/product-payload-identity')
 const { parseStrictEvidenceJson } = require('./strict-evidence-json')
 const { validatePackageLayoutReport } = require('./verify-package-layout')
 
@@ -24,14 +23,31 @@ const EXPECTED_LIMITATIONS = Object.freeze([
   'no-physical-audio',
   'no-media-permission-acceptance',
   'no-real-asr-inference',
+  'no-active-session-preference-freeze',
+  'no-per-process-network-attempt-audit',
   'operator-driven-windows-ui',
   'unsigned-installer',
   'i4-full-status-partial'
 ])
-const EXPECTED_MODEL_BYTES = PRODUCTION_MODEL_MANIFEST.artifacts
-  .reduce((total, artifact) => total + artifact.bytes, 0)
-const EXPECTED_MODEL_FILE_COUNT = PRODUCTION_MODEL_MANIFEST.artifacts
-  .reduce((total, artifact) => total + artifact.requiredFiles.length, 0)
+const CORE_ARTIFACTS = Object.freeze(PRODUCTION_MODEL_MANIFEST.artifacts
+  .filter((artifact) => artifact.resourceGroup === 'core'))
+const REFINEMENT_ARTIFACTS = Object.freeze(PRODUCTION_MODEL_MANIFEST.artifacts
+  .filter((artifact) => artifact.resourceGroup === 'refinement'))
+
+function totalBytes (artifacts) {
+  return artifacts.reduce((total, artifact) => total + artifact.bytes, 0)
+}
+
+function totalFileCount (artifacts) {
+  return artifacts.reduce((total, artifact) => total + artifact.requiredFiles.length, 0)
+}
+
+const EXPECTED_CORE_MODEL_BYTES = totalBytes(CORE_ARTIFACTS)
+const EXPECTED_REFINEMENT_MODEL_BYTES = totalBytes(REFINEMENT_ARTIFACTS)
+const EXPECTED_MODEL_BYTES = totalBytes(PRODUCTION_MODEL_MANIFEST.artifacts)
+const EXPECTED_CORE_MODEL_FILE_COUNT = totalFileCount(CORE_ARTIFACTS)
+const EXPECTED_REFINEMENT_MODEL_FILE_COUNT = totalFileCount(REFINEMENT_ARTIFACTS)
+const EXPECTED_MODEL_FILE_COUNT = totalFileCount(PRODUCTION_MODEL_MANIFEST.artifacts)
 const EXPECTED_PRESERVATION_ENTRY_COUNT = 3 +
   PRODUCTION_MODEL_MANIFEST.artifacts.length + EXPECTED_MODEL_FILE_COUNT
 
@@ -87,19 +103,19 @@ function expectedMarkerDigest (artifact) {
   return sha256Bytes(Buffer.from(`${JSON.stringify(marker)}\n`, 'utf8'))
 }
 
-function validateReadyMarkers (markers) {
-  if (!Array.isArray(markers) || markers.length !== PRODUCTION_MODEL_MANIFEST.artifacts.length) {
-    throw new Error('dataLifecycle.readyMarkers must contain the three production artifacts')
+function validateReadyMarkers (markers, artifacts = PRODUCTION_MODEL_MANIFEST.artifacts, label = 'dataLifecycle.readyMarkers') {
+  if (!Array.isArray(markers) || markers.length !== artifacts.length) {
+    throw new Error(`${label} has the wrong ready-marker count`)
   }
   for (let index = 0; index < markers.length; index += 1) {
     const marker = exactKeys(markers[index], [
       'artifactId', 'bytes', 'markerSha256', 'sourceSha256'
-    ], `dataLifecycle.readyMarkers[${index}]`)
-    const artifact = PRODUCTION_MODEL_MANIFEST.artifacts[index]
+    ], `${label}[${index}]`)
+    const artifact = artifacts[index]
     if (marker.artifactId !== artifact.id || marker.bytes !== artifact.bytes ||
         marker.sourceSha256 !== artifact.sha256 ||
         marker.markerSha256 !== expectedMarkerDigest(artifact)) {
-      throw new Error(`dataLifecycle.readyMarkers[${index}] is not the production marker`)
+      throw new Error(`${label}[${index}] is not the expected production marker`)
     }
   }
 }
@@ -141,9 +157,9 @@ function validateI4NonAudioNsisReport (report, layoutEvidence = readTrackedLayou
 
   exactKeys(report, [
     'artifact', 'dataLifecycle', 'environment', 'firstLaunch', 'gateStatus', 'generatedAt',
-    'kind', 'limitations', 'offlineRestart', 'privacy', 'result', 'schemaVersion'
+    'kind', 'limitations', 'offlineRestart', 'privacy', 'refinementSetup', 'result', 'schemaVersion'
   ], 'I4 non-audio report')
-  if (report.schemaVersion !== 2 || report.kind !== 'i4-nonaudio-nsis-qualification') {
+  if (report.schemaVersion !== 3 || report.kind !== 'i4-nonaudio-nsis-qualification') {
     throw new Error('invalid I4 non-audio report envelope')
   }
   if (report.result !== 'pass' || report.gateStatus !== 'partial') {
@@ -189,11 +205,10 @@ function validateI4NonAudioNsisReport (report, layoutEvidence = readTrackedLayou
       report.artifact.reinstalledExecutableSha256 !== layout.artifact.appExecutableSha256 ||
       report.artifact.reinstalledAsarSha256 !== layout.artifact.appAsarSha256 ||
       report.artifact.installerTarget !== 'nsis' || report.artifact.arch !== 'x64' ||
-      report.artifact.installedViaNsis !== true || report.artifact.releaseMain !== packageJson.main ||
+      report.artifact.installedViaNsis !== true || report.artifact.releaseMain !== layout.artifact.mainEntry ||
       report.artifact.signingStatus !== layout.artifact.signingStatus ||
       report.artifact.exactCandidateBound !== true ||
       report.artifact.productPayloadIdentitySource !== 'tracked-b5-layout-installed-asar-binding' ||
-      report.artifact.productPayloadVersion !== IDENTITY_VERSION ||
       report.artifact.productPayloadVersion !== layout.artifact.productPayloadVersion ||
       report.artifact.productPayloadFileCount !== layout.artifact.productPayloadFileCount ||
       report.artifact.productPayloadSha256 !== layout.artifact.productPayloadSha256) {
@@ -201,49 +216,103 @@ function validateI4NonAudioNsisReport (report, layoutEvidence = readTrackedLayou
   }
 
   exactKeys(report.firstLaunch, [
-    'downloadHostReachabilityVerified', 'downloadedBytesFromReadyMarkers',
+    'coreDownloadedBytesFromReadyMarkers', 'coreModelArtifactCount', 'coreModelFileCount',
+    'coreReadyMarkerCount', 'downloadHostReachabilityVerified',
     'harnessLaunchedBoundReleaseExecutable', 'harnessObservedNormalExit',
-    'harnessVerifiedModelFilesPresent', 'harnessVerifiedProductionReadyMarkers',
-    'harnessVerifiedStagingClean', 'manifestAllowedDownloadHosts', 'modelArtifactCount',
-    'modelFileCount', 'modelTransportEvidence', 'operatorAttestedInteractiveInstall',
+    'harnessVerifiedCoreModelFilesPresent', 'harnessVerifiedCoreReadyMarkers',
+    'harnessVerifiedRefinementModelFilesAbsent', 'harnessVerifiedRefinementPreferenceDisabled',
+    'harnessVerifiedRefinementReadyMarkersAbsent', 'harnessVerifiedStagingClean',
+    'manifestAllowedDownloadHosts', 'modelTransportEvidence', 'operatorAttestedInteractiveInstall',
+    'operatorAttestedMissingRefinementPreferenceAttempted',
+    'operatorAttestedMissingRefinementPreferenceStayedDisabled',
     'operatorAttestedNoCaptureCommand', 'operatorAttestedNoMediaPermissionPrompt',
-    'operatorAttestedPublicHttpsDownloadFromSettings',
-    'operatorAttestedRuntimeReadyBeforeCapture', 'readyMarkerCount'
+    'operatorAttestedPublicHttpsCoreDownloadFromSettings',
+    'operatorAttestedRuntimeCoreReadyBeforeCapture', 'refinementModelFileCount',
+    'refinementNetworkAttemptCountAssessed', 'refinementPreferenceInitiallyDisabled',
+    'refinementReadyMarkerCount'
   ], 'firstLaunch')
   requireTrueFields(report.firstLaunch, [
     'downloadHostReachabilityVerified', 'harnessLaunchedBoundReleaseExecutable',
-    'harnessObservedNormalExit', 'harnessVerifiedModelFilesPresent',
-    'harnessVerifiedProductionReadyMarkers', 'harnessVerifiedStagingClean',
+    'harnessObservedNormalExit', 'harnessVerifiedCoreModelFilesPresent',
+    'harnessVerifiedCoreReadyMarkers', 'harnessVerifiedRefinementModelFilesAbsent',
+    'harnessVerifiedRefinementPreferenceDisabled', 'harnessVerifiedRefinementReadyMarkersAbsent',
+    'harnessVerifiedStagingClean',
     'operatorAttestedInteractiveInstall', 'operatorAttestedNoCaptureCommand',
-    'operatorAttestedNoMediaPermissionPrompt', 'operatorAttestedPublicHttpsDownloadFromSettings',
-    'operatorAttestedRuntimeReadyBeforeCapture'
+    'operatorAttestedNoMediaPermissionPrompt', 'operatorAttestedPublicHttpsCoreDownloadFromSettings',
+    'operatorAttestedRuntimeCoreReadyBeforeCapture',
+    'operatorAttestedMissingRefinementPreferenceAttempted',
+    'operatorAttestedMissingRefinementPreferenceStayedDisabled',
+    'refinementPreferenceInitiallyDisabled'
   ], 'firstLaunch')
+  requireFalseFields(report.firstLaunch, ['refinementNetworkAttemptCountAssessed'], 'firstLaunch')
   if (report.firstLaunch.modelTransportEvidence !== 'operator-attested-settings-public-https' ||
-      report.firstLaunch.downloadedBytesFromReadyMarkers !== EXPECTED_MODEL_BYTES ||
-      report.firstLaunch.readyMarkerCount !== PRODUCTION_MODEL_MANIFEST.artifacts.length ||
-      report.firstLaunch.modelArtifactCount !== PRODUCTION_MODEL_MANIFEST.artifacts.length ||
-      report.firstLaunch.modelFileCount !== EXPECTED_MODEL_FILE_COUNT ||
+      report.firstLaunch.coreDownloadedBytesFromReadyMarkers !== EXPECTED_CORE_MODEL_BYTES ||
+      report.firstLaunch.coreReadyMarkerCount !== CORE_ARTIFACTS.length ||
+      report.firstLaunch.coreModelArtifactCount !== CORE_ARTIFACTS.length ||
+      report.firstLaunch.coreModelFileCount !== EXPECTED_CORE_MODEL_FILE_COUNT ||
+      report.firstLaunch.refinementReadyMarkerCount !== 0 ||
+      report.firstLaunch.refinementModelFileCount !== 0 ||
       JSON.stringify(report.firstLaunch.manifestAllowedDownloadHosts) !== JSON.stringify(EXPECTED_ALLOWED_HOSTS)) {
-    throw new Error('first launch production-model evidence is incomplete or overclaimed')
+    throw new Error('first launch core-resource evidence is incomplete or overclaimed')
+  }
+
+  exactKeys(report.refinementSetup, [
+    'downloadHostReachabilityVerified', 'harnessLaunchedBoundReleaseExecutable',
+    'harnessObservedPreferenceEnableNormalExit', 'harnessObservedRefinementDownloadNormalExit',
+    'harnessVerifiedCoreReadyMarkers', 'harnessVerifiedRefinementModelFilesPresent',
+    'harnessVerifiedRefinementPreferenceDisabledAfterDownload',
+    'harnessVerifiedRefinementPreferenceEnabled', 'harnessVerifiedRefinementReadyMarkers',
+    'harnessVerifiedStagingClean', 'manifestAllowedDownloadHosts', 'modelTransportEvidence',
+    'operatorAttestedNoCaptureCommand', 'operatorAttestedNoMediaPermissionPrompt',
+    'operatorAttestedPublicHttpsRefinementDownloadFromSettings',
+    'operatorAttestedRefinementPreferenceExplicitlyEnabled',
+    'operatorAttestedRefinementPreferenceStayedDisabledAfterDownload',
+    'refinementDownloadedBytesFromReadyMarkers', 'refinementModelArtifactCount',
+    'refinementModelFileCount', 'refinementReadyMarkerCount'
+  ], 'refinementSetup')
+  requireTrueFields(report.refinementSetup, [
+    'downloadHostReachabilityVerified', 'harnessLaunchedBoundReleaseExecutable',
+    'harnessObservedPreferenceEnableNormalExit', 'harnessObservedRefinementDownloadNormalExit',
+    'harnessVerifiedCoreReadyMarkers', 'harnessVerifiedRefinementModelFilesPresent',
+    'harnessVerifiedRefinementPreferenceDisabledAfterDownload',
+    'harnessVerifiedRefinementPreferenceEnabled', 'harnessVerifiedRefinementReadyMarkers',
+    'harnessVerifiedStagingClean', 'operatorAttestedNoCaptureCommand',
+    'operatorAttestedNoMediaPermissionPrompt',
+    'operatorAttestedPublicHttpsRefinementDownloadFromSettings',
+    'operatorAttestedRefinementPreferenceExplicitlyEnabled',
+    'operatorAttestedRefinementPreferenceStayedDisabledAfterDownload'
+  ], 'refinementSetup')
+  if (report.refinementSetup.modelTransportEvidence !== 'operator-attested-settings-public-https' ||
+      report.refinementSetup.refinementDownloadedBytesFromReadyMarkers !== EXPECTED_REFINEMENT_MODEL_BYTES ||
+      report.refinementSetup.refinementReadyMarkerCount !== REFINEMENT_ARTIFACTS.length ||
+      report.refinementSetup.refinementModelArtifactCount !== REFINEMENT_ARTIFACTS.length ||
+      report.refinementSetup.refinementModelFileCount !== EXPECTED_REFINEMENT_MODEL_FILE_COUNT ||
+      JSON.stringify(report.refinementSetup.manifestAllowedDownloadHosts) !== JSON.stringify(EXPECTED_ALLOWED_HOSTS)) {
+    throw new Error('explicit refinement-resource evidence is incomplete or overclaimed')
   }
 
   exactKeys(report.offlineRestart, [
-    'downloadHostsUnreachableAtRestart', 'exportArtifactCount', 'exportFormats',
+    'coreReadyMarkerCount', 'downloadHostsUnreachableAtRestart', 'exportArtifactCount', 'exportFormats',
     'exportedSegmentCount', 'harnessLaunchedBoundReleaseExecutable', 'harnessObservedNormalExit',
-    'harnessVerifiedExports', 'networkAttemptCountAssessed', 'offlineControl',
-    'operatorAttestedLegacySessionCount', 'operatorAttestedModelReady',
+    'harnessVerifiedExports', 'harnessVerifiedRefinementPreferencePersisted',
+    'networkAttemptCountAssessed', 'offlineControl',
+    'operatorAttestedLegacySessionCount', 'operatorAttestedCoreReady',
+    'operatorAttestedRefinementPreferenceEnabledAfterRestart', 'operatorAttestedRefinementReady',
     'operatorAttestedNativeSaveDialogs', 'operatorAttestedNoCaptureCommand',
-    'operatorAttestedNoMediaPermissionPrompt', 'readyMarkerCount'
+    'operatorAttestedNoMediaPermissionPrompt', 'refinementReadyMarkerCount'
   ], 'offlineRestart')
   requireTrueFields(report.offlineRestart, [
     'downloadHostsUnreachableAtRestart', 'harnessLaunchedBoundReleaseExecutable',
-    'harnessObservedNormalExit', 'harnessVerifiedExports', 'operatorAttestedModelReady',
+    'harnessObservedNormalExit', 'harnessVerifiedExports',
+    'harnessVerifiedRefinementPreferencePersisted', 'operatorAttestedCoreReady',
+    'operatorAttestedRefinementPreferenceEnabledAfterRestart', 'operatorAttestedRefinementReady',
     'operatorAttestedNativeSaveDialogs', 'operatorAttestedNoCaptureCommand',
     'operatorAttestedNoMediaPermissionPrompt'
   ], 'offlineRestart')
   requireFalseFields(report.offlineRestart, ['networkAttemptCountAssessed'], 'offlineRestart')
   if (!['vm-host-vnic-disconnect', 'preconfigured-outbound-block'].includes(report.offlineRestart.offlineControl) ||
-      report.offlineRestart.readyMarkerCount !== PRODUCTION_MODEL_MANIFEST.artifacts.length ||
+      report.offlineRestart.coreReadyMarkerCount !== CORE_ARTIFACTS.length ||
+      report.offlineRestart.refinementReadyMarkerCount !== REFINEMENT_ARTIFACTS.length ||
       report.offlineRestart.operatorAttestedLegacySessionCount !== 1 ||
       report.offlineRestart.exportArtifactCount !== 3 || report.offlineRestart.exportedSegmentCount !== 1 ||
       JSON.stringify(report.offlineRestart.exportFormats) !== JSON.stringify(['txt', 'md', 'srt'])) {
@@ -252,30 +321,40 @@ function validateI4NonAudioNsisReport (report, layoutEvidence = readTrackedLayou
 
   exactKeys(report.dataLifecycle, [
     'applicationDataWritten', 'configPresent', 'downloadHostsUnreachableAtReinstall', 'exports',
+    'coreReadyMarkerCount',
     'harnessObservedReinstallNormalExit', 'harnessVerifiedReinstallExportsMatch',
+    'harnessVerifiedRefinementPreferencePreservedAfterReinstall',
     'harnessVerifiedSelectedDataPresentAfterReinstall', 'installDirectoryRemoved',
     'legacyFixtureSha256', 'legacySourceUnchanged', 'modelFileCount',
     'operatorAttestedInteractiveReinstall', 'operatorAttestedInteractiveUninstall',
-    'operatorAttestedLegacySessionCountAfterReinstall', 'operatorAttestedModelReadyAfterReinstall',
+    'operatorAttestedLegacySessionCountAfterReinstall', 'operatorAttestedCoreReadyAfterReinstall',
+    'operatorAttestedRefinementPreferenceEnabledAfterReinstall',
+    'operatorAttestedRefinementReadyAfterReinstall',
     'preservationManifestEntryCount', 'preservationManifestSha256AfterReinstall',
     'preservationManifestSha256AfterUninstall', 'preservationManifestSha256BeforeUninstall',
     'preservationManifestUnchangedThroughReinstall', 'preservationScope', 'readyMarkers',
     'reinstallExitCode', 'reinstallExports', 'selectedApplicationDataPreservedAfterUninstall',
-    'sqliteHeaderValid', 'uninstallExitCode', 'userDataDirectoryName', 'userDataDiscovery'
+    'refinementReadyMarkerCount', 'sqliteHeaderValid', 'uninstallExitCode',
+    'userDataDirectoryName', 'userDataDiscovery'
   ], 'dataLifecycle')
   requireTrueFields(report.dataLifecycle, [
     'applicationDataWritten', 'configPresent', 'downloadHostsUnreachableAtReinstall',
     'harnessObservedReinstallNormalExit', 'harnessVerifiedReinstallExportsMatch',
     'harnessVerifiedSelectedDataPresentAfterReinstall', 'installDirectoryRemoved',
     'legacySourceUnchanged', 'operatorAttestedInteractiveReinstall',
-    'operatorAttestedInteractiveUninstall', 'operatorAttestedModelReadyAfterReinstall',
+    'operatorAttestedInteractiveUninstall', 'operatorAttestedCoreReadyAfterReinstall',
+    'operatorAttestedRefinementPreferenceEnabledAfterReinstall',
+    'operatorAttestedRefinementReadyAfterReinstall',
     'preservationManifestUnchangedThroughReinstall',
-    'selectedApplicationDataPreservedAfterUninstall', 'sqliteHeaderValid'
+    'selectedApplicationDataPreservedAfterUninstall', 'sqliteHeaderValid',
+    'harnessVerifiedRefinementPreferencePreservedAfterReinstall'
   ], 'dataLifecycle')
   if (report.dataLifecycle.userDataDirectoryName !== packageJson.name ||
       report.dataLifecycle.userDataDiscovery !== 'new-roaming-directory-with-product-data' ||
       report.dataLifecycle.preservationScope !== 'config-sqlite-legacy-ready-markers-and-model-files' ||
       report.dataLifecycle.modelFileCount !== EXPECTED_MODEL_FILE_COUNT ||
+      report.dataLifecycle.coreReadyMarkerCount !== CORE_ARTIFACTS.length ||
+      report.dataLifecycle.refinementReadyMarkerCount !== REFINEMENT_ARTIFACTS.length ||
       report.dataLifecycle.preservationManifestEntryCount !== EXPECTED_PRESERVATION_ENTRY_COUNT ||
       report.dataLifecycle.operatorAttestedLegacySessionCountAfterReinstall !== 1 ||
       report.dataLifecycle.uninstallExitCode !== 0 || report.dataLifecycle.reinstallExitCode !== 0) {
@@ -358,15 +437,22 @@ if (require.main === module) {
     result: report.result,
     gateStatus: report.gateStatus,
     installerSha256: report.artifact.installerSha256,
-    readyMarkerCount: report.firstLaunch.readyMarkerCount,
+    coreReadyMarkerCount: report.firstLaunch.coreReadyMarkerCount,
+    refinementReadyMarkerCount: report.refinementSetup.refinementReadyMarkerCount,
     preservedEntryCount: report.dataLifecycle.preservationManifestEntryCount
   }) + '\n')
 }
 
 module.exports = {
   EXPECTED_ALLOWED_HOSTS,
+  CORE_ARTIFACTS,
+  REFINEMENT_ARTIFACTS,
   EXPECTED_LIMITATIONS,
+  EXPECTED_CORE_MODEL_BYTES,
+  EXPECTED_REFINEMENT_MODEL_BYTES,
   EXPECTED_MODEL_BYTES,
+  EXPECTED_CORE_MODEL_FILE_COUNT,
+  EXPECTED_REFINEMENT_MODEL_FILE_COUNT,
   EXPECTED_MODEL_FILE_COUNT,
   EXPECTED_PRESERVATION_ENTRY_COUNT,
   TRACKED_FIXTURE_PATH,

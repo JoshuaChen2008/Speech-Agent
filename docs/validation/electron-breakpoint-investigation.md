@@ -43,7 +43,7 @@ PostQueuedCompletionStatus: (6) 句柄无效。
 
 当前退出绑定 I2 权威证据覆盖 loopback/mic 各 5 轮真实 audio-host→online ASR→Silero→offline refine→Coordinator；每来源包含 5 个 schema-v5 child、5 个 schema-v1 exact-child-exit sidecar 和 1 个 schema-v6 series，并记录 exact accepted-partial 跨时钟六段诊断。10 轮均有 final/refined，loopback 最大 final/refined CER=0/0、mic=0.035714/0，帧全等且 12 项丢失峰值为 0。冻结字幕可见延迟 P95 为 1158/1005ms：两来源分别超 `<1000ms` 线 158ms/5ms，I2 整体仍未关闭。它不替代真实 pause/refine、拖动、设备变化、睡眠/唤醒、硬崩溃、I3 或 I4，也不把当前退出样本升级为 `0x80000003` 根因或永久修复证明。
 
-B5 已从包含本阶段 runtime 和退出证据钩子的当前源码重建并重取证：正式 x64 安装器 SHA 为 `4a1deb3551ff89758183c527f7a51acc501fddd75e76c1dd950a612d552449dd`，package layout、native/SQLite utility、packaged 首启/离线复启的两次 exact-child clean exit、旧档迁移/导出和隔离 NSIS 安装卸载均绑定该候选；同一 run ID、四份报告 SHA 与 112 文件产品载荷 SHA `503a40df…b93d` 关闭了旧报告/新包拼接空间。它仍未签名，也不是干净机、真实权限或物理音源证明，故不关闭 I4，也不把 clean exit 升级为 `0x80000003` 根因或永久修复证明。
+B5 已从包含本阶段 runtime 和退出证据钩子的当前源码重建并重取证：正式 x64 安装器 SHA 为 `4abc23bc4f0ab0307d551a5c59c834009d3d48953810f6c864c485db73db31de`，package layout、native/SQLite utility、packaged 首启/离线复启的两次 exact-child clean exit、核心/精修分层、下载取消/复启继续、J15b/J15c 产品旅程、旧档迁移/导出和隔离 NSIS 安装卸载均绑定该候选；同一 run ID、四份报告 SHA 与 114 文件产品载荷 SHA `b6503ca2…a0bbd` 关闭了旧报告/新包拼接空间。它仍未签名，也不是干净机、真实权限或物理音源证明，故不关闭 I4，也不把 clean exit 升级为 `0x80000003` 根因或永久修复证明。
 
 ## 后续可证伪诊断
 

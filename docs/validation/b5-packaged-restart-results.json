@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "kind": "product-shell-offline-restart-smoke",
-  "generatedAt": "2026-08-01T16:36:07.099Z",
+  "generatedAt": "2026-08-02T10:37:59.023Z",
   "result": "pass",
   "gateStatus": "partial",
   "runtime": {
@@ -11,12 +11,12 @@
     "crashEventCount": 0
   },
   "qualification": {
-    "runId": "b5-bb5f34b3-e625-4a9c-b5c1-94055ee6f3e5",
+    "runId": "b5-2bd0dc7a-e233-41a5-a41b-65d04344b0aa",
     "phase": "restart",
-    "freshProductReportSha256": "d7c16956b9133a7dc43558e287e01f5045804910611f64e0dc7f2af5dc0bfb39",
+    "freshProductReportSha256": "9ad795e7d1a55f54e73baebaedeac20e0f1e5ae943e91df22abfea27aec8a003",
     "productPayloadVersion": "live-subtitle-product-payload-v1",
-    "productPayloadFileCount": 112,
-    "productPayloadSha256": "503a40df18f70c397604bda6a4c3ac909851624ec2129a8db7b690fa610ab93d"
+    "productPayloadFileCount": 114,
+    "productPayloadSha256": "b6503ca26c3f59bb0b5c15acfa6c2ceec0d2eaff3a540bf5f56016032c1a0bbd"
   },
   "packaging": {
     "appIsPackaged": true,
@@ -39,20 +39,34 @@
     "installedViaNsis": false
   },
   "journey": {
-    "readyModelSurvivedRestart": true,
-    "modelFetchAttemptCount": 0,
-    "fixtureServerStarted": false,
-    "modelReadyMarkerCount": 3,
+    "coreReadySurvivedRestart": true,
+    "refinementMissingWithRetainedPart": true,
+    "modelFetchAttemptCountBeforeExplicitContinue": 0,
+    "fixtureServerStartedBeforeExplicitContinue": false,
+    "coreReadyMarkerCount": 2,
+    "refinementReadyMarkerCount": 1,
     "resourceCount": 3,
+    "refinementContinueRangeObserved": true,
+    "refinementExplicitDownloadReady": true,
+    "refinementPreferenceStillDisabledAfterDownload": true,
+    "refinementPreferenceExplicitlyEnabled": true,
+    "refinementNoticeNotReplayed": true,
     "persistedTerminalHistoryCount": 3,
     "previousLiveSessionVisible": true,
     "legacySessionVisible": true,
     "legacyMigrationIdempotent": true,
+    "persistedRawSessionFrozenOriginal": true,
     "longHistorySegmentCount": 205,
     "historyPageSize": 50,
-    "historyExportArtifactCount": 3,
-    "historyExportFullSegmentCount": 205,
+    "historyOriginalExportArtifactCount": 3,
+    "historyOriginalExportFullSegmentCount": 205,
     "restartCaptionRendered": true,
+    "restartSessionFrozenWithPersistedPreference": true,
+    "refinementPreferenceChangedForFutureSessions": true,
+    "refinementFaultSilentDuringSession": true,
+    "postSessionRefinementNoticeShown": true,
+    "refinementNoticeClearedByHistory": true,
+    "historyRefinementFaultVisible": true,
     "restartSessionPersisted": true,
     "terminalHistoryCountAfterRestart": 4
   },

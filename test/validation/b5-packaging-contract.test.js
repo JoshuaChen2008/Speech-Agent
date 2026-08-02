@@ -48,6 +48,106 @@ function validationReportPath (name) {
   return path.join(VALIDATION_DIR, name)
 }
 
+function productShellV2Fixture () {
+  const report = JSON.parse(fs.readFileSync(
+    path.join(ROOT, 'docs', 'validation', 'b5-packaged-product-results.json'),
+    'utf8'
+  ))
+  return {
+    ...report,
+    schemaVersion: 2,
+    journey: {
+      onboardingPreset: 'dictation',
+      coreInstallClicked: true,
+      coreInitialState: 'missing',
+      refinementInitialState: 'missing',
+      refinementPreferenceInitiallyDisabled: true,
+      refinementPreferenceRejectedWhileMissing: true,
+      refinementFetchAttemptCountBeforeExplicitDownload: 0,
+      coreObservedStates: ['missing', 'downloading', 'verifying', 'ready'],
+      coreRangeResumeObserved: true,
+      coreReadyMarkerCount: 2,
+      refinementReadyMarkerCountBeforeExplicitDownload: 0,
+      coreHotActivation: true,
+      refinementContinueRangeObserved: true,
+      refinementExplicitDownloadReady: true,
+      refinementReadyMarkerCount: 1,
+      refinementPreferenceStillDisabledAfterDownload: true,
+      refinementPreferenceExplicitlyEnabled: true,
+      rawSessionFrozenOriginal: true,
+      futureSessionFrozenRefinementEnabled: true,
+      refinementFaultSilentDuringSession: true,
+      postSessionRefinementNoticeShown: true,
+      refinementNoticeClearedByHistory: true,
+      historyRefinementFaultVisible: true,
+      startListeningStop: true,
+      pauseResume: true,
+      finalCaptionRendered: true,
+      visibleCaptionMatchesFinal: true,
+      captionFontApplied: true,
+      downloadedModelSessionInHistory: true,
+      terminalHistoryCount: 4,
+      legacyJsonlMigrated: true,
+      legacySessionVisible: true,
+      legacySourceReadOnly: true,
+      longHistorySegmentCount: 205,
+      historyPageCount: 5,
+      historyPageSize: 50,
+      historyMaxTimelineNodes: 50,
+      historyReachedEnd: true,
+      historyBackForwardNavigation: true,
+      historyAriaRangeAligned: true,
+      historyVersionStartsOriginal: true,
+      historyRefinedVersionSelected: true,
+      historyRefinedVersionPersistsAcrossPaging: true,
+      historyRefinedExportHonored: true,
+      historySessionChangeResetsOriginal: true,
+      historyOriginalExportHonored: true,
+      historyExportDialogCount: 5,
+      historyOriginalExportFormats: ['txt', 'md', 'srt'],
+      historyOriginalExportArtifactCount: 3,
+      historyOriginalExportFullSegmentCount: 205,
+      historyRefinedExportArtifactCount: 1,
+      historyRawOriginalExportArtifactCount: 1,
+      resourcesPaneOpenedFromToolbar: true,
+      coreState: 'ready',
+      refinementState: 'ready',
+      resourceCount: 3,
+      coreReadinessSource: 'settings-click-controlled-install',
+      translationAdvertised: false
+    }
+  }
+}
+
+function productShellV3Fixture () {
+  const report = productShellV2Fixture()
+  const {
+    refinementContinueRangeObserved,
+    refinementExplicitDownloadReady,
+    refinementPreferenceStillDisabledAfterDownload,
+    refinementPreferenceExplicitlyEnabled,
+    futureSessionFrozenRefinementEnabled,
+    refinementFaultSilentDuringSession,
+    postSessionRefinementNoticeShown,
+    refinementNoticeClearedByHistory,
+    historyRefinementFaultVisible,
+    ...baseJourney
+  } = report.journey
+  return {
+    ...report,
+    schemaVersion: 3,
+    journey: {
+      ...baseJourney,
+      refinementDownloadStartedBeforeCancellation: true,
+      refinementCancellationClosedFetchStream: true,
+      refinementCancellationRetainedPart: true,
+      refinementReadyMarkerCount: 0,
+      terminalHistoryCount: 3,
+      refinementState: 'missing'
+    }
+  }
+}
+
 test('release package uses an explicit ASAR allowlist, hardened fuses and per-user NSIS', () => {
   assert.equal(releaseConfig.asar, true)
   assert.equal(releaseConfig.npmRebuild, false)
@@ -215,12 +315,42 @@ test('packaged product report requires ASAR, native utility and SQLite round-tri
   }), /limitations/)
 })
 
+test('packaged product v2 evidence closes the split core/refinement, history-version and post-session notice journey', () => {
+  const report = productShellV2Fixture()
+  assert.equal(validatePackagedProductShellReport(report), report)
+  assert.throws(() => validatePackagedProductShellReport({
+    ...report,
+    journey: { ...report.journey, refinementFetchAttemptCountBeforeExplicitDownload: 1 }
+  }), /v2 user journey/)
+  assert.throws(() => validatePackagedProductShellReport({
+    ...report,
+    journey: { ...report.journey, unexpectedEvidence: true }
+  }), /v2 user journey/)
+})
+
+test('packaged product v3 evidence records the streamed cancellation before restart continuation', () => {
+  const report = productShellV3Fixture()
+  assert.equal(validatePackagedProductShellReport(report), report)
+  assert.throws(() => validatePackagedProductShellReport({
+    ...report,
+    journey: { ...report.journey, refinementCancellationRetainedPart: false }
+  }), /v3 user journey/)
+  assert.throws(() => validatePackagedProductShellReport({
+    ...report,
+    journey: { ...report.journey, unexpectedEvidence: true }
+  }), /v3 user journey/)
+})
+
 test('packaged smoke source starts at packaged argv and probes native code in a utility process', () => {
   const source = fs.readFileSync(path.join(ROOT, 'scripts', 'product-shell-smoke.js'), 'utf8')
   assert.match(source, /process\.argv\.slice\(app\.isPackaged \? 1 : 2\)/)
   assert.match(source, /utilityProcess\.fork\(probePath/)
   assert.match(source, /app\.asar\.unpacked/)
   assert.match(source, /releaseCandidate: false/)
+  assert.match(source, /coreReadyMarkerCount/)
+  assert.match(source, /refinementContinueRangeObserved/)
+  assert.match(source, /historyRefinedVersionPersistsAcrossPaging/)
+  assert.match(source, /postSessionRefinementNoticeShown/)
 })
 
 test('NSIS lifecycle report binds install/uninstall mechanics without claiming an app journey', () => {
@@ -342,10 +472,15 @@ test('tracked B5 evidence is mutually consistent and preserves the I4 boundary',
   assert.equal(product.packaging.installedViaNsis, false)
   assert.ok(product.limitations.includes('not-clean-machine-i4'))
   assert.ok(product.limitations.includes('packaged-test-variant-not-release-installer'))
-  assert.equal(restart.journey.modelFetchAttemptCount, 0)
+  assert.equal(restart.schemaVersion === 3
+    ? restart.journey.modelFetchAttemptCountBeforeExplicitContinue
+    : restart.journey.modelFetchAttemptCount, 0)
   assert.equal(restart.journey.legacyMigrationIdempotent, true)
-  assert.equal(restart.journey.historyExportFullSegmentCount, 205)
-  assert.equal(restart.journey.terminalHistoryCountAfterRestart, 4)
+  assert.equal(restart.schemaVersion === 1
+    ? restart.journey.historyExportFullSegmentCount
+    : restart.journey.historyOriginalExportFullSegmentCount, 205)
+  assert.equal(restart.journey.terminalHistoryCountAfterRestart,
+    restart.schemaVersion === 3 ? 4 : 5)
   assert.equal(exit.outcome, 'clean-exit')
   assert.equal(exit.counters.incidentCount, 0)
   assert.equal(exit.attribution.breakpointObserved, false)

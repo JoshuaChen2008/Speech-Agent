@@ -68,6 +68,73 @@ function restartReportFixture () {
   }
 }
 
+function restartReportV2Fixture () {
+  const report = restartReportFixture()
+  return {
+    ...report,
+    schemaVersion: 2,
+    journey: {
+      coreReadySurvivedRestart: true,
+      refinementReadySurvivedRestart: true,
+      modelFetchAttemptCount: 0,
+      fixtureServerStarted: false,
+      coreReadyMarkerCount: 2,
+      refinementReadyMarkerCount: 1,
+      resourceCount: 3,
+      refinementPreferencePersisted: true,
+      refinementNoticeNotReplayed: true,
+      persistedTerminalHistoryCount: 4,
+      previousLiveSessionVisible: true,
+      legacySessionVisible: true,
+      legacyMigrationIdempotent: true,
+      persistedRawSessionFrozenOriginal: true,
+      persistedRefinedSessionFrozenEnabled: true,
+      longHistorySegmentCount: 205,
+      historyPageSize: 50,
+      historyOriginalExportArtifactCount: 3,
+      historyOriginalExportFullSegmentCount: 205,
+      restartCaptionRendered: true,
+      restartSessionFrozenWithPersistedPreference: true,
+      refinementPreferenceChangedForFutureSessions: true,
+      restartSessionPersisted: true,
+      terminalHistoryCountAfterRestart: 5
+    }
+  }
+}
+
+function restartReportV3Fixture () {
+  const report = restartReportV2Fixture()
+  const {
+    refinementReadySurvivedRestart,
+    modelFetchAttemptCount,
+    fixtureServerStarted,
+    refinementPreferencePersisted,
+    persistedRefinedSessionFrozenEnabled,
+    terminalHistoryCountAfterRestart,
+    ...baseJourney
+  } = report.journey
+  return {
+    ...report,
+    schemaVersion: 3,
+    journey: {
+      ...baseJourney,
+      refinementMissingWithRetainedPart: true,
+      modelFetchAttemptCountBeforeExplicitContinue: 0,
+      fixtureServerStartedBeforeExplicitContinue: false,
+      refinementContinueRangeObserved: true,
+      refinementExplicitDownloadReady: true,
+      refinementPreferenceStillDisabledAfterDownload: true,
+      refinementPreferenceExplicitlyEnabled: true,
+      refinementFaultSilentDuringSession: true,
+      postSessionRefinementNoticeShown: true,
+      refinementNoticeClearedByHistory: true,
+      historyRefinementFaultVisible: true,
+      persistedTerminalHistoryCount: 3,
+      terminalHistoryCountAfterRestart: 4
+    }
+  }
+}
+
 test('packaged offline restart report proves ready-model and SQLite persistence without overclaiming I4', (t) => {
   const report = restartReportFixture()
   assert.equal(validateProductShellRestartReport(report), report)
@@ -87,6 +154,32 @@ test('packaged offline restart report proves ready-model and SQLite persistence 
   assert.throws(() => readAndValidateProductShellRestartReport(duplicateKeyPath), /duplicate object key/)
 })
 
+test('packaged offline restart v2 report keeps core and optional readiness, preference freezing and notice lifecycle separate', () => {
+  const report = restartReportV2Fixture()
+  assert.equal(validateProductShellRestartReport(report), report)
+  assert.throws(() => validateProductShellRestartReport({
+    ...report,
+    journey: { ...report.journey, refinementNoticeNotReplayed: false }
+  }), /v2 journey/)
+  assert.throws(() => validateProductShellRestartReport({
+    ...report,
+    journey: { ...report.journey, unexpectedEvidence: true }
+  }), /v2 journey/)
+})
+
+test('packaged restart v3 reports the cancelled-part offline boundary before the explicit Range continuation', () => {
+  const report = restartReportV3Fixture()
+  assert.equal(validateProductShellRestartReport(report), report)
+  assert.throws(() => validateProductShellRestartReport({
+    ...report,
+    journey: { ...report.journey, modelFetchAttemptCountBeforeExplicitContinue: 1 }
+  }), /v3 journey/)
+  assert.throws(() => validateProductShellRestartReport({
+    ...report,
+    journey: { ...report.journey, refinementContinueRangeObserved: false }
+  }), /v3 journey/)
+})
+
 test('packaged runner performs a second supervised launch against the same isolated userData', () => {
   const runner = fs.readFileSync(path.join(ROOT, 'scripts', 'run-packaged-product-shell.js'), 'utf8')
   const smoke = fs.readFileSync(path.join(ROOT, 'scripts', 'product-shell-smoke.js'), 'utf8')
@@ -96,6 +189,10 @@ test('packaged runner performs a second supervised launch against the same isola
   assert.match(runner, /readAndValidateElectronExitEvidence\(restartEvidencePath\)/)
   assert.match(smoke, /offline restart attempted a model download/)
   assert.match(smoke, /legacyMigrationIdempotent/)
-  assert.match(smoke, /historyExportFullSegmentCount/)
+  assert.match(smoke, /historyOriginalExportFullSegmentCount/)
+  assert.match(smoke, /coreReadyMarkerCount/)
+  assert.match(smoke, /refinementNoticeNotReplayed/)
+  assert.match(smoke, /modelFetchAttemptCountBeforeExplicitContinue/)
+  assert.match(smoke, /refinementContinueRangeObserved/)
   assert.match(smoke, /terminalHistoryCountAfterRestart:\s*4/)
 })
