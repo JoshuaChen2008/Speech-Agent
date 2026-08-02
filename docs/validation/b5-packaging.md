@@ -1,7 +1,7 @@
 # B5 打包态确定性资格
 
 - 日期：2026-08-02
-- 状态：当前源码的构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；远端 run `30766172580` 在 revision `f05f3f9537d0200b63b2e28bb79846ced74f827d` 上完成全部 workflow steps、605 项回归、provenance 绑定与 artifact 上传，下载复核与隐私负扫描均闭合，J9-CI 已达到确定性联合验收完成。该远端证据只绑定其精确 revision/旧候选，当前 revision 的远端 provenance 为实现完成·尚未验收
+- 状态：当前源码的本机构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；本机安装器 SHA 为 `d862c5fc…0de10`。远端 run `30768637180` 精确绑定当前源码 revision `2d3d6bdf5d745c15c239ef7503a0dfac211409a8`，全部 workflow steps、609 项回归、provenance 绑定、artifact 上传、下载复核与隐私负扫描均闭合，J9-CI 已达到确定性联合验收完成。远端索引绑定 installer SHA `91297945…19292`，不把未下载的远端 installer 字节冒充本机安装器
 - 发布边界：同一隔离 `userData` 的离线复启发生在测试 package；NSIS 卸载只验证隔离安装目录与无关 APPDATA 哨兵。正式 release 的 I4 非音频专用干净机尚未执行，因此尚未达到实机验收完成或发布验收完成
 
 ## 精确候选
@@ -86,15 +86,17 @@ provenance 绑定与 artifact 上传均成功。artifact
 `qualification-evidence-3b4b0db2f56f57e3d0e7500c77593b406a5dd857-30765231206-1` 的 GitHub ZIP
 digest 为 `2df032ffb1c4d7f3da3130cce240b617559947f8b4cef0c63d8cf8b0ca33698c`。下载后 strict reader
 因 caption layout runner/verifier 在 hosted checkout 为 CRLF、本机为 LF 而拒绝当前工作树复算；
-两份脚本及索引复算的 lockfile/workflow 现由 `.gitattributes` 固定 LF。run `30766172580` 随后在
-revision `f05f3f9537d0200b63b2e28bb79846ced74f827d` 完成全部 workflow steps 与 605 项回归；artifact
-`qualification-evidence-f05f3f9537d0200b63b2e28bb79846ced74f827d-30766172580-1`（ID `8839039319`，
-GitHub ZIP digest `33bddcb065f5297ab9b244c60455dda798d5415abab1b213d0c1fac65a537017`）下载后通过五个
-strict readers、四份报告与 lockfile/workflow SHA、跨报告绑定及 41 文件/29 JSON 隐私负扫描，
-J9-CI 已达到确定性联合验收完成。下载包不含 installer 字节；同轮 workflow step 17 已在索引生成前
-复核其精确 installer SHA。该结论只绑定 run `30766172580` 的精确 revision 与旧候选，不绑定本页
-当前 B5 候选字节；本地构造相同 JSON 也不带远端来源语境或签名，不能冒充 GitHub run 证据。当前
-revision 仍须在推送后取得新的完整 workflow、provenance index 与下载复核。
+两份脚本及索引复算的 lockfile/workflow 现由 `.gitattributes` 固定 LF。run `30766172580` 随后验证
+了该可移植性修复。当前源码由 run `30768637180` 在 revision
+`2d3d6bdf5d745c15c239ef7503a0dfac211409a8` 上完成全部 workflow steps 与 609 项回归；artifact
+`qualification-evidence-2d3d6bdf5d745c15c239ef7503a0dfac211409a8-30768637180-1`（ID
+`8839812004`，GitHub ZIP digest
+`3663225294fbd1019ab6e0e1e29608297fa767eb6c8e4b9012972fcd2d1f16c6`）下载后通过五个 strict
+readers、四份报告与 lockfile/workflow SHA、跨报告绑定及 41 文件/29 JSON 隐私负扫描，J9-CI 已
+达到确定性联合验收完成。下载包不含 installer 字节；同轮 workflow 已在索引生成前复核远端
+installer SHA `9129794558c1f24f9300ba6f365a4b304a805fabe4f4e82691e77ea8cab19292`。该远端摘要与本机
+安装器 SHA `d862c5fca0e477abc2d636573e1dd41aef564ed0c82def3bd469966db7b0de10` 不同，二者不得互相冒充；
+本地构造相同 JSON 也不带远端来源语境或签名，不能冒充 GitHub run 证据。
 
 这条旅程使用受控小资源和 fake ASR，不访问物理声卡、不保存音频，也不冒充公网真实张量、
 I2、真实两小时 I3 或 I4。
