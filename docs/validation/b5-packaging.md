@@ -1,7 +1,7 @@
 # B5 打包态确定性资格
 
 - 日期：2026-08-02
-- 状态：当前源码的构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；远端 run `30763123116` 已在 revision `2efb8969ec0608dd44695586ef70255f01c79fa7` 通过 Electron、存储、四窗口产品壳、packaged 双启动、release NSIS 与隔离安装卸载，hidden artifact 已上传；完整产品文本 LF checkout 修复与新候选 B5 重建为实现完成·尚未验收
+- 状态：当前源码的构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；远端 run `30764235663` 已在 revision `92a968a0bae405226fe7a9baa6fd1dd168f7cbe2` 通过 Electron、存储、四窗口产品壳、packaged 双启动、release NSIS 与隔离安装卸载，hidden artifact 已上传；末端 evidence 回归的外部时区漂移不改变 B5 候选结论，J9-CI provenance 仍为实现完成·尚未验收
 - 发布边界：同一隔离 `userData` 的离线复启发生在测试 package；NSIS 卸载只验证隔离安装目录与无关 APPDATA 哨兵。正式 release 的 I4 非音频专用干净机尚未执行，因此尚未达到实机验收完成或发布验收完成
 
 ## 精确候选
@@ -75,11 +75,14 @@ writer/verifier、workflow 顺序与本地当前候选的交叉哈希探针为�
 未供给而止于首个字幕布局步骤；run `30760407160` 精确绑定 revision
 `0d0cd9f91cfd5136bbd5d3fec44e636da04b4e21`，通过 runtime、布局与 DB0 后暴露 DB1 fixture
 漂移及 hidden artifact 未上传。run `30761472817` 暴露模型 fixture 与十个 I3 文本输入的可移植性缺口；
-修复后的 run `30763123116` 精确绑定 revision `2efb8969ec0608dd44695586ef70255f01c79fa7`，已通过
-Electron、DB0/DB1/Gateway、四窗口产品壳、packaged 双启动、release NSIS 与隔离安装卸载，hidden
-artifact 也已上传，模型 fixture 与十个 I3 文本输入通过；末端只因完整产品载荷的其余文本 checkout
-行尾未固定而有 2 项失败，最终索引按设计跳过。当前 `.gitattributes` 已固定全部六种产品文本为 LF，
-产品载荷、ASAR、installer 与报告仍按精确字节计算；新候选 B5 已重建，该修复为实现完成·尚未验收。
+run `30763123116` 精确绑定 revision `2efb8969ec0608dd44695586ef70255f01c79fa7`，通过所有产品与打包
+前置后暴露完整产品载荷 checkout 行尾漂移。修复模型、文本 provenance 与完整产品载荷 checkout 后，
+run `30764235663` 精确绑定 revision
+`92a968a0bae405226fe7a9baa6fd1dd168f7cbe2`，已通过 Electron、DB0/DB1/Gateway、四窗口产品壳、
+packaged 双启动、release NSIS 与隔离安装卸载，hidden artifact 也已上传；末端完整回归仅 I3 非音频
+Markdown 标题因本机与 hosted Windows 外部时区不同而有 1 项实际字节 SHA 漂移，最终索引按设计
+跳过。I3 fixture 现以独立 Node child 执行并在加载 runner 与产品模块前固定 UTC，产品导出继续跟随 Windows 系统时区，
+实际导出、产品载荷、ASAR、installer 与报告 SHA 均不做内容规范化；该修复为实现完成·尚未验收，且不改变当前 B5 候选字节。
 只有新 revision 的完整 workflow 成功并产生可下载 artifact，才可取得
 对应远端索引；本地构造相同 JSON 也不带远端来源语境或签名，不能冒充 GitHub run 证据。
 

@@ -48,7 +48,7 @@ Live Subtitle 的数据边界是设计的一部分：
 |---|---|---|
 | 固定高度字幕流、版本隔离、可选精修及历史 | 联合验收完成 | 本地确定性范围已有跨模块用户旅程和打包态证据。 |
 | 本地非音频回归 | 联合验收完成 | core 410、integration 27、evidence 166，共 603 项。 |
-| 远端 Windows CI 资格 | 实现完成·尚未验收 | run `30763123116` 已通过 Electron、存储、四窗口产品壳、packaged 双启动、release NSIS 与隔离安装卸载，hidden artifact 已上传；末端仅余完整产品文本 checkout 行尾导致的载荷漂移，当前已固定 LF 并重建候选，等待新 revision 复验。 |
+| 远端 Windows CI 资格 | 实现完成·尚未验收 | run `30764235663` 精确绑定 revision `92a968a0…`，已通过 Electron、存储、四窗口产品壳、packaged 双启动、release NSIS 与隔离安装卸载；完整回归仅 I3 非音频 Markdown 标题受外部时区影响而有 1 项 SHA 漂移，provenance 索引按设计跳过。I3 fixture 已改由固定 `TZ=UTC` 的独立 Node child 执行，等待新 revision 复验；产品导出仍跟随 Windows 系统时区。 |
 | 36 组合 DWM、主题、透明窗和异缩放双屏观察 | 实现完成·尚未验收 | runner 和严格 verifier 已就位，仍需可见实机矩阵。 |
 | 真实 `loopback` / `mic` 性能与两小时稳定性 | 实现完成·尚未验收 | 当前冻结 P95 仍高于 `<1000 ms` 门槛，真实两小时音频尚未执行。 |
 | I4 非音频干净 Windows 子门禁 | 实现完成·尚未验收 | runner/verifier 已实现；需要无仓库、无 Node、无既有数据的标准用户机器复核真实 `userData` 与安装生命周期。 |

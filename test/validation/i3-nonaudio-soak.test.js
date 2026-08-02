@@ -1,6 +1,7 @@
 'use strict'
 
 const assert = require('node:assert/strict')
+const childProcess = require('node:child_process')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -9,8 +10,7 @@ const test = require('node:test')
 const {
   DEFAULT_SEGMENT_COUNT,
   PROVENANCE_FILES,
-  canonicalTextProvenanceDigest,
-  runI3NonAudioSoak
+  canonicalTextProvenanceDigest
 } = require('../../scripts/i3-nonaudio-soak')
 const {
   readAndValidateI3NonAudioReport,
@@ -64,14 +64,25 @@ test('tracked I3 non-audio evidence remains strict, reproducible in shape, and e
 test('I3 non-audio soak: deterministic thousands-segment virtual two-hour fixture stays bounded and is explicitly partial', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'i3-nonaudio-test-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const reportPath = path.join(root, 'i3-nonaudio-report.json')
   const tracked = readAndValidateI3NonAudioReport(
     path.join(ROOT, 'docs', 'validation', 'i3-nonaudio-results.json')
   )
-  const report = await runI3NonAudioSoak({
-    batchSize: 100,
-    rootDirectory: root,
-    segmentCount: DEFAULT_SEGMENT_COUNT
+  const child = childProcess.spawnSync(process.execPath, [
+    path.join(ROOT, 'scripts', 'i3-nonaudio-soak.js'),
+    '--segments', String(DEFAULT_SEGMENT_COUNT),
+    '--batch-size', '100',
+    '--report', reportPath
+  ], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: { ...process.env, TZ: 'UTC' },
+    maxBuffer: 1024 * 1024,
+    timeout: 120000
   })
+  assert.equal(child.error, undefined)
+  assert.equal(child.status, 0, child.stderr)
+  const report = readAndValidateI3NonAudioReport(reportPath)
   assert.equal(report.result, 'pass')
   assert.equal(report.gateStatus, 'partial')
   assert.equal(report.boundaries.realTwoHourAudioSoak, false)
@@ -85,8 +96,6 @@ test('I3 non-audio soak: deterministic thousands-segment virtual two-hour fixtur
   assert.deepEqual(report.exports, tracked.exports)
   assert.deepEqual(report.provenance, tracked.provenance)
   assert.deepEqual(validateI3NonAudioReport(report), report)
-  const reportPath = path.join(root, 'i3-nonaudio-report.json')
-  fs.writeFileSync(reportPath, JSON.stringify(report), 'utf8')
   assert.deepEqual(readAndValidateI3NonAudioReport(reportPath), report)
   const duplicateKeyPath = path.join(root, 'i3-nonaudio-duplicate-key.json')
   fs.writeFileSync(duplicateKeyPath, '{"schemaVersion":1,"schemaVersion":1}', 'utf8')
