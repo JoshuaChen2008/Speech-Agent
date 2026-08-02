@@ -151,6 +151,42 @@ test('Windows CI writes and verifies provenance only after the full regression a
   ]) assert.match(workflow, new RegExp(token.replaceAll('$', '\\$')))
 })
 
+test('Windows CI installs and verifies the locked Electron runtime before every dependent step', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
+  const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8')
+  const installDependencies = workflow.indexOf('run: npm ci')
+  const installRuntime = workflow.indexOf('run: npm run electron:install')
+  const verifyRuntime = workflow.indexOf("$electronPath = Join-Path $PWD 'node_modules/electron/dist/electron.exe'")
+
+  assert.equal(packageJson.scripts['electron:install'], 'install-electron')
+  assert.ok(installDependencies >= 0 && installRuntime > installDependencies)
+  assert.ok(verifyRuntime > installRuntime)
+  assert.match(workflow, /Test-Path -LiteralPath \$electronPath -PathType Leaf/)
+  assert.match(workflow, /require\('\.\/package\.json'\)\.devDependencies\.electron/)
+  assert.match(workflow, /require\('\.\/package-lock\.json'\)\.packages\['node_modules\/electron'\]\.version/)
+  assert.match(workflow, /Start-Process -FilePath \$electronPath[\s\S]*-ArgumentList @\('--version'\)/)
+  assert.match(workflow, /-RedirectStandardOutput \$versionStdout/)
+  assert.match(workflow, /-RedirectStandardError \$versionStderr/)
+  assert.match(workflow, /"v\$packageVersion"/)
+
+  for (const dependent of [
+    'scripts/caption-layout-smoke.js',
+    'scripts/db0-sqlite-smoke.js',
+    'scripts/db1-storage-smoke.js',
+    'scripts/storage-gateway-smoke.js',
+    'scripts/product-shell-smoke.js',
+    'npm run package:smoke',
+    'node scripts/run-packaged-product-shell.js',
+    'npm run package:release',
+    'node scripts/qualify-nsis-lifecycle.js',
+    'run: npm run test:ci'
+  ]) {
+    const position = workflow.indexOf(dependent)
+    assert.ok(position > verifyRuntime,
+      `Electron runtime verification must precede ${dependent}`)
+  }
+})
+
 test('SEM-T03 and J9-CI register the failed exact revision and Electron runtime prerequisite', () => {
   const semantic = fs.readFileSync(path.join(ROOT, 'docs', 'semantic-contract.md'), 'utf8')
   const strategy = fs.readFileSync(path.join(ROOT, 'docs', 'testing-strategy.md'), 'utf8')

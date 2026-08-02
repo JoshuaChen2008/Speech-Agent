@@ -59,7 +59,7 @@ test('J9-CI status projects the authoritative implemented-but-unaccepted qualifi
     assert.match(row, /30750568366/)
   }
   assert.match(navigationRow, /Electron `43\.2\.0`/)
-  assert.match(readmeRow, /修复为已决定/)
+  assert.match(readmeRow, /修复为实现完成·尚未验收/)
 })
 
 test('I4 projections separate the implemented non-audio child from the decided complete gate', () => {

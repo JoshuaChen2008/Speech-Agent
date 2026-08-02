@@ -9,7 +9,7 @@
 >
 > 2026-08-02 进度更新：上述排期快照已执行到 J15c。核心 ready 现只依赖实时 ASR+VAD，精修默认不下载；全局偏好按会话冻结，首次 `final` 与精修稿分版，下载取消→保留 `.part`→复启 fetch=0→明确继续 Range、故障回退、工具条会话状态通知、历史覆盖与本地日志均已进入真实 packaged 双启动旅程。J15a 又闭合了整段最后一条视觉行退出后的 identity-only renderer→main 回报与 canonical 永久淘汰，迟到修订、回退、窗口放大和 reload 均不得复活。DPI/主题/透明窗人工视觉、I4 专用干净机以及所有延期音频门禁仍未达到实机验收完成。
 >
-> 2026-08-03 远端状态纠偏：GitHub Actions run `30750568366` 已在 revision `2242103eb917f2afbfe81c7c8df788852bb36ebc` 执行；`npm ci` 成功，但 Electron runtime 未出现，首个字幕布局步骤找不到 `node_modules/electron/dist/electron.exe`，后续组合门禁与 provenance 索引均未执行。该结果是 CI 环境前置缺口，不是字幕布局产品断言失败。显式安装及前置校验 Electron `43.2.0` 为已决定。
+> 2026-08-03 远端状态纠偏：GitHub Actions run `30750568366` 已在 revision `2242103eb917f2afbfe81c7c8df788852bb36ebc` 执行；`npm ci` 成功，但 Electron runtime 未出现，首个字幕布局步骤找不到 `node_modules/electron/dist/electron.exe`，后续组合门禁与 provenance 索引均未执行。该结果是 CI 环境前置缺口，不是字幕布局产品断言失败。显式安装及前置校验 Electron `43.2.0` 已实现并通过本地真实版本探针，该修复为实现完成·尚未验收。
 
 ---
 

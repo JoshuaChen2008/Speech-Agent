@@ -1,7 +1,7 @@
 # B5 打包态确定性资格
 
 - 日期：2026-08-02
-- 状态：当前源码的构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；远端 run `30750568366` 已在 revision `2242103eb917f2afbfe81c7c8df788852bb36ebc` 执行，但因锁文件安装后缺少 Electron runtime 而失败，修复为已决定
+- 状态：当前源码的构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；远端 run `30750568366` 已在 revision `2242103eb917f2afbfe81c7c8df788852bb36ebc` 执行，但因锁文件安装后缺少 Electron runtime 而失败；显式 runtime 供给与前置版本校验修复为实现完成·尚未验收
 - 发布边界：同一隔离 `userData` 的离线复启发生在测试 package；NSIS 卸载只验证隔离安装目录与无关 APPDATA 哨兵。正式 release 的 I4 非音频专用干净机尚未执行，因此尚未达到实机验收完成或发布验收完成
 
 ## 精确候选

@@ -10,6 +10,7 @@
     "test:integration": "node --test --experimental-test-isolation=none \"test/integration/**/*.test.js\"",
     "test:evidence": "node --test --experimental-test-isolation=none \"test/gate-0b/**/*.test.js\" \"test/gate-0c/**/*.test.js\" \"test/validation/**/*.test.js\"",
     "test:ci": "npm test",
+    "electron:install": "install-electron",
     "preview:fixtures": "node scripts/build-preview-fixtures.js",
     "package:smoke": "electron-builder --config electron-builder.smoke.config.cjs --win dir --x64 --publish never",
     "package:release": "electron-builder --config electron-builder.config.cjs --win nsis --x64 --publish never"

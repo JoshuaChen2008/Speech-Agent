@@ -31,6 +31,55 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Install locked Electron runtime
+        run: npm run electron:install
+
+      - name: Verify locked Electron runtime
+        shell: powershell
+        run: |
+          $electronPath = Join-Path $PWD 'node_modules/electron/dist/electron.exe'
+          if (-not (Test-Path -LiteralPath $electronPath -PathType Leaf)) {
+            throw "Electron runtime prerequisite is missing after explicit installation"
+          }
+
+          $packageVersion = (node -p "require('./package.json').devDependencies.electron").Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($packageVersion)) {
+            throw "Unable to read the locked Electron version from package.json"
+          }
+          $lockVersion = (node -p "require('./package-lock.json').packages['node_modules/electron'].version").Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($lockVersion)) {
+            throw "Unable to read the installed Electron package version from package-lock.json"
+          }
+          if ($packageVersion -ne $lockVersion) {
+            throw "Electron version mismatch between package.json and package-lock.json"
+          }
+
+          $versionRoot = Join-Path $env:RUNNER_TEMP 'electron-runtime-version'
+          New-Item -ItemType Directory -Force -Path $versionRoot | Out-Null
+          $versionStdout = Join-Path $versionRoot 'stdout.log'
+          $versionStderr = Join-Path $versionRoot 'stderr.log'
+          $versionProcess = Start-Process -FilePath $electronPath `
+            -ArgumentList @('--version') `
+            -RedirectStandardOutput $versionStdout `
+            -RedirectStandardError $versionStderr `
+            -WindowStyle Hidden -Wait -PassThru
+          if ($versionProcess.ExitCode -ne 0) {
+            throw "Electron runtime version probe failed with exit code $($versionProcess.ExitCode)"
+          }
+          $runtimeOutput = @()
+          $runtimeOutput += Get-Content -ErrorAction SilentlyContinue $versionStdout
+          $runtimeOutput += Get-Content -ErrorAction SilentlyContinue $versionStderr
+          $runtimeVersion = $runtimeOutput |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Last 1
+          if ($null -eq $runtimeVersion) {
+            throw "Electron runtime version probe returned no version"
+          }
+          $runtimeVersion = ([string]$runtimeVersion).Trim()
+          if ($runtimeVersion -ne "v$packageVersion") {
+            throw "Electron runtime version does not match the locked package version"
+          }
+
       # 排在所有重步骤之前：字幕排版是本阶段改动最频繁的部分，而这一步只要一两分钟。
       # 它只启动最小字幕宿主，不证明产品组合根、真实 ASR 或人工视觉验收（见报告 boundaries）。
       - name: Qualify fixed-height caption layout
