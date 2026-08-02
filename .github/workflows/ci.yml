@@ -199,6 +199,44 @@ jobs:
       - name: Run non-interactive core integration and evidence regression lanes
         run: npm run test:ci
 
+      # 只有前面的布局、存储、产品壳、双启动、release、NSIS 和三条 test lane
+      # 全部成功，才会生成这一最终索引。writer 同时要求实际 HEAD == GITHUB_SHA
+      # 且受跟踪工作树干净；verifier 再复核关键报告和制品的交叉哈希。
+      - name: Bind qualification evidence to the exact CI revision
+        shell: powershell
+        run: |
+          node scripts/write-ci-qualification-index.js `
+            --expected-revision $env:GITHUB_SHA `
+            --run-id $env:GITHUB_RUN_ID `
+            --run-attempt $env:GITHUB_RUN_ATTEMPT `
+            --event-name $env:GITHUB_EVENT_NAME `
+            --repository $env:GITHUB_REPOSITORY `
+            --workflow-name $env:GITHUB_WORKFLOW `
+            --job-name windows-user-journeys `
+            --caption-layout-report .artifacts/caption-layout-ci/report.json `
+            --packaged-binding-report .artifacts/packaged-product-ci/qualification-binding.json `
+            --release-layout-report .artifacts/b5-ci/release-layout.json `
+            --nsis-lifecycle-report .artifacts/nsis-lifecycle-ci/report.json `
+            --installer .artifacts/release-package/Live-Subtitle-0.1.0-x64.exe `
+            --package-lock package-lock.json `
+            --workflow-file .github/workflows/ci.yml `
+            --report .artifacts/ci-qualification/index.json
+          if ($LASTEXITCODE -ne 0) {
+            throw "CI qualification index generation failed with exit code $LASTEXITCODE"
+          }
+          node scripts/verify-ci-qualification-index.js `
+            --report .artifacts/ci-qualification/index.json `
+            --caption-layout-report .artifacts/caption-layout-ci/report.json `
+            --packaged-binding-report .artifacts/packaged-product-ci/qualification-binding.json `
+            --release-layout-report .artifacts/b5-ci/release-layout.json `
+            --nsis-lifecycle-report .artifacts/nsis-lifecycle-ci/report.json `
+            --installer .artifacts/release-package/Live-Subtitle-0.1.0-x64.exe `
+            --package-lock package-lock.json `
+            --workflow-file .github/workflows/ci.yml
+          if ($LASTEXITCODE -ne 0) {
+            throw "CI qualification index verification failed with exit code $LASTEXITCODE"
+          }
+
       # 结构化报告与 stdout/stderr 都写在 .artifacts（gitignored）里，跑完即随 runner 销毁。
       # 失败时不上传就只剩「第 N 步失败了」，无法定位是哪个字段不满足。
       # 报告本身按 SEM-F14 不含字幕正文、PCM 或音频路径。
@@ -206,7 +244,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: qualification-evidence
+          name: qualification-evidence-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             .artifacts/**/*.json
             .artifacts/**/*.log
