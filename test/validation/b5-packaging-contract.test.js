@@ -29,7 +29,10 @@ const {
   parseArguments: parseNsisArguments,
   validateNsisLifecycleReport
 } = require('../../scripts/qualify-nsis-lifecycle')
-const { IDENTITY_VERSION } = require('../../src/main/services/product-payload-identity')
+const {
+  IDENTITY_VERSION,
+  collectProductPayloadEntries
+} = require('../../src/main/services/product-payload-identity')
 const {
   readAndValidatePackagedRunBindingReport,
   sha256File
@@ -167,6 +170,17 @@ test('release package uses an explicit ASAR allowlist, hardened fuses and per-us
   assert.equal(releaseConfig.nsis.packElevateHelper, false)
   assert.equal(releaseConfig.extraResources, undefined)
   assert.equal(releaseConfig.files.some((entry) => /models|scripts|test|docs|artifacts/i.test(entry)), false)
+
+  const textExtensions = ['.css', '.html', '.js', '.json', '.md', '.mjs']
+  const productExtensions = [...new Set(collectProductPayloadEntries(path.join(ROOT, 'src'))
+    .map((entry) => path.extname(entry.name)))].sort()
+  assert.deepEqual(productExtensions, textExtensions)
+  const attributes = fs.readFileSync(path.join(ROOT, '.gitattributes'), 'utf8')
+  for (const extension of textExtensions) {
+    const escaped = extension.replace('.', '\\.')
+    assert.match(attributes, new RegExp(`^src/\\*\\*\\/\\*${escaped} text eol=lf$`, 'm'),
+      `complete product ${extension} payload must be pinned to LF checkout bytes`)
+  }
 })
 
 test('test-only packaged journey preserves the production layout but cannot be mistaken for release', () => {

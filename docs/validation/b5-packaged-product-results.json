@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "kind": "product-shell-smoke",
-  "generatedAt": "2026-08-02T18:58:46.507Z",
+  "generatedAt": "2026-08-02T19:29:52.732Z",
   "result": "pass",
   "gateStatus": "partial",
   "runtime": {
@@ -11,12 +11,12 @@
     "crashEventCount": 0
   },
   "qualification": {
-    "runId": "b5-0fc36b16-d73d-43e7-9894-8305c679315f",
+    "runId": "b5-4dac9934-7e7c-44f7-b5c9-bca9ac5b2a70",
     "phase": "fresh",
     "freshProductReportSha256": null,
     "productPayloadVersion": "live-subtitle-product-payload-v1",
     "productPayloadFileCount": 114,
-    "productPayloadSha256": "704a3c6f183761482d129317d39e6d918f670cd12f23a152d62849e84a0d7520"
+    "productPayloadSha256": "2045fb2c7f834fabf315b4f38d6e4f17d8d0be23dd2df96fbb59e53d72c5d459"
   },
   "packaging": {
     "appIsPackaged": true,

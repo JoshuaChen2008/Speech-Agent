@@ -26,7 +26,7 @@ test('acceptance navigation projects every remaining subtitle MVP machine gate',
   assert.match(strategy, /I4 音频发布子门禁/)
 })
 
-test('current acceptance projections record all three exact failed CI revisions instead of the stale no-run claim', () => {
+test('current acceptance projections record all four exact failed CI revisions instead of the stale no-run claim', () => {
   const historicalFiles = [
     'PLAN.md',
     path.join('docs', 'semantic-contract.md'),
@@ -36,7 +36,8 @@ test('current acceptance projections record all three exact failed CI revisions 
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
     assert.match(source, /30750568366/, `${file} must retain the original prerequisite failure`)
     assert.match(source, /30760407160/, `${file} must retain the refinement fixture failure`)
-    assert.match(source, /30761472817/, `${file} must name the latest exact failed run`)
+    assert.match(source, /30761472817/, `${file} must retain the first evidence portability failure`)
+    assert.match(source, /30763123116/, `${file} must name the latest exact failed run`)
   }
   const projectionFiles = [
     'README.md',
@@ -45,7 +46,7 @@ test('current acceptance projections record all three exact failed CI revisions 
   ]
   for (const file of projectionFiles) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
-    assert.match(source, /30761472817/, `${file} must project the latest exact failed run`)
+    assert.match(source, /30763123116/, `${file} must project the latest exact failed run`)
   }
   for (const file of [...historicalFiles, ...projectionFiles]) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
@@ -67,10 +68,14 @@ test('J9-CI status projects the authoritative implemented-but-unaccepted qualifi
 
   for (const row of [navigationRow, readmeRow, semanticRow, strategyRow]) {
     assert.match(row, /实现完成·尚未验收/)
-    assert.match(row, /30761472817/)
+    assert.match(row, /30763123116/)
   }
+  assert.match(semanticRow, /完整产品文本 LF checkout 修复与新候选 B5 重建为实现完成·尚未验收/)
+  assert.match(strategyRow, /完整产品文本 LF checkout 修复与新候选 B5 重建为实现完成·尚未验收/)
+  assert.match(navigationRow, /\| J9-CI 远端资格 \| 实现完成·尚未验收 \|/)
+  assert.match(readmeRow, /\| 远端 Windows CI 资格 \| 实现完成·尚未验收 \|/)
   assert.match(navigationRow, /Electron `43\.2\.0`/)
-  assert.match(readmeRow, /当前已修正，等待新 revision 复验/)
+  assert.match(readmeRow, /当前已固定 LF 并重建候选，等待新 revision 复验/)
 })
 
 test('I4 projections separate the implemented non-audio child from the decided complete gate', () => {

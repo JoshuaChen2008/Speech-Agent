@@ -9,6 +9,16 @@ docs/validation/i2-live-v5/**/*.json text eol=lf
 docs/validation/b5-*.json text eol=lf
 docs/validation/i3-nonaudio-results.json text eol=lf
 
+# The complete product payload is hashed as exact bytes and compared between
+# packaged test and release ASARs on developer and hosted Windows worktrees.
+# Pin every current product text type; binary payloads remain byte-exact.
+src/**/*.css text eol=lf
+src/**/*.html text eol=lf
+src/**/*.js text eol=lf
+src/**/*.json text eol=lf
+src/**/*.md text eol=lf
+src/**/*.mjs text eol=lf
+
 # I3 non-audio source provenance is compared across developer and hosted
 # Windows worktrees. Pin every text input to LF; the runner also canonicalizes
 # legacy CRLF worktrees before hashing, without normalizing binary evidence.

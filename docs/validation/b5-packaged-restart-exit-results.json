@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "kind": "electron-role-exit-evidence",
-  "generatedAt": "2026-08-02T18:58:50.983Z",
+  "generatedAt": "2026-08-02T19:29:57.229Z",
   "outcome": "clean-exit",
   "gateStatus": "diagnostic-only",
   "runtime": {
