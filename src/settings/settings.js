@@ -4,6 +4,7 @@ let cfg = null
 let runtimeSnapshot = null
 let modelStatus = null
 let modelInstallPending = false
+let refinementInstallPending = false
 let pendingPatch = {}
 let patchTimer = null
 
@@ -19,6 +20,16 @@ const modelProgressBar = document.getElementById('modelProgressBar')
 const modelProgressText = document.getElementById('modelProgressText')
 const modelBytes = document.getElementById('modelBytes')
 const modelError = document.getElementById('modelError')
+const refinementOverallState = document.getElementById('refinementOverallState')
+const refinementInstallButton = document.getElementById('refinementInstallButton')
+const refinementCancelButton = document.getElementById('refinementCancelButton')
+const refinementProgress = document.getElementById('refinementProgress')
+const refinementProgressBar = document.getElementById('refinementProgressBar')
+const refinementProgressText = document.getElementById('refinementProgressText')
+const refinementBytes = document.getElementById('refinementBytes')
+const refinementError = document.getElementById('refinementError')
+const refinementPreferenceToggle = document.getElementById('refinementPreferenceToggle')
+const refinementPreferenceState = document.getElementById('refinementPreferenceState')
 const modelResourceRows = [...document.querySelectorAll('[data-resource-id]')]
 
 function showStatus (message) {
@@ -204,6 +215,11 @@ function reflect (next) {
   barColorReset.disabled = !custom
   document.documentElement.dataset.theme =
     next.theme === 'auto' ? (next.systemDark ? 'dark' : 'light') : next.theme
+  refinementPreferenceToggle.checked = next.refinementEnabled === true
+  if (next.refinementPreferenceFallback === true) {
+    showStatus('精修模型不可用，已关闭精修偏好。请重新下载模型后再开启。')
+  }
+  updateRefinementPreferenceControl()
 }
 
 const PROFILE_BY_LATENCY = { 160: 'fast', 480: 'balanced', 960: 'accurate' }
@@ -223,6 +239,7 @@ function reflectRuntime (snapshot) {
     ? (limitation ? limitation.message : '当前没有可用识别档位。')
     : '识别档位由本机已就绪的模型决定，不可用的档位已停用。'
   updateModelInstallControl()
+  updateRefinementPreferenceControl()
 }
 
 const MODEL_STATES = Object.freeze(['missing', 'downloading', 'verifying', 'ready', 'error'])
@@ -234,11 +251,20 @@ const MODEL_STATE_LABELS = Object.freeze({
   error: '安装失败'
 })
 const MODEL_STATE_DETAILS = Object.freeze({
-  missing: '需要下载三项本地 ASR 资源',
-  downloading: '正在下载本地资源，可以关闭应用后继续',
-  verifying: '正在校验并安装本地资源',
-  ready: '实时字幕、离线精修与语音活动检测均已就绪',
-  error: '资源未能完成安装，可以安全重试'
+  core: Object.freeze({
+    missing: '需要下载实时字幕模型与语音活动检测。',
+    downloading: '正在下载核心字幕模型资源包。',
+    verifying: '正在校验并安装核心字幕模型资源包。',
+    ready: '实时字幕模型与语音活动检测已就绪。',
+    error: '核心字幕模型资源包未能完成安装，可以重试。'
+  }),
+  refinement: Object.freeze({
+    missing: '默认不下载；需要时请明确下载精修模型。',
+    downloading: '正在下载精修模型；可取消，之后需明确继续下载。',
+    verifying: '正在校验并安装精修模型。',
+    ready: '精修模型已就绪；仍需再次明确开启。',
+    error: '精修模型未能完成安装，可以重新下载。'
+  })
 })
 
 function normalizeModelState (value) {
@@ -279,50 +305,124 @@ function safeModelErrorMessage (error) {
   return '模型资源未能完成安装，请重试。'
 }
 
+function fallbackGroupStatus () {
+  return {
+    state: 'missing',
+    progress: 0,
+    downloadedBytes: 0,
+    totalBytes: 0,
+    error: null,
+    canInstall: false
+  }
+}
+
+function modelGroup (name) {
+  const value = modelStatus && modelStatus[name]
+  return value && typeof value === 'object' ? value : fallbackGroupStatus()
+}
+
+function isBusy (group) {
+  return group.state === 'downloading' || group.state === 'verifying'
+}
+
+function renderGroupProgress (groupName, group, details, progress, progressBar, progressText, bytes, error) {
+  const state = normalizeModelState(group.state)
+  const percent = Math.round(clampProgress(group.progress) * 100)
+  details.textContent = MODEL_STATE_DETAILS[groupName][state]
+  progress.setAttribute('aria-valuenow', String(percent))
+  progressBar.style.width = `${percent}%`
+  progressText.textContent = `${percent}%`
+  bytes.textContent = formatByteProgress(group.downloadedBytes, group.totalBytes)
+  error.hidden = group.error === null
+  error.textContent = group.error === null ? '' : safeModelErrorMessage(group.error)
+}
+
 function updateModelInstallControl () {
-  const state = modelStatus ? normalizeModelState(modelStatus.state) : null
-  const busy = state === 'downloading' || state === 'verifying'
+  const core = modelGroup('core')
+  const refinement = modelGroup('refinement')
+  const coreState = normalizeModelState(core.state)
+  const refinementState = normalizeModelState(refinement.state)
+  const coreBusy = isBusy(core)
+  const refinementBusy = isBusy(refinement)
+  const anyBusy = coreBusy || refinementBusy
   const runtimeKnown = runtimeSnapshot !== null
   const sessionActive = runtimeSnapshot !== null && runtimeSnapshot.sessionId !== null
   const canInstall = modelStatus !== null && modelStatus.canInstall === true
-  modelInstallButton.disabled = !runtimeKnown || modelInstallPending || sessionActive || busy || state === 'ready' || !canInstall
+  const canInstallRefinement = modelStatus !== null && modelStatus.canInstallRefinement === true
+  modelInstallButton.disabled = !runtimeKnown || modelInstallPending || sessionActive || anyBusy || coreState === 'ready' || !canInstall
+  refinementInstallButton.disabled = !runtimeKnown || refinementInstallPending || sessionActive || anyBusy || refinementState === 'ready' || !canInstallRefinement
+  refinementCancelButton.hidden = !refinementBusy
+  refinementCancelButton.disabled = sessionActive || modelStatus === null || modelStatus.canCancelInstall !== true
 
   if (!runtimeKnown) {
     modelInstallButton.textContent = '正在读取'
     modelInstallButton.title = '正在读取字幕会话状态'
-  } else if (sessionActive && !busy && state !== 'ready') {
+  } else if (sessionActive && !coreBusy && coreState !== 'ready') {
     modelInstallButton.textContent = '请先停止会话'
     modelInstallButton.title = '活动字幕会话期间不能安装模型资源'
-  } else if (modelInstallPending || busy) {
-    modelInstallButton.textContent = state === 'verifying' ? '正在校验' : '正在下载'
-    modelInstallButton.title = '模型资源正在处理'
-  } else if (state === 'error') {
-    modelInstallButton.textContent = '重试'
-    modelInstallButton.title = '重新下载并校验模型资源'
-  } else if (state === 'ready') {
+  } else if (modelInstallPending || coreBusy) {
+    modelInstallButton.textContent = coreState === 'verifying' ? '正在校验' : '正在下载'
+    modelInstallButton.title = '核心字幕模型资源包正在处理'
+  } else if (coreState === 'error') {
+    modelInstallButton.textContent = '重试下载'
+    modelInstallButton.title = '重新下载并校验核心字幕模型资源包'
+  } else if (coreState === 'ready') {
     modelInstallButton.textContent = '已就绪'
-    modelInstallButton.title = '模型资源已安装'
-  } else if (state === 'missing') {
-    modelInstallButton.textContent = '下载模型'
-    modelInstallButton.title = '下载本地字幕识别所需资源'
+    modelInstallButton.title = '核心字幕模型资源包已安装'
+  } else if (coreState === 'missing') {
+    modelInstallButton.textContent = '下载核心模型'
+    modelInstallButton.title = '下载实时字幕模型与语音活动检测'
   } else {
     modelInstallButton.textContent = '正在读取'
-    modelInstallButton.title = '正在读取模型资源状态'
+    modelInstallButton.title = '正在读取核心字幕模型资源包状态'
+  }
+
+  if (!runtimeKnown) {
+    refinementInstallButton.textContent = '正在读取'
+    refinementInstallButton.title = '正在读取字幕会话状态'
+  } else if (sessionActive && !refinementBusy && refinementState !== 'ready') {
+    refinementInstallButton.textContent = '请先停止会话'
+    refinementInstallButton.title = '活动字幕会话期间不能下载精修模型'
+  } else if (refinementInstallPending || refinementBusy) {
+    refinementInstallButton.textContent = refinementState === 'verifying' ? '正在校验' : '正在下载'
+    refinementInstallButton.title = '精修模型正在处理'
+  } else if (refinementState === 'ready') {
+    refinementInstallButton.textContent = '已就绪'
+    refinementInstallButton.title = '精修模型已安装；仍需明确开启'
+  } else if (refinementState === 'error') {
+    refinementInstallButton.textContent = '重新下载'
+    refinementInstallButton.title = '重新下载并校验精修模型'
+  } else if (refinement.downloadedBytes > 0) {
+    refinementInstallButton.textContent = '继续下载'
+    refinementInstallButton.title = '继续精修模型下载'
+  } else {
+    refinementInstallButton.textContent = '下载精修模型'
+    refinementInstallButton.title = '下载可选精修模型'
+  }
+}
+
+function updateRefinementPreferenceControl () {
+  const refinement = modelGroup('refinement')
+  const refinementBusy = isBusy(refinement)
+  refinementPreferenceToggle.disabled = cfg === null || refinementBusy
+  if (cfg === null) {
+    refinementPreferenceState.textContent = '正在读取全局精修偏好。'
+  } else if (cfg.refinementEnabled === true) {
+    refinementPreferenceState.textContent = '已启用；只影响未来新会话，当前会话保持开始时的选择。'
+  } else if (refinement.state === 'ready') {
+    refinementPreferenceState.textContent = '模型已就绪；请明确开启，设置仅影响未来新会话。'
+  } else {
+    refinementPreferenceState.textContent = '默认关闭；模型缺失时尝试开启不会下载，请先下载精修模型。'
   }
 }
 
 function reflectModelStatus (next) {
-  if (!next || next.schemaVersion !== 1 || !Array.isArray(next.resources)) return
+  if (!next || next.schemaVersion !== 1 || !Array.isArray(next.resources) || !next.core || !next.refinement) return
   modelStatus = next
-  const state = normalizeModelState(next.state)
-  const progress = clampProgress(next.progress)
-  const percent = Math.round(progress * 100)
-
-  modelOverallState.textContent = MODEL_STATE_DETAILS[state]
-  modelProgress.setAttribute('aria-valuenow', String(percent))
-  modelProgressBar.style.width = `${percent}%`
-  modelProgressText.textContent = `${percent}%`
-  modelBytes.textContent = formatByteProgress(next.downloadedBytes, next.totalBytes)
+  const core = modelGroup('core')
+  const refinement = modelGroup('refinement')
+  renderGroupProgress('core', core, modelOverallState, modelProgress, modelProgressBar, modelProgressText, modelBytes, modelError)
+  renderGroupProgress('refinement', refinement, refinementOverallState, refinementProgress, refinementProgressBar, refinementProgressText, refinementBytes, refinementError)
 
   const resources = new Map(next.resources.map((resource) => [resource.id, resource]))
   modelResourceRows.forEach((row) => {
@@ -344,9 +444,8 @@ function reflectModelStatus (next) {
     )
   })
 
-  modelError.hidden = next.error === null
-  modelError.textContent = next.error === null ? '' : safeModelErrorMessage(next.error)
   updateModelInstallControl()
+  updateRefinementPreferenceControl()
 }
 
 async function refreshModelStatus () {
@@ -354,8 +453,11 @@ async function refreshModelStatus () {
     reflectModelStatus(await window.shell.getModelStatus())
   } catch {
     modelError.hidden = false
-    modelError.textContent = '无法读取模型资源状态，请稍后重试。'
+    modelError.textContent = '无法读取核心字幕模型资源包状态，请稍后重试。'
+    refinementError.hidden = false
+    refinementError.textContent = '无法读取精修模型资源状态，请稍后重试。'
     updateModelInstallControl()
+    updateRefinementPreferenceControl()
   }
 }
 
@@ -377,10 +479,69 @@ modelInstallButton.addEventListener('click', async () => {
     await refreshModelStatus()
     modelInstallPending = false
     if (installRequestFailed && (!modelStatus || modelStatus.state !== 'error')) {
-      modelError.hidden = false
-      modelError.textContent = '安装请求未能完成，请稍后重试。'
+        modelError.hidden = false
+        modelError.textContent = '安装请求未能完成，请稍后重试。'
     }
     updateModelInstallControl()
+  }
+})
+
+refinementInstallButton.addEventListener('click', async () => {
+  if (refinementInstallButton.disabled) return
+  refinementInstallPending = true
+  let installRequestFailed = false
+  updateModelInstallControl()
+  try {
+    const result = await window.shell.installRefinementModel()
+    installRequestFailed = !!(result && result.ok === false)
+    const returnedStatus = result && result.value && result.value.schemaVersion === 1 ? result.value : null
+    if (returnedStatus) reflectModelStatus(returnedStatus)
+    if (installRequestFailed) showStatus(result?.error?.message || '精修模型下载请求未能完成。')
+  } catch {
+    installRequestFailed = true
+  } finally {
+    await refreshModelStatus()
+    refinementInstallPending = false
+    if (installRequestFailed && (!modelStatus || modelGroup('refinement').state !== 'error')) {
+      refinementError.hidden = false
+      refinementError.textContent = '精修模型下载请求未能完成，请稍后重试。'
+    }
+    updateModelInstallControl()
+    updateRefinementPreferenceControl()
+  }
+})
+
+refinementCancelButton.addEventListener('click', async () => {
+  if (refinementCancelButton.disabled) return
+  refinementCancelButton.disabled = true
+  try {
+    const result = await window.shell.cancelModelInstall()
+    if (!result || result.ok !== true) showStatus(result?.error?.message || '取消下载请求未能完成。')
+    else showStatus('已取消精修模型下载；需要时请明确继续下载。')
+  } catch {
+    showStatus('取消下载请求未能完成。')
+  } finally {
+    await refreshModelStatus()
+  }
+})
+
+refinementPreferenceToggle.addEventListener('change', async () => {
+  const enabled = refinementPreferenceToggle.checked
+  refinementPreferenceToggle.disabled = true
+  try {
+    const result = await window.shell.setRefinementPreference(enabled)
+    if (!result || result.ok !== true) {
+      showStatus(result?.error?.message || '精修偏好未保存。')
+      reflect(await window.shell.getConfig())
+      return
+    }
+    reflect(result.value)
+    showStatus('')
+  } catch {
+    showStatus('精修偏好未保存。')
+    try { reflect(await window.shell.getConfig()) } catch { /* noop */ }
+  } finally {
+    updateRefinementPreferenceControl()
   }
 })
 

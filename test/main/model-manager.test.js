@@ -24,6 +24,7 @@ const {
   REFINEMENT_REQUIRED_FILES,
   REQUIRED_FILES
 } = require('../../src/main/services/model-resolver')
+const { ConfigStore } = require('../../src/main/services/config-store')
 
 function tempUserData (t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'model-manager-'))
@@ -41,6 +42,7 @@ function manifestFor (artifacts) {
     artifacts: artifacts.map((artifact) => ({
       id: artifact.id,
       artifactKind: artifact.artifactKind || 'file',
+      resourceGroup: artifact.resourceGroup || 'core',
       installId: artifact.installId || artifact.id,
       url: artifact.url || `https://github.com/owner/repo/releases/download/models/${artifact.id}`,
       bytes: artifact.body.length,
@@ -118,18 +120,21 @@ test('production manifest pins the three approved immutable resources', () => {
   const realtime = PRODUCTION_MODEL_MANIFEST.artifacts.find((item) => item.id === 'x-asr-160ms')
   assert.equal(realtime.bytes, 133898007)
   assert.equal(realtime.sha256, '8a6fca056e1a342546edd78be4d50274e2c01898e7b8ae8fc336f6410319c399')
+  assert.equal(realtime.resourceGroup, 'core')
   assert.equal(realtime.directoryName, APPROVED_REALTIME_MODEL.directoryName)
   assert.deepEqual(realtime.requiredFiles, REQUIRED_FILES)
 
   const refine = PRODUCTION_MODEL_MANIFEST.artifacts.find((item) => item.id === 'x-asr-offline')
   assert.equal(refine.bytes, 136396739)
   assert.equal(refine.sha256, '5d02c36d7b44e886b7c8f0d8e051f8713acab96c264bb6ef9e718be39a6a2224')
+  assert.equal(refine.resourceGroup, 'refinement')
   assert.equal(refine.directoryName, APPROVED_REFINEMENT_MODEL.directoryName)
   assert.deepEqual(refine.requiredFiles, REFINEMENT_REQUIRED_FILES)
 
   const vad = PRODUCTION_MODEL_MANIFEST.artifacts.find((item) => item.id === 'silero-vad')
   assert.equal(vad.bytes, 643854)
   assert.equal(vad.sha256, '9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6')
+  assert.equal(vad.resourceGroup, 'core')
   assert.equal(vad.fileName, 'silero_vad.onnx')
   assert.throws(() => { vad.bytes = 1 }, TypeError)
   if (process.platform === 'win32') {
@@ -166,6 +171,116 @@ test('status is clone-safe, frozen and does not expose URL, hash or local paths'
   assert.doesNotMatch(serialized, /github\.com|sha256|\.part|model-manager-/)
   assert.equal(status.state, 'missing')
   assert.equal(status.canInstall, true)
+})
+
+test('core installation reaches ready without fetching the optional refinement resource', async (t) => {
+  const realtime = Buffer.from('core realtime')
+  const vad = Buffer.from('core vad')
+  const refinement = Buffer.from('optional refinement')
+  const manifest = manifestFor([
+    { id: 'realtime', body: realtime, resourceGroup: 'core' },
+    { id: 'refinement', body: refinement, resourceGroup: 'refinement' },
+    { id: 'vad', body: vad, resourceGroup: 'core' }
+  ])
+  const requested = []
+  const bodies = new Map([
+    ['realtime', realtime],
+    ['refinement', refinement],
+    ['vad', vad]
+  ])
+  const manager = managerFor(t, manifest, async (url) => {
+    const id = String(url).split('/').at(-1)
+    requested.push(id)
+    return response(bodies.get(id))
+  })
+
+  const core = await manager.installCore()
+  assert.equal(core.state, 'ready')
+  assert.equal(manager.isCoreReady(), true)
+  assert.equal(manager.isRefinementReady(), false)
+  assert.deepEqual(requested.sort(), ['realtime', 'vad'])
+  assert.equal(core.resources.find((resource) => resource.id === 'refinement').state, 'missing')
+  assert.equal(core.refinement.state, 'missing')
+
+  const installedRefinement = await manager.installRefinement()
+  assert.equal(installedRefinement.state, 'ready')
+  assert.equal(manager.isRefinementReady(), true)
+  assert.deepEqual(requested.sort(), ['realtime', 'refinement', 'vad'])
+  assert.equal(installedRefinement.refinement.state, 'ready')
+})
+
+test('an attempted preference enable while refinement is missing leaves it off without a fetch', async (t) => {
+  const core = Buffer.from('core')
+  const refinement = Buffer.from('refinement')
+  const manifest = manifestFor([
+    { id: 'core', body: core, resourceGroup: 'core' },
+    { id: 'refinement', body: refinement, resourceGroup: 'refinement' }
+  ])
+  let fetches = 0
+  const manager = managerFor(t, manifest, async () => {
+    fetches += 1
+    throw new Error('a preference change must not download')
+  })
+  await manager.initialize()
+  const config = new ConfigStore(path.join(manager.userDataDir, 'config.json'))
+  config.load()
+
+  const result = config.setRefinementPreference(true, manager.isRefinementReady())
+  assert.equal(result.accepted, false)
+  assert.equal(result.reason, 'REFINEMENT_MODEL_NOT_READY')
+  assert.equal(config.get().refinementEnabled, false)
+  assert.equal(fetches, 0)
+})
+
+test('cancelling optional refinement preserves a legal part, does not resume on initialize, and resumes only on an explicit command', async (t) => {
+  const core = Buffer.from('core')
+  const refinement = Buffer.from('optional-refinement-download')
+  const manifest = validateManifest(manifestFor([
+    { id: 'core', body: core, resourceGroup: 'core' },
+    { id: 'refinement', body: refinement, resourceGroup: 'refinement' }
+  ]))
+  let started
+  const fetchStarted = new Promise((resolve) => { started = resolve })
+  const manager = managerFor(t, manifest, async (url, options = {}) => {
+    if (String(url).endsWith('/core')) return response(core)
+    started()
+    return await new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true })
+    })
+  })
+  await manager.installCore()
+  const part = path.join(manager.userDataDir, 'models', '.downloads', 'refinement.part')
+  fs.writeFileSync(part, refinement.subarray(0, 7))
+
+  const pending = manager.installRefinement()
+  await fetchStarted
+  assert.equal(manager.cancelInstall(), true)
+  await assert.rejects(pending, (error) => error.code === 'ABORTED')
+  assert.equal(fs.statSync(part).size, 7)
+  assert.equal(manager.getStatus().state, 'ready')
+  assert.equal(manager.getStatus().refinement.state, 'missing')
+
+  let initializeFetches = 0
+  const restarted = new ModelManager({
+    userDataDir: manager.userDataDir,
+    manifest,
+    fetchImpl: async () => { initializeFetches++; throw new Error('initialize must not resume') }
+  })
+  await restarted.initialize()
+  assert.equal(initializeFetches, 0)
+  assert.equal(restarted.getStatus().resources.find((resource) => resource.id === 'refinement').downloadedBytes, 7)
+
+  let range = null
+  restarted.fetchImpl = async (_url, options = {}) => {
+    range = options.headers.Range
+    return response(refinement.subarray(7), {
+      status: 206,
+      headers: { 'content-range': `bytes 7-${refinement.length - 1}/${refinement.length}` }
+    })
+  }
+  await restarted.installRefinement()
+  assert.equal(range, 'bytes=7-')
+  assert.equal(restarted.isRefinementReady(), true)
 })
 
 test('a valid 206 response resumes the fixed part and hashes the complete stream', async (t) => {

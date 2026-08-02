@@ -5,7 +5,15 @@
 /* 字幕窗：命中测试 + 拖动（role=caption）+ 锁定穿透 + 配置应用 + CaptionEvent 渲染。
    状态归并和行数预算都在 ../ui/shared/caption-reducer.js，本文件只做 DOM 落地。 */
 
-const { createState, hydrateState, applyEvent, selectFlow, countVisibleLines } = window.CaptionReducer
+const {
+  createState,
+  hydrateState,
+  applyEvent,
+  evictCaptionPrefix,
+  isCaptionSegmentEvicted,
+  selectFlow,
+  countVisibleLines
+} = window.CaptionReducer
 const { applyAppearance } = window.Appearance
 
 const wrap = document.getElementById('wrap')
@@ -21,7 +29,8 @@ const liveRegion = document.getElementById('liveRegion')
 const bridge = window.shell || {
   mouseThrough () {}, dragStart () {}, dragEnd () {},
   resizeStart () {}, resizeEnd () {},
-  onLock () {}, onConfig () {}, onCaption () {},
+  onLock () {}, onConfig () {}, onCaption () {}, onCaptionState () {},
+  reportCaptionViewportEviction () { return Promise.resolve(false) },
   getLock () { return Promise.reject(new Error('no shell')) },
   getConfig () { return Promise.reject(new Error('no shell')) },
   getCaptionState () { return Promise.reject(new Error('no shell')) }
@@ -180,10 +189,11 @@ function applyViewport () {
     lineHeight: cssNumber(styles, '--lh-caption')
   })
   document.documentElement.style.setProperty('--visible-lines', String(lines))
+  queueViewportEviction()
 }
 
 /** 按需增删节点、只改 textContent；不为一次 partial 刷新重建整棵子树。 */
-function render () {
+function render (scheduleEviction = true) {
   const flow = selectFlow(state)
   const nodes = captionFlow.children
 
@@ -202,6 +212,69 @@ function render () {
     /* 最后一个是最新段；它永远贴在底部，裁剪只发生在它上方。 */
     node.classList.toggle('older', i < flow.length - 1)
   }
+  if (scheduleEviction) queueViewportEviction()
+}
+
+// --------------------------------------------------------------------------
+// 视觉退出闭合
+//
+// CSS 负责逐行裁剪；只有一个段的最后一行也完全越过视口顶部时，才把该段
+// 作为有序前缀永久淘汰。回报只含会话/段身份，正文与屏幕几何都不出 renderer。
+// --------------------------------------------------------------------------
+const CLIP_EPSILON_PX = 0.5
+let viewportEvictionQueued = false
+
+function fullyClippedThroughSegmentId () {
+  const flow = selectFlow(state)
+  const nodes = captionFlow.children
+  if (flow.length < 2 || nodes.length !== flow.length) return null
+  const viewportTop = captionFlow.getBoundingClientRect().top
+  if (!Number.isFinite(viewportTop)) return null
+
+  let throughSegmentId = null
+  /* 只接受连续旧前缀；一旦遇到仍有任一部分可见的段就停止。 */
+  for (let index = 0; index < flow.length - 1; index += 1) {
+    const bottom = nodes[index].getBoundingClientRect().bottom
+    if (!Number.isFinite(bottom) || bottom > viewportTop + CLIP_EPSILON_PX) break
+    throughSegmentId = flow[index].segmentId
+  }
+  return throughSegmentId
+}
+
+function retireFullyClippedPrefix () {
+  const throughSegmentId = fullyClippedThroughSegmentId()
+  const sessionId = state.sessionId
+  if (!throughSegmentId || typeof sessionId !== 'string' ||
+      !evictCaptionPrefix(state, throughSegmentId)) return false
+
+  /* 删除的节点原本全在 overflow 顶部之外；重排后可见像素不应跳动。 */
+  render(false)
+  try {
+    Promise.resolve(bridge.reportCaptionViewportEviction({
+      schemaVersion: 1,
+      sessionId,
+      throughSegmentId
+    })).catch(() => {})
+  } catch { /* 主进程关闭或 browser preview：本地墓碑仍然生效 */ }
+  return true
+}
+
+function queueViewportEviction () {
+  if (viewportEvictionQueued) return
+  viewportEvictionQueued = true
+  requestAnimationFrame(() => {
+    if (!viewportEvictionQueued) return
+    viewportEvictionQueued = false
+    retireFullyClippedPrefix()
+  })
+}
+
+/* 在任何正文/版本替换之前先结算上一帧已经发生的视觉退出，避免同一帧紧随
+   其后的短精修稿把刚离场的旧段重新拉回可见区域。 */
+function flushViewportEviction () {
+  if (!viewportEvictionQueued) return false
+  viewportEvictionQueued = false
+  return retireFullyClippedPrefix()
 }
 
 /** 只播报定稿。partial 每秒刷新十几次，逐帧播报会让屏幕阅读器无法使用。 */
@@ -210,9 +283,12 @@ function announce (text) {
 }
 
 function ingest (event) {
+  flushViewportEviction()
+  const displaySuppressed = state.sessionId === event.sessionId &&
+    isCaptionSegmentEvicted(state, event.segmentId)
   state = applyEvent(state, event)
   render()
-  if (event.kind !== 'partial') announce(event.text)
+  if (!displaySuppressed && event.kind !== 'partial') announce(event.text)
 }
 
 /* Bootstrap 恢复：先订阅（此间事件全部缓冲），再读取主进程 canonical
@@ -220,24 +296,53 @@ function ingest (event) {
    事件会被单调判定丢弃，晚到的照常应用，两条路径必然收敛。
    重放不做无障碍播报：那是恢复历史，不是新说的话。 */
 let bootstrapped = false
-let bufferedEvents = []
+let canonicalRevision = 0
+let bufferedCaptionInputs = []
 
 function onCaptionEvent (event) {
   if (!bootstrapped) {
-    bufferedEvents.push(event)
+    bufferedCaptionInputs.push({ type: 'event', value: event })
     return
   }
   ingest(event)
 }
 
+function replaceCaptionState (canonical) {
+  flushViewportEviction()
+  if (!canonical || !Number.isSafeInteger(canonical.revision) ||
+      canonical.revision <= canonicalRevision) return
+  state = hydrateState(canonical, state)
+  canonicalRevision = canonical.revision
+  render()
+}
+
+function onCaptionState (canonical) {
+  if (!bootstrapped) {
+    bufferedCaptionInputs.push({ type: 'state', value: canonical })
+    return
+  }
+  replaceCaptionState(canonical)
+}
+
 async function initCaptions () {
   try {
-    state = hydrateState(await bridge.getCaptionState())
+    const canonical = await bridge.getCaptionState()
+    state = hydrateState(canonical)
+    canonicalRevision = Number.isSafeInteger(canonical?.revision) ? canonical.revision : 0
   } catch { /* browser preview：保持空状态 */ }
+  render()
+  flushViewportEviction()
   bootstrapped = true
-  const replay = bufferedEvents
-  bufferedEvents = []
-  for (const event of replay) state = applyEvent(state, event)
+  const replay = bufferedCaptionInputs
+  bufferedCaptionInputs = []
+  for (const input of replay) {
+    if (input.type === 'state') replaceCaptionState(input.value)
+    else {
+      flushViewportEviction()
+      state = applyEvent(state, input.value)
+      render()
+    }
+  }
   render()
 }
 
@@ -267,4 +372,5 @@ initLock()
 // B2 的真实 worker 都走同一通道，renderer 不再自造“看起来成功”的字幕。
 // 订阅必须先于 getCaptionState，否则两者之间到达的事件会永久丢失。
 bridge.onCaption(onCaptionEvent)
+bridge.onCaptionState(onCaptionState)
 initCaptions()

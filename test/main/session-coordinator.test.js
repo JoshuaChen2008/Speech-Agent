@@ -95,6 +95,158 @@ test('an installed runtime can replace the missing model while idle and start im
   assert.equal(original.context, null)
 })
 
+test('the global refinement preference is frozen per session and does not vary by source', async (t) => {
+  const adapter = new FakeRuntimeAdapter({ autoEmit: false })
+  const { coordinator } = makeCoordinator({
+    adapter,
+    runtimeOptions: { ...DEV_MODEL, refinementAvailable: true },
+    configuration: { ...DICTATION, refinementEnabled: true }
+  })
+  t.after(() => coordinator.dispose())
+
+  assert.equal((await coordinator.command('start')).ok, true)
+  assert.equal(adapter.context.refinementEnabled, true)
+  coordinator.updateConfiguration({ ...DICTATION, refinementEnabled: false })
+  assert.equal(adapter.context.refinementEnabled, true, 'the active session keeps its frozen choice')
+  assert.equal((await coordinator.command('stop')).ok, true)
+
+  assert.equal((await coordinator.command('start')).ok, true)
+  assert.equal(adapter.context.refinementEnabled, false, 'a future session reads the updated global preference')
+})
+
+test('a session that froze refinement off rejects stray refined events fail closed', async (t) => {
+  const adapter = new FakeRuntimeAdapter({ autoEmit: false })
+  const { coordinator } = makeCoordinator({
+    adapter,
+    runtimeOptions: { ...DEV_MODEL, refinementAvailable: true },
+    configuration: { ...DICTATION, refinementEnabled: false }
+  })
+  t.after(() => coordinator.dispose())
+
+  assert.equal((await coordinator.command('start')).ok, true)
+  const sessionId = coordinator.getSnapshot().sessionId
+  const original = {
+    schemaVersion: 1,
+    sessionId,
+    sourceId: 'mic',
+    segmentId: 'segment-original-only',
+    sequence: 1,
+    revision: 1,
+    kind: 'final',
+    t0: 0,
+    t1: 1,
+    text: '原始字幕',
+    translation: null
+  }
+
+  adapter.emitCaption(original)
+  adapter.emitCaption({
+    ...original,
+    sequence: 2,
+    revision: 2,
+    kind: 'refined',
+    text: '不应进入关闭精修的会话'
+  })
+  assert.deepEqual(coordinator.getCaptionState().segments.map((segment) => ({
+    kind: segment.kind,
+    text: segment.text
+  })), [{ kind: 'final', text: '原始字幕' }])
+})
+
+test('a refinement fault restores visible originals, preserves the current partial, and stays session-local', async (t) => {
+  const adapter = new FakeRuntimeAdapter({ autoEmit: false })
+  const durableFaults = []
+  const observedFaults = []
+  const replacementStates = []
+  const displayedEvents = []
+  const persistenceSink = {
+    openSession: async () => {},
+    acceptCaption: async () => {},
+    recordRefinementFault: async (fault) => { durableFaults.push(structuredClone(fault)) },
+    closeSession: async () => {},
+    retry: async () => {},
+    flush: async () => {}
+  }
+  const coordinator = new SessionCoordinator({
+    adapter,
+    runtimeOptions: { ...DEV_MODEL, refinementAvailable: true },
+    configuration: { ...DICTATION, refinementEnabled: true },
+    idFactory: () => 'session-refinement-fault',
+    persistenceSink
+  })
+  t.after(() => coordinator.dispose())
+  coordinator.onCaption((event) => displayedEvents.push(event.kind))
+  coordinator.onCaptionState((state) => replacementStates.push(state))
+  coordinator.onRefinementFault((fault) => observedFaults.push(fault))
+
+  assert.equal((await coordinator.command('start')).ok, true)
+  const base = {
+    schemaVersion: 1,
+    sessionId: 'session-refinement-fault',
+    sourceId: 'mic',
+    segmentId: 'segment-final',
+    sequence: 1,
+    revision: 1,
+    kind: 'final',
+    t0: 0,
+    t1: 1,
+    text: '原始字幕',
+    translation: null
+  }
+  adapter.emitCaption(base)
+  adapter.emitCaption({ ...base, sequence: 2, revision: 2, kind: 'refined', text: '精修字幕' })
+  adapter.emitCaption({
+    ...base,
+    segmentId: 'segment-partial',
+    sequence: 3,
+    revision: 1,
+    kind: 'partial',
+    t0: 1,
+    t1: 1.5,
+    text: '当前还在识别'
+  })
+  const partialBefore = structuredClone(coordinator.getCaptionState().segments.at(-1))
+
+  assert.equal(adapter.emitRefinementFault({
+    code: 'REFINE_DECODE_FAILED',
+    stage: 'decode',
+    faultAtMs: 321
+  }), true)
+
+  assert.equal(coordinator.getSnapshot().phase, 'listening')
+  assert.deepEqual(coordinator.getCaptionState().segments.map((segment) => segment.text), [
+    '原始字幕',
+    '当前还在识别'
+  ])
+  assert.deepEqual(coordinator.getCaptionState().segments.at(-1), partialBefore)
+  assert.equal(replacementStates.length, 1)
+  assert.deepEqual(replacementStates[0], coordinator.getCaptionState())
+  assert.deepEqual(durableFaults, [{
+    sessionId: 'session-refinement-fault',
+    faultCode: 'REFINE_DECODE_FAILED',
+    faultAtMs: 321
+  }])
+  assert.deepEqual(observedFaults, [{
+    sessionId: 'session-refinement-fault',
+    code: 'REFINE_DECODE_FAILED',
+    stage: 'decode',
+    faultAtMs: 321
+  }])
+
+  adapter.emitCaption({ ...base, sequence: 4, revision: 3, kind: 'refined', text: '迟到精修' })
+  assert.deepEqual(coordinator.getCaptionState().segments.map((segment) => segment.text), [
+    '原始字幕',
+    '当前还在识别'
+  ])
+  assert.deepEqual(displayedEvents, ['final', 'refined', 'partial'])
+  assert.equal(adapter.emitRefinementFault({
+    code: 'REFINE_INTERNAL_FAILURE',
+    stage: 'worker-channel',
+    faultAtMs: 400
+  }), false)
+  assert.equal(durableFaults.length, 1)
+})
+
 test('runtime replacement is rejected while a session is active without touching its adapter', async (t) => {
   const original = new FakeRuntimeAdapter({ autoEmit: false })
   const replacement = new FakeRuntimeAdapter({ autoEmit: false })

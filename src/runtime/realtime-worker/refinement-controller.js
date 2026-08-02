@@ -11,6 +11,7 @@ class RefinementController {
    * @param {{
    *   emitRefined: (info: *, text: string) => * | null,
    *   publish: (message: *) => void,
+   *   publishFault?: (fault: { code: string, stage: string }) => void,
    *   maxPending?: number
    * }} options
    */
@@ -25,6 +26,7 @@ class RefinementController {
 
     this.emitRefined = options.emitRefined
     this.publish = options.publish
+    this.publishFault = typeof options.publishFault === 'function' ? options.publishFault : () => {}
     this.maxPending = maxPending
     this.enabled = false
     this.accepting = true
@@ -36,6 +38,7 @@ class RefinementController {
     this.failed = 0
     this.emptyResults = 0
     this.bufferedWhilePaused = []
+    this.faulted = false
   }
 
   metrics () {
@@ -49,10 +52,13 @@ class RefinementController {
 
   /** MessagePortMain-compatible attachment; no Electron import is required. */
   attachPort (port) {
-    if (this.port) {
-      try { this.port.close() } catch { /* already closed */ }
+    const previous = this.port
+    if (previous) {
+      /* Retire before close: a synchronous close must not look like a live fault. */
+      this.port = null
       /* close may be delivered asynchronously, so retire the old generation now. */
       this.pending.clear()
+      try { previous.close() } catch { /* already closed */ }
     }
     this.port = port
     port.on('message', (event) => this.onMessage(event.data))
@@ -62,8 +68,10 @@ class RefinementController {
 
   onPortClosed (port) {
     if (this.port !== port) return
+    const reportFault = this.enabled && this.accepting
     this.port = null
     this.pending.clear()
+    if (reportFault) this.fail('REFINE_INTERNAL_FAILURE', 'transport')
   }
 
   request (info) {
@@ -95,6 +103,7 @@ class RefinementController {
     } catch {
       this.pending.delete(requestId)
       this.skipped += 1
+      this.fail('REFINE_INTERNAL_FAILURE', 'transport')
       return false
     }
   }
@@ -104,18 +113,36 @@ class RefinementController {
       const info = this.pending.get(message.requestId)
       this.pending.delete(message.requestId)
       if (!info) return
-      const text = typeof message.text === 'string' ? message.text.trim() : ''
+      if (typeof message.text !== 'string') {
+        this.fail('REFINE_INVALID_RESPONSE', 'response')
+        return
+      }
+      const text = message.text.trim()
       if (text.length === 0) {
         this.emptyResults += 1
         return
       }
-      const event = this.emitRefined(info, text)
+      let event
+      try {
+        event = this.emitRefined(info, text)
+      } catch {
+        this.fail('REFINE_INTERNAL_FAILURE', 'delivery')
+        return
+      }
       if (!event) return
       if (this.paused) this.bufferedWhilePaused.push(event)
-      else this.publish({ type: 'caption', event })
+      else {
+        try {
+          this.publish({ type: 'caption', event })
+        } catch {
+          this.fail('REFINE_INTERNAL_FAILURE', 'delivery')
+        }
+      }
     } else if (message?.type === 'refine-failed') {
-      this.pending.delete(message.requestId)
+      const knownRequest = this.pending.delete(message.requestId)
+      if (!knownRequest) return
       this.failed += 1
+      this.fail('REFINE_DECODE_FAILED', 'decode')
     }
   }
 
@@ -138,8 +165,38 @@ class RefinementController {
     this.pending.clear()
   }
 
+  /** Disabling is session-local; callers must never mutate the global preference here. */
+  disable () {
+    this.enabled = false
+    this.accepting = false
+    this.pending.clear()
+    this.bufferedWhilePaused = []
+  }
+
+  fail (code, stage) {
+    if (this.faulted) return false
+    this.faulted = true
+    this.disable()
+    const port = this.port
+    this.port = null
+    if (port) {
+      try { port.close() } catch { /* already closed */ }
+    }
+    try {
+      this.publishFault({ code, stage })
+    } catch { /* fault reporting must not leak or revive refinement */ }
+    return true
+  }
+
   flushBuffered () {
-    for (const event of this.bufferedWhilePaused) this.publish({ type: 'caption', event })
+    for (const event of this.bufferedWhilePaused) {
+      try {
+        this.publish({ type: 'caption', event })
+      } catch {
+        this.fail('REFINE_INTERNAL_FAILURE', 'delivery')
+        break
+      }
+    }
     this.bufferedWhilePaused = []
   }
 

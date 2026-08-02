@@ -31,6 +31,8 @@ const DEFAULT_ALLOWED_HOSTS = Object.freeze([
   'release-assets.githubusercontent.com',
   'objects.githubusercontent.com'
 ])
+const CORE_RESOURCE_GROUP = 'core'
+const REFINEMENT_RESOURCE_GROUP = 'refinement'
 
 const SAFE_MESSAGES = Object.freeze({
   ABORTED: '模型安装已停止',
@@ -126,6 +128,9 @@ class ModelManager {
     this.activeAbortController = null
     this.activeChild = null
     this.activeStaging = new Set()
+    this.activeInstallGroup = null
+    this.cancelRequested = false
+    this.groupErrors = new Map()
     this.installPromise = null
     this.initializePromise = null
     this.shutdownPromise = null
@@ -137,7 +142,7 @@ class ModelManager {
       downloadedBytes: 0,
       totalBytes: artifact.bytes
     }]))
-    this.status = this._makeStatus('missing', null, null)
+    this.status = this._makeStatus(null, null)
   }
 
   async initialize () {
@@ -192,7 +197,7 @@ class ModelManager {
     }
     this._throwIfClosed()
     this.initialized = true
-    this._publish(this._allReady() ? 'ready' : 'missing', null, null)
+    this._publish(null, null, null)
     return this.getStatus()
   }
 
@@ -206,22 +211,63 @@ class ModelManager {
     return () => this.listeners.delete(callback)
   }
 
+  /** Install the core subtitle model bundle only (realtime ASR + VAD). */
+  installCore () {
+    return this._installGroup(CORE_RESOURCE_GROUP)
+  }
+
+  /** Install the optional refinement model only after an explicit user action. */
+  installRefinement () {
+    return this._installGroup(REFINEMENT_RESOURCE_GROUP)
+  }
+
+  /* Compatibility alias for the only product-facing pre-J15c operation. */
   install () {
+    return this.installCore()
+  }
+
+  _installGroup (group) {
     if (this.closed) return Promise.reject(safeError('SHUTDOWN'))
+    if (!this._groupArtifacts(group).length) return Promise.reject(safeError('INVALID_MANIFEST'))
     if (this.installPromise) return this.installPromise
-    this.installPromise = this._install().finally(() => { this.installPromise = null })
+    this.activeInstallGroup = group
+    this.cancelRequested = false
+    this.groupErrors.delete(group)
+    this._publish(null, null, null)
+    this.installPromise = this._install(group).finally(() => {
+      this.installPromise = null
+      this.activeInstallGroup = null
+      this.cancelRequested = false
+      this._publish(null, null, null)
+    })
     return this.installPromise
   }
 
-  async _install () {
+  /** Abort only an explicitly requested active installation. Legal .part files remain resumable. */
+  cancelInstall () {
+    if (this.closed || !this.installPromise || !this.activeAbortController) return false
+    this.cancelRequested = true
+    this.activeAbortController.abort()
+    return true
+  }
+
+  isCoreReady () {
+    return this._isGroupReady(CORE_RESOURCE_GROUP)
+  }
+
+  isRefinementReady () {
+    return this._isGroupReady(REFINEMENT_RESOURCE_GROUP)
+  }
+
+  async _install (group) {
     try {
       if (!this.initialized) await this.initialize()
-      for (const artifact of this.manifest.artifacts) {
+      for (const artifact of this._groupArtifacts(group)) {
         if (this.closed) throw safeError('ABORTED')
         if ((this.resourceState.get(artifact.id) || {}).state === 'ready' && (await this._isArtifactReady(artifact) || await this._isExternalReady(artifact.id))) continue
         await this._installArtifact(artifact)
       }
-      this._publish('ready', null, null)
+      this._publish(null, null, null)
       return this.getStatus()
     } catch (error) {
       const normalized = error instanceof ModelManagerError
@@ -229,17 +275,18 @@ class ModelManager {
         : safeError(this.closed ? 'ABORTED' : 'INSTALL_FAILED')
       const currentArtifactId = this.status.currentArtifactId
       if (currentArtifactId) await this._recordResourceError(currentArtifactId, normalized.code === 'ABORTED' ? 'missing' : 'error')
-      if (!this.closed || normalized.code !== 'ABORTED') this._publish('error', null, normalized)
+      if (!this.closed && normalized.code === 'ABORTED' && this.cancelRequested) this._publish(null, null, null)
+      else if (!this.closed || normalized.code !== 'ABORTED') this._publish(null, null, normalized)
       throw normalized
     }
   }
 
   async _installArtifact (artifact) {
     this._setResource(artifact, 'downloading')
-    this._publish('downloading', artifact.id, null)
+    this._publish(null, artifact.id, null)
     const archive = await this._download(artifact)
     this._setResource(artifact, 'verifying', artifact.bytes)
-    this._publish('verifying', artifact.id, null)
+    this._publish(null, artifact.id, null)
 
     const staging = this._newStagingPath(artifact)
     this.activeStaging.add(staging)
@@ -268,7 +315,7 @@ class ModelManager {
       await this._replaceArtifact(stagedRoot, this._targetPath(artifact), staging)
       await this._safeRemove(archive, 'download')
       this._setResource(artifact, 'ready', artifact.bytes)
-      this._publish(this._allReady() ? 'ready' : 'downloading', null, null)
+      this._publish(null, null, null)
     } finally {
       this.activeStaging.delete(staging)
       await this._safeRemove(staging, 'staging').catch(() => {})
@@ -294,7 +341,7 @@ class ModelManager {
       offset = 0
     }
     this._setResource(artifact, 'downloading', offset)
-    this._publish('downloading', artifact.id, null)
+    this._publish(null, artifact.id, null)
 
     const controller = new AbortController()
     this.activeAbortController = controller
@@ -335,7 +382,7 @@ class ModelManager {
           }
           hash.update(chunk)
           this._setResource(artifact, 'downloading', downloaded)
-          this._publish('downloading', artifact.id, null)
+          this._publish(null, artifact.id, null)
         }
         await handle.sync()
       } finally {
@@ -627,12 +674,28 @@ class ModelManager {
     })
   }
 
-  _allReady () {
-    return this.manifest.artifacts.every((artifact) => (this.resourceState.get(artifact.id) || {}).state === 'ready')
+  _groupArtifacts (group) {
+    return this.manifest.artifacts.filter((artifact) => artifact.resourceGroup === group)
   }
 
-  _makeStatus (state, currentArtifactId, error) {
-    const resources = this.manifest.artifacts.map((artifact) => {
+  _isGroupReady (group) {
+    const artifacts = this._groupArtifacts(group)
+    return artifacts.length > 0 && artifacts.every((artifact) => (this.resourceState.get(artifact.id) || {}).state === 'ready')
+  }
+
+  _groupState (group) {
+    const artifacts = this._groupArtifacts(group)
+    if (artifacts.length === 0) return 'missing'
+    const states = artifacts.map((artifact) => (this.resourceState.get(artifact.id) || {}).state || 'missing')
+    if (states.every((state) => state === 'ready')) return 'ready'
+    if (states.includes('downloading')) return 'downloading'
+    if (states.includes('verifying')) return 'verifying'
+    if (states.includes('error')) return 'error'
+    return 'missing'
+  }
+
+  _makeGroupStatus (group) {
+    const resources = this._groupArtifacts(group).map((artifact) => {
       const resource = this.resourceState.get(artifact.id) || { state: 'missing', downloadedBytes: 0, totalBytes: artifact.bytes }
       return {
         id: artifact.id,
@@ -644,21 +707,52 @@ class ModelManager {
     })
     const downloadedBytes = resources.reduce((sum, resource) => sum + resource.downloadedBytes, 0)
     const totalBytes = resources.reduce((sum, resource) => sum + resource.totalBytes, 0)
-    return cloneAndFreeze({
-      schemaVersion: STATUS_SCHEMA_VERSION,
+    const state = this._groupState(group)
+    const error = this.groupErrors.get(group) || null
+    return {
       state,
       progress: totalBytes === 0 ? 0 : downloadedBytes / totalBytes,
       downloadedBytes,
       totalBytes,
+      error: error ? { code: error.code, message: error.message } : null,
+      canInstall: !this.closed && resources.length > 0 && state !== 'ready' && state !== 'downloading' && state !== 'verifying'
+    }
+  }
+
+  _makeStatus (currentArtifactId, error) {
+    const resources = this.manifest.artifacts.map((artifact) => {
+      const resource = this.resourceState.get(artifact.id) || { state: 'missing', downloadedBytes: 0, totalBytes: artifact.bytes }
+      return {
+        id: artifact.id,
+        state: resource.state,
+        progress: resource.totalBytes === 0 ? 0 : resource.downloadedBytes / resource.totalBytes,
+        downloadedBytes: resource.downloadedBytes,
+        totalBytes: resource.totalBytes
+      }
+    })
+    const core = this._makeGroupStatus(CORE_RESOURCE_GROUP)
+    const refinement = this._makeGroupStatus(REFINEMENT_RESOURCE_GROUP)
+    const activeError = error || this.groupErrors.get(this.activeInstallGroup) || core.error || refinement.error || null
+    return cloneAndFreeze({
+      schemaVersion: STATUS_SCHEMA_VERSION,
+      state: core.state,
+      progress: core.progress,
+      downloadedBytes: core.downloadedBytes,
+      totalBytes: core.totalBytes,
       currentArtifactId,
       resources,
-      error: error ? { code: error.code, message: error.message } : null,
-      canInstall: !this.closed && state !== 'ready' && state !== 'downloading' && state !== 'verifying'
+      error: activeError ? { code: activeError.code, message: activeError.message } : null,
+      canInstall: core.canInstall,
+      core,
+      refinement,
+      canInstallRefinement: refinement.canInstall,
+      canCancelInstall: !this.closed && this.activeAbortController !== null
     })
   }
 
-  _publish (state, currentArtifactId, error) {
-    this.status = this._makeStatus(state, currentArtifactId, error)
+  _publish (_state, currentArtifactId, error) {
+    if (error) this.groupErrors.set(this.activeInstallGroup || CORE_RESOURCE_GROUP, error)
+    this.status = this._makeStatus(currentArtifactId, error)
     for (const listener of this.listeners) {
       try { listener(this.getStatus()) } catch { /* observers cannot break installation */ }
     }
@@ -717,7 +811,7 @@ class ModelManager {
     if (this.activeChild) {
       try { this.activeChild.kill() } catch {}
     }
-    this._publish(this._allReady() ? 'ready' : 'missing', null, null)
+    this._publish(null, null, null)
     this.listeners.clear()
   }
 }

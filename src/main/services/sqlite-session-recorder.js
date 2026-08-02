@@ -11,6 +11,13 @@ const { assertCaptionEvent } = require('../../contracts')
 
 const PERSISTED_KINDS = Object.freeze(['final', 'refined'])
 const TERMINAL_STATES = Object.freeze(['closed', 'interrupted'])
+const REFINEMENT_FAULT_CODES = Object.freeze([
+  'REFINE_WORKER_START_FAILED',
+  'REFINE_WORKER_EXITED',
+  'REFINE_DECODE_FAILED',
+  'REFINE_INVALID_RESPONSE',
+  'REFINE_INTERNAL_FAILURE'
+])
 
 function assertSessionIdentity (value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
@@ -26,11 +33,32 @@ function timestamp (value) {
   return value
 }
 
+function refinementEnabled (value) {
+  if (value === undefined) return false
+  if (typeof value !== 'boolean') throw new TypeError('refinementEnabled must be a boolean')
+  return value
+}
+
+function refinementFault (value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      Object.keys(value).length !== 3 || !Object.hasOwn(value, 'sessionId') ||
+      !Object.hasOwn(value, 'faultCode') || !Object.hasOwn(value, 'faultAtMs')) {
+    throw new TypeError('valid refinement fault is required')
+  }
+  if (typeof value.sessionId !== 'string' || value.sessionId.length < 1 ||
+      !REFINEMENT_FAULT_CODES.includes(value.faultCode) ||
+      !Number.isSafeInteger(value.faultAtMs) || value.faultAtMs < 0) {
+    throw new TypeError('valid refinement fault is required')
+  }
+  return { sessionId: value.sessionId, faultCode: value.faultCode, faultAtMs: value.faultAtMs }
+}
+
 class SqliteSessionRecorder {
   constructor (options) {
     const gateway = options?.gateway
     if (!gateway || typeof gateway.openSession !== 'function' ||
         typeof gateway.appendCaption !== 'function' || typeof gateway.closeSession !== 'function' ||
+        typeof gateway.recordRefinementFault !== 'function' ||
         typeof gateway.flush !== 'function' || typeof gateway.retry !== 'function') {
       throw new TypeError('storage gateway is required')
     }
@@ -54,15 +82,20 @@ class SqliteSessionRecorder {
 
   openSession (input) {
     const identity = assertSessionIdentity(input)
+    const frozenRefinementEnabled = refinementEnabled(input?.refinementEnabled)
     if (this.active) {
       if (this.active.sessionId !== identity.sessionId || this.active.sourceId !== identity.sourceId) {
         throw new Error('another durable subtitle session is active')
+      }
+      if (this.active.refinementEnabled !== frozenRefinementEnabled) {
+        throw new Error('durable session refinement preference is already frozen')
       }
       return this.active.openPromise || this.submitOpen(this.active)
     }
     const payload = {
       ...identity,
-      startedAt: timestamp(this.now())
+      startedAt: timestamp(this.now()),
+      refinementEnabled: frozenRefinementEnabled
     }
     const active = {
       ...payload,
@@ -82,7 +115,8 @@ class SqliteSessionRecorder {
       operation = this.gateway.openSession(structuredClone({
         sessionId: active.sessionId,
         sourceId: active.sourceId,
-        startedAt: active.startedAt
+        startedAt: active.startedAt,
+        refinementEnabled: active.refinementEnabled
       }))
       active.openQueued = true
     } catch (error) {
@@ -109,6 +143,14 @@ class SqliteSessionRecorder {
       return false
     }
     return this.track(this.gateway.appendCaption(structuredClone(event)))
+  }
+
+  recordRefinementFault (input) {
+    const fault = refinementFault(input)
+    if (!this.active || fault.sessionId !== this.active.sessionId) {
+      throw new Error('durable session identity does not match')
+    }
+    return this.track(this.gateway.recordRefinementFault(structuredClone(fault)))
   }
 
   closeSession (input) {
@@ -187,6 +229,7 @@ class SqliteSessionRecorder {
       sessionId: this.active.sessionId,
       sourceId: this.active.sourceId,
       startedAt: this.active.startedAt,
+      refinementEnabled: this.active.refinementEnabled,
       closePayload: this.active.closePayload
     })
   }
@@ -194,6 +237,7 @@ class SqliteSessionRecorder {
 
 module.exports = {
   PERSISTED_KINDS,
+  REFINEMENT_FAULT_CODES,
   SqliteSessionRecorder,
   TERMINAL_STATES
 }

@@ -79,12 +79,13 @@ test('CI journey: queue pressure retains every displayed final/refined before ca
   const adapter = new FakeRuntimeAdapter({ autoEmit: false })
   const coordinator = new SessionCoordinator({
     adapter,
-    runtimeOptions: DEV_MODEL,
+    runtimeOptions: { ...DEV_MODEL, refinementAvailable: true },
     configuration: {
       onboardingCompleted: true,
       onboardingPreset: 'meeting',
       mic: false,
-      loopback: true
+      loopback: true,
+      refinementEnabled: true
     },
     idFactory: () => 'pressure-session',
     persistenceSink: recorder
@@ -170,12 +171,13 @@ test('CI journey: stop during queue pressure reaches idle only after terminal cl
   const adapter = new FakeRuntimeAdapter({ autoEmit: false })
   const coordinator = new SessionCoordinator({
     adapter,
-    runtimeOptions: DEV_MODEL,
+    runtimeOptions: { ...DEV_MODEL, refinementAvailable: true },
     configuration: {
       onboardingCompleted: true,
       onboardingPreset: 'meeting',
       mic: false,
-      loopback: true
+      loopback: true,
+      refinementEnabled: true
     },
     idFactory: () => 'pressure-stop-session',
     persistenceSink: recorder

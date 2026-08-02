@@ -3,7 +3,11 @@
 const assert = require('node:assert/strict')
 const test = require('node:test')
 
-const { assertCaptionState, isCaptionState } = require('../../src/contracts')
+const {
+  assertCaptionState,
+  assertCaptionViewportEviction,
+  isCaptionState
+} = require('../../src/contracts')
 
 function validState () {
   return {
@@ -79,4 +83,25 @@ test('isCaptionState returns booleans instead of throwing', () => {
   assert.equal(isCaptionState(validState()), true)
   assert.equal(isCaptionState(null), false)
   assert.equal(isCaptionState({ schemaVersion: 1 }), false)
+})
+
+test('caption viewport eviction carries identity only and rejects text or geometry', () => {
+  const report = {
+    schemaVersion: 1,
+    sessionId: 'session-1',
+    throughSegmentId: 'segment-7'
+  }
+  assert.equal(assertCaptionViewportEviction(report), report)
+
+  const invalid = [
+    [{ ...report, schemaVersion: 2 }, /schemaVersion/],
+    [{ ...report, sessionId: ' ' }, /sessionId/],
+    [{ ...report, throughSegmentId: '' }, /throughSegmentId/],
+    [{ ...report, text: '不得回传字幕正文' }, /exactly/],
+    [{ ...report, viewportTop: 120 }, /exactly/],
+    [{ schemaVersion: 1, sessionId: 'session-1' }, /exactly/]
+  ]
+  for (const [value, expected] of invalid) {
+    assert.throws(() => assertCaptionViewportEviction(value), expected)
+  }
 })

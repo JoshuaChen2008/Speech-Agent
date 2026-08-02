@@ -18,7 +18,8 @@ const {
   makeCaptionEventId,
   makeCloseSessionKey,
   makeLegacyImportKey,
-  makeOpenSessionKey
+  makeOpenSessionKey,
+  makeRefinementFaultKey
 } = require('./protocol')
 
 const WORKER_PATH = path.join(__dirname, 'storage-worker.js')
@@ -340,6 +341,14 @@ class StorageWorkerHost {
 
   closeSession (input) {
     return this.enqueue(OPERATIONS.CLOSE_SESSION, input, makeCloseSessionKey(input?.sessionId))
+  }
+
+  recordRefinementFault (input) {
+    return this.enqueue(
+      OPERATIONS.RECORD_REFINEMENT_FAULT,
+      input,
+      makeRefinementFaultKey(input?.sessionId, input?.faultCode)
+    )
   }
 
   recoverStaleSessions (input) {

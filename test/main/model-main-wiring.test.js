@@ -17,16 +17,36 @@ test('product composition initializes ModelManager before the SQLite application
   assert.match(source, /\.\.\.\(externalModelsAllowed\s*\? \{ externalReady:/s)
   assert.match(source, /externalReady:\s*\(artifactId\) => isExternalArtifactReady\(artifactId\)/)
   assert.match(source, /createApprovedRuntimeDefinition\(\{\s*userDataDir: app\.getPath\('userData'\),\s*allowExternal: allowsExternalModelResources\(process\.env, \{ packaged: app\.isPackaged \}\)/s)
-  assert.match(source, /await modelManager\.initialize\(\)\s*if \(quitRequested\) return false/s)
+  assert.match(source, /await modelManager\.initialize\(\)[\s\S]{0,350}if \(quitRequested\) return false/s)
   assert.match(source, /await applicationRuntime\.start\(\)\s*if \(quitRequested\) return false/s)
 })
 
-test('settings-only model IPC accepts no renderer-controlled install parameters', () => {
+test('settings-only model IPC separates core install, optional refinement download/cancel, and the global preference', () => {
   const source = fs.readFileSync(MAIN_PATH, 'utf8')
   assert.match(source, /ipcMain\.handle\(CHANNELS\.MODEL_STATUS_GET, \(event\) => \{\s*requireSender\(event, CHANNELS\.MODEL_STATUS_GET\)/s)
   assert.match(source, /ipcMain\.handle\(CHANNELS\.MODEL_INSTALL, \(event\) => \{\s*requireSender\(event, CHANNELS\.MODEL_INSTALL\)\s*return installModelResources\(\)/s)
+  assert.match(source, /ipcMain\.handle\(CHANNELS\.MODEL_INSTALL_REFINEMENT, \(event\) => \{\s*requireSender\(event, CHANNELS\.MODEL_INSTALL_REFINEMENT\)\s*return installRefinementModelResources\(\)/s)
+  assert.match(source, /ipcMain\.handle\(CHANNELS\.MODEL_CANCEL_INSTALL, \(event\) => \{\s*requireSender\(event, CHANNELS\.MODEL_CANCEL_INSTALL\)\s*return cancelModelInstall\(\)/s)
+  assert.match(source, /ipcMain\.handle\(CHANNELS\.REFINEMENT_PREFERENCE_SET, \(event, enabled\) => \{\s*requireSender\(event, CHANNELS\.REFINEMENT_PREFERENCE_SET\)\s*return setRefinementPreference\(enabled\)/s)
   assert.doesNotMatch(source, /ipcMain\.handle\(CHANNELS\.MODEL_INSTALL, \(event,\s*[^)]/)
+  assert.doesNotMatch(source, /ipcMain\.handle\(CHANNELS\.MODEL_INSTALL_REFINEMENT, \(event,\s*[^)]/)
+  assert.doesNotMatch(source, /ipcMain\.handle\(CHANNELS\.MODEL_CANCEL_INSTALL, \(event,\s*[^)]/)
   assert.match(source, /activateApprovedRuntime\(\{\s*coordinator,\s*userDataDir: app\.getPath\('userData'\),\s*allowExternal: allowsExternalModelResources\(process\.env, \{ packaged: app\.isPackaged \}\),\s*\.\.\.runtimeEvidenceOptions\s*\}\)/s)
+  assert.match(source, /installModelResourceGroup\(\(\) => modelManager\.installCore\(\)\)/)
+  assert.match(source, /installModelResourceGroup\(\(\) => modelManager\.installRefinement\(\)\)/)
+  assert.match(source, /modelManager\.cancelInstall\(\)/)
+  assert.match(source, /config\.setRefinementPreference\(enabled === true, modelManager\.isRefinementReady\(\)\)/)
+  assert.match(source, /config\.setRefinementPreference\([\s\S]{0,800}coordinator\.updateConfiguration\(config\.get\(\)\)/)
+})
+
+test('startup audits the optional refinement readiness without initiating a download and exposes an explicit fallback notice', () => {
+  const source = fs.readFileSync(MAIN_PATH, 'utf8')
+  const bootstrap = source.slice(source.indexOf('async function bootstrapApplication ()'))
+
+  assert.match(bootstrap, /await modelManager\.initialize\(\)[\s\S]{0,350}config\.reconcileRefinementReadiness\(modelManager\.isRefinementReady\(\)\)/)
+  assert.match(source, /let refinementPreferenceFallbackNotice = false/)
+  assert.match(source, /refinementPreferenceFallback: refinementPreferenceFallbackNotice/)
+  assert.doesNotMatch(bootstrap, /reconcileRefinementReadiness[\s\S]{0,160}install(?:Core|Refinement)?\(/)
 })
 
 test('quit and native-crash diagnostics are wired at the product composition root', () => {

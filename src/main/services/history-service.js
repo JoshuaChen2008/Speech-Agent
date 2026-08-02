@@ -18,6 +18,13 @@ const EXPORT_FORMATS = Object.freeze({
   srt: Object.freeze({ extension: 'srt', name: 'SubRip 字幕', mimeType: 'application/x-subrip' })
 })
 const MODE_BY_SOURCE = Object.freeze({ loopback: 'meeting', mic: 'dictation' })
+const REFINEMENT_FAULT_CODES = new Set([
+  'REFINE_WORKER_START_FAILED',
+  'REFINE_WORKER_EXITED',
+  'REFINE_DECODE_FAILED',
+  'REFINE_INVALID_RESPONSE',
+  'REFINE_INTERNAL_FAILURE'
+])
 
 class HistoryError extends Error {
   constructor (code, message) {
@@ -219,9 +226,42 @@ function pageItem (value, sourceId) {
   }
 }
 
+function refinementResult (value) {
+  exactObject(value, [
+    'segmentCount',
+    'refinedSegmentCount',
+    'refinementResultStatus',
+    'refinementEnabled',
+    'refinementFaultCode'
+  ], 'INVALID_HISTORY_DATA')
+  const segmentCount = safeInteger(value.segmentCount, {
+    code: 'INVALID_HISTORY_DATA', message: '历史记录数据无效'
+  })
+  const refinedSegmentCount = safeInteger(value.refinedSegmentCount, {
+    min: 0, max: segmentCount, code: 'INVALID_HISTORY_DATA', message: '历史记录数据无效'
+  })
+  if (!['known', 'not_recorded'].includes(value.refinementResultStatus) ||
+      (value.refinementEnabled !== null && typeof value.refinementEnabled !== 'boolean') ||
+      (value.refinementFaultCode !== null && !REFINEMENT_FAULT_CODES.has(value.refinementFaultCode))) {
+    throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+  }
+  if (value.refinementResultStatus === 'not_recorded' &&
+      (value.refinementEnabled !== null || value.refinementFaultCode !== null)) {
+    throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+  }
+  return {
+    segmentCount,
+    refinedSegmentCount,
+    refinementResultStatus: value.refinementResultStatus,
+    refinementEnabled: value.refinementEnabled,
+    refinementFaultCode: value.refinementFaultCode
+  }
+}
+
 function pageResult (value, request) {
-  exactObject(value, ['session', 'totalCount', 'items', 'nextCursor'], 'INVALID_HISTORY_DATA')
+  exactObject(value, ['session', 'totalCount', 'refinement', 'items', 'nextCursor'], 'INVALID_HISTORY_DATA')
   const session = pageSession(value.session, request.sessionId)
+  const refinement = refinementResult(value.refinement)
   const totalCount = safeInteger(value.totalCount, {
     code: 'INVALID_HISTORY_DATA', message: '历史记录数据无效'
   })
@@ -263,7 +303,10 @@ function pageResult (value, request) {
   } else if (request.cursor === null && totalCount !== items.length) {
     throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
   }
-  return { session, totalCount, items, nextCursor }
+  if (refinement.segmentCount !== totalCount) {
+    throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+  }
+  return { session, totalCount, refinement, items, nextCursor }
 }
 
 function formatValue (value) {
@@ -274,13 +317,17 @@ function formatValue (value) {
 }
 
 function terminalTranscript (transcript) {
-  if (!transcript || !transcript.session || !Array.isArray(transcript.segments)) {
+  if (!transcript || !transcript.session || !Array.isArray(transcript.segments) || !transcript.refinement) {
     throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
   }
   if (!['closed', 'interrupted'].includes(transcript.session.state)) {
     throw new HistoryError('SESSION_ACTIVE', '活动会话尚未进入历史记录')
   }
-  return transcript
+  const refinement = refinementResult(transcript.refinement)
+  if (refinement.segmentCount !== transcript.segments.length) {
+    throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+  }
+  return { ...transcript, refinement }
 }
 
 /* 导出必须声明版本（SEM-F11 / SEM-T08）：默认原始版，精修版只有用户明确选择
@@ -301,10 +348,35 @@ function versionedSegments (transcript, version) {
     text: version === 'refined' && typeof segment.refinedText === 'string' && segment.refinedText.length > 0
       ? segment.refinedText
       : segment.text,
+    originalFallback: version === 'refined' &&
+      !(typeof segment.refinedText === 'string' && segment.refinedText.length > 0),
     textRevision: segment.textRevision,
     t0: segment.t0Ms / 1000,
     t1: segment.t1Ms / 1000,
     translation: null
+  }))
+}
+
+function refinementExportState (refinement, version) {
+  if (version !== 'refined') return { incomplete: false, coverageLine: null }
+  if (refinement.segmentCount === 0 || refinement.refinedSegmentCount === 0) {
+    throw new HistoryError('REFINEMENT_UNAVAILABLE', '本会话未生成精修稿')
+  }
+  const incomplete = refinement.refinedSegmentCount < refinement.segmentCount
+  return {
+    incomplete,
+    coverageLine: incomplete
+      ? `精修覆盖不完整：已精修 ${refinement.refinedSegmentCount}/${refinement.segmentCount} 段，` +
+        `${refinement.segmentCount - refinement.refinedSegmentCount} 段使用原始版`
+      : null
+  }
+}
+
+function exportSegmentsForState (segments, state) {
+  if (!state.incomplete) return segments
+  return segments.map((segment) => ({
+    ...segment,
+    text: segment.originalFallback ? `[原始版回退] ${segment.text}` : segment.text
   }))
 }
 
@@ -324,21 +396,31 @@ function buildExport (transcript, format, version) {
   const terminal = terminalTranscript(transcript)
   const selectedFormat = formatValue(format)
   const selectedVersion = versionValue(version)
-  const segments = versionedSegments(terminal, selectedVersion)
+  const exportState = refinementExportState(terminal.refinement, selectedVersion)
+  const segments = exportSegmentsForState(versionedSegments(terminal, selectedVersion), exportState)
   const versionLabel = selectedVersion === 'refined' ? '精修稿' : '原始转写'
   const title = `字幕记录 ${new Date(terminal.session.startedAt).toLocaleString('zh-CN')} · ${versionLabel}`
   let content
-  if (selectedFormat === 'txt') content = exportText(segments)
-  else if (selectedFormat === 'md') content = exportMarkdown(segments, { title })
+  if (selectedFormat === 'txt') {
+    content = exportText(segments)
+    if (exportState.incomplete) content = `${exportState.coverageLine}\n\n${content}`
+  } else if (selectedFormat === 'md') {
+    content = exportMarkdown(segments, { title })
+    if (exportState.incomplete) {
+      const titleEnd = content.indexOf('\n\n')
+      content = `${content.slice(0, titleEnd + 2)}> ${exportState.coverageLine}\n\n${content.slice(titleEnd + 2)}`
+    }
+  }
   else content = exportSrt(segments)
   const metadata = EXPORT_FORMATS[selectedFormat]
+  const fileVersion = exportState.incomplete ? 'refined-incomplete' : selectedVersion
   return Object.freeze({
     content,
     format: selectedFormat,
     version: selectedVersion,
     mimeType: metadata.mimeType,
     suggestedName: `${safeStamp(terminal.session.startedAt)}_${terminal.session.sourceId}_` +
-      `${safeSessionPart(terminal.session.sessionId)}_${selectedVersion}.${metadata.extension}`
+      `${safeSessionPart(terminal.session.sessionId)}_${fileVersion}.${metadata.extension}`
   })
 }
 

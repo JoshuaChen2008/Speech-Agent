@@ -35,6 +35,7 @@ test('fresh config requires an explicit Gate 0D preset', (t) => {
   assert.equal(store.get().onboardingPreset, null)
   assert.equal(store.get().mic, false)
   assert.equal(store.get().loopback, false)
+  assert.equal(store.get().refinementEnabled, false)
 })
 
 test('meeting and dictation presets select concrete, non-hidden sources', (t) => {
@@ -79,6 +80,31 @@ test('persisted config is atomically replaceable and reloadable', (t) => {
   assert.deepEqual(reloaded.load(), store.get())
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).schemaVersion, CONFIG_SCHEMA_VERSION)
   assert.deepEqual(fs.readdirSync(path.dirname(file)).sort(), ['config.json'])
+})
+
+test('global refinement preference is default-off, requires a ready model to enable, and startup reconciliation closes stale enabled state', (t) => {
+  const { file, store } = makeStore(t)
+  store.load()
+
+  assert.deepEqual(store.setRefinementPreference(true, false), {
+    accepted: false,
+    reason: 'REFINEMENT_MODEL_NOT_READY',
+    value: { ...DEFAULT_CONFIG }
+  })
+  assert.equal(store.get().refinementEnabled, false)
+
+  assert.deepEqual(store.setRefinementPreference(true, true), {
+    accepted: true,
+    reason: null,
+    value: { ...DEFAULT_CONFIG, refinementEnabled: true }
+  })
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).refinementEnabled, true)
+
+  assert.deepEqual(store.reconcileRefinementReadiness(false), {
+    changed: true,
+    value: { ...DEFAULT_CONFIG, refinementEnabled: false }
+  })
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).refinementEnabled, false)
 })
 
 test('legacy migration preserves appearance but closes sources until Gate 0D', () => {

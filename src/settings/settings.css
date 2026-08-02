@@ -173,7 +173,14 @@ h1 { font-size: var(--fs-title); font-weight: var(--fw-bold); margin: 14px 0 4px
 
 /* 本地模型资源：只呈现公开状态，不展示下载地址或文件系统细节。 */
 .model-summary { padding-bottom: 14px; }
+.refinement-summary { margin-top: 14px; }
 .model-state { display: block; margin: 5px 0 0; }
+.resource-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .primary-btn {
   min-width: 92px;
   padding: 7px 14px;
@@ -186,6 +193,17 @@ h1 { font-size: var(--fs-title); font-weight: var(--fw-bold); margin: 14px 0 4px
   cursor: pointer;
 }
 .primary-btn:disabled { opacity: 0.42; cursor: not-allowed; }
+.secondary-btn {
+  padding: 7px 12px;
+  border: 1px solid rgba(var(--fg), 0.2);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: rgb(var(--fg));
+  font-family: inherit;
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+.secondary-btn:disabled { opacity: 0.42; cursor: not-allowed; }
 .model-progress {
   height: 5px;
   overflow: hidden;
@@ -238,6 +256,17 @@ h1 { font-size: var(--fs-title); font-weight: var(--fw-bold); margin: 14px 0 4px
 .resource-row[data-state="downloading"] .resource-status,
 .resource-row[data-state="verifying"] .resource-status { color: var(--tone-busy); }
 .resource-row[data-state="error"] .resource-status { color: var(--tone-danger); }
+.refinement-preference { margin-top: 14px; }
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: rgb(var(--fg));
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+.switch input { accent-color: var(--accent-solid); }
+.switch input:disabled + span { opacity: 0.45; }
 
 /* 分段控件 */
 .seg {
@@ -317,7 +346,7 @@ input[type="range"]::-webkit-slider-thumb {
    高对比度：开关/分段控件靠底色区分状态，强制色下会失去差异，补形状编码
    -------------------------------------------------------------------------- */
 @media (forced-colors: active) {
-  .group, .seg, .resource-list, .model-progress { border: 1px solid CanvasText; }
+  .group, .seg, .resource-list, .model-progress, .secondary-btn { border: 1px solid CanvasText; }
   .seg button.on { border: 2px solid Highlight; }
   .nav-item.active, .preset-card:hover { border: 1px solid Highlight; }
 }

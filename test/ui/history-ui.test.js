@@ -74,7 +74,7 @@ function createHistoryHarness () {
   const ids = [
     'titlebar', 'close', 'refresh', 'globalStatus', 'sessionCount', 'sessionList',
     'loadMore', 'emptyState', 'sessionDetail', 'detailSource', 'detailTitle',
-    'detailMeta', 'exportStatus', 'previousPage', 'nextPage', 'retryPage',
+    'detailMeta', 'detailRefinement', 'exportStatus', 'previousPage', 'nextPage', 'retryPage',
     'rangeStatus', 'timeline'
   ]
   const elements = new Map(ids.map((id) => [id, new FakeElement(id.includes('Page') ? 'button' : 'div')]))
@@ -135,11 +135,25 @@ function createHistoryHarness () {
     document,
     window
   })
-  return { elements, exportButtons, exportRequests, pageRequests, sessions }
+  return { elements, exportButtons, exportRequests, pageRequests, sessions, versionButtons }
 }
 
-function pageValue (session, totalCount, items, nextCursor) {
-  return { ok: true, value: { session, totalCount, items, nextCursor } }
+function refinement (segmentCount, refinedSegmentCount, {
+  refinementEnabled = true,
+  refinementFaultCode = null,
+  refinementResultStatus = 'known'
+} = {}) {
+  return {
+    segmentCount,
+    refinedSegmentCount,
+    refinementEnabled,
+    refinementFaultCode,
+    refinementResultStatus
+  }
+}
+
+function pageValue (session, totalCount, items, nextCursor, pageRefinement = refinement(totalCount, totalCount)) {
+  return { ok: true, value: { session, totalCount, items, nextCursor, refinement: pageRefinement } }
 }
 
 function segment (prefix, index, sourceId = 'loopback') {
@@ -147,6 +161,7 @@ function segment (prefix, index, sourceId = 'loopback') {
     segmentId: `${prefix}-${index}`,
     sourceId,
     text: `${prefix} 字幕 ${index}`,
+    refinedText: `${prefix} 精修稿 ${index}`,
     textRevision: 1,
     t0Ms: index * 1_000,
     t1Ms: index * 1_000 + 800
@@ -162,6 +177,7 @@ test('history window exposes terminal text review and txt/md/srt export without 
   assert.match(html, /id="nextPage"[^>]*>下一批</)
   assert.match(html, /id="retryPage"[^>]+hidden[^>]*>重试</)
   assert.match(html, /id="rangeStatus"[^>]+role="status"[^>]+aria-live="polite"/)
+  assert.match(html, /id="detailRefinement"[^>]+role="status"/)
   assert.match(html, /id="timeline"[^>]+role="list"[^>]+tabindex="0"[\s\S]+aria-busy="false"/)
   assert.match(html, /data-export="txt"/)
   assert.match(html, /data-export="md"/)
@@ -181,6 +197,8 @@ test('history window exposes terminal text review and txt/md/srt export without 
   assert.match(script, /api\.exportSession\(sessionId, format, selectedVersion\)/)
   assert.match(script, /let selectedVersion = 'original'/)
   assert.match(script, /selectedVersion === 'refined' && typeof segment\.refinedText === 'string'/)
+  assert.match(script, /page\.refinement/)
+  assert.match(script, /\[原始版回退\]/)
   assert.match(script, /request !== exportRequest \|\| generation !== detailGeneration \|\| sessionId !== selectedSessionId/)
   assert.match(script, /listItem\.setAttribute\('role', 'listitem'\)/)
   assert.match(script, /item\.setAttribute\('aria-posinset'/)
@@ -225,6 +243,13 @@ test('history detail keeps one bounded page and rejects late page or export resu
   assert.equal(harness.elements.get('nextPage').disabled, false)
   assert.equal(timeline.getAttribute('aria-busy'), 'false')
 
+  /* J15b：同一会话翻页保留用户明确选择的精修稿；导出跟随这个选择。 */
+  harness.versionButtons[1].click()
+  assert.equal(timeline.children.length, 50)
+  assert.equal(timeline.children[0].children[1].textContent, 'b 精修稿 0')
+  assert.equal(harness.versionButtons[0].getAttribute('aria-checked'), 'false')
+  assert.equal(harness.versionButtons[1].getAttribute('aria-checked'), 'true')
+
   harness.pageRequests[0].request.resolve(pageValue(
     harness.sessions[0],
     2,
@@ -233,7 +258,7 @@ test('history detail keeps one bounded page and rejects late page or export resu
   ))
   await flushRenderer()
   assert.equal(timeline.children.length, 50)
-  assert.equal(timeline.children[0].children[1].textContent, 'b 字幕 0')
+  assert.equal(timeline.children[0].children[1].textContent, 'b 精修稿 0')
 
   harness.elements.get('nextPage').click()
   assert.equal(harness.pageRequests[2].cursor.firstEventOrder, 50)
@@ -245,6 +270,7 @@ test('history detail keeps one bounded page and rejects late page or export resu
   ))
   await flushRenderer()
   assert.equal(timeline.children.length, 1)
+  assert.equal(timeline.children[0].children[1].textContent, 'b 精修稿 50')
   assert.equal(timeline.children[0].getAttribute('aria-posinset'), '51')
   assert.equal(rangeStatus.textContent, '第 51–51 条，共 51 条')
   assert.equal(harness.elements.get('previousPage').disabled, false)
@@ -260,9 +286,11 @@ test('history detail keeps one bounded page and rejects late page or export resu
   ))
   await flushRenderer()
   assert.equal(timeline.children.length, 50)
+  assert.equal(timeline.children[0].children[1].textContent, 'b 精修稿 0')
 
   harness.exportButtons[0].click()
   assert.equal(harness.exportRequests[0].sessionId, 'session-b')
+  assert.equal(harness.exportRequests[0].version, 'refined')
   assert.equal(harness.elements.get('exportStatus').textContent, '正在准备导出…')
   sessionACard.click()
   harness.pageRequests[4].request.resolve(pageValue(
@@ -274,7 +302,10 @@ test('history detail keeps one bounded page and rejects late page or export resu
   await flushRenderer()
   harness.exportRequests[0].request.resolve({ ok: true, value: { status: 'saved' } })
   await flushRenderer()
+  /* 选择另一会话必须强制恢复原始版，避免把 A 的显示选择带到 B（SEM-F11）。 */
   assert.equal(timeline.children[0].children[1].textContent, 'a 字幕 0')
+  assert.equal(harness.versionButtons[0].getAttribute('aria-checked'), 'true')
+  assert.equal(harness.versionButtons[1].getAttribute('aria-checked'), 'false')
   assert.equal(harness.elements.get('exportStatus').textContent, '')
 
   sessionBCard.click()
@@ -288,6 +319,92 @@ test('history detail keeps one bounded page and rejects late page or export resu
   assert.equal(harness.elements.get('retryPage').hidden, true)
   assert.equal(timeline.children.length, 1)
   assert.equal(timeline.children[0].children[1].textContent, 'retry-b 字幕 0')
+})
+
+test('history refinement detail uses whole-session metadata, marks fallback rows and keeps fault facts independent', async () => {
+  const harness = createHistoryHarness()
+  await flushRenderer()
+
+  const sessionList = harness.elements.get('sessionList')
+  const sessionACard = sessionList.children[0].children[0]
+  const sessionBCard = sessionList.children[1].children[0]
+  const detailRefinement = harness.elements.get('detailRefinement')
+  const timeline = harness.elements.get('timeline')
+
+  sessionBCard.click()
+  harness.pageRequests[0].request.resolve(pageValue(
+    harness.sessions[1],
+    205,
+    [
+      { ...segment('whole-session', 0), refinedText: 'whole-session 精修稿 0' },
+      { ...segment('whole-session', 1), refinedText: null }
+    ],
+    { t0Ms: 1_000, firstEventOrder: 2 },
+    refinement(205, 125)
+  ))
+  await flushRenderer()
+
+  assert.equal(detailRefinement.textContent, '已精修 125/205 段，80 段使用原始版')
+  assert.equal(harness.versionButtons[1].disabled, false)
+  assert.equal(harness.exportButtons[0].disabled, false)
+  harness.versionButtons[1].click()
+  assert.equal(timeline.children[0].children[1].textContent, 'whole-session 精修稿 0')
+  assert.equal(timeline.children[1].children[1].textContent, '[原始版回退] whole-session 字幕 1',
+    'the fallback marker is per row and the 125/205 coverage does not come from this two-row page')
+
+  sessionACard.click()
+  harness.pageRequests[1].request.resolve(pageValue(
+    harness.sessions[0],
+    0,
+    [],
+    null,
+    refinement(0, 0, { refinementFaultCode: 'REFINE_WORKER_EXITED' })
+  ))
+  await flushRenderer()
+  assert.equal(detailRefinement.textContent, '精修进程异常结束；本会话未产生可精修的已定稿字幕')
+  assert.equal(harness.versionButtons[1].disabled, true)
+  assert.equal(harness.versionButtons[1].getAttribute('aria-disabled'), 'true')
+  assert.equal(harness.exportButtons[0].disabled, false, 'original export stays available for an empty session')
+
+  sessionBCard.click()
+  harness.pageRequests[2].request.resolve(pageValue(
+    harness.sessions[1],
+    5,
+    [segment('fault-complete', 0)],
+    null,
+    refinement(5, 5, { refinementFaultCode: 'REFINE_DECODE_FAILED' })
+  ))
+  await flushRenderer()
+  assert.equal(detailRefinement.textContent, '精修进程异常结束，但本次已生成 5/5 段精修稿',
+    'complete coverage must not hide a confirmed refinement fault')
+  assert.equal(harness.versionButtons[1].disabled, false)
+
+  sessionACard.click()
+  harness.pageRequests[3].request.resolve(pageValue(
+    harness.sessions[0],
+    4,
+    [segment('zero-refinement', 0, 'mic')],
+    null,
+    refinement(4, 0)
+  ))
+  await flushRenderer()
+  assert.equal(detailRefinement.textContent, '本会话未生成精修稿')
+  assert.equal(harness.versionButtons[1].disabled, true)
+  assert.equal(harness.versionButtons[1].getAttribute('aria-disabled'), 'true')
+
+  sessionBCard.click()
+  harness.pageRequests[4].request.resolve(pageValue(
+    harness.sessions[1],
+    4,
+    [segment('legacy-refinement', 0)],
+    null,
+    refinement(4, 2, { refinementResultStatus: 'not_recorded' })
+  ))
+  await flushRenderer()
+  assert.equal(detailRefinement.textContent, '已精修 2/4 段，2 段使用原始版；未记录精修运行状态')
+  assert.equal(harness.versionButtons[1].disabled, false)
+  assert.doesNotMatch(sessionList.textContent, /未记录精修运行状态/,
+    'legacy result status stays inside refinement detail, never the ordinary session list')
 })
 
 test('history preload is a narrow IPC façade without SQL, arbitrary paths or filesystem powers', () => {

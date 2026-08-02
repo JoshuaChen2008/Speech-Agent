@@ -83,7 +83,11 @@ test('start waits for durable session open before starting capture', async (t) =
   await new Promise((resolve) => setImmediate(resolve))
   assert.equal(context.coordinator.getSnapshot().phase, 'starting')
   assert.equal(context.starts(), 0)
-  assert.deepEqual(context.calls[0], ['open', { sessionId: 'durable-session', sourceId: 'loopback' }])
+  assert.deepEqual(context.calls[0], ['open', {
+    sessionId: 'durable-session',
+    sourceId: 'loopback',
+    refinementEnabled: false
+  }])
 
   opening.resolve({ status: 'committed' })
   assert.equal((await starting).ok, true)

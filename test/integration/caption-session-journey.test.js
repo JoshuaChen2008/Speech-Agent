@@ -29,6 +29,7 @@ const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtit
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
 
 const DEV_RUNTIME = resolveRuntimeOptions({ LIVE_SUBTITLE_DEV_MODEL: DEV_MODEL_VALUE })
+const DEV_RUNTIME_WITH_REFINEMENT = Object.freeze({ ...DEV_RUNTIME, refinementAvailable: true })
 
 function tempDirectory (scenario) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `caption-journey-${scenario}-`))
@@ -275,7 +276,7 @@ async function runCaptionJourney (t, scenario) {
   const coordinator = new SessionCoordinator({
     adapter,
     persistenceSink: recorder,
-    runtimeOptions: DEV_RUNTIME,
+    runtimeOptions: DEV_RUNTIME_WITH_REFINEMENT,
     configuration: scenario.configuration,
     idFactory: () => `ci-${scenario.id}-session`
   })
@@ -381,7 +382,13 @@ const scenarios = [
   {
     id: 'meeting-loopback',
     sourceId: 'loopback',
-    configuration: { onboardingCompleted: true, onboardingPreset: 'meeting', mic: false, loopback: true },
+    configuration: {
+      onboardingCompleted: true,
+      onboardingPreset: 'meeting',
+      mic: false,
+      loopback: true,
+      refinementEnabled: true
+    },
     partial: '系统音频正在转写',
     final: '系统音频已经完成转写',
     refined: '系统音频已经完成转写。',
@@ -390,7 +397,13 @@ const scenarios = [
   {
     id: 'dictation-microphone',
     sourceId: 'mic',
-    configuration: { onboardingCompleted: true, onboardingPreset: 'dictation', mic: true, loopback: false },
+    configuration: {
+      onboardingCompleted: true,
+      onboardingPreset: 'dictation',
+      mic: true,
+      loopback: false,
+      refinementEnabled: true
+    },
     partial: '麦克风正在听写',
     final: '麦克风已经完成听写',
     refined: '麦克风已经完成听写。',
@@ -502,7 +515,12 @@ test('CI journey I2: production runtime composition retains timing only for the 
   const coordinator = new SessionCoordinator({
     adapter,
     runtimeOptions: DEV_RUNTIME,
-    configuration: { onboardingCompleted: true, onboardingPreset: 'meeting', mic: false, loopback: true },
+    configuration: {
+      onboardingCompleted: true,
+      onboardingPreset: 'meeting',
+      mic: false,
+      loopback: true
+    },
     idFactory: () => 'ci-timing-session'
   })
   const observed = []
@@ -626,9 +644,15 @@ test('CI journey J5/J6/J12: pause-refine and worker recovery preserve one durabl
       adapters.push(adapter)
       return adapter
     },
-    runtimeOptions: DEV_RUNTIME,
+    runtimeOptions: DEV_RUNTIME_WITH_REFINEMENT,
     persistenceSink: new SqliteSessionRecorder({ gateway, now: () => 1785396200000 }),
-    configuration: { onboardingCompleted: true, onboardingPreset: 'meeting', mic: false, loopback: true },
+    configuration: {
+      onboardingCompleted: true,
+      onboardingPreset: 'meeting',
+      mic: false,
+      loopback: true,
+      refinementEnabled: true
+    },
     idFactory: () => 'ci-pause-fault-session'
   })
   t.after(async () => {

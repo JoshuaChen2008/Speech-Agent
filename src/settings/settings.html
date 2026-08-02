@@ -139,12 +139,12 @@
       <!-- 模型资源 -->
       <section class="pane" data-pane="resources">
         <h1>模型资源</h1>
-        <p class="sub">下载并校验字幕系统所需的本地离线语音识别资源。</p>
+        <p class="sub">核心字幕模型资源包与可选精修模型资源分别管理。</p>
 
         <div class="group model-summary">
           <div class="row">
             <div>
-              <div class="label">本地 ASR 资源</div>
+              <div class="label">核心字幕模型资源包</div>
               <div class="hint model-state" id="modelOverallState" aria-live="polite">正在读取状态</div>
             </div>
             <button class="primary-btn" id="modelInstallButton" type="button" disabled>正在读取</button>
@@ -160,7 +160,7 @@
           <p class="model-error" id="modelError" role="alert" hidden></p>
         </div>
 
-        <div class="resource-list" aria-label="模型资源明细">
+        <div class="resource-list" aria-label="核心字幕模型资源明细">
           <div class="resource-row" data-resource-id="x-asr-160ms" data-state="missing">
             <div>
               <div class="label">实时字幕模型</div>
@@ -171,20 +171,10 @@
               <span class="hint" data-field="bytes">0 B / 0 B</span>
             </div>
           </div>
-          <div class="resource-row" data-resource-id="x-asr-offline" data-state="missing">
-            <div>
-              <div class="label">精修识别模型</div>
-              <div class="hint">负责终稿的离线精修</div>
-            </div>
-            <div class="resource-status">
-              <span data-field="state">未安装</span>
-              <span class="hint" data-field="bytes">0 B / 0 B</span>
-            </div>
-          </div>
           <div class="resource-row" data-resource-id="silero-vad" data-state="missing">
             <div>
               <div class="label">语音活动检测</div>
-              <div class="hint">辅助判断语音片段边界</div>
+              <div class="hint">辅助判断字幕段边界</div>
             </div>
             <div class="resource-status">
               <span data-field="state">未安装</span>
@@ -193,7 +183,55 @@
           </div>
         </div>
 
-        <p class="note">这些资源只服务于本地字幕识别，不包含 Agent、翻译或大语言模型。下载中关闭应用后，可在下次启动时继续。</p>
+        <div class="group model-summary refinement-summary">
+          <div class="row">
+            <div>
+              <div class="label">精修模型资源</div>
+              <div class="hint model-state" id="refinementOverallState" aria-live="polite">正在读取状态</div>
+            </div>
+            <div class="resource-actions">
+              <button class="secondary-btn" id="refinementCancelButton" type="button" hidden>取消下载</button>
+              <button class="primary-btn" id="refinementInstallButton" type="button" disabled>正在读取</button>
+            </div>
+          </div>
+          <div class="model-progress" id="refinementProgress" role="progressbar"
+               aria-label="精修模型资源进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <span id="refinementProgressBar"></span>
+          </div>
+          <div class="model-progress-meta">
+            <span id="refinementProgressText">0%</span>
+            <span id="refinementBytes">0 B / 0 B</span>
+          </div>
+          <p class="model-error" id="refinementError" role="alert" hidden></p>
+        </div>
+
+        <div class="resource-list" aria-label="精修模型资源明细">
+          <div class="resource-row" data-resource-id="x-asr-offline" data-state="missing">
+            <div>
+              <div class="label">离线精修识别模型</div>
+              <div class="hint">为首次稳定转写生成独立精修稿</div>
+            </div>
+            <div class="resource-status">
+              <span data-field="state">未安装</span>
+              <span class="hint" data-field="bytes">0 B / 0 B</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="group refinement-preference">
+          <div class="row">
+            <div>
+              <div class="label">为未来新会话启用精修</div>
+              <div class="hint" id="refinementPreferenceState">默认关闭；不区分系统音频或麦克风。</div>
+            </div>
+            <label class="switch">
+              <input id="refinementPreferenceToggle" type="checkbox" aria-describedby="refinementPreferenceState">
+              <span>启用</span>
+            </label>
+          </div>
+        </div>
+
+        <p class="note">这些资源只服务于本地字幕识别，不包含 Agent、翻译或大语言模型。核心字幕模型资源包只包含实时字幕模型与语音活动检测。精修模型默认不下载；取消后保留合法已下载部分，只有明确点击“继续下载”才会续传。安装完成后仍需再次明确开启，且只影响未来新会话。</p>
       </section>
 
       <!-- 关于 -->

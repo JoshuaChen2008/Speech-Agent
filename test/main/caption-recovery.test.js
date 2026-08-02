@@ -15,6 +15,7 @@ const {
   applyEvent,
   createState,
   hydrateState,
+  isCaptionSegmentEvicted,
   selectFlow
 } = require('../../src/ui/shared/caption-reducer')
 
@@ -59,7 +60,7 @@ function makeCoordinator (options = {}) {
       replacements.push(replacement)
       return replacement
     },
-    runtimeOptions: DEV_MODEL,
+    runtimeOptions: options.runtimeOptions || DEV_MODEL,
     configuration: options.configuration || DICTATION,
     idFactory: () => `session-${++nextId}`,
     transitionTimeoutMs: options.transitionTimeoutMs
@@ -118,27 +119,33 @@ test('late amendments to evicted segments keep live and reloaded views identical
   const live = createState()
   coordinator.onCaption((event) => applyEvent(live, event))
 
-  /* 12 段定稿：renderer 窗口只剩 seg-5..seg-12。 */
-  for (let index = 1; index <= 12; index += 1) {
+  /* 超过内存保险上限：renderer/canonical 只剩最新 KEEP_SEGMENTS 段。 */
+  const total = KEEP_SEGMENTS + 4
+  for (let index = 1; index <= total; index += 1) {
     adapter.emitCaption(caption({
       sessionId, segmentId: `seg-${index}`, sequence: index, kind: 'final', text: `句子${index}`
     }))
   }
-  /* 迟到修订落在已被 renderer 淘汰的 seg-3：两侧都不得开新段/复活。 */
+  /* 迟到修订落在已被容量保险淘汰的 seg-3。用高于当前 source watermark
+     的 sequence，证明事件确实穿过 coordinator ingress 后仍被 display fold 抑制。 */
   adapter.emitCaption(caption({
-    sessionId, segmentId: 'seg-3', sequence: 13, revision: 2, kind: 'refined', text: '精修句三'
+    sessionId, segmentId: 'seg-3', sequence: total + 1, revision: 2, kind: 'refined', text: '精修句三'
   }))
   adapter.emitCaption(caption({
     sessionId,
     segmentId: 'seg-3',
-    sequence: 14,
+    sequence: total + 2,
     revision: 3,
     kind: 'translated',
     text: '精修句三',
     translation: { language: 'en', text: 'Sentence three.', basedOnRevision: 2 }
   }))
+  adapter.emitCaption(caption({
+    sessionId, segmentId: 'seg-3', sequence: total + 3, revision: 4, kind: 'final', text: '迟到定稿也不得复活'
+  }))
 
-  assert.equal(selectFlow(live).at(-1).text, '句子12')
+  assert.equal(selectFlow(live).at(-1).text, `句子${total}`)
+  assert.equal(isCaptionSegmentEvicted(live, 'seg-3'), true)
   const rehydrated = hydrateState(coordinator.getCaptionState())
   assert.deepEqual(rehydrated.segments, live.segments)
   assert.deepEqual(selectFlow(rehydrated), selectFlow(live))
@@ -146,11 +153,17 @@ test('late amendments to evicted segments keep live and reloaded views identical
   /* canonical 与 renderer 同窗口：seg-3 已淘汰，修订被一致地忽略。 */
   const canonical = coordinator.getCaptionState()
   assert.equal(canonical.segments.some((segment) => segment.segmentId === 'seg-3'), false)
-  assert.equal(canonical.segments.at(-1).segmentId, 'seg-12')
+  assert.equal(canonical.segments.at(-1).segmentId, `seg-${total}`)
 })
 
 test('canonical fold and live reducer stay equivalent across adversarial streams', async (t) => {
-  const { adapter, coordinator } = makeCoordinator()
+  /* This stream contains refined CaptionEvent values.  They are only
+     broadcast by a session that froze the explicit refinement preference on,
+     so keep the adversarial fold case within that valid session contract. */
+  const { adapter, coordinator } = makeCoordinator({
+    runtimeOptions: { ...DEV_MODEL, refinementAvailable: true },
+    configuration: { ...DICTATION, refinementEnabled: true }
+  })
   t.after(() => coordinator.dispose())
   await coordinator.command('start')
   const first = coordinator.getSnapshot().sessionId
@@ -175,7 +188,7 @@ test('canonical fold and live reducer stay equivalent across adversarial streams
       kind: 'final',
       text: `对方句${i + 1}`
     })),
-    /* a-1 已被窗口淘汰后才定稿：两侧都按重开新段处理（复活到末尾）。 */
+    /* a-1 已被容量保险淘汰后才定稿：两侧都必须用墓碑抑制，不能复活。 */
     caption({ sessionId: first, sourceId: 'mic', segmentId: 'a-1', sequence: KEEP_SEGMENTS + 3, revision: 2, kind: 'final', text: '我说完了。' }),
     /* 窗口内修订：应用。 */
     caption({
@@ -394,6 +407,65 @@ test('caption state segment cap keeps the newest segments', async (t) => {
   assert.equal(state.segments.length, KEEP_SEGMENTS)
   assert.equal(state.segments[0].segmentId, `seg-${total - KEEP_SEGMENTS + 1}`)
   assert.equal(state.segments.at(-1).segmentId, `seg-${total}`)
+})
+
+test('renderer viewport eviction closes canonical state and suppresses every late display amendment', async (t) => {
+  const { adapter, coordinator } = makeCoordinator({
+    runtimeOptions: { ...DEV_MODEL, refinementAvailable: true },
+    configuration: { ...DICTATION, refinementEnabled: true }
+  })
+  t.after(() => coordinator.dispose())
+  await coordinator.command('start')
+  const sessionId = coordinator.getSnapshot().sessionId
+  const delivered = []
+  const replacements = []
+  coordinator.onCaption((event) => delivered.push([event.segmentId, event.kind]))
+  coordinator.onCaptionState((state) => replacements.push(state))
+
+  for (let index = 1; index <= 3; index += 1) {
+    adapter.emitCaption(caption({
+      sessionId,
+      segmentId: `seg-${index}`,
+      sequence: index,
+      kind: 'final',
+      text: `句子 ${index}`
+    }))
+  }
+
+  assert.equal(coordinator.acceptCaptionViewportEviction({
+    schemaVersion: 1,
+    sessionId,
+    throughSegmentId: 'seg-1'
+  }), true)
+  assert.deepEqual(coordinator.getCaptionState().segments.map((segment) => segment.segmentId), ['seg-2', 'seg-3'])
+  assert.equal(replacements.length, 1)
+  assert.deepEqual(replacements[0], coordinator.getCaptionState())
+
+  const deliveredBeforeLate = structuredClone(delivered)
+  adapter.emitCaption(caption({ sessionId, segmentId: 'seg-1', sequence: 4, revision: 2, kind: 'refined', text: '迟到精修' }))
+  adapter.emitCaption(caption({ sessionId, segmentId: 'seg-1', sequence: 5, revision: 3, kind: 'final', text: '迟到定稿' }))
+  adapter.emitCaption(caption({
+    sessionId,
+    segmentId: 'seg-1',
+    sequence: 6,
+    revision: 4,
+    kind: 'translated',
+    text: '迟到定稿',
+    translation: { language: 'en', text: 'Late.', basedOnRevision: 3 }
+  }))
+  assert.deepEqual(delivered, deliveredBeforeLate, '已视觉淘汰的段不得再广播给实时 renderer')
+  assert.deepEqual(coordinator.getCaptionState().segments.map((segment) => segment.segmentId), ['seg-2', 'seg-3'])
+
+  assert.equal(coordinator.acceptCaptionViewportEviction({
+    schemaVersion: 1,
+    sessionId: 'another-session',
+    throughSegmentId: 'seg-2'
+  }), false)
+  assert.equal(coordinator.acceptCaptionViewportEviction({
+    schemaVersion: 1,
+    sessionId,
+    throughSegmentId: 'seg-3'
+  }), false, '不得淘汰当前最新段')
 })
 
 test('dispose clears caption state', async (t) => {

@@ -37,6 +37,8 @@ const {
   SubtitleApplicationRuntime
 } = require('./main/services/subtitle-application-runtime')
 const { HistoryService } = require('./main/services/history-service')
+const { RefinementFaultLog } = require('./main/services/refinement-fault-log')
+const { RefinementNoticeStore } = require('./main/services/refinement-notice')
 const { createMainEvidenceBridge } = require('./main/services/electron-exit-evidence')
 const { PowerSessionGuard } = require('./main/services/power-session-guard')
 
@@ -53,10 +55,15 @@ exitEvidence.markLifecycle('main-started')
 /** @type {SessionCoordinator | null} */ let coordinator = null
 /** @type {HistoryService | null} */ let historyService = null
 /** @type {PowerSessionGuard | null} */ let powerSessionGuard = null
+/** @type {RefinementFaultLog | null} */ let refinementFaultLog = null
 
 let quitBarrierComplete = false
 let quitBarrierPromise = null
 let quitRequested = false
+let refinementPreferenceFallbackNotice = false
+const refinementNoticeStore = new RefinementNoticeStore({
+  onListenerError: () => console.error('[refinement.notice] listener failed')
+})
 
 const windowRoles = new Map()
 let locked = false
@@ -114,7 +121,11 @@ function preloadPath (role) {
 }
 
 function payload () {
-  return { ...config.get(), systemDark: nativeTheme.shouldUseDarkColors }
+  return {
+    ...config.get(),
+    systemDark: nativeTheme.shouldUseDarkColors,
+    refinementPreferenceFallback: refinementPreferenceFallbackNotice
+  }
 }
 
 function send (win, channel, value) {
@@ -137,6 +148,12 @@ function broadcastSnapshot (snapshot) {
 function broadcastModelStatus (status) {
   send(settingsWin, CHANNELS.MODEL_STATUS_CHANGED, status)
 }
+
+function broadcastRefinementNotice (notice) {
+  send(toolbarWin, CHANNELS.REFINEMENT_NOTICE_CHANGED, notice)
+}
+
+refinementNoticeStore.onChanged(broadcastRefinementNotice)
 
 function registerWindowRole (win, role) {
   const senderId = win.webContents.id
@@ -486,11 +503,11 @@ function createCoordinator (persistenceSink) {
   if (structuralRuntime) {
     console.warn('[runtime] structural runtime enabled: real capture and worker, null recognizer, no captions')
   }
-  /* 产品能力只在 ModelManager 审计完整三资源 bundle 后开启。仓库模型和显式
+  /* 产品能力只在 ModelManager 审计核心字幕模型资源包后开启。仓库模型和显式
      env 路径只有在 LIVE_SUBTITLE_ALLOW_EXTERNAL_MODELS=1 时才通过
      externalReady 开发缝进入；普通 npm start 与打包应用都必须依赖 userData
      中清单匹配的 ready marker，不能被工作区模型悄悄遮蔽下载入口。 */
-  const managerReady = modelManager?.getStatus().state === 'ready'
+  const managerReady = modelManager?.isCoreReady() === true
   const approvedRuntime = (!devOptions.modelOverride && !structuralRuntime && managerReady)
     ? createApprovedRuntimeDefinition({
         userDataDir: app.getPath('userData'),
@@ -502,13 +519,13 @@ function createCoordinator (persistenceSink) {
   let runtimeOptions = devOptions
   let transitionTimeoutMs
   if (approvedRuntime) {
-    console.log('[runtime] approved local subtitle model bundle ready')
+    console.log('[runtime] approved local core subtitle model bundle ready')
     adapterFactory = approvedRuntime.adapterFactory
     runtimeOptions = approvedRuntime.runtimeOptions
     transitionTimeoutMs = approvedRuntime.transitionTimeoutMs
   } else {
     if (managerReady && !devOptions.modelOverride && !structuralRuntime) {
-      console.error('[runtime] model manager reported ready but runtime bundle could not be resolved')
+      console.error('[runtime] model manager reported core ready but runtime bundle could not be resolved')
     }
     adapterFactory = () => structuralRuntime
       ? new RealtimeRuntimeAdapter(runtimeEvidenceOptions)
@@ -524,6 +541,15 @@ function createCoordinator (persistenceSink) {
   })
   created.onSnapshot(broadcastSnapshot)
   created.onCaption((event) => send(captionWin, CHANNELS.CAPTION_EVENT, event))
+  created.onCaptionState((state) => send(captionWin, CHANNELS.CAPTION_STATE_CHANGED, state))
+  created.onRefinementFault((fault) => {
+    if (!refinementFaultLog) return
+    void refinementFaultLog.record({
+      code: fault.code,
+      stage: fault.stage,
+      faultAtMs: fault.faultAtMs
+    }).catch(() => console.error('[refinement.fault-log] write failed'))
+  })
   return created
 }
 
@@ -575,6 +601,8 @@ function publicModelError (error) {
     INVALID_MANIFEST: '模型资源清单无效',
     MODEL_FILES_MISSING: '模型文件不完整',
     MODEL_RUNTIME_UNAVAILABLE: '模型已安装但字幕运行时未就绪',
+    REFINEMENT_MODEL_NOT_READY: '请先下载精修模型',
+    MODEL_INSTALL_NOT_ACTIVE: '当前没有可取消的模型下载',
     SESSION_ACTIVE: '请先停止当前字幕会话',
     SHUTDOWN: '模型管理服务已关闭',
     TOO_MANY_REDIRECTS: '模型下载重定向过多'
@@ -582,7 +610,7 @@ function publicModelError (error) {
   return { code, message: messages[code] || '模型资源暂时不可用' }
 }
 
-async function installModelResources () {
+async function installModelResourceGroup (install) {
   if (!modelManager || !coordinator) {
     return { ok: false, error: publicModelError({ code: 'MODEL_INSTALL_FAILED' }) }
   }
@@ -590,11 +618,10 @@ async function installModelResources () {
     return { ok: false, error: publicModelError({ code: 'SESSION_ACTIVE' }) }
   }
   try {
-    const status = await modelManager.install()
+    const status = await install()
     const devOptions = resolveRuntimeOptions(process.env, { packaged: app.isPackaged })
     const structuralRuntime = !app.isPackaged && process.env.LIVE_SUBTITLE_DEV_RUNTIME === 'structural'
-    if (!devOptions.modelOverride && !structuralRuntime &&
-        coordinator.getSnapshot().model.state !== 'ready') {
+    if (!devOptions.modelOverride && !structuralRuntime && modelManager.isCoreReady()) {
       activateApprovedRuntime({
         coordinator,
         userDataDir: app.getPath('userData'),
@@ -607,6 +634,47 @@ async function installModelResources () {
     const safe = publicModelError(error)
     console.error(`[model.install] ${safe.code}`)
     return { ok: false, error: safe }
+  }
+}
+
+async function installModelResources () {
+  return installModelResourceGroup(() => modelManager.installCore())
+}
+
+async function installRefinementModelResources () {
+  return installModelResourceGroup(() => modelManager.installRefinement())
+}
+
+function cancelModelInstall () {
+  if (!modelManager || !coordinator) {
+    return { ok: false, error: publicModelError({ code: 'MODEL_INSTALL_NOT_ACTIVE' }) }
+  }
+  if (coordinator.getSnapshot().sessionId !== null) {
+    return { ok: false, error: publicModelError({ code: 'SESSION_ACTIVE' }) }
+  }
+  if (!modelManager.cancelInstall()) {
+    return { ok: false, error: publicModelError({ code: 'MODEL_INSTALL_NOT_ACTIVE' }) }
+  }
+  return { ok: true, value: modelManager.getStatus() }
+}
+
+function setRefinementPreference (enabled) {
+  if (typeof enabled !== 'boolean' || !modelManager || !coordinator) {
+    return { ok: false, error: publicModelError({ code: 'REFINEMENT_MODEL_NOT_READY' }) }
+  }
+  try {
+    const result = config.setRefinementPreference(enabled === true, modelManager.isRefinementReady())
+    coordinator.updateConfiguration(config.get())
+    if (!result.accepted) {
+      broadcastConfig()
+      return { ok: false, error: publicModelError({ code: result.reason }) }
+    }
+    refinementPreferenceFallbackNotice = false
+    broadcastConfig()
+    return { ok: true, value: payload() }
+  } catch (error) {
+    logError('refinement.preference', error)
+    return { ok: false, error: publicModelError({ code: 'REFINEMENT_MODEL_NOT_READY' }) }
   }
 }
 
@@ -637,7 +705,10 @@ ipcMain.on(CHANNELS.TOOLBAR_ACTION, (event, action) => {
   requireSender(event, CHANNELS.TOOLBAR_ACTION)
   if (action === 'settings') openSettingsWindow()
   else if (action === 'open-model-manager') openSettingsWindow('resources')
-  else if (action === 'history') openHistoryWindow()
+  else if (action === 'history') {
+    refinementNoticeStore.clear()
+    openHistoryWindow()
+  } else if (action === 'dismiss-refinement-notice') refinementNoticeStore.clear()
   else if (action === 'close') app.quit()
 })
 ipcMain.on(CHANNELS.SETTINGS_CLOSE, (event) => {
@@ -668,10 +739,44 @@ ipcMain.handle(CHANNELS.CAPTION_STATE_GET, (event) => {
   requireSender(event, CHANNELS.CAPTION_STATE_GET)
   return coordinator.getCaptionState()
 })
+ipcMain.handle(CHANNELS.CAPTION_VIEWPORT_EVICT, (event, report) => {
+  requireSender(event, CHANNELS.CAPTION_VIEWPORT_EVICT)
+  return coordinator.acceptCaptionViewportEviction(report)
+})
+ipcMain.handle(CHANNELS.REFINEMENT_NOTICE_GET, (event) => {
+  requireSender(event, CHANNELS.REFINEMENT_NOTICE_GET)
+  return refinementNoticeStore.get()
+})
+
+async function refreshPostSessionRefinementNotice (sessionId) {
+  try {
+    if (!historyService) return
+    const page = await historyService.getSessionPage({ sessionId, limit: 1, cursor: null })
+    refinementNoticeStore.setFromResult(sessionId, page.refinement)
+  } catch {
+    /* A status hint may never turn a successfully closed durable session into
+       a command failure. Detailed facts remain available through history. */
+    console.error('[refinement.notice] result unavailable')
+  }
+}
+
+async function runRuntimeCommand (name) {
+  const before = coordinator.getSnapshot()
+  const operation = coordinator.command(name)
+  if (name === 'start' && before.sessionId === null && coordinator.getSnapshot().sessionId !== null) {
+    refinementNoticeStore.clear()
+  }
+  const result = await operation
+  if (name === 'stop' && result.ok && before.sessionId !== null && before.phase !== 'error') {
+    await refreshPostSessionRefinementNotice(before.sessionId)
+  }
+  return result
+}
+
 ipcMain.handle(CHANNELS.RUNTIME_COMMAND, async (event, name) => {
   requireSender(event, CHANNELS.RUNTIME_COMMAND)
   try {
-    return await coordinator.command(name)
+    return await runRuntimeCommand(name)
   } catch (error) {
     logError('runtime.command', error)
     return failure('COMMAND_FAILED', '命令执行失败', true)
@@ -685,6 +790,18 @@ ipcMain.handle(CHANNELS.MODEL_STATUS_GET, (event) => {
 ipcMain.handle(CHANNELS.MODEL_INSTALL, (event) => {
   requireSender(event, CHANNELS.MODEL_INSTALL)
   return installModelResources()
+})
+ipcMain.handle(CHANNELS.MODEL_INSTALL_REFINEMENT, (event) => {
+  requireSender(event, CHANNELS.MODEL_INSTALL_REFINEMENT)
+  return installRefinementModelResources()
+})
+ipcMain.handle(CHANNELS.MODEL_CANCEL_INSTALL, (event) => {
+  requireSender(event, CHANNELS.MODEL_CANCEL_INSTALL)
+  return cancelModelInstall()
+})
+ipcMain.handle(CHANNELS.REFINEMENT_PREFERENCE_SET, (event, enabled) => {
+  requireSender(event, CHANNELS.REFINEMENT_PREFERENCE_SET)
+  return setRefinementPreference(enabled)
 })
 
 function publicHistoryError (error) {
@@ -731,6 +848,9 @@ async function bootstrapApplication () {
   if (quitRequested) return false
   config.load()
   const userDataDir = app.getPath('userData')
+  refinementFaultLog = new RefinementFaultLog({
+    directory: path.join(userDataDir, 'logs', 'refinement')
+  })
   const externalModelsAllowed = allowsExternalModelResources(process.env, { packaged: app.isPackaged })
   modelManager = new ModelManager({
     userDataDir,
@@ -740,6 +860,9 @@ async function bootstrapApplication () {
   })
   modelManager.onStatus(broadcastModelStatus)
   await modelManager.initialize()
+  const refinementReadiness = config.reconcileRefinementReadiness(modelManager.isRefinementReady())
+  refinementPreferenceFallbackNotice = refinementReadiness.changed
+  if (refinementReadiness.changed) broadcastConfig()
   if (quitRequested) return false
   applicationRuntime = new SubtitleApplicationRuntime({
     userDataDir,
@@ -810,6 +933,7 @@ function beginQuitBarrier (event) {
     } else if (coordinator) {
       shutdownTasks.push(coordinator.dispose())
     }
+    if (refinementFaultLog) shutdownTasks.push(refinementFaultLog.close())
     const settlements = await Promise.allSettled(shutdownTasks)
     const failed = settlements.find((result) => result.status === 'rejected')
     if (failed) throw failed.reason

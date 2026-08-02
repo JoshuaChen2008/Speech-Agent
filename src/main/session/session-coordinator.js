@@ -6,6 +6,7 @@ const { randomUUID } = require('node:crypto')
 const {
   assertCaptionEvent,
   assertCaptionState,
+  assertCaptionViewportEviction,
   assertCommandResult,
   assertListeningConfiguration,
   assertRuntimeSnapshot,
@@ -18,7 +19,10 @@ const {
    该文件因此成为 UI 与壳层共享，改动需双侧评审。 */
 const {
   applyEvent: foldCaptionEvent,
-  createState: createCaptionFoldState
+  createState: createCaptionFoldState,
+  evictCaptionPrefix,
+  fallbackRefinement,
+  isCaptionSegmentEvicted
 } = require('../../ui/shared/caption-reducer')
 
 const COMMANDS = Object.freeze(['start', 'pause', 'resume', 'stop', 'retry'])
@@ -27,6 +31,13 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({ id: 'loopback', label: '系统音频' })
 ])
 const DEFAULT_TRANSITION_TIMEOUT_MS = 5000
+const REFINEMENT_FAULT_CODES = new Set([
+  'REFINE_WORKER_START_FAILED',
+  'REFINE_WORKER_EXITED',
+  'REFINE_DECODE_FAILED',
+  'REFINE_INVALID_RESPONSE',
+  'REFINE_INTERNAL_FAILURE'
+])
 
 class TransitionTimeoutError extends Error {
   constructor (operation) {
@@ -85,6 +96,8 @@ class SessionCoordinator {
     this.configuration = this.validateConfiguration(options.configuration)
     this.snapshotListeners = new Set()
     this.captionListeners = new Set()
+    this.captionStateListeners = new Set()
+    this.refinementFaultListeners = new Set()
     this.sourceSequences = new Map()
     this.segmentRevisions = new Map()
     this.segmentSources = new Map()
@@ -108,6 +121,8 @@ class SessionCoordinator {
     this.persistenceFaultTask = null
     this.terminalCaptionIngressClosed = false
     this.sessionSourceIds = []
+    this.sessionRefinementEnabled = false
+    this.sessionRefinementFault = null
     this.busy = false
     this.disposed = false
     this.shuttingDown = false
@@ -128,7 +143,8 @@ class SessionCoordinator {
       onboardingCompleted: configuration.onboardingCompleted,
       onboardingPreset: configuration.onboardingPreset,
       mic: configuration.mic,
-      loopback: configuration.loopback
+      loopback: configuration.loopback,
+      refinementEnabled: configuration.refinementEnabled === true
     }
   }
 
@@ -171,6 +187,40 @@ class SessionCoordinator {
       this.publish(this.buildRestingSnapshot())
     }
     return this.getSnapshot()
+  }
+
+  publishCaptionState () {
+    const state = this.getCaptionState()
+    for (const listener of this.captionStateListeners) {
+      try { listener(clone(state)) } catch (error) { this.reportListenerError(error) }
+    }
+    return state
+  }
+
+  /**
+   * Renderer 用真实 Chromium 几何确认一个旧前缀已经整段离开固定视口。
+   * 这里只接受身份水位；权威正文仍完整留在 SQLite，canonical CaptionState
+   * 只是实时显示恢复状态。
+   */
+  acceptCaptionViewportEviction (input) {
+    const report = assertCaptionViewportEviction(input)
+    if (this.disposed || this.captionFold.sessionId !== report.sessionId) return false
+    if (!evictCaptionPrefix(this.captionFold, report.throughSegmentId)) return false
+    this.captionStateRevision += 1
+    this.publishCaptionState()
+    return true
+  }
+
+  onCaptionState (listener) {
+    if (typeof listener !== 'function') throw new TypeError('caption state listener must be a function')
+    this.captionStateListeners.add(listener)
+    return () => this.captionStateListeners.delete(listener)
+  }
+
+  onRefinementFault (listener) {
+    if (typeof listener !== 'function') throw new TypeError('refinement fault listener must be a function')
+    this.refinementFaultListeners.add(listener)
+    return () => this.refinementFaultListeners.delete(listener)
   }
 
   /**
@@ -271,11 +321,13 @@ class SessionCoordinator {
     }
     const transition = this.beginTransition('start')
     this.sessionSourceIds = this.selectedSourceIds()
+    this.sessionRefinementEnabled = this.configuration.refinementEnabled && this.runtimeOptions.refinementAvailable === true
     this.sourceSequences.clear()
     this.segmentRevisions.clear()
     this.segmentSources.clear()
     this.pendingCaptions = []
     this.persistenceFault = null
+    this.sessionRefinementFault = null
     this.terminalCaptionIngressClosed = false
     this.publish(this.buildSnapshot('starting', sessionId, 'starting', null))
     try {
@@ -283,7 +335,8 @@ class SessionCoordinator {
         try {
           await this.persistenceSink.openSession({
             sessionId,
-            sourceId: this.sessionSourceIds[0]
+            sourceId: this.sessionSourceIds[0],
+            refinementEnabled: this.sessionRefinementEnabled
           })
         } catch (cause) {
           if (!this.isTransitionCurrent(transition)) {
@@ -300,6 +353,7 @@ class SessionCoordinator {
         sessionId,
         sourceIds: [...this.sessionSourceIds],
         profile: this.runtimeOptions.modelOverride.profile,
+        refinementEnabled: this.adapterRefinementEnabled(),
         resume: this.captionCursor(),
         signal: transition.controller.signal
       })
@@ -401,6 +455,7 @@ class SessionCoordinator {
         sessionId,
         sourceIds: [...this.sessionSourceIds],
         profile: this.runtimeOptions.modelOverride.profile,
+        refinementEnabled: this.adapterRefinementEnabled(),
         resume: this.captionCursor(),
         signal: transition.controller.signal
       })
@@ -464,6 +519,7 @@ class SessionCoordinator {
           sessionId,
           sourceIds: [...this.sessionSourceIds],
           profile: this.runtimeOptions.modelOverride.profile,
+          refinementEnabled: this.adapterRefinementEnabled(),
           resume: this.captionCursor(),
           signal: transition.controller.signal
         })
@@ -544,6 +600,7 @@ class SessionCoordinator {
   completeStoppedSession () {
     this.persistenceFault = null
     this.sessionSourceIds = []
+    this.sessionRefinementEnabled = false
     this.sourceSequences.clear()
     this.segmentRevisions.clear()
     this.segmentSources.clear()
@@ -619,8 +676,11 @@ class SessionCoordinator {
   foldCaptionState (event) {
     /* 与 renderer 完全相同的折叠：惰性会话切换、修订不开新段、
        KEEP_SEGMENTS 窗口淘汰，全部来自共享实现。 */
+    if (this.captionFold.sessionId === event.sessionId &&
+        isCaptionSegmentEvicted(this.captionFold, event.segmentId)) return false
     foldCaptionEvent(this.captionFold, clone(event))
     this.captionStateRevision += 1
+    return true
   }
 
   beginTransition (operation) {
@@ -659,6 +719,10 @@ class SessionCoordinator {
     if (!this.shuttingDown && this.persistenceFault?.mode === 'active') {
       queueMicrotask(() => this.maybeStopForPersistenceFault())
     }
+  }
+
+  adapterRefinementEnabled () {
+    return this.sessionRefinementEnabled && this.sessionRefinementFault === null
   }
 
   async invokeAdapter (transition, operation, argument) {
@@ -744,7 +808,55 @@ class SessionCoordinator {
     if (typeof adapter.onError === 'function') {
       unsubscribers.push(adapter.onError((event) => this.acceptAdapterFault(adapter, event)))
     }
+    if (typeof adapter.onRefinementFault === 'function') {
+      unsubscribers.push(adapter.onRefinementFault((event) => this.acceptRefinementFault(adapter, event)))
+    }
     return () => { for (const unsubscribe of unsubscribers) unsubscribe() }
+  }
+
+  acceptRefinementFault (adapter, event) {
+    if (this.disposed || adapter !== this.adapter || !this.sessionRefinementEnabled ||
+        this.sessionRefinementFault !== null) return false
+    if (!['starting', 'recovering', 'listening', 'paused'].includes(this.snapshot.phase)) return false
+    if (event?.sessionId !== undefined && event.sessionId !== this.snapshot.sessionId) return false
+    if (!REFINEMENT_FAULT_CODES.has(event?.code) ||
+        !Number.isSafeInteger(event?.faultAtMs) || event.faultAtMs < 0 ||
+        typeof event?.stage !== 'string' || !/^[a-z][a-z0-9-]{0,31}$/.test(event.stage)) {
+      return false
+    }
+
+    const fault = Object.freeze({
+      sessionId: this.snapshot.sessionId,
+      code: event.code,
+      stage: event.stage,
+      faultAtMs: event.faultAtMs
+    })
+    this.sessionRefinementFault = fault
+    this.pendingCaptions = this.pendingCaptions.filter((caption) => caption.kind !== 'refined')
+
+    if (this.persistenceSink && typeof this.persistenceSink.recordRefinementFault === 'function') {
+      try {
+        const accepted = this.persistenceSink.recordRefinementFault({
+          sessionId: fault.sessionId,
+          faultCode: fault.code,
+          faultAtMs: fault.faultAtMs
+        })
+        if (accepted && typeof accepted.then === 'function') {
+          Promise.resolve(accepted).catch((error) => this.acceptPersistenceFault(error))
+        }
+      } catch (error) {
+        this.acceptPersistenceFault(error)
+      }
+    }
+
+    if (this.captionFold.sessionId === fault.sessionId && fallbackRefinement(this.captionFold)) {
+      this.captionStateRevision += 1
+      this.publishCaptionState()
+    }
+    for (const listener of this.refinementFaultListeners) {
+      try { listener(clone(fault)) } catch (error) { this.reportListenerError(error) }
+    }
+    return true
   }
 
   /**
@@ -1018,9 +1130,11 @@ class SessionCoordinator {
     }
     /* 折叠发生在广播出口：canonical state 精确等于订阅者见过的内容，
        被丢弃的 pending 缓冲不会在 reload 后凭空出现在字幕窗里。 */
-    this.foldCaptionState(event)
-    for (const listener of this.captionListeners) {
-      try { listener(clone(event)) } catch (error) { this.reportListenerError(error) }
+    const displayAccepted = this.foldCaptionState(event)
+    if (displayAccepted) {
+      for (const listener of this.captionListeners) {
+        try { listener(clone(event)) } catch (error) { this.reportListenerError(error) }
+      }
     }
     return true
   }
@@ -1070,6 +1184,11 @@ class SessionCoordinator {
     if (!pending && !['listening', 'stopping'].includes(this.snapshot.phase)) return false
     if (event.sessionId !== this.snapshot.sessionId) return false
     if (!this.sessionSourceIds.includes(event.sourceId)) return false
+    /* A refined event is legal only for a session that froze refinement on.
+       Keep this fail-closed even if a stale or faulty adapter emits one while
+       the global preference is off. */
+    if (event.kind === 'refined' &&
+        (!this.sessionRefinementEnabled || this.sessionRefinementFault !== null)) return false
 
     const segmentKey = event.segmentId
     const sourceSequence = this.sourceSequences.get(event.sourceId) || 0
@@ -1182,6 +1301,8 @@ class SessionCoordinator {
     this.unsubscribeAdapter()
     this.snapshotListeners.clear()
     this.captionListeners.clear()
+    this.captionStateListeners.clear()
+    this.refinementFaultListeners.clear()
     const adapters = new Set([this.adapter, ...this.quarantinedAdapters].filter(Boolean))
     const tasks = [...adapters].map((adapter) => this.cleanupAdapter(adapter))
     if (this.adapterRetirementPromise) tasks.unshift(this.adapterRetirementPromise)

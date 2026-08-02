@@ -97,6 +97,41 @@ BEGIN
 END;
 `
 
+/* J15c 的会话级精修运行事实必须以独立 migration 加入：绝不能改写 v1，
+   因为既有数据库已持有 v1 checksum。覆盖 N/M 不落表，而由权威字幕行查询派生。 */
+const REFINEMENT_SESSION_RESULTS_SCHEMA_SQL = `
+CREATE TABLE refinement_session_results (
+  session_id TEXT PRIMARY KEY NOT NULL,
+  result_status TEXT NOT NULL CHECK (result_status IN ('known', 'not_recorded')),
+  refinement_enabled INTEGER CHECK (refinement_enabled IN (0, 1)),
+  fault_code TEXT CHECK (fault_code IS NULL OR fault_code IN (
+    'REFINE_WORKER_START_FAILED',
+    'REFINE_WORKER_EXITED',
+    'REFINE_DECODE_FAILED',
+    'REFINE_INVALID_RESPONSE',
+    'REFINE_INTERNAL_FAILURE'
+  )),
+  fault_stage TEXT CHECK (fault_stage IS NULL OR fault_stage IN (
+    'start', 'worker', 'decode', 'response', 'internal'
+  )),
+  fault_at_ms INTEGER CHECK (fault_at_ms IS NULL OR fault_at_ms >= 0),
+  FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE RESTRICT,
+  CHECK (
+    (result_status = 'not_recorded' AND refinement_enabled IS NULL AND
+      fault_code IS NULL AND fault_stage IS NULL AND fault_at_ms IS NULL) OR
+    (result_status = 'known' AND refinement_enabled IN (0, 1) AND
+      ((fault_code IS NULL AND fault_stage IS NULL AND fault_at_ms IS NULL) OR
+       (fault_code IS NOT NULL AND fault_stage IS NOT NULL AND fault_at_ms IS NOT NULL)))
+  )
+) STRICT;
+
+INSERT INTO refinement_session_results(
+  session_id, result_status, refinement_enabled, fault_code, fault_stage, fault_at_ms
+)
+SELECT session_id, 'not_recorded', NULL, NULL, NULL, NULL
+FROM sessions;
+`
+
 function checksum (sql) {
   return crypto.createHash('sha256').update(sql, 'utf8').digest('hex')
 }
@@ -106,6 +141,11 @@ const MIGRATIONS = Object.freeze([
     version: 1,
     checksum: checksum(INITIAL_SCHEMA_SQL),
     sql: INITIAL_SCHEMA_SQL
+  }),
+  Object.freeze({
+    version: 2,
+    checksum: checksum(REFINEMENT_SESSION_RESULTS_SCHEMA_SQL),
+    sql: REFINEMENT_SESSION_RESULTS_SCHEMA_SQL
   })
 ])
 
@@ -113,6 +153,7 @@ const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version
 
 module.exports = {
   INITIAL_SCHEMA_SQL,
+  REFINEMENT_SESSION_RESULTS_SCHEMA_SQL,
   MIGRATIONS,
   SCHEMA_VERSION,
   checksum

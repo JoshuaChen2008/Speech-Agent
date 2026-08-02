@@ -22,6 +22,7 @@ const DEFAULT_MAX_RESTARTS = 2
 const DEFAULT_MAX_QUEUE = 4096
 const DURABLE_WRITE_OPERATIONS = new Set([
   'openSession',
+  'recordRefinementFault',
   'appendCaption',
   'closeSession',
   'recoverStaleSessions',
@@ -275,6 +276,10 @@ class StorageGateway {
     return this.enqueue('closeSession', input)
   }
 
+  recordRefinementFault (input) {
+    return this.enqueue('recordRefinementFault', input)
+  }
+
   recoverStaleSessions (input) {
     return this.enqueue('recoverStaleSessions', input)
   }
@@ -304,6 +309,7 @@ class StorageGateway {
       case 'openSession': return host.openSession(item.payload)
       case 'appendCaption': return host.appendCaption(item.payload)
       case 'closeSession': return host.closeSession(item.payload)
+      case 'recordRefinementFault': return host.recordRefinementFault(item.payload)
       case 'recoverStaleSessions': return host.recoverStaleSessions(item.payload)
       case 'importLegacyJsonl': return host.importLegacyJsonl(item.payload)
       case 'getSessionTranscript': return host.getSessionTranscript(item.payload)

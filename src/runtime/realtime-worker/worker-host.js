@@ -14,6 +14,22 @@ const { assertSingleSourceIds, isCaptionEvent } = require('../../contracts')
 const { MAIN_CLOCK_ID, selectClockCalibration } = require('../clock-calibration')
 
 const WORKER_PATH = path.join(__dirname, 'realtime-worker.js')
+const REFINEMENT_FAULT_CODES = new Set([
+  'REFINE_WORKER_START_FAILED',
+  'REFINE_WORKER_EXITED',
+  'REFINE_DECODE_FAILED',
+  'REFINE_INVALID_RESPONSE',
+  'REFINE_INTERNAL_FAILURE'
+])
+const REFINEMENT_FAULT_STAGES = new Set([
+  'startup',
+  'worker-exit',
+  'decode',
+  'response',
+  'transport',
+  'delivery',
+  'internal'
+])
 const SERVICE_NAME = 'Speech Agent realtime ASR'
 /* Native model construction and ONNX inference are synchronous inside the
    utility process.  A shutdown message cannot be observed until that work
@@ -95,6 +111,7 @@ class RealtimeWorkerHost {
     this.child = null
     this.captionListeners = new Set()
     this.statsListeners = new Set()
+    this.controlListeners = new Set()
     this.exitListeners = new Set()
     this.lastStats = null
     this.exited = null
@@ -139,6 +156,11 @@ class RealtimeWorkerHost {
   onStats (listener) {
     this.statsListeners.add(listener)
     return () => this.statsListeners.delete(listener)
+  }
+
+  onControl (listener) {
+    this.controlListeners.add(listener)
+    return () => this.controlListeners.delete(listener)
   }
 
   onExit (listener) {
@@ -251,6 +273,16 @@ class RealtimeWorkerHost {
         else this.droppedCaptionCount += 1
         return
       }
+      if (message?.type === 'refinement-fault') {
+        if (REFINEMENT_FAULT_CODES.has(message.code) && REFINEMENT_FAULT_STAGES.has(message.stage)) {
+          this.emit(this.controlListeners, Object.freeze({
+            type: 'refinement-fault',
+            code: message.code,
+            stage: message.stage
+          }))
+        }
+        return
+      }
       if (message?.type === 'stats') {
         this.lastStats = message.stats
         this.emit(this.statsListeners, message.stats)
@@ -302,6 +334,16 @@ class RealtimeWorkerHost {
   attachRefinePort (port) {
     if (!this.child) throw new Error('worker is not running')
     this.child.postMessage({ type: 'refine-port' }, [port])
+  }
+
+  disableRefinement () {
+    if (!this.child) return false
+    try {
+      this.child.postMessage({ type: 'disable-refinement' })
+      return true
+    } catch {
+      return false
+    }
   }
 
   requestStats () {
@@ -454,6 +496,7 @@ class RealtimeWorkerHost {
   clearListeners () {
     this.captionListeners.clear()
     this.statsListeners.clear()
+    this.controlListeners.clear()
     this.exitListeners.clear()
     this.captionTimings.clear()
   }

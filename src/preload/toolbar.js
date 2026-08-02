@@ -16,5 +16,7 @@ contextBridge.exposeInMainWorld('shell', {
   onConfig: (callback) => subscribe(CHANNELS.CONFIG_CHANGED, callback),
   getSnapshot: () => ipcRenderer.invoke(CHANNELS.RUNTIME_GET),
   onSnapshot: (callback) => subscribe(CHANNELS.RUNTIME_CHANGED, callback),
+  getRefinementNotice: () => ipcRenderer.invoke(CHANNELS.REFINEMENT_NOTICE_GET),
+  onRefinementNotice: (callback) => subscribe(CHANNELS.REFINEMENT_NOTICE_CHANGED, callback),
   command: (name) => ipcRenderer.invoke(CHANNELS.RUNTIME_COMMAND, String(name || ''))
 })

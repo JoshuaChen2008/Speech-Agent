@@ -21,6 +21,14 @@ function transcript (overrides = {}) {
       state: 'closed',
       ...overrides.session
     },
+    refinement: {
+      segmentCount: 2,
+      refinedSegmentCount: 1,
+      refinementResultStatus: 'known',
+      refinementEnabled: true,
+      refinementFaultCode: null,
+      ...overrides.refinement
+    },
     segments: overrides.segments || [
       {
         segmentId: 'segment-1',
@@ -61,6 +69,14 @@ function sessionPage (overrides = {}) {
       ...overrides.session
     },
     totalCount: overrides.totalCount === undefined ? 2 : overrides.totalCount,
+    refinement: {
+      segmentCount: 2,
+      refinedSegmentCount: 1,
+      refinementResultStatus: 'known',
+      refinementEnabled: true,
+      refinementFaultCode: null,
+      ...overrides.refinement
+    },
     items: overrides.items || [
       {
         segmentId: 'segment-1',
@@ -270,6 +286,7 @@ test('history detail page requires a cursor matching the last item and strictly 
 
   const valid = makeService({ page: sessionPage({
     totalCount: 3,
+    refinement: { segmentCount: 3, refinedSegmentCount: 1 },
     items,
     nextCursor: { t0Ms: 1000, firstEventOrder: 12 }
   }) })
@@ -281,7 +298,12 @@ test('history detail page requires a cursor matching the last item and strictly 
     { t0Ms: 999, firstEventOrder: 99 },
     { t0Ms: 1001, firstEventOrder: 12 }
   ]) {
-    const service = makeService({ page: sessionPage({ totalCount: 3, items, nextCursor }) })
+    const service = makeService({ page: sessionPage({
+      totalCount: 3,
+      refinement: { segmentCount: 3, refinedSegmentCount: 1 },
+      items,
+      nextCursor
+    }) })
     await assert.rejects(
       service.getSessionPage(request),
       (error) => error instanceof HistoryError && error.code === 'INVALID_HISTORY_DATA'
@@ -326,12 +348,20 @@ test('exports default to the first-pass original version in all three formats', 
 
 test('an explicitly selected refined export carries the refined body and its own name', () => {
   const value = transcript()
+  value.segments[1].refinedText = '第二条精修字幕。'
+  value.refinement = {
+    segmentCount: 2,
+    refinedSegmentCount: 2,
+    refinementResultStatus: 'known',
+    refinementEnabled: true,
+    refinementFaultCode: null
+  }
   const original = buildExport(value, 'txt', 'original')
   const refined = buildExport(value, 'txt', 'refined')
 
   /* 精修版只替换有精修稿的段落；没有精修的段落回落到原始版，两版段落数
      必须保持可比——SEM-T08 要求两版的导出 digest 分别核对。 */
-  assert.equal(refined.content, '精修后的字幕。\n第二条字幕\n')
+  assert.equal(refined.content, '精修后的字幕。\n第二条精修字幕。\n')
   assert.equal(refined.version, 'refined')
   assert.notEqual(refined.content, original.content)
   assert.equal(refined.content.trimEnd().split('\n').length, original.content.trimEnd().split('\n').length)
@@ -343,6 +373,61 @@ test('an explicitly selected refined export carries the refined body and its own
     assert.throws(() => buildExport(value, 'txt', bad),
       (error) => error instanceof HistoryError && error.code === 'INVALID_EXPORT_VERSION')
   }
+})
+
+test('J15c: incomplete refined exports identify every original fallback without changing original output', () => {
+  const value = transcript()
+  value.refinement = {
+    segmentCount: 2,
+    refinedSegmentCount: 1,
+    refinementResultStatus: 'known',
+    refinementEnabled: true,
+    refinementFaultCode: null
+  }
+
+  const original = buildExport(value, 'txt', 'original')
+  const incompleteTxt = buildExport(value, 'txt', 'refined')
+  const incompleteMd = buildExport(value, 'md', 'refined')
+  const incompleteSrt = buildExport(value, 'srt', 'refined')
+
+  assert.equal(original.content, '第一次定稿的字幕。\n第二条字幕\n')
+  assert.match(incompleteTxt.suggestedName, /_refined-incomplete\.txt$/)
+  assert.match(incompleteTxt.content, /已精修 1\/2 段，1 段使用原始版/)
+  assert.match(incompleteTxt.content, /\[原始版回退\] 第二条字幕/)
+  assert.match(incompleteMd.content, /已精修 1\/2 段，1 段使用原始版/)
+  assert.match(incompleteMd.content, /\[原始版回退\] 第二条字幕/)
+  assert.match(incompleteSrt.content, /\[原始版回退\] 第二条字幕/)
+})
+
+test('J15c: refined export fails closed for zero refined segments, including an empty session', () => {
+  const noneRefined = transcript({
+    refinement: {
+      segmentCount: 2,
+      refinedSegmentCount: 0,
+      refinementResultStatus: 'known',
+      refinementEnabled: true,
+      refinementFaultCode: null
+    }
+  })
+  assert.throws(
+    () => buildExport(noneRefined, 'txt', 'refined'),
+    (error) => error instanceof HistoryError && error.code === 'REFINEMENT_UNAVAILABLE'
+  )
+
+  const empty = transcript({
+    segments: [],
+    refinement: {
+      segmentCount: 0,
+      refinedSegmentCount: 0,
+      refinementResultStatus: 'known',
+      refinementEnabled: false,
+      refinementFaultCode: null
+    }
+  })
+  assert.throws(
+    () => buildExport(empty, 'srt', 'refined'),
+    (error) => error instanceof HistoryError && error.code === 'REFINEMENT_UNAVAILABLE'
+  )
 })
 
 test('cancelled export writes nothing and does not expose a filesystem path', async () => {

@@ -30,6 +30,7 @@ function fakeWorker () {
     captionListeners: new Set(),
     captionTimings: new Map(),
     statsListeners: new Set(),
+    controlListeners: new Set(),
     exitListeners: new Set(),
     lastStats: null,
     droppedCaptionCount: 0,
@@ -38,6 +39,7 @@ function fakeWorker () {
     async start (config) { worker.calls.push(['start', config]) },
     attachPort (port) { worker.calls.push(['attachPort', port]) },
     attachRefinePort (port) { worker.calls.push(['attachRefinePort', port]) },
+    disableRefinement () { worker.calls.push(['disableRefinement']); return true },
     async pause () { worker.calls.push(['pause']) },
     async resume () { worker.calls.push(['resume']) },
     async calibrateClock () {
@@ -61,6 +63,7 @@ function fakeWorker () {
     async terminateAndWait () { worker.calls.push(['terminateAndWait']); worker.disposed = true; return 0 },
     onCaption (listener) { worker.captionListeners.add(listener); return () => worker.captionListeners.delete(listener) },
     onStats (listener) { worker.statsListeners.add(listener); return () => worker.statsListeners.delete(listener) },
+    onControl (listener) { worker.controlListeners.add(listener); return () => worker.controlListeners.delete(listener) },
     onExit (listener) { worker.exitListeners.add(listener); return () => worker.exitListeners.delete(listener) },
     takeCaptionTiming (event) {
       const key = `${event?.sourceId}:${event?.sequence}`
@@ -73,6 +76,7 @@ function fakeWorker () {
       for (const listener of worker.captionListeners) listener(event)
     },
     emitStats (stats) { worker.lastStats = stats; for (const listener of worker.statsListeners) listener(stats) },
+    emitControl (message) { for (const listener of worker.controlListeners) listener(message) },
     emitExit (code) { for (const listener of worker.exitListeners) listener({ code }) },
     async dispose () { worker.calls.push(['dispose']); worker.disposed = true }
   }
@@ -248,31 +252,54 @@ test('recognizer options reach the worker only for non-null profile mappings', a
 
 const REFINEMENT = { kind: 'sherpa-offline-transducer', modelDir: 'refine-dir', numThreads: 3 }
 
-test('refinement worker wires only for real profiles and degrades without failing the session', async () => {
+test('refinement worker wires only for real profiles and reports stable per-session faults', async () => {
+  /* Ready resource alone is insufficient: the frozen per-session preference
+     must explicitly opt in before a refine worker is constructed. */
+  const disabled = makeAdapterWith({ profileMap: { fast: 'x-asr-160ms' }, recognizer: { kind: 'sherpa-online-transducer', modelDir: 'm', numThreads: 4 }, refinement: REFINEMENT })
+  await disabled.adapter.start({ sessionId: 'session-disabled', sourceIds: ['mic'], profile: 'fast', refinementEnabled: false })
+  assert.equal(disabled.refineWorker.calls.length, 0)
+  assert.equal(disabled.worker.calls.find(([name]) => name === 'start')[1].refinement, false)
+  await disabled.adapter.stop()
+  disabled.adapter.dispose()
+
   /* 正常接线：refine 配置 + 双端口 + worker 声明 refinement。 */
   const wired = makeAdapterWith({ profileMap: { fast: 'x-asr-160ms' }, recognizer: { kind: 'sherpa-online-transducer', modelDir: 'm', numThreads: 4 }, refinement: REFINEMENT })
-  await wired.adapter.start({ sessionId: 'session-1', sourceIds: ['mic'], profile: 'fast' })
+  await wired.adapter.start({ sessionId: 'session-1', sourceIds: ['mic'], profile: 'fast', refinementEnabled: true })
   assert.deepEqual(wired.refineWorker.calls.find(([name]) => name === 'start')[1], { model: REFINEMENT })
   assert.equal(wired.worker.calls.find(([name]) => name === 'start')[1].refinement, true)
   const refinePort = wired.worker.calls.find(([name]) => name === 'attachRefinePort')[1]
   const refineSide = wired.refineWorker.calls.find(([name]) => name === 'attachPort')[1]
   assert.equal(refinePort.id, 'p1')
   assert.equal(refineSide.id, 'p2')
-  /* 精修中途退出：降级而非会话故障。 */
-  const faults = []
-  wired.adapter.onError((event) => faults.push(event))
+  /* 精修中途退出：保留会话，且仅上报稳定故障码。 */
+  const sessionErrors = []
+  const refinementFaults = []
+  wired.adapter.onError((event) => sessionErrors.push(event))
+  wired.adapter.onRefinementFault((fault) => refinementFaults.push(fault))
   wired.refineWorker.emitExit(9)
-  assert.equal(faults.length, 0, 'refine exit must not fault the session')
-  assert.equal(wired.degraded.length, 1)
+  assert.equal(sessionErrors.length, 0, 'refine exit must not fault the session')
+  assert.equal(wired.degraded.length, 0)
+  assert.deepEqual(
+    refinementFaults.map(({ code, stage }) => ({ code, stage })),
+    [{ code: 'REFINE_WORKER_EXITED', stage: 'worker-exit' }]
+  )
+  assert.ok(Number.isFinite(refinementFaults[0].faultAtMs) && refinementFaults[0].faultAtMs >= 0)
+  assert.deepEqual(Object.keys(refinementFaults[0]).sort(), ['code', 'faultAtMs', 'stage'])
   await wired.adapter.stop()
   assert.equal(wired.refineWorker.disposed, true)
   wired.adapter.dispose()
 
-  /* 精修配置失败：会话照常启动，refine 丢弃并告警。 */
+  /* 精修配置失败：会话照常启动，精修仅本会话禁用。 */
   const failing = makeAdapterWith({ profileMap: { fast: 'x-asr-160ms' }, recognizer: { kind: 'sherpa-online-transducer', modelDir: 'm', numThreads: 4 }, refinement: REFINEMENT })
+  const startFaults = []
+  failing.adapter.onRefinementFault((fault) => startFaults.push(fault))
   failing.refineWorker.failStart = true
-  await failing.adapter.start({ sessionId: 'session-2', sourceIds: ['mic'], profile: 'fast' })
-  assert.equal(failing.degraded.length, 1)
+  await failing.adapter.start({ sessionId: 'session-2', sourceIds: ['mic'], profile: 'fast', refinementEnabled: true })
+  assert.equal(failing.degraded.length, 0)
+  assert.deepEqual(
+    startFaults.map(({ code, stage }) => ({ code, stage })),
+    [{ code: 'REFINE_WORKER_START_FAILED', stage: 'startup' }]
+  )
   assert.equal(failing.refineWorker.disposed, true)
   assert.equal(failing.worker.calls.some(([name]) => name === 'attachRefinePort'), false)
   await failing.adapter.stop()
@@ -286,6 +313,59 @@ test('refinement worker wires only for real profiles and degrades without failin
   structural.adapter.dispose()
 })
 
+test('refinement fault retains source captions and suppresses later refined captions', async () => {
+  const { adapter, worker } = makeAdapterWith({
+    profileMap: { fast: 'x-asr-160ms' },
+    recognizer: { kind: 'sherpa-online-transducer', modelDir: 'm', numThreads: 4 },
+    refinement: REFINEMENT
+  })
+  const captions = []
+  const faults = []
+  adapter.onCaption((event) => captions.push(event))
+  adapter.onRefinementFault((fault) => faults.push(fault))
+  await adapter.start({ sessionId: 'session-source-first', sourceIds: ['mic'], profile: 'fast', refinementEnabled: true })
+
+  worker.emitCaption({ kind: 'final', sourceId: 'mic', segmentId: 'seg-1', sequence: 1, text: 'source one' })
+  worker.emitControl({
+    type: 'refinement-fault',
+    code: 'REFINE_DECODE_FAILED',
+    stage: 'decode',
+    message: 'C:\\private\\model.bin source one',
+    stack: 'sensitive worker stack'
+  })
+  worker.emitControl({ type: 'refinement-fault', code: 'REFINE_INVALID_RESPONSE', stage: 'response' })
+  worker.emitCaption({ kind: 'refined', sourceId: 'mic', segmentId: 'seg-1', sequence: 2, text: 'changed one' })
+  worker.emitCaption({ kind: 'final', sourceId: 'mic', segmentId: 'seg-2', sequence: 3, text: 'source two' })
+
+  assert.deepEqual(captions.map(({ kind, text }) => ({ kind, text })), [
+    { kind: 'final', text: 'source one' },
+    { kind: 'final', text: 'source two' }
+  ])
+  assert.equal(worker.calls.filter(([name]) => name === 'disableRefinement').length, 1)
+  assert.deepEqual(
+    faults.map(({ code, stage }) => ({ code, stage })),
+    [{ code: 'REFINE_DECODE_FAILED', stage: 'decode' }]
+  )
+  assert.equal(JSON.stringify(faults).includes('private'), false)
+  assert.equal(JSON.stringify(faults).includes('source one'), false)
+  await adapter.stop()
+  adapter.dispose()
+})
+
+test('normal refinement shutdown emits no refinement fault', async () => {
+  const { adapter } = makeAdapterWith({
+    profileMap: { fast: 'x-asr-160ms' },
+    recognizer: { kind: 'sherpa-online-transducer', modelDir: 'm', numThreads: 4 },
+    refinement: REFINEMENT
+  })
+  const faults = []
+  adapter.onRefinementFault((fault) => faults.push(fault))
+  await adapter.start({ sessionId: 'session-normal-stop', sourceIds: ['mic'], profile: 'fast', refinementEnabled: true })
+  await adapter.stop()
+  assert.deepEqual(faults, [])
+  adapter.dispose()
+})
+
 test('I2 acceptance composition can delay only a real refine reply while production defaults stay immediate', async () => {
   const accepted = makeAdapterWith({
     profileMap: { fast: 'x-asr-160ms' },
@@ -293,7 +373,7 @@ test('I2 acceptance composition can delay only a real refine reply while product
     refinement: REFINEMENT,
     acceptanceRefineResponseDelayMs: 1200
   })
-  await accepted.adapter.start({ sessionId: 'session-acceptance-delay', sourceIds: ['mic'], profile: 'fast' })
+  await accepted.adapter.start({ sessionId: 'session-acceptance-delay', sourceIds: ['mic'], profile: 'fast', refinementEnabled: true })
   assert.deepEqual(accepted.refineWorker.calls.find(([name]) => name === 'start')[1], {
     model: REFINEMENT,
     acceptanceResponseDelayMs: 1200
@@ -687,7 +767,7 @@ test('adapter dispose reuses graceful worker shutdown for active native generati
     recognizer: { kind: 'sherpa-online-transducer', modelDir: 'm', numThreads: 4 },
     refinement: REFINEMENT
   })
-  await adapter.start({ sessionId: 'session-dispose', sourceIds: ['mic'], profile: 'fast' })
+  await adapter.start({ sessionId: 'session-dispose', sourceIds: ['mic'], profile: 'fast', refinementEnabled: true })
 
   const first = adapter.dispose()
   const second = adapter.dispose()
@@ -919,7 +999,23 @@ test('worker host pause awaits the ack after flushed captions and fails on dead 
   }
   const host = new RealtimeWorkerHost({ electron: { utilityProcess: { fork: () => child } } })
   host.onCaption(() => order.push('caption'))
+  const refinementControls = []
+  host.onControl((message) => refinementControls.push(message))
   await host.start({ sessionId: 's', sourceIds: ['mic'] })
+  child.emit('message', {
+    type: 'refinement-fault',
+    code: 'REFINE_DECODE_FAILED',
+    stage: 'decode',
+    message: 'C:\\private\\model.bin',
+    stack: 'sensitive worker stack'
+  })
+  child.emit('message', { type: 'refinement-fault', code: 'unsupported', stage: 'decode' })
+  assert.deepEqual(refinementControls, [{
+    type: 'refinement-fault',
+    code: 'REFINE_DECODE_FAILED',
+    stage: 'decode'
+  }])
+  assert.equal(JSON.stringify(refinementControls).includes('private'), false)
   await host.pause().then(() => order.push('ack'))
   assert.deepEqual(order, ['caption', 'ack'], '定稿必须先于 pause ack 交付')
 

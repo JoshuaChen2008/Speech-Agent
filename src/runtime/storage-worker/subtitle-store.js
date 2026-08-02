@@ -16,6 +16,20 @@ const {
 
 const MODE_BY_SOURCE = Object.freeze({ loopback: 'meeting', mic: 'dictation' })
 const PERSISTED_CAPTION_KINDS = Object.freeze(['final', 'refined'])
+const REFINEMENT_FAULT_CODES = Object.freeze([
+  'REFINE_WORKER_START_FAILED',
+  'REFINE_WORKER_EXITED',
+  'REFINE_DECODE_FAILED',
+  'REFINE_INVALID_RESPONSE',
+  'REFINE_INTERNAL_FAILURE'
+])
+const REFINEMENT_FAULT_STAGE_BY_CODE = Object.freeze({
+  REFINE_WORKER_START_FAILED: 'start',
+  REFINE_WORKER_EXITED: 'worker',
+  REFINE_DECODE_FAILED: 'decode',
+  REFINE_INVALID_RESPONSE: 'response',
+  REFINE_INTERNAL_FAILURE: 'internal'
+})
 const CAPTION_EVENT_KEYS = Object.freeze([
   'schemaVersion',
   'sessionId',
@@ -57,6 +71,25 @@ function nonNegativeInteger (value, code = 'INVALID_LEGACY_IMPORT') {
 function positiveInteger (value, code = 'INVALID_SESSION') {
   if (!Number.isSafeInteger(value) || value < 1) throw new StorageError(code)
   return value
+}
+
+function refinementEnabledValue (value, code = 'INVALID_SESSION') {
+  if (typeof value !== 'boolean') throw new StorageError(code)
+  return value
+}
+
+function refinementFault (input) {
+  assertExactKeys(input, ['sessionId', 'faultCode', 'faultAtMs'], 'INVALID_REFINEMENT_FAULT')
+  const sessionId = sessionIdValue(input.sessionId)
+  if (!REFINEMENT_FAULT_CODES.includes(input.faultCode)) {
+    throw new StorageError('INVALID_REFINEMENT_FAULT')
+  }
+  return {
+    sessionId,
+    faultCode: input.faultCode,
+    faultStage: REFINEMENT_FAULT_STAGE_BY_CODE[input.faultCode],
+    faultAtMs: nonNegativeInteger(input.faultAtMs, 'INVALID_REFINEMENT_FAULT')
+  }
 }
 
 function legacySourceName (value) {
@@ -170,19 +203,46 @@ function sameEvent (row, event) {
    呈现它，精修稿只有在用户明确选择时才使用。 */
 function versionedSegment (row) {
   const originalRevision = Number(row.original_revision)
-  const currentRevision = Number(row.text_revision)
   return {
     segmentId: row.segment_id,
     sourceId: row.source_id,
     text: row.original_text,
     textRevision: originalRevision,
-    refinedText: currentRevision > originalRevision ? row.current_text : null,
+    refinedText: typeof row.refined_text === 'string' && row.refined_text.length > 0
+      ? row.refined_text
+      : null,
     /* 时间戳同样取自那条首次 final：原始版必须自洽，不能正文来自原始事件、
        时间来自被精修更新过的投影，否则两版的导出 digest 无法分别核对。 */
     t0Ms: Number(row.origin_t0_ms),
     t1Ms: Number(row.origin_t1_ms),
     firstEventOrder: Number(row.first_event_order),
     ...(row.updated_event_order === undefined ? {} : { updatedEventOrder: Number(row.updated_event_order) })
+  }
+}
+
+function refinementMetadata (database, sessionId) {
+  const row = database.prepare(`
+    SELECT rr.result_status, rr.refinement_enabled, rr.fault_code,
+           COUNT(s.id) AS segment_count,
+           COALESCE(SUM(CASE WHEN s.id IS NOT NULL AND EXISTS (
+             SELECT 1 FROM caption_events AS refined
+             WHERE refined.session_id = s.session_id
+               AND refined.source_id = s.source_id
+               AND refined.segment_id = s.segment_id
+               AND refined.kind = 'refined'
+           ) THEN 1 ELSE 0 END), 0) AS refined_segment_count
+    FROM refinement_session_results AS rr
+    LEFT JOIN segments AS s ON s.session_id = rr.session_id
+    WHERE rr.session_id = ?
+    GROUP BY rr.session_id, rr.result_status, rr.refinement_enabled, rr.fault_code
+  `).get(sessionId)
+  if (!row) throw new StorageError('REFINEMENT_RESULT_UNAVAILABLE')
+  return {
+    segmentCount: Number(row.segment_count),
+    refinedSegmentCount: Number(row.refined_segment_count),
+    refinementResultStatus: row.result_status,
+    refinementEnabled: row.refinement_enabled === null ? null : Boolean(row.refinement_enabled),
+    refinementFaultCode: row.fault_code === null ? null : row.fault_code
   }
 }
 
@@ -205,13 +265,18 @@ class SqliteSubtitleStore {
   openSession (input) {
     this.assertOpen()
     if (!input || typeof input !== 'object' || Array.isArray(input) ||
-        Object.keys(input).some((key) => !['sessionId', 'sourceId', 'startedAt'].includes(key))) {
+        Object.keys(input).some((key) => !['sessionId', 'sourceId', 'startedAt', 'refinementEnabled'].includes(key))) {
       throw new StorageError('INVALID_SESSION')
     }
     const sessionId = sessionIdValue(input.sessionId)
     const sourceId = sourceValue(input.sourceId)
     const mode = MODE_BY_SOURCE[sourceId]
     const startedAt = integerTimestamp(input.startedAt)
+    /* 新会话即使当前产品尚未接入设置页，也必须留下 known 运行事实；
+       缺省值是精修默认关闭，而不是把新会话伪装成 legacy unknown。 */
+    const refinementEnabled = input.refinementEnabled === undefined
+      ? false
+      : refinementEnabledValue(input.refinementEnabled)
     const database = this.database
     database.exec('BEGIN IMMEDIATE')
     try {
@@ -220,6 +285,14 @@ class SqliteSubtitleStore {
         if (existing.source_id === sourceId && existing.mode === mode &&
             Number(existing.started_at) === startedAt && existing.ended_at === null &&
             existing.state === 'active') {
+          const existingResult = database.prepare(`
+            SELECT result_status, refinement_enabled
+            FROM refinement_session_results WHERE session_id = ?
+          `).get(sessionId)
+          if (!existingResult || existingResult.result_status !== 'known' ||
+              Boolean(existingResult.refinement_enabled) !== refinementEnabled) {
+            throw new StorageError('SESSION_CONFLICT')
+          }
           database.exec('COMMIT')
           return { status: 'already_processed', sessionId, sourceId }
         }
@@ -231,6 +304,11 @@ class SqliteSubtitleStore {
         INSERT INTO sessions(session_id, mode, source_id, started_at, ended_at, state)
         VALUES (?, ?, ?, ?, NULL, 'active')
       `).run(sessionId, mode, sourceId, startedAt)
+      database.prepare(`
+        INSERT INTO refinement_session_results(
+          session_id, result_status, refinement_enabled, fault_code, fault_stage, fault_at_ms
+        ) VALUES (?, 'known', ?, NULL, NULL, NULL)
+      `).run(sessionId, refinementEnabled ? 1 : 0)
       database.exec('COMMIT')
       return { status: 'committed', sessionId, sourceId }
     } catch (error) {
@@ -269,11 +347,23 @@ class SqliteSubtitleStore {
       }
 
       const session = database.prepare(`
-        SELECT source_id, state FROM sessions WHERE session_id = ?
+        SELECT
+          sessions.source_id,
+          sessions.state,
+          refinement_session_results.result_status AS refinement_result_status,
+          refinement_session_results.refinement_enabled
+        FROM sessions
+        LEFT JOIN refinement_session_results
+          ON refinement_session_results.session_id = sessions.session_id
+        WHERE sessions.session_id = ?
       `).get(event.sessionId)
       if (!session) throw new StorageError('SESSION_NOT_FOUND')
       if (session.source_id !== event.sourceId) throw new StorageError('SESSION_CONFLICT')
       if (session.state !== 'active') throw new StorageError('SESSION_NOT_ACTIVE')
+      if (event.kind === 'refined' && session.refinement_result_status === 'known' &&
+          !Boolean(session.refinement_enabled)) {
+        throw new StorageError('REFINEMENT_DISABLED')
+      }
 
       const current = database.prepare(`
         SELECT * FROM segments
@@ -323,6 +413,50 @@ class SqliteSubtitleStore {
     }
     this.inject('afterCommitBeforeReturn')
     return result
+  }
+
+  /* 精修故障是独立会话事实：确认后立即短事务提交，不能等待 close，也不能由
+     N/M 覆盖度推断或在覆盖完整时清除。faultStage 只由固定 faultCode 映射，
+     从而拒绝把原始 Error/stack 或自由文本写入 SQLite。 */
+  recordRefinementFault (input) {
+    this.assertOpen()
+    const fault = refinementFault(input)
+    const database = this.database
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const session = database.prepare(`
+        SELECT session_id FROM sessions WHERE session_id = ?
+      `).get(fault.sessionId)
+      if (!session) throw new StorageError('SESSION_NOT_FOUND')
+      const existing = database.prepare(`
+        SELECT result_status, refinement_enabled, fault_code, fault_stage, fault_at_ms
+        FROM refinement_session_results WHERE session_id = ?
+      `).get(fault.sessionId)
+      if (!existing || existing.result_status !== 'known') {
+        throw new StorageError('REFINEMENT_RESULT_UNAVAILABLE')
+      }
+      if (!Boolean(existing.refinement_enabled)) throw new StorageError('REFINEMENT_DISABLED')
+      if (existing.fault_code !== null) {
+        if (existing.fault_code === fault.faultCode &&
+            existing.fault_stage === fault.faultStage &&
+            Number(existing.fault_at_ms) === fault.faultAtMs) {
+          database.exec('COMMIT')
+          return { status: 'already_processed', sessionId: fault.sessionId, faultCode: fault.faultCode }
+        }
+        throw new StorageError('REFINEMENT_RESULT_CONFLICT')
+      }
+      database.prepare(`
+        UPDATE refinement_session_results
+        SET fault_code = ?, fault_stage = ?, fault_at_ms = ?
+        WHERE session_id = ? AND result_status = 'known' AND fault_code IS NULL
+      `).run(fault.faultCode, fault.faultStage, fault.faultAtMs, fault.sessionId)
+      this.inject('afterRefinementFault')
+      database.exec('COMMIT')
+      return { status: 'committed', sessionId: fault.sessionId, faultCode: fault.faultCode }
+    } catch (error) {
+      rollbackQuietly(database)
+      throw error
+    }
   }
 
   closeSession (input) {
@@ -456,6 +590,11 @@ class SqliteSubtitleStore {
         session.sessionId, MODE_BY_SOURCE[session.sourceId], session.sourceId,
         session.startedAt, session.endedAt, session.state
       )
+      database.prepare(`
+        INSERT INTO refinement_session_results(
+          session_id, result_status, refinement_enabled, fault_code, fault_stage, fault_at_ms
+        ) VALUES (?, 'not_recorded', NULL, NULL, NULL, NULL)
+      `).run(session.sessionId)
       this.inject('legacyAfterSession')
 
       const seenEventIds = new Set()
@@ -553,11 +692,20 @@ class SqliteSubtitleStore {
       SELECT s.segment_id, s.source_id, s.text AS current_text, s.text_revision,
              s.t0_ms, s.t1_ms, s.first_event_order, s.updated_event_order,
              origin.text AS original_text, origin.revision AS original_revision,
-             origin.t0_ms AS origin_t0_ms, origin.t1_ms AS origin_t1_ms
+             origin.t0_ms AS origin_t0_ms, origin.t1_ms AS origin_t1_ms,
+             (
+               SELECT refined.text FROM caption_events AS refined
+               WHERE refined.session_id = s.session_id
+                 AND refined.source_id = s.source_id
+                 AND refined.segment_id = s.segment_id
+                 AND refined.kind = 'refined'
+               ORDER BY refined.revision DESC, refined.event_order DESC
+               LIMIT 1
+             ) AS refined_text
       FROM segments s
       JOIN caption_events origin ON origin.event_order = s.first_event_order
       WHERE s.session_id = ?
-      ORDER BY s.t0_ms, s.first_event_order, s.id
+      ORDER BY origin.t0_ms, s.first_event_order, s.id
     `).all(sessionId).map(versionedSegment)
     return {
       session: {
@@ -568,6 +716,7 @@ class SqliteSubtitleStore {
         endedAt: session.ended_at === null ? null : Number(session.ended_at),
         state: session.state
       },
+      refinement: refinementMetadata(this.database, sessionId),
       segments
     }
   }
@@ -603,7 +752,7 @@ class SqliteSubtitleStore {
     let afterCursor = ''
     if (cursor) {
       afterCursor = `
-        AND (s.t0_ms > ? OR (s.t0_ms = ? AND s.first_event_order > ?))
+        AND (origin.t0_ms > ? OR (origin.t0_ms = ? AND s.first_event_order > ?))
       `
       params.push(cursor.t0Ms, cursor.t0Ms, cursor.firstEventOrder)
     }
@@ -612,12 +761,21 @@ class SqliteSubtitleStore {
       SELECT s.segment_id, s.source_id, s.text AS current_text, s.text_revision,
              s.t0_ms, s.t1_ms, s.first_event_order,
              origin.text AS original_text, origin.revision AS original_revision,
-             origin.t0_ms AS origin_t0_ms, origin.t1_ms AS origin_t1_ms
+             origin.t0_ms AS origin_t0_ms, origin.t1_ms AS origin_t1_ms,
+             (
+               SELECT refined.text FROM caption_events AS refined
+               WHERE refined.session_id = s.session_id
+                 AND refined.source_id = s.source_id
+                 AND refined.segment_id = s.segment_id
+                 AND refined.kind = 'refined'
+               ORDER BY refined.revision DESC, refined.event_order DESC
+               LIMIT 1
+             ) AS refined_text
       FROM segments s
       JOIN caption_events origin ON origin.event_order = s.first_event_order
       WHERE s.session_id = ?
       ${afterCursor}
-      ORDER BY s.t0_ms, s.first_event_order
+      ORDER BY origin.t0_ms, s.first_event_order
       LIMIT ?
     `).all(...params)
     const hasMore = rows.length > limit
@@ -639,9 +797,10 @@ class SqliteSubtitleStore {
       totalCount: Number(this.database.prepare(
         'SELECT COUNT(*) AS count FROM segments WHERE session_id = ?'
       ).get(sessionId).count),
+      refinement: refinementMetadata(this.database, sessionId),
       items,
       nextCursor: hasMore
-        ? { t0Ms: Number(last.t0_ms), firstEventOrder: Number(last.first_event_order) }
+        ? { t0Ms: Number(last.origin_t0_ms), firstEventOrder: Number(last.first_event_order) }
         : null
     }
   }
@@ -725,6 +884,7 @@ module.exports = {
   LEGACY_SESSION_KEYS,
   MODE_BY_SOURCE,
   PERSISTED_CAPTION_KINDS,
+  REFINEMENT_FAULT_CODES,
   SqliteSubtitleStore,
   legacyImport,
   persistedEvent,

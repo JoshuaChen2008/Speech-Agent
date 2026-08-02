@@ -41,9 +41,9 @@ function isExternalArtifactReady (artifactId, options = {}) {
 }
 
 /**
- * Build the complete local subtitle runtime. This is bundle-atomic at the
- * capability boundary: realtime ASR, offline refinement and VAD must all be
- * resolvable before the UI may advertise a startable installed runtime.
+ * Build the core local subtitle runtime. Realtime ASR plus VAD alone make the
+ * subtitle system startable; offline refinement is an independently supplied
+ * optional capability and never blocks the core runtime.
  */
 function createApprovedRuntimeDefinition (options = {}) {
   if (typeof options.userDataDir !== 'string' || !path.isAbsolute(options.userDataDir)) {
@@ -53,7 +53,7 @@ function createApprovedRuntimeDefinition (options = {}) {
   const realtime = resolveApprovedRealtimeModel(candidateOptions)
   const refinement = resolveApprovedRefinementModel(candidateOptions)
   const vad = resolveSileroVadModel(candidateOptions)
-  if (!realtime || !refinement || !vad) return null
+  if (!realtime || !vad) return null
 
   const Adapter = options.Adapter || RealtimeRuntimeAdapter
   if (typeof Adapter !== 'function') throw new TypeError('Adapter must be a constructor')
@@ -66,11 +66,13 @@ function createApprovedRuntimeDefinition (options = {}) {
       modelType: realtime.modelType
     },
     vad,
-    refinement: {
-      kind: refinement.kind,
-      modelDir: refinement.modelDir,
-      numThreads: refinement.numThreads
-    },
+    refinement: refinement
+      ? {
+          kind: refinement.kind,
+          modelDir: refinement.modelDir,
+          numThreads: refinement.numThreads
+        }
+      : null,
     registerAudioHostWebContents: options.registerAudioHostWebContents,
     onAudioHostRenderProcessGone: options.onAudioHostRenderProcessGone,
     onAudioHostPreloadError: options.onAudioHostPreloadError,
@@ -87,7 +89,7 @@ function createApprovedRuntimeDefinition (options = {}) {
         profile: realtime.profile,
         developmentOnly: false
       }),
-      refinementAvailable: true
+      refinementAvailable: refinement !== null
     }),
     transitionTimeoutMs: RUNTIME_TRANSITION_TIMEOUT_MS
   })

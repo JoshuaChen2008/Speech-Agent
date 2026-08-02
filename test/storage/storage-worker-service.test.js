@@ -12,7 +12,8 @@ const {
   makeCaptionEventId,
   makeCloseSessionKey,
   makeLegacyImportKey,
-  makeOpenSessionKey
+  makeOpenSessionKey,
+  makeRefinementFaultKey
 } = require('../../src/runtime/storage-worker/protocol')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
 
@@ -85,7 +86,12 @@ test('service composes protocol, real SQLite and subtitle semantics without SQL 
   let response = service.handle(request(OPERATIONS.INITIALIZE, { databasePath }))
   assert.equal(response.ok, true)
 
-  const opened = { sessionId: 'session-1', sourceId: 'loopback', startedAt: 1000 }
+  const opened = {
+    sessionId: 'session-1',
+    sourceId: 'loopback',
+    startedAt: 1000,
+    refinementEnabled: true
+  }
   response = service.handle(request(OPERATIONS.OPEN_SESSION, opened, {
     idempotencyKey: makeOpenSessionKey(opened.sessionId)
   }))
@@ -101,6 +107,18 @@ test('service composes protocol, real SQLite and subtitle semantics without SQL 
     requestId: 'different-transport-request'
   }))
   assert.equal(response.result.status, 'already_processed', 'requestId is correlation, not persistence identity')
+
+  const fault = {
+    sessionId: 'session-1',
+    faultCode: 'REFINE_WORKER_EXITED',
+    faultAtMs: 480
+  }
+  response = service.handle(request(OPERATIONS.RECORD_REFINEMENT_FAULT, fault, {
+    idempotencyKey: makeRefinementFaultKey(fault.sessionId, fault.faultCode)
+  }))
+  assert.deepEqual(response.result, {
+    status: 'committed', sessionId: 'session-1', faultCode: 'REFINE_WORKER_EXITED'
+  })
 
   const queried = service.handle(request(OPERATIONS.GET_SESSION, { sessionId: 'session-1' }))
   assert.equal(queried.result.segments[0].text, '协议字幕。')
@@ -130,6 +148,13 @@ test('service composes protocol, real SQLite and subtitle semantics without SQL 
       startedAt: 1000, endedAt: 2000, state: 'closed'
     },
     totalCount: 1,
+    refinement: {
+      segmentCount: 1,
+      refinedSegmentCount: 0,
+      refinementResultStatus: 'known',
+      refinementEnabled: true,
+      refinementFaultCode: 'REFINE_WORKER_EXITED'
+    },
     items: [{
       segmentId: 'segment-1', sourceId: 'loopback', text: '协议字幕。',
       refinedText: null, textRevision: 1, t0Ms: 0, t1Ms: 1000
@@ -242,6 +267,15 @@ test('legacy import RPC is narrow, idempotent and cannot accept translation, aud
   assert.equal(imported.ok, true)
   assert.equal(imported.result.status, 'imported')
   assert.equal(imported.result.captionEventCount, 1)
+  assert.deepEqual(service.handle(request(OPERATIONS.GET_SESSION, {
+    sessionId: valid.session.sessionId
+  })).result.refinement, {
+    segmentCount: 1,
+    refinedSegmentCount: 0,
+    refinementResultStatus: 'not_recorded',
+    refinementEnabled: null,
+    refinementFaultCode: null
+  })
   const replay = service.handle(request(OPERATIONS.IMPORT_LEGACY_JSONL, {
     ...valid,
     importedAt: 4000
@@ -292,6 +326,76 @@ test('legacy import RPC is narrow, idempotent and cannot accept translation, aud
     assert.equal(response.ok, false)
     assert.ok(!JSON.stringify(response).includes(sentinel))
   }
+  assert.equal(service.handle(request(OPERATIONS.GET_STATS)).result.captionEvents, 1)
+  service.handle(request(OPERATIONS.SHUTDOWN))
+})
+
+test('J15c fault RPC accepts only stable fault codes and never exposes free-text diagnostics', (t) => {
+  const service = new StorageWorkerService()
+  const databasePath = tempDatabase(t)
+  assert.equal(service.handle(request(OPERATIONS.INITIALIZE, { databasePath })).ok, true)
+  const opened = { sessionId: 'fault-contract', sourceId: 'loopback', startedAt: 1000, refinementEnabled: true }
+  assert.equal(service.handle(request(OPERATIONS.OPEN_SESSION, opened, {
+    idempotencyKey: makeOpenSessionKey(opened.sessionId)
+  })).ok, true)
+  const secret = 'raw stack and C:\\private\\capture.wav'
+  const rejected = service.handle(request(OPERATIONS.RECORD_REFINEMENT_FAULT, {
+    sessionId: opened.sessionId,
+    faultCode: secret,
+    faultAtMs: 1
+  }, {
+    idempotencyKey: makeRefinementFaultKey(opened.sessionId, secret)
+  }))
+  assert.equal(rejected.ok, false)
+  assert.equal(rejected.error.code, 'INVALID_REFINEMENT_FAULT')
+  assert.equal(JSON.stringify(rejected).includes(secret), false)
+  service.handle(request(OPERATIONS.SHUTDOWN))
+})
+
+test('J15c storage service rejects refinement facts for a session frozen off', (t) => {
+  const service = new StorageWorkerService()
+  const databasePath = tempDatabase(t)
+  assert.equal(service.handle(request(OPERATIONS.INITIALIZE, { databasePath })).ok, true)
+  const opened = {
+    sessionId: 'refinement-disabled',
+    sourceId: 'loopback',
+    startedAt: 1000,
+    refinementEnabled: false
+  }
+  assert.equal(service.handle(request(OPERATIONS.OPEN_SESSION, opened, {
+    idempotencyKey: makeOpenSessionKey(opened.sessionId)
+  })).ok, true)
+
+  const final = caption({ sessionId: opened.sessionId, text: '保留的原始版。' })
+  assert.equal(service.handle(request(OPERATIONS.APPEND_CAPTION, { event: final }, {
+    idempotencyKey: makeCaptionEventId(final),
+    requestId: 'append-disabled-final'
+  })).ok, true)
+  const refined = caption({
+    sessionId: opened.sessionId,
+    sequence: 2,
+    revision: 2,
+    kind: 'refined',
+    text: '不得写入的精修稿。'
+  })
+  const refinedResponse = service.handle(request(OPERATIONS.APPEND_CAPTION, { event: refined }, {
+    idempotencyKey: makeCaptionEventId(refined),
+    requestId: 'append-disabled-refined'
+  }))
+  assert.equal(refinedResponse.ok, false)
+  assert.equal(refinedResponse.error.code, 'REFINEMENT_DISABLED')
+
+  const fault = {
+    sessionId: opened.sessionId,
+    faultCode: 'REFINE_WORKER_EXITED',
+    faultAtMs: 10
+  }
+  const faultResponse = service.handle(request(OPERATIONS.RECORD_REFINEMENT_FAULT, fault, {
+    idempotencyKey: makeRefinementFaultKey(fault.sessionId, fault.faultCode),
+    requestId: 'fault-disabled-refinement'
+  }))
+  assert.equal(faultResponse.ok, false)
+  assert.equal(faultResponse.error.code, 'REFINEMENT_DISABLED')
   assert.equal(service.handle(request(OPERATIONS.GET_STATS)).result.captionEvents, 1)
   service.handle(request(OPERATIONS.SHUTDOWN))
 })

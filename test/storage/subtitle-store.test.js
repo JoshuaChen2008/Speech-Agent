@@ -41,7 +41,12 @@ function caption (overrides = {}) {
 
 test('open/append/refine/late-event/close form one strict idempotent history', (t) => {
   const store = tempStore(t)
-  const opened = { sessionId: 'session-loopback', sourceId: 'loopback', startedAt: 1770000000000 }
+  const opened = {
+    sessionId: 'session-loopback',
+    sourceId: 'loopback',
+    startedAt: 1770000000000,
+    refinementEnabled: true
+  }
   assert.equal(store.openSession(opened).status, 'committed')
   assert.equal(store.openSession(opened).status, 'already_processed')
   assert.throws(
@@ -74,7 +79,12 @@ test('open/append/refine/late-event/close form one strict idempotent history', (
 
 test('current projection is higher revision, stable and isolated across sequential XOR sessions', (t) => {
   const store = tempStore(t)
-  store.openSession({ sessionId: 'session-loopback', sourceId: 'loopback', startedAt: 1000 })
+  store.openSession({
+    sessionId: 'session-loopback',
+    sourceId: 'loopback',
+    startedAt: 1000,
+    refinementEnabled: true
+  })
   store.appendCaption(caption())
   store.appendCaption(caption({ sequence: 4, revision: 4, kind: 'refined', text: '精修正文。' }))
   store.appendCaption(caption({ sequence: 5, revision: 2, text: '迟到旧正文。' }))
@@ -110,7 +120,12 @@ test('current projection is higher revision, stable and isolated across sequenti
 
 test('identity conflicts, ghost refinements and non-subtitle kinds fail closed', (t) => {
   const store = tempStore(t)
-  store.openSession({ sessionId: 'session-loopback', sourceId: 'loopback', startedAt: 1000 })
+  store.openSession({
+    sessionId: 'session-loopback',
+    sourceId: 'loopback',
+    startedAt: 1000,
+    refinementEnabled: true
+  })
   store.appendCaption(caption())
   for (const divergent of [
     caption({ text: '同序号不同正文。' }),
@@ -334,7 +349,7 @@ test('history detail pages 205 same-timestamp segments without gaps, duplicates 
   do {
     const page = store.getSessionPage({ sessionId, limit: 50, cursor })
     pageCount += 1
-    assert.deepEqual(Object.keys(page).sort(), ['items', 'nextCursor', 'session', 'totalCount'])
+    assert.deepEqual(Object.keys(page).sort(), ['items', 'nextCursor', 'refinement', 'session', 'totalCount'])
     assert.deepEqual(page.session, {
       sessionId,
       mode: 'meeting',
@@ -344,6 +359,13 @@ test('history detail pages 205 same-timestamp segments without gaps, duplicates 
       state: 'closed'
     })
     assert.equal(page.totalCount, 205)
+    assert.deepEqual(page.refinement, {
+      segmentCount: 205,
+      refinedSegmentCount: 0,
+      refinementResultStatus: 'known',
+      refinementEnabled: false,
+      refinementFaultCode: null
+    })
     for (const item of page.items) {
       assert.deepEqual(Object.keys(item).sort(), [
         'refinedText', 'segmentId', 'sourceId', 't0Ms', 't1Ms', 'text', 'textRevision'
@@ -409,7 +431,12 @@ test('history detail pages reject active sessions, malformed cursors and over-pr
 
 function versionStore (t, sessionId = 'session-loopback') {
   const store = tempStore(t)
-  store.openSession({ sessionId, sourceId: 'loopback', startedAt: 1770000000000 })
+  store.openSession({
+    sessionId,
+    sourceId: 'loopback',
+    startedAt: 1770000000000,
+    refinementEnabled: true
+  })
   return store
 }
 
@@ -435,6 +462,133 @@ test('J15b: a segment without refinement reports no refined version at all', (t)
   const [segment] = store.getSessionTranscript({ sessionId: 'session-loopback' }).segments
   assert.equal(segment.text, '只有原始版。')
   assert.equal(segment.refinedText, null, '没有精修时不得凭空造出一个精修稿')
+})
+
+test('J15b: history order and page cursors stay anchored to first-pass timestamps', (t) => {
+  const store = tempStore(t)
+  const sessionId = 'j15b-origin-timeline'
+  store.openSession({
+    sessionId,
+    sourceId: 'loopback',
+    startedAt: 1000,
+    refinementEnabled: true
+  })
+  store.appendCaption(caption({
+    sessionId,
+    segmentId: 'segment-a',
+    sequence: 1,
+    revision: 1,
+    t0: 1,
+    t1: 2,
+    text: '第一段原始版。'
+  }))
+  store.appendCaption(caption({
+    sessionId,
+    segmentId: 'segment-b',
+    sequence: 2,
+    revision: 1,
+    t0: 3,
+    t1: 4,
+    text: '第二段原始版。'
+  }))
+  store.appendCaption(caption({
+    sessionId,
+    segmentId: 'segment-a',
+    sequence: 3,
+    revision: 2,
+    kind: 'refined',
+    t0: 9,
+    t1: 10,
+    text: '时间戳不同的第一段精修稿。'
+  }))
+  store.closeSession({
+    sessionId,
+    sourceId: 'loopback',
+    endedAt: 12000,
+    state: 'closed'
+  })
+
+  assert.deepEqual(
+    store.getSessionTranscript({ sessionId }).segments.map((segment) => segment.segmentId),
+    ['segment-a', 'segment-b']
+  )
+  const firstPage = store.getSessionPage({ sessionId, limit: 1, cursor: null })
+  assert.equal(firstPage.items[0].segmentId, 'segment-a')
+  assert.deepEqual(firstPage.nextCursor, { t0Ms: 1000, firstEventOrder: 1 })
+  const secondPage = store.getSessionPage({ sessionId, limit: 1, cursor: firstPage.nextCursor })
+  assert.equal(secondPage.items[0].segmentId, 'segment-b')
+  assert.equal(secondPage.nextCursor, null)
+})
+
+test('J15c: a known session that froze refinement off rejects refined facts', (t) => {
+  const store = tempStore(t)
+  const sessionId = 'j15c-refinement-disabled'
+  store.openSession({
+    sessionId,
+    sourceId: 'loopback',
+    startedAt: 1000,
+    refinementEnabled: false
+  })
+  store.appendCaption(caption({
+    sessionId,
+    sequence: 1,
+    revision: 1,
+    kind: 'final',
+    text: '必须保留的原始版。'
+  }))
+
+  assert.throws(() => store.appendCaption(caption({
+    sessionId,
+    sequence: 2,
+    revision: 2,
+    kind: 'refined',
+    text: '不得写入的精修稿。'
+  })), (error) => error.code === 'REFINEMENT_DISABLED')
+
+  const transcript = store.getSessionTranscript({ sessionId })
+  assert.equal(transcript.segments[0].text, '必须保留的原始版。')
+  assert.equal(transcript.segments[0].refinedText, null)
+  assert.equal(store.getStats().captionEvents, 1)
+})
+
+test('J15c: session refinement facts are frozen, fault persistence is independent from full coverage', (t) => {
+  const store = tempStore(t)
+  const sessionId = 'j15c-known-fault'
+  store.openSession({
+    sessionId,
+    sourceId: 'loopback',
+    startedAt: 1000,
+    refinementEnabled: true
+  })
+  store.appendCaption(caption({ sessionId, sequence: 1, revision: 1, text: '原始版。' }))
+  store.appendCaption(caption({
+    sessionId,
+    sequence: 2,
+    revision: 2,
+    kind: 'refined',
+    text: '精修稿。'
+  }))
+
+  assert.deepEqual(store.recordRefinementFault({
+    sessionId,
+    faultCode: 'REFINE_WORKER_EXITED',
+    faultAtMs: 640
+  }), {
+    status: 'committed',
+    sessionId,
+    faultCode: 'REFINE_WORKER_EXITED'
+  })
+  store.closeSession({ sessionId, sourceId: 'loopback', endedAt: 2000, state: 'closed' })
+
+  const transcript = store.getSessionTranscript({ sessionId })
+  assert.deepEqual(transcript.refinement, {
+    segmentCount: 1,
+    refinedSegmentCount: 1,
+    refinementResultStatus: 'known',
+    refinementEnabled: true,
+    refinementFaultCode: 'REFINE_WORKER_EXITED'
+  }, 'N=M must not erase an independently confirmed refinement fault')
+  assert.deepEqual(store.getSessionPage({ sessionId, limit: 50, cursor: null }).refinement, transcript.refinement)
 })
 
 test('J15b: the first-final pointer survives out-of-order arrival and several finals', (t) => {

@@ -14,6 +14,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
+const vm = require('node:vm')
 
 const { HistoryService } = require('../../src/main/services/history-service')
 const { SqliteSessionRecorder } = require('../../src/main/services/sqlite-session-recorder')
@@ -33,6 +34,7 @@ const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtit
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
 
 const DEV_RUNTIME = resolveRuntimeOptions({ LIVE_SUBTITLE_DEV_MODEL: DEV_MODEL_VALUE })
+const DEV_RUNTIME_WITH_REFINEMENT = Object.freeze({ ...DEV_RUNTIME, refinementAvailable: true })
 
 function temporaryDirectory () {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'history-review-journey-'))
@@ -155,12 +157,13 @@ test('CI journey: review completed SQLite sessions, their detail, and text-only 
   const coordinator = new SessionCoordinator({
     adapter,
     persistenceSink: recorder,
-    runtimeOptions: DEV_RUNTIME,
+    runtimeOptions: DEV_RUNTIME_WITH_REFINEMENT,
     configuration: {
       onboardingCompleted: true,
       onboardingPreset: 'dictation',
       mic: true,
-      loopback: false
+      loopback: false,
+      refinementEnabled: true
     },
     idFactory: () => sessionIds.shift()
   })
@@ -364,12 +367,13 @@ test('CI journey: 205 refined captions page through the real durability stack wi
   const coordinator = new SessionCoordinator({
     adapter,
     persistenceSink: recorder,
-    runtimeOptions: DEV_RUNTIME,
+    runtimeOptions: DEV_RUNTIME_WITH_REFINEMENT,
     configuration: {
       onboardingCompleted: true,
       onboardingPreset: 'dictation',
       mic: true,
-      loopback: false
+      loopback: false,
+      refinementEnabled: true
     },
     idFactory: () => 'long-history-session'
   })
@@ -432,9 +436,16 @@ test('CI journey: 205 refined captions page through the real durability stack wi
   do {
     const page = await history.getSessionPage({ sessionId, limit: 50, cursor })
     pageCount += 1
-    assert.deepEqual(Object.keys(page).sort(), ['items', 'nextCursor', 'session', 'totalCount'])
+    assert.deepEqual(Object.keys(page).sort(), ['items', 'nextCursor', 'refinement', 'session', 'totalCount'])
     assert.deepEqual(Object.keys(page.session).sort(), ['endedAt', 'mode', 'sessionId', 'sourceId', 'startedAt', 'state'])
     assert.equal(page.totalCount, 205)
+    assert.deepEqual(page.refinement, {
+      segmentCount: 205,
+      refinedSegmentCount: refinedIndexes.size,
+      refinementResultStatus: 'known',
+      refinementEnabled: true,
+      refinementFaultCode: null
+    }, '整场精修覆盖来自 SQLite 权威行而不是当前 50 条分页（SEM-F11）')
     assert.ok(page.items.length > 0 && page.items.length <= 50)
     for (const item of page.items) {
       assert.deepEqual(Object.keys(item).sort(),
@@ -490,10 +501,14 @@ test('CI journey: 205 refined captions page through the real durability stack wi
     { status: 'saved', format: 'txt', version: 'refined' })
   const refinedTxt = fs.readFileSync(refinedExportPath, 'utf8')
   assert.notEqual(digest(refinedTxt), digest(txt), '两个版本的导出 digest 必须不同')
-  assert.equal(refinedTxt.trimEnd().split('\n').length, 205)
+  const refinedLines = refinedTxt.trimEnd().split('\n')
+  assert.equal(refinedLines.length, 207, '不完整精修导出有两行覆盖提示，正文段数仍保持 205')
+  assert.match(refinedLines[0], new RegExp(`已精修 ${refinedIndexes.size}/205 段`))
+  assert.equal(refinedLines[1], '')
   assert.match(refinedTxt, /refined subtitle 050/)
   assert.doesNotMatch(refinedTxt, /final subtitle 050/)
-  assert.match(refinedTxt, /final subtitle 002/, '没有精修稿的段落在精修版里回落到原始版')
+  assert.match(refinedTxt, /\[原始版回退] final subtitle 002/,
+    '没有精修稿的段落在精修版里回落到原始版并明确标记')
   await assert.rejects(
     history.exportSession({ sessionId, format: 'txt', version: 'latest' }),
     (error) => error.code === 'INVALID_EXPORT_VERSION'
@@ -505,4 +520,251 @@ test('CI journey: 205 refined captions page through the real durability stack wi
   assert.ok(operations.includes(OPERATIONS.GET_SESSION_PAGE))
   assert.ok(operations.includes(OPERATIONS.GET_SESSION), 'full transcript stays private to comparison and export')
   assert.deepEqual(audioFilesUnder(root), [])
+})
+
+class HistoryRendererElement {
+  constructor (tagName = 'div') {
+    this.tagName = tagName.toUpperCase()
+    this.attributes = new Map()
+    this.children = []
+    this.dataset = {}
+    this.disabled = false
+    this.hidden = false
+    this.listeners = new Map()
+    this._textContent = ''
+    this.classList = { add () {}, remove () {} }
+  }
+
+  get textContent () { return this._textContent }
+
+  set textContent (value) {
+    this._textContent = String(value)
+    if (value === '') this.children = []
+  }
+
+  appendChild (child) {
+    this.children.push(child)
+    return child
+  }
+
+  setAttribute (name, value) { this.attributes.set(name, String(value)) }
+
+  getAttribute (name) { return this.attributes.get(name) ?? null }
+
+  addEventListener (name, callback) {
+    if (!this.listeners.has(name)) this.listeners.set(name, [])
+    this.listeners.get(name).push(callback)
+  }
+
+  click () {
+    for (const callback of this.listeners.get('click') || []) callback({ target: this })
+  }
+
+  closest () { return null }
+
+  setPointerCapture () {}
+}
+
+async function settleHistoryRenderer () {
+  await new Promise((resolve) => setImmediate(resolve))
+  await new Promise((resolve) => setImmediate(resolve))
+  await new Promise((resolve) => setImmediate(resolve))
+}
+
+async function waitForHistoryExport (statusElement) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (statusElement.textContent !== '正在准备导出…') return
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  throw new Error('history renderer export did not settle')
+}
+
+function createHistoryRenderer (history) {
+  const ids = [
+    'titlebar', 'close', 'refresh', 'globalStatus', 'sessionCount', 'sessionList',
+    'loadMore', 'emptyState', 'sessionDetail', 'detailSource', 'detailTitle',
+    'detailMeta', 'detailRefinement', 'exportStatus', 'previousPage', 'nextPage', 'retryPage',
+    'rangeStatus', 'timeline'
+  ]
+  const elements = new Map(ids.map((id) => [id, new HistoryRendererElement(id.includes('Page') ? 'button' : 'div')]))
+  elements.get('sessionDetail').hidden = true
+  elements.get('loadMore').hidden = true
+  elements.get('retryPage').hidden = true
+  const exportButtons = ['txt', 'md', 'srt'].map((format) => {
+    const button = new HistoryRendererElement('button')
+    button.dataset.export = format
+    return button
+  })
+  const versionButtons = ['original', 'refined'].map((version) => {
+    const button = new HistoryRendererElement('button')
+    button.dataset.version = version
+    button.setAttribute('aria-checked', version === 'original' ? 'true' : 'false')
+    return button
+  })
+  const api = {
+    dragStart () {},
+    dragEnd () {},
+    close () {},
+    onConfig () {},
+    getConfig: async () => ({ theme: 'dark', systemDark: true }),
+    listSessions: async (limit, cursor) => ({
+      ok: true,
+      value: await history.listSessions({ limit, cursor })
+    }),
+    getSessionPage: async (sessionId, limit, cursor) => ({
+      ok: true,
+      value: await history.getSessionPage({ sessionId, limit, cursor })
+    }),
+    exportSession: async (sessionId, format, version) => ({
+      ok: true,
+      value: await history.exportSession({ sessionId, format, version })
+    })
+  }
+  const document = {
+    documentElement: new HistoryRendererElement('html'),
+    createElement: (tagName) => new HistoryRendererElement(tagName),
+    getElementById: (id) => elements.get(id),
+    querySelectorAll: (selector) => {
+      if (selector === '[data-export]') return exportButtons
+      if (selector === '[data-version]') return versionButtons
+      return []
+    }
+  }
+  document.documentElement.dataset = {}
+  const window = { addEventListener () {}, historyApi: api }
+  vm.runInNewContext(
+    fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'history', 'history.js'), 'utf8'),
+    { Date, Intl, console, document, window }
+  )
+  return { elements, exportButtons, versionButtons }
+}
+
+test('CI journey: history renderer scopes version selection and export to the selected session', async (t) => {
+  const root = temporaryDirectory()
+  const databasePath = path.join(root, 'data', 'speech-agent.sqlite3')
+  const refinedPath = path.join(root, 'exports', 'session-a-refined.txt')
+  const originalPath = path.join(root, 'exports', 'session-b-original.txt')
+  const operations = []
+  const { gateway } = createGateway(databasePath, operations)
+  const exportPaths = [refinedPath, originalPath]
+  const history = new HistoryService({
+    gateway,
+    showSaveDialog: async () => ({ canceled: false, filePath: exportPaths.shift() })
+  })
+  const sessionA = 'history-version-session-a'
+  const sessionB = 'history-version-session-b'
+
+  t.after(async () => {
+    await gateway.shutdown().catch(() => gateway.terminate())
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  fs.mkdirSync(path.dirname(refinedPath), { recursive: true })
+  await gateway.start()
+  await gateway.openSession({
+    sessionId: sessionA,
+    sourceId: 'mic',
+    startedAt: 1_777_900_000_000,
+    refinementEnabled: true
+  })
+  let sequence = 0
+  for (let index = 0; index < 51; index += 1) {
+    const segmentId = `version-a-${String(index).padStart(3, '0')}`
+    await gateway.appendCaption(caption(sessionA, 'mic', {
+      segmentId,
+      sequence: ++sequence,
+      revision: 1,
+      t0: index,
+      t1: index + 0.5,
+      text: `session A original ${index}`
+    }))
+    await gateway.appendCaption(caption(sessionA, 'mic', {
+      segmentId,
+      sequence: ++sequence,
+      revision: 2,
+      kind: 'refined',
+      t0: index,
+      t1: index + 0.5,
+      text: `session A refined ${index}`
+    }))
+  }
+  await gateway.closeSession({
+    sessionId: sessionA,
+    sourceId: 'mic',
+    endedAt: 1_777_900_100_000,
+    state: 'closed'
+  })
+  await gateway.openSession({
+    sessionId: sessionB,
+    sourceId: 'loopback',
+    startedAt: 1_777_900_200_000,
+    refinementEnabled: true
+  })
+  await gateway.appendCaption(caption(sessionB, 'loopback', {
+    segmentId: 'version-b-000',
+    sequence: 1,
+    revision: 1,
+    t0: 0,
+    t1: 0.5,
+    text: 'session B original 0'
+  }))
+  await gateway.appendCaption(caption(sessionB, 'loopback', {
+    segmentId: 'version-b-000',
+    sequence: 2,
+    revision: 2,
+    kind: 'refined',
+    t0: 0,
+    t1: 0.5,
+    text: 'session B refined 0'
+  }))
+  await gateway.closeSession({
+    sessionId: sessionB,
+    sourceId: 'loopback',
+    endedAt: 1_777_900_300_000,
+    state: 'closed'
+  })
+  await gateway.flush()
+
+  const renderer = createHistoryRenderer(history)
+  await settleHistoryRenderer()
+  const sessionList = renderer.elements.get('sessionList')
+  const cardBySessionId = new Map(sessionList.children.map((item) => [item.children[0].dataset.sessionId, item.children[0]]))
+  const timeline = renderer.elements.get('timeline')
+
+  cardBySessionId.get(sessionA).click()
+  await settleHistoryRenderer()
+  assert.equal(timeline.children.length, 50)
+  assert.equal(timeline.children[0].children[1].textContent, 'session A original 0',
+    'a newly selected session starts with its first-pass final text')
+
+  renderer.versionButtons[1].click()
+  assert.equal(timeline.children[0].children[1].textContent, 'session A refined 0')
+  renderer.elements.get('nextPage').click()
+  await settleHistoryRenderer()
+  assert.equal(timeline.children.length, 1)
+  assert.equal(timeline.children[0].children[1].textContent, 'session A refined 50',
+    'the explicit choice persists while paging within the same session')
+
+  renderer.exportButtons[0].click()
+  await waitForHistoryExport(renderer.elements.get('exportStatus'))
+  assert.equal(renderer.elements.get('exportStatus').textContent, '字幕精修稿已导出')
+  assert.match(fs.readFileSync(refinedPath, 'utf8'), /session A refined 50/,
+    'the export follows the current session’s explicit refined selection')
+
+  cardBySessionId.get(sessionB).click()
+  await settleHistoryRenderer()
+  assert.equal(timeline.children[0].children[1].textContent, 'session B original 0',
+    'choosing another session resets the display to the immutable first-pass final')
+  assert.equal(renderer.versionButtons[0].getAttribute('aria-checked'), 'true')
+  assert.equal(renderer.versionButtons[1].getAttribute('aria-checked'), 'false')
+
+  renderer.exportButtons[0].click()
+  await waitForHistoryExport(renderer.elements.get('exportStatus'))
+  assert.equal(renderer.elements.get('exportStatus').textContent, '字幕原文已导出')
+  assert.match(fs.readFileSync(originalPath, 'utf8'), /session B original 0/,
+    'the next session exports its reset original selection')
+  assert.doesNotMatch(fs.readFileSync(originalPath, 'utf8'), /session B refined 0/)
+  assert.ok(operations.includes(OPERATIONS.GET_SESSION_PAGE))
+  assert.ok(operations.includes(OPERATIONS.GET_SESSION))
+  assert.deepEqual(audioFilesUnder(root), [], 'the full review journey creates no raw-audio files')
 })

@@ -20,6 +20,23 @@ const { AudioHostController } = require('./audio-host/audio-host-controller')
 const { RealtimeWorkerHost } = require('./realtime-worker/worker-host')
 const { RefineWorkerHost } = require('./refine-worker/worker-host')
 const { performance } = require('node:perf_hooks')
+
+const REFINEMENT_FAULT_CODES = new Set([
+  'REFINE_WORKER_START_FAILED',
+  'REFINE_WORKER_EXITED',
+  'REFINE_DECODE_FAILED',
+  'REFINE_INVALID_RESPONSE',
+  'REFINE_INTERNAL_FAILURE'
+])
+const REFINEMENT_FAULT_STAGES = new Set([
+  'startup',
+  'worker-exit',
+  'decode',
+  'response',
+  'transport',
+  'delivery',
+  'internal'
+])
 const { assertSingleSourceIds } = require('../contracts')
 
 const DEFAULT_PROFILE_MAP = Object.freeze({ fast: 'null', balanced: 'null', accurate: 'null' })
@@ -71,6 +88,7 @@ class RealtimeRuntimeAdapter {
     }))
     this.captionHandler = null
     this.errorHandler = null
+    this.refinementFaultHandler = null
     this.session = null
     /* 最近一次会话的纯指标快照。只包含帧/队列/worker 计数，不包含 PCM、
        音频路径或字幕正文，供 I2 smoke 与故障诊断读取。 */
@@ -92,6 +110,14 @@ class RealtimeRuntimeAdapter {
     this.errorHandler = handler
     return () => {
       if (this.errorHandler === handler) this.errorHandler = null
+    }
+  }
+
+  onRefinementFault (handler) {
+    if (typeof handler !== 'function') throw new TypeError('refinement fault handler must be a function')
+    this.refinementFaultHandler = handler
+    return () => {
+      if (this.refinementFaultHandler === handler) this.refinementFaultHandler = null
     }
   }
 
@@ -134,14 +160,19 @@ class RealtimeRuntimeAdapter {
     }
     throwIfAborted(context.signal)
 
-    const useRefinement = recognizerProfile !== 'null' && !!this.refinement
+    /* The coordinator freezes the global preference at session start. The
+       optional model being present only makes this eligible; it must not turn
+       refinement on by itself. */
+    const useRefinement = recognizerProfile !== 'null' && context.refinementEnabled === true && !!this.refinement
     const session = {
       sessionId: context.sessionId,
       sourceIds: [...context.sourceIds],
+      startedAtMs: performance.now(),
       host: this.hostFactory(),
       worker: this.workerFactory(),
       refineWorker: useRefinement ? this.refineWorkerFactory() : null,
       refineReady: false,
+      refinementFaulted: false,
       captureEvidence: null,
       captureMetrics: {},
       workerStats: null,
@@ -159,6 +190,7 @@ class RealtimeRuntimeAdapter {
     this.session = session
     try {
       session.unsubscribers.push(session.worker.onCaption((event) => {
+        if (session.refinementFaulted && event.kind === 'refined') return
         const timing = typeof session.worker.takeCaptionTiming === 'function'
           ? session.worker.takeCaptionTiming(event)
           : null
@@ -175,6 +207,13 @@ class RealtimeRuntimeAdapter {
       session.unsubscribers.push(session.worker.onStats((stats) => {
         if (this.session === session) session.workerStats = stats
       }))
+      if (typeof session.worker.onControl === 'function') {
+        session.unsubscribers.push(session.worker.onControl((message) => {
+          if (message?.type === 'refinement-fault') {
+            this.reportRefinementFault(session, message.code, message.stage)
+          }
+        }))
+      }
       session.unsubscribers.push(session.worker.onExit(({ code }) => {
         this.fault(session, {
           scope: 'worker',
@@ -186,14 +225,11 @@ class RealtimeRuntimeAdapter {
       if (session.refineWorker) {
         /* 精修退出 ≠ 会话故障：实时字幕继续，仅降级并留警告。宿主对象
            就地收殓（进程已退，dispose 只清理监听与占位）。 */
-        session.unsubscribers.push(session.refineWorker.onExit(({ code }) => {
+        session.unsubscribers.push(session.refineWorker.onExit(() => {
           /* refineReady 门：configure 期间的崩溃由 refineStart 的失败路径
              统一告警，这里只管「配置成功后」的中途退出，避免双重告警。 */
           if (this.session === session && !session.stopping && session.refineWorker && session.refineReady) {
-            const refineWorker = session.refineWorker
-            session.refineWorker = null
-            try { void Promise.resolve(refineWorker.dispose()).catch(() => {}) } catch { /* best effort */ }
-            this.onDegraded(`refine worker exited (${code}); captions continue without refinement`)
+            this.reportRefinementFault(session, 'REFINE_WORKER_EXITED', 'worker-exit')
           }
         }))
       }
@@ -238,18 +274,22 @@ class RealtimeRuntimeAdapter {
         refineStartOptions.acceptanceResponseDelayMs = this.acceptanceRefineResponseDelayMs
       }
       const refineStart = session.refineWorker
-        ? session.refineWorker.start(refineStartOptions).then(() => true, (error) => {
-            this.onDegraded(`refinement unavailable for this session: ${String(error?.message || error).slice(0, 160)}`)
+        ? session.refineWorker.start(refineStartOptions).then(() => true, () => {
+            this.reportRefinementFault(session, 'REFINE_WORKER_START_FAILED', 'startup')
             return false
           })
         : Promise.resolve(false)
       const [, refineReady] = await Promise.all([workerStart, refineStart])
       throwIfAborted(context.signal)
-      session.refineReady = refineReady
-      if (refineReady && session.refineWorker) {
-        const refineChannel = new this.electron.MessageChannelMain()
-        session.worker.attachRefinePort(refineChannel.port1)
-        session.refineWorker.attachPort(refineChannel.port2)
+      session.refineReady = refineReady && !session.refinementFaulted
+      if (session.refineReady && session.refineWorker) {
+        try {
+          const refineChannel = new this.electron.MessageChannelMain()
+          session.worker.attachRefinePort(refineChannel.port1)
+          session.refineWorker.attachPort(refineChannel.port2)
+        } catch {
+          this.reportRefinementFault(session, 'REFINE_INTERNAL_FAILURE', 'transport')
+        }
       } else if (session.refineWorker) {
         await this.shutdownWorker(session.refineWorker, 'graceful', 'offline refinement')
         session.refineWorker = null
@@ -446,6 +486,28 @@ class RealtimeRuntimeAdapter {
     return this.session
   }
 
+  reportRefinementFault (session, code, stage) {
+    if (this.disposed || this.session !== session || session.stopping || session.refinementFaulted) return false
+    const safeCode = REFINEMENT_FAULT_CODES.has(code) ? code : 'REFINE_INTERNAL_FAILURE'
+    const safeStage = REFINEMENT_FAULT_STAGES.has(stage) ? stage : 'internal'
+    session.refinementFaulted = true
+    session.refineReady = false
+    try { session.worker.disableRefinement?.() } catch { /* best effort */ }
+    const refineWorker = session.refineWorker
+    session.refineWorker = null
+    if (refineWorker) {
+      try { void this.shutdownWorker(refineWorker, 'graceful', 'offline refinement').catch(() => {}) } catch { /* best effort */ }
+    }
+    /* SQLite and the public diagnostic contract use integer milliseconds. */
+    const faultAtMs = Math.max(0, Math.round(performance.now() - session.startedAtMs))
+    if (this.refinementFaultHandler) {
+      try {
+        this.refinementFaultHandler(Object.freeze({ code: safeCode, stage: safeStage, faultAtMs }))
+      } catch { /* observer failures stay isolated */ }
+    }
+    return true
+  }
+
   async shutdownWorker (worker, mode, label) {
     if (!worker) return
     let outcome
@@ -513,6 +575,7 @@ class RealtimeRuntimeAdapter {
     }
     this.captionHandler = null
     this.errorHandler = null
+    this.refinementFaultHandler = null
     return this.disposePromise
   }
 }

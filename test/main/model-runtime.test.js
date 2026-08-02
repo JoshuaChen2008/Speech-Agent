@@ -50,18 +50,21 @@ class CapturingAdapter {
   onCaption () { return () => {} }
 }
 
-test('runtime definition stays unavailable until the complete installed bundle is ready', (t) => {
+test('runtime definition needs only the core subtitle bundle and exposes refinement separately when installed', (t) => {
   const root = tempRoot(t)
   const userDataDir = path.join(root, 'user-data')
   installArtifact(userDataDir, 'x-asr-160ms')
   installArtifact(userDataDir, 'silero-vad')
 
-  assert.equal(createApprovedRuntimeDefinition({
+  const coreDefinition = createApprovedRuntimeDefinition({
     userDataDir,
     repoRoot: path.join(root, 'empty-repo'),
     env: {},
     Adapter: CapturingAdapter
-  }), null)
+  })
+  assert.ok(coreDefinition)
+  assert.equal(coreDefinition.runtimeOptions.refinementAvailable, false)
+  assert.equal(coreDefinition.adapterFactory().options.refinement, null)
 
   const offlineRoot = installArtifact(userDataDir, 'x-asr-offline')
   const registerAudioHostWebContents = () => () => {}

@@ -42,17 +42,22 @@ const { StorageWorkerService } = require('../../src/runtime/storage-worker/worke
 const NO_MODEL = resolveRuntimeOptions({})
 const SYSTEM_TAR = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
 const STATUS_KEYS = [
+  'canCancelInstall',
   'canInstall',
+  'canInstallRefinement',
+  'core',
   'currentArtifactId',
   'downloadedBytes',
   'error',
   'progress',
   'resources',
+  'refinement',
   'schemaVersion',
   'state',
   'totalBytes'
 ]
 const RESOURCE_STATUS_KEYS = ['downloadedBytes', 'id', 'progress', 'state', 'totalBytes']
+const GROUP_STATUS_KEYS = ['canInstall', 'downloadedBytes', 'error', 'progress', 'state', 'totalBytes']
 
 function sha256 (value) {
   return crypto.createHash('sha256').update(value).digest('hex')
@@ -236,6 +241,10 @@ function assertPublicStatus (status, forbiddenValues) {
     assert.deepEqual(Object.keys(resource).sort(), [...RESOURCE_STATUS_KEYS].sort())
     assert.equal(Object.isFrozen(resource), true)
   }
+  for (const group of [status.core, status.refinement]) {
+    assert.deepEqual(Object.keys(group).sort(), [...GROUP_STATUS_KEYS].sort())
+    assert.equal(Object.isFrozen(group), true)
+  }
   if (status.error !== null) {
     assert.deepEqual(Object.keys(status.error).sort(), ['code', 'message'])
   }
@@ -361,11 +370,13 @@ test('CI journey: resumed model install activates captions and produces terminal
   assert.equal(initialized.state, 'missing')
   assert.equal(initialized.resources[0].downloadedBytes, resumeOffset)
 
-  const ready = await manager.install()
+  const ready = await manager.installCore()
   assert.equal(ready.state, 'ready')
   assert.equal(ready.progress, 1)
   assert.equal(ready.canInstall, false)
-  assert.equal(ready.resources.every((resource) => resource.state === 'ready' && resource.progress === 1), true)
+  assert.equal(ready.resources.filter((resource) => resource.id !== 'x-asr-offline').every((resource) => resource.state === 'ready' && resource.progress === 1), true)
+  assert.equal(ready.resources.find((resource) => resource.id === 'x-asr-offline').state, 'missing')
+  assert.equal(ready.refinement.state, 'missing')
   assert.ok(observedStatuses.some(({ state }) => state === 'downloading'))
   assert.ok(observedStatuses.some(({ state }) => state === 'verifying'))
   assert.equal(observedStatuses.at(-1).state, 'ready')
@@ -376,7 +387,7 @@ test('CI journey: resumed model install activates captions and produces terminal
     pathname: new URL(firstArtifact.url).pathname,
     range: `bytes=${resumeOffset}-`
   }], 'the retained .part is continued with one valid Range request')
-  assert.equal(originalFetchUrls.length, fixtures.manifest.artifacts.length)
+  assert.equal(originalFetchUrls.length, fixtures.manifest.artifacts.filter((artifact) => artifact.resourceGroup === 'core').length)
   assert.equal(originalFetchUrls.every((url) => {
     const parsed = new URL(url)
     return parsed.protocol === 'https:' && parsed.hostname === 'github.com'
@@ -387,7 +398,7 @@ test('CI journey: resumed model install activates captions and produces terminal
     assertPublicStatus(status, forbiddenStatusValues)
   }
 
-  for (const artifact of fixtures.manifest.artifacts) {
+  for (const artifact of fixtures.manifest.artifacts.filter((artifact) => artifact.resourceGroup === 'core')) {
     const target = targetFor(userDataDir, artifact)
     assert.deepEqual(
       JSON.parse(fs.readFileSync(path.join(target, '.ready.json'), 'utf8')),
@@ -399,6 +410,7 @@ test('CI journey: resumed model install activates captions and produces terminal
     }
     assert.equal(fs.existsSync(path.join(downloadsRoot, `${artifact.id}.part`)), false)
   }
+  assert.equal(fs.existsSync(targetFor(userDataDir, fixtures.manifest.artifacts.find((artifact) => artifact.id === 'x-asr-offline'))), false)
   assert.deepEqual(fs.readdirSync(path.join(userDataDir, 'models', '.staging')), [])
 
   const activated = coordinator.replaceRuntime({
@@ -409,7 +421,7 @@ test('CI journey: resumed model install activates captions and produces terminal
         profile: 'balanced',
         developmentOnly: false
       },
-      refinementAvailable: true
+      refinementAvailable: false
     }
   })
   assert.equal(activated.phase, 'idle')
@@ -427,7 +439,7 @@ test('CI journey: resumed model install activates captions and produces terminal
     adapterFactory: () => new FakeRuntimeAdapter({ autoEmit: false }),
     runtimeOptions: {
       modelOverride: { id: firstArtifact.id, profile: 'balanced', developmentOnly: false },
-      refinementAvailable: true
+      refinementAvailable: false
     }
   }), (error) => error.code === 'SESSION_ACTIVE')
   assert.equal(coordinator.getSnapshot().revision, listening.revision)

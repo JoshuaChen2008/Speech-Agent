@@ -135,7 +135,7 @@ function runDatabaseQualification (databasePath) {
     const tables = tableNames(writer)
     const privacy = schemaPrivacyAudit(writer, tables)
     checks.subtitleOnlyTables = JSON.stringify(tables) === JSON.stringify([
-      'caption_events', 'legacy_imports', 'schema_migrations', 'segments', 'sessions'
+      'caption_events', 'legacy_imports', 'refinement_session_results', 'schema_migrations', 'segments', 'sessions'
     ])
     checks.noAudioPersistenceSchema = !privacy.containsAudioPersistenceSchema
     checks.integrity = String(scalar(writer, 'PRAGMA integrity_check')) === 'ok'

@@ -93,7 +93,23 @@ function isCaptionState (value) {
   }
 }
 
+/* Renderer 只把“哪个旧段已经整段离开固定视口”闭合回主进程。
+   这是显示身份水位，不是布局遥测；严格键集合防止字幕正文或屏幕几何
+   意外跨过这条反向 IPC。 */
+function assertCaptionViewportEviction (value, path = 'CaptionViewportEviction') {
+  assertSchemaVersion(value, path)
+  const keys = Object.keys(value).sort()
+  const expected = ['schemaVersion', 'sessionId', 'throughSegmentId']
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
+    fail(path, `must contain exactly: ${expected.join(', ')}`)
+  }
+  assertString(value.sessionId, `${path}.sessionId`, { nonEmpty: true })
+  assertString(value.throughSegmentId, `${path}.throughSegmentId`, { nonEmpty: true })
+  return value
+}
+
 module.exports = {
   assertCaptionState,
+  assertCaptionViewportEviction,
   isCaptionState
 }

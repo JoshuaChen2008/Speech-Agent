@@ -57,8 +57,8 @@ html, body {
    ⚠ 仍是硬编码。尺寸按工具条窗最坏情况取（main.js TB_W 568 + 留白，高 40 + 留白），
    宁可多盖一点也不能漏 —— 漏了的话字幕卡会替工具条吞掉点击。多盖的部分正好是
    工具条自己占的位置，拖动那里等于拖整个单元，功能上无损。
-   正解仍是主进程下发实际 overlap rect（docs/subtitle-window.md §3），
-   那需要新增一条 main → renderer 通道，留作 contract request。 */
+   后续交互质量优化可由主进程下发实际 overlap rect（docs/subtitle-window.md §3）；
+   当前固定洞是已知且可用的 MVP 边界，不阻断本次验收。 */
 .tb-hole {
   position: absolute;
   top: 0;
@@ -104,6 +104,7 @@ html { --caption-line: calc(var(--fs) * var(--lh-caption)); }
 /* 字幕段。同字号、同行高、零外边距是固定高度流的硬前提，
    视觉层次只能走不影响布局的通道（这里是 opacity）。 */
 .seg {
+  flex: none;
   margin: 0;
   font-size: var(--fs);
   font-weight: var(--fw-caption);

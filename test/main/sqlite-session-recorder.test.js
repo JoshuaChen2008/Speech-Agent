@@ -26,6 +26,7 @@ function gatewayFixture (overrides = {}) {
   const calls = []
   const gateway = {
     openSession: async (payload) => { calls.push(['open', structuredClone(payload)]); return { status: 'committed' } },
+    recordRefinementFault: async (payload) => { calls.push(['refinementFault', structuredClone(payload)]); return { status: 'committed' } },
     appendCaption: async (event) => { calls.push(['append', structuredClone(event)]); return { status: 'committed' } },
     closeSession: async (payload) => { calls.push(['close', structuredClone(payload)]); return { status: 'committed' } },
     flush: async () => { calls.push(['flush']); return { flushed: true } },
@@ -54,7 +55,9 @@ test('SQLite recorder freezes one XOR session and persists only final/refined', 
   await recorder.closeSession({ sessionId: 'session-1', sourceId: 'loopback', state: 'closed' })
 
   assert.deepEqual(calls.map(([operation]) => operation), ['open', 'append', 'append', 'close'])
-  assert.deepEqual(calls[0][1], { sessionId: 'session-1', sourceId: 'loopback', startedAt: 1000 })
+  assert.deepEqual(calls[0][1], {
+    sessionId: 'session-1', sourceId: 'loopback', startedAt: 1000, refinementEnabled: false
+  })
   assert.deepEqual(calls[3][1], {
     sessionId: 'session-1', sourceId: 'loopback', endedAt: 9000, state: 'closed'
   })
@@ -82,11 +85,12 @@ test('SQLite recorder resubmits the same frozen open when capacity rejected it b
   await recorder.retry()
   assert.equal(openAttempts, 2)
   assert.deepEqual(calls.filter(([operation]) => operation === 'open').map(([, payload]) => payload), [
-    { sessionId: 'session-1', sourceId: 'loopback', startedAt: 3000 },
-    { sessionId: 'session-1', sourceId: 'loopback', startedAt: 3000 }
+    { sessionId: 'session-1', sourceId: 'loopback', startedAt: 3000, refinementEnabled: false },
+    { sessionId: 'session-1', sourceId: 'loopback', startedAt: 3000, refinementEnabled: false }
   ])
   assert.deepEqual(recorder.getActiveSession(), {
-    sessionId: 'session-1', sourceId: 'loopback', startedAt: 3000, closePayload: null
+    sessionId: 'session-1', sourceId: 'loopback', startedAt: 3000,
+    refinementEnabled: false, closePayload: null
   })
 })
 
@@ -159,4 +163,33 @@ test('SQLite recorder rejects cross-session/source close without mutating the ac
     /does not match/
   )
   assert.equal(recorder.getActiveSession().sourceId, 'mic')
+})
+
+test('J15c recorder freezes refinement preference and sends only a stable fault envelope', async () => {
+  const { calls, gateway } = gatewayFixture()
+  const recorder = new SqliteSessionRecorder({ gateway, now: () => 1000 })
+  await recorder.openSession({ sessionId: 'session-1', sourceId: 'loopback', refinementEnabled: true })
+  await recorder.recordRefinementFault({
+    sessionId: 'session-1',
+    faultCode: 'REFINE_WORKER_EXITED',
+    faultAtMs: 300
+  })
+  assert.deepEqual(calls.slice(0, 2), [
+    ['open', {
+      sessionId: 'session-1', sourceId: 'loopback', startedAt: 1000, refinementEnabled: true
+    }],
+    ['refinementFault', {
+      sessionId: 'session-1', faultCode: 'REFINE_WORKER_EXITED', faultAtMs: 300
+    }]
+  ])
+  assert.throws(
+    () => recorder.openSession({ sessionId: 'session-1', sourceId: 'loopback', refinementEnabled: false }),
+    /refinement preference is already frozen/
+  )
+  assert.throws(
+    () => recorder.recordRefinementFault({
+      sessionId: 'session-1', faultCode: 'raw Error.stack', faultAtMs: 301
+    }),
+    /valid refinement fault/
+  )
 })

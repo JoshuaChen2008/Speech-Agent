@@ -19,11 +19,34 @@
    UMD，理由同 runtime-view.js。 */
 
 ;(function (root) {
-  /** 保留多少段历史。渲染只用到最后两段，多留一点是为了迟到事件还能落位。 */
-  const KEEP_SEGMENTS = 8
+  /**
+   * canonical 实时视图的内存保险上限。产品最大 420px 窗高、最小 24px
+   * 字号下最多完整显示 10 行；64 段远高于视觉容量，所以它不会在视口尚未
+   * 写满时提前删除短段。真正的正常淘汰来自 Chromium 量出的整段视觉退出。
+   */
+  const KEEP_SEGMENTS = 64
 
   function createState () {
-    return { sessionId: null, segments: [] }
+    const state = { sessionId: null, segments: [], refinementSuppressed: false }
+    /* Internal-only immutable first passes. Keep them non-enumerable so the
+       public CaptionState shape and deterministic state comparisons do not
+       accidentally expose another transcript field. */
+    Object.defineProperty(state, 'firstPassBySegment', {
+      value: new Map(),
+      enumerable: false,
+      configurable: false,
+      writable: false
+    })
+    /* 已经整段离开固定视口的显示墓碑。只存会话内 segmentId，不进入历史、
+       CaptionState 或持久化；主进程用它抑制迟到显示事件，renderer 用它保护
+       canonical replacement。 */
+    Object.defineProperty(state, 'evictedSegmentIds', {
+      value: new Set(),
+      enumerable: false,
+      configurable: false,
+      writable: false
+    })
+    return state
   }
 
   /**
@@ -33,13 +56,23 @@
    * 会因 revision/sequence 不更新而被单调判定自然丢弃。
    * @param {*} canonical 已通过 assertCaptionState 的主进程状态
    */
-  function hydrateState (canonical) {
+  function hydrateState (canonical, previousState = null) {
     const state = createState()
     if (!canonical || typeof canonical !== 'object') return state
     if (typeof canonical.sessionId !== 'string' || canonical.sessionId.length === 0) return state
     const segments = Array.isArray(canonical.segments) ? canonical.segments : []
     state.sessionId = canonical.sessionId
-    for (const segment of segments.slice(-KEEP_SEGMENTS)) {
+    if (previousState?.sessionId === canonical.sessionId && previousState.evictedSegmentIds) {
+      for (const segmentId of previousState.evictedSegmentIds) state.evictedSegmentIds.add(segmentId)
+    }
+    const eligible = segments
+      .filter((segment) => !state.evictedSegmentIds.has(segment.segmentId))
+    const overflow = Math.max(0, eligible.length - KEEP_SEGMENTS)
+    for (let index = 0; index < overflow; index += 1) {
+      state.evictedSegmentIds.add(eligible[index].segmentId)
+    }
+    const retained = eligible.slice(overflow)
+    for (const segment of retained) {
       state.segments.push({
         segmentId: segment.segmentId,
         sourceId: segment.sourceId,
@@ -58,6 +91,7 @@
         t0: segment.t0,
         t1: segment.t1
       })
+      if (segment.kind === 'final') state.firstPassBySegment.set(segment.segmentId, segment.text)
     }
     return state
   }
@@ -79,7 +113,19 @@
     if (state.sessionId !== event.sessionId) {
       state.sessionId = event.sessionId
       state.segments = []
+      state.refinementSuppressed = false
+      state.firstPassBySegment.clear()
+      state.evictedSegmentIds.clear()
     }
+
+    /* CSS 已确认整段离场后，本会话的任何迟到版本都只能留在权威历史，
+       不能再进入实时显示 fold。 */
+    if (state.evictedSegmentIds.has(event.segmentId)) return state
+
+    /* A confirmed refinement fault retires that worker generation. Late
+       refined events must not repaint the caption after the original version
+       has been restored. */
+    if (state.refinementSuppressed && event.kind === 'refined') return state
 
     let segment = findSegment(state, event.segmentId)
     if (!segment) {
@@ -101,7 +147,11 @@
         t1: event.t1
       }
       state.segments.push(segment)
-      if (state.segments.length > KEEP_SEGMENTS) state.segments.shift()
+      if (state.segments.length > KEEP_SEGMENTS) {
+        const removed = state.segments.shift()
+        state.evictedSegmentIds.add(removed.segmentId)
+        state.firstPassBySegment.delete(removed.segmentId)
+      }
     }
 
     /* 严格「更新」判定：先比 revision，再比 sequence。
@@ -109,6 +159,11 @@
        两者都不更大就是旧事件，一律丢弃，绝不回滚已显示的文本。 */
     const isNewerText = event.revision > segment.textRevision ||
       (event.revision === segment.textRevision && event.sequence > segment.sequence)
+
+    /* The first final is the immutable source text for runtime fallback. */
+    if (event.kind === 'final' && !state.firstPassBySegment.has(segment.segmentId)) {
+      state.firstPassBySegment.set(segment.segmentId, event.text)
+    }
 
     /* 正文：只接受更新的事件。旧事件不能覆盖新文本。 */
     if (isNewerText) {
@@ -128,6 +183,47 @@
     }
 
     return state
+  }
+
+  /**
+   * Retire refinement display for the current session and restore every still
+   * retained finalized segment to its immutable first pass. Current partial
+   * objects are not touched, and evicted segments cannot be recreated because
+   * they are absent from this bounded state.
+   * @returns {boolean} whether visible displayed text changed
+   */
+  function fallbackRefinement (state) {
+    state.refinementSuppressed = true
+    let changed = false
+    for (const segment of state.segments) {
+      const firstPassText = state.firstPassBySegment.get(segment.segmentId)
+      if (segment.kind === 'partial' || typeof firstPassText !== 'string') continue
+      if (segment.text !== firstPassText || segment.kind !== 'final') changed = true
+      segment.text = firstPassText
+      segment.kind = 'final'
+    }
+    return changed
+  }
+
+  /**
+   * 永久淘汰一个已经完全离开视觉视口的有序前缀。
+   * throughSegmentId 必须仍在当前 state 中，且不能是最新段；这既保证报告
+   * 表达的是旧前缀，也让 renderer 即使被错误调用也无法清空当前 partial。
+   */
+  function evictCaptionPrefix (state, throughSegmentId) {
+    if (typeof throughSegmentId !== 'string' || throughSegmentId.length === 0) return false
+    const index = state.segments.findIndex((segment) => segment.segmentId === throughSegmentId)
+    if (index < 0 || index >= state.segments.length - 1) return false
+    const removed = state.segments.splice(0, index + 1)
+    for (const segment of removed) {
+      state.evictedSegmentIds.add(segment.segmentId)
+      state.firstPassBySegment.delete(segment.segmentId)
+    }
+    return removed.length > 0
+  }
+
+  function isCaptionSegmentEvicted (state, segmentId) {
+    return !!state?.evictedSegmentIds?.has(segmentId)
   }
 
   /**
@@ -174,7 +270,17 @@
     return Math.max(1, Math.floor(available / line))
   }
 
-  const api = { KEEP_SEGMENTS, createState, hydrateState, applyEvent, selectFlow, countVisibleLines }
+  const api = {
+    KEEP_SEGMENTS,
+    createState,
+    evictCaptionPrefix,
+    hydrateState,
+    isCaptionSegmentEvicted,
+    applyEvent,
+    fallbackRefinement,
+    selectFlow,
+    countVisibleLines
+  }
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api
   else root.CaptionReducer = api

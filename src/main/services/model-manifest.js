@@ -3,6 +3,7 @@
 // @ts-check
 
 const MANIFEST_VERSION = 1
+const RESOURCE_GROUPS = Object.freeze(['core', 'refinement'])
 
 const REALTIME_DIRECTORY = 'sherpa-onnx-x-asr-160ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05'
 const REFINEMENT_DIRECTORY = 'sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03'
@@ -27,6 +28,7 @@ const PRODUCTION_MODEL_MANIFEST = deepFreeze({
   artifacts: [
     {
       id: 'x-asr-160ms',
+      resourceGroup: 'core',
       artifactKind: 'archive',
       installId: 'x-asr-160ms',
       url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-x-asr-160ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2',
@@ -42,6 +44,7 @@ const PRODUCTION_MODEL_MANIFEST = deepFreeze({
     },
     {
       id: 'x-asr-offline',
+      resourceGroup: 'refinement',
       artifactKind: 'archive',
       installId: 'x-asr-offline',
       url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03.tar.bz2',
@@ -57,6 +60,7 @@ const PRODUCTION_MODEL_MANIFEST = deepFreeze({
     },
     {
       id: 'silero-vad',
+      resourceGroup: 'core',
       artifactKind: 'file',
       installId: 'silero-vad',
       url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx',
@@ -100,6 +104,7 @@ function validateManifest (input) {
     if (!raw.upstream || typeof raw.upstream !== 'object' || typeof raw.upstream.project !== 'string' || typeof raw.upstream.release !== 'string' || typeof raw.upstream.asset !== 'string') throw invalidManifest()
     const artifact = {
       id: raw.id,
+      resourceGroup: raw.resourceGroup === undefined ? 'core' : raw.resourceGroup,
       artifactKind: raw.artifactKind,
       installId: raw.installId,
       url: parsed.toString(),
@@ -112,6 +117,7 @@ function validateManifest (input) {
         asset: raw.upstream.asset
       }
     }
+    if (!RESOURCE_GROUPS.includes(artifact.resourceGroup)) throw invalidManifest()
     if (raw.artifactKind === 'archive') {
       if (!SAFE_COMPONENT.test(raw.directoryName)) throw invalidManifest()
       artifact.directoryName = raw.directoryName
@@ -127,6 +133,7 @@ function validateManifest (input) {
 module.exports = {
   MANIFEST_VERSION,
   PRODUCTION_MODEL_MANIFEST,
+  RESOURCE_GROUPS,
   deepFreeze,
   validateManifest
 }

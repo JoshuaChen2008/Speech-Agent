@@ -35,6 +35,7 @@ const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtit
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
 
 const DEV_RUNTIME = resolveRuntimeOptions({ LIVE_SUBTITLE_DEV_MODEL: DEV_MODEL_VALUE })
+const DEV_RUNTIME_WITH_REFINEMENT = Object.freeze({ ...DEV_RUNTIME, refinementAvailable: true })
 
 function temporaryDirectory () {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'product-sqlite-lifecycle-'))
@@ -229,12 +230,13 @@ function makeRuntime (options) {
       const coordinator = new SessionCoordinator({
         adapter,
         persistenceSink: input.persistenceSink,
-        runtimeOptions: DEV_RUNTIME,
+        runtimeOptions: DEV_RUNTIME_WITH_REFINEMENT,
         configuration: {
           onboardingCompleted: true,
           onboardingPreset: sourceId === 'mic' ? 'dictation' : 'meeting',
           mic: sourceId === 'mic',
-          loopback: sourceId === 'loopback'
+          loopback: sourceId === 'loopback',
+          refinementEnabled: true
         },
         idFactory: () => sessionId
       })

@@ -43,6 +43,7 @@ function segment (ordinal) {
 
 function harness () {
   const published = []
+  const faults = []
   const controller = new RefinementController({
     emitRefined: (info, text) => ({
       kind: 'refined',
@@ -50,11 +51,12 @@ function harness () {
       revision: info.baseRevision + 1,
       text
     }),
-    publish: (message) => published.push(message)
+    publish: (message) => published.push(message),
+    publishFault: (fault) => faults.push(fault)
   })
   const port = new FakePort()
   controller.attachPort(port)
-  return { controller, port, published }
+  return { controller, port, published, faults }
 }
 
 test('refined responses arriving while paused wait for resume ack and keep arrival order', () => {
@@ -85,7 +87,7 @@ test('refined responses arriving while paused wait for resume ack and keep arriv
 })
 
 test('end stops new refinement requests before flushing and clears in-flight work', () => {
-  const { controller, port, published } = harness()
+  const { controller, port, published, faults } = harness()
   assert.equal(controller.request(segment(1)), true)
 
   controller.end(() => {
@@ -101,6 +103,46 @@ test('end stops new refinement requests before flushing and clears in-flight wor
   port.respond({ type: 'refined', requestId: 1, text: '迟到结果' })
   assert.equal(controller.pending.size, 0)
   assert.deepEqual(published, [], 'end-cleared late responses must not publish')
+  assert.deepEqual(faults, [], 'normal stop must not report a refinement fault')
+})
+
+test('first refinement failure disables only refinement and publishes a stable safe fault once', () => {
+  const { controller, port, faults } = harness()
+  controller.enabled = true
+  assert.equal(controller.request(segment(1)), true)
+
+  port.respond({
+    type: 'refine-failed',
+    requestId: 1,
+    message: 'C:\\private\\model.onnx: decoder rejected transcript text'
+  })
+  port.respond({ type: 'refined', requestId: 1, text: 42 })
+  port.close()
+
+  assert.deepEqual(faults, [{
+    code: 'REFINE_DECODE_FAILED',
+    stage: 'decode'
+  }])
+  assert.equal(controller.enabled, false)
+  assert.equal(controller.accepting, false)
+  assert.equal(controller.request(segment(2)), false)
+  assert.equal(JSON.stringify(faults).includes('private'), false)
+  assert.equal(JSON.stringify(faults).includes('transcript'), false)
+})
+
+test('invalid refinement response reports its stable code and retains no pending work', () => {
+  const { controller, port, faults } = harness()
+  controller.enabled = true
+  assert.equal(controller.request(segment(1)), true)
+
+  port.respond({ type: 'refined', requestId: 1, text: { unexpected: true } })
+
+  assert.deepEqual(faults, [{
+    code: 'REFINE_INVALID_RESPONSE',
+    stage: 'response'
+  }])
+  assert.equal(controller.pending.size, 0)
+  assert.equal(controller.enabled, false)
 })
 
 test('refine port close invalidates pending requests and degrades to skipping', () => {

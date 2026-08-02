@@ -35,6 +35,7 @@ class FakeRuntimeAdapter {
     this.betweenLinesMs = options.betweenLinesMs || 700
     this.script = validateScript(options.script || DEFAULT_SCRIPT)
     this.captionHandler = null
+    this.refinementFaultHandler = null
     this.context = null
     this.lastSessionId = null
     this.paused = false
@@ -56,6 +57,14 @@ class FakeRuntimeAdapter {
     }
   }
 
+  onRefinementFault (handler) {
+    if (typeof handler !== 'function') throw new TypeError('refinement fault handler must be a function')
+    this.refinementFaultHandler = handler
+    return () => {
+      if (this.refinementFaultHandler === handler) this.refinementFaultHandler = null
+    }
+  }
+
   async start (context) {
     this.stopTimers()
     this.assertContext(context)
@@ -64,7 +73,8 @@ class FakeRuntimeAdapter {
     this.context = {
       sessionId: context.sessionId,
       sourceIds: [...context.sourceIds],
-      profile: context.profile
+      profile: context.profile,
+      refinementEnabled: context.refinementEnabled === true
     }
     this.lastSessionId = context.sessionId
     this.paused = false
@@ -112,6 +122,7 @@ class FakeRuntimeAdapter {
   dispose () {
     this.stopTimers()
     this.captionHandler = null
+    this.refinementFaultHandler = null
     this.context = null
     this.currentLine = null
   }
@@ -119,6 +130,11 @@ class FakeRuntimeAdapter {
   /** Test/diagnostic seam representing a worker-originated event. */
   emitCaption (event) {
     if (this.captionHandler) this.captionHandler(event)
+  }
+
+  /** Test/diagnostic seam for the refinement-only failure channel. */
+  emitRefinementFault (event) {
+    return this.refinementFaultHandler ? this.refinementFaultHandler(event) : false
   }
 
   assertContext (context) {

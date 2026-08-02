@@ -18,7 +18,9 @@ test('every inbound channel has an explicit least-privilege role allowlist', () 
     CHANNELS.CONFIG_CHANGED,
     CHANNELS.MODEL_STATUS_CHANGED,
     CHANNELS.RUNTIME_CHANGED,
-    CHANNELS.CAPTION_EVENT
+    CHANNELS.CAPTION_EVENT,
+    CHANNELS.CAPTION_STATE_CHANGED,
+    CHANNELS.REFINEMENT_NOTICE_CHANGED
   ].includes(channel))
   assert.deepEqual(Object.keys(ROLE_ACCESS).sort(), inbound.sort())
 })
@@ -32,12 +34,22 @@ test('window roles cannot invoke one another privileged APIs', () => {
   assert.equal(isRoleAllowed(CHANNELS.CAPTION_STATE_GET, 'caption'), true)
   assert.equal(isRoleAllowed(CHANNELS.CAPTION_STATE_GET, 'toolbar'), false)
   assert.equal(isRoleAllowed(CHANNELS.CAPTION_STATE_GET, 'settings'), false)
+  assert.equal(isRoleAllowed(CHANNELS.CAPTION_VIEWPORT_EVICT, 'caption'), true)
+  assert.equal(isRoleAllowed(CHANNELS.CAPTION_VIEWPORT_EVICT, 'toolbar'), false)
+  assert.equal(isRoleAllowed(CHANNELS.REFINEMENT_NOTICE_GET, 'toolbar'), true)
+  assert.equal(isRoleAllowed(CHANNELS.REFINEMENT_NOTICE_GET, 'caption'), false)
   assert.equal(isRoleAllowed(CHANNELS.CONFIG_UPDATE, 'settings'), true)
   assert.equal(isRoleAllowed(CHANNELS.CONFIG_UPDATE, 'toolbar'), false)
   assert.equal(isRoleAllowed(CHANNELS.MODEL_STATUS_GET, 'settings'), true)
   assert.equal(isRoleAllowed(CHANNELS.MODEL_INSTALL, 'settings'), true)
+  assert.equal(isRoleAllowed(CHANNELS.MODEL_INSTALL_REFINEMENT, 'settings'), true)
+  assert.equal(isRoleAllowed(CHANNELS.MODEL_CANCEL_INSTALL, 'settings'), true)
+  assert.equal(isRoleAllowed(CHANNELS.REFINEMENT_PREFERENCE_SET, 'settings'), true)
   assert.equal(isRoleAllowed(CHANNELS.MODEL_STATUS_GET, 'toolbar'), false)
   assert.equal(isRoleAllowed(CHANNELS.MODEL_INSTALL, 'caption'), false)
+  assert.equal(isRoleAllowed(CHANNELS.MODEL_INSTALL_REFINEMENT, 'toolbar'), false)
+  assert.equal(isRoleAllowed(CHANNELS.MODEL_CANCEL_INSTALL, 'caption'), false)
+  assert.equal(isRoleAllowed(CHANNELS.REFINEMENT_PREFERENCE_SET, 'history'), false)
   assert.equal(isRoleAllowed(CHANNELS.RESIZE_START, 'caption'), true)
   assert.equal(isRoleAllowed(CHANNELS.RESIZE_START, 'settings'), false)
   assert.equal(isRoleAllowed(CHANNELS.SETTINGS_CLOSE, 'settings'), true)

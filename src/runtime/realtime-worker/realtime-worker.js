@@ -64,7 +64,12 @@ function sourceTiming (sourceId) {
    （段保持 final），绝不反压实时；CaptionEvent 序号仍由 WorkerCore 分配。 */
 state.refine = new RefinementController({
   emitRefined: (info, text) => state.core ? state.core.emitRefined(info, text) : null,
-  publish
+  publish,
+  publishFault: (fault) => publish({
+    type: 'refinement-fault',
+    code: fault.code,
+    stage: fault.stage
+  })
 })
 
 function grantCredits (sourceId, count, consumed = 0) {
@@ -269,6 +274,8 @@ process.parentPort.on('message', (event) => {
     })
   } else if (message?.type === 'shutdown') {
     shutdown()
+  } else if (message?.type === 'disable-refinement') {
+    state.refine.disable()
   } else if (state.shuttingDown) {
     return
   } else if (message?.type === 'configure') {

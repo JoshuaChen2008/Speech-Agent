@@ -19,11 +19,12 @@ const { applyAppearance } = window.Appearance
 const bridge = window.shell || {
   mouseThrough () {}, dragStart () {}, dragEnd () {},
   lockToggle () {}, action () {},
-  onLock () {}, onConfig () {}, onSnapshot () {},
+  onLock () {}, onConfig () {}, onSnapshot () {}, onRefinementNotice () {},
   command () { return Promise.reject(new Error('no shell')) },
   getLock () { return Promise.reject(new Error('no shell')) },
   getConfig () { return Promise.reject(new Error('no shell')) },
-  getSnapshot () { return Promise.reject(new Error('no shell')) }
+  getSnapshot () { return Promise.reject(new Error('no shell')) },
+  getRefinementNotice () { return Promise.reject(new Error('no shell')) }
 }
 
 const wrap = document.getElementById('wrap')
@@ -41,6 +42,7 @@ let snapshot = window.FIXTURES.runtime.unavailable
 let runtimeSnapshotAccepted = false
 let commandPending = false
 let commandFailure = null
+let refinementNotice = null
 
 installSprite(document)
 grip.innerHTML = iconMarkup('grip')
@@ -79,6 +81,7 @@ const SUPPORTED = {
   'open-settings': () => bridge.action('settings'),
   'open-model-manager': () => bridge.action('open-model-manager'),
   history: () => bridge.action('history'),
+  'dismiss-refinement-notice': () => bridge.action('dismiss-refinement-notice'),
   lock: () => bridge.lockToggle(),
   settings: () => bridge.action('settings'),
   close: () => bridge.action('close')
@@ -145,18 +148,48 @@ const SPIN = { spinner: 'cw', recover: 'ccw' }
  */
 function renderStatus (view) {
   statusHost.textContent = ''
+  statusHost.classList.remove('refinement-notice')
   statusHost.dataset.tone = view.status.tone
   statusHost.dataset.emphasis = view.status.emphasis
   statusHost.setAttribute('aria-label', view.status.ariaLabel)
 
-  const icon = iconEl(view.status.icon, 'status-icon')
-  if (SPIN[view.status.icon]) icon.dataset.spin = SPIN[view.status.icon]
-  statusHost.appendChild(icon)
+  if (refinementNotice) {
+    statusHost.classList.add('refinement-notice')
+    statusHost.dataset.tone = 'warn'
+    statusHost.dataset.emphasis = 'attention'
+    statusHost.setAttribute('aria-label', `${refinementNotice.message}；可查看历史或关闭提示`)
+    statusHost.appendChild(iconEl('alert', 'status-icon'))
+    const message = el('span', 'status-message', refinementNotice.message)
+    message.title = refinementNotice.message
+    statusHost.appendChild(message)
+    statusHost.appendChild(commandButton({
+      act: 'history',
+      icon: 'history',
+      label: '查看历史',
+      showLabel: true,
+      ariaLabel: `查看本次会话历史：${refinementNotice.message}`,
+      disabled: false,
+      reason: null
+    }, 'notice-history'))
+    statusHost.appendChild(commandButton({
+      act: 'dismiss-refinement-notice',
+      icon: 'close',
+      label: '关闭提示',
+      showLabel: false,
+      ariaLabel: '关闭精修状态提示',
+      disabled: false,
+      reason: null
+    }, 'notice-dismiss'))
+  } else {
+    const icon = iconEl(view.status.icon, 'status-icon')
+    if (SPIN[view.status.icon]) icon.dataset.spin = SPIN[view.status.icon]
+    statusHost.appendChild(icon)
 
-  const message = el('span', 'status-message',
-    view.status.emphasis === 'attention' ? view.status.message : '')
-  message.title = view.status.ariaLabel
-  statusHost.appendChild(message)
+    const message = el('span', 'status-message',
+      view.status.emphasis === 'attention' ? view.status.message : '')
+    message.title = view.status.ariaLabel
+    statusHost.appendChild(message)
+  }
 
   if (commandFailure) {
     const message = statusHost.querySelector('.status-message')
@@ -221,7 +254,7 @@ function render () {
   renderCommands(view)
   renderWindowControls()
   /* 需要用户介入时条不允许隐身（带着说明和下一步出口，必须看得见） */
-  wrap.dataset.attention = (commandFailure || view.status.emphasis === 'attention') ? 'on' : 'off'
+  wrap.dataset.attention = (commandFailure || refinementNotice || view.status.emphasis === 'attention') ? 'on' : 'off'
   toolbar.setAttribute('aria-busy', String(commandPending))
 }
 
@@ -321,6 +354,23 @@ async function initRuntime () {
   try { acceptSnapshot(await bridge.getSnapshot()) } catch { /* browser preview */ }
 }
 
+let refinementNoticeRevision = 0
+
+function acceptRefinementNotice (notice) {
+  refinementNoticeRevision += 1
+  refinementNotice = notice && notice.kind === 'refinement-fault' ? notice : null
+  render()
+}
+
+async function initRefinementNotice () {
+  bridge.onRefinementNotice(acceptRefinementNotice)
+  const requestedAt = refinementNoticeRevision
+  try {
+    const notice = await bridge.getRefinementNotice()
+    if (refinementNoticeRevision === requestedAt) acceptRefinementNotice(notice)
+  } catch { /* browser preview */ }
+}
+
 function applyConfig (c) {
   applyAppearance(document.documentElement, c)
 }
@@ -333,3 +383,4 @@ render()
 initLock()
 initConfig()
 initRuntime()
+initRefinementNotice()

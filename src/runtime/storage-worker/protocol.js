@@ -9,6 +9,7 @@ const OPERATIONS = Object.freeze({
   DB0_QUALIFY: 'db0:qualify',
   INITIALIZE: 'storage:initialize',
   OPEN_SESSION: 'session:open',
+  RECORD_REFINEMENT_FAULT: 'refinement:record-fault',
   APPEND_CAPTION: 'caption:append',
   CLOSE_SESSION: 'session:close',
   RECOVER_STALE_SESSIONS: 'session:recover-stale',
@@ -35,8 +36,12 @@ const SAFE_ERROR_MESSAGES = Object.freeze({
   ACTIVE_SESSION_EXISTS: 'Another subtitle session is active.',
   SESSION_ACTIVE: 'Session is still active.',
   SESSION_NOT_ACTIVE: 'Session is not active.',
+  REFINEMENT_RESULT_UNAVAILABLE: 'Refinement session result is unavailable.',
+  REFINEMENT_RESULT_CONFLICT: 'Refinement session result conflicts with persisted data.',
+  INVALID_REFINEMENT_FAULT: 'Refinement fault data is invalid.',
   INVALID_CAPTION: 'Caption data is invalid.',
   UNSUPPORTED_CAPTION_KIND: 'Only final and refined captions can be persisted.',
+  REFINEMENT_DISABLED: 'Refined captions are disabled for this session.',
   EVENT_IDENTITY_CONFLICT: 'Caption identity conflicts with persisted data.',
   MISSING_BASE_SEGMENT: 'A refined caption cannot create a segment.',
   INVALID_LEGACY_IMPORT: 'Legacy transcript import data is invalid.',
@@ -108,6 +113,10 @@ function makeCloseSessionKey (sessionId) {
   return `close-v1-${digestParts([sessionId])}`
 }
 
+function makeRefinementFaultKey (sessionId, faultCode) {
+  return `refinement-fault-v1-${digestParts([sessionId, faultCode])}`
+}
+
 function makeLegacyImportKey (sourceSha256) {
   return `legacy-v1-${digestParts([sourceSha256])}`
 }
@@ -135,5 +144,6 @@ module.exports = {
   makeCloseSessionKey,
   makeLegacyImportKey,
   makeOpenSessionKey,
+  makeRefinementFaultKey,
   publicError
 }

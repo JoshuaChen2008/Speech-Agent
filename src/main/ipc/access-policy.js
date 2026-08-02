@@ -22,9 +22,14 @@ const ROLE_ACCESS = Object.freeze({
   [CHANNELS.PRESET_SELECT]: Object.freeze(['settings']),
   [CHANNELS.MODEL_STATUS_GET]: Object.freeze(['settings']),
   [CHANNELS.MODEL_INSTALL]: Object.freeze(['settings']),
+  [CHANNELS.MODEL_INSTALL_REFINEMENT]: Object.freeze(['settings']),
+  [CHANNELS.MODEL_CANCEL_INSTALL]: Object.freeze(['settings']),
+  [CHANNELS.REFINEMENT_PREFERENCE_SET]: Object.freeze(['settings']),
   [CHANNELS.RUNTIME_GET]: Object.freeze(['toolbar', 'settings']),
   [CHANNELS.RUNTIME_COMMAND]: Object.freeze(['toolbar']),
-  [CHANNELS.CAPTION_STATE_GET]: Object.freeze(['caption'])
+  [CHANNELS.CAPTION_STATE_GET]: Object.freeze(['caption']),
+  [CHANNELS.CAPTION_VIEWPORT_EVICT]: Object.freeze(['caption']),
+  [CHANNELS.REFINEMENT_NOTICE_GET]: Object.freeze(['toolbar'])
 })
 
 const RENDERER_CONFIG_KEYS = Object.freeze([

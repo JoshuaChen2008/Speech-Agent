@@ -26,9 +26,25 @@ function applyPreset (preset) {
   return requireStore().applyPreset(preset)
 }
 
+function setRefinementPreference (enabled, refinementReady) {
+  return requireStore().setRefinementPreference(enabled, refinementReady)
+}
+
+function reconcileRefinementReadiness (refinementReady) {
+  return requireStore().reconcileRefinementReadiness(refinementReady)
+}
+
 function requireStore () {
   if (!store) throw new Error('config.load() must be called after app.whenReady()')
   return store
 }
 
-module.exports = { DEFAULTS: DEFAULT_CONFIG, applyPreset, load, get, set }
+module.exports = {
+  DEFAULTS: DEFAULT_CONFIG,
+  applyPreset,
+  get,
+  load,
+  reconcileRefinementReadiness,
+  set,
+  setRefinementPreference
+}

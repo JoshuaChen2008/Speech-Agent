@@ -16,6 +16,7 @@ const {
   makeCloseSessionKey,
   makeLegacyImportKey,
   makeOpenSessionKey,
+  makeRefinementFaultKey,
   publicError
 } = require('./protocol')
 
@@ -46,9 +47,14 @@ class StorageWorkerService {
       return { initialized: true }
     }
     if (operation === OPERATIONS.OPEN_SESSION) {
-      assertExactKeys(payload, ['sessionId', 'sourceId', 'startedAt'])
+      assertExactKeys(payload, ['sessionId', 'sourceId', 'startedAt', 'refinementEnabled'])
       assertIdempotencyKey(idempotencyKey, makeOpenSessionKey(payload.sessionId))
       return this.requireStore().openSession(payload)
+    }
+    if (operation === OPERATIONS.RECORD_REFINEMENT_FAULT) {
+      assertExactKeys(payload, ['sessionId', 'faultCode', 'faultAtMs'])
+      assertIdempotencyKey(idempotencyKey, makeRefinementFaultKey(payload.sessionId, payload.faultCode))
+      return this.requireStore().recordRefinementFault(payload)
     }
     if (operation === OPERATIONS.APPEND_CAPTION) {
       assertExactKeys(payload, ['event'])

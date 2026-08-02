@@ -26,6 +26,8 @@ const DEFAULT_CONFIG = Object.freeze({
   theme: 'auto',
   bilingual: true,
   maxLines: 4,
+  // Global, source-independent choice read once when a future session starts.
+  refinementEnabled: false,
   // Gate 0D: fresh installs select neither source until the user chooses a preset.
   mic: false,
   loopback: false,
@@ -46,6 +48,7 @@ const FIELD_RULES = Object.freeze({
   theme: (value) => ['light', 'auto', 'dark'].includes(value),
   bilingual: (value) => typeof value === 'boolean',
   maxLines: (value) => isIntegerRange(value, 1, 6),
+  refinementEnabled: (value) => typeof value === 'boolean',
   mic: (value) => typeof value === 'boolean',
   loopback: (value) => typeof value === 'boolean',
   latency: (value) => [160, 480, 960].includes(value)
@@ -161,6 +164,37 @@ class ConfigStore {
       onboardingPreset: preset,
       ...sourceFlagsForPreset(preset)
     })
+  }
+
+  /**
+   * Enabling refinement is deliberately separate from downloading its model.
+   * A missing or invalid resource never causes a network request here and the
+   * persisted preference remains false until the caller has proved readiness.
+   */
+  setRefinementPreference (enabled, refinementReady) {
+    if (typeof enabled !== 'boolean') throw new TypeError('refinement preference must be a boolean')
+    if (enabled && refinementReady !== true) {
+      if (this.state.refinementEnabled) this.update({ refinementEnabled: false })
+      return Object.freeze({
+        accepted: false,
+        reason: 'REFINEMENT_MODEL_NOT_READY',
+        value: this.get()
+      })
+    }
+    return Object.freeze({
+      accepted: true,
+      reason: null,
+      value: this.update({ refinementEnabled: enabled })
+    })
+  }
+
+  /** Apply the one allowed automatic correction: app startup readiness audit. */
+  reconcileRefinementReadiness (refinementReady) {
+    if (typeof refinementReady !== 'boolean') throw new TypeError('refinement readiness must be a boolean')
+    if (refinementReady || !this.state.refinementEnabled) {
+      return Object.freeze({ changed: false, value: this.get() })
+    }
+    return Object.freeze({ changed: true, value: this.update({ refinementEnabled: false }) })
   }
 
   persist (value) {

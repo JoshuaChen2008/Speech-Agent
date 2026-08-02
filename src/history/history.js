@@ -21,6 +21,7 @@ const sessionDetail = document.getElementById('sessionDetail')
 const detailSource = document.getElementById('detailSource')
 const detailTitle = document.getElementById('detailTitle')
 const detailMeta = document.getElementById('detailMeta')
+const detailRefinement = document.getElementById('detailRefinement')
 const exportStatus = document.getElementById('exportStatus')
 const previousPageButton = document.getElementById('previousPage')
 const nextPageButton = document.getElementById('nextPage')
@@ -40,6 +41,7 @@ let detailPending = false
 let detailError = null
 let detailPage = null
 let detailPageIndex = 0
+let refinementMetadata = null
 let detailCursorStack = [{ cursor: null, offset: 0 }]
 let exportRequest = 0
 let exportPending = false
@@ -151,12 +153,91 @@ function selectSessionButton (sessionId) {
    不重新请求分页——两份文本已经在同一页数据里（J15b 的接口形状）。 */
 let selectedVersion = 'original'
 
+function renderVersionSelection () {
+  for (const button of versionButtons) {
+    button.setAttribute('aria-checked', button.dataset.version === selectedVersion ? 'true' : 'false')
+  }
+}
+
+function resetSelectedVersion () {
+  selectedVersion = 'original'
+  renderVersionSelection()
+  exportStatus.textContent = ''
+}
+
+function normaliseRefinementMetadata (value) {
+  if (!value || typeof value !== 'object') return null
+
+  const segmentCount = Number(value.segmentCount)
+  const refinedSegmentCount = Number(value.refinedSegmentCount)
+  if (!Number.isInteger(segmentCount) || segmentCount < 0 ||
+    !Number.isInteger(refinedSegmentCount) || refinedSegmentCount < 0 ||
+    refinedSegmentCount > segmentCount) {
+    return null
+  }
+
+  return {
+    segmentCount,
+    refinedSegmentCount,
+    refinementFaultCode: typeof value.refinementFaultCode === 'string'
+      ? value.refinementFaultCode
+      : null,
+    refinementResultStatus: value.refinementResultStatus === 'not_recorded'
+      ? 'not_recorded'
+      : 'known'
+  }
+}
+
+function canSelectRefinedVersion () {
+  return refinementMetadata !== null && refinementMetadata.refinedSegmentCount > 0
+}
+
+function refinementDetailText (metadata) {
+  if (metadata === null) return ''
+
+  const {
+    segmentCount,
+    refinedSegmentCount,
+    refinementFaultCode,
+    refinementResultStatus
+  } = metadata
+  const hasFault = refinementFaultCode !== null
+  let text = ''
+
+  if (segmentCount === 0) {
+    text = hasFault
+      ? '精修进程异常结束；本会话未产生可精修的已定稿字幕'
+      : ''
+  } else if (refinedSegmentCount === 0) {
+    text = '本会话未生成精修稿'
+  } else if (hasFault && refinedSegmentCount === segmentCount) {
+    text = `精修进程异常结束，但本次已生成 ${refinedSegmentCount}/${segmentCount} 段精修稿`
+  } else if (refinedSegmentCount < segmentCount) {
+    text = `已精修 ${refinedSegmentCount}/${segmentCount} 段，${segmentCount - refinedSegmentCount} 段使用原始版`
+  } else {
+    text = `已精修 ${refinedSegmentCount}/${segmentCount} 段`
+  }
+
+  if (hasFault && segmentCount > 0 && refinedSegmentCount !== segmentCount) {
+    text = `精修进程异常结束；${text}`
+  }
+  if (refinementResultStatus === 'not_recorded') {
+    text = text === '' ? '未记录精修运行状态' : `${text}；未记录精修运行状态`
+  }
+
+  return text
+}
+
+function renderRefinementDetail () {
+  detailRefinement.textContent = refinementDetailText(refinementMetadata)
+}
+
 /* 精修稿缺失的段落回落到原始版：宁可显示原文，也不留空行。 */
 function segmentBody (segment) {
   if (selectedVersion === 'refined' && typeof segment.refinedText === 'string' && segment.refinedText.length > 0) {
     return segment.refinedText
   }
-  return segment.text
+  return selectedVersion === 'refined' ? `[原始版回退] ${segment.text}` : segment.text
 }
 
 function assertHistoryPage (value, sessionId) {
@@ -180,14 +261,21 @@ function assertHistoryPage (value, sessionId) {
 
 function updateDetailControls () {
   previousPageButton.disabled = detailPending || detailPageIndex === 0
+  previousPageButton.setAttribute('aria-disabled', String(previousPageButton.disabled))
   nextPageButton.disabled = detailPending || detailPage === null || detailPage.nextCursor === null
+  nextPageButton.setAttribute('aria-disabled', String(nextPageButton.disabled))
   retryPageButton.hidden = detailError === null
   retryPageButton.disabled = detailPending
+  retryPageButton.setAttribute('aria-disabled', String(retryPageButton.disabled))
   exportButtons.forEach((button) => {
-    button.disabled = detailPending || exportPending || detailPage === null
+    button.disabled = detailPending || exportPending || detailPage === null ||
+      (selectedVersion === 'refined' && !canSelectRefinedVersion())
+    button.setAttribute('aria-disabled', String(button.disabled))
   })
   versionButtons.forEach((button) => {
-    button.disabled = detailPending || exportPending || detailPage === null
+    button.disabled = detailPending || exportPending || detailPage === null ||
+      (button.dataset.version === 'refined' && !canSelectRefinedVersion())
+    button.setAttribute('aria-disabled', String(button.disabled))
   })
 }
 
@@ -202,6 +290,7 @@ function renderDetailHeading (session, totalCount) {
   detailTitle.textContent = fullDateTime(session.startedAt)
   detailMeta.textContent = `${durationText(session.startedAt, session.endedAt)}` +
     ` · ${totalCount} 条已定稿字幕`
+  renderRefinementDetail()
 }
 
 function renderSelectedSessionHeading (sessionId) {
@@ -210,6 +299,7 @@ function renderSelectedSessionHeading (sessionId) {
     detailSource.textContent = ''
     detailTitle.textContent = '字幕会话'
     detailMeta.textContent = ''
+    detailRefinement.textContent = ''
     return
   }
   renderDetailHeading(session, session.segmentCount)
@@ -264,6 +354,8 @@ async function loadDetailPage (pageIndex) {
     )
     if (generation !== detailGeneration || sessionId !== selectedSessionId) return
 
+    refinementMetadata = normaliseRefinementMetadata(page.refinement)
+    if (selectedVersion === 'refined' && !canSelectRefinedVersion()) resetSelectedVersion()
     detailPage = page
     detailCursorStack = detailCursorStack.slice(0, pageIndex + 1)
     if (page.nextCursor !== null) {
@@ -295,6 +387,10 @@ async function selectSession (sessionId) {
   if (selectedSessionId !== sessionId) {
     detailGeneration += 1
     detailPending = false
+    /* J15b / SEM-F11：版本选择属于当前会话；进入另一会话一律从原始版开始。 */
+    resetSelectedVersion()
+    refinementMetadata = null
+    detailRefinement.textContent = ''
   }
   selectSessionButton(sessionId)
   detailCursorStack = [{ cursor: null, offset: 0 }]
@@ -317,7 +413,9 @@ function clearDetailSelection () {
   detailError = null
   detailPage = null
   detailPageIndex = 0
+  refinementMetadata = null
   detailCursorStack = [{ cursor: null, offset: 0 }]
+  detailRefinement.textContent = ''
   timeline.textContent = ''
   timeline.setAttribute('aria-busy', 'false')
   rangeStatus.textContent = ''
@@ -419,15 +517,15 @@ exportButtons.forEach((button) => {
 versionButtons.forEach((button) => {
   button.addEventListener('click', () => {
     const version = button.dataset.version
-    if (version !== 'original' && version !== 'refined' || version === selectedVersion) return
+    if ((version !== 'original' && version !== 'refined') || version === selectedVersion ||
+      (version === 'refined' && !canSelectRefinedVersion())) return
     selectedVersion = version
-    for (const other of versionButtons) {
-      other.setAttribute('aria-checked', other.dataset.version === selectedVersion ? 'true' : 'false')
-    }
+    renderVersionSelection()
     exportStatus.textContent = ''
     /* 只重排已有数据：两个版本都在同一页响应里，切换不重新请求分页，
        也不移动游标——用户切回原始版时看到的仍是同一批字幕。 */
     if (detailPage) renderTimeline(detailPage, detailCursorStack[detailPageIndex]?.offset || 0)
+    updateDetailControls()
   })
 })
 

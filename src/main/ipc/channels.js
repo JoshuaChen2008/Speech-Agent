@@ -22,10 +22,17 @@ module.exports = Object.freeze({
   PRESET_SELECT: 'onboarding:select-preset',
   MODEL_STATUS_GET: 'model:get-status',
   MODEL_INSTALL: 'model:install',
+  MODEL_INSTALL_REFINEMENT: 'model:install-refinement',
+  MODEL_CANCEL_INSTALL: 'model:cancel-install',
+  REFINEMENT_PREFERENCE_SET: 'model:set-refinement-preference',
   MODEL_STATUS_CHANGED: 'model:status',
   RUNTIME_GET: 'runtime:get-snapshot',
   RUNTIME_COMMAND: 'runtime:command',
   RUNTIME_CHANGED: 'runtime:snapshot',
   CAPTION_EVENT: 'runtime:caption',
-  CAPTION_STATE_GET: 'runtime:get-caption-state'
+  CAPTION_STATE_GET: 'runtime:get-caption-state',
+  CAPTION_STATE_CHANGED: 'runtime:caption-state',
+  CAPTION_VIEWPORT_EVICT: 'runtime:caption-viewport-evict',
+  REFINEMENT_NOTICE_GET: 'refinement-notice:get',
+  REFINEMENT_NOTICE_CHANGED: 'refinement-notice:changed'
 })
