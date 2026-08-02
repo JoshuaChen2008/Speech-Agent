@@ -48,7 +48,7 @@ Live Subtitle 的数据边界是设计的一部分：
 |---|---|---|
 | 固定高度字幕流、版本隔离、可选精修及历史 | 联合验收完成 | 本地确定性范围已有跨模块用户旅程和打包态证据。 |
 | 本地非音频回归 | 联合验收完成 | core 410、integration 27、evidence 168，共 605 项。 |
-| 远端 Windows CI 资格 | 实现完成·尚未验收 | run `30765231206` 精确绑定 revision `3b4b0db2…`，完整 workflow、provenance 绑定与 artifact 上传成功。下载后的 strict reader 发现 caption layout runner/verifier 在 hosted checkout 为 CRLF、本机为 LF；两份脚本及索引复算的 lockfile/workflow 现已固定 LF，等待新 revision 的 workflow 与下载 artifact 复验。产品导出仍跟随 Windows 系统时区。 |
+| 远端 Windows CI 资格 | 联合验收完成 | run `30766172580` 精确绑定 revision `f05f3f95…`，全部 workflow steps 与 605 项回归成功；下载 artifact 通过五个 strict readers、报告/lockfile/workflow SHA、跨报告绑定及 41 文件/29 JSON 隐私负扫描。下载包不含 installer 字节，同轮 workflow 已在索引生成前复核精确 installer。 |
 | 36 组合 DWM、主题、透明窗和异缩放双屏观察 | 实现完成·尚未验收 | runner 和严格 verifier 已就位，仍需可见实机矩阵。 |
 | 真实 `loopback` / `mic` 性能与两小时稳定性 | 实现完成·尚未验收 | 当前冻结 P95 仍高于 `<1000 ms` 门槛，真实两小时音频尚未执行。 |
 | I4 非音频干净 Windows 子门禁 | 实现完成·尚未验收 | runner/verifier 已实现；需要无仓库、无 Node、无既有数据的标准用户机器复核真实 `userData` 与安装生命周期。 |

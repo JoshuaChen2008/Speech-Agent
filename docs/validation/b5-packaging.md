@@ -1,7 +1,7 @@
 # B5 打包态确定性资格
 
 - 日期：2026-08-02
-- 状态：当前源码的构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；远端 run `30765231206` 已在 revision `3b4b0db2f56f57e3d0e7500c77593b406a5dd857` 完成 workflow、provenance 绑定与 artifact 上传；下载后的 strict reader 暴露 caption layout runner/verifier 的 hosted CRLF 与本机 LF 差异，两份脚本及索引复算的 lockfile/workflow LF checkout 修复为实现完成·尚未验收，J9-CI provenance 仍待新 revision 与下载 artifact 复验
+- 状态：当前源码的构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；远端 run `30766172580` 已在 revision `f05f3f9537d0200b63b2e28bb79846ced74f827d` 完成全部 workflow steps、605 项回归、provenance 绑定与 artifact 上传，下载复核与隐私负扫描均闭合，J9-CI 已达到确定性联合验收完成
 - 发布边界：同一隔离 `userData` 的离线复启发生在测试 package；NSIS 卸载只验证隔离安装目录与无关 APPDATA 哨兵。正式 release 的 I4 非音频专用干净机尚未执行，因此尚未达到实机验收完成或发布验收完成
 
 ## 精确候选
@@ -70,7 +70,7 @@ workflow/job/event、`package-lock.json`/workflow digest、installer SHA，以�
 release layout 和 NSIS 报告 SHA；strict verifier 随后重新读取关键报告和文件并核对跨报告关系。
 上传名包含 revision、run ID 与 attempt。失败运行仍上传已有诊断，但不会生成这份最终索引。
 
-writer/verifier、workflow 顺序与本地当前候选的交叉哈希探针为实现完成·尚未验收。远端 run
+writer/verifier、workflow 顺序与本地当前候选的交叉哈希探针已达到确定性联合验收完成。远端 run
 `30750568366` 精确绑定 revision `2242103eb917f2afbfe81c7c8df788852bb36ebc`，因 Electron runtime
 未供给而止于首个字幕布局步骤；run `30760407160` 精确绑定 revision
 `0d0cd9f91cfd5136bbd5d3fec44e636da04b4e21`，通过 runtime、布局与 DB0 后暴露 DB1 fixture
@@ -86,9 +86,14 @@ provenance 绑定与 artifact 上传均成功。artifact
 `qualification-evidence-3b4b0db2f56f57e3d0e7500c77593b406a5dd857-30765231206-1` 的 GitHub ZIP
 digest 为 `2df032ffb1c4d7f3da3130cce240b617559947f8b4cef0c63d8cf8b0ca33698c`。下载后 strict reader
 因 caption layout runner/verifier 在 hosted checkout 为 CRLF、本机为 LF 而拒绝当前工作树复算；
-两份脚本及索引复算的 lockfile/workflow 现由 `.gitattributes` 固定 LF，该修复为实现完成·尚未验收，且不改变当前 B5 候选字节。
-只有新 revision 的完整 workflow 成功且下载 artifact 通过 strict reader 与隐私复核，才可关闭 J9-CI；
-本地构造相同 JSON 也不带远端来源语境或签名，不能冒充 GitHub run 证据。
+两份脚本及索引复算的 lockfile/workflow 现由 `.gitattributes` 固定 LF。run `30766172580` 随后在
+revision `f05f3f9537d0200b63b2e28bb79846ced74f827d` 完成全部 workflow steps 与 605 项回归；artifact
+`qualification-evidence-f05f3f9537d0200b63b2e28bb79846ced74f827d-30766172580-1`（ID `8839039319`，
+GitHub ZIP digest `33bddcb065f5297ab9b244c60455dda798d5415abab1b213d0c1fac65a537017`）下载后通过五个
+strict readers、四份报告与 lockfile/workflow SHA、跨报告绑定及 41 文件/29 JSON 隐私负扫描，
+J9-CI 已达到确定性联合验收完成。下载包不含 installer 字节；同轮 workflow step 17 已在索引生成前
+复核精确 installer SHA。该结论不改变当前 B5 候选字节；本地构造相同 JSON 也不带远端来源语境或
+签名，不能冒充 GitHub run 证据。
 
 这条旅程使用受控小资源和 fake ASR，不访问物理声卡、不保存音频，也不冒充公网真实张量、
 I2、真实两小时 I3 或 I4。
