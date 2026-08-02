@@ -1,12 +1,11 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "cases": [
     {
       "id": "zh-roadmap",
       "category": "zh",
-      "reference": "我们下周一起复盘产品路线图。",
+      "referenceSha256": "3cdd1b9f6290201ed9c8c2afcffade4f180974e2bfd5e46a889b935dad69c07e",
       "xAsr": {
-        "text": "我们下周一起复盘产品路线图",
         "cer": 0,
         "wer": null,
         "punctuation": {
@@ -15,10 +14,10 @@
           "precision": 0,
           "recall": 0,
           "f1": 0
-        }
+        },
+        "transcriptSha256": "5584fc1de8b7a41e73cb680d48568183a2a73527e4e6ba03f82480242727399c"
       },
       "senseVoice": {
-        "text": "我们下周一起复盘产品路线图",
         "cer": 0,
         "wer": null,
         "punctuation": {
@@ -27,16 +26,16 @@
           "precision": 0,
           "recall": 0,
           "f1": 0
-        }
+        },
+        "transcriptSha256": "5584fc1de8b7a41e73cb680d48568183a2a73527e4e6ba03f82480242727399c"
       },
       "refinementCerDelta": 0
     },
     {
       "id": "en-onboarding",
       "category": "en",
-      "reference": "The onboarding drop-off is mostly on step three.",
+      "referenceSha256": "abc12978ba014a4f7e62c839912db4075f1c1af6eaf59818313e9a3dec8b070e",
       "xAsr": {
-        "text": "The onboarding drop off is mostly on step three",
         "cer": 0,
         "wer": 0,
         "punctuation": {
@@ -45,10 +44,10 @@
           "precision": 0,
           "recall": 0,
           "f1": 0
-        }
+        },
+        "transcriptSha256": "aea5ec7f2fd2c06d93c6b25443285e5279f9e7a38f15bc4c533b1ae911fa2bd0"
       },
       "senseVoice": {
-        "text": "THE ONBOARDING DROP OFF IS MOSTLY ON STEP THREE",
         "cer": 0,
         "wer": 0,
         "punctuation": {
@@ -57,16 +56,16 @@
           "precision": 0,
           "recall": 0,
           "f1": 0
-        }
+        },
+        "transcriptSha256": "28be1a053b9626119956a4c904eaebf1cf49d5bc546f2e210b28b549b4041d70"
       },
       "refinementCerDelta": 0
     },
     {
       "id": "zh-en-code-switch",
       "category": "code-switch",
-      "reference": "我们下周 review 一下 roadmap，然后看 A B test。",
+      "referenceSha256": "524198166c72c7480ec0009f433fa79dbf54b0ea9c76180bf98fa36253701cb2",
       "xAsr": {
-        "text": "我们下周 review 一下 roadmap， 然后看 A B test",
         "cer": 0,
         "wer": null,
         "punctuation": {
@@ -75,10 +74,10 @@
           "precision": 1,
           "recall": 0.5,
           "f1": 0.6666666666666666
-        }
+        },
+        "transcriptSha256": "044826e56bb012e518fdae8b3dd978cf1c8df5374740803ee30adadf35a3cf58"
       },
       "senseVoice": {
-        "text": "我们下周 REVIEW 一下 ROADMP 然后看 A B TEST",
         "cer": 0.03571428571428571,
         "wer": null,
         "punctuation": {
@@ -87,16 +86,16 @@
           "precision": 0,
           "recall": 0,
           "f1": 0
-        }
+        },
+        "transcriptSha256": "fdfec61fde54697e2fabf967332f351029cfd6e93fd1c2fd9aadf78578491736"
       },
       "refinementCerDelta": -0.03571428571428571
     },
     {
       "id": "zh-date-itn",
       "category": "itn",
-      "reference": "会议安排在二零二六年七月二十五日下午三点半。",
+      "referenceSha256": "ce83bb68393e20ce4ae81fbed51cbb19fa060d064402f5aa5bda89f91aab462d",
       "xAsr": {
-        "text": "会议安排在二零二六年七月二十五日下午三点半",
         "cer": 0,
         "wer": null,
         "punctuation": {
@@ -105,10 +104,10 @@
           "precision": 0,
           "recall": 0,
           "f1": 0
-        }
+        },
+        "transcriptSha256": "6806cab1b10d7a545fde49701965dc44bfba55d747fd209d36c58cc9b1403523"
       },
       "senseVoice": {
-        "text": "会议安排在二零二六年七月二十五日下午三点半",
         "cer": 0,
         "wer": null,
         "punctuation": {
@@ -117,7 +116,8 @@
           "precision": 0,
           "recall": 0,
           "f1": 0
-        }
+        },
+        "transcriptSha256": "6806cab1b10d7a545fde49701965dc44bfba55d747fd209d36c58cc9b1403523"
       },
       "refinementCerDelta": 0
     }
@@ -130,5 +130,8 @@
     "refinementRegressedCases": 1,
     "xAsrMacroPunctuationF1": 0.16666666666666666,
     "senseVoiceMacroPunctuationF1": 0
+  },
+  "privacy": {
+    "transcriptTextPersisted": false
   }
 }

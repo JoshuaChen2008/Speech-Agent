@@ -3,9 +3,8 @@
 /* M3 精修候选评估：离线 X-ASR（同家族非流式）对照 SenseVoice 的替换评估。
      node scripts/gate-0b/m3-offline-refine.js `
        --asset-root models/gate-0b `
-       --observations docs/validation/gate-0b-cli-observations.json `
-       --sweep models/gate-0b/runs/m2-sweep/x160-cli-threads.json `
-       --raw-dir models/gate-0b/runs/m3 `
+       --observations models/gate-0b/private/cli-observations.json `
+       --sweep models/gate-0b/private/m2-sweep/x160-cli-threads.json `
        --output models/gate-0b/runs/m3/m3-evaluation.json
    评估器复用冻结的 evaluate-transcripts（CER/WER/标点 F1 与净收益口径不变）；
    其输出字段名 senseVoice 在本评估中承载「精修候选 = 离线 X-ASR」。
@@ -18,6 +17,7 @@ const crypto = require('node:crypto')
 const { spawnSync } = require('node:child_process')
 
 const { evaluate, inputFromObservations } = require('./evaluate-transcripts')
+const { projectM3Report } = require('./evidence-projection')
 
 const OFFLINE_MODEL_DIR = ['extracted', 'x-asr-offline', 'sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03']
 const CONTROLLED = ['zh-roadmap', 'en-onboarding', 'zh-en-code-switch', 'zh-date-itn']
@@ -29,12 +29,11 @@ function parseArguments (argv) {
     observations: null,
     sweep: null,
     numThreads: 3,
-    rawDir: null,
     output: null
   }
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index + 1]
-    if (argv[index] === '--asset-root') { options.assetRoot = value; index += 1 } else if (argv[index] === '--observations') { options.observations = value; index += 1 } else if (argv[index] === '--sweep') { options.sweep = value; index += 1 } else if (argv[index] === '--num-threads') { options.numThreads = Number(value); index += 1 } else if (argv[index] === '--raw-dir') { options.rawDir = value; index += 1 } else if (argv[index] === '--output') { options.output = value; index += 1 } else throw new Error(`Unknown argument: ${argv[index]}`)
+    if (argv[index] === '--asset-root') { options.assetRoot = value; index += 1 } else if (argv[index] === '--observations') { options.observations = value; index += 1 } else if (argv[index] === '--sweep') { options.sweep = value; index += 1 } else if (argv[index] === '--num-threads') { options.numThreads = Number(value); index += 1 } else if (argv[index] === '--output') { options.output = value; index += 1 } else throw new Error(`Unknown argument: ${argv[index]}`)
   }
   if (!options.assetRoot || !options.observations || !options.output) {
     throw new Error('--asset-root, --observations and --output are required')
@@ -141,12 +140,7 @@ function main () {
 
   const outputPath = path.resolve(options.output)
   fs.mkdirSync(path.dirname(outputPath), { recursive: true })
-  fs.writeFileSync(outputPath, JSON.stringify(report, null, 2) + '\n')
-  if (options.rawDir) {
-    const rawDirectory = path.resolve(options.rawDir)
-    fs.mkdirSync(rawDirectory, { recursive: true })
-    fs.writeFileSync(path.join(rawDirectory, `${OFFLINE_RUN_ID}.log`), offline.rawOutput)
-  }
+  fs.writeFileSync(outputPath, JSON.stringify(projectM3Report(report), null, 2) + '\n')
 
   for (const [baseline, evaluation] of Object.entries(evaluations)) {
     const aggregate = evaluation.aggregate

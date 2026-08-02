@@ -112,3 +112,46 @@ test('rejects illegal string syntax and invalid number forms', () => {
     /overflow\.json: non-finite number 1e400/
   )
 })
+
+test('tracked validation JSON contains no transcript body or audio filename', () => {
+  const validationRoot = path.resolve(__dirname, '../../docs/validation')
+  const files = []
+  const visitDirectory = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const target = path.join(directory, entry.name)
+      if (entry.isDirectory()) visitDirectory(target)
+      else if (entry.isFile() && entry.name.endsWith('.json')) files.push(target)
+    }
+  }
+  const forbiddenTextKeys = /^(?:captionText|hypothesis|joinedFinalText|joinedRefinedText|reference|text|transcript|transcriptText|wav)$/i
+  const forbiddenLocationKeys = /^(?:audioFile|audioFilePath|audioPath|deviceLabel|deviceName|localPath|modelPath)$/i
+  const inspect = (value, label) => {
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) inspect(value[index], `${label}[${index}]`)
+      return
+    }
+    if (!value || typeof value !== 'object') return
+    for (const [key, child] of Object.entries(value)) {
+      const childLabel = `${label}.${key}`
+      if (typeof child === 'string' && forbiddenTextKeys.test(key)) {
+        assert.fail(`${childLabel} persists transcript text or an audio filename`)
+      }
+      if (forbiddenLocationKeys.test(key)) assert.fail(`${childLabel} persists a forbidden location or device field`)
+      if (key === 'tokens' && Array.isArray(child) && child.some((item) => typeof item === 'string')) {
+        assert.fail(`${childLabel} persists reconstructable transcript tokens`)
+      }
+      inspect(child, childLabel)
+    }
+  }
+
+  visitDirectory(validationRoot)
+  assert.ok(files.length > 0)
+  for (const file of files) {
+    const bytes = fs.readFileSync(file)
+    const relative = path.relative(validationRoot, file)
+    if (/\.(?:flac|m4a|mp3|ogg|opus|pcm|wav)(?:["'?#\\/]|$)/i.test(bytes.toString('utf8'))) {
+      assert.fail(`${relative} contains an audio filename or extension`)
+    }
+    inspect(parseStrictEvidenceJson(bytes, relative), relative)
+  }
+})

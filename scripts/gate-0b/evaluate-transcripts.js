@@ -8,6 +8,7 @@ const {
   punctuationMetrics,
   wordErrorRate
 } = require('./metrics')
+const { projectEvaluation } = require('./evidence-projection')
 
 function parseArguments (argv) {
   const options = { input: null, corpus: null, observations: null, xRun: 'x480-controlled', senseRun: 'sense-controlled', output: null }
@@ -104,7 +105,7 @@ function main () {
         options.xRun,
         options.senseRun
       )
-  const report = evaluate(input)
+  const report = projectEvaluation(evaluate(input))
   const json = JSON.stringify(report, null, 2) + '\n'
   if (options.output) {
     fs.mkdirSync(path.dirname(path.resolve(options.output)), { recursive: true })

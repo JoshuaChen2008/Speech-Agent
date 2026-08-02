@@ -9,7 +9,7 @@
     "cliObservations": "gate-0b-cli-observations.json",
     "controlledMetrics": "gate-0b-controlled-metrics.json",
     "reproduce": "../../scripts/gate-0b/README.md",
-    "note": "The tracked CLI observations are path-free; raw local logs are ignored and linked per run by rawOutputSha256."
+    "note": "Tracked observations and ordinary sweep outputs are path-free; raw CLI output is parsed only in memory and bound per run by rawOutputSha256."
   },
   "criteria": {
     "punctuationPresent": { "target": true, "result": "pass", "evidence": "X-ASR 480ms emitted commas on official code-switch samples and the controlled code-switch case." },

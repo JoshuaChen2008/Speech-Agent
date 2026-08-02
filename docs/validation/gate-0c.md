@@ -22,7 +22,7 @@
 
 当前 Gate 0C runner 从不保存捕获音频。每路样本只在有界内存中分析后释放；runner 仅写结构化报告、进度日志和隔离的 Electron user-data 目录。I2 使用的语音 WAV 由受跟踪的 generator/reference 本地生成并被 Git 忽略；I2 child 报告绑定生成 WAV 与 reference digest，不提交 WAV。
 
-2026-07-26 的 [`gate-0c-results.json`](gate-0c-results.json) 是历史拓扑资格记录。当时为核对多路独立性曾在忽略目录暂存短音频并只提交摘要；这些旧产物不是当前产品或 runner 的允许输出，也不能作为新的测试模板。2026-07-30 起，“永不持久化现场音频”是冻结语义。
+2026-07-26 的旧拓扑报告曾引用忽略目录中的短音频文件名，现已退役；[`gate-0c-results.json`](gate-0c-results.json) 只保留旧报告 SHA-256、已移除字段计数与当前权威预检 SHA-256，不能再作为执行结果或新测试模板。当前 runner 只输出 schema-v2 内存分析指标，默认写入 `.artifacts/gate-0c/report.json`。2026-07-30 起，“永不持久化现场音频”是冻结语义。
 
 ## 隐藏窗与用户手势
 

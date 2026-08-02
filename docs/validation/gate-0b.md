@@ -6,7 +6,7 @@
 >
 > **状态更新（2026-07-27）**：产品负责人正式改判——在写明机器基线与理由的前提下把 RTF 门槛重设为 `<0.60`，批准 `x-asr-160ms`（fast profile，numThreads=4）与离线 X-ASR 精修（替换 SenseVoice）。原判定与原门槛在本文与 `gate-0b-results.json` 中原样保留；改判记录见本文末尾 [正式改判](#2026-07-27-正式改判re-judgment) 与 `gate-0b-results.json` 的 `rejudgment` 块。
 
-机器为 Windows 11 23H2（22631.5768）、Intel Core Ultra 9 185H；所有模型均用 CPU、3 threads。CLI 和 Node N-API 均为 sherpa-onnx 1.13.4。判定摘要、归档 URL/SHA256 和流式数值见 [`gate-0b-results.json`](gate-0b-results.json)；逐条 CLI 输出见 [`gate-0b-cli-observations.json`](gate-0b-cli-observations.json)，由它直接生成的 CER/WER/标点指标见 [`gate-0b-controlled-metrics.json`](gate-0b-controlled-metrics.json)。模型、合成 WAV 和逐次原始 CLI 日志位于已忽略的 `models/gate-0b/`，每组日志由观测文件中的 SHA256 关联。
+机器为 Windows 11 23H2（22631.5768）、Intel Core Ultra 9 185H；所有模型均用 CPU、3 threads。CLI 和 Node N-API 均为 sherpa-onnx 1.13.4。判定摘要、归档 URL/SHA256 和流式数值见 [`gate-0b-results.json`](gate-0b-results.json)；[`gate-0b-cli-observations.json`](gate-0b-cli-observations.json) 只保留逐 case 指标与输出摘要哈希，由当时正文计算出的 CER/WER/标点指标在 [`gate-0b-controlled-metrics.json`](gate-0b-controlled-metrics.json) 中也只保留数值与正文摘要哈希。模型和生成测试语料位于已忽略的 `models/gate-0b/`；原始 CLI 输出只在内存中完成解析与摘要哈希，普通文件及标准输出只发布无正文投影。确需持久化的正文中间件只能写入固定私有目录 `models/gate-0b/private/`；受跟踪证据不保存正文、token 串或音频文件名。
 
 ## 判定
 
@@ -21,10 +21,10 @@
 
 ## 方法
 
-- `run-cli-suite.js` 用 v1.13.4 CLI 运行官方 WAV 与受控 WAV，把参数固定在源码中，并输出不含本机绝对路径的结构化观测；`rawOutputSha256` 关联本地逐组原始日志。
+- `run-cli-suite.js` 用 v1.13.4 CLI 运行官方测试语料与受控测试语料，把参数固定在源码中；受跟踪 schema-v2 投影只写 case ID、数值和 `transcriptSha256`/`resultSha256`。`rawOutputSha256` 在内存中计算，只绑定当轮 CLI 输出，不再持久化逐组原始日志。CER/WER 复算所需的唯一正文中间件只能写入固定、被 Git 忽略的 `models/gate-0b/private/`；其他仓库路径 fail closed。
 - `scripts/gate-0b/corpus.json` 定义 4 条非敏感语料：中文、英文、中英 code-switch、日期/ITN；`generate-corpus.ps1` 用 Windows SAPI 生成 16kHz mono PCM16 WAV 并记录 SHA256。
-- `streaming-bench.js` 用官方 v1.13.4 Node N-API，以墙钟节奏分块喂入，首个连续有声窗口到首个非空 partial 计算 P50/P95；同步处理耗时单独计算 RTF。
-- `evaluate-transcripts.js` 直接读取上述观测，对同一 WAV 的 X-ASR final 与 SenseVoice 输出计算 CER、英文 WER 和按标点数量计算的 F1，不经过人工抄录。
+- `streaming-bench.js` 用官方 v1.13.4 Node N-API，以墙钟节奏分块喂入，首个连续有声窗口到首个非空 partial 计算 P50/P95；同步处理耗时单独计算 RTF。文件与 stdout 都只输出 schema-v2 的 case ID、指标和正文哈希，不含 `wav`、partial/final 正文。
+- `evaluate-transcripts.js` 在忽略目录中直接读取同轮私有观测，对同一 case 的 X-ASR 首次稳定转写与 SenseVoice 输出计算 CER、英文 WER 和按标点数量计算的 F1；写入受跟踪目录前投影为只含指标与哈希的 schema-v2，不经过人工抄录。
 - 每个 480ms/40ms case 重复 5 次；边缘失败另以 20ms code-switch 重跑 5 次。
 
 ## 关键事实修正

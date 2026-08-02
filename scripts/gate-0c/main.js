@@ -9,7 +9,7 @@ const { analyzeSamples, evaluateCaptureChecks, evaluateGate0CDecision } = requir
 function parseArguments (argv) {
   const options = {
     workDir: '.artifacts/gate-0c',
-    report: 'docs/validation/gate-0c-results.json',
+    report: '.artifacts/gate-0c/report.json',
     durationMs: 2600
   }
   for (let index = 0; index < argv.length; index += 1) {

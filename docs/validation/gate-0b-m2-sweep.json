@@ -3,7 +3,7 @@
   "kind": "gate-0b-m2-sweep-summary",
   "sourceReport": "gate-0b-m2-sweep.md",
   "reproduce": "../../scripts/gate-0b/README.md",
-  "note": "Raw sweep outputs stay in the ignored runs directory; this summary is path-free and linked by rawOutputSha256.",
+  "note": "Sweep outputs are content-free; this summary stays path-free and binds each CLI run by rawOutputSha256.",
   "x160CliThreadSweep": {
     "model": "sherpa-onnx-x-asr-160ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
     "provider": "cpu",

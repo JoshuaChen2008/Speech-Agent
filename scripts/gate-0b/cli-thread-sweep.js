@@ -4,6 +4,7 @@
      node scripts/gate-0b/cli-thread-sweep.js `
        --asset-root models/gate-0b `
        --model x160 --threads 3,4,6 --wav-set both `
+       --private-transcript-output models/gate-0b/private/m2-sweep/x160-cli-threads.json `
        --output models/gate-0b/runs/m2-sweep/x160-cli-threads.json
    复用 cli-bench 的官方 CLI 调用（Gate 0B 的选择级 RTF 权威来源），只把
    numThreads 作为运行时候选配置展开；测量方法学（CLI、语料、解析）不变，
@@ -12,6 +13,8 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { runOnline } = require('./cli-bench')
+const { projectObservationReport } = require('./evidence-projection')
+const { resolvePrivateTranscriptOutputPath } = require('./private-output-policy')
 
 const MODELS = {
   x480: {
@@ -26,10 +29,10 @@ const MODELS = {
 const CONTROLLED = ['zh-roadmap', 'en-onboarding', 'zh-en-code-switch', 'zh-date-itn']
 
 function parseArguments (argv) {
-  const options = { assetRoot: null, model: 'x160', threads: [3, 4, 6], wavSet: 'both', output: null }
+  const options = { assetRoot: null, model: 'x160', threads: [3, 4, 6], wavSet: 'both', output: null, privateTranscriptOutput: null }
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index + 1]
-    if (argv[index] === '--asset-root') { options.assetRoot = value; index += 1 } else if (argv[index] === '--model') { options.model = value; index += 1 } else if (argv[index] === '--threads') { options.threads = String(value).split(',').map(Number); index += 1 } else if (argv[index] === '--wav-set') { options.wavSet = value; index += 1 } else if (argv[index] === '--output') { options.output = value; index += 1 } else throw new Error(`Unknown argument: ${argv[index]}`)
+    if (argv[index] === '--asset-root') { options.assetRoot = value; index += 1 } else if (argv[index] === '--model') { options.model = value; index += 1 } else if (argv[index] === '--threads') { options.threads = String(value).split(',').map(Number); index += 1 } else if (argv[index] === '--wav-set') { options.wavSet = value; index += 1 } else if (argv[index] === '--output') { options.output = value; index += 1 } else if (argv[index] === '--private-transcript-output') { options.privateTranscriptOutput = value; index += 1 } else throw new Error(`Unknown argument: ${argv[index]}`)
   }
   if (!options.assetRoot || !options.output) throw new Error('--asset-root and --output are required')
   if (!MODELS[options.model]) throw new Error(`--model must be one of: ${Object.keys(MODELS).join(', ')}`)
@@ -40,6 +43,9 @@ function parseArguments (argv) {
 
 function main () {
   const options = parseArguments(process.argv.slice(2))
+  const privateTranscriptPath = options.privateTranscriptOutput
+    ? resolvePrivateTranscriptOutputPath(options.privateTranscriptOutput)
+    : null
   const root = path.resolve(options.assetRoot)
   const cliBin = path.join(root, 'extracted', 'cli', 'sherpa-onnx-v1.13.4-win-x64-shared-MD-Release', 'bin')
   const spec = MODELS[options.model]
@@ -84,7 +90,11 @@ function main () {
   }
   const outputPath = path.resolve(options.output)
   fs.mkdirSync(path.dirname(outputPath), { recursive: true })
-  fs.writeFileSync(outputPath, JSON.stringify(report, null, 2) + '\n')
+  fs.writeFileSync(outputPath, JSON.stringify(projectObservationReport(report), null, 2) + '\n')
+  if (privateTranscriptPath) {
+    fs.mkdirSync(path.dirname(privateTranscriptPath), { recursive: true })
+    fs.writeFileSync(privateTranscriptPath, JSON.stringify(report, null, 2) + '\n')
+  }
 }
 
 try {

@@ -4,12 +4,14 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const { runOnline, runSenseVoice } = require('./cli-bench')
+const { projectObservationReport } = require('./evidence-projection')
+const { resolvePrivateTranscriptOutputPath } = require('./private-output-policy')
 
 function parseArguments (argv) {
-  const options = { assetRoot: null, output: null, rawDir: null }
+  const options = { assetRoot: null, output: null, privateTranscriptOutput: null }
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index + 1]
-    if (argv[index] === '--asset-root') { options.assetRoot = value; index += 1 } else if (argv[index] === '--output') { options.output = value; index += 1 } else if (argv[index] === '--raw-dir') { options.rawDir = value; index += 1 } else throw new Error(`Unknown argument: ${argv[index]}`)
+    if (argv[index] === '--asset-root') { options.assetRoot = value; index += 1 } else if (argv[index] === '--output') { options.output = value; index += 1 } else if (argv[index] === '--private-transcript-output') { options.privateTranscriptOutput = value; index += 1 } else throw new Error(`Unknown argument: ${argv[index]}`)
   }
   if (!options.assetRoot || !options.output) throw new Error('--asset-root and --output are required')
   return options
@@ -25,6 +27,9 @@ function wavs (directory, names) {
 
 function main () {
   const options = parseArguments(process.argv.slice(2))
+  const privateTranscriptPath = options.privateTranscriptOutput
+    ? resolvePrivateTranscriptOutputPath(options.privateTranscriptOutput)
+    : null
   const root = path.resolve(options.assetRoot)
   const cliBin = path.join(root, 'extracted', 'cli', 'sherpa-onnx-v1.13.4-win-x64-shared-MD-Release', 'bin')
   const x480 = path.join(root, 'extracted', 'x-asr', 'sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05')
@@ -70,11 +75,9 @@ function main () {
   }))
 
   const runs = []
-  const raw = []
   for (const config of online) {
     const result = runOnline(config)
     runs.push(result.report)
-    raw.push({ id: config.id, output: result.rawOutput })
   }
 
   const senseResult = runSenseVoice({
@@ -85,7 +88,6 @@ function main () {
     wavs: wavs(corpus, controlledNames)
   })
   runs.push(senseResult.report)
-  raw.push({ id: 'sense-controlled', output: senseResult.rawOutput })
 
   const version = require('node:child_process').spawnSync(path.join(cliBin, 'sherpa-onnx-version.exe'), [], { cwd: cliBin, encoding: 'utf8', windowsHide: true })
   if (version.status !== 0) throw new Error('sherpa-onnx-version.exe failed')
@@ -100,12 +102,11 @@ function main () {
 
   const outputPath = path.resolve(options.output)
   fs.mkdirSync(path.dirname(outputPath), { recursive: true })
-  fs.writeFileSync(outputPath, JSON.stringify(report, null, 2) + '\n')
+  fs.writeFileSync(outputPath, JSON.stringify(projectObservationReport(report), null, 2) + '\n')
 
-  if (options.rawDir) {
-    const rawDirectory = path.resolve(options.rawDir)
-    fs.mkdirSync(rawDirectory, { recursive: true })
-    for (const item of raw) fs.writeFileSync(path.join(rawDirectory, `${item.id}.log`), item.output)
+  if (privateTranscriptPath) {
+    fs.mkdirSync(path.dirname(privateTranscriptPath), { recursive: true })
+    fs.writeFileSync(privateTranscriptPath, JSON.stringify(report, null, 2) + '\n')
   }
 }
 

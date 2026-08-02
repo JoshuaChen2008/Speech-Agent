@@ -6,6 +6,7 @@ const { performance } = require('node:perf_hooks')
 
 const sherpa = require('sherpa-onnx-node')
 const { percentile } = require('./metrics')
+const { projectStreamingBenchReport } = require('./evidence-projection')
 
 function parseArguments (argv) {
   const result = { wavs: [], runs: 5, chunkMs: 40, pace: true, output: null, modelDir: null, modelType: 'zipformer2', numThreads: 3 }
@@ -186,7 +187,9 @@ async function main () {
     modelLoadMs,
     cases
   }
-  const json = JSON.stringify(report, null, 2)
+  /* File and stdout share the same content-free projection. Captions are used
+     only in memory to compute per-run digests. */
+  const json = JSON.stringify(projectStreamingBenchReport(report), null, 2)
   if (options.output) {
     fs.mkdirSync(path.dirname(path.resolve(options.output)), { recursive: true })
     fs.writeFileSync(path.resolve(options.output), json + '\n')

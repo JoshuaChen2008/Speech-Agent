@@ -9,7 +9,9 @@
 > `x-asr-160ms@t4`（fast profile）并重设 RTF 门槛，理由与适用条件见
 > [`gate-0b.md`](gate-0b.md) 改判节。本扫描的判定所需数字已提取为 tracked 的
 > [`gate-0b-m2-sweep.json`](gate-0b-m2-sweep.json)（`summarize-m2-sweep.js` 生成，
-> path-free，以 rawOutputSha256 回链忽略目录的原始输出）。
+> path-free，以 rawOutputSha256 绑定当轮内存中的 CLI 输出）。当前 M2 runner 的普通
+> 输出在生成处已投影为 ID、指标与哈希；M3 必需的线程 sweep 正文副本只能进入
+> `models/gate-0b/private/`，不得写入普通 runs、validation 或 artifacts。
 >
 > 改判当日另补测了 x160@t4 的**全语料**首 partial（本文只测过 code-switch 一条；
 > 摘要中的 `x160FirstPartialBench`）：三条 697–856ms 通过，zh-date-itn P95
@@ -27,7 +29,7 @@
 
 - 机器：Intel Core Ultra 9 185H（16 核 / 22 逻辑，6P+8E+2LPE 混合架构），CPU provider
 - 引擎：sherpa-onnx v1.13.4（CLI 与 N-API 同版本）
-- 原始结果：`models/gate-0b/runs/m2-sweep/`（被忽略目录，本文档记录判定所需数字）
+- 内容安全的扫描结果：`models/gate-0b/runs/m2-sweep/`；M3 必需的正文中间件：`models/gate-0b/private/m2-sweep/`（两者均被忽略，本文档只记录判定所需数字）
 
 ## 480ms punct int8：首 partial 是架构下限，线程无关
 

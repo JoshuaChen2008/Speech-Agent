@@ -1,6 +1,7 @@
 'use strict'
 
 const assert = require('node:assert/strict')
+const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const test = require('node:test')
@@ -145,31 +146,22 @@ test('current Gate 0C runner analyzes samples in memory and contains no audio wr
   assert.doesNotMatch(main, /encodePcm16Wav|parsePcm16Wav|\.wav|save-capture/)
 })
 
-test('published Gate 0C evidence records three independent passing routes without local paths', () => {
+test('superseded Gate 0C evidence is a content-free retirement receipt bound to the current preflight', () => {
   const reportPath = path.resolve(__dirname, '../../docs/validation/gate-0c-results.json')
   const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'))
-  assert.equal(report.result, 'pass')
-  assert.equal(report.decision.hiddenSchemePass, true)
-  assert.equal(report.decision.requiredVisibilityStagesPresent, true)
-  assert.equal(report.decision.displayRequestPass, true)
-  assert.equal(report.decision.artifactHashesIndependent, true)
-  assert.equal(report.decision.selectedTopology, 'hidden-audio-host')
-  assert.equal(report.capture.mic.selection, 'physical-preferred')
-  assert.equal(report.capture.micProbe.selection, 'virtual-cable')
-  assert.equal(report.capture.micProbe.capture.playback.output.selected, 'virtual-cable')
-  assert.ok(report.displayRequests.some((request) => request.userGesture === true && request.frameMatchedHost === true && request.callbackAudio === 'loopback'))
-  assert.ok(report.window.visibility.every((event) => event.visible === false))
-  for (const sourceId of ['loopback', 'mic', 'mic-probe']) {
-    assert.equal(report.artifacts[sourceId].checks.pass, true)
-    assert.equal(report.artifacts[sourceId].checks.formatPass, true)
-    assert.equal(report.artifacts[sourceId].format.sampleRate, 16000)
-    assert.equal(report.artifacts[sourceId].format.channels, 1)
-    assert.equal(report.artifacts[sourceId].format.bitsPerSample, 16)
-    assert.ok(report.artifacts[sourceId].analysis.acRmsDbfs > -65)
-    assert.match(report.artifacts[sourceId].artifact.sha256, /^[a-f0-9]{64}$/)
-  }
-  assert.notEqual(report.artifacts.loopback.artifact.sha256, report.artifacts.mic.artifact.sha256)
-  assert.notEqual(report.artifacts.mic.artifact.sha256, report.artifacts['mic-probe'].artifact.sha256)
-  assert.notEqual(report.artifacts.loopback.artifact.sha256, report.artifacts['mic-probe'].artifact.sha256)
-  assert.doesNotMatch(JSON.stringify(report), /[A-Za-z]:\\\\|Joshua|A1Project|Speech-Agent2\.0/i)
+  const currentPreflight = fs.readFileSync(path.resolve(__dirname, '../../docs/validation/i2-live-v5/gate-0c-preflight.json'))
+
+  assert.deepEqual(Object.keys(report).sort(), [
+    'kind', 'privacyMigration', 'replacementEvidenceSha256', 'retiredEvidenceSha256', 'schemaVersion'
+  ].sort())
+  assert.equal(report.schemaVersion, 1)
+  assert.equal(report.kind, 'gate-0c-legacy-evidence-retirement')
+  assert.match(report.retiredEvidenceSha256, /^[a-f0-9]{64}$/)
+  assert.equal(report.replacementEvidenceSha256, crypto.createHash('sha256').update(currentPreflight).digest('hex'))
+  assert.deepEqual(report.privacyMigration, {
+    audioFileNameFieldsRemoved: 6,
+    replacementUsesMemoryOnlyAnalysis: true,
+    transcriptTextFieldsRemoved: 0
+  })
+  assert.doesNotMatch(JSON.stringify(report), /[A-Za-z]:\\\\|Joshua|A1Project|Speech-Agent2\.0|\.wav|"(?:text|file|wav)"\s*:/i)
 })

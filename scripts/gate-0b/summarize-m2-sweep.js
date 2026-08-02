@@ -4,9 +4,9 @@
      node scripts/gate-0b/summarize-m2-sweep.js `
        --sweep-dir models/gate-0b/runs/m2-sweep `
        --output docs/validation/gate-0b-m2-sweep.json
-   原始扫描输出（含逐 run 文本与 token 细节）留在被忽略目录；本脚本只提取
+   当前扫描输出已在生成处投影为只含 ID、数字与哈希；本脚本再提取
    re-judgment 判定所需的数字（RTF、首 partial P95、audioNeeded），并以
-   rawOutputSha256 / 逐 case 数值保持可回链。输出必须 path-free。
+   rawOutputSha256 / 逐 case 数值保持同轮绑定。输出必须 path-free。
    160ms-t4-c40.json 是 M4 re-judgment 期间补测的 x160@t4 全语料首 partial
    基准（streaming-bench.js 同方法学），存在时并入摘要。 */
 
@@ -66,7 +66,7 @@ function main () {
     kind: 'gate-0b-m2-sweep-summary',
     sourceReport: 'gate-0b-m2-sweep.md',
     reproduce: '../../scripts/gate-0b/README.md',
-    note: 'Raw sweep outputs stay in the ignored runs directory; this summary is path-free and linked by rawOutputSha256.',
+    note: 'Sweep outputs are content-free; this summary stays path-free and binds each CLI run by rawOutputSha256.',
     x160CliThreadSweep: summarizeX160(threadSweep),
     x480FirstPartialSweep: {
       model: benches[0].model,

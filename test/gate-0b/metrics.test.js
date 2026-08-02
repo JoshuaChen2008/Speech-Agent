@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 
@@ -15,6 +16,26 @@ const {
 } = require('../../scripts/gate-0b/metrics')
 const { evaluate, inputFromObservations } = require('../../scripts/gate-0b/evaluate-transcripts')
 const { parseOnlineOutput, parseSenseVoiceOutput } = require('../../scripts/gate-0b/cli-bench')
+const {
+  projectObservationReport,
+  projectStreamingBenchReport
+} = require('../../scripts/gate-0b/evidence-projection')
+const { resolvePrivateTranscriptOutputPath } = require('../../scripts/gate-0b/private-output-policy')
+
+const SHA256 = /^[a-f0-9]{64}$/
+
+function assertContentFreeEvaluation (evaluation) {
+  assert.equal(evaluation.schemaVersion, 2)
+  assert.ok(Array.isArray(evaluation.cases) && evaluation.cases.length > 0)
+  for (const item of evaluation.cases) {
+    assert.match(item.referenceSha256, SHA256)
+    assert.equal(Object.hasOwn(item, 'reference'), false)
+    for (const candidate of [item.xAsr, item.senseVoice]) {
+      assert.match(candidate.transcriptSha256, SHA256)
+      assert.equal(Object.hasOwn(candidate, 'text'), false)
+    }
+  }
+}
 
 test('editDistance handles insertions, deletions, and substitutions', () => {
   assert.equal(editDistance('kitten', 'sitting'), 3)
@@ -93,6 +114,125 @@ test('refinement input is built from structured observations', () => {
   })
 })
 
+test('published observation projection replaces transcript bodies and audio names with digests', () => {
+  const projected = projectObservationReport({
+    schemaVersion: 1,
+    generatedAt: '2026-08-02T00:00:00.000Z',
+    provider: 'cpu',
+    numThreads: 1,
+    runs: [{
+      id: 'synthetic',
+      rawOutputSha256: 'a'.repeat(64),
+      samples: [{
+        wav: 'case-one.wav',
+        text: 'synthetic transcript',
+        result: { text: 'synthetic transcript', tokens: ['synthetic', ' transcript'] },
+        rtf: 0.1
+      }]
+    }]
+  })
+  const sample = projected.runs[0].samples[0]
+  assert.deepEqual(Object.keys(sample).sort(), ['caseId', 'resultSha256', 'rtf', 'transcriptSha256'].sort())
+  assert.equal(sample.caseId, 'case-one')
+  assert.match(sample.transcriptSha256, SHA256)
+  assert.match(sample.resultSha256, SHA256)
+  assert.doesNotMatch(JSON.stringify(projected), /synthetic transcript|\.wav|"(?:text|wav)"\s*:/i)
+})
+
+test('streaming benchmark projection keeps timings and digests without transcript or audio names', () => {
+  const projected = projectStreamingBenchReport({
+    schemaVersion: 1,
+    engine: 'synthetic-engine',
+    cases: [{
+      id: 'case-one',
+      wav: 'case-one.wav',
+      sampleRate: 16000,
+      runs: [{
+        firstPartial: {
+          text: 'private first partial',
+          wallFromStartMs: 250,
+          audioNeededAfterSpeechOnsetMs: 200
+        },
+        finalText: 'private final transcript',
+        processingMs: 12,
+        processingRtf: 0.05
+      }]
+    }]
+  })
+  assert.equal(projected.schemaVersion, 2)
+  assert.equal(Object.hasOwn(projected.cases[0], 'wav'), false)
+  assert.equal(Object.hasOwn(projected.cases[0].runs[0], 'finalText'), false)
+  assert.equal(Object.hasOwn(projected.cases[0].runs[0].firstPartial, 'text'), false)
+  assert.match(projected.cases[0].runs[0].firstPartial.transcriptSha256, SHA256)
+  assert.match(projected.cases[0].runs[0].finalTranscriptSha256, SHA256)
+  assert.equal(projected.cases[0].runs[0].firstPartial.wallFromStartMs, 250)
+  assert.doesNotMatch(JSON.stringify(projected), /private first partial|private final transcript|\.wav/i)
+})
+
+test('Gate 0B raw content persistence is fail-closed to one ignored private directory', () => {
+  const projectRoot = path.resolve(__dirname, '../..')
+  const allowed = path.join(projectRoot, 'models', 'gate-0b', 'private', 'cli-observations.json')
+  assert.equal(resolvePrivateTranscriptOutputPath(allowed, projectRoot), allowed)
+
+  for (const rejected of [
+    path.join(projectRoot, 'private-observations.json'),
+    path.join(projectRoot, 'docs', 'validation', 'private-observations.json'),
+    path.join(projectRoot, '.artifacts', 'private-observations.json'),
+    path.join(projectRoot, 'scripts', 'gate-0b', 'private-observations.json'),
+    path.join(projectRoot, 'models', 'gate-0b', 'runs', 'private-observations.json'),
+    path.join(projectRoot, 'models', 'gate-0b', 'private', '..', 'escaped.json')
+  ]) {
+    assert.throws(
+      () => resolvePrivateTranscriptOutputPath(rejected, projectRoot),
+      /models[\\/]gate-0b[\\/]private/
+    )
+  }
+  assert.throws(
+    () => resolvePrivateTranscriptOutputPath(
+      path.join(projectRoot, 'models', 'gate-0b', 'private', 'not-json.log'),
+      projectRoot
+    ),
+    /\.json/
+  )
+
+  const ignore = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8')
+  assert.match(ignore, /^models\/$/m)
+  const suiteSource = fs.readFileSync(path.join(projectRoot, 'scripts/gate-0b/run-cli-suite.js'), 'utf8')
+  const threadSweepSource = fs.readFileSync(path.join(projectRoot, 'scripts/gate-0b/cli-thread-sweep.js'), 'utf8')
+  const streamingSource = fs.readFileSync(path.join(projectRoot, 'scripts/gate-0b/streaming-bench.js'), 'utf8')
+  const m3Source = fs.readFileSync(path.join(projectRoot, 'scripts/gate-0b/m3-offline-refine.js'), 'utf8')
+  assert.match(suiteSource, /resolvePrivateTranscriptOutputPath/)
+  assert.match(threadSweepSource, /resolvePrivateTranscriptOutputPath/)
+  assert.match(threadSweepSource, /projectObservationReport\(report\)/)
+  assert.match(streamingSource, /projectStreamingBenchReport\(report\)/)
+  assert.doesNotMatch(suiteSource, /--raw-dir/)
+  assert.doesNotMatch(m3Source, /--raw-dir/)
+})
+
+test('private Gate 0B output rejects an existing symlink or junction escape', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-0b-private-policy-'))
+  try {
+    const privateRoot = path.join(tempRoot, 'models', 'gate-0b', 'private')
+    const trackedTarget = path.join(tempRoot, 'docs', 'validation')
+    fs.mkdirSync(privateRoot, { recursive: true })
+    fs.mkdirSync(trackedTarget, { recursive: true })
+    const escape = path.join(privateRoot, 'escape')
+    fs.symlinkSync(trackedTarget, escape, process.platform === 'win32' ? 'junction' : 'dir')
+    assert.throws(
+      () => resolvePrivateTranscriptOutputPath(path.join(escape, 'leak.json'), tempRoot),
+      /symbolic link|junction|reparse/i
+    )
+    fs.rmSync(trackedTarget, { recursive: true, force: true })
+    assert.throws(
+      () => resolvePrivateTranscriptOutputPath(path.join(escape, 'dangling-leak.json'), tempRoot),
+      /symbolic link|junction|reparse/i,
+      'dangling reparse points must be inspected with lstat instead of existsSync'
+    )
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
 test('published Gate 0B summary matches the structured CLI evidence', () => {
   const validationDir = path.resolve(__dirname, '../../docs/validation')
   const observations = JSON.parse(fs.readFileSync(path.join(validationDir, 'gate-0b-cli-observations.json'), 'utf8'))
@@ -100,6 +240,21 @@ test('published Gate 0B summary matches the structured CLI evidence', () => {
   const summary = JSON.parse(fs.readFileSync(path.join(validationDir, 'gate-0b-results.json'), 'utf8'))
   const run = (id) => observations.runs.find((item) => item.id === id)
   const candidate = (id) => summary.realtimeCandidates.find((item) => item.id === id)
+
+  assert.equal(observations.schemaVersion, 2)
+  assert.equal(metrics.schemaVersion, 2)
+  assertContentFreeEvaluation(metrics)
+  for (const observationRun of observations.runs) {
+    assert.match(observationRun.rawOutputSha256, SHA256)
+    for (const sample of observationRun.samples) {
+      assert.match(sample.caseId, /^[a-z0-9-]+$/)
+      assert.match(sample.transcriptSha256, SHA256)
+      assert.match(sample.resultSha256, SHA256)
+      assert.equal(Object.hasOwn(sample, 'wav'), false)
+      assert.equal(Object.hasOwn(sample, 'text'), false)
+      assert.equal(Object.hasOwn(sample, 'result'), false)
+    }
+  }
 
   assert.deepEqual(candidate('x-asr-480ms').officialSampleRtf, run('x480-official').samples.map((item) => item.rtf))
   assert.deepEqual(candidate('x-asr-480ms').controlledSampleRtf, run('x480-controlled').samples.map((item) => item.rtf))
@@ -113,6 +268,7 @@ test('published Gate 0B summary matches the structured CLI evidence', () => {
 
   const serialized = JSON.stringify(observations)
   assert.doesNotMatch(serialized, /[A-Za-z]:\\\\|Joshua|A1Project|Speech-Agent2\.0/i)
+  assert.doesNotMatch(serialized, /"(?:text|wav)"\s*:|\.wav|"tokens"\s*:\s*\[/i)
 })
 
 test('Gate 0B re-judgment decision matches the tracked M2/M3 evidence', () => {
@@ -121,6 +277,9 @@ test('Gate 0B re-judgment decision matches the tracked M2/M3 evidence', () => {
   const sweep = JSON.parse(fs.readFileSync(path.join(validationDir, 'gate-0b-m2-sweep.json'), 'utf8'))
   const m3 = JSON.parse(fs.readFileSync(path.join(validationDir, 'gate-0b-m3-evaluation.json'), 'utf8'))
   const rejudgment = summary.rejudgment
+
+  assert.equal(m3.schemaVersion, 2)
+  for (const evaluation of Object.values(m3.evaluations)) assertContentFreeEvaluation(evaluation)
 
   // A non-empty approval may only exist alongside the explicit re-judgment record,
   // and the original FAIL must stay on the record.
@@ -194,4 +353,5 @@ test('Gate 0B re-judgment decision matches the tracked M2/M3 evidence', () => {
 
   const serialized = JSON.stringify(sweep) + JSON.stringify(m3)
   assert.doesNotMatch(serialized, /[A-Za-z]:\\\\|Joshua|A1Project|Speech-Agent2\.0/i)
+  assert.doesNotMatch(JSON.stringify(m3), /"(?:text|reference|wav)"\s*:|\.wav/i)
 })
