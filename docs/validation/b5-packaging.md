@@ -1,7 +1,7 @@
 # B5 打包态确定性资格
 
 - 日期：2026-08-02
-- 状态：当前源码的构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；远端 workflow 已接线，但尚未在本工作树对应提交上取得 GitHub Actions 结果
+- 状态：当前源码的构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；远端 run `30750568366` 已在 revision `2242103eb917f2afbfe81c7c8df788852bb36ebc` 执行，但因锁文件安装后缺少 Electron runtime 而失败，修复为已决定
 - 发布边界：同一隔离 `userData` 的离线复启发生在测试 package；NSIS 卸载只验证隔离安装目录与无关 APPDATA 哨兵。正式 release 的 I4 非音频专用干净机尚未执行，因此尚未达到实机验收完成或发布验收完成
 
 ## 精确候选
@@ -70,9 +70,12 @@ workflow/job/event、`package-lock.json`/workflow digest、installer SHA，以�
 release layout 和 NSIS 报告 SHA；strict verifier 随后重新读取关键报告和文件并核对跨报告关系。
 上传名包含 revision、run ID 与 attempt。失败运行仍上传已有诊断，但不会生成这份最终索引。
 
-writer/verifier、workflow 顺序与本地当前候选的交叉哈希探针为实现完成/尚未验收。当前工作树
-尚未提交/推送，因此没有其对应的远端索引；本地构造相同 JSON 也不带远端来源语境或签名，
-不能冒充 GitHub run 证据。
+writer/verifier、workflow 顺序与本地当前候选的交叉哈希探针为实现完成·尚未验收。远端 run
+`30750568366` 精确绑定 revision `2242103eb917f2afbfe81c7c8df788852bb36ebc`：`npm ci`
+成功后，`node_modules/electron/dist/electron.exe` 不存在，首个字幕布局步骤无法启动；后续存储、
+产品壳、打包、回归与最终 provenance 索引均未执行。该结果只证明 Electron runtime 供给前置缺口，
+不构成字幕布局或产品断言失败。只有显式安装并校验锁定的 Electron `43.2.0` 后完整 workflow
+成功，才可取得对应远端索引；本地构造相同 JSON 也不带远端来源语境或签名，不能冒充 GitHub run 证据。
 
 这条旅程使用受控小资源和 fake ASR，不访问物理声卡、不保存音频，也不冒充公网真实张量、
 I2、真实两小时 I3 或 I4。

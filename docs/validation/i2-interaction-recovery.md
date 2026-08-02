@@ -36,6 +36,21 @@ node --test --experimental-test-isolation=none `
   test/integration/caption-session-journey.test.js
 ```
 
+## schema-v2 实机恢复报告登记
+
+I2 interaction 报告将升级为兼容旧 v1 的 schema-v2，并增加
+`device-removal-retry` 与 `sleep-wake-retry`。当前状态为已决定：要求已登记，runner 与 verifier
+尚未实现，因此不能据此产生新的实机验收结论。
+
+两个场景都只允许 runner 等待操作者动作。设备场景由操作者实际拔出或禁用当前端点，睡眠场景由
+操作者实际触发 Windows 睡眠并唤醒；completion 只证明动作已经执行。报告只有同时观察到对应的
+`AUDIO_TRACK_ENDED` 或 `SYSTEM_SUSPEND`、capture 已释放、没有自动重新采集、用户明确 Retry 后
+恢复监听、再次出现字幕以及 SQLite、sequence、transport 边界后，才能得到该场景的通过结论。
+completion 缺失必须失败，但 completion 单独存在也必须 fail closed。
+
+schema-v2 继续执行 SEM-F14：只写指标、枚举和哈希，拒绝字幕正文、PCM、现场音频文件、设备名、
+本地绝对路径、绝对单调时刻和时钟偏移。
+
 ## 可执行的实机交互 runner
 
 `run-i2-interaction.ps1` 复用 I2 live-caption smoke 的真实 `BrowserWindow`
@@ -88,7 +103,7 @@ node scripts/complete-i2-dwm-drag.js `
 下列观察不能由模拟 `track-ended`、假 Electron 边界或静态代码替代，且执行前需要有效的音频/设备/睡眠授权：
 
 1. 真实 pause/refine：播放受控语料，暂停于定稿/精修交界，确认恢复后出现对应 refined，且 transport 为零丢失。
-2. Overlay 拖动：持续真字幕期间拖动字幕条和工具条，确认未闪烁、窗口位置正确、字幕连续；以运行结束的 transport 零丢失证明 PCM 链路未断帧。当前没有能替代人工视觉判定的无头断言。
+2. Overlay 拖动：在真实音频会话持续显示字幕期间拖动字幕条和工具条，确认未闪烁、窗口位置正确、字幕连续；以运行结束的 transport 零丢失证明 PCM 链路未断帧。当前没有能替代人工视觉判定的无头断言。
 3. 设备变更/移除：活动会话中实际拔出或禁用当前输入/回环设备，确认出现 `AUDIO_TRACK_ENDED`（或明确的采集失败）、capture 已停止；恢复设备后仅通过 Retry 重新开始，再以受控语料验证字幕连续。
 4. Worker 硬崩溃：在真实模型会话中终止 exact realtime child，确认无后续字幕、会话进入可重试错误；Retry 后运行新 child，并以同一 session 的续增 sequence、SQLite 和零 transport 损失闭环。
 5. 睡眠/唤醒：活动会话运行时由操作者触发一次 Windows 睡眠并唤醒；确认 `SYSTEM_SUSPEND`、不会自动重采集，设备恢复后点击 Retry 才重连。不得把 OS 休眠自动化成后台操作。

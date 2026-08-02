@@ -47,14 +47,17 @@ Live Subtitle 的数据边界是设计的一部分：
 | 范围 | 状态 | 说明 |
 |---|---|---|
 | 固定高度字幕流、版本隔离、可选精修及历史 | 联合验收完成 | 本地确定性范围已有跨模块用户旅程和打包态证据。 |
-| 本地非音频回归 | 联合验收完成 | core 410、integration 27、evidence 158，共 595 项。 |
+| 本地非音频回归 | 联合验收完成 | core 410、integration 27、evidence 162，共 599 项。 |
+| 远端 Windows CI 资格 | 实现完成·尚未验收 | provenance/workflow 资格链路已实现；revision `2242103…` 的 run `30750568366` 因 Electron runtime 未供给而在首个布局步骤失败，显式供给与前置校验修复为已决定。 |
 | 36 组合 DWM、主题、透明窗和异缩放双屏观察 | 实现完成·尚未验收 | runner 和严格 verifier 已就位，仍需可见实机矩阵。 |
 | 真实 `loopback` / `mic` 性能与两小时稳定性 | 实现完成·尚未验收 | 当前冻结 P95 仍高于 `<1000 ms` 门槛，真实两小时音频尚未执行。 |
-| 干净 Windows 安装、真实 `userData` 与 SmartScreen | 实现完成·尚未验收 | 需要无仓库、无 Node、无既有数据的标准用户机器。 |
+| I4 非音频干净 Windows 子门禁 | 实现完成·尚未验收 | runner/verifier 已实现；需要无仓库、无 Node、无既有数据的标准用户机器复核真实 `userData` 与安装生命周期。 |
+| 完整 I4 干净机发布验收 | 已决定 | `loopback`/`mic` 音频 child、strict summary 与不含仓库/Node 的移交包尚未实现；SmartScreen 与真实来源旅程仍归此门禁。 |
 | Agent 系统 | 已决定 | 摘要、增强文本和 Agent Loop 后置，不阻断字幕 MVP。 |
 | 代码签名 | 已决定 | 内部 MVP 阶段暂缓，当前安装器不是公开签名版本。 |
 
 这里的“联合验收完成”只描述已经取得确定性证据的范围，不代表真实声卡、物理麦克风、DWM 行为或干净机发布验收完成。
+各门禁入口、环境、发声边界、证据位置和下一动作见[字幕 MVP 验收导航](docs/validation/README.md)。
 
 ## 运行项目
 

@@ -265,7 +265,7 @@ realtime/refine worker
 - 字幕应用运行时以 **45 秒**作为优雅收束结束/升级触发线，用于容纳 worker 的两阶段收束、字幕 flush 与 storage shutdown；ModelManager 的 **5 秒**收束与它并行。触线后进入 termination，但仍必须等待 exact child 收殓，因此 45 秒不是硬退出上限。迟到的原始 shutdown 会加入同一 termination promise，不得再次 flush/关闭或启动第二条退出路径。
 - 所有 UtilityProcess 都必须注册 `error` listener；fatal 诊断只发布固定角色和类型，不保存 Electron/V8 report、location、本地路径、stack、字幕或 PCM。`serviceName` 用于主进程的角色级 `child-process-gone` 归因，不把原始 details 透给 renderer；可见 renderer 与隐藏 audio host 由各自 WebContents role 归因。
 - 可见 renderer 重载：读取完整 snapshot 和当前 caption state，不依赖历史广播。
-- 系统睡眠/唤醒：重建 media tracks，校正单调时间基准并记录 session gap。
+- 系统睡眠/唤醒：挂起时发布 `SYSTEM_SUSPEND` 并释放 media tracks；唤醒后只校正单调时间基准并保留 session gap，不自动重新采集。用户明确 Retry 后才沿同一会话/cursor 重建 audio host、worker 与 media tracks。实际设备轨道结束同理发布 `AUDIO_TRACK_ENDED`、先释放 capture、等待设备恢复与明确 Retry。
 - 退出：停止接收命令 → 停 tracks → 处理/放弃实时队列 → 提交/报告字幕事务 → 有界 checkpoint → graceful shutdown workers → 必要时只终止并收殓 exact child → 关闭窗口。Agent 未完成任务按 A1 的可靠消费协议保留，不能无限阻塞退出；禁止按进程名批量结束 Electron。
 
 2026-07-31 的真实模型活跃诊断已用批准 bundle 连续三轮驱动 online stream、Silero VAD
@@ -288,7 +288,7 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 
 ## 10. 后端验收顺序
 
-每一步都必须同时具有局部测试和跨模块用户旅程；只有单元测试时只能标记“实现完成 / 尚未验收”。完整测试分层与场景矩阵见 [`testing-strategy.md`](testing-strategy.md)。
+每一步都必须同时具有局部测试和跨模块用户旅程；只有单元测试时只能标记“实现完成·尚未验收”。完整测试分层与场景矩阵见 [`testing-strategy.md`](testing-strategy.md)。
 
 1. contract fixtures 和 reducer/state-machine 测试，并由联合 CI 验证同一事件在 coordinator、renderer 与存储之间一致。
 2. 内存音频指标、时间戳和背压指标；禁止 dump 现场采集音频。

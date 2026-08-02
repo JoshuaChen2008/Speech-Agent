@@ -151,7 +151,7 @@ test('Windows CI writes and verifies provenance only after the full regression a
   ]) assert.match(workflow, new RegExp(token.replaceAll('$', '\\$')))
 })
 
-test('SEM-T03 and J9-CI register exact revision provenance without overclaiming remote trust', () => {
+test('SEM-T03 and J9-CI register the failed exact revision and Electron runtime prerequisite', () => {
   const semantic = fs.readFileSync(path.join(ROOT, 'docs', 'semantic-contract.md'), 'utf8')
   const strategy = fs.readFileSync(path.join(ROOT, 'docs', 'testing-strategy.md'), 'utf8')
   const semT03 = semantic.split(/\r?\n/).find((line) => line.includes('**SEM-T03**'))
@@ -160,6 +160,9 @@ test('SEM-T03 and J9-CI register exact revision provenance without overclaiming 
   assert.match(semT03, /checkout revision/)
   assert.match(semT03, /run ID\/attempt/)
   assert.match(semT03, /不带签名/)
+  assert.match(semT03, /electron\.exe/)
+  assert.match(semT03, /30750568366/)
   assert.match(j9Ci, /exact checkout revision/)
-  assert.match(j9Ci, /尚未提交\/推送/)
+  assert.match(j9Ci, /30750568366/)
+  assert.match(j9Ci, /electron\.exe/)
 })
