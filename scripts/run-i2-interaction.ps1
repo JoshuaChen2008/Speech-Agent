@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('pause-refine', 'worker-crash-retry', 'dwm-drag')]
+  [ValidateSet('pause-refine', 'worker-crash-retry', 'dwm-drag', 'device-removal-retry', 'sleep-wake-retry')]
   [string]$Scenario,
 
   [Parameter(Mandatory = $true)]
@@ -67,6 +67,15 @@ if ($Scenario -eq 'dwm-drag') {
   $entryArguments += @('--progress', $progressPath, '--completion', $completionPath)
   Write-Output "DWM runner will write ready/completed state to: $progressPath"
   Write-Output "After actual visual drag, record completion with: node scripts/complete-i2-dwm-drag.js --completion $completionPath"
+} elseif ($Scenario -in @('device-removal-retry', 'sleep-wake-retry')) {
+  $entryArguments += @('--progress', $progressPath, '--completion', $completionPath)
+  Write-Output "Recovery runner will write product-observed state to: $progressPath"
+  if ($Scenario -eq 'device-removal-retry') {
+    Write-Output 'Wait for awaiting-device-removal, then actually unplug/disable and restore the active endpoint.'
+  } else {
+    Write-Output 'Wait for awaiting-system-suspend, then use Windows sleep and wake the machine.'
+  }
+  Write-Output "Only after the external action and restoration, record completion with: node scripts/complete-i2-recovery-action.js --scenario $Scenario --completion $completionPath"
 }
 
 & (Join-Path $PSScriptRoot 'run-electron-smoke.ps1') `

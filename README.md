@@ -47,7 +47,7 @@ Live Subtitle 的数据边界是设计的一部分：
 | 范围 | 状态 | 说明 |
 |---|---|---|
 | 固定高度字幕流、版本隔离、可选精修及历史 | 联合验收完成 | 本地确定性范围已有跨模块用户旅程和打包态证据。 |
-| 本地非音频回归 | 联合验收完成 | core 414、integration 27、evidence 168，共 609 项。 |
+| 本地非音频回归 | 联合验收完成 | core 414、integration 27、evidence 172，共 613 项。 |
 | 远端 Windows CI 资格 | 联合验收完成 | run `30768637180` 精确绑定当前源码 revision `2d3d6bdf…09a8`，全部 workflow steps 与 609 项回归成功；artifact `qualification-evidence-2d3d6bdf…-30768637180-1`（ID `8839812004`，ZIP digest `36632252…f16c6`）下载后通过五个 strict readers、报告/lockfile/workflow SHA、跨报告绑定及 41 文件/29 JSON 隐私负扫描。下载包不含 installer 字节，同轮 workflow 已在索引生成前复核远端 installer SHA `91297945…19292`；本机 B5 安装器仍以其独立 SHA 与七份报告为准。 |
 | 36 组合 DWM、主题、透明窗和异缩放双屏观察 | 实现完成·尚未验收 | runner 和严格 verifier 已就位，仍需可见实机矩阵。 |
 | 真实 `loopback` / `mic` 性能与两小时稳定性 | 实现完成·尚未验收 | 当前冻结 P95 仍高于 `<1000 ms` 门槛，真实两小时音频尚未执行。 |

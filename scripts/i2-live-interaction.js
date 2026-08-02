@@ -10,15 +10,18 @@
  * enough to count event kinds; neither stdout, progress nor report contains
  * it.  The DWM scenario is intentionally manual: it renders the product's
  * caption/toolbar assets in real transparent BrowserWindows and delegates the
- * visual drag observation to an external operator completion file.
+ * visual drag observation to an external operator completion file. Device
+ * removal and sleep/wake likewise wait for an external action, while product
+ * state independently proves the fault, cleanup, explicit Retry and recovery.
  */
 
 const fs = require('node:fs')
 const path = require('node:path')
-const { app, BrowserWindow, ipcMain, screen } = require('electron')
+const { app, BrowserWindow, ipcMain, powerMonitor, screen } = require('electron')
 const CHANNELS = require('../src/main/ipc/channels')
 const { DEFAULT_CONFIG } = require('../src/main/services/config-store')
 const { SubtitleApplicationRuntime } = require('../src/main/services/subtitle-application-runtime')
+const { PowerSessionGuard } = require('../src/main/services/power-session-guard')
 const { SessionCoordinator } = require('../src/main/session/session-coordinator')
 const { RealtimeRuntimeAdapter } = require('../src/runtime/realtime-runtime-adapter')
 const { RealtimeWorkerHost } = require('../src/runtime/realtime-worker/worker-host')
@@ -29,11 +32,15 @@ const {
 } = require('../src/main/services/model-resolver')
 const {
   SCENARIOS,
+  RECOVERY_FAULT_CODES,
+  RECOVERY_SCENARIOS,
   TRANSPORT_FIELDS,
   buildDwmProgress,
   buildInteractionReport,
+  buildRecoveryProgress,
   parseArguments,
   parseOperatorCompletion,
+  parseRecoveryOperatorCompletion,
   transportDelta,
   transportSnapshot,
   validateDwmProgress,
@@ -61,6 +68,8 @@ const PAUSE_REFINE_RESPONSE_DELAY_MS = 1200
 const PAUSE_SETTLE_MS = 2600
 const FINAL_SETTLE_MS = 3200
 const LIVE_METRICS_SETTLE_MS = 700
+const NO_AUTO_REACQUIRE_OBSERVATION_MS = 1500
+const RECOVERY_CAPTURE_RELEASE_TIMEOUT_MS = 30000
 
 function delay (milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -384,6 +393,25 @@ async function awaitDwmCompletion (completionPath, timeoutSeconds) {
   return null
 }
 
+async function awaitRecoveryCompletion (completionPath, scenario, timeoutSeconds) {
+  const deadline = Date.now() + timeoutSeconds * 1000
+  while (Date.now() <= deadline) {
+    if (fs.existsSync(completionPath)) {
+      return parseRecoveryOperatorCompletion(fs.readFileSync(completionPath), scenario)
+    }
+    await delay(250)
+  }
+  return null
+}
+
+function captionCount (captions, kind, startIndex = 0) {
+  return captions.slice(startIndex).filter((entry) => entry.kind === kind).length
+}
+
+function maximumCaptionSequence (captions) {
+  return captions.reduce((maximum, entry) => Math.max(maximum, entry.sequence), 0)
+}
+
 async function runPauseRefine ({ coordinator, getAdapter, play, sourceId, captions }) {
   const started = await coordinator.command('start')
   if (!started.ok) throw new Error('coordinator start failed')
@@ -538,6 +566,205 @@ async function runDwmDrag ({ coordinator, getAdapter, play, sourceId, options, w
   }
 }
 
+async function runRecoveryInteraction ({
+  coordinator,
+  getAdapter,
+  applicationRuntime,
+  play,
+  sourceId,
+  options,
+  captions,
+  workers,
+  writeProgress
+}) {
+  const expectedFaultCode = RECOVERY_FAULT_CODES[options.scenario]
+  let systemResumeEventObserved = false
+  const onSystemResume = () => { systemResumeEventObserved = true }
+  const powerGuard = options.scenario === 'sleep-wake-retry'
+    ? new PowerSessionGuard({ powerMonitor, getCoordinator: () => coordinator })
+    : null
+  if (powerGuard) {
+    powerMonitor.on('resume', onSystemResume)
+    powerGuard.start()
+  }
+
+  try {
+    writeProgress('starting', {})
+    const started = await coordinator.command('start')
+    if (!started.ok) throw new Error('coordinator start failed')
+    const sessionId = coordinator.getSnapshot().sessionId
+    const activeAdapter = getAdapter()
+    const workerBeforeFault = activeAdapter?.session?.worker
+    if (!workerBeforeFault) throw new Error('active realtime worker is unavailable for recovery scenario')
+    await delay(800)
+
+    const finalCountBeforePlayback = captionCount(captions, 'final')
+    await play()
+    await waitUntil(
+      () => captionCount(captions, 'final') > finalCountBeforePlayback,
+      PAUSE_AWAIT_FIRST_FINAL_MS,
+      'first real final before external recovery action'
+    )
+    writeProgress(
+      options.scenario === 'device-removal-retry' ? 'awaiting-device-removal' : 'awaiting-system-suspend',
+      {}
+    )
+
+    await waitUntil(() => {
+      const snapshot = coordinator.getSnapshot()
+      return snapshot.phase === 'error' && snapshot.lastError?.code === expectedFaultCode
+    }, options.timeoutSeconds * 1000, `${expectedFaultCode} product fault`)
+    const faultPhaseObserved = true
+    const workerGenerationCountAtFault = workers.length
+    writeProgress('fault-observed', { faultCodeObserved: expectedFaultCode })
+
+    await waitUntil(
+      () => activeAdapter.getLiveDiagnostics() === null,
+      RECOVERY_CAPTURE_RELEASE_TIMEOUT_MS,
+      'faulted capture release'
+    )
+    const captureReleased = activeAdapter.getLiveDiagnostics() === null
+    const faultGenerationTransport = stoppedTransport(activeAdapter, sourceId, sessionId)
+    /* Capture cleanup is the stable boundary after which no further caption
+       from the faulted generation can be accepted. Count and sequence the
+       complete pre-Retry prefix here, including any event accepted while the
+       external fault was still propagating. */
+    const captionsBeforeFault = captions.length
+    const finalBeforeFault = captionCount(captions, 'final')
+    const maxSequenceBeforeFault = maximumCaptionSequence(captions)
+    writeProgress('awaiting-operator-completion', {
+      faultCodeObserved: expectedFaultCode,
+      captureReleased
+    })
+
+    const completion = await awaitRecoveryCompletion(options.completion, options.scenario, options.timeoutSeconds)
+    if (!completion) throw new Error('operator recovery completion was not observed')
+    if (options.scenario === 'sleep-wake-retry') {
+      await waitUntil(() => systemResumeEventObserved, 10000, 'real system resume event')
+    }
+    const workerGenerationCountBeforeRetry = workers.length
+    await delay(NO_AUTO_REACQUIRE_OBSERVATION_MS)
+    const noAutomaticReacquire = coordinator.getSnapshot().phase === 'error' &&
+      coordinator.getSnapshot().lastError?.code === expectedFaultCode &&
+      activeAdapter.getLiveDiagnostics() === null &&
+      workers.length === workerGenerationCountBeforeRetry
+    writeProgress('operator-completion-observed', {
+      faultCodeObserved: expectedFaultCode,
+      captureReleased,
+      automaticReacquireObserved: !noAutomaticReacquire,
+      operatorCompletionObserved: true
+    })
+    if (!noAutomaticReacquire) throw new Error('capture reacquired without explicit Retry')
+
+    writeProgress('retrying', {
+      faultCodeObserved: expectedFaultCode,
+      captureReleased,
+      operatorCompletionObserved: true,
+      retryIssued: true
+    })
+    const retried = await coordinator.command('retry')
+    const sameSession = coordinator.getSnapshot().sessionId === sessionId
+    const recoveredAdapter = getAdapter()
+    const runtimeAdapterReusedAfterRetry = recoveredAdapter === activeAdapter
+    const recoveredWorker = recoveredAdapter?.session?.worker
+    const freshWorkerGenerationAfterRetry = recoveredWorker != null && recoveredWorker !== workerBeforeFault
+    const workerGenerationCountAfterRetry = workers.length
+    const captionIndexAtRetry = captions.length
+    if (retried.ok) {
+      await waitUntil(() => coordinator.getSnapshot().phase === 'listening', 10000, 'listening after explicit Retry')
+      await play()
+      await waitUntil(
+        () => captionCount(captions, 'final', captionIndexAtRetry) > 0,
+        PAUSE_AWAIT_FIRST_FINAL_MS,
+        'real final after explicit Retry'
+      )
+    }
+    const captionsAfterRetry = captions.length - captionIndexAtRetry
+    const finalAfterRetry = captionCount(captions, 'final', captionIndexAtRetry)
+    const firstSequenceAfterRetry = captions[captionIndexAtRetry]?.sequence ?? null
+    const sequenceStrictlyIncreased = firstSequenceAfterRetry !== null &&
+      firstSequenceAfterRetry > maxSequenceBeforeFault
+
+    const stopped = await coordinator.command('stop')
+    if (!stopped.ok) throw new Error('coordinator stop after recovery failed')
+    const recoveredGenerationTransport = stoppedTransport(recoveredAdapter, sourceId, sessionId)
+    await applicationRuntime.gateway.flush()
+    const transcript = await applicationRuntime.gateway.getSessionTranscript(sessionId)
+    const sqliteSessionClosed = transcript.session.state === 'closed'
+    const sqliteSourceMatched = transcript.session.sourceId === sourceId &&
+      transcript.segments.every((segment) => segment.sourceId === sourceId)
+    const sqlitePersistedSegmentCount = transcript.segments.length
+    const sqlitePersistedAtLeastObservedFinals = sqlitePersistedSegmentCount >= finalBeforeFault + finalAfterRetry
+
+    const scenarioEvidence = {
+      faultCodeObserved: expectedFaultCode,
+      faultPhaseObserved,
+      captureReleased,
+      operatorCompletionObserved: completion.observed === true,
+      systemResumeEventObserved,
+      workerGenerationCountAtFault,
+      workerGenerationCountBeforeRetry,
+      workerGenerationCountAfterRetry,
+      noAutomaticReacquire,
+      explicitRetryIssued: true,
+      retrySucceeded: retried.ok === true,
+      sameSession,
+      runtimeAdapterReusedAfterRetry,
+      freshWorkerGenerationAfterRetry,
+      captionsBeforeFault,
+      captionsAfterRetry,
+      finalBeforeFault,
+      finalAfterRetry,
+      maxSequenceBeforeFault,
+      firstSequenceAfterRetry,
+      sequenceStrictlyIncreased,
+      sqliteSessionClosed,
+      sqliteSourceMatched,
+      sqlitePersistedSegmentCount,
+      sqlitePersistedAtLeastObservedFinals
+    }
+    const result = retried.ok && sameSession && runtimeAdapterReusedAfterRetry &&
+      freshWorkerGenerationAfterRetry && workerGenerationCountAtFault === workerGenerationCountBeforeRetry &&
+      workerGenerationCountAfterRetry === workerGenerationCountBeforeRetry + 1 && noAutomaticReacquire &&
+      captionsBeforeFault > 0 && captionsAfterRetry > 0 && finalBeforeFault > 0 && finalAfterRetry > 0 &&
+      sequenceStrictlyIncreased && sqliteSessionClosed && sqliteSourceMatched &&
+      sqlitePersistedAtLeastObservedFinals && cleanTransport(faultGenerationTransport) &&
+      cleanTransport(recoveredGenerationTransport) &&
+      (options.scenario !== 'sleep-wake-retry' || systemResumeEventObserved)
+      ? 'pass'
+      : 'fail'
+    writeProgress(result === 'pass' ? 'completed' : 'failed', {
+      faultCodeObserved: expectedFaultCode,
+      captureReleased,
+      automaticReacquireObserved: !noAutomaticReacquire,
+      operatorCompletionObserved: true,
+      retryIssued: true,
+      captionsAfterRetry
+    })
+    return {
+      result,
+      scenarioEvidence,
+      transport: {
+        comparison: 'cross-recovery-generation',
+        before: faultGenerationTransport,
+        after: recoveredGenerationTransport,
+        delta: null
+      },
+      deviceRecovery: {
+        simulatedTrackEnded: false,
+        actualOsDeviceRemoval: options.scenario === 'device-removal-retry',
+        actualSystemSleepWake: options.scenario === 'sleep-wake-retry',
+        networkRecoveryNotApplicable: true
+      }
+    }
+  } finally {
+    if (powerGuard) {
+      powerGuard.stop()
+      powerMonitor.removeListener('resume', onSystemResume)
+    }
+  }
+}
+
 function failureEvidence (scenario) {
   if (scenario === 'pause-refine') {
     return {
@@ -550,6 +777,35 @@ function failureEvidence (scenario) {
       crashMethod: 'forced-exact-realtime-worker-termination', workerExitObserved: false, retrySucceeded: false,
       sameSession: false, runtimeAdapterReusedAfterRetry: false, freshWorkerGenerationAfterRetry: false,
       workerGenerationCount: 0, finalBeforeCrash: 0, finalAfterRetry: 0
+    }
+  }
+  if (RECOVERY_SCENARIOS.includes(scenario)) {
+    return {
+      faultCodeObserved: null,
+      faultPhaseObserved: false,
+      captureReleased: false,
+      operatorCompletionObserved: false,
+      systemResumeEventObserved: false,
+      workerGenerationCountAtFault: 0,
+      workerGenerationCountBeforeRetry: 0,
+      workerGenerationCountAfterRetry: 0,
+      noAutomaticReacquire: false,
+      explicitRetryIssued: false,
+      retrySucceeded: false,
+      sameSession: false,
+      runtimeAdapterReusedAfterRetry: false,
+      freshWorkerGenerationAfterRetry: false,
+      captionsBeforeFault: 0,
+      captionsAfterRetry: 0,
+      finalBeforeFault: 0,
+      finalAfterRetry: 0,
+      maxSequenceBeforeFault: 0,
+      firstSequenceAfterRetry: null,
+      sequenceStrictlyIncreased: false,
+      sqliteSessionClosed: false,
+      sqliteSourceMatched: false,
+      sqlitePersistedSegmentCount: 0,
+      sqlitePersistedAtLeastObservedFinals: false
     }
   }
   return { mode: 'manual-dwm-harness', rendererAssets: 'caption-toolbar', manualSetBounds: true, operatorCompletionObserved: false }
@@ -565,8 +821,8 @@ async function main () {
     : null
   assertDistinctOutputPaths([reportPath, progressPath, completionPath])
   if (fs.existsSync(reportPath)) throw new Error('interaction report already exists; use a fresh artifact path')
-  if (progressPath && fs.existsSync(progressPath)) throw new Error('DWM progress already exists; use a fresh artifact path')
-  if (completionPath && fs.existsSync(completionPath)) throw new Error('DWM completion already exists; use a fresh artifact path')
+  if (progressPath && fs.existsSync(progressPath)) throw new Error('interaction progress already exists; use a fresh artifact path')
+  if (completionPath && fs.existsSync(completionPath)) throw new Error('interaction completion already exists; use a fresh artifact path')
 
   app.on('window-all-closed', () => {})
   app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
@@ -582,10 +838,22 @@ async function main () {
   const captions = []
   const workers = []
   let runtimeSummary = null
-  const writeProgress = (state, transport, operatorCompletionObserved) => {
+  const writeProgress = (state, payload, operatorCompletionObserved) => {
     if (!progressPath) return
-    const progress = buildDwmProgress({ sourceId: options.source, state, transport, operatorCompletionObserved })
-    validateDwmProgress(progress)
+    const progress = RECOVERY_SCENARIOS.includes(options.scenario)
+      ? buildRecoveryProgress({
+          scenario: options.scenario,
+          sourceId: options.source,
+          state,
+          ...(payload || {})
+        })
+      : buildDwmProgress({
+          sourceId: options.source,
+          state,
+          transport: payload,
+          operatorCompletionObserved
+        })
+    if (options.scenario === 'dwm-drag') validateDwmProgress(progress)
     writeAtomicJson(progressPath, progress)
   }
 
@@ -612,7 +880,7 @@ async function main () {
     const coordinator = started.coordinator
     adapter = composition.getAdapter()
     coordinator.onCaption((event) => {
-      captions.push({ kind: event.kind, phase: coordinator.getSnapshot().phase })
+      captions.push({ kind: event.kind, phase: coordinator.getSnapshot().phase, sequence: event.sequence })
     })
     runtimeSummary = {
       modelId: model.id,
@@ -626,22 +894,40 @@ async function main () {
       scenarioOutcome = await runPauseRefine({ coordinator, getAdapter: composition.getAdapter, play, sourceId: options.source, captions })
     } else if (options.scenario === 'worker-crash-retry') {
       scenarioOutcome = await runWorkerCrashRetry({ coordinator, getAdapter: composition.getAdapter, play, sourceId: options.source, captions, workers })
-    } else {
+    } else if (options.scenario === 'dwm-drag') {
       scenarioOutcome = await runDwmDrag({ coordinator, getAdapter: composition.getAdapter, play, sourceId: options.source, options: { ...options, completion: completionPath }, writeProgress })
+    } else {
+      scenarioOutcome = await runRecoveryInteraction({
+        coordinator,
+        getAdapter: composition.getAdapter,
+        applicationRuntime,
+        play,
+        sourceId: options.source,
+        options: { ...options, completion: completionPath },
+        captions,
+        workers,
+        writeProgress
+      })
     }
     result = scenarioOutcome.result
   } catch (error) {
     if (options.scenario === 'dwm-drag' && progressPath) {
       const empty = blankTransport()
       writeProgress('failed', { comparison: 'same-capture-generation', before: empty, after: empty, delta: transportDelta(empty, empty, true) }, false)
+    } else if (RECOVERY_SCENARIOS.includes(options.scenario) && progressPath) {
+      writeProgress('failed', {})
     }
     scenarioOutcome = scenarioOutcome || {
       scenarioEvidence: failureEvidence(options.scenario),
       transport: {
-        comparison: options.scenario === 'worker-crash-retry' ? 'cross-recovery-generation' : 'same-capture-generation',
+        comparison: options.scenario === 'worker-crash-retry' || RECOVERY_SCENARIOS.includes(options.scenario)
+          ? 'cross-recovery-generation'
+          : 'same-capture-generation',
         before: blankTransport(),
         after: blankTransport(),
-        delta: options.scenario === 'worker-crash-retry' ? null : transportDelta(blankTransport(), blankTransport(), true)
+        delta: options.scenario === 'worker-crash-retry' || RECOVERY_SCENARIOS.includes(options.scenario)
+          ? null
+          : transportDelta(blankTransport(), blankTransport(), true)
       }
     }
     process.stderr.write(JSON.stringify({ result: 'error', errorCode: 'i2-interaction-run-failed' }) + '\n')
@@ -668,7 +954,7 @@ async function main () {
     counts,
     scenarioEvidence: scenarioOutcome.scenarioEvidence,
     transport: scenarioOutcome.transport,
-    deviceRecovery: {
+    deviceRecovery: scenarioOutcome.deviceRecovery || {
       simulatedTrackEnded: false,
       actualOsDeviceRemoval: false,
       actualSystemSleepWake: false,
@@ -696,6 +982,7 @@ module.exports = {
   createRuntimeComposition,
   failureEvidence,
   assertDistinctOutputPaths,
+  runRecoveryInteraction,
   stoppedTransport,
   stimulusPathForScenario,
   workspaceArtifactPath

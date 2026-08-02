@@ -4,7 +4,7 @@
  * Shared, pure protocol for the executable I2 interaction scenarios.
  *
  * The Electron runner owns real media/worker/UI work.  This module owns the
- * report shape, privacy boundary, transport snapshots and DWM hand-off files,
+ * report shape, privacy boundary, transport snapshots and operator hand-off files,
  * so all of those can be unit-tested without launching Electron or touching a
  * microphone, loopback device, speaker, network or desktop window.
  */
@@ -12,7 +12,9 @@
 const assert = require('node:assert/strict')
 const { parseStrictEvidenceJson } = require('./strict-evidence-json')
 
-const SCENARIOS = Object.freeze(['pause-refine', 'worker-crash-retry', 'dwm-drag'])
+const LEGACY_SCENARIOS = Object.freeze(['pause-refine', 'worker-crash-retry', 'dwm-drag'])
+const RECOVERY_SCENARIOS = Object.freeze(['device-removal-retry', 'sleep-wake-retry'])
+const SCENARIOS = Object.freeze([...LEGACY_SCENARIOS, ...RECOVERY_SCENARIOS])
 const SOURCES = Object.freeze(['loopback', 'mic'])
 const TRANSPORT_FIELDS = Object.freeze([
   'capturedFrames', 'sentFrames', 'ingestedFrames', 'droppedFrames',
@@ -28,6 +30,18 @@ const LOSS_FIELDS = Object.freeze([
 const PROGRESS_STATES = Object.freeze([
   'starting', 'ready-for-dwm-drag', 'awaiting-operator-completion', 'completed', 'failed'
 ])
+const RECOVERY_PROGRESS_STATES = Object.freeze([
+  'starting', 'awaiting-device-removal', 'awaiting-system-suspend', 'fault-observed',
+  'awaiting-operator-completion', 'operator-completion-observed', 'retrying', 'completed', 'failed'
+])
+const RECOVERY_FAULT_CODES = Object.freeze({
+  'device-removal-retry': 'AUDIO_TRACK_ENDED',
+  'sleep-wake-retry': 'SYSTEM_SUSPEND'
+})
+const RECOVERY_OPERATOR_ACTIONS = Object.freeze({
+  'device-removal-retry': 'device-restored-after-removal',
+  'sleep-wake-retry': 'system-resumed-after-sleep'
+})
 const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 
 function assertPlainRecord (value, label) {
@@ -129,11 +143,12 @@ function parseArguments (argv) {
   if (options.source === 'loopback' && options.physicalMicPreflight !== null) {
     throw new Error('--physical-mic-preflight is only valid with --source mic')
   }
-  if (options.scenario === 'dwm-drag' && (!options.progress || !options.completion)) {
-    throw new Error('dwm-drag requires both --progress and --completion')
+  const operatorScenario = options.scenario === 'dwm-drag' || RECOVERY_SCENARIOS.includes(options.scenario)
+  if (operatorScenario && (!options.progress || !options.completion)) {
+    throw new Error(`${options.scenario} requires both --progress and --completion`)
   }
-  if (options.scenario !== 'dwm-drag' && (options.progress || options.completion)) {
-    throw new Error('--progress and --completion are only valid for dwm-drag')
+  if (!operatorScenario && (options.progress || options.completion)) {
+    throw new Error('--progress and --completion are only valid for operator interaction scenarios')
   }
   return options
 }
@@ -240,6 +255,80 @@ function parseOperatorCompletion (bytes) {
   return value
 }
 
+function buildRecoveryProgress ({
+  scenario,
+  sourceId,
+  state,
+  faultCodeObserved = null,
+  captureReleased = false,
+  automaticReacquireObserved = false,
+  operatorCompletionObserved = false,
+  retryIssued = false,
+  captionsAfterRetry = 0
+}) {
+  const progress = {
+    schemaVersion: 1,
+    kind: 'i2-recovery-progress',
+    scenario,
+    sourceId,
+    state,
+    faultCodeObserved,
+    captureReleased,
+    automaticReacquireObserved,
+    operatorCompletionObserved,
+    retryIssued,
+    captionsAfterRetry
+  }
+  return validateRecoveryProgress(progress)
+}
+
+function validateRecoveryProgress (value) {
+  assertSafeInteractionValue(value)
+  assertExactKeys(value, [
+    'schemaVersion', 'kind', 'scenario', 'sourceId', 'state', 'faultCodeObserved',
+    'captureReleased', 'automaticReacquireObserved', 'operatorCompletionObserved',
+    'retryIssued', 'captionsAfterRetry'
+  ], 'recovery progress')
+  assert.equal(value.schemaVersion, 1)
+  assert.equal(value.kind, 'i2-recovery-progress')
+  assert.ok(RECOVERY_SCENARIOS.includes(value.scenario), 'recovery progress scenario is invalid')
+  assert.ok(SOURCES.includes(value.sourceId), 'recovery progress source is invalid')
+  assert.ok(RECOVERY_PROGRESS_STATES.includes(value.state), 'recovery progress state is invalid')
+  if (value.faultCodeObserved !== null) {
+    assert.equal(value.faultCodeObserved, RECOVERY_FAULT_CODES[value.scenario])
+  }
+  for (const key of [
+    'captureReleased', 'automaticReacquireObserved', 'operatorCompletionObserved', 'retryIssued'
+  ]) assert.equal(typeof value[key], 'boolean', `recovery progress.${key} must be boolean`)
+  assertNonNegativeInteger(value.captionsAfterRetry, 'recovery progress.captionsAfterRetry')
+  return value
+}
+
+function recoveryOperatorCompletion ({ scenario }) {
+  if (!RECOVERY_SCENARIOS.includes(scenario)) throw new TypeError('recovery completion scenario is invalid')
+  return {
+    schemaVersion: 1,
+    kind: 'i2-recovery-operator-completion',
+    scenario,
+    action: RECOVERY_OPERATOR_ACTIONS[scenario],
+    observed: true
+  }
+}
+
+function parseRecoveryOperatorCompletion (bytes, expectedScenario = null) {
+  const value = parseStrictEvidenceJson(bytes, 'I2 recovery operator completion')
+  assertSafeInteractionValue(value)
+  assertExactKeys(value, ['schemaVersion', 'kind', 'scenario', 'action', 'observed'],
+    'I2 recovery operator completion')
+  assert.equal(value.schemaVersion, 1)
+  assert.equal(value.kind, 'i2-recovery-operator-completion')
+  assert.ok(RECOVERY_SCENARIOS.includes(value.scenario), 'recovery completion scenario is invalid')
+  if (expectedScenario !== null) assert.equal(value.scenario, expectedScenario)
+  assert.equal(value.action, RECOVERY_OPERATOR_ACTIONS[value.scenario])
+  assert.equal(value.observed, true, 'operator completion must explicitly record observed=true')
+  return value
+}
+
 function buildInteractionReport ({
   executedAt,
   scenario,
@@ -251,8 +340,9 @@ function buildInteractionReport ({
   transport,
   deviceRecovery
 }) {
+  const recoveryReport = RECOVERY_SCENARIOS.includes(scenario)
   return {
-    schemaVersion: 1,
+    schemaVersion: recoveryReport ? 2 : 1,
     kind: 'i2-live-interaction',
     executedAt,
     scenario,
@@ -269,10 +359,15 @@ function buildInteractionReport ({
       reportContainsAudioPath: false,
       reportContainsDeviceName: false
     },
-    limitations: [
-      'This interaction report does not attest physical device removal or OS sleep/wake.',
-      'No captured audio, transcript text, device name, model path, or local audio path is persisted in this evidence.'
-    ]
+    limitations: recoveryReport
+      ? [
+          'Operator completion records the external action only and cannot independently produce pass.',
+          'No captured audio, transcript text, device name, model path, or local audio path is persisted in this evidence.'
+        ]
+      : [
+          'This interaction report does not attest physical device removal or OS sleep/wake.',
+          'No captured audio, transcript text, device name, model path, or local audio path is persisted in this evidence.'
+        ]
   }
 }
 
@@ -291,21 +386,30 @@ function validateCounts (counts) {
   assert.equal(counts.captions, counts.partials + counts.finals + counts.refined)
 }
 
-function validateDeviceRecovery (value) {
+function validateDeviceRecovery (value, scenario, result) {
   assertExactKeys(value, [
     'simulatedTrackEnded', 'actualOsDeviceRemoval', 'actualSystemSleepWake', 'networkRecoveryNotApplicable'
   ], 'deviceRecovery')
-  assert.deepEqual(value, {
-    simulatedTrackEnded: false,
-    actualOsDeviceRemoval: false,
-    actualSystemSleepWake: false,
-    networkRecoveryNotApplicable: true
-  })
+  for (const key of Object.keys(value)) assert.equal(typeof value[key], 'boolean', `deviceRecovery.${key} must be boolean`)
+  assert.equal(value.simulatedTrackEnded, false)
+  assert.equal(value.networkRecoveryNotApplicable, true)
+  if (!RECOVERY_SCENARIOS.includes(scenario)) {
+    assert.equal(value.actualOsDeviceRemoval, false)
+    assert.equal(value.actualSystemSleepWake, false)
+    return
+  }
+  if (result === 'pass' && scenario === 'device-removal-retry') {
+    assert.equal(value.actualOsDeviceRemoval, true)
+    assert.equal(value.actualSystemSleepWake, false)
+  } else if (result === 'pass') {
+    assert.equal(value.actualOsDeviceRemoval, false)
+    assert.equal(value.actualSystemSleepWake, true)
+  }
 }
 
 function validateInteractionTransport (transport, scenario, result) {
   assertExactKeys(transport, ['comparison', 'before', 'after', 'delta'], 'transport')
-  const expectedComparison = scenario === 'worker-crash-retry'
+  const expectedComparison = scenario === 'worker-crash-retry' || RECOVERY_SCENARIOS.includes(scenario)
     ? 'cross-recovery-generation'
     : 'same-capture-generation'
   assert.equal(transport.comparison, expectedComparison)
@@ -321,6 +425,12 @@ function validateInteractionTransport (transport, scenario, result) {
     assert.ok(transport.after.capturedFrames > 0, 'transport.after.capturedFrames must be positive')
     assertNonNegativeInteger(transport.after.sentFrames, 'transport.after.sentFrames')
     for (const field of LOSS_FIELDS) assert.equal(transport.after[field], 0, `transport.after.${field} must be zero`)
+    if (RECOVERY_SCENARIOS.includes(scenario)) {
+      assertNonNegativeInteger(transport.before.capturedFrames, 'transport.before.capturedFrames')
+      assert.ok(transport.before.capturedFrames > 0, 'transport.before.capturedFrames must be positive')
+      assertNonNegativeInteger(transport.before.sentFrames, 'transport.before.sentFrames')
+      for (const field of LOSS_FIELDS) assert.equal(transport.before[field], 0, `transport.before.${field} must be zero`)
+    }
   }
 }
 
@@ -373,6 +483,60 @@ function validateScenarioEvidence (scenario, value, result) {
     }
     return
   }
+  if (RECOVERY_SCENARIOS.includes(scenario)) {
+    assertExactKeys(value, [
+      'faultCodeObserved', 'faultPhaseObserved', 'captureReleased', 'operatorCompletionObserved',
+      'systemResumeEventObserved', 'workerGenerationCountAtFault', 'workerGenerationCountBeforeRetry',
+      'workerGenerationCountAfterRetry', 'noAutomaticReacquire', 'explicitRetryIssued', 'retrySucceeded',
+      'sameSession', 'runtimeAdapterReusedAfterRetry', 'freshWorkerGenerationAfterRetry',
+      'captionsBeforeFault', 'captionsAfterRetry', 'finalBeforeFault', 'finalAfterRetry',
+      'maxSequenceBeforeFault', 'firstSequenceAfterRetry', 'sequenceStrictlyIncreased',
+      'sqliteSessionClosed', 'sqliteSourceMatched', 'sqlitePersistedSegmentCount',
+      'sqlitePersistedAtLeastObservedFinals'
+    ], 'scenarioEvidence')
+    if (value.faultCodeObserved !== null) assert.equal(value.faultCodeObserved, RECOVERY_FAULT_CODES[scenario])
+    for (const key of [
+      'faultPhaseObserved', 'captureReleased', 'operatorCompletionObserved', 'systemResumeEventObserved',
+      'noAutomaticReacquire', 'explicitRetryIssued', 'retrySucceeded', 'sameSession',
+      'runtimeAdapterReusedAfterRetry', 'freshWorkerGenerationAfterRetry', 'sequenceStrictlyIncreased',
+      'sqliteSessionClosed', 'sqliteSourceMatched', 'sqlitePersistedAtLeastObservedFinals'
+    ]) assert.equal(typeof value[key], 'boolean', `scenarioEvidence.${key} must be boolean`)
+    for (const key of [
+      'workerGenerationCountAtFault', 'workerGenerationCountBeforeRetry', 'workerGenerationCountAfterRetry',
+      'captionsBeforeFault', 'captionsAfterRetry', 'finalBeforeFault', 'finalAfterRetry',
+      'maxSequenceBeforeFault', 'sqlitePersistedSegmentCount'
+    ]) assertNonNegativeInteger(value[key], `scenarioEvidence.${key}`)
+    assertNullableNonNegativeInteger(value.firstSequenceAfterRetry, 'scenarioEvidence.firstSequenceAfterRetry')
+    if (result === 'pass') {
+      assert.equal(value.faultCodeObserved, RECOVERY_FAULT_CODES[scenario])
+      assert.equal(value.faultPhaseObserved, true)
+      assert.equal(value.captureReleased, true)
+      assert.equal(value.operatorCompletionObserved, true)
+      assert.equal(value.systemResumeEventObserved, scenario === 'sleep-wake-retry')
+      assert.equal(value.workerGenerationCountAtFault, value.workerGenerationCountBeforeRetry,
+        'operator completion must not auto-create a worker generation')
+      assert.equal(value.workerGenerationCountAfterRetry, value.workerGenerationCountBeforeRetry + 1,
+        'explicit Retry must create exactly one worker generation')
+      assert.equal(value.noAutomaticReacquire, true)
+      assert.equal(value.explicitRetryIssued, true)
+      assert.equal(value.retrySucceeded, true)
+      assert.equal(value.sameSession, true)
+      assert.equal(value.runtimeAdapterReusedAfterRetry, true)
+      assert.equal(value.freshWorkerGenerationAfterRetry, true)
+      assert.ok(value.captionsBeforeFault > 0)
+      assert.ok(value.captionsAfterRetry > 0)
+      assert.ok(value.finalBeforeFault > 0)
+      assert.ok(value.finalAfterRetry > 0)
+      assert.ok(value.maxSequenceBeforeFault > 0)
+      assert.ok(value.firstSequenceAfterRetry > value.maxSequenceBeforeFault)
+      assert.equal(value.sequenceStrictlyIncreased, true)
+      assert.equal(value.sqliteSessionClosed, true)
+      assert.equal(value.sqliteSourceMatched, true)
+      assert.ok(value.sqlitePersistedSegmentCount >= value.finalBeforeFault + value.finalAfterRetry)
+      assert.equal(value.sqlitePersistedAtLeastObservedFinals, true)
+    }
+    return
+  }
   assertExactKeys(value, [
     'mode', 'rendererAssets', 'manualSetBounds', 'operatorCompletionObserved'
   ], 'scenarioEvidence')
@@ -389,10 +553,12 @@ function validateInteractionReport (report, expectedScenario = null) {
     'schemaVersion', 'kind', 'executedAt', 'scenario', 'sourceId', 'result', 'runtime', 'counts',
     'scenarioEvidence', 'transport', 'deviceRecovery', 'privacy', 'limitations'
   ], 'interaction report')
-  assert.equal(report.schemaVersion, 1)
+  assert.ok(report.schemaVersion === 1 || report.schemaVersion === 2, 'schemaVersion must be 1 or 2')
   assert.equal(report.kind, 'i2-live-interaction')
   assertIsoTimestamp(report.executedAt, 'executedAt')
   assert.ok(SCENARIOS.includes(report.scenario), 'scenario is invalid')
+  if (report.schemaVersion === 1) assert.ok(LEGACY_SCENARIOS.includes(report.scenario), 'schema v1 scenario is invalid')
+  if (report.schemaVersion === 2) assert.ok(RECOVERY_SCENARIOS.includes(report.scenario), 'schema v2 scenario is invalid')
   if (expectedScenario !== null) assert.equal(report.scenario, expectedScenario)
   assert.ok(SOURCES.includes(report.sourceId), 'sourceId is invalid')
   const allowedResults = report.scenario === 'dwm-drag'
@@ -403,22 +569,31 @@ function validateInteractionReport (report, expectedScenario = null) {
   validateCounts(report.counts)
   validateScenarioEvidence(report.scenario, report.scenarioEvidence, report.result)
   validateInteractionTransport(report.transport, report.scenario, report.result)
-  validateDeviceRecovery(report.deviceRecovery)
+  validateDeviceRecovery(report.deviceRecovery, report.scenario, report.result)
   assert.deepEqual(report.privacy, {
     capturedAudioPersisted: false,
     reportContainsTranscriptText: false,
     reportContainsAudioPath: false,
     reportContainsDeviceName: false
   })
-  assert.deepEqual(report.limitations, [
-    'This interaction report does not attest physical device removal or OS sleep/wake.',
-    'No captured audio, transcript text, device name, model path, or local audio path is persisted in this evidence.'
-  ])
+  assert.deepEqual(report.limitations, report.schemaVersion === 2
+    ? [
+        'Operator completion records the external action only and cannot independently produce pass.',
+        'No captured audio, transcript text, device name, model path, or local audio path is persisted in this evidence.'
+      ]
+    : [
+        'This interaction report does not attest physical device removal or OS sleep/wake.',
+        'No captured audio, transcript text, device name, model path, or local audio path is persisted in this evidence.'
+      ])
   return report
 }
 
 module.exports = {
   LOSS_FIELDS,
+  RECOVERY_FAULT_CODES,
+  RECOVERY_OPERATOR_ACTIONS,
+  RECOVERY_PROGRESS_STATES,
+  RECOVERY_SCENARIOS,
   PROGRESS_STATES,
   SCENARIOS,
   SOURCES,
@@ -426,11 +601,15 @@ module.exports = {
   assertSafeInteractionValue,
   buildDwmProgress,
   buildInteractionReport,
+  buildRecoveryProgress,
   parseArguments,
   parseOperatorCompletion,
+  parseRecoveryOperatorCompletion,
+  recoveryOperatorCompletion,
   transportDelta,
   transportSnapshot,
   validateDwmProgress,
   validateInteractionReport,
+  validateRecoveryProgress,
   validateTransportSnapshot
 }

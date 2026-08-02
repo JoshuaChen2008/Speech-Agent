@@ -38,9 +38,9 @@ node --test --experimental-test-isolation=none `
 
 ## schema-v2 实机恢复报告登记
 
-I2 interaction 报告将升级为兼容旧 v1 的 schema-v2，并增加
-`device-removal-retry` 与 `sleep-wake-retry`。当前状态为已决定：要求已登记，runner 与 verifier
-尚未实现，因此不能据此产生新的实机验收结论。
+I2 interaction 报告现已升级为兼容旧 v1 的 schema-v2，并增加
+`device-removal-retry` 与 `sleep-wake-retry`。runner、strict verifier、进度文件与操作者 completion
+协议当前为实现完成·尚未验收；尚无这两个场景的实机报告，因此不能据此产生新的实机验收结论。
 
 两个场景都只允许 runner 等待操作者动作。设备场景由操作者实际拔出或禁用当前端点，睡眠场景由
 操作者实际触发 Windows 睡眠并唤醒；completion 只证明动作已经执行。报告只有同时观察到对应的
@@ -50,6 +50,33 @@ completion 缺失必须失败，但 completion 单独存在也必须 fail closed
 
 schema-v2 继续执行 SEM-F14：只写指标、枚举和哈希，拒绝字幕正文、PCM、现场音频文件、设备名、
 本地绝对路径、绝对单调时刻和时钟偏移。
+
+两个新场景通过同一个入口执行。runner 启动后会在进度文件中写出等待状态；操作者必须在另一个
+PowerShell 窗口中，等外部动作与恢复确实发生后再写 completion：
+
+```powershell
+.\scripts\run-i2-interaction.ps1 -Scenario device-removal-retry -Source loopback `
+  -OutputDirectory .artifacts\audio-acceptance\i2-device-removal-loopback
+
+node scripts/complete-i2-recovery-action.js `
+  --scenario device-removal-retry `
+  --completion .artifacts\audio-acceptance\i2-device-removal-loopback\device-removal-retry-loopback.completion.json
+```
+
+设备场景必须先等 `awaiting-device-removal`，再实际拔出或禁用当前端点并恢复端点；只有看到产品
+进入 `AUDIO_TRACK_ENDED` 故障阶段后，runner 才会接受 completion 并继续执行显式 Retry。
+
+```powershell
+.\scripts\run-i2-interaction.ps1 -Scenario sleep-wake-retry -Source loopback `
+  -OutputDirectory .artifacts\audio-acceptance\i2-sleep-wake-loopback
+
+node scripts/complete-i2-recovery-action.js `
+  --scenario sleep-wake-retry `
+  --completion .artifacts\audio-acceptance\i2-sleep-wake-loopback\sleep-wake-retry-loopback.completion.json
+```
+
+睡眠场景必须先等 `awaiting-system-suspend`，再由操作者触发 Windows 睡眠并唤醒。runner 同时要求
+真实 `SYSTEM_SUSPEND` 故障和 `powerMonitor` 的 resume 事件；completion 不能替代任一产品状态。
 
 ## 可执行的实机交互 runner
 
@@ -94,9 +121,9 @@ node scripts/complete-i2-dwm-drag.js `
   --completion .artifacts\audio-acceptance\i2-interaction-dwm-loopback\dwm-drag-loopback.completion.json
 ```
 
-这三个 runner 只验证 pause/refine、worker 硬崩溃+Retry 和实际可见的 DWM
-拖动。它们明确不宣称发生过实际 OS 设备移除或 Windows 睡眠/唤醒；这两项仍必须
-按下文步骤由操作者单独执行和记录。
+前述旧 v1 三个场景分别验证 pause/refine、worker 硬崩溃+Retry 和实际可见的 DWM 拖动；
+schema-v2 两个恢复场景才允许在满足真实故障与恢复边界时声明发生过实际设备移除或 Windows
+睡眠/唤醒。当前尚无这两个新场景的报告，它们仍必须按下文步骤由操作者执行和记录。
 
 ## 必须由实机完成的部分
 
@@ -104,7 +131,7 @@ node scripts/complete-i2-dwm-drag.js `
 
 1. 真实 pause/refine：播放受控语料，暂停于定稿/精修交界，确认恢复后出现对应 refined，且 transport 为零丢失。
 2. Overlay 拖动：在真实音频会话持续显示字幕期间拖动字幕条和工具条，确认未闪烁、窗口位置正确、字幕连续；以运行结束的 transport 零丢失证明 PCM 链路未断帧。当前没有能替代人工视觉判定的无头断言。
-3. 设备变更/移除：活动会话中实际拔出或禁用当前输入/回环设备，确认出现 `AUDIO_TRACK_ENDED`（或明确的采集失败）、capture 已停止；恢复设备后仅通过 Retry 重新开始，再以受控语料验证字幕连续。
+3. 设备变更/移除：活动会话中实际拔出或禁用当前输入/回环设备，确认出现精确的 `AUDIO_TRACK_ENDED` 且 capture 已停止；其他采集失败不能产生 schema-v2 `pass`。恢复设备后仅通过 Retry 重新开始，再以受控语料验证字幕连续。
 4. Worker 硬崩溃：在真实模型会话中终止 exact realtime child，确认无后续字幕、会话进入可重试错误；Retry 后运行新 child，并以同一 session 的续增 sequence、SQLite 和零 transport 损失闭环。
 5. 睡眠/唤醒：活动会话运行时由操作者触发一次 Windows 睡眠并唤醒；确认 `SYSTEM_SUSPEND`、不会自动重采集，设备恢复后点击 Retry 才重连。不得把 OS 休眠自动化成后台操作。
 
