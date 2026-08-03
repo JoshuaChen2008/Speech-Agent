@@ -6,6 +6,7 @@ const path = require('node:path')
 const test = require('node:test')
 
 const ROOT = path.resolve(__dirname, '../..')
+const REMOTE_COUNTS_PATTERN = /workflow 结论为 `success`；core 414 tests=407 pass\+7 expected model\/Silero-asset skips，integration 27\/27，evidence 190\/190；总计 631 tests=624 pass\+7 expected skips\+0 fail。7 项跳过不计作模型测试成立/
 
 test('acceptance navigation projects every remaining subtitle MVP machine gate', () => {
   const navigation = fs.readFileSync(path.join(ROOT, 'docs', 'validation', 'README.md'), 'utf8')
@@ -112,10 +113,13 @@ test('current acceptance projections retain failed CI revisions and record the e
   ]
   for (const file of projectionFiles) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
-    assert.match(source, /30787209338/, `${file} must project the current downloaded qualified workflow`)
-    assert.match(source, /8845725648/, `${file} must project the current artifact identity`)
-    assert.match(source, /b9d0a56b55fa4c6728be660698654bce418ee6364fd43a59eb1be9ccb9993242|b9d0a56b…93242/,
+    assert.match(source, /30790372286/, `${file} must project the current downloaded qualified workflow`)
+    assert.match(source, /8846860080/, `${file} must project the current artifact identity`)
+    assert.match(source, /5968779b61db0eb6f6d2d7e7dcaa3d0a38844f8987a43941bb4395aff5ba69ef|5968779b…69ef/,
       `${file} must project the current artifact digest`)
+    assert.match(source, REMOTE_COUNTS_PATTERN, `${file} must separate discovered, passed, and expected-skip counts`)
+    assert.doesNotMatch(source, /631 项回归成功|631 项回归均返回/,
+      `${file} must not count hosted model-asset skips as passed tests`)
   }
   for (const file of [...historicalFiles, ...projectionFiles]) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
@@ -140,8 +144,11 @@ test('current acceptance projections retain failed CI revisions and record the e
   const readmeRemoteRow = readme.split(/\r?\n/).find((line) => line.includes('| 远端 Windows CI 资格 |')) || ''
   assert.match(readmeLocalRow, /core 414、integration 27、evidence 190，共 631 项/)
   assert.doesNotMatch(readmeLocalRow, /evidence 188|共 629 项/)
-  assert.match(readmeRemoteRow, /run `30787209338`[\s\S]*629 项回归成功/)
+  assert.match(readmeRemoteRow, /run `30790372286`/)
+  assert.match(readmeRemoteRow, REMOTE_COUNTS_PATTERN)
   assert.match(strategy, /本次 I2 模型替换决策[\s\S]*evidence 190\/190，共 631\/631/)
+  assert.match(strategy, /run `30790372286`[\s\S]*revision `5c6ce847fc07329802e3e98db9db70cc683f1f75`/)
+  assert.match(strategy, REMOTE_COUNTS_PATTERN)
   assert.match(strategy, /revision `f86ac1ef604dc7da0728c6eda44d59bbfd1e09bf`[\s\S]*evidence 188\/188，共 629\/629/)
 })
 
@@ -158,15 +165,17 @@ test('J9-CI status projects the authoritative deterministic joint acceptance bou
   const semanticRow = semantic.split(/\r?\n/).find((line) => line.includes('**SEM-T03**')) || ''
   const semanticPrevious = semantic.split(/\r?\n/).find((line) => line.includes('I3 修复代码候选 T03/J9-CI 证据')) || ''
   const semanticCurrent = semantic.split(/\r?\n/).find((line) => line.includes('I3 live provenance LF 修复候选 T03/J9-CI 证据')) || ''
+  const semanticLatest = semantic.split(/\r?\n/).find((line) => line.includes('最新 I2 模型替换决策证据投影')) || ''
   const strategyRow = strategy.split(/\r?\n/).find((line) => line.includes('| J9-CI |')) || ''
   const planRow = plan.split(/\r?\n/).find((line) => line.includes('**B5 字幕 MVP 分发')) || ''
   const b5Current = b5.split(/\r?\n/).find((line) => line.startsWith('- 状态：')) || ''
 
-  for (const row of [navigationRow, readmeRow, semanticCurrent, strategyRow]) {
+  for (const row of [navigationRow, readmeRow, semanticLatest, strategyRow]) {
     assert.match(row, /联合验收完成/)
-    assert.match(row, /30787209338/)
-    assert.match(row, /f86ac1ef604dc7da0728c6eda44d59bbfd1e09bf/)
-    assert.match(row, /8845725648/)
+    assert.match(row, /30790372286/)
+    assert.match(row, /5c6ce847fc07329802e3e98db9db70cc683f1f75/)
+    assert.match(row, /8846860080/)
+    assert.match(row, REMOTE_COUNTS_PATTERN)
   }
   assert.match(semanticRow, /J9-CI 已达到确定性联合验收完成/)
   assert.match(semanticPrevious, /82d56f64c80c74f30c1944665460f1316f1d7939/)
@@ -174,6 +183,9 @@ test('J9-CI status projects the authoritative deterministic joint acceptance bou
   assert.match(semanticPrevious, /bdac65edc7541070b9e2b4af13550b5768ff0bc86b4048b13fd6e7aca7dea7c4/)
   assert.match(semanticCurrent, /b9d0a56b55fa4c6728be660698654bce418ee6364fd43a59eb1be9ccb9993242/)
   assert.match(semanticCurrent, /b9becb191234cefa6ddfba48bc2865379d6dc62f1a7020c85124df02f2516f31/)
+  assert.match(semanticLatest, /5968779b61db0eb6f6d2d7e7dcaa3d0a38844f8987a43941bb4395aff5ba69ef/)
+  assert.match(semanticLatest, /618f02eddbbd3a956d679b17180817665d48dd0b9608262fd6519f53eac857e0/)
+  assert.match(semanticLatest, /不表示 Gate 0B 已选定替代模型/)
   assert.match(strategyRow, /J9-CI 已达到确定性联合验收完成/)
   assert.match(navigationRow, /\| J9-CI 远端资格 \| 联合验收完成 \|/)
   assert.match(readmeRow, /\| 远端 Windows CI 资格 \| 联合验收完成 \|/)
@@ -183,7 +195,22 @@ test('J9-CI status projects the authoritative deterministic joint acceptance bou
   for (const row of [semanticRow, planRow, b5Current]) {
     assert.doesNotMatch(row, /provenance writer\/verifier、跨报告哈希复核、workflow 顺序和含 revision\/run 的上传名为实现完成·尚未验收|最终 CI provenance writer\/verifier 为实现完成·尚未验收|writer\/verifier、workflow 顺序与本地当前候选的交叉哈希探针为实现完成·尚未验收/)
     assert.match(row, /联合验收完成/)
-    assert.match(row, /30787209338/)
+    assert.match(row, /30790372286/)
+    assert.match(row, /5c6ce847fc07329802e3e98db9db70cc683f1f75/)
+    assert.match(row, /8846860080/)
+    assert.match(row, REMOTE_COUNTS_PATTERN)
+  }
+  for (const source of [semantic, strategy, plan, b5]) {
+    assert.match(source, /30790372286/)
+    assert.match(source, /5c6ce847fc07329802e3e98db9db70cc683f1f75/)
+  }
+  assert.match(planRow, /5968779b61db0eb6f6d2d7e7dcaa3d0a38844f8987a43941bb4395aff5ba69ef/)
+  assert.match(planRow, /618f02eddbbd3a956d679b17180817665d48dd0b9608262fd6519f53eac857e0/)
+  assert.match(b5Current, /5968779b61db0eb6f6d2d7e7dcaa3d0a38844f8987a43941bb4395aff5ba69ef/)
+  assert.match(b5Current, /618f02eddbbd3a956d679b17180817665d48dd0b9608262fd6519f53eac857e0/)
+  for (const row of [planRow, b5Current]) {
+    assert.doesNotMatch(row, /30787209338|f86ac1ef604dc7da0728c6eda44d59bbfd1e09bf|629 项/,
+      'current B5 projection must not end on the superseded LF-repair candidate')
   }
 })
 

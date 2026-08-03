@@ -17,6 +17,7 @@ const {
 const ROOT = path.resolve(__dirname, '../..')
 const REVISION = 'a'.repeat(40)
 const SHA256 = 'b'.repeat(64)
+const REMOTE_COUNTS_PATTERN = /workflow 结论为 `success`；core 414 tests=407 pass\+7 expected model\/Silero-asset skips，integration 27\/27，evidence 190\/190；总计 631 tests=624 pass\+7 expected skips\+0 fail。7 项跳过不计作模型测试成立/
 
 test('CI qualification lockfile and workflow provenance are pinned to LF checkout bytes', () => {
   const attributes = fs.readFileSync(path.join(ROOT, '.gitattributes'), 'utf8')
@@ -203,6 +204,7 @@ test('SEM-T03 and J9-CI retain failed revisions, record the successful artifact,
   const semT03 = semantic.split(/\r?\n/).find((line) => line.includes('**SEM-T03**'))
   const semanticPrevious = semantic.split(/\r?\n/).find((line) => line.includes('I3 修复代码候选 T03/J9-CI 证据')) || ''
   const semanticCurrent = semantic.split(/\r?\n/).find((line) => line.includes('I3 live provenance LF 修复候选 T03/J9-CI 证据')) || ''
+  const semanticLatest = semantic.split(/\r?\n/).find((line) => line.includes('最新 I2 模型替换决策证据投影')) || ''
   const j9Ci = strategy.split(/\r?\n/).find((line) => line.includes('| J9-CI |'))
 
   assert.match(semT03, /checkout revision/)
@@ -226,6 +228,13 @@ test('SEM-T03 and J9-CI retain failed revisions, record the successful artifact,
   assert.match(semT03, /8845725648/)
   assert.match(semT03, /b9d0a56b55fa4c6728be660698654bce418ee6364fd43a59eb1be9ccb9993242/)
   assert.match(semT03, /b9becb191234cefa6ddfba48bc2865379d6dc62f1a7020c85124df02f2516f31/)
+  assert.match(semT03, /30790372286/)
+  assert.match(semT03, /5c6ce847fc07329802e3e98db9db70cc683f1f75/)
+  assert.match(semT03, /8846860080/)
+  assert.match(semT03, /5968779b61db0eb6f6d2d7e7dcaa3d0a38844f8987a43941bb4395aff5ba69ef/)
+  assert.match(semT03, /618f02eddbbd3a956d679b17180817665d48dd0b9608262fd6519f53eac857e0/)
+  assert.match(semT03, REMOTE_COUNTS_PATTERN)
+  assert.doesNotMatch(semT03, /631 项回归成功|631 项回归均返回/)
   assert.match(semT03, /2df032ffb1c4d7f3da3130cce240b617559947f8b4cef0c63d8cf8b0ca33698c/)
   assert.match(semT03, /33bddcb065f5297ab9b244c60455dda798d5415abab1b213d0c1fac65a537017/)
   assert.match(semT03, /hidden files/)
@@ -247,6 +256,13 @@ test('SEM-T03 and J9-CI retain failed revisions, record the successful artifact,
   assert.match(semanticCurrent, /8845725648/)
   assert.match(semanticCurrent, /b9d0a56b55fa4c6728be660698654bce418ee6364fd43a59eb1be9ccb9993242/)
   assert.match(semanticCurrent, /b9becb191234cefa6ddfba48bc2865379d6dc62f1a7020c85124df02f2516f31/)
+  assert.match(semanticLatest, /30790372286/)
+  assert.match(semanticLatest, /5c6ce847fc07329802e3e98db9db70cc683f1f75/)
+  assert.match(semanticLatest, /8846860080/)
+  assert.match(semanticLatest, /5968779b61db0eb6f6d2d7e7dcaa3d0a38844f8987a43941bb4395aff5ba69ef/)
+  assert.match(semanticLatest, /618f02eddbbd3a956d679b17180817665d48dd0b9608262fd6519f53eac857e0/)
+  assert.match(semanticLatest, /不表示 Gate 0B 已选定替代模型/)
+  assert.match(semanticLatest, REMOTE_COUNTS_PATTERN)
   assert.match(j9Ci, /exact checkout revision/)
   assert.match(j9Ci, /30784483976/)
   assert.match(j9Ci, /82d56f64c80c74f30c1944665460f1316f1d7939/)
@@ -260,6 +276,13 @@ test('SEM-T03 and J9-CI retain failed revisions, record the successful artifact,
   assert.match(j9Ci, /8845725648/)
   assert.match(j9Ci, /b9d0a56b55fa4c6728be660698654bce418ee6364fd43a59eb1be9ccb9993242/)
   assert.match(j9Ci, /b9becb191234cefa6ddfba48bc2865379d6dc62f1a7020c85124df02f2516f31/)
+  assert.match(j9Ci, /30790372286/)
+  assert.match(j9Ci, /5c6ce847fc07329802e3e98db9db70cc683f1f75/)
+  assert.match(j9Ci, /8846860080/)
+  assert.match(j9Ci, /5968779b61db0eb6f6d2d7e7dcaa3d0a38844f8987a43941bb4395aff5ba69ef/)
+  assert.match(j9Ci, /618f02eddbbd3a956d679b17180817665d48dd0b9608262fd6519f53eac857e0/)
+  assert.match(j9Ci, REMOTE_COUNTS_PATTERN)
+  assert.doesNotMatch(j9Ci, /631 项回归成功|631 项回归均返回/)
   assert.match(j9Ci, /8844827701/)
   assert.match(j9Ci, /78227ef5b4af08f3f2319156cb4ef096a132599707446506c32124f0ecbcdaca/)
   assert.match(j9Ci, /Electron `43\.2\.0`/)
