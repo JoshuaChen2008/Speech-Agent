@@ -9,6 +9,7 @@ const test = require('node:test')
 const { parseStrictEvidenceJson } = require('../../scripts/strict-evidence-json')
 
 const EVIDENCE_ROOT = path.resolve(__dirname, '../../docs/validation/i2-live-v5')
+const B96_LOOPBACK_EVIDENCE_ROOT = path.resolve(__dirname, '../../docs/validation/i2-live-b96b8fe-loopback')
 const GATE_REPORT_PATH = path.join(EVIDENCE_ROOT, 'gate-0c-preflight.json')
 const RUNNER_PATH = path.resolve(__dirname, '../../scripts/i2-live-caption-smoke.js')
 const EXPECTED_GATE_SHA256 = '0f9f7668751c64fbce922883421ead41680226126800e0b7f6b3da81b39840ef'
@@ -55,8 +56,7 @@ function sha256 (bytes) {
   return crypto.createHash('sha256').update(bytes).digest('hex')
 }
 
-function sourceEvidence (sourceId) {
-  const directory = path.join(EVIDENCE_ROOT, sourceId)
+function readSourceEvidenceDirectory (directory, sourceId) {
   const reportNames = [...Array(5)].map((_, index) => `run-${String(index + 1).padStart(2, '0')}.json`)
   const exitEvidenceNames = [...Array(5)].map((_, index) => `run-${String(index + 1).padStart(2, '0')}.exit.json`)
   const expectedNames = [...reportNames, ...exitEvidenceNames, 'series.json']
@@ -66,6 +66,10 @@ function sourceEvidence (sourceId) {
   const exitEvidenceInputs = exitEvidenceNames.map((name) => fs.readFileSync(path.join(directory, name)))
   const summaryBytes = fs.readFileSync(path.join(directory, 'series.json'))
   return { inputs, exitEvidenceInputs, summaryBytes, summary: parseStrictEvidenceJson(summaryBytes, `${sourceId} summary`) }
+}
+
+function sourceEvidence (sourceId) {
+  return readSourceEvidenceDirectory(path.join(EVIDENCE_ROOT, sourceId), sourceId)
 }
 
 function mutateBytes (bytes, mutate) {
@@ -103,6 +107,7 @@ test('exact-byte v5 evidence is pinned to LF across Windows checkouts', () => {
   const attributes = fs.readFileSync(path.resolve(__dirname, '../../.gitattributes'), 'utf8')
   assert.match(attributes, /^docs\/validation\/i2-live-v5\/\*\.json text eol=lf$/m)
   assert.match(attributes, /^docs\/validation\/i2-live-v5\/\*\*\/\*\.json text eol=lf$/m)
+  assert.match(attributes, /^docs\/validation\/i2-live-b96b8fe-loopback\/\*\.json text eol=lf$/m)
 
   const evidenceBytes = [fs.readFileSync(GATE_REPORT_PATH)]
   for (const sourceId of ['loopback', 'mic']) {
@@ -110,6 +115,34 @@ test('exact-byte v5 evidence is pinned to LF across Windows checkouts', () => {
     evidenceBytes.push(...evidence.inputs, ...evidence.exitEvidenceInputs, evidence.summaryBytes)
   }
   for (const bytes of evidenceBytes) assert.equal(bytes.includes(0x0d), false)
+})
+
+test('revision b96b8fe7 loopback supplement is an exact five-child refinement and exit-bound series', () => {
+  const evidence = readSourceEvidenceDirectory(B96_LOOPBACK_EVIDENCE_ROOT, 'loopback')
+  const rebuilt = validateI2SeriesSummaryEvidence(evidence.summaryBytes, 'loopback', {
+    inputs: evidence.inputs,
+    exitEvidenceInputs: evidence.exitEvidenceInputs,
+    minimumRuns: 5,
+    gateReportBytes: null
+  })
+  assert.equal(sha256(evidence.summaryBytes), '2a365e3c6a1075336b9c7df65ad5b3ca36094a991d5b68532d15e65556ab1b48')
+  assert.equal(rebuilt.result, 'pass')
+  assert.equal(rebuilt.runCount, 5)
+  assert.deepEqual(rebuilt.distributions.firstPartialFromEstimatedSpeechOnsetMs, {
+    p50: 1144,
+    p95: 1242,
+    min: 1054,
+    max: 1242
+  })
+  assert.equal(rebuilt.maxima.finalCer, 0)
+  assert.equal(rebuilt.maxima.refinedCer, 0)
+  for (const key of ZERO_TRANSPORT_KEYS) assert.equal(rebuilt.maxima[key], 0)
+  assert.deepEqual(rebuilt.privacy, {
+    capturedAudioPersisted: false,
+    reportContainsTranscriptText: false,
+    reportContainsAudioPath: false,
+    reportContainsInputPaths: false
+  })
 })
 
 test('tracked Gate 0C preflight is the exact memory-only schema2 fixture bound by schema5 mic reports', () => {

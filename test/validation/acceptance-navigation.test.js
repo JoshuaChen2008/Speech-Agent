@@ -49,8 +49,8 @@ test('current acceptance projections retain failed CI revisions and record the e
   ]
   for (const file of projectionFiles) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
-    assert.match(source, /30768637180/, `${file} must project the current downloaded qualified workflow`)
-    assert.match(source, /8839812004/, `${file} must project the current artifact identity`)
+    assert.match(source, /30781736119/, `${file} must project the current downloaded qualified workflow`)
+    assert.match(source, /8843931512/, `${file} must project the current artifact identity`)
   }
   for (const file of [...historicalFiles, ...projectionFiles]) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
@@ -70,18 +70,19 @@ test('J9-CI status projects the authoritative deterministic joint acceptance bou
   const navigationRow = navigation.split(/\r?\n/).find((line) => line.includes('| J9-CI ')) || ''
   const readmeRow = readme.split(/\r?\n/).find((line) => line.includes('| 远端 Windows CI 资格 ')) || ''
   const semanticRow = semantic.split(/\r?\n/).find((line) => line.includes('**SEM-T03**')) || ''
-  const semanticCurrent = semantic.split(/\r?\n/).find((line) => line.includes('当前 T03/J9-CI 证据')) || ''
+  const semanticCurrent = semantic.split(/\r?\n/).find((line) => line.includes('最近代码候选 T03/J9-CI 证据')) || ''
   const strategyRow = strategy.split(/\r?\n/).find((line) => line.includes('| J9-CI |')) || ''
   const planRow = plan.split(/\r?\n/).find((line) => line.includes('**B5 字幕 MVP 分发')) || ''
   const b5WriterLine = b5.split(/\r?\n/).find((line) => line.includes('writer/verifier、workflow 顺序')) || ''
 
   for (const row of [navigationRow, readmeRow, semanticCurrent, strategyRow]) {
     assert.match(row, /联合验收完成/)
-    assert.match(row, /30768637180/)
+    assert.match(row, /30781736119/)
   }
   assert.match(semanticRow, /J9-CI 已达到确定性联合验收完成/)
-  assert.match(semanticCurrent, /2d3d6bdf5d745c15c239ef7503a0dfac211409a8/)
-  assert.match(semanticCurrent, /3663225294fbd1019ab6e0e1e29608297fa767eb6c8e4b9012972fcd2d1f16c6/)
+  assert.match(semanticCurrent, /b96b8fe7db5ba4db3ac36c4ee85371a4381b521f/)
+  assert.match(semanticCurrent, /c010ef81f2a5bf8b864e7c4ecf81071744a4d2c68a6b584fc44b401160854dd6/)
+  assert.match(semanticCurrent, /f9a795b063d0ce80c26b11e7223955924d0d152c830cc6829638c9a1e76cf7bf/)
   assert.match(strategyRow, /J9-CI 已达到确定性联合验收完成/)
   assert.match(navigationRow, /\| J9-CI 远端资格 \| 联合验收完成 \|/)
   assert.match(readmeRow, /\| 远端 Windows CI 资格 \| 联合验收完成 \|/)

@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "kind": "i2-exact-child-exit",
+  "sourceId": "loopback",
+  "reportSha256": "2a87704ea20e42d95c369f7ed8ecfeb2e4222254860b94c9d6c6849556b26a3d",
+  "outcome": "exited-zero-without-runner-termination"
+}

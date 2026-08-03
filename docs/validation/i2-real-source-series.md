@@ -50,6 +50,26 @@ Captured PCM and decoded text remain in bounded memory. Reports contain metrics,
 
 Accuracy, refinement, lossless transport, exact accepted-partial binding and report-bound external exit checks pass. The current loopback and mic batches exceed the frozen latency line by 158ms and 5ms respectively. Performance remains explicit I2 debt, and the remaining interaction/recovery scenarios also keep I2 open; neither a green schema result, captured-onset diagnostic nor Gate 0B naked-model benchmark closes it.
 
+## 2026-08-03 exact-revision `loopback` supplement
+
+Revision `b96b8fe7db5ba4db3ac36c4ee85371a4381b521f` restores the I2 evidence composition after the optional-refinement lifecycle began requiring both the session-frozen `refinementEnabled` preference and the runtime-frozen `refinementAvailable` capability. The runner now fails closed when the approved refinement model is absent. If a first-pass final exists after the fixed tail-silence window but its refined transcript version does not, the child observes the real offline refinement reply for at most 15,000ms on a monotonic clock. A timeout is sticky: even a reply arriving during the subsequent Stop flush cannot erase `refined-caption-missing`.
+
+Diagnostic attempts made before both gates were explicitly frozen produced `refined-caption-missing` and were excluded from the series. The committed implementation then produced exactly five schema-v5 children, five report-bound schema-v1 exit sidecars and one schema-v6 recursive summary under [`i2-live-b96b8fe-loopback/`](i2-live-b96b8fe-loopback/). The summary SHA-256 is `2a365e3c6a1075336b9c7df65ad5b3ca36094a991d5b68532d15e65556ab1b48`; reconstruction from the exact child and sidecar bytes returns `pass`.
+
+| Evidence boundary | Result |
+|---|---:|
+| Runs / exact-child exits | 5 / 5 |
+| First-pass finals / refined transcript versions | 5 / 5 |
+| Maximum final / refined CER | 0 / 0 |
+| Frozen visibility P50 / P95 / min / max | 1144 / 1242 / 1054 / 1242ms |
+| Six diagnostic P95 intervals | 814 / 400 / 1 / 28 / 1 / 1ms |
+| All recorded transport loss maxima | 0 |
+| Captured audio, transcript text, audio path or input path persisted | false |
+
+The dominant diagnostic budget remains the interval from the frozen onset to VAD-start-frame receipt, followed by the audio needed from VAD start to the partial trigger. The six percentile columns can come from different children and are not additive. The unchanged acceptance value is the per-child frozen caption visibility latency, whose P95 is 1242ms and therefore still exceeds `<1000ms`.
+
+This supplement proves the fixed `loopback` refinement composition, accuracy, transport, privacy and exit binding for the exact revision. It does not provide a same-revision `mic` series, physical-microphone evidence, user-driven native dragging, actual device removal, system sleep/wake, I3 or I4. It also does not replace the earlier two-source authoritative bundle. I2 remains 实现完成·尚未验收.
+
 ## Reproduction
 
 Refresh the memory-only preflight first:
