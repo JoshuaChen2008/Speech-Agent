@@ -20,6 +20,7 @@ const {
   QUALIFICATION_CRASH_TARGET_MS,
   QUALIFICATION_DURATION_SECONDS,
   SOAK_LIMITS,
+  buildI3CoordinatorSessionOptions,
   buildSyntheticFixtureReport,
   currentProvenance,
   forceRealtimeWorkerCrashAndRetry,
@@ -49,6 +50,28 @@ test('I3 public arguments bypass the closed internal recovery-seed parser', () =
 test('I3 wrapper keeps its required status BrowserWindow interactive', () => {
   const wrapper = fs.readFileSync(path.resolve(__dirname, '../../scripts/run-i3-live-audio-soak.ps1'), 'utf8')
   assert.doesNotMatch(wrapper, /-WindowStyle\s+Hidden/)
+})
+
+test('I3 real-audio runner freezes the approved refinement model in both session inputs', () => {
+  const model = { id: 'x-asr-160ms', profile: 'balanced' }
+  for (const source of ['loopback', 'mic']) {
+    const enabled = buildI3CoordinatorSessionOptions({
+      source,
+      model,
+      refinementModel: { id: 'x-asr-offline' }
+    })
+    assert.equal(enabled.configuration.refinementEnabled, true)
+    assert.equal(enabled.runtimeOptions.refinementAvailable, true)
+    assert.deepEqual(enabled.runtimeOptions.modelOverride, {
+      developmentOnly: false,
+      id: model.id,
+      profile: model.profile
+    })
+
+    const unavailable = buildI3CoordinatorSessionOptions({ source, model, refinementModel: null })
+    assert.equal(unavailable.configuration.refinementEnabled, false)
+    assert.equal(unavailable.runtimeOptions.refinementAvailable, false)
+  }
 })
 
 test('I3 switches post-recovery caption generation before retry completion is reported', async () => {

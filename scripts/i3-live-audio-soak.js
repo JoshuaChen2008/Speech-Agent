@@ -210,6 +210,35 @@ function parseArguments (argv) {
   return options
 }
 
+function buildI3CoordinatorSessionOptions ({ source, model, refinementModel }) {
+  if (!['loopback', 'mic'].includes(source)) throw new Error('I3 coordinator source must be loopback or mic')
+  if (!model || typeof model.id !== 'string' || typeof model.profile !== 'string') {
+    throw new Error('I3 coordinator requires an approved realtime model')
+  }
+  const refinementAvailable = Boolean(refinementModel)
+  return {
+    configuration: source === 'loopback'
+      ? {
+          onboardingCompleted: true,
+          onboardingPreset: 'meeting',
+          loopback: true,
+          mic: false,
+          refinementEnabled: refinementAvailable
+        }
+      : {
+          onboardingCompleted: true,
+          onboardingPreset: 'dictation',
+          loopback: false,
+          mic: true,
+          refinementEnabled: refinementAvailable
+        },
+    runtimeOptions: {
+      modelOverride: { developmentOnly: false, id: model.id, profile: model.profile },
+      refinementAvailable
+    }
+  }
+}
+
 function resolveWorkspacePath (value, label) {
   const candidate = path.resolve(value)
   const rootPrefix = `${PROJECT_ROOT}${path.sep}`
@@ -780,6 +809,11 @@ async function runRealAudioSoak (options) {
     const refinementModel = auditedModels.refinement
     const preflight = options.source === 'mic' ? readPhysicalMicPreflight(options.physicalMicPreflight) : null
     const wave = readI3ShortStimulus()
+    const coordinatorSessionOptions = buildI3CoordinatorSessionOptions({
+      source: options.source,
+      model,
+      refinementModel
+    })
     let runtimeAdapter = null
     const sessionId = `i3-live-${soakId}`
     runtime = new SubtitleApplicationRuntime({
@@ -798,12 +832,10 @@ async function runRealAudioSoak (options) {
           })
           return runtimeAdapter
         },
-        configuration: options.source === 'loopback'
-          ? { onboardingCompleted: true, onboardingPreset: 'meeting', loopback: true, mic: false }
-          : { onboardingCompleted: true, onboardingPreset: 'dictation', loopback: false, mic: true },
+        configuration: coordinatorSessionOptions.configuration,
         idFactory: () => sessionId,
         persistenceSink,
-        runtimeOptions: { modelOverride: { developmentOnly: false, id: model.id, profile: model.profile } },
+        runtimeOptions: coordinatorSessionOptions.runtimeOptions,
         transitionTimeoutMs: 30000
       })
     })
@@ -1149,6 +1181,7 @@ module.exports = {
   QUALIFICATION_DURATION_SECONDS,
   SOAK_LIMITS,
   assertSafeReport,
+  buildI3CoordinatorSessionOptions,
   buildFailureReport,
   buildSyntheticFixtureReport,
   currentProvenance,

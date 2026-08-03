@@ -67,6 +67,8 @@
 >
 > 2026-08-03 的最近代码候选 T03/J9-CI 证据由 run `30781736119` 精确绑定 revision `b96b8fe7db5ba4db3ac36c4ee85371a4381b521f`；artifact ID `8843931512`、GitHub ZIP digest `c010ef81f2a5bf8b864e7c4ecf81071744a4d2c68a6b584fc44b401160854dd6`。下载侧五个 strict readers、四份报告与 lockfile/workflow SHA、跨报告绑定以及 41 文件/29 JSON 隐私负扫描均闭合；下载包不含 installer 字节，同轮 workflow 在索引生成前复核远端 installer SHA `f9a795b063d0ce80c26b11e7223955924d0d152c830cc6829638c9a1e76cf7bf`。该精确 revision 的 J9-CI 已达到确定性联合验收完成；此记录不扩大 T03 的托管 CI 边界，也不替代 I2/I3/I4 实机门禁。
 
+> SEM-F04/J8 的 I3 实机资格补充：I3 runner 若解析到受批准精修模型并据此要求 `refinedObservedWhenEnabled`，必须同时在会话配置冻结 `refinementEnabled=true`、在运行时能力冻结 `refinementAvailable=true`；只把模型对象传给 adapter 不构成精修已启用的证据。2026-08-03 revision `efccfeda4cb66ff74da23c747f6c4af3495b9659` 的 75 秒 `loopback` qualification 生成 `fail/partial`：墙钟 76,856.073ms、33 个首次稳定转写、worker 强制退出/Retry、SQLite/导出/transport/隐私等其余 14 项检查均成立，但精修稿为 0，唯一失败项是 `refinedObservedWhenEnabled=false`。该报告不得进入 I3 合格证据。双重冻结修复与 runner 契约回归现为实现完成·尚未验收；仍须由新精确 revision 的 75 秒实机资格验证。不得降低精修检查、25/12/8 段门槛或两小时验收口径，I3 整体保持实现完成·尚未验收。
+
 > SEM-F14 的报告边界同样适用于历史测试证据：受跟踪的 validation JSON 只能保留指标、枚举和哈希，不得以“测试语料”或“旧格式”为由保留字幕正文、可重建正文的 token 数组或音频文件名。被新证据替代的旧报告可保留原文件哈希与迁移计数，但不得继续冒充当前执行结果。Gate 0B 复算所需的正文中间件只允许写入固定、被 Git 忽略且无 symlink/junction 的 `models/gate-0b/private/`；CLI 原始输出只在内存中参与解析和哈希，不提供落盘参数，线程 sweep/流式 benchmark 的普通文件与 stdout 必须先投影为 ID、指标和哈希，任意其他正文落盘路径必须 fail closed。
 >
 > SEM-F20 的“永久淘汰”也覆盖 reducer 的内存保险上限：该上限严格高于最大视觉容量；一旦旧前缀因保险上限移除，实时 fold 与同会话水合必须同步写入仅含 `segmentId` 的显示墓碑，并以高于当前水位的迟到 `final` 验证 live、canonical replacement 与 reload 均不复活。
