@@ -55,6 +55,8 @@ const CLOCK_CALIBRATION_SAMPLES = 7
 const CLOCK_CALIBRATION_MAX_RTT_MS = 50
 const CLOCK_CALIBRATION_MAX_AGE_MS = 30000
 const PLAYBACK_SCHEDULE_LEAD_MS = 500
+const REFINEMENT_OBSERVATION_TIMEOUT_MS = 15000
+const REFINEMENT_OBSERVATION_POLL_MS = 100
 const PROVISIONAL_DIAGNOSTIC_KEYS = Object.freeze([
   'provisionalCandidatesStarted',
   'provisionalFramesFed',
@@ -564,6 +566,39 @@ function delay (milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
+async function waitForRefinementObservation (
+  captions,
+  {
+    timeoutMs = REFINEMENT_OBSERVATION_TIMEOUT_MS,
+    pollMs = REFINEMENT_OBSERVATION_POLL_MS,
+    now = mainClockNowMs,
+    sleep = delay
+  } = {}
+) {
+  if (!Array.isArray(captions)) throw new TypeError('captions must be an array')
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new TypeError('timeoutMs must be a non-negative finite number')
+  if (!Number.isFinite(pollMs) || pollMs <= 0) throw new TypeError('pollMs must be a positive finite number')
+  if (typeof now !== 'function') throw new TypeError('now must be a function')
+  if (typeof sleep !== 'function') throw new TypeError('sleep must be a function')
+
+  if (captions.some((event) => event?.kind === 'refined')) return true
+  const startedAt = now()
+  while (true) {
+    const remainingMs = timeoutMs - (now() - startedAt)
+    if (remainingMs <= 0) return false
+    await sleep(Math.min(pollMs, remainingMs))
+    if (now() - startedAt >= timeoutMs) return false
+    if (captions.some((event) => event?.kind === 'refined')) return true
+  }
+}
+
+function isRefinementEvidenceMissing ({ observationTimedOut, finalCount, refinedCount }) {
+  if (typeof observationTimedOut !== 'boolean') throw new TypeError('observationTimedOut must be a boolean')
+  if (!Number.isInteger(finalCount) || finalCount < 0) throw new TypeError('finalCount must be a non-negative integer')
+  if (!Number.isInteger(refinedCount) || refinedCount < 0) throw new TypeError('refinedCount must be a non-negative integer')
+  return observationTimedOut || (finalCount > 0 && refinedCount === 0)
+}
+
 /* 与 Gate 0B 首 partial 基准相同：连续两个 20ms 窗口高于 -45dBFS。 */
 function findSpeechOnsetMsPcm16 (data, sampleRate) {
   const windowSamples = Math.max(1, Math.round(sampleRate * 0.02))
@@ -783,14 +818,15 @@ async function main () {
     if (!model) throw new Error('approved realtime model not found on this machine')
     const vadModel = resolveSileroVadModel({ userDataDir: app.getPath('userData') })
     const refineModel = resolveApprovedRefinementModel({ userDataDir: app.getPath('userData') })
+    if (!refineModel) throw new Error('approved refinement model not found on this machine')
     const wave = readPcm16MonoWav(WAV_PATH)
     const physicalPreflight = options.physicalMicPreflight
       ? readPhysicalMicPreflight(options.physicalMicPreflight)
       : null
 
     const configuration = options.source === 'loopback'
-      ? { onboardingCompleted: true, onboardingPreset: 'meeting', mic: false, loopback: true }
-      : { onboardingCompleted: true, onboardingPreset: 'dictation', mic: true, loopback: false }
+      ? { onboardingCompleted: true, onboardingPreset: 'meeting', mic: false, loopback: true, refinementEnabled: true }
+      : { onboardingCompleted: true, onboardingPreset: 'dictation', mic: true, loopback: false, refinementEnabled: true }
     coordinator = new SessionCoordinator({
       adapterFactory: () => {
         runtimeAdapter = new RealtimeRuntimeAdapter({
@@ -810,7 +846,10 @@ async function main () {
         })
         return runtimeAdapter
       },
-      runtimeOptions: { modelOverride: { id: model.id, profile: model.profile, developmentOnly: false } },
+      runtimeOptions: {
+        modelOverride: { id: model.id, profile: model.profile, developmentOnly: false },
+        refinementAvailable: true
+      },
       transitionTimeoutMs: 30000,
       configuration,
       idFactory: () => `i2-live-${Date.now()}`,
@@ -836,6 +875,7 @@ async function main () {
 
     let stimulusStartedAtMainClockMs = mainClockNowMs()
     let stimulusEndedAtMainClockMs = null
+    let refinementObservationTimedOut = false
     let playback = null
     if (options.source === 'loopback') {
       await runtimeAdapter.calibrateTimingProbe()
@@ -865,6 +905,12 @@ async function main () {
     }
     /* 尾静音窗口：VAD 收段（silero 默认 1.0s 收句）+ 模型冲刷 + 事件到达。 */
     await delay(3200)
+
+    if (refineModel &&
+        captions.some((event) => event.kind === 'final') &&
+        !captions.some((event) => event.kind === 'refined')) {
+      refinementObservationTimedOut = !(await waitForRefinementObservation(captions))
+    }
 
     const stopped = await coordinator.command('stop')
     expect(stopped.ok === true, 'coordinator-stop-failed')
@@ -937,7 +983,11 @@ async function main () {
     /* 精修断言（B3）：精修模型就位时必须有 refined 到达、内容达标且带标点
        （第一遍 160ms 短句几乎不出标点，标点恢复正是精修的存在理由）。 */
     if (refineModel) {
-      if (finals.length > 0 && refined.length === 0) failures.push('refined-caption-missing')
+      if (isRefinementEvidenceMissing({
+        observationTimedOut: refinementObservationTimedOut,
+        finalCount: finals.length,
+        refinedCount: refined.length
+      })) failures.push('refined-caption-missing')
       if (refined.length > 0) {
         if (refinedCer > CER_LIMIT) failures.push('refined-cer-exceeded')
         if (!refinedHasPunctuation) failures.push('refined-punctuation-missing')
@@ -1034,15 +1084,19 @@ module.exports = {
   buildMicPromptNotice,
   buildReport,
   findSpeechOnsetMsPcm16,
+  isRefinementEvidenceMissing,
   isDirectElectronMainEntry,
   normalizeFailureCodes,
   parseArguments,
   playWave,
   provisionalDiagnosticsSummary,
+  REFINEMENT_OBSERVATION_POLL_MS,
+  REFINEMENT_OBSERVATION_TIMEOUT_MS,
   readPhysicalMicPreflight,
   readPcm16MonoWav,
   safeInputEvidence,
   safeTrackEvidence,
   startPreparedPlaybackAfterProbe,
+  waitForRefinementObservation,
   WAV_PATH
 }

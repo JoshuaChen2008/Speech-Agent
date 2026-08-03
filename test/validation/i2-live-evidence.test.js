@@ -16,12 +16,16 @@ const {
   buildFailureReport,
   buildMicPromptNotice,
   buildReport,
+  isRefinementEvidenceMissing,
   isDirectElectronMainEntry,
   normalizeFailureCodes,
   parseArguments,
   provisionalDiagnosticsSummary,
+  REFINEMENT_OBSERVATION_POLL_MS,
+  REFINEMENT_OBSERVATION_TIMEOUT_MS,
   readPhysicalMicPreflight,
-  startPreparedPlaybackAfterProbe
+  startPreparedPlaybackAfterProbe,
+  waitForRefinementObservation
 } = require('../../scripts/i2-live-caption-smoke')
 const { validateGate0CMetricsReport } = require('../../scripts/gate-0c/verify-report')
 const {
@@ -355,6 +359,25 @@ test('I2 live runner requires exactly one explicit source and self-validates bef
   assert.match(source, /await coordinator\.dispose\(\)\s*if \(result === 'pass'\) app\.quit\(\)/,
     'a passing real-audio run must dispose product resources before a graceful Electron quit')
 
+  const fixedTailIndex = source.indexOf('await delay(3200)')
+  const refinementObservationIndex = source.indexOf('await waitForRefinementObservation(captions)', fixedTailIndex)
+  const stopIndex = source.indexOf("await coordinator.command('stop')", refinementObservationIndex)
+  const stickyTimeoutCheckIndex = source.indexOf('if (isRefinementEvidenceMissing({', stopIndex)
+  assert.equal(REFINEMENT_OBSERVATION_TIMEOUT_MS, 15000)
+  assert.ok(fixedTailIndex >= 0 && refinementObservationIndex > fixedTailIndex && stopIndex > refinementObservationIndex &&
+    stickyTimeoutCheckIndex > stopIndex,
+  'bounded refinement observation must precede Stop and its frozen timeout must be checked after Stop')
+  assert.match(source, /now = mainClockNowMs/,
+    'the refinement observation deadline must use the Electron main monotonic clock')
+  assert.match(source, /failures\.push\('refined-caption-missing'\)/,
+    'a missing refinement must remain fail closed after the bounded observation window')
+  assert.match(source, /if \(!refineModel\) throw new Error\('approved refinement model not found on this machine'\)/,
+    'I2 evidence must fail closed before starting when the approved refinement model is absent')
+  assert.equal((source.match(/refinementEnabled: true/g) || []).length, 2,
+    'both source-specific I2 configurations must freeze refinement on')
+  assert.match(source, /refinementAvailable: true/,
+    'the I2 runtime capability must explicitly advertise the resolved refinement model')
+
   const playerSource = fs.readFileSync(path.resolve(__dirname, '../../scripts/i2-live-caption-player.js'), 'utf8')
   assert.match(playerSource, /startPreparedPcm16 = function startPreparedPcm16/)
   assert.match(playerSource, /source\.start\(startedAt\)/,
@@ -446,6 +469,64 @@ test('I2 live runner requires exactly one explicit source and self-validates bef
   assert.deepEqual(normalizeFailureCodes(['listener-error', 'final-cer-exceeded']), ['listener-error', 'final-cer-exceeded'])
   assert.throws(() => normalizeFailureCodes(['transcript: private words']), /fixed codes/)
   assert.throws(() => normalizeFailureCodes(['C:/private/recording.wav']), /fixed codes/)
+})
+
+test('I2 refinement observation returns early and stops at its fixed timeout without wall-clock waiting', async () => {
+  assert.equal(REFINEMENT_OBSERVATION_POLL_MS, 100)
+
+  let immediateSleepCalls = 0
+  assert.equal(await waitForRefinementObservation(
+    [{ kind: 'refined' }],
+    { now: () => 0, sleep: async () => { immediateSleepCalls += 1 } }
+  ), true)
+  assert.equal(immediateSleepCalls, 0)
+
+  const captions = [{ kind: 'final' }]
+  let earlyClockMs = 0
+  assert.equal(await waitForRefinementObservation(captions, {
+    now: () => earlyClockMs,
+    sleep: async (milliseconds) => {
+      earlyClockMs += milliseconds
+      if (earlyClockMs === 300) captions.push({ kind: 'refined' })
+    }
+  }), true)
+  assert.equal(earlyClockMs, 300, 'a real refinement must end observation immediately')
+
+  let timeoutClockMs = 0
+  assert.equal(await waitForRefinementObservation([{ kind: 'final' }], {
+    now: () => timeoutClockMs,
+    sleep: async (milliseconds) => { timeoutClockMs += milliseconds }
+  }), false)
+  assert.equal(timeoutClockMs, REFINEMENT_OBSERVATION_TIMEOUT_MS,
+    'a missing refinement must not extend the fixed observation bound')
+
+  const boundaryCaptions = [{ kind: 'final' }]
+  let boundaryClockMs = 0
+  assert.equal(await waitForRefinementObservation(boundaryCaptions, {
+    pollMs: REFINEMENT_OBSERVATION_TIMEOUT_MS,
+    now: () => boundaryClockMs,
+    sleep: async (milliseconds) => {
+      boundaryClockMs += milliseconds
+      boundaryCaptions.push({ kind: 'refined' })
+    }
+  }), false, 'a refinement arriving at the monotonic deadline must remain timed out')
+  assert.equal(boundaryClockMs, REFINEMENT_OBSERVATION_TIMEOUT_MS)
+
+  assert.equal(isRefinementEvidenceMissing({
+    observationTimedOut: true,
+    finalCount: 1,
+    refinedCount: 1
+  }), true, 'a refinement arriving during Stop cannot erase a frozen observation timeout')
+  assert.equal(isRefinementEvidenceMissing({
+    observationTimedOut: false,
+    finalCount: 1,
+    refinedCount: 1
+  }), false)
+  assert.equal(isRefinementEvidenceMissing({
+    observationTimedOut: false,
+    finalCount: 1,
+    refinedCount: 0
+  }), true)
 })
 
 test('I2 runner can print only the text-free provisional worker counters for diagnosis', () => {
