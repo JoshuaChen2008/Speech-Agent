@@ -35,6 +35,60 @@ test('acceptance navigation projects every remaining subtitle MVP machine gate',
   assert.doesNotMatch(i3PlanRow, /非音频与真实资格完成|\bfinal\/refined\b/)
 })
 
+test('I2 projections reopen Gate 0B replacement evaluation without moving the frozen acceptance boundary', () => {
+  const files = [
+    'PLAN.md',
+    'README.md',
+    path.join('docs', 'semantic-contract.md'),
+    path.join('docs', 'testing-strategy.md'),
+    path.join('docs', 'runtime-architecture.md'),
+    path.join('docs', 'validation', 'README.md'),
+    path.join('docs', 'validation', 'gate-0b.md'),
+    path.join('docs', 'validation', 'i2-real-source-series.md')
+  ]
+  for (const file of files) {
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
+    assert.match(source, /重新开启 (?:Gate 0B )?(?:实时|realtime)\s*模型替换评估|reopen Gate 0B replacement evaluation/,
+      `${file} must project the realtime model replacement decision`)
+    assert.match(source, /替代模型尚未选定|尚未选定替代模型|替代候选尚未选定|No replacement model has been selected|尚未批准任何替代 realtime 模型/,
+      `${file} must not claim a replacement has already been selected`)
+  }
+
+  const semantic = fs.readFileSync(path.join(ROOT, 'docs', 'semantic-contract.md'), 'utf8')
+  const strategy = fs.readFileSync(path.join(ROOT, 'docs', 'testing-strategy.md'), 'utf8')
+  const navigation = fs.readFileSync(path.join(ROOT, 'docs', 'validation', 'README.md'), 'utf8')
+  const gate0b = fs.readFileSync(path.join(ROOT, 'docs', 'validation', 'gate-0b.md'), 'utf8')
+  const semanticDecision = semantic.split(/\r?\n/).find((line) => line.includes('I2 模型替换决策（SEM-F01/SEM-T14/J1）')) || ''
+  const j1Row = strategy.split(/\r?\n/).find((line) => line.startsWith('| J1 |')) || ''
+  const gateHeading = '## 2026-08-03 I2 集成复核：重新开启 realtime 模型替换评估'
+  const gateDecisionOffset = gate0b.indexOf(gateHeading)
+  assert.ok(gateDecisionOffset >= 0, 'Gate 0B must contain the dated current replacement decision')
+  const gateDecision = gate0b.slice(gateDecisionOffset)
+
+  for (const [label, section] of [
+    ['dated semantic decision', semanticDecision],
+    ['J1 row', j1Row],
+    ['dated Gate 0B decision', gateDecision]
+  ]) {
+    assert.match(section, /当前观测|已观察到/, `${label} must scope the decision to the observed composition`)
+    assert.match(section, /不是物理下限证明/, `${label} must reject a physical-lower-bound overclaim`)
+    assert.match(section, /已决定/, `${label} must record the engineering decision explicitly`)
+    assert.match(section, /尚未选定替代模型|替代候选尚未选定|尚未批准任何替代 realtime 模型/,
+      `${label} must not select a replacement model`)
+    assert.doesNotMatch(section,
+      /继续调整该候选不能闭合 I2|已处于其语料音频下限附近|修改线程、provisional 上限或 Silero 参数不能满足产品冻结门槛|物理不可(?:能|达)/,
+      `${label} must not turn observed maxima into physical impossibility`)
+  }
+  for (const source of [semantic, strategy, navigation]) {
+    assert.match(source, /<1000ms|<1000 ms/)
+    assert.match(source, /source t0 \+ 140ms/)
+  }
+  assert.match(semantic, /534\.562ms/)
+  assert.match(strategy, /534\.562ms/)
+  assert.match(navigation.split(/\r?\n/).find((line) => line.includes('| I2 真实来源与交互恢复 |')) || '',
+    /^\| I2 真实来源与交互恢复 \| 实现完成·尚未验收 \|/)
+})
+
 test('current acceptance projections retain failed CI revisions and record the exact current qualified run', () => {
   const historicalFiles = [
     'PLAN.md',
@@ -82,8 +136,13 @@ test('current acceptance projections retain failed CI revisions and record the e
   }
   const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8')
   const strategy = fs.readFileSync(path.join(ROOT, 'docs', 'testing-strategy.md'), 'utf8')
-  assert.match(readme, /core 414、integration 27、evidence 188，共 629 项/)
-  assert.match(strategy, /core 414\/414、integration 27\/27、evidence 188\/188，共 629\/629/)
+  const readmeLocalRow = readme.split(/\r?\n/).find((line) => line.includes('| 本地非音频回归 |')) || ''
+  const readmeRemoteRow = readme.split(/\r?\n/).find((line) => line.includes('| 远端 Windows CI 资格 |')) || ''
+  assert.match(readmeLocalRow, /core 414、integration 27、evidence 190，共 631 项/)
+  assert.doesNotMatch(readmeLocalRow, /evidence 188|共 629 项/)
+  assert.match(readmeRemoteRow, /run `30787209338`[\s\S]*629 项回归成功/)
+  assert.match(strategy, /本次 I2 模型替换决策[\s\S]*evidence 190\/190，共 631\/631/)
+  assert.match(strategy, /revision `f86ac1ef604dc7da0728c6eda44d59bbfd1e09bf`[\s\S]*evidence 188\/188，共 629\/629/)
 })
 
 test('J9-CI status projects the authoritative deterministic joint acceptance boundary', () => {

@@ -70,6 +70,16 @@ The dominant diagnostic budget remains the interval from the frozen onset to VAD
 
 This supplement proves the fixed `loopback` refinement composition, accuracy, transport, privacy and exit binding for the exact revision. It does not provide a same-revision `mic` series, physical-microphone evidence, user-driven native dragging, actual device removal, system sleep/wake, I3 or I4. It also does not replace the earlier two-source authoritative bundle. I2 remains 实现完成·尚未验收.
 
+## 2026-08-03 realtime model replacement decision
+
+The five exact children now make the next performance action explicit without moving the frozen origin or line. Their `audioNeededAfterCapturedOnsetMs` values are 776.562, 744.812, 735.375, 734.625 and 712.625ms. The slowest child telescopes to 1242ms as 814/400/0/27/0/1ms. In that same child, subtracting the 776.562ms model-audio duration and the 28ms after the trigger leaves an observed 437.438ms capture/VAD pre-trigger budget; meeting `<1000ms` under that observed composition requires a realtime model audio need below 534.562ms.
+
+Gate 0B's tracked naked-model result for the same `zh-en-code-switch` corpus records P95=697.4775ms and maximum audio need=660ms for `x-asr-160ms`. The bounded provisional path is already the current implementation; local text-free runner diagnostics confirmed one 300ms provisional candidate was reused in each of the five runs, but those ignored logs are diagnostic support rather than new acceptance evidence. The tracked child reports and Gate 0B inputs are the evidence used for the decision.
+
+This comparison is not proof of a physical model floor and does not rule out a separately registered capture-topology change. It supports a narrower engineering choice based on the current observed composition.
+
+Status: **已决定** to stop this parameter-tuning round for the current realtime candidate and reopen Gate 0B replacement evaluation. No replacement model has been selected. A replacement must first satisfy the same corpus, quality, RTF and first-partial Gate 0B criterion, then rerun five `loopback` and five `mic` I2 children. `source t0 + 140ms`, `<1000ms`, Silero threshold/minimum durations, the 4×100ms pre-roll and 12×100ms provisional cap remain unchanged. The six trace intervals remain diagnostic and cannot replace the frozen acceptance value.
+
 ## Reproduction
 
 Refresh the memory-only preflight first:

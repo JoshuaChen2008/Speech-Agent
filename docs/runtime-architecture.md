@@ -215,6 +215,8 @@ B2.2 落地的流控协议（`src/runtime/audio-host/frame-flow.js` + `src/runti
 
 2026-07-31 的 I2 exit-bound bundle 以共享的未来播放 `source t0` 加冻结的 140ms 语料 onset offset，到 `SessionCoordinator` 接受并通知观察者的同一首个 partial，作为冻结字幕可见延迟。播放器、audio host 与 utility 先完成时钟校准，再先 arm 同一 `source t0`、后 schedule 播放，避免准备 IPC 偷吃 onset 预算；captured-energy 诊断另从 `source t0 + 40ms` 固定 guard 后观察，但不移动冻结起点。loopback 5 轮 P50/P95/min/max=1133/1158/1092/1158ms；`physical-preferred-label-heuristic` mic 声学 fixture=875/1005/822/1005ms；final-after-stimulus-end P95 分别 710/792ms。10 轮最大 final/refined CER 为 loopback 0/0、mic 0.035714/0，captured/sent/ingested 帧全等，12 项丢失峰值全为 0。两来源分别超过未改变的 `<1000ms` 线 158ms/5ms，因此 I2 integration 性能债与整体门禁未关闭。每个 schema-v5 child 还以 NTP 式最小 RTT 校准把同一 exact accepted partial 拆为六段非负整数诊断区间；P95 依次为 loopback=729/405/1/33/1/1ms、mic=557/500/1/28/1/1ms。该 trace 精确望远镜到冻结值，但不改变验收起点、终点或门槛。该 mic 分类只按标签启发式并绑定 SHA-256 为 `0f9f7668751c64fbce922883421ead41680226126800e0b7f6b3da81b39840ef`、runId 为 `gate-0c-2026-07-31T09-52-00-521Z`、执行时间为 `2026-07-31T09:52:13.999Z` 的精确 Gate 0C 预检及同一匿名标签，不能视为硬件证明或排除未知/伪造标签的虚拟设备。generator/reference 受跟踪，生成 WAV 被忽略；报告绑定两者摘要。完整 bundle 见 [`validation/i2-live-v5/`](validation/i2-live-v5/) 与 [`validation/i2-real-source-series.md`](validation/i2-real-source-series.md)。
 
+2026-08-03 的 4×100ms / 12×100ms provisional 优化后，revision `b96b8fe7db5ba4db3ac36c4ee85371a4381b521f` 的五轮 `loopback` 仍为 P95=1242ms。逐轮 `audioNeededAfterCapturedOnsetMs` 为 712.625–776.562ms；仅在保持最慢轮已观察到的 437.438ms 采集/VAD 前置与 28ms 触发后组合时，模型必须在低于 534.562ms 的音频需求内产生首个临时字幕才可能达线。Gate 0B 同一 `zh-en-code-switch` 语料的当前模型裸测观测最大音频需求为 660ms、P95=697.4775ms。该比较不是物理下限证明，也不排除另行登记捕获拓扑改造；基于当前观测，已决定停止本轮 `x-asr-160ms` 参数微调并重新开启 Gate 0B 实时模型替换评估。尚未选定替代模型，也不改变冻结起点、门槛或报告口径。
+
 ### 5.2 低频控制与文本路径
 
 ```text

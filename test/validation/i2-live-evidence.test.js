@@ -11,6 +11,7 @@ const { parseStrictEvidenceJson } = require('../../scripts/strict-evidence-json'
 const EVIDENCE_ROOT = path.resolve(__dirname, '../../docs/validation/i2-live-v5')
 const B96_LOOPBACK_EVIDENCE_ROOT = path.resolve(__dirname, '../../docs/validation/i2-live-b96b8fe-loopback')
 const GATE_REPORT_PATH = path.join(EVIDENCE_ROOT, 'gate-0c-preflight.json')
+const GATE_M2_SWEEP_PATH = path.resolve(__dirname, '../../docs/validation/gate-0b-m2-sweep.json')
 const RUNNER_PATH = path.resolve(__dirname, '../../scripts/i2-live-caption-smoke.js')
 const EXPECTED_GATE_SHA256 = '0f9f7668751c64fbce922883421ead41680226126800e0b7f6b3da81b39840ef'
 const {
@@ -143,6 +144,42 @@ test('revision b96b8fe7 loopback supplement is an exact five-child refinement an
     reportContainsAudioPath: false,
     reportContainsInputPaths: false
   })
+})
+
+test('SEM-F01/SEM-T14/J1 tracked trace requires a realtime model replacement decision without moving the frozen line', () => {
+  const evidence = readSourceEvidenceDirectory(B96_LOOPBACK_EVIDENCE_ROOT, 'loopback')
+  const reports = evidence.inputs.map((bytes) => validateI2LiveReportEvidence(bytes, 'loopback'))
+  const audioNeeds = reports.map((report) => report.latencyDiagnostics.modelAudio.audioNeededAfterCapturedOnsetMs)
+  assert.deepEqual(audioNeeds, [776.562, 744.812, 735.375, 734.625, 712.625])
+
+  const slowest = reports.reduce((selected, report) =>
+    report.timings.firstPartialFromEstimatedSpeechOnsetMs > selected.timings.firstPartialFromEstimatedSpeechOnsetMs
+      ? report
+      : selected)
+  assert.equal(slowest.timings.firstPartialFromEstimatedSpeechOnsetMs, 1242)
+  assert.deepEqual(Object.values(slowest.latencyTrace), [814, 400, 0, 27, 0, 1])
+
+  const postTriggerMs = [
+    'partialTriggerFrameAudioHostToUtilityIngressMs',
+    'partialTriggerUtilityIngressToPublishMs',
+    'partialPublishUtilityToMainWorkerHostMs',
+    'mainWorkerHostToCoordinatorObserverMs'
+  ].reduce((sum, key) => sum + slowest.latencyTrace[key], 0)
+  const observedCaptureVadBudgetMs = Number((
+    slowest.timings.firstPartialFromEstimatedSpeechOnsetMs -
+    slowest.latencyDiagnostics.modelAudio.audioNeededAfterCapturedOnsetMs -
+    postTriggerMs
+  ).toFixed(3))
+  const requiredModelAudioBelowMs = Number((1000 - observedCaptureVadBudgetMs - postTriggerMs).toFixed(3))
+  assert.equal(postTriggerMs, 28)
+  assert.equal(observedCaptureVadBudgetMs, 437.438)
+  assert.equal(requiredModelAudioBelowMs, 534.562)
+
+  const sweep = parseStrictEvidenceJson(fs.readFileSync(GATE_M2_SWEEP_PATH), 'tracked Gate 0B M2 sweep')
+  const codeSwitch = sweep.x160FirstPartialBench.cases.find((item) => item.id === 'zh-en-code-switch')
+  assert.equal(codeSwitch.firstPartialLatencyP95Ms, 697.4774999999936)
+  assert.equal(codeSwitch.audioNeededAfterSpeechOnsetMsMax, 660)
+  assert.ok(requiredModelAudioBelowMs < codeSwitch.audioNeededAfterSpeechOnsetMsMax)
 })
 
 test('tracked Gate 0C preflight is the exact memory-only schema2 fixture bound by schema5 mic reports', () => {
