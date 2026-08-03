@@ -1,0 +1,576 @@
+{
+  "schemaVersion": 1,
+  "kind": "gate-0b-realtime-candidate-summary",
+  "semanticRefs": [
+    "SEM-F17",
+    "SEM-T11",
+    "SEM-T14",
+    "J1",
+    "J14"
+  ],
+  "candidateRegistrySha256": "d202c018aa295e5d1859765c1856dab7509280ad7dfcf96c601e1657b48bdcac",
+  "corpusSha256": "7edd6dff286b84619a3b68f385ba04622103ffe17cc57dbe5e1f16521deb156d",
+  "productionManifestSourceSha256": "54af5df4069015927cff2e40dd57314e70306c4e2ce1ebb2bb9807e9a2bf225f",
+  "candidateEvaluations": [
+    {
+      "evaluationReportSha256": "cba178cb14f0233fd26fc7ee3bab7bf01f796c1102eb68bd4f151d5c6066b021",
+      "report": {
+        "schemaVersion": 1,
+        "kind": "gate-0b-realtime-candidate-evaluation",
+        "semanticRefs": [
+          "SEM-F17",
+          "SEM-T11",
+          "SEM-T14",
+          "J1",
+          "J14"
+        ],
+        "candidateBinding": {
+          "candidateId": "zipformer-bilingual-zh-en-2023-02-20",
+          "candidateRegistrySha256": "d202c018aa295e5d1859765c1856dab7509280ad7dfcf96c601e1657b48bdcac",
+          "archiveBytes": 511274346,
+          "archiveSha256": "27ffbd9ee24ad186d99acc2f6354d7992b27bcab490812510665fa8f9389c5f8",
+          "evaluationOnly": true,
+          "productionApproved": false
+        },
+        "evidenceBindings": {
+          "corpusSha256": "7edd6dff286b84619a3b68f385ba04622103ffe17cc57dbe5e1f16521deb156d",
+          "streamingReportSha256": "737ba50d9cbe9a08bfa1f306f6c543c4071772c485a1e4d4b816e4126cfaf48d",
+          "cliRawOutputSha256": "c435b651a682874c93b181a64bc176f8d6f7cf322e49468d3f8388fa3609204c",
+          "cliVersionOutputSha256": "06c0ed397dcbebb175f8f18bd1c20ee17d02c2a164d74804b671f9419a0eb3a3"
+        },
+        "runtime": {
+          "cliVersion": "1.13.4",
+          "provider": "cpu",
+          "numThreads": 4,
+          "recognizerLoadSeconds": 1.45941
+        },
+        "cases": [
+          {
+            "id": "zh-roadmap",
+            "category": "zh",
+            "referenceSha256": "3cdd1b9f6290201ed9c8c2afcffade4f180974e2bfd5e46a889b935dad69c07e",
+            "transcriptSha256": "5584fc1de8b7a41e73cb680d48568183a2a73527e4e6ba03f82480242727399c",
+            "resultSha256": "01b6bb526c1d9f2d213bd95e61a5a6e48862abf704b2448a8c8d1240d09378c3",
+            "cer": 0,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            },
+            "cli": {
+              "elapsedSeconds": 0.63,
+              "durationSeconds": 3.9,
+              "rtf": 0.16
+            },
+            "streaming": {
+              "firstPartialP95Ms": 332.33439999999973,
+              "audioNeededAfterSpeechOnsetMsMax": 300,
+              "processingRtfP95": 0.06736549422336334
+            }
+          },
+          {
+            "id": "en-onboarding",
+            "category": "en",
+            "referenceSha256": "abc12978ba014a4f7e62c839912db4075f1c1af6eaf59818313e9a3dec8b070e",
+            "transcriptSha256": "e19bb36d55469ae8fdce6099ffd429f304fbc324b8a7aa53c4213a8d040e02bf",
+            "resultSha256": "4e17cb7658fda8aa9edef0e34208db42693d391d513721f9440f34a05f12f0c4",
+            "cer": 0.02564102564102564,
+            "wer": 0.1111111111111111,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            },
+            "cli": {
+              "elapsedSeconds": 0.6,
+              "durationSeconds": 3.5,
+              "rtf": 0.17
+            },
+            "streaming": {
+              "firstPartialP95Ms": 352.77880000000005,
+              "audioNeededAfterSpeechOnsetMsMax": 320,
+              "processingRtfP95": 0.07080995768688098
+            }
+          },
+          {
+            "id": "zh-en-code-switch",
+            "category": "code-switch",
+            "referenceSha256": "524198166c72c7480ec0009f433fa79dbf54b0ea9c76180bf98fa36253701cb2",
+            "transcriptSha256": "c84a5b57b77eec85e8214e6ef9129c3d8e38fe294fe390136b42f51e734ca756",
+            "resultSha256": "1cf536d170510dde809c98e3b945de7390c35d3ed13d1569756303c4cc6f7b5e",
+            "cer": 0.21428571428571427,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 2,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            },
+            "cli": {
+              "elapsedSeconds": 0.89,
+              "durationSeconds": 8.6,
+              "rtf": 0.1
+            },
+            "streaming": {
+              "firstPartialP95Ms": 326.9991999999984,
+              "audioNeededAfterSpeechOnsetMsMax": 300,
+              "processingRtfP95": 0.06574001168224283
+            }
+          },
+          {
+            "id": "zh-date-itn",
+            "category": "itn",
+            "referenceSha256": "ce83bb68393e20ce4ae81fbed51cbb19fa060d064402f5aa5bda89f91aab462d",
+            "transcriptSha256": "6806cab1b10d7a545fde49701965dc44bfba55d747fd209d36c58cc9b1403523",
+            "resultSha256": "686314d18d55054b9d7ad6c249a85e549ae80ea0564bb3d807aac7d12475f812",
+            "cer": 0,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            },
+            "cli": {
+              "elapsedSeconds": 0.75,
+              "durationSeconds": 5.4,
+              "rtf": 0.14
+            },
+            "streaming": {
+              "firstPartialP95Ms": 630.527900000001,
+              "audioNeededAfterSpeechOnsetMsMax": 600,
+              "processingRtfP95": 0.06397082636951851
+            }
+          }
+        ],
+        "aggregate": {
+          "cliRtfMax": 0.17,
+          "macroCer": 0.05998168498168498,
+          "englishWer": 0.1111111111111111,
+          "firstPartialP95MaxMs": 630.527900000001
+        },
+        "criteria": {
+          "cliRtf": {
+            "limitExclusive": 0.6,
+            "observedMax": 0.17,
+            "result": "pass"
+          },
+          "macroCer": {
+            "limitInclusive": 0,
+            "observed": 0.05998168498168498,
+            "result": "fail"
+          },
+          "englishWer": {
+            "limitInclusive": 0,
+            "observed": 0.1111111111111111,
+            "result": "fail"
+          },
+          "firstPartial": {
+            "limitExclusiveMs": 1000,
+            "observedP95MaxMs": 630.527900000001,
+            "result": "pass"
+          },
+          "conditionalCodeSwitchAudioNeedScreen": {
+            "limitExclusiveMs": 534.562,
+            "observedMaxMs": 300,
+            "result": "pass",
+            "releaseGate": false
+          },
+          "realtimePunctuationReplacementGate": false,
+          "eligibleForProductionSelection": false,
+          "productionApproved": false
+        },
+        "privacy": {
+          "absolutePathPersisted": false,
+          "audioFileNamePersisted": false,
+          "transcriptTextPersisted": false
+        }
+      }
+    },
+    {
+      "evaluationReportSha256": "ee4fa16a7087c4bc40b7751f28a7d2d3ec15dd5ea277bc3c91eb99c37b9d2ebf",
+      "report": {
+        "schemaVersion": 1,
+        "kind": "gate-0b-realtime-candidate-evaluation",
+        "semanticRefs": [
+          "SEM-F17",
+          "SEM-T11",
+          "SEM-T14",
+          "J1",
+          "J14"
+        ],
+        "candidateBinding": {
+          "candidateId": "paraformer-bilingual-zh-en",
+          "candidateRegistrySha256": "d202c018aa295e5d1859765c1856dab7509280ad7dfcf96c601e1657b48bdcac",
+          "archiveBytes": 1047319737,
+          "archiveSha256": "5462a1fce42693deae572af1e8c4687124b12aa85fe61ff4d3168bb5280e205f",
+          "evaluationOnly": true,
+          "productionApproved": false
+        },
+        "evidenceBindings": {
+          "corpusSha256": "7edd6dff286b84619a3b68f385ba04622103ffe17cc57dbe5e1f16521deb156d",
+          "streamingReportSha256": "96ecdda54861f9effe35c600f8a31418c5a3b79a0ec4c5d51767868a8055f17b",
+          "cliRawOutputSha256": "268eb71039795aea070948eb5357c308e678300ed0817baf055c70b99ed609c8",
+          "cliVersionOutputSha256": "06c0ed397dcbebb175f8f18bd1c20ee17d02c2a164d74804b671f9419a0eb3a3"
+        },
+        "runtime": {
+          "cliVersion": "1.13.4",
+          "provider": "cpu",
+          "numThreads": 4,
+          "recognizerLoadSeconds": 1.17899
+        },
+        "cases": [
+          {
+            "id": "zh-roadmap",
+            "category": "zh",
+            "referenceSha256": "3cdd1b9f6290201ed9c8c2afcffade4f180974e2bfd5e46a889b935dad69c07e",
+            "transcriptSha256": "5584fc1de8b7a41e73cb680d48568183a2a73527e4e6ba03f82480242727399c",
+            "resultSha256": "49507393ffb746cb5353c4c592f77361dc675c338322ad9c17fa39ecb8d81b9f",
+            "cer": 0,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            },
+            "cli": {
+              "elapsedSeconds": 1.1,
+              "durationSeconds": 3.9,
+              "rtf": 0.29
+            },
+            "streaming": {
+              "firstPartialP95Ms": 553.8330000000005,
+              "audioNeededAfterSpeechOnsetMsMax": 500,
+              "processingRtfP95": 0.09071804878048764
+            }
+          },
+          {
+            "id": "en-onboarding",
+            "category": "en",
+            "referenceSha256": "abc12978ba014a4f7e62c839912db4075f1c1af6eaf59818313e9a3dec8b070e",
+            "transcriptSha256": "b0caa724909cd78633de2b8b7ade8864eee12d9f5afcd9f60e2ed7a71a3d30e8",
+            "resultSha256": "012468ac4a112699bb323880197645587fe2c460352e409ce34762ad811251a3",
+            "cer": 0.02564102564102564,
+            "wer": 0.4444444444444444,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            },
+            "cli": {
+              "elapsedSeconds": 1,
+              "durationSeconds": 3.5,
+              "rtf": 0.29
+            },
+            "streaming": {
+              "firstPartialP95Ms": 588.0249000000003,
+              "audioNeededAfterSpeechOnsetMsMax": 520,
+              "processingRtfP95": 0.0863659802538752
+            }
+          },
+          {
+            "id": "zh-en-code-switch",
+            "category": "code-switch",
+            "referenceSha256": "524198166c72c7480ec0009f433fa79dbf54b0ea9c76180bf98fa36253701cb2",
+            "transcriptSha256": "1937a460ae6d06209dfde4f4800bc93e0da2908c4e7ae0209d65e1236347efaf",
+            "resultSha256": "bcada75f2204a84a145945aaf8de2942dbbdce414b542f90f4b66d682bc9b8d4",
+            "cer": 0.07142857142857142,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 2,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            },
+            "cli": {
+              "elapsedSeconds": 1.5,
+              "durationSeconds": 8.6,
+              "rtf": 0.17
+            },
+            "streaming": {
+              "firstPartialP95Ms": 563.4189000000042,
+              "audioNeededAfterSpeechOnsetMsMax": 500,
+              "processingRtfP95": 0.07746995327105541
+            }
+          },
+          {
+            "id": "zh-date-itn",
+            "category": "itn",
+            "referenceSha256": "ce83bb68393e20ce4ae81fbed51cbb19fa060d064402f5aa5bda89f91aab462d",
+            "transcriptSha256": "6806cab1b10d7a545fde49701965dc44bfba55d747fd209d36c58cc9b1403523",
+            "resultSha256": "b23eb9be2ddeded7a6e2186ac60285034d46ef03d9682f94ead09f93493d7a25",
+            "cer": 0,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            },
+            "cli": {
+              "elapsedSeconds": 1.3,
+              "durationSeconds": 5.4,
+              "rtf": 0.24
+            },
+            "streaming": {
+              "firstPartialP95Ms": 536.7430000000022,
+              "audioNeededAfterSpeechOnsetMsMax": 480,
+              "processingRtfP95": 0.08382479108635955
+            }
+          }
+        ],
+        "aggregate": {
+          "cliRtfMax": 0.29,
+          "macroCer": 0.024267399267399264,
+          "englishWer": 0.4444444444444444,
+          "firstPartialP95MaxMs": 588.0249000000003
+        },
+        "criteria": {
+          "cliRtf": {
+            "limitExclusive": 0.6,
+            "observedMax": 0.29,
+            "result": "pass"
+          },
+          "macroCer": {
+            "limitInclusive": 0,
+            "observed": 0.024267399267399264,
+            "result": "fail"
+          },
+          "englishWer": {
+            "limitInclusive": 0,
+            "observed": 0.4444444444444444,
+            "result": "fail"
+          },
+          "firstPartial": {
+            "limitExclusiveMs": 1000,
+            "observedP95MaxMs": 588.0249000000003,
+            "result": "pass"
+          },
+          "conditionalCodeSwitchAudioNeedScreen": {
+            "limitExclusiveMs": 534.562,
+            "observedMaxMs": 500,
+            "result": "pass",
+            "releaseGate": false
+          },
+          "realtimePunctuationReplacementGate": false,
+          "eligibleForProductionSelection": false,
+          "productionApproved": false
+        },
+        "privacy": {
+          "absolutePathPersisted": false,
+          "audioFileNamePersisted": false,
+          "transcriptTextPersisted": false
+        }
+      }
+    },
+    {
+      "evaluationReportSha256": "363f47f7815dd9594c66ebcb8a7d7b925254e1bb243221925523a971df040448",
+      "report": {
+        "schemaVersion": 1,
+        "kind": "gate-0b-realtime-candidate-evaluation",
+        "semanticRefs": [
+          "SEM-F17",
+          "SEM-T11",
+          "SEM-T14",
+          "J1",
+          "J14"
+        ],
+        "candidateBinding": {
+          "candidateId": "paraformer-trilingual-zh-cantonese-en",
+          "candidateRegistrySha256": "d202c018aa295e5d1859765c1856dab7509280ad7dfcf96c601e1657b48bdcac",
+          "archiveBytes": 1047671211,
+          "archiveSha256": "d479167d8752628d9032d29de1060493865389d1e295a1c2e8e011e7062f1932",
+          "evaluationOnly": true,
+          "productionApproved": false
+        },
+        "evidenceBindings": {
+          "corpusSha256": "7edd6dff286b84619a3b68f385ba04622103ffe17cc57dbe5e1f16521deb156d",
+          "streamingReportSha256": "ea37a1f108d9fe8256a798be27ec64c32d07e2466a4495e081af0deadaf6742b",
+          "cliRawOutputSha256": "6da3b3737a52c870ee28401eea31614a2d8d793c7dbca7dd41f74bfa92d08e76",
+          "cliVersionOutputSha256": "06c0ed397dcbebb175f8f18bd1c20ee17d02c2a164d74804b671f9419a0eb3a3"
+        },
+        "runtime": {
+          "cliVersion": "1.13.4",
+          "provider": "cpu",
+          "numThreads": 4,
+          "recognizerLoadSeconds": 1.47972
+        },
+        "cases": [
+          {
+            "id": "zh-roadmap",
+            "category": "zh",
+            "referenceSha256": "3cdd1b9f6290201ed9c8c2afcffade4f180974e2bfd5e46a889b935dad69c07e",
+            "transcriptSha256": "702ff3412708663802a8e4c208d9c8b61a593d97da6cc17764195c93df83a346",
+            "resultSha256": "c2a4e5b177fcf90cbd6482f7896336eb66ddd5f8b6ad8a54465a03f7816e3b24",
+            "cer": 0.23076923076923078,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            },
+            "cli": {
+              "elapsedSeconds": 1.1,
+              "durationSeconds": 3.9,
+              "rtf": 0.27
+            },
+            "streaming": {
+              "firstPartialP95Ms": 555.6994999999988,
+              "audioNeededAfterSpeechOnsetMsMax": 500,
+              "processingRtfP95": 0.08730593068036127
+            }
+          },
+          {
+            "id": "en-onboarding",
+            "category": "en",
+            "referenceSha256": "abc12978ba014a4f7e62c839912db4075f1c1af6eaf59818313e9a3dec8b070e",
+            "transcriptSha256": "5d461ef97b44dd950921f4f3238d2dcf6300861fced265dcbb845c0fee564307",
+            "resultSha256": "9d4a6ff24e8a17bbfc73eb6007249517bc68f9303c532916265c65b96b7934f2",
+            "cer": 0.3333333333333333,
+            "wer": 0.3333333333333333,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            },
+            "cli": {
+              "elapsedSeconds": 0.96,
+              "durationSeconds": 3.5,
+              "rtf": 0.27
+            },
+            "streaming": {
+              "firstPartialP95Ms": 575.8274999999994,
+              "audioNeededAfterSpeechOnsetMsMax": 520,
+              "processingRtfP95": 0.08485150916785898
+            }
+          },
+          {
+            "id": "zh-en-code-switch",
+            "category": "code-switch",
+            "referenceSha256": "524198166c72c7480ec0009f433fa79dbf54b0ea9c76180bf98fa36253701cb2",
+            "transcriptSha256": "607f071c1a53f8bc96cfbe99fe183a49ca3d94e473b0e74f59f390935c1149f1",
+            "resultSha256": "f24263100e9dccb639228a4efcc6d5594991703f7ec18cac8acac2818f93cad8",
+            "cer": 0.25,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 2,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            },
+            "cli": {
+              "elapsedSeconds": 1.4,
+              "durationSeconds": 8.6,
+              "rtf": 0.16
+            },
+            "streaming": {
+              "firstPartialP95Ms": 558.8823000000048,
+              "audioNeededAfterSpeechOnsetMsMax": 500,
+              "processingRtfP95": 0.07752914719626502
+            }
+          },
+          {
+            "id": "zh-date-itn",
+            "category": "itn",
+            "referenceSha256": "ce83bb68393e20ce4ae81fbed51cbb19fa060d064402f5aa5bda89f91aab462d",
+            "transcriptSha256": "eafde728e449f5d9c0285c377441fdcdc9dccbc2047e0e6c7175d46b62a08f18",
+            "resultSha256": "9ba9fc991f855fe898f73567394cc884374d8b2c94ec13f66f33e2c93e2fa487",
+            "cer": 0.047619047619047616,
+            "wer": null,
+            "punctuation": {
+              "referenceCount": 1,
+              "hypothesisCount": 0,
+              "precision": 0,
+              "recall": 0,
+              "f1": 0
+            },
+            "cli": {
+              "elapsedSeconds": 1.2,
+              "durationSeconds": 5.4,
+              "rtf": 0.22
+            },
+            "streaming": {
+              "firstPartialP95Ms": 534.5486999999994,
+              "audioNeededAfterSpeechOnsetMsMax": 480,
+              "processingRtfP95": 0.08030718662953054
+            }
+          }
+        ],
+        "aggregate": {
+          "cliRtfMax": 0.27,
+          "macroCer": 0.21543040293040294,
+          "englishWer": 0.3333333333333333,
+          "firstPartialP95MaxMs": 575.8274999999994
+        },
+        "criteria": {
+          "cliRtf": {
+            "limitExclusive": 0.6,
+            "observedMax": 0.27,
+            "result": "pass"
+          },
+          "macroCer": {
+            "limitInclusive": 0,
+            "observed": 0.21543040293040294,
+            "result": "fail"
+          },
+          "englishWer": {
+            "limitInclusive": 0,
+            "observed": 0.3333333333333333,
+            "result": "fail"
+          },
+          "firstPartial": {
+            "limitExclusiveMs": 1000,
+            "observedP95MaxMs": 575.8274999999994,
+            "result": "pass"
+          },
+          "conditionalCodeSwitchAudioNeedScreen": {
+            "limitExclusiveMs": 534.562,
+            "observedMaxMs": 500,
+            "result": "pass",
+            "releaseGate": false
+          },
+          "realtimePunctuationReplacementGate": false,
+          "eligibleForProductionSelection": false,
+          "productionApproved": false
+        },
+        "privacy": {
+          "absolutePathPersisted": false,
+          "audioFileNamePersisted": false,
+          "transcriptTextPersisted": false
+        }
+      }
+    }
+  ],
+  "decision": {
+    "result": "no-eligible-candidate",
+    "eligibleCandidateIds": [],
+    "replacementCandidateSelected": null,
+    "currentImplementationBaseline": "x-asr-160ms",
+    "productionManifestChanged": false,
+    "nextAction": "register-new-model-or-recognition-architecture",
+    "i2Status": "实现完成·尚未验收"
+  },
+  "privacy": {
+    "absolutePathPersisted": false,
+    "audioFileNamePersisted": false,
+    "transcriptTextPersisted": false
+  }
+}

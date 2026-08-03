@@ -66,11 +66,23 @@ function parseSenseVoiceOutput (output, expectedWavs) {
 }
 
 function runOnline (config) {
+  const modelType = config.modelType || 'transducer'
+  if (!['transducer', 'zipformer', 'zipformer2', 'paraformer'].includes(modelType)) {
+    throw new Error(`unsupported online model type: ${modelType}`)
+  }
+  const modelArgs = modelType === 'paraformer'
+    ? [
+        `--paraformer-encoder=${config.model.encoder}`,
+        `--paraformer-decoder=${config.model.decoder}`
+      ]
+    : [
+        `--encoder=${config.model.encoder}`,
+        `--decoder=${config.model.decoder}`,
+        `--joiner=${config.model.joiner}`
+      ]
   const args = [
     `--tokens=${config.model.tokens}`,
-    `--encoder=${config.model.encoder}`,
-    `--decoder=${config.model.decoder}`,
-    `--joiner=${config.model.joiner}`,
+    ...modelArgs,
     `--num-threads=${config.numThreads}`,
     '--provider=cpu',
     '--print-args=false',
@@ -81,7 +93,7 @@ function runOnline (config) {
   return {
     report: {
       id: config.id,
-      mode: 'online-transducer',
+      mode: modelType === 'paraformer' ? 'online-paraformer' : 'online-transducer',
       numThreads: config.numThreads,
       modelFiles: Object.fromEntries(Object.entries(config.model).map(([key, value]) => [key, path.basename(value)])),
       recognizerLoadSeconds: parseRecognizerLoadSeconds(execution.rawOutput),

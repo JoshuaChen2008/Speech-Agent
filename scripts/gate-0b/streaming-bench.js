@@ -7,9 +7,17 @@ const { performance } = require('node:perf_hooks')
 const sherpa = require('sherpa-onnx-node')
 const { percentile } = require('./metrics')
 const { projectStreamingBenchReport } = require('./evidence-projection')
+const {
+  readAndValidateRealtimeCandidateRegistry,
+  selectRealtimeCandidate
+} = require('./realtime-candidate-registry')
 
 function parseArguments (argv) {
-  const result = { wavs: [], runs: 5, chunkMs: 40, pace: true, output: null, modelDir: null, modelType: 'zipformer2', numThreads: 3 }
+  const result = {
+    wavs: [], runs: 5, chunkMs: 40, pace: true, output: null, modelDir: null,
+    modelType: 'zipformer2', numThreads: 3, candidateRegistry: null, candidateId: null,
+    modelTypeExplicit: false, numThreadsExplicit: false
+  }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
     const value = argv[index + 1]
@@ -19,14 +27,19 @@ function parseArguments (argv) {
       case '--runs': result.runs = Number(value); index += 1; break
       case '--chunk-ms': result.chunkMs = Number(value); index += 1; break
       case '--output': result.output = value; index += 1; break
-      case '--model-type': result.modelType = value; index += 1; break
-      case '--num-threads': result.numThreads = Number(value); index += 1; break
+      case '--model-type': result.modelType = value; result.modelTypeExplicit = true; index += 1; break
+      case '--num-threads': result.numThreads = Number(value); result.numThreadsExplicit = true; index += 1; break
+      case '--candidate-registry': result.candidateRegistry = value; index += 1; break
+      case '--candidate-id': result.candidateId = value; index += 1; break
       case '--no-pace': result.pace = false; break
       default: throw new Error(`Unknown argument: ${arg}`)
     }
   }
   if (!result.modelDir) throw new Error('--model-dir is required')
   if (result.wavs.length === 0) throw new Error('at least one --wav is required')
+  if (Boolean(result.candidateRegistry) !== Boolean(result.candidateId)) {
+    throw new Error('--candidate-registry and --candidate-id must be provided together')
+  }
   if (!Number.isInteger(result.runs) || result.runs < 1) throw new Error('--runs must be a positive integer')
   if (!Number.isFinite(result.chunkMs) || result.chunkMs <= 0) throw new Error('--chunk-ms must be positive')
   /* 测量方法学不变：线程数只是运行时候选配置，进入报告披露。 */
@@ -65,16 +78,40 @@ function findModelFile (modelDir, preferredName, fallbackPattern) {
   return path.join(modelDir, matches[0])
 }
 
-function createRecognizer (modelDir, modelType, numThreads) {
+function createRecognizer (modelDir, modelType, numThreads, requiredFiles = null) {
+  if (modelType === 'paraformer' && !requiredFiles) {
+    throw new Error('paraformer benchmarks require a registered candidate runtime profile')
+  }
+  const modelFiles = requiredFiles || {
+    encoder: path.basename(findModelFile(modelDir, 'encoder.int8.onnx', /^encoder.*\.int8\.onnx$/)),
+    decoder: path.basename(findModelFile(modelDir, 'decoder.onnx', /^decoder.*\.int8\.onnx$/)),
+    joiner: path.basename(findModelFile(modelDir, 'joiner.int8.onnx', /^joiner.*\.int8\.onnx$/)),
+    tokens: 'tokens.txt'
+  }
+  for (const fileName of Object.values(modelFiles)) {
+    if (!fs.statSync(path.join(modelDir, fileName), { throwIfNoEntry: false })?.isFile()) {
+      throw new Error(`candidate runtime file is missing: ${fileName}`)
+    }
+  }
+  const architecture = modelType === 'paraformer'
+    ? {
+        paraformer: {
+          encoder: path.join(modelDir, modelFiles.encoder),
+          decoder: path.join(modelDir, modelFiles.decoder)
+        }
+      }
+    : {
+        transducer: {
+          encoder: path.join(modelDir, modelFiles.encoder),
+          decoder: path.join(modelDir, modelFiles.decoder),
+          joiner: path.join(modelDir, modelFiles.joiner)
+        }
+      }
   return new sherpa.OnlineRecognizer({
     featConfig: { sampleRate: 16000, featureDim: 80 },
     modelConfig: {
-      transducer: {
-        encoder: findModelFile(modelDir, 'encoder.int8.onnx', /^encoder.*\.int8\.onnx$/),
-        decoder: findModelFile(modelDir, 'decoder.onnx', /^decoder.*\.int8\.onnx$/),
-        joiner: findModelFile(modelDir, 'joiner.int8.onnx', /^joiner.*\.int8\.onnx$/)
-      },
-      tokens: path.join(modelDir, 'tokens.txt'),
+      ...architecture,
+      tokens: path.join(modelDir, modelFiles.tokens),
       numThreads,
       provider: 'cpu',
       modelType
@@ -139,8 +176,29 @@ async function runStream (recognizer, wave, options) {
 async function main () {
   const options = parseArguments(process.argv.slice(2))
   const modelDir = path.resolve(options.modelDir)
+  let candidate = null
+  let candidateRegistrySha256 = null
+  if (options.candidateRegistry) {
+    const evidence = readAndValidateRealtimeCandidateRegistry(options.candidateRegistry)
+    candidate = selectRealtimeCandidate(evidence.registry, options.candidateId)
+    candidateRegistrySha256 = evidence.sha256
+    if (path.basename(modelDir) !== candidate.runtime.directoryName) {
+      throw new Error('candidate model directory does not match the registered directory name')
+    }
+    if ((options.modelTypeExplicit && options.modelType !== candidate.runtime.modelType) ||
+        (options.numThreadsExplicit && options.numThreads !== candidate.runtime.numThreads)) {
+      throw new Error('candidate runtime arguments differ from the registered profile')
+    }
+    options.modelType = candidate.runtime.modelType
+    options.numThreads = candidate.runtime.numThreads
+  }
   const modelLoadStarted = performance.now()
-  const recognizer = createRecognizer(modelDir, options.modelType, options.numThreads)
+  const recognizer = createRecognizer(
+    modelDir,
+    options.modelType,
+    options.numThreads,
+    candidate?.runtime.requiredFiles || null
+  )
   const modelLoadMs = performance.now() - modelLoadStarted
   const cases = []
 
@@ -185,6 +243,16 @@ async function main () {
     paced: options.pace,
     runsPerCase: options.runs,
     modelLoadMs,
+    candidateBinding: candidate
+      ? {
+          candidateId: candidate.id,
+          candidateRegistrySha256,
+          archiveBytes: candidate.archive.bytes,
+          archiveSha256: candidate.archive.sha256,
+          evaluationOnly: candidate.evaluationOnly,
+          productionApproved: candidate.productionApproved
+        }
+      : null,
     cases
   }
   /* File and stdout share the same content-free projection. Captions are used

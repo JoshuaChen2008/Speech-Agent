@@ -71,3 +71,19 @@ revision `b96b8fe7db5ba4db3ac36c4ee85371a4381b521f` 的五轮真实 `loopback` �
 本 Gate 已跟踪的同一 `zh-en-code-switch` 裸模型结果是 P95=697.4775ms、观测最大音频需求 660ms。它与产品五轮的 712.625–776.562ms 同向，但不是物理下限证明，也不排除另行登记的捕获拓扑或实现改造。当前证据只说明继续微调现有候选缺少达线依据。
 
 因此状态更新为：**已决定基于当前观测停止本轮参数微调，并重新开启 realtime 模型替换评估**。2026-07-27 对 `x-asr-160ms` 的历史改判与证据原样保留，但该候选只继续作为当前实现基线，不再足以支持 I2 发布判定；尚未批准任何替代 realtime 模型。新候选必须沿用相同语料、质量、RTF、首个临时字幕和隐私投影口径，先登记模型 manifest/供应链与 J14 影响，再执行两来源各五轮 I2。不得降低 `<1000ms`、移动 `source t0 + 140ms` 或把六段诊断改作验收值。
+
+## 2026-08-03 实时候选矩阵复测
+
+本轮按 SEM-F17/SEM-T11/SEM-T14 与 J1/J14 先登记供应链、运行文件和门槛，再用同一四条冻结语料、官方 CLI 1.13.4 与 Node N-API 1.13.4 复测。每例 N-API 执行 5 轮、40ms 墙钟喂帧；内容质量相对当前生产受控基线要求 macro CER 与英文 WER 都不高于 `0`。实时模型标点仍由用户明确启用的可选精修补齐，不作为本轮替换门槛。
+
+| `evaluation-only` 候选 | CLI max RTF | 首个临时字幕 P95 最大值 | 混说观测音频需求最大值 | macro CER / 英文 WER | 判定 |
+|---|---:|---:|---:|---:|---|
+| large bilingual Zipformer | `0.17` | `630.5279ms` | `300ms` | `0.05998168498168498` / `0.1111111111111111` | 内容质量失败 |
+| bilingual Paraformer | `0.29` | `588.0249ms` | `500ms` | `0.024267399267399264` / `0.4444444444444444` | 内容质量失败 |
+| trilingual Paraformer | `0.27` | `575.8275ms` | `500ms` | `0.21543040293040294` / `0.3333333333333333` | 内容质量失败 |
+
+三项候选的 CLI RTF `<0.60` 与四例首个临时字幕 P95 `<1000ms` 均成立，且混说观测音频需求都低于条件性 `534.562ms` 工程筛选值；该筛选仍不是 I2 验收门槛。三项都未保住内容质量，因此全部保持 `evaluation-only`，未选定替代实时模型。结合既有 small bilingual 质量失败与当前 `x-asr-160ms` 产品链路冻结字幕可见延迟未达线，当前 sherpa-onnx runtime 可直接部署的官方在线中英候选矩阵已逐项留证；中文-only、英文-only 与 online CTC 中文模型不满足同一会话中英内容边界，未进入本轮候选矩阵。
+
+受跟踪严格汇总为 [`gate-0b-realtime-candidate-summary.json`](gate-0b-realtime-candidate-summary.json)：绑定候选 registry SHA-256 `d202c018aa295e5d1859765c1856dab7509280ad7dfcf96c601e1657b48bdcac`，汇总文件 SHA-256 `682d71b5bb8ff7851ceec15e0673bf52943cc74ca9611f9617306d18c4c08a1f`。它内嵌三份内容脱敏评测，重建结果为 `no-eligible-candidate`、0 个 eligible ID、替代候选为 null、生产 manifest 未变；evidence lane 对 registry/corpus/生产 manifest SHA、三份评测闭合字段、指标重算和隐私负向字段 fail closed。
+
+因此**已决定**生产 manifest、J14 下载预算、ready marker 与当前实现基线均不改变；下一步必须另行登记新的模型资产或识别架构并按相同门槛复测。不得降低 `<1000ms`、移动 `source t0 + 140ms` 或放宽内容质量边界，I2 仍为实现完成·尚未验收。

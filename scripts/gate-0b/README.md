@@ -37,6 +37,54 @@ Both `--output` and stdout use the same schema-v2 content-free projection: case 
 
 The official CLI remains the source of the selection-level RTF used by Gate 0B. The N-API run adds the first-partial measurement and verifies that the production binding can load the selected model; it does not validate Electron worker integration.
 
+## Evaluate a registered realtime replacement candidate
+
+`realtime-candidates.json` is a strict, evaluation-only registry. It freezes each official archive URL/bytes/SHA-256, the exact int8 runtime allowlist, J14 byte impact, the four-case corpus digest and the unchanged quality/RTF/first-partial boundaries. A registry entry never changes the production model manifest or approves a candidate.
+
+After downloading an asset into ignored `models/gate-0b/downloads/`, audit its archive paths and selectively extract only the registered runtime files. Do not extract upstream WAV files into a model directory. Run the five-round streaming benchmark with both candidate arguments so the report binds the registry SHA-256:
+
+```powershell
+node scripts/gate-0b/streaming-bench.js `
+  --candidate-registry scripts/gate-0b/realtime-candidates.json `
+  --candidate-id <candidate-id> `
+  --model-dir <ignored-candidate-model-directory> `
+  --wav models/gate-0b/corpus/zh-roadmap.wav `
+  --wav models/gate-0b/corpus/en-onboarding.wav `
+  --wav models/gate-0b/corpus/zh-en-code-switch.wav `
+  --wav models/gate-0b/corpus/zh-date-itn.wav `
+  --runs 5 --chunk-ms 40 `
+  --output models/gate-0b/runs/<candidate>-streaming.json
+```
+
+Combine that content-free report with an official CLI run. The evaluator keeps hypotheses in memory, persists only metrics and hashes, validates Zipformer/Paraformer architecture-specific arguments and never has a private-transcript output option:
+
+```powershell
+node scripts/gate-0b/evaluate-realtime-candidate.js `
+  --candidate-registry scripts/gate-0b/realtime-candidates.json `
+  --candidate-id <candidate-id> `
+  --model-dir <ignored-candidate-model-directory> `
+  --cli-bin models/gate-0b/extracted/cli/sherpa-onnx-v1.13.4-win-x64-shared-MD-Release/bin `
+  --corpus scripts/gate-0b/corpus.json `
+  --wav-dir models/gate-0b/corpus `
+  --streaming-report models/gate-0b/runs/<candidate>-streaming.json `
+  --output models/gate-0b/runs/<candidate>-evaluation.json
+```
+
+After every registered candidate has an evaluation bound to the same final registry SHA, rebuild the tracked strict summary in registry order:
+
+```powershell
+node scripts/gate-0b/summarize-realtime-candidates.js `
+  --candidate-registry scripts/gate-0b/realtime-candidates.json `
+  --corpus scripts/gate-0b/corpus.json `
+  --evaluation models/gate-0b/runs/replacement-large-bilingual-evaluation.json `
+  --evaluation models/gate-0b/runs/replacement-paraformer-evaluation.json `
+  --evaluation models/gate-0b/runs/replacement-paraformer-trilingual-evaluation.json `
+  --production-manifest-source src/main/services/model-manifest.js `
+  --output docs/validation/gate-0b-realtime-candidate-summary.json
+```
+
+The summary is not a production selection. It reconstructs eligible candidate IDs, keeps `replacementCandidateSelected` null and binds the unchanged production manifest source. A production selection requires a separate semantic decision plus full J14 and two-source I2 requalification.
+
 ## Reproduce CLI and refinement evidence
 
 After extracting the five archives at the paths used by `run-cli-suite.js`, run the complete fixed suite. The tracked schema-v2 projection contains only case IDs, metrics and SHA-256 digests. A private transcript-bearing observation file is needed only while recomputing historical CER/WER. The script accepts that file only below the fixed ignored directory `models/gate-0b/private/`; arbitrary repository paths, `docs/validation` and `.artifacts` fail closed.

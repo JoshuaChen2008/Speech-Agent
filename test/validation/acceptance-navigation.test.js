@@ -142,7 +142,7 @@ test('current acceptance projections retain failed CI revisions and record the e
   const strategy = fs.readFileSync(path.join(ROOT, 'docs', 'testing-strategy.md'), 'utf8')
   const readmeLocalRow = readme.split(/\r?\n/).find((line) => line.includes('| 本地非音频回归 |')) || ''
   const readmeRemoteRow = readme.split(/\r?\n/).find((line) => line.includes('| 远端 Windows CI 资格 |')) || ''
-  assert.match(readmeLocalRow, /core 414、integration 27、evidence 190，共 631 项/)
+  assert.match(readmeLocalRow, /core 414、integration 27、evidence 200，共 641 项/)
   assert.doesNotMatch(readmeLocalRow, /evidence 188|共 629 项/)
   assert.match(readmeRemoteRow, /run `30790372286`/)
   assert.match(readmeRemoteRow, REMOTE_COUNTS_PATTERN)

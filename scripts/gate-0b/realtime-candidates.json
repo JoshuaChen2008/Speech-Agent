@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "semanticRefs": [
+    "SEM-F17",
+    "SEM-T11",
+    "SEM-T14",
+    "J1",
+    "J14"
+  ],
+  "candidates": [
+    {
+      "id": "zipformer-bilingual-zh-en-2023-02-20",
+      "evaluationOnly": true,
+      "productionApproved": false,
+      "upstream": {
+        "project": "k2-fsa/sherpa-onnx",
+        "release": "asr-models",
+        "asset": "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20.tar.bz2",
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20.tar.bz2"
+      },
+      "archive": {
+        "bytes": 511274346,
+        "sha256": "27ffbd9ee24ad186d99acc2f6354d7992b27bcab490812510665fa8f9389c5f8"
+      },
+      "runtime": {
+        "directoryName": "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
+        "modelType": "zipformer",
+        "provider": "cpu",
+        "numThreads": 4,
+        "decodingMethod": "greedy_search",
+        "requiredFiles": {
+          "tokens": "tokens.txt",
+          "encoder": "encoder-epoch-99-avg-1.int8.onnx",
+          "decoder": "decoder-epoch-99-avg-1.onnx",
+          "joiner": "joiner-epoch-99-avg-1.int8.onnx"
+        }
+      },
+      "benchmark": {
+        "corpusRelativePath": "scripts/gate-0b/corpus.json",
+        "corpusSha256": "7edd6dff286b84619a3b68f385ba04622103ffe17cc57dbe5e1f16521deb156d",
+        "runsPerCase": 5,
+        "chunkMs": 40,
+        "cliRtfLimitExclusive": 0.6,
+        "macroCerLimitInclusive": 0,
+        "englishWerLimitInclusive": 0,
+        "realtimePunctuationIsReplacementGate": false,
+        "firstPartialLimitMsExclusive": 1000,
+        "conditionalCodeSwitchAudioNeedScreenMs": 534.562,
+        "conditionalScreenIsReleaseGate": false
+      },
+      "j14": {
+        "currentProductionArchiveBytes": 133898007,
+        "candidateArchiveBytesDelta": 377376339,
+        "productionManifestChanged": false,
+        "requiresFullSupplyChainRequalificationIfSelected": true
+      }
+    },
+    {
+      "id": "paraformer-bilingual-zh-en",
+      "evaluationOnly": true,
+      "productionApproved": false,
+      "upstream": {
+        "project": "k2-fsa/sherpa-onnx",
+        "release": "asr-models",
+        "asset": "sherpa-onnx-streaming-paraformer-bilingual-zh-en.tar.bz2",
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-paraformer-bilingual-zh-en.tar.bz2"
+      },
+      "archive": {
+        "bytes": 1047319737,
+        "sha256": "5462a1fce42693deae572af1e8c4687124b12aa85fe61ff4d3168bb5280e205f"
+      },
+      "runtime": {
+        "directoryName": "sherpa-onnx-streaming-paraformer-bilingual-zh-en",
+        "modelType": "paraformer",
+        "provider": "cpu",
+        "numThreads": 4,
+        "decodingMethod": "greedy_search",
+        "requiredFiles": {
+          "tokens": "tokens.txt",
+          "encoder": "encoder.int8.onnx",
+          "decoder": "decoder.int8.onnx"
+        }
+      },
+      "benchmark": {
+        "corpusRelativePath": "scripts/gate-0b/corpus.json",
+        "corpusSha256": "7edd6dff286b84619a3b68f385ba04622103ffe17cc57dbe5e1f16521deb156d",
+        "runsPerCase": 5,
+        "chunkMs": 40,
+        "cliRtfLimitExclusive": 0.6,
+        "macroCerLimitInclusive": 0,
+        "englishWerLimitInclusive": 0,
+        "realtimePunctuationIsReplacementGate": false,
+        "firstPartialLimitMsExclusive": 1000,
+        "conditionalCodeSwitchAudioNeedScreenMs": 534.562,
+        "conditionalScreenIsReleaseGate": false
+      },
+      "j14": {
+        "currentProductionArchiveBytes": 133898007,
+        "candidateArchiveBytesDelta": 913421730,
+        "productionManifestChanged": false,
+        "requiresFullSupplyChainRequalificationIfSelected": true
+      }
+    },
+    {
+      "id": "paraformer-trilingual-zh-cantonese-en",
+      "evaluationOnly": true,
+      "productionApproved": false,
+      "upstream": {
+        "project": "k2-fsa/sherpa-onnx",
+        "release": "asr-models",
+        "asset": "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en.tar.bz2",
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en.tar.bz2"
+      },
+      "archive": {
+        "bytes": 1047671211,
+        "sha256": "d479167d8752628d9032d29de1060493865389d1e295a1c2e8e011e7062f1932"
+      },
+      "runtime": {
+        "directoryName": "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en",
+        "modelType": "paraformer",
+        "provider": "cpu",
+        "numThreads": 4,
+        "decodingMethod": "greedy_search",
+        "requiredFiles": {
+          "tokens": "tokens.txt",
+          "encoder": "encoder.int8.onnx",
+          "decoder": "decoder.int8.onnx"
+        }
+      },
+      "benchmark": {
+        "corpusRelativePath": "scripts/gate-0b/corpus.json",
+        "corpusSha256": "7edd6dff286b84619a3b68f385ba04622103ffe17cc57dbe5e1f16521deb156d",
+        "runsPerCase": 5,
+        "chunkMs": 40,
+        "cliRtfLimitExclusive": 0.6,
+        "macroCerLimitInclusive": 0,
+        "englishWerLimitInclusive": 0,
+        "realtimePunctuationIsReplacementGate": false,
+        "firstPartialLimitMsExclusive": 1000,
+        "conditionalCodeSwitchAudioNeedScreenMs": 534.562,
+        "conditionalScreenIsReleaseGate": false
+      },
+      "j14": {
+        "currentProductionArchiveBytes": 133898007,
+        "candidateArchiveBytesDelta": 913773204,
+        "productionManifestChanged": false,
+        "requiresFullSupplyChainRequalificationIfSelected": true
+      }
+    }
+  ]
+}
