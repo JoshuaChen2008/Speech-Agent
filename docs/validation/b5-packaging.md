@@ -1,7 +1,7 @@
 # B5 打包态确定性资格
 
 - 日期：2026-08-03
-- 状态：当前源码的本机构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；本机安装器 SHA 为 `d862c5fc…0de10`。I3 修复代码候选 run `30784483976` 精确绑定 revision `82d56f64c80c74f30c1944665460f1316f1d7939`，全部 workflow steps、627 项回归、provenance 绑定、artifact 上传、下载复核与隐私负扫描均闭合，J9-CI 已达到确定性联合验收完成。远端索引绑定 installer SHA `bdac65ed…a7c4`，不把未下载的远端 installer 字节冒充本机安装器。后续 revision `c36aefaee4778a1bf2dfe1ee005924a724f4be53` 的 run `30786324179` 通过 packaged/NSIS 前置后，在 evidence lane 因 I3 live playback HTML 未固定 LF 而 fail closed，未形成新的 provenance 索引
+- 状态：当前源码的本机构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；本机安装器 SHA 为 `d862c5fc…0de10`。I3 修复代码候选 run `30784483976` 精确绑定 revision `82d56f64c80c74f30c1944665460f1316f1d7939`，全部 workflow steps、627 项回归、provenance 绑定、artifact 上传、下载复核与隐私负扫描均闭合，J9-CI 已达到确定性联合验收完成。远端索引绑定 installer SHA `bdac65ed…a7c4`，不把未下载的远端 installer 字节冒充本机安装器。后续 revision `c36aefaee4778a1bf2dfe1ee005924a724f4be53` 的 run `30786324179` 通过 packaged/NSIS 前置后，在 evidence lane 因 I3 live playback HTML 未固定 LF 而 fail closed，未形成新的 provenance 索引。LF 修复 run `30787209338` 精确绑定 revision `f86ac1ef604dc7da0728c6eda44d59bbfd1e09bf`，全部 workflow steps、629 项回归、provenance 绑定、artifact 上传、下载复核与隐私负扫描均闭合；artifact ID `8845725648`、GitHub ZIP digest `b9d0a56b…93242`、远端 installer SHA=`b9becb19…16f31`，该精确 revision 的 J9-CI 已达到确定性联合验收完成
 - 发布边界：同一隔离 `userData` 的离线复启发生在测试 package；NSIS 卸载只验证隔离安装目录与无关 APPDATA 哨兵。正式 release 的 I4 非音频专用干净机尚未执行，因此尚未达到实机验收完成或发布验收完成
 
 ## 精确候选
@@ -113,6 +113,16 @@ J9-CI 已达到确定性联合验收完成；它不替代本机安装器字节�
 与 NSIS 前置均成立，但 evidence lane 在复核 tracked I3 资格报告时因
 `scripts/i2-live-caption-player.html` 未固定 LF 而触发 `i2PlaybackPageSha256` 漂移；最终 provenance
 索引按设计跳过。该 revision 的新增证据投影保持实现完成·尚未验收。
+
+LF 修复 run `30787209338` 随后精确绑定 revision
+`f86ac1ef604dc7da0728c6eda44d59bbfd1e09bf`，全部 workflow steps 与 629 项回归成功。artifact
+`qualification-evidence-f86ac1ef604dc7da0728c6eda44d59bbfd1e09bf-30787209338-1`（ID
+`8845725648`，GitHub ZIP digest
+`b9d0a56b55fa4c6728be660698654bce418ee6364fd43a59eb1be9ccb9993242`）下载后通过五个 strict
+readers、四份报告与两个源码 digest、跨报告绑定及 41 文件/29 JSON 隐私负扫描。下载包不含
+installer 字节；同轮索引绑定 installer SHA
+`b9becb191234cefa6ddfba48bc2865379d6dc62f1a7020c85124df02f2516f31`。该精确 revision 的 J9-CI
+已达到确定性联合验收完成；它不替代本机安装器字节证据或 I4 干净机发布门禁。
 
 这条旅程使用受控小资源和 fake ASR，不访问物理声卡、不保存音频，也不冒充公网真实张量、
 I2、真实两小时 I3 或 I4。

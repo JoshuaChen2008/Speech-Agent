@@ -58,8 +58,10 @@ test('current acceptance projections retain failed CI revisions and record the e
   ]
   for (const file of projectionFiles) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
-    assert.match(source, /30784483976/, `${file} must project the current downloaded qualified workflow`)
-    assert.match(source, /8844827701/, `${file} must project the current artifact identity`)
+    assert.match(source, /30787209338/, `${file} must project the current downloaded qualified workflow`)
+    assert.match(source, /8845725648/, `${file} must project the current artifact identity`)
+    assert.match(source, /b9d0a56b55fa4c6728be660698654bce418ee6364fd43a59eb1be9ccb9993242|b9d0a56b…93242/,
+      `${file} must project the current artifact digest`)
   }
   for (const file of [...historicalFiles, ...projectionFiles]) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
@@ -69,6 +71,9 @@ test('current acceptance projections retain failed CI revisions and record the e
     assert.match(source, /I3 live playback HTML|scripts\/i2-live-caption-player\.html/,
       `${file} must retain the LF provenance root cause`)
     assert.match(source, /LF/, `${file} must name the failed checkout invariant`)
+    assert.match(source, /30787209338/, `${file} must record the successful LF repair workflow`)
+    assert.match(source, /f86ac1ef604dc7da0728c6eda44d59bbfd1e09bf/,
+      `${file} must bind the successful LF repair workflow to its exact revision`)
   }
   for (const file of [...historicalFiles, ...projectionFiles]) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
@@ -92,28 +97,34 @@ test('J9-CI status projects the authoritative deterministic joint acceptance bou
   const navigationRow = navigation.split(/\r?\n/).find((line) => line.includes('| J9-CI ')) || ''
   const readmeRow = readme.split(/\r?\n/).find((line) => line.includes('| 远端 Windows CI 资格 ')) || ''
   const semanticRow = semantic.split(/\r?\n/).find((line) => line.includes('**SEM-T03**')) || ''
-  const semanticCurrent = semantic.split(/\r?\n/).find((line) => line.includes('I3 修复代码候选 T03/J9-CI 证据')) || ''
+  const semanticPrevious = semantic.split(/\r?\n/).find((line) => line.includes('I3 修复代码候选 T03/J9-CI 证据')) || ''
+  const semanticCurrent = semantic.split(/\r?\n/).find((line) => line.includes('I3 live provenance LF 修复候选 T03/J9-CI 证据')) || ''
   const strategyRow = strategy.split(/\r?\n/).find((line) => line.includes('| J9-CI |')) || ''
   const planRow = plan.split(/\r?\n/).find((line) => line.includes('**B5 字幕 MVP 分发')) || ''
-  const b5WriterLine = b5.split(/\r?\n/).find((line) => line.includes('writer/verifier、workflow 顺序')) || ''
+  const b5Current = b5.split(/\r?\n/).find((line) => line.startsWith('- 状态：')) || ''
 
   for (const row of [navigationRow, readmeRow, semanticCurrent, strategyRow]) {
     assert.match(row, /联合验收完成/)
-    assert.match(row, /30784483976/)
+    assert.match(row, /30787209338/)
+    assert.match(row, /f86ac1ef604dc7da0728c6eda44d59bbfd1e09bf/)
+    assert.match(row, /8845725648/)
   }
   assert.match(semanticRow, /J9-CI 已达到确定性联合验收完成/)
-  assert.match(semanticCurrent, /82d56f64c80c74f30c1944665460f1316f1d7939/)
-  assert.match(semanticCurrent, /78227ef5b4af08f3f2319156cb4ef096a132599707446506c32124f0ecbcdaca/)
-  assert.match(semanticCurrent, /bdac65edc7541070b9e2b4af13550b5768ff0bc86b4048b13fd6e7aca7dea7c4/)
+  assert.match(semanticPrevious, /82d56f64c80c74f30c1944665460f1316f1d7939/)
+  assert.match(semanticPrevious, /78227ef5b4af08f3f2319156cb4ef096a132599707446506c32124f0ecbcdaca/)
+  assert.match(semanticPrevious, /bdac65edc7541070b9e2b4af13550b5768ff0bc86b4048b13fd6e7aca7dea7c4/)
+  assert.match(semanticCurrent, /b9d0a56b55fa4c6728be660698654bce418ee6364fd43a59eb1be9ccb9993242/)
+  assert.match(semanticCurrent, /b9becb191234cefa6ddfba48bc2865379d6dc62f1a7020c85124df02f2516f31/)
   assert.match(strategyRow, /J9-CI 已达到确定性联合验收完成/)
   assert.match(navigationRow, /\| J9-CI 远端资格 \| 联合验收完成 \|/)
   assert.match(readmeRow, /\| 远端 Windows CI 资格 \| 联合验收完成 \|/)
   assert.match(navigationRow, /Electron `43\.2\.0`/)
   assert.match(readmeRow, /artifact .*下载后通过五个 strict readers/)
   assert.match(readmeRow, /下载包不含 installer 字节/)
-  for (const row of [semanticRow, planRow, b5WriterLine]) {
+  for (const row of [semanticRow, planRow, b5Current]) {
     assert.doesNotMatch(row, /provenance writer\/verifier、跨报告哈希复核、workflow 顺序和含 revision\/run 的上传名为实现完成·尚未验收|最终 CI provenance writer\/verifier 为实现完成·尚未验收|writer\/verifier、workflow 顺序与本地当前候选的交叉哈希探针为实现完成·尚未验收/)
     assert.match(row, /联合验收完成/)
+    assert.match(row, /30787209338/)
   }
 })
 
