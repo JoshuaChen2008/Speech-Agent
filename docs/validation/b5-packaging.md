@@ -1,7 +1,7 @@
 # B5 打包态确定性资格
 
 - 日期：2026-08-03
-- 状态：当前源码的本机构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；本机安装器 SHA 为 `d862c5fc…0de10`。I3 修复代码候选 run `30784483976` 精确绑定 revision `82d56f64c80c74f30c1944665460f1316f1d7939`，全部 workflow steps、627 项回归、provenance 绑定、artifact 上传、下载复核与隐私负扫描均闭合，J9-CI 已达到确定性联合验收完成。远端索引绑定 installer SHA `bdac65ed…a7c4`，不把未下载的远端 installer 字节冒充本机安装器
+- 状态：当前源码的本机构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；本机安装器 SHA 为 `d862c5fc…0de10`。I3 修复代码候选 run `30784483976` 精确绑定 revision `82d56f64c80c74f30c1944665460f1316f1d7939`，全部 workflow steps、627 项回归、provenance 绑定、artifact 上传、下载复核与隐私负扫描均闭合，J9-CI 已达到确定性联合验收完成。远端索引绑定 installer SHA `bdac65ed…a7c4`，不把未下载的远端 installer 字节冒充本机安装器。后续 revision `c36aefaee4778a1bf2dfe1ee005924a724f4be53` 的 run `30786324179` 通过 packaged/NSIS 前置后，在 evidence lane 因 I3 live playback HTML 未固定 LF 而 fail closed，未形成新的 provenance 索引
 - 发布边界：同一隔离 `userData` 的离线复启发生在测试 package；NSIS 卸载只验证隔离安装目录与无关 APPDATA 哨兵。正式 release 的 I4 非音频专用干净机尚未执行，因此尚未达到实机验收完成或发布验收完成
 
 ## 精确候选
@@ -107,6 +107,12 @@ readers、四份报告与 lockfile/workflow SHA、跨报告绑定及 41 文件/2
 installer 字节；同轮 workflow 在索引生成前复核远端 installer SHA
 `bdac65edc7541070b9e2b4af13550b5768ff0bc86b4048b13fd6e7aca7dea7c4`。这条精确 revision 的
 J9-CI 已达到确定性联合验收完成；它不替代本机安装器字节证据或 I4 干净机发布门禁。
+
+后续证据投影 run `30786324179` 精确绑定 revision
+`c36aefaee4778a1bf2dfe1ee005924a724f4be53`。Electron runtime、字幕布局、存储、产品壳、packaged
+与 NSIS 前置均成立，但 evidence lane 在复核 tracked I3 资格报告时因
+`scripts/i2-live-caption-player.html` 未固定 LF 而触发 `i2PlaybackPageSha256` 漂移；最终 provenance
+索引按设计跳过。该 revision 的新增证据投影保持实现完成·尚未验收。
 
 这条旅程使用受控小资源和 fake ASR，不访问物理声卡、不保存音频，也不冒充公网真实张量、
 I2、真实两小时 I3 或 I4。

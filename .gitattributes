@@ -40,6 +40,16 @@ src/main/services/storage-gateway.js text eol=lf
 src/runtime/storage-worker/worker-service.js text eol=lf
 scripts/verify-i3-nonaudio-report.js text eol=lf
 
+# I3 live-audio reports hash every text provenance input as checkout bytes.
+# Pin the script-side inputs explicitly; product-side JS is covered above.
+scripts/i2-live-caption-player.html text eol=lf
+scripts/i2-live-caption-player.js text eol=lf
+scripts/i3-live-audio-soak.js text eol=lf
+scripts/i3-live-soak-window.html text eol=lf
+scripts/i3-live-stimulus.json text eol=lf
+scripts/generate-i3-live-stimulus.ps1 text eol=lf
+scripts/verify-i3-live-audio-report.js text eol=lf
+
 # I4 non-audio reports bind an exact fixture and may be collected on another
 # Windows snapshot. Keep both the source fixture and any future report stable.
 scripts/fixtures/i4-nonaudio-legacy-session.jsonl text eol=lf

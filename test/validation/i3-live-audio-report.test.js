@@ -18,6 +18,7 @@ const {
   MIN_QUALIFICATION_POST_RECOVERY_FINAL_SEGMENTS,
   MIN_QUALIFICATION_PRE_RECOVERY_FINAL_SEGMENTS,
   PLAYBACK_SCHEDULE_LEAD_MS,
+  PROVENANCE_FILES,
   QUALIFICATION_CRASH_TARGET_MS,
   QUALIFICATION_DURATION_SECONDS,
   SOAK_LIMITS,
@@ -51,6 +52,23 @@ test('I3 public arguments bypass the closed internal recovery-seed parser', () =
 test('I3 wrapper keeps its required status BrowserWindow interactive', () => {
   const wrapper = fs.readFileSync(path.resolve(__dirname, '../../scripts/run-i3-live-audio-soak.ps1'), 'utf8')
   assert.doesNotMatch(wrapper, /-WindowStyle\s+Hidden/)
+})
+
+test('I3 实机来源资格的每个文本 provenance 输入固定 LF', () => {
+  const attributes = new Set(fs.readFileSync(path.resolve(ROOT, '.gitattributes'), 'utf8')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean))
+  for (const relativePath of Object.values(PROVENANCE_FILES)) {
+    const exactRule = `${relativePath} text eol=lf`
+    const coveredByProductRule = relativePath.startsWith('src/') && relativePath.endsWith('.js') &&
+      attributes.has('src/**/*.js text eol=lf')
+    assert.equal(
+      attributes.has(exactRule) || coveredByProductRule,
+      true,
+      `${relativePath} must be pinned to LF before its exact SHA is compared across checkouts`
+    )
+  }
 })
 
 test('I3 real-audio runner freezes the approved refinement model in both session inputs', () => {

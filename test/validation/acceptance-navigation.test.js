@@ -63,9 +63,22 @@ test('current acceptance projections retain failed CI revisions and record the e
   }
   for (const file of [...historicalFiles, ...projectionFiles]) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
+    assert.match(source, /30786324179/, `${file} must retain the exact current-head CI failure`)
+    assert.match(source, /c36aefaee4778a1bf2dfe1ee005924a724f4be53/,
+      `${file} must bind the current-head CI failure to its exact revision`)
+    assert.match(source, /I3 live playback HTML|scripts\/i2-live-caption-player\.html/,
+      `${file} must retain the LF provenance root cause`)
+    assert.match(source, /LF/, `${file} must name the failed checkout invariant`)
+  }
+  for (const file of [...historicalFiles, ...projectionFiles]) {
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
     assert.doesNotMatch(source, /尚未提交\/推送|尚未在本工作树对应提交上取得 GitHub Actions 结果/,
       `${file} must not keep the superseded no-run status`)
   }
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8')
+  const strategy = fs.readFileSync(path.join(ROOT, 'docs', 'testing-strategy.md'), 'utf8')
+  assert.match(readme, /core 414、integration 27、evidence 188，共 629 项/)
+  assert.match(strategy, /core 414\/414、integration 27\/27、evidence 188\/188，共 629\/629/)
 })
 
 test('J9-CI status projects the authoritative deterministic joint acceptance boundary', () => {
