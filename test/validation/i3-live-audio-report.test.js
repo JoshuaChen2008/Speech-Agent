@@ -1,6 +1,7 @@
 'use strict'
 
 const assert = require('node:assert/strict')
+const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -104,9 +105,48 @@ test('I3 switches post-recovery caption generation before retry completion is re
 })
 const {
   readAndValidateI3LiveAudioReport,
+  readAndValidateI3LiveAudioQualificationReport,
   validateI3LiveAudioQualificationReport,
   validateI3LiveAudioReport
 } = require('../../scripts/verify-i3-live-audio-report')
+
+test('revision 82d56f6 的 loopback 资格报告严格闭合且保持 partial', () => {
+  const attributes = fs.readFileSync(path.resolve(ROOT, '.gitattributes'), 'utf8')
+  assert.match(
+    attributes,
+    /^docs\/validation\/i3-live-82d56f6-loopback-qualification\/report\.json text eol=lf$/m
+  )
+  const reportPath = path.resolve(
+    ROOT,
+    'docs/validation/i3-live-82d56f6-loopback-qualification/report.json'
+  )
+  const bytes = fs.readFileSync(reportPath)
+  assert.equal(
+    crypto.createHash('sha256').update(bytes).digest('hex'),
+    '0c219b9627618cdda12ad41ae77093fd5f7bcccbe30b042c1c9cad2958d702f4'
+  )
+
+  const report = readAndValidateI3LiveAudioQualificationReport(reportPath)
+  assert.equal(report.gateStatus, 'partial')
+  assert.equal(report.metrics.measuredListeningWallDurationMs, 75540.785)
+  assert.deepEqual({
+    preRecoveryFinalSegments: report.metrics.preRecoveryFinalSegments,
+    postRecoveryFinalSegments: report.metrics.postRecoveryFinalSegments,
+    finalSegments: report.metrics.finalSegments,
+    refinedSegments: report.metrics.refinedSegments
+  }, {
+    preRecoveryFinalSegments: 14,
+    postRecoveryFinalSegments: 17,
+    finalSegments: 31,
+    refinedSegments: 29
+  })
+  assert.equal(Object.values(report.checks).every(Boolean), true)
+  assert.deepEqual(report.privacy, {
+    capturedAudioPersisted: false,
+    reportContainsAbsolutePath: false,
+    reportContainsTranscriptText: false
+  })
+})
 
 function passingReport () {
   const manifestSha = Object.fromEntries(PRODUCTION_MODEL_MANIFEST.artifacts.map((artifact) => [artifact.id, artifact.sha256]))

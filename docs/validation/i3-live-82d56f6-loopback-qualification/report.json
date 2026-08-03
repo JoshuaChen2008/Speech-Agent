@@ -1,0 +1,183 @@
+{
+  "boundaries": {
+    "actualElectronBrowserWindow": true,
+    "actualRealtimeAudioPipeline": true,
+    "actualSqliteStorage": true,
+    "controlledSpeakerPlayback": true,
+    "syntheticFixture": false,
+    "wallClockTwoHourRun": false
+  },
+  "checks": {
+    "audioArtifactsAbsent": true,
+    "captionsPersisted": true,
+    "controlledCycleBounded": true,
+    "exportsComplete": true,
+    "historyPaginationComplete": true,
+    "noCapturePersisted": true,
+    "postRecoveryFinalsPersisted": true,
+    "preRecoveryFinalsPersisted": true,
+    "realAudioDurationSeventyFiveSeconds": true,
+    "refinedObservedWhenEnabled": true,
+    "resourceBounds": true,
+    "sqliteIntegrity": true,
+    "storageRecoveryAfterForcedMainExit": true,
+    "transportHealthy": true,
+    "workerCrashRecovered": true
+  },
+  "crashRecovery": {
+    "recoveredSessionCount": 1,
+    "recoveryStatus": "committed",
+    "recoveredSessionTerminal": true,
+    "separateMainProcessForcedExit": true
+  },
+  "environment": {
+    "electron": "43.2.0",
+    "node": "24.18.0"
+  },
+  "exports": {
+    "text": {
+      "bytes": 496,
+      "recordCount": 31,
+      "sha256": "f52f4fb3ce2d10a9717dd3b77c16fb39de40ecf97f3df61c8e9654e61b20cec9"
+    },
+    "markdown": {
+      "bytes": 608,
+      "recordCount": 31,
+      "sha256": "3690b4819c34271caf7896568233fe6cb38ad75965ccf188791691824ba01392"
+    },
+    "srt": {
+      "bytes": 1540,
+      "recordCount": 31,
+      "sha256": "53f98247d98233f7243a49df23cebce71228fbf3ebacabb66296015d236660e7"
+    }
+  },
+  "gateStatus": "partial",
+  "generatedAt": "2026-08-03T04:36:15.203Z",
+  "kind": "i3-live-audio-qualification",
+  "limits": {
+    "crashTargetSeconds": 30,
+    "durationSeconds": 75,
+    "maxHistoryPageP95Ms": 1000,
+    "maxStimulusCycleDurationMs": 2200,
+    "minFinalSegments": 25,
+    "minPostRecoveryFinalSegments": 8,
+    "minPreRecoveryFinalSegments": 12,
+    "minResourceSamples": 30
+  },
+  "model": {
+    "realtime": {
+      "artifactId": "x-asr-160ms",
+      "markerSha256": "4ae16380c8f67ec91b34d7d5ec6e11fe69088c25bb26b68264e97e89f0d6039d",
+      "manifestSha256": "8a6fca056e1a342546edd78be4d50274e2c01898e7b8ae8fc336f6410319c399"
+    },
+    "refinement": {
+      "artifactId": "x-asr-offline",
+      "markerSha256": "de69d2890f6db3fff8ed19f933a1cdd995aa0fe9f5151fce726ff07788eff4d0",
+      "manifestSha256": "5d02c36d7b44e886b7c8f0d8e051f8713acab96c264bb6ef9e718be39a6a2224"
+    },
+    "vad": {
+      "artifactId": "silero-vad",
+      "markerSha256": "ad7c4644023fbfd5fc5842d4ae0bf8dfba54b21553c87fc7c04cb4db979bd130",
+      "manifestSha256": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"
+    }
+  },
+  "metrics": {
+    "captionEvents": 186,
+    "finalSegments": 31,
+    "historyPageCount": 1,
+    "historySegmentCount": 31,
+    "historyPageP95Ms": 2.428,
+    "measuredListeningWallDurationMs": 75540.785,
+    "playbackCycles": 31,
+    "postRecoveryFinalSegments": 17,
+    "postRecoveryPlaybackCycles": 18,
+    "preRecoveryFinalSegments": 14,
+    "refinedSegments": 29,
+    "resource": {
+      "appCpuP95Percent": 47.976,
+      "appWorkingSetMiBMax": 1454.465,
+      "maxGatewayQueueDepth": 0,
+      "maxProcessCount": 10,
+      "sampleCount": 76
+    },
+    "sqliteCaptionEvents": 60,
+    "sqliteSegments": 31
+  },
+  "mode": "qualification",
+  "privacy": {
+    "capturedAudioPersisted": false,
+    "reportContainsAbsolutePath": false,
+    "reportContainsTranscriptText": false
+  },
+  "progress": {
+    "soakId": "eaaf93743b24b518889b189c",
+    "statusWindowDragRequired": false,
+    "workerCrashInjectionRequired": true
+  },
+  "provenance": {
+    "historyServiceSha256": "beafb8d7590cf52d7eab29417cad34427857c1dbd537275aef64d47fef5a1584",
+    "i2PlaybackPageSha256": "17fad4b2af2650ad19896563907f4abfdf439bcd3479695e6cbee94554f18302",
+    "i2PlaybackScriptSha256": "655663bb16f7875d4c85bcde97f84654bca0b954cc0a3a06c93f87b7baae1b71",
+    "modelManifestSha256": "54af5df4069015927cff2e40dd57314e70306c4e2ce1ebb2bb9807e9a2bf225f",
+    "modelResolverSha256": "431c9443c506004ed32fbbb0f3a0461ab61d3894c40b28957ffdc813d80ccf2a",
+    "realtimeRuntimeAdapterSha256": "ce8e2112292517953f8ba6e8450119bc51915eded4bf7cecddc9cecd82fa0453",
+    "runnerSha256": "fc3448a9054d60a5dc6827d6c4ff5cc5588926bb9efce4c22bb5c1df824e71dd",
+    "sqliteRuntimeSha256": "aedc5cf293c520a3ee13d60a909ea12ea0a4b473d0568949463d30b552c49eb0",
+    "statusWindowSha256": "b4a7c21acd838823df788daa376a5df0e350411e642378c0a41189c6dd7b2cd3",
+    "stimulusDefinitionSha256": "a7565ea16dfd1337d6c0e3a87c1f87a2b66b62b17788504fe98f1472ea789a87",
+    "stimulusGeneratorSha256": "a3b9bdc1cc3161f7994ea42480bc8d7eca7e79a9032c2bb57bbb6091733bd297",
+    "verifierSha256": "b7612c62f93a3666268552e2121c847babea7a7f47f7d1690d9e4e3040dffc49",
+    "productPayloadSha256": "a1f03ed65dea8af26190ab463660e8840270eacd50022528cbbe79b8b379accc"
+  },
+  "result": "pass",
+  "schemaVersion": 1,
+  "stimulus": {
+    "cycleDurationMs": 2100,
+    "derivedWavSha256": "fe5910b176ed91fe44c5d8ca10ba6a2f403536663b6db9b6f753f56cfdeac538",
+    "referenceSha256": "526e578fc5adf81953558ce881aa771f5f5a7c93ed9215b4e9e8b1073a47c2db",
+    "scheduleLeadMs": 80,
+    "silenceDurationMs": 1100,
+    "sliceLeadingSilenceMs": 140,
+    "sliceLengthMs": 1000,
+    "sliceSampleCount": 16000,
+    "sourceCorpusSha256": "1971223a71ebbd178ffba7d5a69d75e9cda0220f39dd6ec0cb1c9e4bd9823dcb",
+    "sourceId": "loopback",
+    "sourceReferenceSha256": "3cdd1b9f6290201ed9c8c2afcffade4f180974e2bfd5e46a889b935dad69c07e"
+  },
+  "transport": {
+    "forcedCrashGeneration": {
+      "acknowledgedFrames": 310,
+      "badSampleTypeFrames": 0,
+      "capturedFrames": 313,
+      "creditStalls": 0,
+      "droppedCaptionCount": 0,
+      "droppedFrames": 0,
+      "ingestedFrames": 310,
+      "lostInFlightFrames": 0,
+      "missedFrames": 0,
+      "portReplacements": 0,
+      "sentFrames": 313,
+      "sequenceGapCount": 0
+    },
+    "postRecoveryGeneration": {
+      "acknowledgedFrames": 380,
+      "badSampleTypeFrames": 0,
+      "capturedFrames": 381,
+      "creditStalls": 0,
+      "droppedCaptionCount": 0,
+      "droppedFrames": 0,
+      "ingestedFrames": 381,
+      "lostInFlightFrames": 0,
+      "missedFrames": 0,
+      "portReplacements": 0,
+      "sentFrames": 381,
+      "sequenceGapCount": 0
+    }
+  },
+  "window": {
+    "heartbeatCount": 17,
+    "nativeDragObserved": false,
+    "rendered": true,
+    "visibleAtCompletion": true
+  }
+}

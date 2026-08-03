@@ -1,5 +1,11 @@
 # I3 real audio soak acceptance
 
+## 2026-08-03 exact-revision qualification
+
+Revision `82d56f64c80c74f30c1944665460f1316f1d7939` completed a new 75-second real `loopback` qualification after the runner began freezing both `refinementEnabled=true` and `refinementAvailable=true`. The tracked strict report is [`i3-live-82d56f6-loopback-qualification/report.json`](i3-live-82d56f6-loopback-qualification/report.json), SHA-256 `0c219b9627618cdda12ad41ae77093fd5f7bcccbe30b042c1c9cad2958d702f4`.
+
+The measured listening wall time was 75,540.785ms. It produced 31 first-pass finals and 29 refined transcript versions, with 14 finals before the forced realtime-worker exit and 17 after explicit Retry. All 15 closed qualification checks passed, including SQLite/history/three-format export completeness, bounded resources, worker and stale-session recovery, the transport check, and the SEM-F14 privacy boundary. The forced-exit generation retains its independent sent/ingested/acknowledged counters; only the post-recovery generation satisfies every zero-loss axis. The report remains `pass/partial`: it does not record a native drag, does not run for 7,200 seconds, and cannot satisfy the 3,000-first-pass-final acceptance threshold. I3 therefore remains 实现完成·尚未验收.
+
 ## 2026-08-01 qualification status
 
 Two real loopback qualification runs were completed before any two-hour run was allowed to start:

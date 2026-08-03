@@ -1,7 +1,7 @@
 # B5 打包态确定性资格
 
 - 日期：2026-08-03
-- 状态：当前源码的本机构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；本机安装器 SHA 为 `d862c5fc…0de10`。最近代码候选 run `30781736119` 精确绑定 revision `b96b8fe7db5ba4db3ac36c4ee85371a4381b521f`，全部 workflow steps、625 项回归、provenance 绑定、artifact 上传、下载复核与隐私负扫描均闭合，J9-CI 已达到确定性联合验收完成。远端索引绑定 installer SHA `f9a795b0…f7bf`，不把未下载的远端 installer 字节冒充本机安装器
+- 状态：当前源码的本机构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；本机安装器 SHA 为 `d862c5fc…0de10`。I3 修复代码候选 run `30784483976` 精确绑定 revision `82d56f64c80c74f30c1944665460f1316f1d7939`，全部 workflow steps、627 项回归、provenance 绑定、artifact 上传、下载复核与隐私负扫描均闭合，J9-CI 已达到确定性联合验收完成。远端索引绑定 installer SHA `bdac65ed…a7c4`，不把未下载的远端 installer 字节冒充本机安装器
 - 发布边界：同一隔离 `userData` 的离线复启发生在测试 package；NSIS 卸载只验证隔离安装目录与无关 APPDATA 哨兵。正式 release 的 I4 非音频专用干净机尚未执行，因此尚未达到实机验收完成或发布验收完成
 
 ## 精确候选
@@ -98,14 +98,14 @@ installer SHA `9129794558c1f24f9300ba6f365a4b304a805fabe4f4e82691e77ea8cab19292`
 安装器 SHA `d862c5fca0e477abc2d636573e1dd41aef564ed0c82def3bd469966db7b0de10` 不同，二者不得互相冒充；
 本地构造相同 JSON 也不带远端来源语境或签名，不能冒充 GitHub run 证据。
 
-最近代码候选由 run `30781736119` 在 revision
-`b96b8fe7db5ba4db3ac36c4ee85371a4381b521f` 上完成全部 workflow steps 与 625 项回归；artifact
-`qualification-evidence-b96b8fe7db5ba4db3ac36c4ee85371a4381b521f-30781736119-1`（ID
-`8843931512`，GitHub ZIP digest
-`c010ef81f2a5bf8b864e7c4ecf81071744a4d2c68a6b584fc44b401160854dd6`）下载后通过相同五个 strict
+I3 修复代码候选由 run `30784483976` 在 revision
+`82d56f64c80c74f30c1944665460f1316f1d7939` 上完成全部 workflow steps 与 627 项回归；artifact
+`qualification-evidence-82d56f64c80c74f30c1944665460f1316f1d7939-30784483976-1`（ID
+`8844827701`，GitHub ZIP digest
+`78227ef5b4af08f3f2319156cb4ef096a132599707446506c32124f0ecbcdaca`）下载后通过相同五个 strict
 readers、四份报告与 lockfile/workflow SHA、跨报告绑定及 41 文件/29 JSON 隐私负扫描。下载包仍不含
 installer 字节；同轮 workflow 在索引生成前复核远端 installer SHA
-`f9a795b063d0ce80c26b11e7223955924d0d152c830cc6829638c9a1e76cf7bf`。这条精确 revision 的
+`bdac65edc7541070b9e2b4af13550b5768ff0bc86b4048b13fd6e7aca7dea7c4`。这条精确 revision 的
 J9-CI 已达到确定性联合验收完成；它不替代本机安装器字节证据或 I4 干净机发布门禁。
 
 这条旅程使用受控小资源和 fake ASR，不访问物理声卡、不保存音频，也不冒充公网真实张量、

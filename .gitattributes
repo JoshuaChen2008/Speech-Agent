@@ -47,3 +47,6 @@ docs/validation/i4-nonaudio-*.json text eol=lf
 
 # Exact-byte I2 child/exit/series reconstruction for revision b96b8fe7.
 docs/validation/i2-live-b96b8fe-loopback/*.json text eol=lf
+
+# Exact-byte I3 qualification evidence for revision 82d56f64.
+docs/validation/i3-live-82d56f6-loopback-qualification/report.json text eol=lf
