@@ -105,7 +105,7 @@ function validateRestartV2Journey (journey) {
   }
 }
 
-function validateRestartV3Journey (journey) {
+function validateRestartV3Journey (journey, expectedCoreReadyMarkerCount = 2, expectedResourceCount = 3, schemaVersion = 3) {
   const trueFields = [
     'coreReadySurvivedRestart',
     'refinementMissingWithRetainedPart',
@@ -130,18 +130,18 @@ function validateRestartV3Journey (journey) {
   if (!hasExactKeys(journey, PRODUCT_SHELL_RESTART_V3_JOURNEY_KEYS) ||
       journey.modelFetchAttemptCountBeforeExplicitContinue !== 0 ||
       journey.fixtureServerStartedBeforeExplicitContinue !== false ||
-      journey.coreReadyMarkerCount !== 2 || journey.refinementReadyMarkerCount !== 1 ||
-      journey.resourceCount !== 3 || journey.persistedTerminalHistoryCount !== 3 ||
+      journey.coreReadyMarkerCount !== expectedCoreReadyMarkerCount || journey.refinementReadyMarkerCount !== 1 ||
+      journey.resourceCount !== expectedResourceCount || journey.persistedTerminalHistoryCount !== 3 ||
       journey.longHistorySegmentCount !== 205 || journey.historyPageSize !== 50 ||
       journey.historyOriginalExportArtifactCount !== 3 || journey.historyOriginalExportFullSegmentCount !== 205 ||
       journey.terminalHistoryCountAfterRestart !== 4 ||
       trueFields.some((field) => journey[field] !== true)) {
-    throw new Error('offline restart v3 journey evidence is incomplete')
+    throw new Error(`offline restart v${schemaVersion} journey evidence is incomplete`)
   }
 }
 
 function validateProductShellRestartReport (report) {
-  if (!report || ![1, 2, 3].includes(report.schemaVersion) ||
+  if (!report || ![1, 2, 3, 4].includes(report.schemaVersion) ||
       report.kind !== 'product-shell-offline-restart-smoke' ||
       report.result !== 'pass' || report.gateStatus !== 'partial') {
     throw new Error('invalid product-shell offline restart report envelope')
@@ -167,6 +167,7 @@ function validateProductShellRestartReport (report) {
   }
   if (report.schemaVersion === 2) validateRestartV2Journey(journey)
   if (report.schemaVersion === 3) validateRestartV3Journey(journey)
+  if (report.schemaVersion === 4) validateRestartV3Journey(journey, 3, 4, 4)
   if (report.privacy?.physicalAudioSourceOpened !== false ||
       report.privacy?.audioPersisted !== false ||
       report.privacy?.transcriptTextPersistedInReport !== false ||
@@ -212,10 +213,10 @@ if (require.main === module) {
     coreReadySurvivedRestart: report.schemaVersion >= 2
       ? report.journey.coreReadySurvivedRestart
       : report.journey.readyModelSurvivedRestart,
-    refinementMissingWithRetainedPart: report.schemaVersion === 3
+    refinementMissingWithRetainedPart: report.schemaVersion >= 3
       ? report.journey.refinementMissingWithRetainedPart
       : null,
-    modelFetchAttemptCountBeforeExplicitContinue: report.schemaVersion === 3
+    modelFetchAttemptCountBeforeExplicitContinue: report.schemaVersion >= 3
       ? report.journey.modelFetchAttemptCountBeforeExplicitContinue
       : report.journey.modelFetchAttemptCount,
     persistedTerminalHistoryCount: report.journey.persistedTerminalHistoryCount,

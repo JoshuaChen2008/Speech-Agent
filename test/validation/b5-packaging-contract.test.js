@@ -151,6 +151,19 @@ function productShellV3Fixture () {
   }
 }
 
+function productShellV4Fixture () {
+  const report = productShellV3Fixture()
+  return {
+    ...report,
+    schemaVersion: 4,
+    journey: {
+      ...report.journey,
+      coreReadyMarkerCount: 3,
+      resourceCount: 4
+    }
+  }
+}
+
 test('release package uses an explicit ASAR allowlist, hardened fuses and per-user NSIS', () => {
   assert.equal(releaseConfig.asar, true)
   assert.equal(releaseConfig.npmRebuild, false)
@@ -355,6 +368,19 @@ test('packaged product v3 evidence records the streamed cancellation before rest
   }), /v3 user journey/)
 })
 
+test('packaged product v4 evidence requires the SEM-F21 three-core-marker and four-resource boundary', () => {
+  const report = productShellV4Fixture()
+  assert.equal(validatePackagedProductShellReport(report), report)
+  assert.throws(() => validatePackagedProductShellReport({
+    ...report,
+    journey: { ...report.journey, coreReadyMarkerCount: 2 }
+  }), /v4 user journey/)
+  assert.throws(() => validatePackagedProductShellReport({
+    ...report,
+    journey: { ...report.journey, resourceCount: 3 }
+  }), /v4 user journey/)
+})
+
 test('packaged smoke source starts at packaged argv and probes native code in a utility process', () => {
   const source = fs.readFileSync(path.join(ROOT, 'scripts', 'product-shell-smoke.js'), 'utf8')
   assert.match(source, /process\.argv\.slice\(app\.isPackaged \? 1 : 2\)/)
@@ -362,6 +388,7 @@ test('packaged smoke source starts at packaged argv and probes native code in a 
   assert.match(source, /app\.asar\.unpacked/)
   assert.match(source, /releaseCandidate: false/)
   assert.match(source, /coreReadyMarkerCount/)
+  assert.match(source, /schemaVersion:\s*4/)
   assert.match(source, /refinementContinueRangeObserved/)
   assert.match(source, /historyRefinedVersionPersistsAcrossPaging/)
   assert.match(source, /postSessionRefinementNoticeShown/)

@@ -137,7 +137,7 @@ async function main () {
     storageUtilityRoundTrip: product.packaging.storageUtilityRoundTrip,
     exit: evidence.outcome,
     offlineRestart: restart.result,
-    offlineModelFetchAttemptCountBeforeExplicitContinue: restart.schemaVersion === 3
+    offlineModelFetchAttemptCountBeforeExplicitContinue: restart.schemaVersion >= 3
       ? restart.journey.modelFetchAttemptCountBeforeExplicitContinue
       : restart.journey.modelFetchAttemptCount,
     offlineRestartExit: restartEvidence.outcome,

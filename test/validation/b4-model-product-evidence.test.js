@@ -158,6 +158,7 @@ test('product-shell CI keeps the settings-click controlled install rather than e
   assert.match(smoke, /\['missing', 'downloading', 'verifying', 'ready'\]/)
   assert.match(smoke, /coreRangeResumeObserved/)
   assert.match(smoke, /coreReadyMarkerCount:\s*CORE_RESOURCE_IDS\.length/)
+  assert.match(smoke, /schemaVersion:\s*4/)
   assert.match(smoke, /document\.getElementById\('refinementCancelButton'\)\.click\(\)/)
   assert.match(smoke, /heldRefinementResponse\.connectionClosed/)
   assert.match(smoke, /refinementCancellationRetainedPart/)

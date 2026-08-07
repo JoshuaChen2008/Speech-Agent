@@ -135,6 +135,19 @@ function restartReportV3Fixture () {
   }
 }
 
+function restartReportV4Fixture () {
+  const report = restartReportV3Fixture()
+  return {
+    ...report,
+    schemaVersion: 4,
+    journey: {
+      ...report.journey,
+      coreReadyMarkerCount: 3,
+      resourceCount: 4
+    }
+  }
+}
+
 test('packaged offline restart report proves ready-model and SQLite persistence without overclaiming I4', (t) => {
   const report = restartReportFixture()
   assert.equal(validateProductShellRestartReport(report), report)
@@ -178,6 +191,19 @@ test('packaged restart v3 reports the cancelled-part offline boundary before the
     ...report,
     journey: { ...report.journey, refinementContinueRangeObserved: false }
   }), /v3 journey/)
+})
+
+test('packaged restart v4 requires all three core ready markers across the offline boundary', () => {
+  const report = restartReportV4Fixture()
+  assert.equal(validateProductShellRestartReport(report), report)
+  assert.throws(() => validateProductShellRestartReport({
+    ...report,
+    journey: { ...report.journey, coreReadyMarkerCount: 2 }
+  }), /v4 journey/)
+  assert.throws(() => validateProductShellRestartReport({
+    ...report,
+    journey: { ...report.journey, resourceCount: 3 }
+  }), /v4 journey/)
 })
 
 test('packaged runner performs a second supervised launch against the same isolated userData', () => {

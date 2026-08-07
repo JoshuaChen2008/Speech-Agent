@@ -194,7 +194,7 @@ function validateProductShellV2Journey (journey) {
   }
 }
 
-function validateProductShellV3Journey (journey) {
+function validateProductShellV3Journey (journey, expectedCoreReadyMarkerCount = 2, expectedResourceCount = 3, schemaVersion = 3) {
   const requiredCoreStates = ['missing', 'downloading', 'verifying', 'ready']
   const trueFields = [
     'coreInstallClicked',
@@ -231,7 +231,7 @@ function validateProductShellV3Journey (journey) {
       journey.coreInitialState !== 'missing' || journey.refinementInitialState !== 'missing' ||
       journey.refinementFetchAttemptCountBeforeExplicitDownload !== 0 ||
       !isExactArray(journey.coreObservedStates, requiredCoreStates) ||
-      journey.coreReadyMarkerCount !== 2 || journey.refinementReadyMarkerCountBeforeExplicitDownload !== 0 ||
+      journey.coreReadyMarkerCount !== expectedCoreReadyMarkerCount || journey.refinementReadyMarkerCountBeforeExplicitDownload !== 0 ||
       journey.refinementReadyMarkerCount !== 0 || journey.terminalHistoryCount !== 3 ||
       journey.longHistorySegmentCount !== 205 || journey.historyPageCount !== 5 ||
       journey.historyPageSize !== 50 || !Number.isSafeInteger(journey.historyMaxTimelineNodes) ||
@@ -240,16 +240,16 @@ function validateProductShellV3Journey (journey) {
       !isExactArray(journey.historyOriginalExportFormats, ['txt', 'md', 'srt']) ||
       journey.historyOriginalExportArtifactCount !== 3 || journey.historyOriginalExportFullSegmentCount !== 205 ||
       journey.historyRefinedExportArtifactCount !== 1 || journey.historyRawOriginalExportArtifactCount !== 1 ||
-      journey.coreState !== 'ready' || journey.refinementState !== 'missing' || journey.resourceCount !== 3 ||
+      journey.coreState !== 'ready' || journey.refinementState !== 'missing' || journey.resourceCount !== expectedResourceCount ||
       journey.coreReadinessSource !== 'settings-click-controlled-install' ||
       journey.translationAdvertised !== false ||
       trueFields.some((field) => journey[field] !== true)) {
-    throw new Error('product-shell v3 user journey evidence is incomplete')
+    throw new Error(`product-shell v${schemaVersion} user journey evidence is incomplete`)
   }
 }
 
 function validateProductShellReport (report) {
-  if (!report || ![1, 2, 3].includes(report.schemaVersion) || report.kind !== 'product-shell-smoke') {
+  if (!report || ![1, 2, 3, 4].includes(report.schemaVersion) || report.kind !== 'product-shell-smoke') {
     throw new Error('invalid product-shell report envelope')
   }
   if (report.result !== 'pass' || report.gateStatus !== 'partial') {
@@ -299,6 +299,7 @@ function validateProductShellReport (report) {
   }
   if (report.schemaVersion === 2) validateProductShellV2Journey(journey)
   if (report.schemaVersion === 3) validateProductShellV3Journey(journey)
+  if (report.schemaVersion === 4) validateProductShellV3Journey(journey, 3, 4, 4)
   if (report.privacy?.physicalAudioSourceOpened !== false ||
       report.privacy?.audioPersisted !== false ||
       report.privacy?.transcriptTextPersistedInReport !== false ||

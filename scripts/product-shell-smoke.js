@@ -41,7 +41,11 @@ const LEGACY_HISTORY_SESSION_ID = 'ci-legacy-history-session'
 const LONG_HISTORY_SEGMENT_COUNT = 205
 const HISTORY_PAGE_SIZE = 50
 const EXPORT_FORMATS = Object.freeze(['txt', 'md', 'srt'])
-const CORE_RESOURCE_IDS = Object.freeze(['x-asr-160ms', 'silero-vad'])
+const CORE_RESOURCE_IDS = Object.freeze([
+  'zipformer-bilingual-zh-en-2023-02-20',
+  'x-asr-160ms',
+  'silero-vad'
+])
 const REFINEMENT_RESOURCE_IDS = Object.freeze(['x-asr-offline'])
 const B5_RUN_ID_PATTERN = /^b5-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -819,7 +823,7 @@ async function runRestartJourney () {
       readyMarkerCountFor(path.join(userDataDir, 'models'), CORE_RESOURCE_IDS) !== CORE_RESOURCE_IDS.length ||
       readyMarkerCountFor(path.join(userDataDir, 'models'), REFINEMENT_RESOURCE_IDS) !== 0 ||
       !retainedRefinementPartOnRestart ||
-      resourceCount !== 3 || modelTransport !== null) {
+      resourceCount !== 4 || modelTransport !== null) {
     throw new Error('restart did not preserve offline core readiness and the cancelled refinement part')
   }
 
@@ -971,7 +975,7 @@ async function runRestartJourney () {
   if (crashEvents.length > 0) throw new Error('Electron child process crashed during offline restart')
   if (audioFilesUnder(options.workDir).length > 0) throw new Error('offline restart persisted audio')
   const report = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: 'product-shell-offline-restart-smoke',
     generatedAt: new Date().toISOString(),
     result: 'pass',
@@ -1354,12 +1358,12 @@ async function runJourney () {
   const resourceCount = finalModelState.resourceCount
   const translationTogglePresent = await rendererValue(settings, `document.body.textContent.includes('显示双语译文')`)
   if (finalModelState.core !== 'ready' || finalModelState.refinement !== 'missing' ||
-      resourceCount !== 3 || translationTogglePresent) throw new Error('model resources UI contract is not aligned')
+      resourceCount !== 4 || translationTogglePresent) throw new Error('model resources UI contract is not aligned')
   if (crashEvents.length > 0) throw new Error('Electron child process crashed during the product journey')
   if (audioFilesUnder(options.workDir).length > 0) throw new Error('product shell smoke persisted audio')
 
   const report = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: 'product-shell-smoke',
     generatedAt: new Date().toISOString(),
     result: 'pass',
