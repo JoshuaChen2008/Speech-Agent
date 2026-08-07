@@ -239,3 +239,33 @@ test('I4 projections keep implemented report entry points separate from unaccept
   assert.match(planRow, /尚无专用干净 Win11 的三份 child 报告/)
   assert.match(strategyRow, /尚无合格干净机三份 child 报告/)
 })
+
+test('SEM-F21/J16 registers same-source two-stage recognition before implementation', () => {
+  const context = fs.readFileSync(path.join(ROOT, 'CONTEXT.md'), 'utf8')
+  const semantic = fs.readFileSync(path.join(ROOT, 'docs', 'semantic-contract.md'), 'utf8')
+  const strategy = fs.readFileSync(path.join(ROOT, 'docs', 'testing-strategy.md'), 'utf8')
+  const runtime = fs.readFileSync(path.join(ROOT, 'docs', 'runtime-architecture.md'), 'utf8')
+
+  const semanticRow = semantic.split(/\r?\n/).find((line) => line.includes('**SEM-F21**')) || ''
+  const supplyRow = semantic.split(/\r?\n/).find((line) => line.includes('**SEM-F17**')) || ''
+  const modelJourneyRow = strategy.split(/\r?\n/).find((line) => line.startsWith('| J14 |')) || ''
+  const journeyRow = strategy.split(/\r?\n/).find((line) => line.startsWith('| J16 |')) || ''
+
+  assert.match(context, /\*\*临时字幕识别器（Draft Recognizer）\*\*/)
+  assert.match(context, /\*\*权威识别器（Authoritative Recognizer）\*\*/)
+  assert.match(semanticRow, /每个会话仍只选择一个 `mic` 或 `loopback` 来源/)
+  assert.match(semanticRow, /Zipformer 仅发布低延迟 `partial`/)
+  assert.match(semanticRow, /X-ASR 独占首次 `final`/)
+  assert.match(semanticRow, /不得让临时字幕识别器产生 `final\/refined`/)
+  assert.match(semanticRow, /`DRAFT_RECOGNIZER_START_FAILED`/)
+  assert.match(semanticRow, /`DRAFT_RECOGNIZER_FAILED`/)
+  assert.match(semanticRow, /已决定/)
+  assert.match(supplyRow, /临时字幕识别器、权威识别器与 VAD/)
+  assert.match(modelJourneyRow, /临时字幕识别器、权威识别器与 VAD 三项严格 ready marker/)
+  assert.match(modelJourneyRow, /SEM-F21.*已决定，尚未实现/)
+  assert.match(journeyRow, /单份 PCM 经 VAD 后同时驱动/)
+  assert.match(journeyRow, /SQLite、历史和导出只包含该首次稳定转写/)
+  assert.match(journeyRow, /报告及 SQLite\/历史\/导出必须验证零临时字幕正文/)
+  assert.match(journeyRow, /权威识别器故障仍进入 Retry/)
+  assert.match(runtime, /SEM-F21 同源两阶段识别/)
+})

@@ -63,6 +63,7 @@ stack、dump 或任意 Error 文本，也不配置 WER/Crashpad 或外部上传�
 - 每个 source 独立 OnlineRecognizer/VAD/stream。
 - 维护有界 PCM 队列和分段 buffer。
 - 产生 partial/final CaptionEvent。
+- SEM-F21 同源两阶段识别：同一 `mic` 或 `loopback` 的 VAD 后样本在 worker 内扇出到临时字幕识别器与权威识别器；前者仅提供 `partial`，后者独占首次 `final`。权威识别器出现非空结果后永久接管当前段的后续 `partial`，两者不得建立第二次采集或改变来源互斥。
 - v1 以 VAD speech-end 为主要分段依据，recognizer endpoint 只处理超长句兜底。
 - 不加载 SenseVoice，不执行网络或 DOM 工作。
 - B2.3 现状：`worker-core.js` 纯逻辑管线（帧→VAD→adapter→contract-valid 事件，段前缓冲防句首截断）；recognizer 经 `recognizer-adapter.js` 注册表解析（默认 `null`，只验证结构不产文本）；`realtime-worker.js` 沿用 B2.2 credit 协议；`worker-host.js` 在主进程边界做契约校验后路由 caption/stats/exit。
@@ -287,6 +288,7 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 - 现场采集 PCM 不进入数据库、文件、日志、诊断产物、导出或 Agent 上下文；smoke 只输出指标。
 - 精修故障日志使用本地滚动 JSONL，最多 5 个文件、每个 1 MiB、最长保留 7 天，任一上限先到即清理；不自动上传。字段禁止字幕正文、现场音频、路径、原始 Error/stack。手动诊断导出入口后置，不阻断当前 MVP。
 - 模型下载必须有固定 manifest/SHA256；归档先做路径/类型审查且只提取运行白名单，随后在 staging 验证期望文件并写严格 ready marker。
+- 临时字幕识别器与权威识别器只共享同一份有界内存样本；临时字幕文本不得进入 SQLite、导出、报告或日志，段结束、故障和停止都必须释放两套 stream。
 
 ## 10. 后端验收顺序
 
