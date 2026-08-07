@@ -8,6 +8,7 @@ const path = require('node:path')
 const test = require('node:test')
 const { PRODUCTION_MODEL_MANIFEST } = require('../../src/main/services/model-manifest')
 const I3_STIMULUS_DEFINITION = require('../../scripts/i3-live-stimulus.json')
+const { parseStrictEvidenceJson } = require('../../scripts/strict-evidence-json')
 const ROOT = path.resolve(__dirname, '../..')
 
 const {
@@ -128,7 +129,7 @@ const {
   validateI3LiveAudioReport
 } = require('../../scripts/verify-i3-live-audio-report')
 
-test('revision 82d56f6 的 loopback 资格报告严格闭合且保持 partial', () => {
+test('revision 82d56f6 的 loopback 历史资格报告保持 partial 且不得资格当前候选', () => {
   const attributes = fs.readFileSync(path.resolve(ROOT, '.gitattributes'), 'utf8')
   assert.match(
     attributes,
@@ -144,7 +145,14 @@ test('revision 82d56f6 的 loopback 资格报告严格闭合且保持 partial', 
     '0c219b9627618cdda12ad41ae77093fd5f7bcccbe30b042c1c9cad2958d702f4'
   )
 
-  const report = readAndValidateI3LiveAudioQualificationReport(reportPath)
+  const report = parseStrictEvidenceJson(bytes, 'historical I3 qualification report')
+  assert.throws(
+    () => readAndValidateI3LiveAudioQualificationReport(reportPath),
+    /provenance drifted for modelManifestSha256/
+  )
+  const structureOnlyProjection = structuredClone(report)
+  structureOnlyProjection.provenance = currentProvenance()
+  validateI3LiveAudioQualificationReport(structureOnlyProjection)
   assert.equal(report.gateStatus, 'partial')
   assert.equal(report.metrics.measuredListeningWallDurationMs, 75540.785)
   assert.deepEqual({

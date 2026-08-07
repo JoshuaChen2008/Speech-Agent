@@ -184,14 +184,25 @@ test('Gate 0B candidate streaming evidence fails closed on binding, privacy and 
   ), /aggregates are inconsistent/i)
 })
 
-test('Gate 0B tracked candidate summary strictly reconstructs the no-selection decision and privacy boundary', () => {
+test('Gate 0B historical candidate summary reconstructs the no-replacement decision without qualifying the current Draft Recognizer manifest', () => {
   const summaryBytes = fs.readFileSync(SUMMARY_PATH)
   const summary = parseStrictEvidenceJson(summaryBytes, 'tracked realtime candidate summary')
+  const historicalSummarySha256 = '682d71b5bb8ff7851ceec15e0673bf52943cc74ca9611f9617306d18c4c08a1f'
+  const historicalManifestSha256 = '54af5df4069015927cff2e40dd57314e70306c4e2ce1ebb2bb9807e9a2bf225f'
   const productionManifestSha256 = crypto.createHash('sha256')
     .update(fs.readFileSync(PRODUCTION_MANIFEST_PATH))
     .digest('hex')
 
-  validateRealtimeCandidateSummary(summary, registryEvidence, corpus, productionManifestSha256)
+  assert.equal(crypto.createHash('sha256').update(summaryBytes).digest('hex'), historicalSummarySha256)
+  assert.equal(summary.productionManifestSourceSha256, historicalManifestSha256)
+
+  validateRealtimeCandidateSummary(
+    summary,
+    registryEvidence,
+    corpus,
+    historicalManifestSha256
+  )
+  assert.notEqual(summary.productionManifestSourceSha256, productionManifestSha256)
   assert.equal(summary.candidateRegistrySha256, registryEvidence.sha256)
   assert.equal(summary.candidateEvaluations.length, 3)
   assert.deepEqual(summary.decision.eligibleCandidateIds, [])
@@ -219,7 +230,7 @@ test('Gate 0B tracked candidate summary strictly reconstructs the no-selection d
     drift,
     registryEvidence,
     corpus,
-    productionManifestSha256
+    historicalManifestSha256
   ), /inconsistent/i)
 
   const sourceDigestDrift = structuredClone(summary)
@@ -228,7 +239,7 @@ test('Gate 0B tracked candidate summary strictly reconstructs the no-selection d
     sourceDigestDrift,
     registryEvidence,
     corpus,
-    productionManifestSha256
+    historicalManifestSha256
   ), /source SHA-256 is inconsistent/i)
 })
 
