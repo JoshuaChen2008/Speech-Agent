@@ -142,14 +142,15 @@ test('current acceptance projections retain failed CI revisions and record the e
   const strategy = fs.readFileSync(path.join(ROOT, 'docs', 'testing-strategy.md'), 'utf8')
   const readmeLocalRow = readme.split(/\r?\n/).find((line) => line.includes('| 本地非音频回归 |')) || ''
   const readmeRemoteRow = readme.split(/\r?\n/).find((line) => line.includes('| 远端 Windows CI 资格 |')) || ''
-  assert.match(readmeLocalRow, /core 414、integration 27、evidence 200，共 641 项/)
-  assert.doesNotMatch(readmeLocalRow, /evidence 188|共 629 项/)
+  assert.match(readmeLocalRow, /core 414 tests=407 pass\+7 expected skips、integration 27\/27、evidence 201\/201/)
+  assert.match(readmeLocalRow, /总计 642 tests=635 pass\+7 expected skips\+0 fail/)
+  assert.doesNotMatch(readmeLocalRow, /evidence 188|共 629 项|共 641 项/)
   assert.match(readmeRemoteRow, /run `30790372286`/)
   assert.match(readmeRemoteRow, REMOTE_COUNTS_PATTERN)
-  assert.match(strategy, /本次 I2 模型替换决策[\s\S]*evidence 190\/190，共 631\/631/)
+  assert.match(strategy, /本次 I2 模型替换决策[\s\S]*evidence 190\/190；总计 631 tests=624 pass\+7 expected skips\+0 fail/)
   assert.match(strategy, /run `30790372286`[\s\S]*revision `5c6ce847fc07329802e3e98db9db70cc683f1f75`/)
   assert.match(strategy, REMOTE_COUNTS_PATTERN)
-  assert.match(strategy, /revision `f86ac1ef604dc7da0728c6eda44d59bbfd1e09bf`[\s\S]*evidence 188\/188，共 629\/629/)
+  assert.match(strategy, /revision `f86ac1ef604dc7da0728c6eda44d59bbfd1e09bf`[\s\S]*evidence 188\/188；总计 629 tests=622 pass\+7 expected skips\+0 fail/)
 })
 
 test('J9-CI status projects the authoritative deterministic joint acceptance boundary', () => {
@@ -177,7 +178,7 @@ test('J9-CI status projects the authoritative deterministic joint acceptance bou
     assert.match(row, /8846860080/)
     assert.match(row, REMOTE_COUNTS_PATTERN)
   }
-  assert.match(semanticRow, /J9-CI 已达到确定性联合验收完成/)
+  assert.match(semanticRow, /J9-CI 已达到联合验收完成/)
   assert.match(semanticPrevious, /82d56f64c80c74f30c1944665460f1316f1d7939/)
   assert.match(semanticPrevious, /78227ef5b4af08f3f2319156cb4ef096a132599707446506c32124f0ecbcdaca/)
   assert.match(semanticPrevious, /bdac65edc7541070b9e2b4af13550b5768ff0bc86b4048b13fd6e7aca7dea7c4/)
@@ -186,7 +187,7 @@ test('J9-CI status projects the authoritative deterministic joint acceptance bou
   assert.match(semanticLatest, /5968779b61db0eb6f6d2d7e7dcaa3d0a38844f8987a43941bb4395aff5ba69ef/)
   assert.match(semanticLatest, /618f02eddbbd3a956d679b17180817665d48dd0b9608262fd6519f53eac857e0/)
   assert.match(semanticLatest, /不表示 Gate 0B 已选定替代模型/)
-  assert.match(strategyRow, /J9-CI 已达到确定性联合验收完成/)
+  assert.match(strategyRow, /J9-CI 已达到联合验收完成/)
   assert.match(navigationRow, /\| J9-CI 远端资格 \| 联合验收完成 \|/)
   assert.match(readmeRow, /\| 远端 Windows CI 资格 \| 联合验收完成 \|/)
   assert.match(navigationRow, /Electron `43\.2\.0`/)

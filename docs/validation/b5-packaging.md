@@ -1,7 +1,8 @@
 # B5 打包态确定性资格
 
-- 日期：2026-08-03
-- 状态：当前源码的本机构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到确定性联合验收完成；本机安装器 SHA 为 `d862c5fc…0de10`。最新 run `30790372286` 精确绑定 I2 模型替换决策 revision `5c6ce847fc07329802e3e98db9db70cc683f1f75`，workflow 结论为 `success`；core 414 tests=407 pass+7 expected model/Silero-asset skips，integration 27/27，evidence 190/190；总计 631 tests=624 pass+7 expected skips+0 fail。7 项跳过不计作模型测试成立；artifact ID `8846860080`、GitHub ZIP digest `5968779b61db0eb6f6d2d7e7dcaa3d0a38844f8987a43941bb4395aff5ba69ef`、远端 installer SHA=`618f02eddbbd3a956d679b17180817665d48dd0b9608262fd6519f53eac857e0`，provenance 绑定、artifact 上传、下载侧严格复核与隐私负扫描闭合。该精确 revision 的 J9-CI 已达到确定性联合验收完成
+- 证据日期：2026-08-03；文档复核：2026-08-07
+- 状态：当前源码的本机构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到联合验收完成；本机安装器 SHA 为 `d862c5fc…0de10`。前一轮 run `30790372286` 精确绑定 revision `5c6ce847fc07329802e3e98db9db70cc683f1f75`，workflow 结论为 `success`；core 414 tests=407 pass+7 expected model/Silero-asset skips，integration 27/27，evidence 190/190；总计 631 tests=624 pass+7 expected skips+0 fail。7 项跳过不计作模型测试成立；artifact ID `8846860080`、GitHub ZIP digest `5968779b61db0eb6f6d2d7e7dcaa3d0a38844f8987a43941bb4395aff5ba69ef`、远端 installer SHA=`618f02eddbbd3a956d679b17180817665d48dd0b9608262fd6519f53eac857e0`。最近一次远端 J9-CI 联合验收完成基线已前移至 run `30792514100` / revision `2890dd9a5a224bca75cff2257cfd14013d74584d`：同为 631 tests=624 pass+7 expected skips+0 fail；artifact ID `8847650958`、GitHub ZIP digest `9e4b2d7b9975afc288c5a14728e0a8812ec00eea1f6a25f46080063c8beccafd`、远端 installer SHA=`25ff62a88efb8e8d021887df3a2685c72515baadca23f4810902f13d2ae19b76`，provenance 绑定、artifact 上传、下载侧严格复核与隐私负扫描闭合
+- 当前基线边界：revision `a91a200cc2d3df5f73dcb7a0894a9758e532106a` 的产品载荷输入相对 `2d3d6bdf5d745c15c239ef7503a0dfac211409a8` 未变化，因此本机七份 B5 证据仍绑定当前产品载荷；run `30801570384` 也已通过 Electron、布局、存储、产品壳、packaged 与 NSIS 前置，但 evidence 200 tests=197 pass+3 fail，最终 provenance 索引按设计跳过。Gate 0B corpus 文本未固定 LF，hosted CRLF SHA `fdf4420a243cc6e0efe0074dbf5c60c97efc1d1284448b7bfce9c3d658e1fce9` 与登记的 LF SHA `7edd6dff286b84619a3b68f385ba04622103ffe17cc57dbe5e1f16521deb156d` 不同，因此当前 revision 的 J9-CI 为实现完成·尚未验收
 - 发布边界：同一隔离 `userData` 的离线复启发生在测试 package；NSIS 卸载只验证隔离安装目录与无关 APPDATA 哨兵。正式 release 的 I4 非音频专用干净机尚未执行，因此尚未达到实机验收完成或发布验收完成
 
 ## 精确候选
@@ -70,7 +71,7 @@ workflow/job/event、`package-lock.json`/workflow digest、installer SHA，以�
 release layout 和 NSIS 报告 SHA；strict verifier 随后重新读取关键报告和文件并核对跨报告关系。
 上传名包含 revision、run ID 与 attempt。失败运行仍上传已有诊断，但不会生成这份最终索引。
 
-writer/verifier、workflow 顺序与本地当前候选的交叉哈希探针已达到确定性联合验收完成。远端 run
+writer/verifier、workflow 顺序与本地当前候选的交叉哈希探针已达到联合验收完成。远端 run
 `30750568366` 精确绑定 revision `2242103eb917f2afbfe81c7c8df788852bb36ebc`，因 Electron runtime
 未供给而止于首个字幕布局步骤；run `30760407160` 精确绑定 revision
 `0d0cd9f91cfd5136bbd5d3fec44e636da04b4e21`，通过 runtime、布局与 DB0 后暴露 DB1 fixture
@@ -93,7 +94,7 @@ digest 为 `2df032ffb1c4d7f3da3130cce240b617559947f8b4cef0c63d8cf8b0ca33698c`。
 `8839812004`，GitHub ZIP digest
 `3663225294fbd1019ab6e0e1e29608297fa767eb6c8e4b9012972fcd2d1f16c6`）下载后通过五个 strict
 readers、四份报告与 lockfile/workflow SHA、跨报告绑定及 41 文件/29 JSON 隐私负扫描，J9-CI 已
-达到确定性联合验收完成。下载包不含 installer 字节；同轮 workflow 已在索引生成前复核远端
+达到联合验收完成。下载包不含 installer 字节；同轮 workflow 已在索引生成前复核远端
 installer SHA `9129794558c1f24f9300ba6f365a4b304a805fabe4f4e82691e77ea8cab19292`。该远端摘要与本机
 安装器 SHA `d862c5fca0e477abc2d636573e1dd41aef564ed0c82def3bd469966db7b0de10` 不同，二者不得互相冒充；
 本地构造相同 JSON 也不带远端来源语境或签名，不能冒充 GitHub run 证据。
@@ -106,7 +107,7 @@ I3 修复代码候选由 run `30784483976` 在 revision
 readers、四份报告与 lockfile/workflow SHA、跨报告绑定及 41 文件/29 JSON 隐私负扫描。下载包仍不含
 installer 字节；同轮 workflow 在索引生成前复核远端 installer SHA
 `bdac65edc7541070b9e2b4af13550b5768ff0bc86b4048b13fd6e7aca7dea7c4`。这条精确 revision 的
-J9-CI 已达到确定性联合验收完成；它不替代本机安装器字节证据或 I4 干净机发布门禁。
+J9-CI 已达到联合验收完成；它不替代本机安装器字节证据或 I4 干净机发布门禁。
 
 后续证据投影 run `30786324179` 精确绑定 revision
 `c36aefaee4778a1bf2dfe1ee005924a724f4be53`。Electron runtime、字幕布局、存储、产品壳、packaged
@@ -122,9 +123,9 @@ LF 修复 run `30787209338` 随后精确绑定 revision
 readers、四份报告与两个源码 digest、跨报告绑定及 41 文件/29 JSON 隐私负扫描。下载包不含
 installer 字节；同轮索引绑定 installer SHA
 `b9becb191234cefa6ddfba48bc2865379d6dc62f1a7020c85124df02f2516f31`。该精确 revision 的 J9-CI
-已达到确定性联合验收完成；它不替代本机安装器字节证据或 I4 干净机发布门禁。
+已达到联合验收完成；它不替代本机安装器字节证据或 I4 干净机发布门禁。
 
-最新 run `30790372286` 精确绑定 I2 模型替换决策 revision
+其后 run `30790372286` 精确绑定 I2 模型替换决策 revision
 `5c6ce847fc07329802e3e98db9db70cc683f1f75`，workflow 结论为 `success`；core 414 tests=407 pass+7 expected model/Silero-asset skips，integration 27/27，evidence 190/190；总计 631 tests=624 pass+7 expected skips+0 fail。7 项跳过不计作模型测试成立。artifact
 `qualification-evidence-5c6ce847fc07329802e3e98db9db70cc683f1f75-30790372286-1`（ID
 `8846860080`，GitHub ZIP digest
@@ -132,7 +133,7 @@ installer 字节；同轮索引绑定 installer SHA
 readers、四份报告与两个源码 digest、跨报告绑定及 41 文件/29 JSON 隐私负扫描。下载包不含
 installer 字节；同轮索引绑定 installer SHA
 `618f02eddbbd3a956d679b17180817665d48dd0b9608262fd6519f53eac857e0`。该精确 revision 的 J9-CI
-已达到确定性联合验收完成；它不关闭 Gate 0B 模型选择，也不替代 I2/I3/I4 实机门禁。
+已达到联合验收完成；它不关闭 Gate 0B 模型选择，也不替代 I2/I3/I4 实机门禁。
 
 这条旅程使用受控小资源和 fake ASR，不访问物理声卡、不保存音频，也不冒充公网真实张量、
 I2、真实两小时 I3 或 I4。

@@ -3,7 +3,7 @@
 > **历史快照。** 本文保留调查当日绑定的 B5 候选；当前 B5 精确候选与状态以
 > [`b5-packaging.md`](b5-packaging.md) 和 [`../semantic-contract.md`](../semantic-contract.md) 为准。
 
-- 状态：即时触发机制已由现场 stderr 与固定版本源码闭环；具体发送者、进程角色和此次竞态根因仍无 native stack 证明
+- 状态：实现完成·尚未验收；退出诊断与 exact-child 收束机制已有证据，但具体发送者、进程角色和此次竞态根因仍无 native stack 证明
 - 对应语义：SEM-F12、SEM-F14、SEM-T02、SEM-T03、SEM-T04、SEM-T14
 - 证据日期：2026-07-31
 

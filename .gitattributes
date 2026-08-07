@@ -26,6 +26,13 @@ scripts/verify-caption-layout-report.js text eol=lf
 package-lock.json text eol=lf
 .github/workflows/ci.yml text eol=lf
 
+# Gate 0B evidence binds these JSON files as exact bytes.  The corpus digest
+# is embedded in the candidate registry and the tracked summary, so a Windows
+# CRLF checkout must not silently change any member of that hash chain.
+scripts/gate-0b/corpus.json text eol=lf
+scripts/gate-0b/realtime-candidates.json text eol=lf
+docs/validation/gate-0b-realtime-candidate-summary.json text eol=lf
+
 # I3 non-audio source provenance is compared across developer and hosted
 # Windows worktrees. Pin every text input to LF; the runner also canonicalizes
 # legacy CRLF worktrees before hashing, without normalizing binary evidence.

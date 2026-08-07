@@ -55,3 +55,16 @@ test('CI full regression delegates to the complete test command without replayin
   assert.ok(regression > packagedJourney,
     'the full regression remains after packaged and NSIS journey qualification')
 })
+
+test('SEM-T03/J9-CI pins the exact-byte Gate 0B hash chain to LF', () => {
+  const attributes = fs.readFileSync(path.join(ROOT, '.gitattributes'), 'utf8')
+  const requiredRules = [
+    'scripts/gate-0b/corpus.json text eol=lf',
+    'scripts/gate-0b/realtime-candidates.json text eol=lf',
+    'docs/validation/gate-0b-realtime-candidate-summary.json text eol=lf'
+  ]
+
+  for (const rule of requiredRules) {
+    assert.equal(attributes.split(/\r?\n/).includes(rule), true, `missing exact LF rule: ${rule}`)
+  }
+})

@@ -2,9 +2,11 @@
 
 > 日期：2026-07-25
 >
-> 结论：**实测已完成，Gate 未通过；当前不批准任何 realtime profile，也不批准 SenseVoice 精修能力。**
+> 原结论（2026-07-25）：**已决定不批准当时的 realtime profile 与 SenseVoice 精修能力。**
 >
-> **状态更新（2026-07-27）**：产品负责人正式改判——在写明机器基线与理由的前提下把 RTF 门槛重设为 `<0.60`，批准 `x-asr-160ms`（fast profile，numThreads=4）与离线 X-ASR 精修（替换 SenseVoice）。原判定与原门槛在本文与 `gate-0b-results.json` 中原样保留；改判记录见本文末尾 [正式改判](#2026-07-27-正式改判re-judgment) 与 `gate-0b-results.json` 的 `rejudgment` 块。
+> **后续决定（2026-07-27）**：产品负责人正式改判——在写明机器基线与理由的前提下把 RTF 门槛重设为 `<0.60`，批准 `x-asr-160ms`（fast profile，numThreads=4）与离线 X-ASR 精修（替换 SenseVoice）。原判定与原门槛在本文与 `gate-0b-results.json` 中原样保留；改判记录见本文末尾 [正式改判](#2026-07-27-正式改判re-judgment) 与 `gate-0b-results.json` 的 `rejudgment` 块。
+
+> 文档复核（2026-08-07）：三个后续 realtime 替代候选的受控评测仍是“0 个 eligible ID、尚未选定替代模型”，生产 manifest 未变；该决定为已决定。本机 revision `a91a200cc2d3df5f73dcb7a0894a9758e532106a` 的 Gate 0B 严格汇总及失败路径包含在 evidence 200/200 中，但远端 run `30801570384` 的同一 evidence lane 为 197 pass+3 fail：`scripts/gate-0b/corpus.json` 未固定 LF，hosted CRLF SHA `fdf4420a243cc6e0efe0074dbf5c60c97efc1d1284448b7bfce9c3d658e1fce9` 与 registry/报告登记的 LF SHA `7edd6dff286b84619a3b68f385ba04622103ffe17cc57dbe5e1f16521deb156d` 不同。该可移植性缺口不改变候选判定，但使当前 revision 的 SEM-T03/J9-CI 保持实现完成·尚未验收；补齐 LF checkout 合同并重跑完整远端资格后才能提升状态。
 
 机器为 Windows 11 23H2（22631.5768）、Intel Core Ultra 9 185H；所有模型均用 CPU、3 threads。CLI 和 Node N-API 均为 sherpa-onnx 1.13.4。判定摘要、归档 URL/SHA256 和流式数值见 [`gate-0b-results.json`](gate-0b-results.json)；[`gate-0b-cli-observations.json`](gate-0b-cli-observations.json) 只保留逐 case 指标与输出摘要哈希，由当时正文计算出的 CER/WER/标点指标在 [`gate-0b-controlled-metrics.json`](gate-0b-controlled-metrics.json) 中也只保留数值与正文摘要哈希。模型和生成测试语料位于已忽略的 `models/gate-0b/`；原始 CLI 输出只在内存中完成解析与摘要哈希，普通文件及标准输出只发布无正文投影。确需持久化的正文中间件只能写入固定私有目录 `models/gate-0b/private/`；受跟踪证据不保存正文、token 串或音频文件名。
 

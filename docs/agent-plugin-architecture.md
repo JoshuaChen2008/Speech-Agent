@@ -1,6 +1,6 @@
 # Agent 插件架构调研与建议
 
-> 状态：已接受设计，按 [ADR 0003](adr/0003-project-owned-agent-plugin-host.md) 在字幕 MVP 后进入 A1 实现
+> 状态：已决定；按 [ADR 0003](adr/0003-project-owned-agent-plugin-host.md) 在字幕 MVP 后进入 A1，Agent 系统尚未实现
 >
 > 日期：2026-07-30
 >

@@ -1,6 +1,6 @@
 # Storage Gateway 与会话持久化屏障
 
-> 状态：Gateway/Recorder/Coordinator 恢复组合通过；默认产品已切换为 SQLite-only 权威存储
+> 状态：**联合验收完成**；Gateway/Recorder/Coordinator 恢复组合与 SQLite-only 默认产品旅程已有确定性证据
 > 日期：2026-07-31
 
 ## 结论
