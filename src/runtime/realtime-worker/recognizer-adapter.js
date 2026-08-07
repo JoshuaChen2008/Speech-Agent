@@ -47,6 +47,126 @@ class NullRecognizerAdapter {
   dispose () {}
 }
 
+class DraftRecognizerStartError extends Error {
+  constructor () {
+    super('draft recognizer failed to start')
+    this.name = 'DraftRecognizerStartError'
+    this.code = 'DRAFT_RECOGNIZER_START_FAILED'
+  }
+}
+
+function assertRecognizerAdapter (adapter, role) {
+  const required = ['acceptFrame', 'poll', 'endSegment', 'dispose']
+  if (!adapter || typeof adapter !== 'object' || required.some((name) => typeof adapter[name] !== 'function')) {
+    throw new TypeError(`${role} recognizer adapter is invalid`)
+  }
+  return adapter
+}
+
+class TwoStageRecognizerAdapter {
+  constructor (options) {
+    if (!options || typeof options.createDraft !== 'function' || typeof options.createAuthoritative !== 'function') {
+      throw new TypeError('two-stage recognizer factories are required')
+    }
+    this.onDraftFault = typeof options.onDraftFault === 'function' ? options.onDraftFault : () => {}
+    this.draft = null
+    this.authoritative = null
+    this.authoritativeOwned = false
+    this.draftFailed = false
+    this.disposed = false
+    try {
+      this.draft = assertRecognizerAdapter(options.createDraft(), 'draft')
+    } catch {
+      throw new DraftRecognizerStartError()
+    }
+    try {
+      this.authoritative = assertRecognizerAdapter(options.createAuthoritative(), 'authoritative')
+    } catch (error) {
+      try { this.draft.dispose() } catch { /* best effort */ }
+      throw error
+    }
+  }
+
+  failDraft (stage) {
+    if (this.draftFailed) return
+    this.draftFailed = true
+    try { this.draft.dispose() } catch { /* best effort */ }
+    this.draft = null
+    try {
+      this.onDraftFault(Object.freeze({
+        code: 'DRAFT_RECOGNIZER_FAILED',
+        stage,
+        count: 1
+      }))
+    } catch { /* diagnostics must not break authoritative recognition */ }
+  }
+
+  acceptFrame (samples, timestampSeconds) {
+    if (this.disposed) return
+    if (!this.draftFailed) {
+      try { this.draft.acceptFrame(samples, timestampSeconds) } catch { this.failDraft('accept-frame') }
+    }
+    this.authoritative.acceptFrame(samples, timestampSeconds)
+  }
+
+  poll () {
+    if (this.disposed) return null
+    const authoritativeText = this.authoritative.poll()
+    if (typeof authoritativeText === 'string' && authoritativeText.trim().length > 0) {
+      this.authoritativeOwned = true
+      return authoritativeText
+    }
+    if (this.authoritativeOwned || this.draftFailed) return null
+    try {
+      return this.draft.poll()
+    } catch {
+      this.failDraft('poll')
+      return null
+    }
+  }
+
+  endSegment () {
+    if (this.disposed) return null
+    if (!this.draftFailed) {
+      try {
+        if (typeof this.draft.discardProvisional === 'function') this.draft.discardProvisional()
+        else this.draft.endSegment()
+      } catch { this.failDraft('end-segment') }
+    }
+    const finalText = this.authoritative.endSegment()
+    this.authoritativeOwned = false
+    return finalText
+  }
+
+  discardProvisional () {
+    if (this.disposed) return
+    if (!this.draftFailed) {
+      try {
+        if (typeof this.draft.discardProvisional === 'function') this.draft.discardProvisional()
+        else this.draft.endSegment()
+      } catch { this.failDraft('discard-provisional') }
+    }
+    if (typeof this.authoritative.discardProvisional === 'function') this.authoritative.discardProvisional()
+    else this.authoritative.endSegment()
+    this.authoritativeOwned = false
+  }
+
+  dispose () {
+    if (this.disposed) return
+    this.disposed = true
+    if (this.draft) {
+      try { this.draft.dispose() } catch { /* best effort */ }
+    }
+    try { this.authoritative.dispose() } catch { /* best effort */ }
+    this.draft = null
+    this.authoritative = null
+  }
+}
+
+function createTwoStageRecognizerAdapter (options) {
+  return new TwoStageRecognizerAdapter(options)
+}
+
 const FACTORIES = new Map([
   ['null', () => new NullRecognizerAdapter()]
 ])
@@ -68,4 +188,11 @@ function registerRecognizerAdapter (profile, factory) {
   FACTORIES.set(profile, factory)
 }
 
-module.exports = { NullRecognizerAdapter, createRecognizerAdapter, registerRecognizerAdapter }
+module.exports = {
+  DraftRecognizerStartError,
+  NullRecognizerAdapter,
+  TwoStageRecognizerAdapter,
+  createRecognizerAdapter,
+  createTwoStageRecognizerAdapter,
+  registerRecognizerAdapter
+}
