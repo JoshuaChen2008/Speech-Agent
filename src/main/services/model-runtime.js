@@ -4,6 +4,7 @@
 
 const path = require('node:path')
 const {
+  resolveApprovedDraftModel,
   resolveApprovedRealtimeModel,
   resolveApprovedRefinementModel,
   resolveSileroVadModel
@@ -34,6 +35,7 @@ function resolverOptions (options, includeUserData) {
  */
 function isExternalArtifactReady (artifactId, options = {}) {
   const external = resolverOptions({ ...options, allowExternal: true }, false)
+  if (artifactId === 'zipformer-bilingual-zh-en-2023-02-20') return resolveApprovedDraftModel(external) !== null
   if (artifactId === 'x-asr-160ms') return resolveApprovedRealtimeModel(external) !== null
   if (artifactId === 'x-asr-offline') return resolveApprovedRefinementModel(external) !== null
   if (artifactId === 'silero-vad') return resolveSileroVadModel(external) !== null
@@ -41,7 +43,7 @@ function isExternalArtifactReady (artifactId, options = {}) {
 }
 
 /**
- * Build the core local subtitle runtime. Realtime ASR plus VAD alone make the
+ * Build the core local subtitle runtime. Both realtime recognizers plus VAD make the
  * subtitle system startable; offline refinement is an independently supplied
  * optional capability and never blocks the core runtime.
  */
@@ -50,10 +52,11 @@ function createApprovedRuntimeDefinition (options = {}) {
     throw new TypeError('absolute userDataDir is required')
   }
   const candidateOptions = resolverOptions(options, true)
+  const draft = resolveApprovedDraftModel(candidateOptions)
   const realtime = resolveApprovedRealtimeModel(candidateOptions)
   const refinement = resolveApprovedRefinementModel(candidateOptions)
   const vad = resolveSileroVadModel(candidateOptions)
-  if (!realtime || !vad) return null
+  if (!draft || !realtime || !vad) return null
 
   const Adapter = options.Adapter || RealtimeRuntimeAdapter
   if (typeof Adapter !== 'function') throw new TypeError('Adapter must be a constructor')
@@ -64,6 +67,12 @@ function createApprovedRuntimeDefinition (options = {}) {
       modelDir: realtime.modelDir,
       numThreads: realtime.numThreads,
       modelType: realtime.modelType
+    },
+    draftRecognizer: {
+      kind: draft.kind,
+      modelDir: draft.modelDir,
+      numThreads: draft.numThreads,
+      modelType: draft.modelType
     },
     vad,
     refinement: refinement

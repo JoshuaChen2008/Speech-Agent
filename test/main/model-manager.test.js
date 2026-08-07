@@ -19,8 +19,10 @@ const {
   ModelManager
 } = require('../../src/main/services/model-manager')
 const {
+  APPROVED_DRAFT_MODEL,
   APPROVED_REALTIME_MODEL,
   APPROVED_REFINEMENT_MODEL,
+  DRAFT_REQUIRED_FILES,
   REFINEMENT_REQUIRED_FILES,
   REQUIRED_FILES
 } = require('../../src/main/services/model-resolver')
@@ -111,11 +113,18 @@ function makeTarSpawn (configuration) {
   }
 }
 
-test('production manifest pins the three approved immutable resources', () => {
+test('production manifest pins the four approved immutable resources', () => {
   assert.equal(PRODUCTION_MODEL_MANIFEST.version, MANIFEST_VERSION)
   assert.ok(Object.isFrozen(PRODUCTION_MODEL_MANIFEST))
   assert.ok(Object.isFrozen(PRODUCTION_MODEL_MANIFEST.artifacts))
-  assert.equal(PRODUCTION_MODEL_MANIFEST.artifacts.length, 3)
+  assert.equal(PRODUCTION_MODEL_MANIFEST.artifacts.length, 4)
+
+  const draft = PRODUCTION_MODEL_MANIFEST.artifacts.find((item) => item.id === 'zipformer-bilingual-zh-en-2023-02-20')
+  assert.equal(draft.bytes, 511274346)
+  assert.equal(draft.sha256, '27ffbd9ee24ad186d99acc2f6354d7992b27bcab490812510665fa8f9389c5f8')
+  assert.equal(draft.resourceGroup, 'core')
+  assert.equal(draft.directoryName, APPROVED_DRAFT_MODEL.directoryName)
+  assert.deepEqual(draft.requiredFiles, DRAFT_REQUIRED_FILES)
 
   const realtime = PRODUCTION_MODEL_MANIFEST.artifacts.find((item) => item.id === 'x-asr-160ms')
   assert.equal(realtime.bytes, 133898007)

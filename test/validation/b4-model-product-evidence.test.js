@@ -23,16 +23,19 @@ function assertTrackedReportIsPrivate (report) {
   assert.doesNotMatch(serialized, /joined(?:Final|Refined)Text|captionArrivals|"text"\s*:/i)
 }
 
-test('published B4 model evidence proves complete approved bundle installation and callability', () => {
+test('published B4 model evidence remains bound to the historical three-resource bundle', () => {
   const report = readReport(MODEL_REPORT_PATH)
-  const expectedBytes = PRODUCTION_MODEL_MANIFEST.artifacts.reduce((sum, artifact) => sum + artifact.bytes, 0)
+  const currentDraft = PRODUCTION_MODEL_MANIFEST.artifacts.find((artifact) => artifact.id === 'zipformer-bilingual-zh-en-2023-02-20')
+  const currentBytes = PRODUCTION_MODEL_MANIFEST.artifacts.reduce((sum, artifact) => sum + artifact.bytes, 0)
 
   assert.equal(report.schemaVersion, 1)
   assert.equal(report.kind, 'model-install-live-smoke')
   assert.equal(report.result, 'pass')
   assert.equal(report.manifestVersion, PRODUCTION_MODEL_MANIFEST.version)
-  assert.equal(report.installation.resourceCount, PRODUCTION_MODEL_MANIFEST.artifacts.length)
-  assert.equal(report.installation.totalBytes, expectedBytes)
+  assert.equal(report.installation.resourceCount, 3)
+  assert.equal(report.installation.totalBytes, 270938600)
+  assert.equal(PRODUCTION_MODEL_MANIFEST.artifacts.length, 4)
+  assert.equal(currentBytes, report.installation.totalBytes + currentDraft.bytes)
   assert.equal(report.installation.finalState, 'ready')
   assert.deepEqual(report.installation.observedStates, ['missing', 'downloading', 'verifying', 'ready'])
   assert.equal(report.transport.resumeSeedBytes, 1024 * 1024)

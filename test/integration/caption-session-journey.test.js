@@ -14,7 +14,10 @@ const { StorageGateway } = require('../../src/main/services/storage-gateway')
 const { FakeRuntimeAdapter } = require('../../src/main/session/fake-runtime-adapter')
 const { SessionCoordinator } = require('../../src/main/session/session-coordinator')
 const { ConfigStore } = require('../../src/main/services/config-store')
+const { HistoryService } = require('../../src/main/services/history-service')
 const { RealtimeRuntimeAdapter } = require('../../src/runtime/realtime-runtime-adapter')
+const { createTwoStageRecognizerAdapter } = require('../../src/runtime/realtime-worker/recognizer-adapter')
+const { WorkerCore } = require('../../src/runtime/realtime-worker/worker-core')
 const { AudioHostController } = require('../../src/runtime/audio-host/audio-host-controller')
 const { RealtimeWorkerHost, sanitizeCaptionTiming } = require('../../src/runtime/realtime-worker/worker-host')
 const {
@@ -415,6 +418,130 @@ for (const scenario of scenarios) {
   test(`CI journey: ${scenario.id} keeps caption UI and durable session in sync`, async (t) => {
     await runCaptionJourney(t, scenario)
   })
+}
+
+for (const sourceId of ['loopback', 'mic']) {
+test(`CI journey SEM-F21/J16 keeps Partial Caption from ${sourceId} out of SQLite, history and export`, async (t) => {
+  const directory = tempDirectory(`two-stage-authority-${sourceId}`)
+  const exportPath = path.join(directory, 'authoritative.txt')
+  const { gateway } = createGateway(directory)
+  const runtimeBoundary = simulatedElectronRuntime()
+  const adapter = new RealtimeRuntimeAdapter({ electron: runtimeBoundary.electron })
+  const coordinator = new SessionCoordinator({
+    adapter,
+    persistenceSink: new SqliteSessionRecorder({ gateway, now: () => 1785396050000 }),
+    runtimeOptions: DEV_RUNTIME,
+    configuration: {
+      onboardingCompleted: true,
+      onboardingPreset: sourceId === 'mic' ? 'dictation' : 'meeting',
+      mic: sourceId === 'mic',
+      loopback: sourceId === 'loopback'
+    },
+    idFactory: () => `two-stage-authority-${sourceId}-session`
+  })
+  const history = new HistoryService({
+    gateway,
+    showSaveDialog: async () => ({ canceled: false, filePath: exportPath })
+  })
+  t.after(async () => {
+    await coordinator.dispose().catch(() => {})
+    await gateway.shutdown().catch(() => gateway.terminate())
+    fs.rmSync(directory, { recursive: true, force: true })
+  })
+
+  await gateway.start()
+  assert.equal((await coordinator.command('start')).ok, true)
+  const sessionId = coordinator.getSnapshot().sessionId
+  const draftFrames = []
+  const authoritativeFrames = []
+  const draft = {
+    acceptFrame (samples, timestampSeconds) { draftFrames.push({ samples, timestampSeconds }) },
+    poll: (() => { const values = ['临时字幕草案', '不得回写']; return () => values.shift() || null })(),
+    endSegment: () => '不得形成首次稳定转写',
+    discardProvisional () {},
+    dispose () {}
+  }
+  const authoritative = {
+    acceptFrame (samples, timestampSeconds) { authoritativeFrames.push({ samples, timestampSeconds }) },
+    poll: (() => { const values = [null, '权威临时字幕']; return () => values.shift() || null })(),
+    endSegment: () => '唯一首次稳定转写',
+    discardProvisional () {},
+    dispose () {}
+  }
+  assert.throws(() => new WorkerCore({
+    sessionId,
+    sourceIds: ['mic', 'loopback'],
+    adapterFactory: () => createTwoStageRecognizerAdapter({
+      createDraft: () => draft,
+      createAuthoritative: () => authoritative
+    })
+  }), /exactly one/, '同源两阶段识别不得接受双来源会话')
+  let vadFrame = 0
+  const core = new WorkerCore({
+    sessionId,
+    sourceIds: [sourceId],
+    adapterFactory: () => createTwoStageRecognizerAdapter({
+      createDraft: () => draft,
+      createAuthoritative: () => authoritative
+    }),
+    vadFactory: () => ({
+      push () {
+        vadFrame += 1
+        return {
+          voiced: true,
+          rms: 0.1,
+          event: vadFrame === 1 ? 'speech-start' : (vadFrame === 3 ? 'speech-end' : null),
+          forced: false
+        }
+      },
+      reset () {}
+    })
+  })
+  const events = []
+  const inputFrames = []
+  for (let index = 0; index < 3; index += 1) {
+    const frame = {
+      sourceId,
+      sequence: index,
+      timestampSeconds: index / 10,
+      sampleCount: 1600,
+      samples: new Float32Array(1600)
+    }
+    inputFrames.push(frame)
+    events.push(...core.ingestFrame(frame))
+  }
+  assert.equal(draftFrames.length, inputFrames.length)
+  assert.equal(authoritativeFrames.length, inputFrames.length)
+  for (let index = 0; index < inputFrames.length; index += 1) {
+    assert.equal(draftFrames[index].samples, inputFrames[index].samples)
+    assert.equal(authoritativeFrames[index].samples, inputFrames[index].samples)
+    assert.equal(draftFrames[index].timestampSeconds, inputFrames[index].timestampSeconds)
+    assert.equal(authoritativeFrames[index].timestampSeconds, inputFrames[index].timestampSeconds)
+  }
+  assert.deepEqual(events.map(({ kind, text }) => ({ kind, text })), [
+    { kind: 'partial', text: '临时字幕草案' },
+    { kind: 'partial', text: '权威临时字幕' },
+    { kind: 'final', text: '唯一首次稳定转写' }
+  ])
+  for (const event of events) {
+    runtimeBoundary.children[0].emit('message', { type: 'caption', event })
+  }
+  assert.equal((await coordinator.command('stop')).ok, true)
+  await gateway.flush()
+
+  const transcript = await gateway.getSessionTranscript(sessionId)
+  assert.deepEqual(transcript.segments.map(({ text }) => text), ['唯一首次稳定转写'])
+  const page = await history.getSessionPage({ sessionId, limit: 50, cursor: null })
+  assert.deepEqual(page.items.map(({ text }) => text), ['唯一首次稳定转写'])
+  assert.deepEqual(await history.exportSession({ sessionId, format: 'txt' }), {
+    status: 'saved', format: 'txt', version: 'original'
+  })
+  const exported = fs.readFileSync(exportPath, 'utf8')
+  assert.match(exported, /唯一首次稳定转写/)
+  assert.doesNotMatch(exported, /临时字幕草案|权威临时字幕|不得形成首次稳定转写/)
+  assert.deepEqual(audioFilesUnder(directory), [])
+  core.dispose()
+})
 }
 
 test('CI journey J4/J12: source switch requires stop, creates a new isolated text-only session', async (t) => {

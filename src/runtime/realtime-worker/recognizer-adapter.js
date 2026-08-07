@@ -55,6 +55,16 @@ class DraftRecognizerStartError extends Error {
   }
 }
 
+function requireTwoStageRecognizerConfiguration (recognizer, draftRecognizer) {
+  if (!recognizer || typeof recognizer !== 'object') {
+    throw new TypeError('authoritative recognizer configuration is required')
+  }
+  if (!draftRecognizer || typeof draftRecognizer !== 'object') {
+    throw new DraftRecognizerStartError()
+  }
+  return { recognizer, draftRecognizer }
+}
+
 function assertRecognizerAdapter (adapter, role) {
   const required = ['acceptFrame', 'poll', 'endSegment', 'dispose']
   if (!adapter || typeof adapter !== 'object' || required.some((name) => typeof adapter[name] !== 'function')) {
@@ -194,5 +204,6 @@ module.exports = {
   TwoStageRecognizerAdapter,
   createRecognizerAdapter,
   createTwoStageRecognizerAdapter,
+  requireTwoStageRecognizerConfiguration,
   registerRecognizerAdapter
 }

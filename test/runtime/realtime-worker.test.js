@@ -582,6 +582,25 @@ test('worker host cleans up the child on configure failure and rejects fast on e
   assert.equal(child1.killed, false, '可响应的失败世代必须先优雅退出')
   assert.equal(host1.child, null, '占位复位后可重试 start')
 
+  let draftChild
+  const draftHost = new RealtimeWorkerHost({
+    electron: { utilityProcess: { fork: () => {
+      draftChild = fakeChild((c) => c.emit('message', {
+        type: 'configure-failed',
+        code: 'DRAFT_RECOGNIZER_START_FAILED',
+        message: 'draft recognizer failed to start',
+        path: 'C:\\private\\model'
+      }))
+      return draftChild
+    } } }
+  })
+  await assert.rejects(draftHost.start({ sessionId: 's', sourceIds: ['loopback'] }), (error) => {
+    assert.equal(error.code, 'DRAFT_RECOGNIZER_START_FAILED')
+    assert.doesNotMatch(error.message, /private|model\\/i)
+    return true
+  })
+  assert.equal(draftHost.child, null)
+
   /* configured 前退出：立即 reject（不是等 5 秒超时）。 */
   let child2
   const host2 = new RealtimeWorkerHost({

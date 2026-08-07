@@ -20,12 +20,13 @@ function sha256File (file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 }
 
-test('SEM-F17/SEM-T11/J14 replacement candidate freezes supply chain without changing production', () => {
+test('SEM-F17/SEM-T11/J14 keeps the historical replacement decision while SEM-F21 assigns only the Draft Recognizer role', () => {
   const evidence = readAndValidateRealtimeCandidateRegistry(REGISTRY_PATH)
   const candidate = selectRealtimeCandidate(evidence.registry, 'zipformer-bilingual-zh-en-2023-02-20')
   const paraformer = selectRealtimeCandidate(evidence.registry, 'paraformer-bilingual-zh-en')
   const trilingual = selectRealtimeCandidate(evidence.registry, 'paraformer-trilingual-zh-cantonese-en')
   const productionRealtime = PRODUCTION_MODEL_MANIFEST.artifacts.find((item) => item.id === 'x-asr-160ms')
+  const productionDraft = PRODUCTION_MODEL_MANIFEST.artifacts.find((item) => item.id === candidate.id)
 
   assert.equal(candidate.evaluationOnly, true)
   assert.equal(candidate.productionApproved, false)
@@ -35,7 +36,16 @@ test('SEM-F17/SEM-T11/J14 replacement candidate freezes supply chain without cha
     sha256File(path.join(ROOT, candidate.benchmark.corpusRelativePath)))
   assert.equal(candidate.j14.currentProductionArchiveBytes, productionRealtime.bytes)
   assert.equal(candidate.j14.productionManifestChanged, false)
-  assert.equal(PRODUCTION_MODEL_MANIFEST.artifacts.some((item) => item.id === candidate.id), false)
+  /* Gate 0B records the historical decision that this model did not replace
+     x-asr as the Authoritative Recognizer. SEM-F21 later selected the same
+     hash-identical artifact for the separate Draft Recognizer role;
+     that must not rewrite
+     the signed candidate registry or overclaim the replacement evaluation. */
+  assert.equal(productionDraft.resourceGroup, 'core')
+  assert.equal(productionDraft.bytes, candidate.archive.bytes)
+  assert.equal(productionDraft.sha256, candidate.archive.sha256)
+  assert.deepEqual(productionDraft.requiredFiles, Object.values(candidate.runtime.requiredFiles))
+  assert.equal(candidate.runtime.modelType, 'zipformer')
   assert.notEqual(candidate.upstream.url, productionRealtime.url)
   assert.equal(paraformer.evaluationOnly, true)
   assert.equal(paraformer.productionApproved, false)

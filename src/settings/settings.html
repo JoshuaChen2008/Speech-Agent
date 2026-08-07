@@ -161,10 +161,20 @@
         </div>
 
         <div class="resource-list" aria-label="核心字幕模型资源明细">
+          <div class="resource-row" data-resource-id="zipformer-bilingual-zh-en-2023-02-20" data-state="missing">
+            <div>
+              <div class="label">临时字幕识别器</div>
+              <div class="hint">优先提供低延迟临时字幕，不写入历史</div>
+            </div>
+            <div class="resource-status">
+              <span data-field="state">未安装</span>
+              <span class="hint" data-field="bytes">0 B / 0 B</span>
+            </div>
+          </div>
           <div class="resource-row" data-resource-id="x-asr-160ms" data-state="missing">
             <div>
-              <div class="label">实时字幕模型</div>
-              <div class="hint">负责低延迟字幕识别</div>
+              <div class="label">权威识别器</div>
+              <div class="hint">负责首次稳定转写、历史与导出</div>
             </div>
             <div class="resource-status">
               <span data-field="state">未安装</span>
@@ -231,7 +241,7 @@
           </div>
         </div>
 
-        <p class="note">这些资源只服务于本地字幕识别，不包含 Agent、翻译或大语言模型。核心字幕模型资源包只包含实时字幕模型与语音活动检测。精修模型默认不下载；取消后保留合法已下载部分，只有明确点击“继续下载”才会续传。安装完成后仍需再次明确开启，且只影响未来新会话。</p>
+        <p class="note">这些资源只服务于本地字幕识别，不包含 Agent、翻译或大语言模型。核心字幕模型资源包包含临时字幕识别器、权威识别器与语音活动检测；临时字幕不会进入历史或导出。精修模型默认不下载；取消后保留合法已下载部分，只有明确点击“继续下载”才会续传。安装完成后仍需再次明确开启，且只影响未来新会话。</p>
       </section>
 
       <!-- 关于 -->

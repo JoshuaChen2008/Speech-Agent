@@ -304,9 +304,34 @@ process.parentPort.on('message', (event) => {
     try {
       /* 真实模型：先注册（内部同步载入模型），后建 WorkerCore；失败走
          configure-failed。null profile 不 require 原生模块。 */
-      if (config.recognizerProfile !== 'null' && message.recognizer && typeof message.recognizer === 'object') {
+      let adapterFactory
+      if (config.recognizerProfile !== 'null') {
         const { registerSherpaRecognizer } = require('./sherpa-recognizer')
-        registerSherpaRecognizer(config.recognizerProfile, message.recognizer)
+        const {
+          createRecognizerAdapter,
+          createTwoStageRecognizerAdapter,
+          requireTwoStageRecognizerConfiguration
+        } = require('./recognizer-adapter')
+        const twoStage = requireTwoStageRecognizerConfiguration(message.recognizer, message.draftRecognizer)
+        const draftProfile = `${config.recognizerProfile}:draft`
+        try {
+          registerSherpaRecognizer(draftProfile, twoStage.draftRecognizer)
+        } catch {
+          const error = new Error('draft recognizer failed to start')
+          error.code = 'DRAFT_RECOGNIZER_START_FAILED'
+          throw error
+        }
+        registerSherpaRecognizer(config.recognizerProfile, twoStage.recognizer)
+        adapterFactory = () => createTwoStageRecognizerAdapter({
+          createDraft: () => createRecognizerAdapter(draftProfile),
+          createAuthoritative: () => createRecognizerAdapter(config.recognizerProfile),
+          onDraftFault: (fault) => publish({
+            type: 'draft-recognizer-fault',
+            code: fault.code,
+            stage: fault.stage,
+            count: fault.count
+          })
+        })
       }
       /* 真实 VAD（silero）：有选项才 require 原生实现；否则 EnergyVad 兜底。
          段前缓冲固定为 4 帧（400ms），候选预热独立限于 12 帧
@@ -328,6 +353,7 @@ process.parentPort.on('message', (event) => {
         sessionId: config.sessionId,
         sourceIds: config.sourceIds,
         recognizerProfile: config.recognizerProfile,
+        adapterFactory,
         vadOptions: config.vadOptions,
         vadFactory,
         preRollLimit,
@@ -348,7 +374,12 @@ process.parentPort.on('message', (event) => {
       })
       publish({ type: 'configured' })
     } catch (error) {
-      publish({ type: 'configure-failed', message: String(error?.message || error).slice(0, 200) })
+      const code = error?.code === 'DRAFT_RECOGNIZER_START_FAILED' ? error.code : undefined
+      publish({
+        type: 'configure-failed',
+        code,
+        message: code ? 'draft recognizer failed to start' : String(error?.message || error).slice(0, 200)
+      })
     }
   } else if (message?.type === 'pcm-port') {
     if (event.ports && event.ports[0]) attachPort(event.ports[0])

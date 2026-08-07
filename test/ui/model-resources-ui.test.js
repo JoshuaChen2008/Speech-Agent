@@ -21,13 +21,16 @@ test('settings expose separate core and optional refinement resource controls wi
   assert.match(html, /class="nav-item" data-pane="resources">模型资源/)
   assert.deepEqual(
     [...pane.matchAll(/data-resource-id="([^"]+)"/g)].map((match) => match[1]),
-    ['x-asr-160ms', 'silero-vad', 'x-asr-offline']
+    ['zipformer-bilingual-zh-en-2023-02-20', 'x-asr-160ms', 'silero-vad', 'x-asr-offline']
   )
   assert.equal((pane.match(/id="modelInstallButton"/g) || []).length, 1)
   assert.equal((pane.match(/id="refinementInstallButton"/g) || []).length, 1)
   assert.equal((pane.match(/id="refinementCancelButton"/g) || []).length, 1)
   assert.equal((pane.match(/id="refinementPreferenceToggle"/g) || []).length, 1)
   assert.match(pane, /核心字幕模型资源包/)
+  assert.match(pane, /临时字幕识别器/)
+  assert.match(pane, /权威识别器/)
+  assert.match(pane, /临时字幕不会进入历史或导出/)
   assert.match(pane, /精修模型资源/)
   assert.match(pane, /只影响未来新会话/)
   assert.match(pane, /只服务于本地字幕识别，不包含 Agent、翻译或大语言模型/)

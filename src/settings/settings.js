@@ -371,7 +371,7 @@ function updateModelInstallControl () {
     modelInstallButton.title = '核心字幕模型资源包已安装'
   } else if (coreState === 'missing') {
     modelInstallButton.textContent = '下载核心模型'
-    modelInstallButton.title = '下载实时字幕模型与语音活动检测'
+    modelInstallButton.title = '下载临时字幕识别器、权威识别器与语音活动检测'
   } else {
     modelInstallButton.textContent = '正在读取'
     modelInstallButton.title = '正在读取核心字幕模型资源包状态'

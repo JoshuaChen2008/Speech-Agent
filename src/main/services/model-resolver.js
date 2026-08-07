@@ -21,15 +21,27 @@ const path = require('node:path')
 const { PRODUCTION_MODEL_MANIFEST } = require('./model-manifest')
 
 const ARTIFACTS = new Map(PRODUCTION_MODEL_MANIFEST.artifacts.map((artifact) => [artifact.id, artifact]))
+const DRAFT_ARTIFACT = ARTIFACTS.get('zipformer-bilingual-zh-en-2023-02-20')
 const REALTIME_ARTIFACT = ARTIFACTS.get('x-asr-160ms')
 const REFINEMENT_ARTIFACT = ARTIFACTS.get('x-asr-offline')
 const VAD_ARTIFACT = ARTIFACTS.get('silero-vad')
 
-if (!REALTIME_ARTIFACT || !REFINEMENT_ARTIFACT || !VAD_ARTIFACT) {
+if (!DRAFT_ARTIFACT || !REALTIME_ARTIFACT || !REFINEMENT_ARTIFACT || !VAD_ARTIFACT) {
   throw new Error('production model manifest is incomplete')
 }
 
 const MODEL_DIR_ENV = 'LIVE_SUBTITLE_MODEL_DIR'
+const DRAFT_MODEL_DIR_ENV = 'LIVE_SUBTITLE_DRAFT_MODEL_DIR'
+
+const APPROVED_DRAFT_MODEL = Object.freeze({
+  id: 'zipformer-bilingual-zh-en-2023-02-20',
+  kind: 'sherpa-online-transducer',
+  numThreads: 4,
+  modelType: 'zipformer',
+  directoryName: DRAFT_ARTIFACT.directoryName
+})
+
+const DRAFT_REQUIRED_FILES = Object.freeze([...DRAFT_ARTIFACT.requiredFiles])
 
 const APPROVED_REALTIME_MODEL = Object.freeze({
   id: 'x-asr-160ms',
@@ -106,6 +118,36 @@ function resolvedRealtime (modelDir, model) {
   return Object.freeze({
     id: model.id,
     profile: model.profile,
+    kind: model.kind,
+    numThreads: model.numThreads,
+    modelType: model.modelType,
+    modelDir
+  })
+}
+
+function resolveApprovedDraftModel (options = {}) {
+  const env = options.env || process.env
+  const repoRoot = options.repoRoot || path.join(__dirname, '..', '..', '..')
+  const allowExternal = options.allowExternal !== false
+  const model = APPROVED_DRAFT_MODEL
+  const explicit = env[DRAFT_MODEL_DIR_ENV]
+  if (allowExternal && typeof explicit === 'string' && explicit.length > 0 && hasFiles(explicit, DRAFT_REQUIRED_FILES)) {
+    return resolvedDraft(explicit, model)
+  }
+  if (typeof options.userDataDir === 'string' && options.userDataDir.length > 0) {
+    const installed = path.join(options.userDataDir, 'models', model.id, model.directoryName)
+    if (hasInstalledArtifact(installed, DRAFT_ARTIFACT)) return resolvedDraft(installed, model)
+  }
+  if (allowExternal) {
+    const development = path.join(repoRoot, 'models', 'gate-0b', 'extracted', 'replacement-candidates', model.directoryName)
+    if (hasFiles(development, DRAFT_REQUIRED_FILES)) return resolvedDraft(development, model)
+  }
+  return null
+}
+
+function resolvedDraft (modelDir, model) {
+  return Object.freeze({
+    id: model.id,
     kind: model.kind,
     numThreads: model.numThreads,
     modelType: model.modelType,
@@ -204,13 +246,17 @@ function resolveSileroVadModel (options = {}) {
 }
 
 module.exports = {
+  APPROVED_DRAFT_MODEL,
   APPROVED_REALTIME_MODEL,
   APPROVED_REFINEMENT_MODEL,
+  DRAFT_MODEL_DIR_ENV,
+  DRAFT_REQUIRED_FILES,
   MODEL_DIR_ENV,
   REFINE_MODEL_DIR_ENV,
   REFINEMENT_REQUIRED_FILES,
   REQUIRED_FILES,
   VAD_MODEL_ENV,
+  resolveApprovedDraftModel,
   resolveApprovedRealtimeModel,
   resolveApprovedRefinementModel,
   resolveSileroVadModel

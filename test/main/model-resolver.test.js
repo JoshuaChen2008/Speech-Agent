@@ -7,13 +7,17 @@ const path = require('node:path')
 const test = require('node:test')
 
 const {
+  APPROVED_DRAFT_MODEL,
   APPROVED_REALTIME_MODEL,
   APPROVED_REFINEMENT_MODEL,
+  DRAFT_MODEL_DIR_ENV,
+  DRAFT_REQUIRED_FILES,
   MODEL_DIR_ENV,
   REFINE_MODEL_DIR_ENV,
   REFINEMENT_REQUIRED_FILES,
   REQUIRED_FILES,
   VAD_MODEL_ENV,
+  resolveApprovedDraftModel,
   resolveApprovedRealtimeModel,
   resolveApprovedRefinementModel,
   resolveSileroVadModel
@@ -52,6 +56,32 @@ test('resolver returns null when no candidate has the full file set', (t) => {
     userDataDir: path.join(root, 'user-data'),
     repoRoot: path.join(root, 'repo')
   }), null)
+})
+
+test('Draft Recognizer resolver requires its four-file set and carries the SEM-F21 decision constants', (t) => {
+  const root = makeTempRoot(t)
+  const incomplete = path.join(root, 'incomplete-draft')
+  writeModelFiles(incomplete, DRAFT_REQUIRED_FILES.slice(0, 2))
+  assert.equal(resolveApprovedDraftModel({
+    env: { [DRAFT_MODEL_DIR_ENV]: incomplete },
+    userDataDir: null,
+    repoRoot: path.join(root, 'repo')
+  }), null)
+
+  const explicit = path.join(root, 'draft')
+  writeModelFiles(explicit, DRAFT_REQUIRED_FILES)
+  const resolved = resolveApprovedDraftModel({
+    env: { [DRAFT_MODEL_DIR_ENV]: explicit },
+    userDataDir: null,
+    repoRoot: path.join(root, 'repo')
+  })
+  assert.equal(resolved.modelDir, explicit)
+  assert.equal(resolved.id, 'zipformer-bilingual-zh-en-2023-02-20')
+  assert.equal(resolved.kind, 'sherpa-online-transducer')
+  assert.equal(resolved.numThreads, 4)
+  assert.equal(resolved.modelType, 'zipformer')
+  assert.equal(APPROVED_DRAFT_MODEL.directoryName, 'sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20')
+  assert.ok(Object.isFrozen(resolved))
 })
 
 test('explicit environment directory wins and carries the approved decision constants', (t) => {

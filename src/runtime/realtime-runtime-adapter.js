@@ -59,6 +59,9 @@ class RealtimeRuntimeAdapter {
     this.vadOptions = options.vadOptions
     /* 真实模型选项（{kind, modelDir, numThreads, modelType}），null = 结构模式。 */
     this.recognizer = options.recognizer || null
+    /* SEM-F21 临时字幕识别器；真实 profile 下缺失时由 runtime definition
+       阻止 capability 发布，不允许退回旧的单识别器产品路径。 */
+    this.draftRecognizer = options.draftRecognizer || null
     /* 真实 VAD 选项（{kind:'silero', modelPath}），null = EnergyVad 兜底。 */
     this.vad = options.vad || null
     /* 精修模型选项（{kind:'sherpa-offline-transducer', modelDir, numThreads}），
@@ -89,6 +92,7 @@ class RealtimeRuntimeAdapter {
     this.captionHandler = null
     this.errorHandler = null
     this.refinementFaultHandler = null
+    this.draftFaultHandler = null
     this.session = null
     /* 最近一次会话的纯指标快照。只包含帧/队列/worker 计数，不包含 PCM、
        音频路径或字幕正文，供 I2 smoke 与故障诊断读取。 */
@@ -102,6 +106,14 @@ class RealtimeRuntimeAdapter {
     this.captionHandler = handler
     return () => {
       if (this.captionHandler === handler) this.captionHandler = null
+    }
+  }
+
+  onDraftRecognizerFault (handler) {
+    if (typeof handler !== 'function') throw new TypeError('draft recognizer fault handler must be a function')
+    this.draftFaultHandler = handler
+    return () => {
+      if (this.draftFaultHandler === handler) this.draftFaultHandler = null
     }
   }
 
@@ -173,6 +185,8 @@ class RealtimeRuntimeAdapter {
       refineWorker: useRefinement ? this.refineWorkerFactory() : null,
       refineReady: false,
       refinementFaulted: false,
+      draftRecognizerFaulted: false,
+      draftRecognizerFaultStage: null,
       captureEvidence: null,
       captureMetrics: {},
       workerStats: null,
@@ -211,6 +225,20 @@ class RealtimeRuntimeAdapter {
         session.unsubscribers.push(session.worker.onControl((message) => {
           if (message?.type === 'refinement-fault') {
             this.reportRefinementFault(session, message.code, message.stage)
+          } else if (message?.type === 'draft-recognizer-fault') {
+            if (this.session !== session || session.stopping || session.draftRecognizerFaulted) return
+            session.draftRecognizerFaulted = true
+            session.draftRecognizerFaultStage = typeof message.stage === 'string' ? message.stage : 'internal'
+            if (this.draftFaultHandler) {
+              try {
+                this.draftFaultHandler(Object.freeze({
+                  code: 'DRAFT_RECOGNIZER_FAILED',
+                  stage: session.draftRecognizerFaultStage,
+                  count: 1
+                }))
+              } catch { /* observers cannot break the subtitle session */ }
+            }
+            this.onDegraded('draft recognizer unavailable; authoritative recognition continues')
           }
         }))
       }
@@ -263,6 +291,7 @@ class RealtimeRuntimeAdapter {
         /* null profile 绝不携带模型/VAD 选项：结构模式的 worker 不加载任何
            原生模块（构造性保证，不依赖组合方自觉）。 */
         recognizer: recognizerProfile !== 'null' && this.recognizer ? this.recognizer : undefined,
+        draftRecognizer: recognizerProfile !== 'null' && this.draftRecognizer ? this.draftRecognizer : undefined,
         vad: recognizerProfile !== 'null' && this.vad ? this.vad : undefined,
         refinement: session.refineWorker !== null,
         vadOptions: this.vadOptions,
@@ -451,7 +480,12 @@ class RealtimeRuntimeAdapter {
       },
       timingCalibrations: structuredCloneSafe(session.clockCalibrations),
       droppedCaptionCount: session.worker.droppedCaptionCount,
-      refinementEnabled: session.refineReady === true
+      refinementEnabled: session.refineReady === true,
+      draftRecognizer: {
+        degraded: session.draftRecognizerFaulted === true,
+        faultCount: session.draftRecognizerFaulted === true ? 1 : 0,
+        faultStage: session.draftRecognizerFaultStage
+      }
     }
   }
 
@@ -476,7 +510,12 @@ class RealtimeRuntimeAdapter {
       capture: structuredCloneSafe(session.captureMetrics || {}),
       worker: structuredCloneSafe(session.worker.lastStats || session.workerStats || null),
       droppedCaptionCount: session.worker.droppedCaptionCount,
-      refinementEnabled: session.refineReady === true
+      refinementEnabled: session.refineReady === true,
+      draftRecognizer: {
+        degraded: session.draftRecognizerFaulted === true,
+        faultCount: session.draftRecognizerFaulted === true ? 1 : 0,
+        faultStage: session.draftRecognizerFaultStage
+      }
     }
   }
 
@@ -576,6 +615,7 @@ class RealtimeRuntimeAdapter {
     this.captionHandler = null
     this.errorHandler = null
     this.refinementFaultHandler = null
+    this.draftFaultHandler = null
     return this.disposePromise
   }
 }

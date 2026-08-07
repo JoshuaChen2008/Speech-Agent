@@ -111,7 +111,12 @@ function makeFixtureManifest (root) {
     }
   })
 
-  assert.deepEqual(artifacts.map(({ id }) => id), ['x-asr-160ms', 'x-asr-offline', 'silero-vad'])
+  assert.deepEqual(artifacts.map(({ id }) => id), [
+    'zipformer-bilingual-zh-en-2023-02-20',
+    'x-asr-160ms',
+    'x-asr-offline',
+    'silero-vad'
+  ])
   return {
     manifest: { version: PRODUCTION_MODEL_MANIFEST.version, artifacts },
     payloadByUrlPath,

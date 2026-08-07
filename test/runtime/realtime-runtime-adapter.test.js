@@ -229,25 +229,68 @@ test('runtime adapter rejects empty or dual source input before constructing hos
 
 test('recognizer options reach the worker only for non-null profile mappings', async () => {
   const recognizer = { kind: 'sherpa-online-transducer', modelDir: 'model-dir', numThreads: 4, modelType: 'zipformer2' }
+  const draftRecognizer = { kind: 'sherpa-online-transducer', modelDir: 'draft-model-dir', numThreads: 4, modelType: 'zipformer2' }
   const vad = { kind: 'silero', modelPath: 'vad-model' }
 
-  const real = makeAdapterWith({ profileMap: { fast: 'x-asr-160ms' }, recognizer, vad })
+  const real = makeAdapterWith({ profileMap: { fast: 'x-asr-160ms' }, recognizer, draftRecognizer, vad })
   await real.adapter.start({ sessionId: 'session-1', sourceIds: ['mic'], profile: 'fast' })
   const realStart = real.worker.calls.find(([name]) => name === 'start')[1]
   assert.equal(realStart.recognizerProfile, 'x-asr-160ms')
   assert.deepEqual(realStart.recognizer, recognizer)
+  assert.deepEqual(realStart.draftRecognizer, draftRecognizer)
   assert.deepEqual(realStart.vad, vad)
   real.adapter.dispose()
 
   /* 结构模式：即使注入了 recognizer/vad 选项，null profile 也不得携带——
      结构 worker 不加载任何原生模块。 */
-  const structural = makeAdapterWith({ recognizer, vad })
+  const structural = makeAdapterWith({ recognizer, draftRecognizer, vad })
   await structural.adapter.start(START_CONTEXT)
   const structuralStart = structural.worker.calls.find(([name]) => name === 'start')[1]
   assert.equal(structuralStart.recognizerProfile, 'null')
   assert.equal(structuralStart.recognizer, undefined)
+  assert.equal(structuralStart.draftRecognizer, undefined)
   assert.equal(structuralStart.vad, undefined)
   structural.adapter.dispose()
+})
+
+test('SEM-F21 runtime exposes one sanitized Draft Recognizer failure fact without faulting the session', async () => {
+  const degraded = []
+  const faults = []
+  const { adapter, worker } = makeAdapterWith({
+    profileMap: { fast: 'x-asr-160ms' },
+    recognizer: { kind: 'sherpa-online-transducer', modelDir: 'authority', numThreads: 4 },
+    draftRecognizer: { kind: 'sherpa-online-transducer', modelDir: 'draft', numThreads: 4 },
+    onDegraded: (message) => degraded.push(message)
+  })
+  adapter.onDraftRecognizerFault((fault) => faults.push(fault))
+  await adapter.start({ sessionId: 'draft-fault-session', sourceIds: ['loopback'], profile: 'fast' })
+
+  worker.emitControl({
+    type: 'draft-recognizer-fault',
+    code: 'DRAFT_RECOGNIZER_FAILED',
+    stage: 'poll',
+    count: 1,
+    text: 'private caption',
+    path: 'C:\\private\\model'
+  })
+  worker.emitControl({
+    type: 'draft-recognizer-fault',
+    code: 'DRAFT_RECOGNIZER_FAILED',
+    stage: 'accept-frame',
+    count: 2
+  })
+
+  assert.deepEqual(faults, [{ code: 'DRAFT_RECOGNIZER_FAILED', stage: 'poll', count: 1 }])
+  assert.equal(JSON.stringify(faults).includes('private'), false)
+  assert.equal(degraded.length, 1)
+  assert.notEqual(adapter.session, null)
+  await adapter.stop()
+  assert.deepEqual(adapter.getLastRunDiagnostics().draftRecognizer, {
+    degraded: true,
+    faultCount: 1,
+    faultStage: 'poll'
+  })
+  adapter.dispose()
 })
 
 const REFINEMENT = { kind: 'sherpa-offline-transducer', modelDir: 'refine-dir', numThreads: 3 }
@@ -833,6 +876,7 @@ test('completed sessions expose text-free I2 diagnostics from the real compositi
   assert.equal(diagnostics.worker.sources.mic.provisionalConfirmed, 1)
   assert.equal(diagnostics.worker.sources.mic.provisionalLastCandidateAudioMs, 280)
   assert.equal(diagnostics.droppedCaptionCount, 1)
+  assert.deepEqual(diagnostics.draftRecognizer, { degraded: false, faultCount: 0, faultStage: null })
   assert.deepEqual(diagnostics.timingCalibrations, { audioHost: null, utility: null })
   assert.equal(JSON.stringify(diagnostics).includes('samples'), false)
   assert.equal(JSON.stringify(diagnostics).includes('text'), false)
@@ -870,6 +914,7 @@ test('active sessions expose a bounded cloned transport view for interaction obs
   assert.equal(diagnostics.capture.mic.capturedFrames, 12)
   assert.equal(diagnostics.worker.sources.mic.framesIngested, 11)
   assert.equal(diagnostics.droppedCaptionCount, 0)
+  assert.deepEqual(diagnostics.draftRecognizer, { degraded: false, faultCount: 0, faultStage: null })
   assert.equal(Object.hasOwn(diagnostics, 'input'), false)
   assert.equal(Object.hasOwn(diagnostics, 'workerHost'), false)
 
@@ -1010,11 +1055,27 @@ test('worker host pause awaits the ack after flushed captions and fails on dead 
     stack: 'sensitive worker stack'
   })
   child.emit('message', { type: 'refinement-fault', code: 'unsupported', stage: 'decode' })
-  assert.deepEqual(refinementControls, [{
-    type: 'refinement-fault',
-    code: 'REFINE_DECODE_FAILED',
-    stage: 'decode'
-  }])
+  child.emit('message', {
+    type: 'draft-recognizer-fault',
+    code: 'DRAFT_RECOGNIZER_FAILED',
+    stage: 'poll',
+    count: 1,
+    text: 'private caption'
+  })
+  child.emit('message', { type: 'draft-recognizer-fault', code: 'unsupported', stage: 'poll', count: 1 })
+  assert.deepEqual(refinementControls, [
+    {
+      type: 'refinement-fault',
+      code: 'REFINE_DECODE_FAILED',
+      stage: 'decode'
+    },
+    {
+      type: 'draft-recognizer-fault',
+      code: 'DRAFT_RECOGNIZER_FAILED',
+      stage: 'poll',
+      count: 1
+    }
+  ])
   assert.equal(JSON.stringify(refinementControls).includes('private'), false)
   await host.pause().then(() => order.push('ack'))
   assert.deepEqual(order, ['caption', 'ack'], '定稿必须先于 pause ack 交付')

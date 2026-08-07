@@ -5,9 +5,16 @@
 const MANIFEST_VERSION = 1
 const RESOURCE_GROUPS = Object.freeze(['core', 'refinement'])
 
+const DRAFT_DIRECTORY = 'sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20'
 const REALTIME_DIRECTORY = 'sherpa-onnx-x-asr-160ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05'
 const REFINEMENT_DIRECTORY = 'sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03'
 const REALTIME_FILES = Object.freeze(['tokens.txt', 'encoder.int8.onnx', 'decoder.onnx', 'joiner.int8.onnx'])
+const DRAFT_FILES = Object.freeze([
+  'tokens.txt',
+  'encoder-epoch-99-avg-1.int8.onnx',
+  'decoder-epoch-99-avg-1.onnx',
+  'joiner-epoch-99-avg-1.int8.onnx'
+])
 const REFINEMENT_FILES = Object.freeze([
   'tokens.txt',
   'encoder-epoch-99-avg-1.int8.onnx',
@@ -26,6 +33,22 @@ function deepFreeze (value) {
 const PRODUCTION_MODEL_MANIFEST = deepFreeze({
   version: MANIFEST_VERSION,
   artifacts: [
+    {
+      id: 'zipformer-bilingual-zh-en-2023-02-20',
+      resourceGroup: 'core',
+      artifactKind: 'archive',
+      installId: 'zipformer-bilingual-zh-en-2023-02-20',
+      url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20.tar.bz2',
+      bytes: 511274346,
+      sha256: '27ffbd9ee24ad186d99acc2f6354d7992b27bcab490812510665fa8f9389c5f8',
+      directoryName: DRAFT_DIRECTORY,
+      requiredFiles: [...DRAFT_FILES],
+      upstream: {
+        project: 'k2-fsa/sherpa-onnx',
+        release: 'asr-models',
+        asset: 'sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20.tar.bz2'
+      }
+    },
     {
       id: 'x-asr-160ms',
       resourceGroup: 'core',

@@ -283,6 +283,18 @@ class RealtimeWorkerHost {
         }
         return
       }
+      if (message?.type === 'draft-recognizer-fault') {
+        const stages = new Set(['accept-frame', 'poll', 'end-segment', 'discard-provisional'])
+        if (message.code === 'DRAFT_RECOGNIZER_FAILED' && stages.has(message.stage) && message.count === 1) {
+          this.emit(this.controlListeners, Object.freeze({
+            type: 'draft-recognizer-fault',
+            code: message.code,
+            stage: message.stage,
+            count: 1
+          }))
+        }
+        return
+      }
       if (message?.type === 'stats') {
         this.lastStats = message.stats
         this.emit(this.statsListeners, message.stats)
@@ -305,7 +317,11 @@ class RealtimeWorkerHost {
           clearTimeout(timer)
           child.removeListener('exit', onExit)
           if (message?.type === 'configured') resolve()
-          else reject(new Error(`worker configure failed: ${String(message?.message || message?.type || 'unknown').slice(0, 200)}`))
+          else {
+            const error = new Error(`worker configure failed: ${String(message?.message || message?.type || 'unknown').slice(0, 200)}`)
+            if (message?.code === 'DRAFT_RECOGNIZER_START_FAILED') error.code = message.code
+            reject(error)
+          }
         })
         child.postMessage({ type: 'configure', ...config })
       })
