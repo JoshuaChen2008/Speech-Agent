@@ -102,7 +102,7 @@ UI/安装/持久化接线，**不能**证明真实张量推理、真实 GitHub �
 ## B5 打包态补证
 
 B5 使用与正式包相同的 ASAR、native unpack 与 Electron fuse 布局，从真实 packaged
-test executable 重跑核心 ASR+VAD 两 marker 安装、精修独立 `.part` Range 继续与一 marker、
+test executable 重跑临时字幕识别器、权威识别器与 VAD 三项核心 marker 安装、精修独立 `.part` Range 继续与一 marker、
 显式偏好、会话冻结、故障回退/工具条会话状态通知、旧 JSONL 迁移、SQLite 历史、会话 A 精修版跨页/导出
 再切换会话 B 自动原始版/导出，并从同一 `userData` 做第二次完全离线启动；另在两次 packaged utility 中实际加载 sherpa addon/DLL，
 并对 ASAR 中的 storage utility 执行完整 DB0 资格检查。独立 exact-child 证据为

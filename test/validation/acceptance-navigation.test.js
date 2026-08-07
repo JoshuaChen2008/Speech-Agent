@@ -6,7 +6,7 @@ const path = require('node:path')
 const test = require('node:test')
 
 const ROOT = path.resolve(__dirname, '../..')
-const REMOTE_COUNTS_PATTERN = /workflow 结论为 `success`；core 414 tests=407 pass\+7 expected model\/Silero-asset skips，integration 27\/27，evidence 190\/190；总计 631 tests=624 pass\+7 expected skips\+0 fail。7 项跳过不计作模型测试成立/
+const REMOTE_COUNTS_PATTERN = /core 422 tests=415 pass\+7 expected (?:model\/Silero-asset )?skips、integration 29\/29、evidence 204\/204[；，]总计 655 tests=648 pass\+7 expected skips\+0 fail/
 
 test('acceptance navigation projects every remaining subtitle MVP machine gate', () => {
   const navigation = fs.readFileSync(path.join(ROOT, 'docs', 'validation', 'README.md'), 'utf8')
@@ -113,15 +113,15 @@ test('current acceptance projections retain failed CI revisions and record the e
   ]
   for (const file of projectionFiles) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
-    assert.match(source, /30790372286/, `${file} must project the current downloaded qualified workflow`)
-    assert.match(source, /8846860080/, `${file} must project the current artifact identity`)
-    assert.match(source, /5968779b61db0eb6f6d2d7e7dcaa3d0a38844f8987a43941bb4395aff5ba69ef|5968779b…69ef/,
+    assert.match(source, /31191838016/, `${file} must project the current downloaded qualified workflow`)
+    assert.match(source, /8999273285/, `${file} must project the current artifact identity`)
+    assert.match(source, /5ce4070cee109df6d3d86b43b165b20a40636e8e3cd638fd9f28096da95855af|5ce4070c…55af/,
       `${file} must project the current artifact digest`)
     assert.match(source, REMOTE_COUNTS_PATTERN, `${file} must separate discovered, passed, and expected-skip counts`)
     assert.doesNotMatch(source, /631 项回归成功|631 项回归均返回/,
       `${file} must not count hosted model-asset skips as passed tests`)
   }
-  for (const file of [...historicalFiles, ...projectionFiles]) {
+  for (const file of historicalFiles) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
     assert.match(source, /30786324179/, `${file} must retain the exact current-head CI failure`)
     assert.match(source, /c36aefaee4778a1bf2dfe1ee005924a724f4be53/,
@@ -140,17 +140,14 @@ test('current acceptance projections retain failed CI revisions and record the e
   }
   const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8')
   const strategy = fs.readFileSync(path.join(ROOT, 'docs', 'testing-strategy.md'), 'utf8')
-  const readmeLocalRow = readme.split(/\r?\n/).find((line) => line.includes('| 本地非音频回归 |')) || ''
+  const readmeLocalRow = readme.split(/\r?\n/).find((line) => line.includes('| 非音频回归与同源两阶段实时识别 |')) || ''
   const readmeRemoteRow = readme.split(/\r?\n/).find((line) => line.includes('| 远端 Windows CI 资格 |')) || ''
-  assert.match(readmeLocalRow, /core 414 tests=407 pass\+7 expected skips、integration 27\/27、evidence 201\/201/)
-  assert.match(readmeLocalRow, /总计 642 tests=635 pass\+7 expected skips\+0 fail/)
-  assert.doesNotMatch(readmeLocalRow, /evidence 188|共 629 项|共 641 项/)
-  assert.match(readmeRemoteRow, /run `30790372286`/)
+  assert.match(readmeLocalRow, REMOTE_COUNTS_PATTERN)
+  assert.doesNotMatch(readmeLocalRow, /evidence 188|共 629 项|共 641 项|总计 642 tests/)
+  assert.match(readmeRemoteRow, /run `31191838016`/)
   assert.match(readmeRemoteRow, REMOTE_COUNTS_PATTERN)
-  assert.match(strategy, /本次 I2 模型替换决策[\s\S]*evidence 190\/190；总计 631 tests=624 pass\+7 expected skips\+0 fail/)
-  assert.match(strategy, /run `30790372286`[\s\S]*revision `5c6ce847fc07329802e3e98db9db70cc683f1f75`/)
+  assert.match(strategy, /revision `bbfd7041e5963e51942392323735298a7b81cb30` \/ run `31191838016`/)
   assert.match(strategy, REMOTE_COUNTS_PATTERN)
-  assert.match(strategy, /revision `f86ac1ef604dc7da0728c6eda44d59bbfd1e09bf`[\s\S]*evidence 188\/188；总计 629 tests=622 pass\+7 expected skips\+0 fail/)
 })
 
 test('J9-CI status projects the authoritative deterministic joint acceptance boundary', () => {
@@ -167,16 +164,17 @@ test('J9-CI status projects the authoritative deterministic joint acceptance bou
   const semanticPrevious = semantic.split(/\r?\n/).find((line) => line.includes('I3 修复代码候选 T03/J9-CI 证据')) || ''
   const semanticCurrent = semantic.split(/\r?\n/).find((line) => line.includes('I3 live provenance LF 修复候选 T03/J9-CI 证据')) || ''
   const semanticLatest = semantic.split(/\r?\n/).find((line) => line.includes('最新 I2 模型替换决策证据投影')) || ''
+  const semanticPackagingRow = semantic.split(/\r?\n/).find((line) => line.includes('**SEM-F18**')) || ''
+  const semanticReleaseEvidenceRow = semantic.split(/\r?\n/).find((line) => line.includes('**SEM-T12**')) || ''
   const strategyRow = strategy.split(/\r?\n/).find((line) => line.includes('| J9-CI |')) || ''
   const planRow = plan.split(/\r?\n/).find((line) => line.includes('**B5 字幕 MVP 分发')) || ''
-  const b5Current = b5.split(/\r?\n/).find((line) => line.startsWith('- 状态：')) || ''
 
-  for (const row of [navigationRow, readmeRow, semanticLatest, strategyRow]) {
-    assert.match(row, /联合验收完成/)
-    assert.match(row, /30790372286/)
-    assert.match(row, /5c6ce847fc07329802e3e98db9db70cc683f1f75/)
-    assert.match(row, /8846860080/)
-    assert.match(row, REMOTE_COUNTS_PATTERN)
+  for (const source of [navigation, readme, plan, semantic, strategy, b5]) {
+    assert.match(source, /联合验收完成/)
+    assert.match(source, /31191838016/)
+    assert.match(source, /bbfd7041e5963e51942392323735298a7b81cb30|bbfd7041…cb30/)
+    assert.match(source, /8999273285/)
+    assert.match(source, REMOTE_COUNTS_PATTERN)
   }
   assert.match(semanticRow, /J9-CI 已达到联合验收完成/)
   assert.match(semanticPrevious, /82d56f64c80c74f30c1944665460f1316f1d7939/)
@@ -187,31 +185,23 @@ test('J9-CI status projects the authoritative deterministic joint acceptance bou
   assert.match(semanticLatest, /5968779b61db0eb6f6d2d7e7dcaa3d0a38844f8987a43941bb4395aff5ba69ef/)
   assert.match(semanticLatest, /618f02eddbbd3a956d679b17180817665d48dd0b9608262fd6519f53eac857e0/)
   assert.match(semanticLatest, /不表示 Gate 0B 已选定替代模型/)
-  assert.match(strategyRow, /J9-CI 已达到联合验收完成/)
+  for (const row of [strategyRow, semanticPackagingRow, semanticReleaseEvidenceRow]) {
+    assert.match(row, /revision `bbfd7041e5963e51942392323735298a7b81cb30` \/ run `31191838016`/)
+    assert.match(row, /d77d16c0…060c/)
+    assert.match(row, /e95fd87f…a35a/)
+    assert.match(row, /下载 artifact 不含 installer 字节/)
+    assert.match(row, /历史本地候选 `d862c5fc…0de10` \/ `a1f03ed6…9accc`/)
+    assert.doesNotMatch(row, /当前本机(?: B5 )?候选[^。]*(?:d862c5fc|a1f03ed6)|当前 B5 七份证据已绑定 SHA `d862c5fc/)
+  }
   assert.match(navigationRow, /\| J9-CI 远端资格 \| 联合验收完成 \|/)
   assert.match(readmeRow, /\| 远端 Windows CI 资格 \| 联合验收完成 \|/)
-  assert.match(navigationRow, /Electron `43\.2\.0`/)
-  assert.match(readmeRow, /artifact .*下载后通过五个 strict readers/)
-  assert.match(readmeRow, /下载包不含 installer 字节/)
-  for (const row of [semanticRow, planRow, b5Current]) {
-    assert.doesNotMatch(row, /provenance writer\/verifier、跨报告哈希复核、workflow 顺序和含 revision\/run 的上传名为实现完成·尚未验收|最终 CI provenance writer\/verifier 为实现完成·尚未验收|writer\/verifier、workflow 顺序与本地当前候选的交叉哈希探针为实现完成·尚未验收/)
-    assert.match(row, /联合验收完成/)
-    assert.match(row, /30790372286/)
-    assert.match(row, /5c6ce847fc07329802e3e98db9db70cc683f1f75/)
-    assert.match(row, /8846860080/)
-    assert.match(row, REMOTE_COUNTS_PATTERN)
-  }
-  for (const source of [semantic, strategy, plan, b5]) {
-    assert.match(source, /30790372286/)
-    assert.match(source, /5c6ce847fc07329802e3e98db9db70cc683f1f75/)
-  }
-  assert.match(planRow, /5968779b61db0eb6f6d2d7e7dcaa3d0a38844f8987a43941bb4395aff5ba69ef/)
-  assert.match(planRow, /618f02eddbbd3a956d679b17180817665d48dd0b9608262fd6519f53eac857e0/)
-  assert.match(b5Current, /5968779b61db0eb6f6d2d7e7dcaa3d0a38844f8987a43941bb4395aff5ba69ef/)
-  assert.match(b5Current, /618f02eddbbd3a956d679b17180817665d48dd0b9608262fd6519f53eac857e0/)
-  for (const row of [planRow, b5Current]) {
-    assert.doesNotMatch(row, /30787209338|f86ac1ef604dc7da0728c6eda44d59bbfd1e09bf|629 项/,
-      'current B5 projection must not end on the superseded LF-repair candidate')
+  assert.match(navigation, /Electron `43\.2\.0`/)
+  for (const source of [plan, semantic, b5]) {
+    assert.match(source, /31191838016/)
+    assert.match(source, /bbfd7041e5963e51942392323735298a7b81cb30/)
+    assert.match(source, /8999273285/)
+    assert.match(source, /d77d16c00337696727e00ad41d3fc61e1eab85d99edc4527c7cf55b548e0060c|d77d16c0…060c/)
+    assert.match(source, REMOTE_COUNTS_PATTERN)
   }
 })
 
@@ -249,6 +239,7 @@ test('SEM-F21/J16 projects the implemented same-source two-stage boundary withou
   const semanticRow = semantic.split(/\r?\n/).find((line) => line.includes('**SEM-F21**')) || ''
   const supplyRow = semantic.split(/\r?\n/).find((line) => line.includes('**SEM-F17**')) || ''
   const modelJourneyRow = strategy.split(/\r?\n/).find((line) => line.startsWith('| J14 |')) || ''
+  const refinementJourneyRow = strategy.split(/\r?\n/).find((line) => line.startsWith('| J15c |')) || ''
   const journeyRow = strategy.split(/\r?\n/).find((line) => line.startsWith('| J16 |')) || ''
 
   assert.match(context, /\*\*临时字幕识别器（Draft Recognizer）\*\*/)
@@ -259,16 +250,19 @@ test('SEM-F21/J16 projects the implemented same-source two-stage boundary withou
   assert.match(semanticRow, /不得让临时字幕识别器产生 `final\/refined`/)
   assert.match(semanticRow, /`DRAFT_RECOGNIZER_START_FAILED`/)
   assert.match(semanticRow, /`DRAFT_RECOGNIZER_FAILED`/)
-  assert.match(semanticRow, /实现完成·尚未验收/)
-  assert.match(semanticRow, /当前四资源 B4 仍待独立验收/)
+  assert.match(semanticRow, /联合验收完成/)
+  assert.match(semanticRow, /schema-v4 四资源 packaged 首启\/复启已闭合/)
   assert.match(supplyRow, /临时字幕识别器、权威识别器与 VAD/)
   assert.match(modelJourneyRow, /临时字幕识别器、权威识别器与 VAD 三项严格 ready marker/)
-  assert.match(modelJourneyRow, /SEM-F21.*实现完成·尚未验收/)
-  assert.match(modelJourneyRow, /旧三资源 B4 不证明当前四资源验收/)
+  assert.match(modelJourneyRow, /联合验收完成/)
+  assert.match(modelJourneyRow, /schema-v4 产品壳与 packaged 首启\/复启/)
+  assert.match(refinementJourneyRow, /三项核心 marker、四项总资源/)
+  assert.match(refinementJourneyRow, /确定性范围已达到联合验收完成/)
+  assert.doesNotMatch(refinementJourneyRow, /SEM-F21 的核心 ready 扩展为实现完成·尚未验收|当前四资源 B4/)
   assert.match(journeyRow, /单份 PCM 经 VAD 后同时驱动/)
   assert.match(journeyRow, /SQLite、历史和导出只包含该首次稳定转写/)
   assert.match(journeyRow, /报告及 SQLite\/历史\/导出必须验证零临时字幕正文/)
   assert.match(journeyRow, /权威识别器故障仍进入 Retry/)
-  assert.match(journeyRow, /实现完成·尚未验收/)
+  assert.match(journeyRow, /联合验收完成/)
   assert.match(runtime, /SEM-F21 同源两阶段识别/)
 })

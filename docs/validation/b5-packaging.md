@@ -1,14 +1,14 @@
 # B5 打包态确定性资格
 
 - 证据日期：2026-08-03；文档复核：2026-08-07
-- 状态：当前源码的本机构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到联合验收完成；本机安装器 SHA 为 `d862c5fc…0de10`。前一轮 run `30790372286` 精确绑定 revision `5c6ce847fc07329802e3e98db9db70cc683f1f75`，workflow 结论为 `success`；core 414 tests=407 pass+7 expected model/Silero-asset skips，integration 27/27，evidence 190/190；总计 631 tests=624 pass+7 expected skips+0 fail。7 项跳过不计作模型测试成立；artifact ID `8846860080`、GitHub ZIP digest `5968779b61db0eb6f6d2d7e7dcaa3d0a38844f8987a43941bb4395aff5ba69ef`、远端 installer SHA=`618f02eddbbd3a956d679b17180817665d48dd0b9608262fd6519f53eac857e0`。最近一次远端 J9-CI 联合验收完成基线已前移至 run `30792514100` / revision `2890dd9a5a224bca75cff2257cfd14013d74584d`：同为 631 tests=624 pass+7 expected skips+0 fail；artifact ID `8847650958`、GitHub ZIP digest `9e4b2d7b9975afc288c5a14728e0a8812ec00eea1f6a25f46080063c8beccafd`、远端 installer SHA=`25ff62a88efb8e8d021887df3a2685c72515baadca23f4810902f13d2ae19b76`，provenance 绑定、artifact 上传、下载侧严格复核与隐私负扫描闭合
-- 当前基线边界：revision `a91a200cc2d3df5f73dcb7a0894a9758e532106a` 的产品载荷输入相对 `2d3d6bdf5d745c15c239ef7503a0dfac211409a8` 未变化，因此本机七份 B5 证据仍绑定当前产品载荷；run `30801570384` 也已通过 Electron、布局、存储、产品壳、packaged 与 NSIS 前置，但 evidence 200 tests=197 pass+3 fail，最终 provenance 索引按设计跳过。Gate 0B corpus 文本未固定 LF，hosted CRLF SHA `fdf4420a243cc6e0efe0074dbf5c60c97efc1d1284448b7bfce9c3d658e1fce9` 与登记的 LF SHA `7edd6dff286b84619a3b68f385ba04622103ffe17cc57dbe5e1f16521deb156d` 不同，因此当前 revision 的 J9-CI 为实现完成·尚未验收
+- 历史本地状态：旧产品载荷的本机构建、ASAR/native、真实打包测试产品壳双启动与 NSIS 机械生命周期已达到联合验收完成；该历史本机安装器 SHA 为 `d862c5fc…0de10`。前一轮 run `30790372286` 精确绑定 revision `5c6ce847fc07329802e3e98db9db70cc683f1f75`，workflow 结论为 `success`；core 414 tests=407 pass+7 expected model/Silero-asset skips，integration 27/27，evidence 190/190；总计 631 tests=624 pass+7 expected skips+0 fail。7 项跳过不计作模型测试成立；artifact ID `8846860080`、GitHub ZIP digest `5968779b61db0eb6f6d2d7e7dcaa3d0a38844f8987a43941bb4395aff5ba69ef`、远端 installer SHA=`618f02eddbbd3a956d679b17180817665d48dd0b9608262fd6519f53eac857e0`。其后远端 J9-CI 联合验收完成基线前移至 run `30792514100` / revision `2890dd9a5a224bca75cff2257cfd14013d74584d`：同为 631 tests=624 pass+7 expected skips+0 fail；artifact ID `8847650958`、GitHub ZIP digest `9e4b2d7b9975afc288c5a14728e0a8812ec00eea1f6a25f46080063c8beccafd`、远端 installer SHA=`25ff62a88efb8e8d021887df3a2685c72515baadca23f4810902f13d2ae19b76`，provenance 绑定、artifact 上传、下载侧严格复核与隐私负扫描闭合
+- 当前基线边界：revision `bbfd7041e5963e51942392323735298a7b81cb30` / run `31191838016` 已达到联合验收完成；core 422 tests=415 pass+7 expected skips、integration 29/29、evidence 204/204，总计 655 tests=648 pass+7 expected skips+0 fail。schema-v4 packaged 首启/复启闭合三项核心 marker、四项总资源、独立精修资源与同一产品载荷；artifact ID `8999273285`、ZIP digest `5ce4070c…55af`、远端 installer SHA `d77d16c0…060c`、产品载荷 SHA `e95fd87f…a35a`
 - 发布边界：同一隔离 `userData` 的离线复启发生在测试 package；NSIS 卸载只验证隔离安装目录与无关 APPDATA 哨兵。正式 release 的 I4 非音频专用干净机尚未执行，因此尚未达到实机验收完成或发布验收完成
 
-## 精确候选
+## 历史精确本地候选
 
 `electron-builder 26.15.3` 以 Electron `43.2.0`、sherpa wrapper/platform
-`1.13.4` 生成 Windows x64 单击式当前用户 NSIS。候选安装器 SHA-256 为
+`1.13.4` 生成 Windows x64 单击式当前用户 NSIS。该历史候选安装器 SHA-256 为
 `d862c5fca0e477abc2d636573e1dd41aef564ed0c82def3bd469966db7b0de10`
 （104,995,193 字节）。
 
@@ -47,7 +47,7 @@ Node inspector，开启嵌入式 ASAR 完整性和 only-load-from-ASAR；产品�
 5. history 对 205 段完成五页往返且 DOM 上界为 50。会话 A 从原始版明确切到精修版，跨页保持选择并按精修版导出；选择会话 B 后自动回到原始版并按原始版导出。TXT/Markdown/SRT 原始版均包含完整 205 段；保存路径使用受控对话框替身，不冒充人工系统对话框验收。
 6. 独立 storage utility 从 ASAR 完成 DB0 的 17 项 WAL、迁移、事务、重开与 integrity 检查；启动前只读旧 JSONL 被幂等迁入 SQLite，旧文件 SHA 不变且没有 JSONL 双写。
 7. 独立 native utility 从 ASAR 加载 unpacked `.node` 与相邻 DLL，固定 API 面存在并 exact exit 0。
-8. 首轮自然退出后，外部 runner 使用同一 packaged exe 和隔离 `userData` 再启动。第二轮先在没有 fixture server 的条件下确认核心两个 marker 仍 ready、精修仍 missing、合法 `.part` 存在且 fetch=0；随后才启动受控服务器并由用户明确“继续下载”，断言精确 Range，产生一个精修 marker。安装后开关仍关闭，再次明确开启才影响未来会话。受控 worker 故障期间没有弹窗、提示或 resize，全部仍可见 `final` 回到首次稳定转写；正常停止后由 main→IPC→toolbar 显示一次工具条会话状态通知，“查看历史”清除提示并打开保留故障事实与覆盖度的历史。旧提示在复启时不重放，活动会话保持启动时冻结值，最终持久化第 4 条终态会话。
+8. 首轮自然退出后，外部 runner 使用同一 packaged exe 和隔离 `userData` 再启动。第二轮先在没有 fixture server 的条件下确认临时字幕识别器、权威识别器与 VAD 三项核心 marker 仍 ready、精修仍 missing、合法 `.part` 存在且 fetch=0；随后才启动受控服务器并由用户明确“继续下载”，断言精确 Range，产生一个精修 marker。安装后开关仍关闭，再次明确开启才影响未来会话。受控 worker 故障期间没有弹窗、提示或 resize，全部仍可见 `final` 回到首次稳定转写；正常停止后由 main→IPC→toolbar 显示一次工具条会话状态通知，“查看历史”清除提示并打开保留故障事实与覆盖度的历史。旧提示在复启时不重放，活动会话保持启动时冻结值，最终持久化第 4 条终态会话。
 9. 两轮 exact-child supervisor 都得到 `clean-exit`、0 incident、0 crash、未观察到 breakpoint，且 `scope.packagedRuntime=true`。
 
 精修下载的“取消→连接关闭→保留合法 `.part`→应用复启 fetch=0→再次明确继续才 Range”已在
@@ -151,7 +151,7 @@ APPDATA。探针没有启动正式 release 应用、没有观察 Electron 实际
 
 - 不能据此声称物理 mic/loopback、真实媒体权限、两小时 I3、真实模型调用或公网大模型下载通过。
 - 不能据此声称精确 NSIS 已在无仓库、无 Node、无既有 `userData` 的干净 Win11 上完成完整旅程；双启动使用的是与正式包同布局但 main 为受控旅程的 test variant。
-- 默认核心字幕首次公网供给为实时 ASR+VAD 共 134,541,861 字节；136,396,739 字节精修模型默认不下载，只有用户明确动作才供给。不能再把三资源全量 bundle 当作核心 ready 条件。
+- 默认核心字幕首次公网供给为临时字幕识别器、权威识别器与 VAD 三项核心资源；精修模型默认不下载，只有用户明确动作才供给。schema-v4 确定性报告固定为 3 个核心 marker / 4 项总资源；不得把精修模型算入核心 ready。
 - 打包态 clean exit 不是用户截图 `0x80000003` 的 native stack 根因或永久修复证明，只说明本轮受控打包旅程未复现。
 
 结构、产品和退出证据分别见
