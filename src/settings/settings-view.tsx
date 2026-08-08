@@ -142,6 +142,13 @@ export function SettingsView (): ReactElement {
   }, [flushPatch])
 
   useEffect(() => {
+    if (!cfg) return
+    document.documentElement.dataset.theme = cfg.theme === 'auto'
+      ? (cfg.systemDark ? 'dark' : 'light')
+      : cfg.theme
+  }, [cfg?.systemDark, cfg?.theme])
+
+  useEffect(() => {
     const disposers = [
       shell.onConfig(reflectConfig), shell.onSnapshot((next: Dict) => setRuntime((current) => !current || next.revision >= current.revision ? next : current)),
       shell.onModelStatus((next: Dict) => { if (next?.schemaVersion === 1) setModels(next) }),
@@ -221,11 +228,11 @@ export function SettingsView (): ReactElement {
     <div className="layout"><nav className="nav" aria-label="设置类别">{PANES.map(([name, label]) => <button key={name} className={`nav-item${pane === name ? ' active' : ''}`} data-pane={name} aria-current={pane === name ? 'page' : undefined} onClick={() => setPane(name)}>{label}</button>)}</nav>
       <main className="content">
         <section className={`pane${pane === 'display' ? ' active' : ''}`} data-pane="display"><h1>显示与字幕</h1><p className="sub">调整字幕条的外观，改动实时生效。</p><div className="group">
-          <div className="row"><div className="label">字号</div><Segmented name="fontsize" value={cfg?.fontSize} options={[[24, '小'], [30, '中'], [38, '大']]} onSelect={(value) => void savePatch({ fontSize: Number(value) })} /></div>
-          <div className="row"><div className="label">主题</div><Segmented name="theme" value={cfg?.theme} options={[['light', '浅色'], ['auto', '自动'], ['dark', '深色']]} onSelect={(value) => void savePatch({ theme: value })} /></div>
+          <div className="row"><div className="label">字号</div><Segmented name="fontsize" value={cfg?.fontSize} options={[[24, '小'], [30, '中'], [38, '大']]} onSelect={(value) => previewPatch({ fontSize: Number(value) })} /></div>
+          <div className="row"><div className="label">主题</div><Segmented name="theme" value={cfg?.theme} options={[['light', '浅色'], ['auto', '自动'], ['dark', '深色']]} onSelect={(value) => previewPatch({ theme: value })} /></div>
           <div className="row"><div className="label">字幕背景不透明度 <span className="hint" id="opacityVal">{Number(cfg?.opacity ?? .86).toFixed(2)}</span></div><input type="range" id="opacity" min="0" max="1" step="0.01" value={cfg?.opacity ?? .86} aria-label="字幕背景不透明度" onChange={(event) => previewPatch({ opacity: Number(event.currentTarget.value) })} /></div>
           <div className="row"><div className="label">工具条背景不透明度 <span className="hint" id="toolbarOpacityVal">{Number(cfg?.toolbarOpacity ?? .82).toFixed(2)}</span></div><input type="range" id="toolbarOpacity" min="0" max="1" step="0.01" value={cfg?.toolbarOpacity ?? .82} aria-label="工具条背景不透明度" onChange={(event) => previewPatch({ toolbarOpacity: Number(event.currentTarget.value) })} /></div>
-          <div className="row"><div className="label">背景颜色 <span className="hint" id="barColorVal">{cfg?.barColor || '跟随主题'}</span></div><div className="field"><input type="color" id="barColor" value={cfg?.barColor || '#0e202c'} aria-label="背景颜色" onChange={(event) => previewPatch({ barColor: event.currentTarget.value })} /><button className="link-btn" id="barColorReset" disabled={!cfg?.barColor} onClick={() => void savePatch({ barColor: null })}>跟随主题</button></div></div>
+          <div className="row"><div className="label">背景颜色 <span className="hint" id="barColorVal">{cfg?.barColor || '跟随主题'}</span></div><div className="field"><input type="color" id="barColor" value={cfg?.barColor || '#0e202c'} aria-label="背景颜色" onChange={(event) => previewPatch({ barColor: event.currentTarget.value })} /><button className="link-btn" id="barColorReset" disabled={!cfg?.barColor} onClick={() => previewPatch({ barColor: null })}>跟随主题</button></div></div>
           <div className="row"><div className="label">圆角 <span className="hint" id="radiusVal">{cfg?.radius ?? 10} px</span></div><input type="range" id="radius" min="6" max="16" step="1" value={cfg?.radius ?? 10} aria-label="字幕圆角" onChange={(event) => previewPatch({ radius: Number(event.currentTarget.value) })} /></div>
         </div></section>
         <section className={`pane${pane === 'audio' ? ' active' : ''}`} data-pane="audio"><h1>音频源</h1><p className="sub">选择本次会话要监听的一路声音。</p><div className="group"><div className="row"><div><div className="label">监听模式</div><div className="hint source-hint">一次只监听一路；活动会话需停止后才能切换。</div></div>

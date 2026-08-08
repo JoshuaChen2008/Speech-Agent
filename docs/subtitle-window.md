@@ -11,7 +11,7 @@
 可见窗口
 ├─ captionWin   透明、不可聚焦、常驻置顶
 ├─ toolbarWin   透明、可交互、常驻置顶
-├─ settingsWin  正常可聚焦、当前 Win11 Acrylic（SEM-F23 目标为 Mica）
+├─ settingsWin  正常可聚焦、Win11 Mica 与不透明中性回落
 └─ historyWin   正常可聚焦/缩放、终态文本复盘与导出
 
 运行窗口
@@ -105,7 +105,7 @@ Electron 壳层负责：
 设置窗与字幕历史：
 
 - `frame: false` / hidden title bar。
-- 当前设置窗与字幕历史仍使用 `backgroundMaterial: 'acrylic'`，这是 SEM-F23 登记后的明确实现缺口。J18 实施时两窗改为 `transparent: false` 与 `backgroundMaterial: 'mica'`；系统不支持、窗口失焦或系统高对比时由 renderer 的不透明中性表面保证可读。Mica 是长期窗口基底，不用于字幕窗或工具条透明覆盖层。
+- 设置窗与字幕历史使用 `transparent: false` 与 `backgroundMaterial: 'mica'`；系统不支持、窗口失焦或系统高对比时由 renderer 的不透明中性表面保证可读。Mica 是长期窗口基底，不用于字幕窗或工具条透明覆盖层。确定性测试只证明配置与回落表面，真实 Mica 合成仍沿 J15a/I2 实机观察。
 - 设置窗当前决定 `resizable: false`；若未来设置内容明显增长，再由 UI 与壳层共同评审是否允许缩放。
 - 继续使用主进程手动拖动，保持 SEM-F22 的取消路径、焦点层级和窗口角色边界一致；材质替换不改成隐藏的整页抓取区。
 - 两窗的顶部标题栏统一为 `48px`。只有标题栏的非交互区域可发出拖动意图，正文空白区不隐式拖动。

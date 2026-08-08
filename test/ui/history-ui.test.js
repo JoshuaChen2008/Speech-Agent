@@ -189,6 +189,31 @@ test('SEM-F11/J10: whole-session refinement metadata controls fallback and persi
   assert.equal(document.querySelector('#rangeStatus').textContent, '第 51–51 条，共 51 条')
 })
 
+test('SEM-F23/J18: React history exposes a bounded read failure and retries the same authoritative page', async (t) => {
+  const harness = await createHarness(); t.after(() => harness.dispose())
+  await act(async () => click(document.querySelector('[data-session-id="session-b"]')))
+  assert.equal(harness.pageRequests.length, 1)
+
+  await act(async () => harness.pageRequests[0].request.reject(new Error('controlled history read failure')))
+  await flush()
+  assert.equal(document.querySelector('#rangeStatus').textContent, '读取失败，请重试')
+  assert.equal(document.querySelector('#timeline').getAttribute('aria-busy'), 'false')
+  assert.equal(document.querySelector('#retryPage').hidden, false)
+  assert.equal(document.querySelectorAll('#timeline .timeline-item').length, 0)
+
+  await act(async () => click(document.querySelector('#retryPage')))
+  assert.equal(harness.pageRequests.length, 2)
+  assert.equal(harness.pageRequests[1].sessionId, 'session-b')
+  assert.equal(harness.pageRequests[1].cursor, null)
+  await act(async () => harness.pageRequests[1].request.resolve(
+    pageValue(harness.sessions[1], 1, [segment('retry', 0)], null, refinement(1, 1))
+  ))
+  await flush()
+  assert.equal(document.querySelector('#rangeStatus').textContent, '第 1–1 条，共 1 条')
+  assert.equal(document.querySelector('#retryPage').hidden, true)
+  assert.equal(document.querySelectorAll('#timeline .timeline-item').length, 1)
+})
+
 test('history preload remains a narrow IPC facade', () => {
   const preload = source('src/preload/history.js')
   assert.match(preload, /listSessions/)
