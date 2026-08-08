@@ -11,7 +11,7 @@
 可见窗口
 ├─ captionWin   透明、不可聚焦、常驻置顶
 ├─ toolbarWin   透明、可交互、常驻置顶
-├─ settingsWin  正常可聚焦、Win11 acrylic
+├─ settingsWin  正常可聚焦、当前 Win11 Acrylic（SEM-F23 目标为 Mica）
 └─ historyWin   正常可聚焦/缩放、终态文本复盘与导出
 
 运行窗口
@@ -105,12 +105,13 @@ Electron 壳层负责：
 设置窗与字幕历史：
 
 - `frame: false` / hidden title bar。
-- 设置窗使用 `transparent: false` 与 `backgroundMaterial: 'acrylic'`；字幕历史保持正常可聚焦/缩放窗口语义。
+- 当前设置窗与字幕历史仍使用 `backgroundMaterial: 'acrylic'`，这是 SEM-F23 登记后的明确实现缺口。J18 实施时两窗改为 `transparent: false` 与 `backgroundMaterial: 'mica'`；系统不支持、窗口失焦或系统高对比时由 renderer 的不透明中性表面保证可读。Mica 是长期窗口基底，不用于字幕窗或工具条透明覆盖层。
 - 设置窗当前决定 `resizable: false`；若未来设置内容明显增长，再由 UI 与壳层共同评审是否允许缩放。
-- 使用主进程手动拖动，避免 app-region 与 DWM acrylic 重绘不同步。
+- 继续使用主进程手动拖动，保持 SEM-F22 的取消路径、焦点层级和窗口角色边界一致；材质替换不改成隐藏的整页抓取区。
 - 两窗的顶部标题栏统一为 `48px`。只有标题栏的非交互区域可发出拖动意图，正文空白区不隐式拖动。
 - 两窗获得焦点时临时执行 `setAlwaysOnTop(true, 'screen-saver')` 并 `moveTop()`，保证位于字幕和工具条之上；失焦时立即恢复普通层级。关闭、销毁与异常路径也必须恢复，不能形成永久置顶窗口。
 - 设置与字幕历史标题栏均为 `48px`，并已接入上述焦点层级往返。
+- 纯位移更新只在坐标实际变化时调用窗口移动 API；拖动 tick 不重复执行多窗 `moveTop()`，层级恢复只在拖动开始/结束、焦点或窗口拓扑变化时执行。
 
 ## 5. 拖动与穿透
 
