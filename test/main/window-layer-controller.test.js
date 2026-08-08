@@ -128,13 +128,13 @@ test('SEM-F22/J17: a failed demotion cannot block the next focused normal window
   assert.deepEqual(faults, [{ role: 'settings', code: 'demote-failed' }])
 })
 
-test('SEM-F22/J17: main routes every foreground and overlay z-order entry through the controller', () => {
+test('SEM-F22/J17 and SEM-F24/J19: main routes z-order and app visibility through their controllers', () => {
   const main = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8')
 
   assert.match(main, /new WindowLayerController\(\{/)
   assert.match(main, /windowLayerController\.bindForegroundWindow\(settingsWin, 'settings'\)/)
   assert.match(main, /windowLayerController\.bindForegroundWindow\(historyWin, 'history'\)/)
   assert.match(main, /function dock \(\{ restoreStack = true \} = \{\}\)[\s\S]*if \(!sameBounds\([\s\S]*if \(restoreStack\) windowLayerController\.restoreWindowStack\(\)/)
-  assert.match(main, /settingsWin\.show\(\)[\s\S]*settingsWin\.focus\(\)/)
-  assert.match(main, /historyWin\.show\(\)[\s\S]*historyWin\.focus\(\)/)
+  assert.match(main, /applicationWindowLifecycleController\.showAuxiliaryWindow\(settingsWin, 'settings'\)/)
+  assert.match(main, /applicationWindowLifecycleController\.showAuxiliaryWindow\(historyWin, 'history'\)/)
 })

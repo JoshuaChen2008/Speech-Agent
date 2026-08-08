@@ -190,3 +190,17 @@ test('SEM-F22/J17: toolbar reports its existing contour with the main-issued gen
     rect: { x: 184, y: 16, width: 400, height: 40 }
   }])
 })
+
+test('SEM-F24/J19: toolbar exposes an accessible Fluent minimize action', async () => {
+  const { actions, elements } = createHarness()
+  await flush()
+
+  const minimize = elements.get('windowControls').children
+    .find((child) => child.dataset.act === 'minimize')
+  assert.ok(minimize)
+  assert.equal(minimize.getAttribute('aria-label'), '最小化')
+  assert.equal(minimize.title, '最小化')
+
+  for (const callback of elements.get('toolbar').listeners.get('click')) callback({ target: minimize })
+  assert.deepEqual(actions, ['minimize'])
+})

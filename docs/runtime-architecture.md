@@ -24,6 +24,8 @@
 - 四个可见窗口（字幕、工具条、设置、历史）与隐藏 audio host 的创建、销毁和恢复。
 - 字幕/工具条停靠、拖动、穿透、多显示器和 DPI。
 - 分别追踪 visible windows 与 runtime windows；不使用 `BrowserWindow.getAllWindows().length` 判断是否应重建 UI。
+- 工具条是带稳定标题和 AppUserModelID 的持续主任务栏窗口；字幕覆盖窗不占任务栏。主窗口原生事件、renderer 按钮与第二实例统一进入应用级最小化/恢复控制器，恢复最小化前的可见窗口集合、bounds 和焦点层级而不改变会话。
+- 设置与字幕历史关闭只销毁对应辅助窗口；Windows 关闭主任务栏窗口或工具条“退出”统一请求应用退出屏障，屏障失败时保留可从任务栏恢复的主窗口。
 - 关闭、睡眠唤醒和退出时协调 session flush 与 worker 清理。
 
 产品的普通 `npm start` 由 exact-child supervisor 启动 Electron。主进程只向 supervisor
@@ -268,8 +270,10 @@ realtime/refine worker
 - 字幕应用运行时以 **45 秒**作为优雅收束结束/升级触发线，用于容纳 worker 的两阶段收束、字幕 flush 与 storage shutdown；ModelManager 的 **5 秒**收束与它并行。触线后进入 termination，但仍必须等待 exact child 收殓，因此 45 秒不是硬退出上限。迟到的原始 shutdown 会加入同一 termination promise，不得再次 flush/关闭或启动第二条退出路径。
 - 所有 UtilityProcess 都必须注册 `error` listener；fatal 诊断只发布固定角色和类型，不保存 Electron/V8 report、location、本地路径、stack、字幕或 PCM。`serviceName` 用于主进程的角色级 `child-process-gone` 归因，不把原始 details 透给 renderer；可见 renderer 与隐藏 audio host 由各自 WebContents role 归因。
 - 可见 renderer 重载：读取完整 snapshot 和当前 caption state，不依赖历史广播。
+- 应用级最小化：立即收尾拖动/拉伸，隐藏字幕并最小化当时可见的设置/字幕历史；采集、会话、互斥音频来源、持久化和 RuntimeSnapshot 继续运行。任务栏恢复、辅助窗口恢复或第二实例只恢复原窗口集合与层级，不创建新会话。
 - 系统睡眠/唤醒：挂起时发布 `SYSTEM_SUSPEND` 并释放 media tracks；唤醒后只校正单调时间基准并保留 session gap，不自动重新采集。用户明确 Retry 后才沿同一会话/cursor 重建 audio host、worker 与 media tracks。实际设备轨道结束同理发布 `AUDIO_TRACK_ENDED`、先释放 capture、等待设备恢复与明确 Retry。
 - 退出：停止接收命令 → 停 tracks → 处理/放弃实时队列 → 提交/报告字幕事务 → 有界 checkpoint → graceful shutdown workers → 必要时只终止并收殓 exact child → 关闭窗口。Agent 未完成任务按 A1 的可靠消费协议保留，不能无限阻塞退出；禁止按进程名批量结束 Electron。
+- 主任务栏窗口的原生关闭在退出屏障释放前始终 `preventDefault`；收束异常允许以同一主入口重试，不能先销毁入口再留下 taskbarless 后台进程。屏障确认完成后才允许 Electron 关闭窗口并让 exact-child supervisor 自然返回。
 
 2026-07-31 的真实模型活跃诊断已用批准 bundle 连续三轮驱动 online stream、Silero VAD
 和 offline refine，六个 realtime/refine 子进程均优雅 `exitCode=0`、fatal 0。随后 I2

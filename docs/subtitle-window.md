@@ -1,6 +1,6 @@
 # 字幕与工具条窗口规范
 
-> 状态：Rev.5 · 2026-08-08
+> 状态：Rev.6 · 2026-08-09
 > 本文只描述当前 Electron 窗口壳、交互不变量和视觉验收边界。具体视觉方案由 [ui-design-brief.md](ui-design-brief.md) 管理；运行状态和数据来自 [runtime-architecture.md](runtime-architecture.md)。
 
 ## 1. 当前结构
@@ -10,7 +10,7 @@
 ```text
 可见窗口
 ├─ captionWin   透明、不可聚焦、常驻置顶
-├─ toolbarWin   透明、可交互、常驻置顶
+├─ toolbarWin   透明、可交互、常驻置顶、主任务栏窗口
 ├─ settingsWin  正常可聚焦、Win11 Mica 与不透明中性回落
 └─ historyWin   正常可聚焦/缩放、终态文本复盘与导出
 
@@ -22,6 +22,9 @@
 - 已锁定：字幕窗恒穿透；工具条脱离并保持可交互，可用于暂停或解锁。
 - 解锁入口是工具条和 `Ctrl+Alt+L`，字幕窗内不再保留不可见 hotzone。
 - 历史与导出使用独立 `historyWin`；模型资源和首启也不展开在字幕透明窗内。
+- 工具条使用稳定的 `Live Subtitle` 标题和 Windows AppUserModelID，作为持续存在的主任务栏入口；不可聚焦字幕窗不单独占用任务栏。
+- 工具条或任务栏最小化是应用级窗口动作：隐藏字幕，并最小化当时可见的设置/字幕历史；恢复时回到同一可见窗口集合、bounds 与前台层级，不改变当前会话或 RuntimeSnapshot。
+- 设置与字幕历史的关闭仍是局部关闭；工具条“退出”或 Windows 关闭主任务栏窗口才进入应用退出屏障。
 
 本文同时记录窗口交互要求、已达到联合验收完成的确定性范围与仍待 I2 实机验收的外部边界。凡代码现状与要求不同，均按 [SEM-F22](semantic-contract.md) 与 [J17](testing-strategy.md) 视为实现缺口，不得把当前行为反向写成要求。
 
@@ -64,8 +67,8 @@ Electron 壳层负责：
 
 工具条宽度的由来：窗口按**最坏情况**固定，条自适应收窄，窗内**右对齐**。
 
-- **窗口宽 ≠ 遮挡宽。** 常态（idle / listening / paused / starting / stopping）条只有 **287–319**，其余区域全透明且逐像素穿透。
-- 最坏是 `error` 态（图标 + 说明文字 + 开始/停止/重试/下一步），Electron @125% DPI 实测 544。说明文字有 160px 上限，故理论上界约 554，取 568 留 14 余量。
+- **窗口宽 ≠ 遮挡宽。** 常态（idle / listening / paused / starting / stopping）加入最小化按钮后约 **319–351**，其余区域全透明且逐像素穿透。
+- `error` 态会同时出现图标、说明文字、开始/停止/重试/下一步和窗口控制；内容盒上界仍固定为 568，状态区是唯一可压缩区域并先打省略号，握把、命令和历史/锁定/设置/最小化/退出不会换行或被裁掉。
 - 右对齐是关键：`dock()` 按 `窗口右沿 − TB_MARGIN` 反推位置，右对齐后这个假设与实际渲染恒等，**条多宽都不影响停靠精度**，公式一行没改。
 - `#toolbar.toolbar` 是 `flex-wrap: nowrap`、`.bar-group` 是 `flex: none`，挤压只落在状态文字上（打省略号），不会把「重试 / 下一步」这些出口压没，也不会换行成两层条。
 
@@ -88,8 +91,6 @@ Electron 壳层负责：
   backgroundColor: '#00000000',
   resizable: false,
   maximizable: false,
-  minimizable: false,
-  skipTaskbar: true,
   alwaysOnTop: true,
   hasShadow: false,
   webPreferences: {
@@ -100,7 +101,9 @@ Electron 壳层负责：
 }
 ```
 
-字幕窗额外 `focusable: false`。两个窗口使用 `setAlwaysOnTop(true, 'screen-saver')` 和全屏 workspace 可见配置。
+字幕窗额外使用 `focusable: false`、`minimizable: false`、`skipTaskbar: true`。工具条使用稳定标题、`minimizable: true`、`skipTaskbar: false`，并在真实轮廓内提供带可访问名称的 Fluent 最小化按钮。两个窗口使用 `setAlwaysOnTop(true, 'screen-saver')` 和全屏 workspace 可见配置。
+
+主任务栏窗口的原生 `minimize` / `restore` 事件与 renderer 最小化按钮进入同一 `ApplicationWindowLifecycleController`。控制器只保存有界内存中的窗口角色、可见性与焦点引用，不保存字幕正文、设备名或路径；最小化前先收尾进行中的拖动/拉伸，恢复时不改 bounds。若辅助窗口最小化失败，必须回滚已隐藏窗口并保留可访问的主任务栏入口；若恢复中途失败，主窗口先恢复并记录固定 `role/code`，允许用户重试或退出。
 
 设置窗与字幕历史：
 
@@ -226,6 +229,7 @@ renderer 在可拖区域发出 `dragStart(role)` 意图，主进程通过全局�
 - partial 高频更新不产生明显 layout thrash 或持续 DOM 分配。
 - 无持续大面积 `backdrop-filter`；常驻透明窗动效遵守 reduced motion。
 - 工具条在常态、锁定、监听和错误时均可发现、可键盘操作。
+- 工具条持续提供 Windows 主任务栏入口；最小化/任务栏恢复保持当前会话、RuntimeSnapshot、窗口集合与 bounds，单独关闭设置/字幕历史不退出，关闭主窗口进入 SEM-F12 退出序列。
 - 解锁字幕卡除 `8px` 拉伸带和工具条真实轮廓外可从连续点位立即拖动；透明外边距仍穿透，原地点击零位移，工具条只由明确握把拖动。
 - 工具条 quiet / attention / 会话状态通知宽度变化、首帧、reload、非法与陈旧矩形回落均不产生断续抓取区。
 - 设置与字幕历史聚焦时位于字幕和工具条之上，失焦后恢复普通层级；两窗的 `48px` 标题栏可拖且全部交互控件与正文不触发拖动。

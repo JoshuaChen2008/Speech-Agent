@@ -152,6 +152,7 @@ const SUPPORTED: Record<string, () => unknown> = {
   'dismiss-refinement-notice': () => bridge.action('dismiss-refinement-notice'),
   lock: () => bridge.lockToggle(),
   settings: () => bridge.action('settings'),
+  minimize: () => bridge.action('minimize'),
   close: () => bridge.action('close')
 }
 const UNSUPPORTED_REASON = '功能尚未接入'
@@ -302,6 +303,7 @@ const WINDOW_CONTROLS = [
   { act: 'history', icon: 'history', label: '历史记录' },
   { act: 'lock', icon: 'unlock', label: '锁定字幕', toggle: true },
   { act: 'settings', icon: 'settings', label: '设置' },
+  { act: 'minimize', icon: 'minimize', label: '最小化' },
   { act: 'close', icon: 'close', label: '退出', danger: true }
 ]
 

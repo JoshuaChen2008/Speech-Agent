@@ -48,6 +48,11 @@ const {
 } = require('./main/window-layout-contract')
 const { WindowLayerController } = require('./main/window-layer-controller')
 const {
+  ApplicationWindowLifecycleController,
+  WINDOWS_APP_USER_MODEL_ID,
+  overlayApplicationOptions
+} = require('./main/application-window-lifecycle-controller')
+const {
   ManualWindowInteractionController,
   sameBounds
 } = require('./main/manual-window-interaction-controller')
@@ -97,6 +102,15 @@ const windowInteractionController = new ManualWindowInteractionController({
   getCaptionLimits: captionLimits,
   dock,
   onCaptionResizeEnd: persistCaptionBounds
+})
+const applicationWindowLifecycleController = new ApplicationWindowLifecycleController({
+  getCaptionWindow: () => captionWin,
+  getToolbarWindow: () => toolbarWin,
+  getSettingsWindow: () => settingsWin,
+  getHistoryWindow: () => historyWin,
+  stopInteractions: () => windowInteractionController.stopAll(),
+  restoreWindowStack: () => windowLayerController.restoreWindowStack(),
+  onFault: ({ role, code }) => console.error(`[window.lifecycle] role=${role} code=${code}`)
 })
 const CHILD_SERVICE_LABELS = Object.freeze([
   'Speech Agent realtime ASR',
@@ -245,8 +259,7 @@ function makeOverlay (role, width, height, x, y, focusable = true) {
     backgroundColor: '#00000000',
     resizable: false,
     maximizable: false,
-    minimizable: false,
-    skipTaskbar: true,
+    ...overlayApplicationOptions(role),
     alwaysOnTop: true,
     hasShadow: false,
     focusable,
@@ -310,17 +323,35 @@ function createWindows () {
   captionWin = makeOverlay('caption', capW, capH, cx, cy, false)
   captionWin.setResizable(true)
   toolbarWin = makeOverlay('toolbar', TB_W, TB_H, cx, cy, true)
+  applicationWindowLifecycleController.bindPrimaryWindow(toolbarWin)
 
   captionWin.webContents.on('console-message', (details) => console.log('[caption]', details.message))
   toolbarWin.webContents.on('console-message', (details) => console.log('[toolbar]', details.message))
   captionWin.webContents.on('did-finish-load', () => publishToolbarOverlap())
 
   const restoreWindowStack = () => windowLayerController.restoreWindowStack()
-  captionWin.once('ready-to-show', () => { captionWin.show(); restoreWindowStack() })
-  toolbarWin.once('ready-to-show', () => { toolbarWin.show(); dock() })
+  let captionReady = false
+  let toolbarReady = false
+  let overlayPairShown = false
+  const showOverlayPair = () => {
+    if (overlayPairShown || !captionReady || !toolbarReady ||
+        !captionWin || captionWin.isDestroyed() || !toolbarWin || toolbarWin.isDestroyed()) return
+    overlayPairShown = true
+    captionWin.show()
+    toolbarWin.show()
+    dock()
+    restoreWindowStack()
+  }
+  captionWin.once('ready-to-show', () => { captionReady = true; showOverlayPair() })
+  toolbarWin.once('ready-to-show', () => { toolbarReady = true; showOverlayPair() })
   setTimeout(restoreWindowStack, 300)
 
   captionWin.on('closed', () => { windowInteractionController.stopAll(); captionWin = null })
+  toolbarWin.on('close', (event) => {
+    if (quitBarrierComplete) return
+    event.preventDefault()
+    app.quit()
+  })
   toolbarWin.on('closed', () => { windowInteractionController.stopAll(); toolbarWin = null })
 }
 
@@ -333,9 +364,7 @@ function dock ({ restoreStack = true } = {}) {
 
 function openSettingsWindow (initialPane = null) {
   if (settingsWin && !settingsWin.isDestroyed()) {
-    if (settingsWin.isMinimized()) settingsWin.restore()
-    settingsWin.show()
-    settingsWin.focus()
+    applicationWindowLifecycleController.showAuxiliaryWindow(settingsWin, 'settings')
     if (initialPane) send(settingsWin, CHANNELS.SETTINGS_NAVIGATE, initialPane)
     return
   }
@@ -357,12 +386,12 @@ function openSettingsWindow (initialPane = null) {
     }
   })
   registerWindowRole(settingsWin, 'settings')
+  applicationWindowLifecycleController.bindAuxiliaryWindow(settingsWin, 'settings')
   windowLayerController.bindForegroundWindow(settingsWin, 'settings')
   hardenContents(settingsWin)
   settingsWin.webContents.on('console-message', (details) => console.log('[settings]', details.message))
   settingsWin.once('ready-to-show', () => {
-    settingsWin.show()
-    settingsWin.focus()
+    applicationWindowLifecycleController.showAuxiliaryWindow(settingsWin, 'settings')
     if (initialPane) send(settingsWin, CHANNELS.SETTINGS_NAVIGATE, initialPane)
   })
   settingsWin.on('closed', () => { windowInteractionController.stopAll(); settingsWin = null })
@@ -373,9 +402,7 @@ function openSettingsWindow (initialPane = null) {
 function openHistoryWindow () {
   if (!historyService) return
   if (historyWin && !historyWin.isDestroyed()) {
-    if (historyWin.isMinimized()) historyWin.restore()
-    historyWin.show()
-    historyWin.focus()
+    applicationWindowLifecycleController.showAuxiliaryWindow(historyWin, 'history')
     return
   }
   historyWin = new BrowserWindow({
@@ -399,12 +426,12 @@ function openHistoryWindow () {
     }
   })
   registerWindowRole(historyWin, 'history')
+  applicationWindowLifecycleController.bindAuxiliaryWindow(historyWin, 'history')
   windowLayerController.bindForegroundWindow(historyWin, 'history')
   hardenContents(historyWin)
   historyWin.webContents.on('console-message', (details) => console.log('[history]', details.message))
   historyWin.once('ready-to-show', () => {
-    historyWin.show()
-    historyWin.focus()
+    applicationWindowLifecycleController.showAuxiliaryWindow(historyWin, 'history')
   })
   historyWin.on('closed', () => { windowInteractionController.stopAll(); historyWin = null })
   void loadRendererFailClosed(historyWin, 'history', { isPackaged: app.isPackaged })
@@ -663,6 +690,7 @@ ipcMain.on(CHANNELS.TOOLBAR_ACTION, (event, action) => {
     refinementNoticeStore.clear()
     openHistoryWindow()
   } else if (action === 'dismiss-refinement-notice') refinementNoticeStore.clear()
+  else if (action === 'minimize') applicationWindowLifecycleController.minimize()
   else if (action === 'close') app.quit()
 })
 ipcMain.on(CHANNELS.SETTINGS_CLOSE, (event) => {
@@ -909,12 +937,9 @@ if (!hasSingleInstanceLock) {
   app.once('will-quit', () => exitEvidence.markLifecycle('will-quit'))
   app.quit()
 } else {
+  if (process.platform === 'win32') app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID)
   app.on('second-instance', () => {
-    const primary = toolbarWin || captionWin
-    if (!primary || primary.isDestroyed()) return
-    if (primary.isMinimized()) primary.restore()
-    primary.show()
-    primary.focus()
+    applicationWindowLifecycleController.restoreOrShow()
   })
   app.on('child-process-gone', (_event, details) => {
     /* serviceName distinguishes our utilities; type distinguishes Chromium
@@ -937,7 +962,8 @@ if (!hasSingleInstanceLock) {
     if (process.platform !== 'darwin') app.quit()
   })
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0 && coordinator && !quitBarrierPromise) createWindows()
+    if ((!toolbarWin || toolbarWin.isDestroyed()) && coordinator && !quitBarrierPromise) createWindows()
+    else applicationWindowLifecycleController.restoreOrShow()
   })
   app.whenReady().then(async () => {
     exitEvidence.markLifecycle('app-ready')

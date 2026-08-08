@@ -7,6 +7,7 @@ import history from '@fluentui/svg-icons/icons/history_20_regular.svg?raw'
 import key from '@fluentui/svg-icons/icons/key_20_regular.svg?raw'
 import lockClosed from '@fluentui/svg-icons/icons/lock_closed_20_regular.svg?raw'
 import lockOpen from '@fluentui/svg-icons/icons/lock_open_20_regular.svg?raw'
+import minimize from '@fluentui/svg-icons/icons/subtract_20_regular.svg?raw'
 import pause from '@fluentui/svg-icons/icons/pause_20_regular.svg?raw'
 import play from '@fluentui/svg-icons/icons/play_20_regular.svg?raw'
 import power from '@fluentui/svg-icons/icons/power_20_regular.svg?raw'
@@ -36,6 +37,7 @@ const ICONS: Readonly<Record<string, string>> = Object.freeze({
   history,
   lock: lockClosed,
   unlock: lockOpen,
+  minimize,
   close: dismiss
 })
 
