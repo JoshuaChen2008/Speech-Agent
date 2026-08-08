@@ -12,15 +12,16 @@ function read (relativePath) {
 }
 
 test('settings expose separate core and optional refinement resource controls without resource internals', () => {
-  const html = read('src/settings/settings.html')
-  const paneStart = html.indexOf('<section class="pane" data-pane="resources">')
-  const paneEnd = html.indexOf('<!-- 关于 -->', paneStart)
+  const html = read('src/settings/settings-view.tsx')
+  const paneStart = html.indexOf('data-pane="resources"')
+  const paneEnd = html.indexOf('data-pane="about"', paneStart)
   const pane = html.slice(paneStart, paneEnd)
 
   assert.ok(paneStart >= 0)
-  assert.match(html, /class="nav-item" data-pane="resources">模型资源/)
+  assert.match(html, /\['resources', '模型资源'\]/)
+  const resourceCopy = html.slice(html.indexOf('const RESOURCE_COPY'), html.indexOf('] as const', html.indexOf('const RESOURCE_COPY')))
   assert.deepEqual(
-    [...pane.matchAll(/data-resource-id="([^"]+)"/g)].map((match) => match[1]),
+    [...resourceCopy.matchAll(/\['([^']+)', '[^']+', '[^']+'\]/g)].map((match) => match[1]),
     ['zipformer-bilingual-zh-en-2023-02-20', 'x-asr-160ms', 'silero-vad', 'x-asr-offline']
   )
   assert.equal((pane.match(/id="modelInstallButton"/g) || []).length, 1)
@@ -39,12 +40,32 @@ test('settings expose separate core and optional refinement resource controls wi
 })
 
 test('MVP settings do not advertise the deferred translation capability', () => {
-  const html = read('src/settings/settings.html')
-  const script = read('src/settings/settings.js')
+  const html = read('src/settings/settings-view.tsx')
+  const script = html
 
   assert.doesNotMatch(html, /显示双语译文|data-toggle="bilingual"/)
   assert.doesNotMatch(script, /setToggle\('bilingual'|next\.bilingual|data-toggle/)
   assert.match(html, /不包含 Agent、翻译或大语言模型/)
+})
+
+test('SEM-F23/J18: settings production entry mounts a React TypeScript view on an opaque Mica fallback', () => {
+  const html = read('src/settings/settings.html')
+  const entry = read('src/settings/entry.tsx')
+  const view = read('src/settings/settings-view.tsx')
+  const styles = read('src/settings/settings.css')
+  const tokens = read('src/ui/shared/tokens.css')
+  const main = read('src/main.js')
+
+  assert.match(html, /id="root"/)
+  assert.match(html, /src="\.\/entry\.tsx"/)
+  assert.match(entry, /createRoot\(root\)\.render\(<SettingsView \/>\)/)
+  assert.match(view, /useState<Dict \| null>/)
+  assert.match(view, /onClick=\{\(\) => void install\('core'\)\}/)
+  assert.doesNotMatch(view, /settings-markup|dangerouslySetInnerHTML=\{\{ __html: template\.innerHTML/)
+  assert.match(main, /function openSettingsWindow[\s\S]*backgroundMaterial: 'mica'[\s\S]*backgroundColor: '#202020'/)
+  assert.match(tokens, /--surface-settings: rgb\(32, 32, 32\)/)
+  assert.match(tokens, /--surface-settings: rgb\(243, 243, 243\)/)
+  assert.doesNotMatch(styles, /backdrop-filter|backgroundMaterial:'acrylic'/)
 })
 
 test('settings preload grants only fixed model actions and a boolean-only refinement preference', () => {
@@ -64,21 +85,21 @@ test('settings preload grants only fixed model actions and a boolean-only refine
 })
 
 test('resource renderer follows the public state contract and keeps errors path-safe', () => {
-  const script = read('src/settings/settings.js')
+  const script = read('src/settings/settings-view.tsx')
 
   assert.match(script, /\['missing', 'downloading', 'verifying', 'ready', 'error'\]/)
-  assert.match(script, /group\.state === 'downloading' \|\| group\.state === 'verifying'/)
-  assert.match(script, /runtimeSnapshot !== null && runtimeSnapshot\.sessionId !== null/)
-  assert.match(script, /window\.shell\.installRefinementModel\(\)/)
-  assert.match(script, /window\.shell\.cancelModelInstall\(\)/)
-  assert.match(script, /window\.shell\.setRefinementPreference\(enabled\)/)
-  assert.match(script, /modelGroup\('core'\)/)
-  assert.match(script, /modelGroup\('refinement'\)/)
-  assert.match(script, /refinement\.downloadedBytes > 0/)
+  assert.match(script, /\['downloading', 'verifying'\]\.includes\(core\.state\)/)
+  assert.match(script, /runtime\?\.sessionId != null/)
+  assert.match(script, /shell\.installRefinementModel\(\)/)
+  assert.match(script, /shell\.cancelModelInstall\(\)/)
+  assert.match(script, /shell\.setRefinementPreference\(enabled\)/)
+  assert.match(script, /models\?\.core \?\? fallbackGroup\(\)/)
+  assert.match(script, /models\?\.refinement \?\? fallbackGroup\(\)/)
+  assert.match(script, /kind === 'refinement' && group\.downloadedBytes > 0/)
   assert.match(script, /sessionActive \|\| anyBusy/)
-  assert.match(script, /window\.shell\.installModelResources\(\)/)
-  assert.match(script, /window\.shell\.onNavigate\(\(pane\) => activatePane/)
-  assert.match(script, /error\.textContent = group\.error === null \? '' : safeModelErrorMessage\(group\.error\)/)
+  assert.match(script, /shell\.installModelResources\(\)/)
+  assert.match(script, /shell\.onNavigate/)
+  assert.match(script, /safeModelErrorMessage\(group\.error\)/)
   assert.doesNotMatch(script, /(?:next|modelStatus)\.error\.message/)
 })
 

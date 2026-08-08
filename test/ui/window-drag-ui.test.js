@@ -308,21 +308,21 @@ test('SEM-F22/J17: titlebar drag excludes the complete interactive composed path
 test('SEM-F22/J17: settings and subtitle history share a 48px structural titlebar and bind no body drag surface', () => {
   const settingsHtml = source('src/settings/settings.html')
   const historyHtml = source('src/history/index.html')
-  const settingsEntry = source('src/settings/entry.js')
+  const settingsEntry = source('src/settings/entry.tsx')
   const historyEntry = source('src/history/entry.js')
-  const settingsScript = source('src/settings/settings.js')
+  const settingsScript = source('src/settings/settings-view.tsx')
   const historyScript = source('src/history/history.js')
   const settingsStyles = source('src/settings/settings.css')
   const historyStyles = source('src/history/history.css')
   const tokens = source('src/ui/shared/tokens.css')
 
-  assert.match(settingsHtml, /<script type="module" src="\.\/entry\.js"><\/script>/)
+  assert.match(settingsHtml, /<script type="module" src="\.\/entry\.tsx"><\/script>/)
   assert.match(historyHtml, /<script type="module" src="\.\/entry\.js"><\/script>/)
-  assert.match(settingsEntry, /manual-window-drag\.js[\s\S]*settings\.js/)
+  assert.match(settingsEntry, /manual-window-drag\.js[\s\S]*SettingsView/)
   assert.match(historyEntry, /manual-window-drag\.js[\s\S]*history\.js/)
   for (const script of [settingsScript, historyScript]) {
-    assert.match(script, /bindManualWindowDrag\(\{[\s\S]*handle: titlebar/)
-    assert.match(script, /canStart: \(event\) => !manualWindowDrag\.isInteractiveDragEvent\(event\)/)
+    assert.match(script, /bindManualWindowDrag\(\{[\s\S]*handle: titlebar(?:\.current)?/)
+    assert.match(script, /canStart: \(event(?:: Event)?\) => !(?:manualWindowDrag|drag)\.isInteractiveDragEvent\(event\)/)
     assert.doesNotMatch(script, /titlebar\.addEventListener\('pointerdown'/)
     assert.doesNotMatch(script, /document\.(?:body|documentElement)\.addEventListener\('pointerdown'/)
   }

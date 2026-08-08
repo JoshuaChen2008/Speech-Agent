@@ -86,8 +86,8 @@
   --toolbar-bg: var(--c-ink-950);
   --surface-toolbar: rgba(var(--toolbar-bg), var(--toolbar-alpha));
 
-  /* 设置窗：整页近乎透明，让 DWM acrylic 透上来 */
-  --surface-settings: rgba(var(--c-white), 0.04);
+  /* 长期窗口表面：DWM Mica 不可用或高对比接管时仍保持不透明可读。 */
+  --surface-settings: rgb(32, 32, 32);
   --surface-window-titlebar: rgba(var(--c-black), 0.18);
   --border-window-titlebar: rgba(var(--c-white), 0.10);
   --fg: var(--c-fog);
@@ -122,7 +122,7 @@
 :root[data-theme="light"] {
   --bar-bg: var(--c-paper-50);
   --toolbar-bg: var(--c-paper-0);
-  --surface-settings: rgba(var(--c-black), 0.04);
+  --surface-settings: rgb(243, 243, 243);
   --surface-window-titlebar: rgba(var(--c-black), 0.08);
   --border-window-titlebar: rgba(var(--c-black), 0.12);
   --fg: var(--c-slate-text);
@@ -303,5 +303,6 @@
     --focus-color: Highlight;
     --surface-window-titlebar: Canvas;
     --border-window-titlebar: CanvasText;
+    --surface-settings: Canvas;
   }
 }

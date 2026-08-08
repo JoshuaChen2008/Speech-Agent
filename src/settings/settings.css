@@ -1,15 +1,16 @@
 /* ==========================================================================
-   设置窗（矩形面板 + Win11 真·亚克力）
-   背景由 DWM backgroundMaterial:'acrylic' 提供，页面自身保持半透明即可。
+   设置窗（React 视图 + Win11 Mica）
+   DWM 不支持 Mica、窗口失焦或高对比接管时，由不透明中性表面兜底。
    视觉 token 来自 ../ui/shared/tokens.css。
    ========================================================================== */
 
 * { box-sizing: border-box; }
 
+#root, .settings-app { height: 100%; }
+
 html, body {
   margin: 0;
   height: 100%;
-  /* 让亚克力透出来：整页近乎透明，只铺一层极淡的底 */
   background: var(--surface-settings);
   color: rgb(var(--fg));
   font-family: var(--font-ui);
@@ -55,6 +56,7 @@ html, body {
 }
 .tb-close svg { width: 17px; height: 17px; }
 .tb-close:hover { background: var(--danger-solid); color: var(--on-danger); }
+.tb-close:active { transform: scale(0.96); }
 
 /* 布局 */
 .layout {
@@ -195,6 +197,8 @@ h1 { font-size: var(--fs-title); font-weight: var(--fw-bold); margin: 14px 0 4px
   cursor: pointer;
 }
 .primary-btn:disabled { opacity: 0.42; cursor: not-allowed; }
+.primary-btn:not(:disabled):active, .secondary-btn:not(:disabled):active,
+.preset-card:not(:disabled):active { transform: scale(0.98); }
 .secondary-btn {
   padding: 7px 12px;
   border: 1px solid rgba(var(--fg), 0.2);
@@ -351,4 +355,9 @@ input[type="range"]::-webkit-slider-thumb {
   .group, .seg, .resource-list, .model-progress, .secondary-btn { border: 1px solid CanvasText; }
   .seg button.on { border: 2px solid Highlight; }
   .nav-item.active, .preset-card:hover { border: 1px solid Highlight; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane { animation: none; }
+  .tb-close:active, .primary-btn:active, .secondary-btn:active, .preset-card:active { transform: none; }
 }
