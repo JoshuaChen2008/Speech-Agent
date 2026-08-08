@@ -12,7 +12,8 @@ const fs = require('node:fs')
 const fsp = require('node:fs/promises')
 const path = require('node:path')
 const crypto = require('node:crypto')
-const { app, BrowserWindow, dialog, nativeTheme, screen, utilityProcess } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, nativeTheme, screen, utilityProcess } = require('electron')
+const CHANNELS = require('../src/main/ipc/channels')
 const modelManagerModule = require('../src/main/services/model-manager')
 const modelRuntimeModule = require('../src/main/services/model-runtime')
 const { FakeRuntimeAdapter } = require('../src/main/session/fake-runtime-adapter')
@@ -170,6 +171,116 @@ function rendererValue (win, expression) {
 function sameWindowBounds (left, right) {
   return left.x === right.x && left.y === right.y &&
     left.width === right.width && left.height === right.height
+}
+
+function visibleApplicationWindowRoles ({ caption, toolbar, settings, history }) {
+  return [
+    ['caption', caption],
+    ['toolbar', toolbar],
+    ['settings', settings],
+    ['history', history]
+  ].filter(([, win]) => win && !win.isDestroyed() && win.isVisible() && !win.isMinimized())
+    .map(([role]) => role)
+}
+
+function applicationBoundsPreserved (windows, expected) {
+  return Object.entries(windows)
+    .every(([role, win]) => sameWindowBounds(win.getBounds(), expected[role]))
+}
+
+function applicationBoundsMismatchRoles (windows, expected) {
+  return Object.entries(windows)
+    .filter(([role, win]) => !sameWindowBounds(win.getBounds(), expected[role]))
+    .map(([role]) => role)
+}
+
+async function exerciseApplicationLifecycle ({ caption, toolbar, settings, rawSessionId }) {
+  const minimizeControlVisible = await rendererValue(toolbar, `(() => {
+    const button = document.querySelector('button[data-act="minimize"]')
+    return !!button && button.getAttribute('aria-label') === '最小化'
+  })()`)
+  await rendererValue(toolbar, `document.querySelector('button[data-act="history"]').click(); true`)
+  const history = await waitFor(() => windowFor('/history/index.html'), 'lifecycle history renderer')
+  await waitFor(() => !history.webContents.isLoading(), 'lifecycle history load')
+  history.focus()
+  await waitFor(() => history.isFocused(), 'lifecycle history focus')
+
+  const windows = { caption, toolbar, settings, history }
+  const visibleBefore = visibleApplicationWindowRoles(windows)
+  const boundsBefore = Object.fromEntries(Object.entries(windows).map(([role, win]) => [role, win.getBounds()]))
+  const snapshotBefore = await rendererValue(toolbar, `window.shell.getSnapshot()`)
+  if (snapshotBefore.phase !== 'listening' || snapshotBefore.sessionId !== rawSessionId ||
+      visibleBefore.join(',') !== 'caption,toolbar,settings,history') {
+    throw new Error('application lifecycle did not start from four visible windows and one listening session')
+  }
+
+  await rendererValue(toolbar, `document.querySelector('button[data-act="minimize"]').click(); true`)
+  await waitFor(() => toolbar.isMinimized() && !caption.isVisible() &&
+    settings.isMinimized() && history.isMinimized(), 'application minimize')
+  const snapshotWhileMinimized = await rendererValue(toolbar, `window.shell.getSnapshot()`)
+  const activeSessionContinuedWhileMinimized =
+    JSON.stringify(snapshotWhileMinimized) === JSON.stringify(snapshotBefore) &&
+    snapshotWhileMinimized.phase === 'listening' && snapshotWhileMinimized.sessionId === rawSessionId
+  const captionHiddenWhileMinimized = !caption.isVisible()
+  const minimizedAuxiliaryWindowCount = [settings, history].filter((win) => win.isMinimized()).length
+
+  toolbar.restore()
+  await waitFor(() => visibleApplicationWindowRoles(windows).join(',') === visibleBefore.join(',') &&
+    !toolbar.isMinimized() && !settings.isMinimized() && !history.isMinimized() &&
+    applicationBoundsPreserved(windows, boundsBefore), 'native taskbar restore')
+  const nativeSnapshot = await rendererValue(toolbar, `window.shell.getSnapshot()`)
+  const nativeRestorePreservedWindowSet =
+    visibleApplicationWindowRoles(windows).join(',') === visibleBefore.join(',')
+  const nativeRestorePreservedBounds = applicationBoundsPreserved(windows, boundsBefore)
+  const nativeRestorePreservedRuntimeSnapshot =
+    JSON.stringify(nativeSnapshot) === JSON.stringify(snapshotBefore)
+
+  await rendererValue(toolbar, `document.querySelector('button[data-act="minimize"]').click(); true`)
+  await waitFor(() => toolbar.isMinimized() && !caption.isVisible() &&
+    settings.isMinimized() && history.isMinimized(), 'second application minimize')
+  app.emit('second-instance')
+  await waitFor(() => visibleApplicationWindowRoles(windows).join(',') === visibleBefore.join(',') &&
+    !toolbar.isMinimized(), 'second-instance restore visibility')
+  const secondInstanceMismatchRoles = applicationBoundsMismatchRoles(windows, boundsBefore)
+  if (secondInstanceMismatchRoles.length > 0) {
+    throw new Error(`second-instance restore changed bounds for roles=${secondInstanceMismatchRoles.join(',')}`)
+  }
+  const secondInstanceRestoredPrimary = toolbar.isVisible() && !toolbar.isMinimized()
+  const secondInstancePreservedWindowSet =
+    visibleApplicationWindowRoles(windows).join(',') === visibleBefore.join(',')
+  const secondInstancePreservedBounds = applicationBoundsPreserved(windows, boundsBefore)
+
+  await rendererValue(settings, `document.getElementById('close').click(); true`)
+  await waitFor(() => settings.isDestroyed(), 'settings local close')
+  await rendererValue(history, `document.getElementById('close').click(); true`)
+  await waitFor(() => history.isDestroyed(), 'history local close')
+  const auxiliaryCloseKeptPrimary = !toolbar.isDestroyed() && toolbar.isVisible() &&
+    !caption.isDestroyed() && caption.isVisible()
+
+  await rendererValue(toolbar, `document.querySelector('button[data-act="settings"]').click(); true`)
+  const reopenedSettings = await waitFor(() => windowFor('/settings/settings.html'), 'reopened settings renderer')
+  await waitFor(() => !reopenedSettings.webContents.isLoading(), 'reopened settings load')
+
+  return {
+    settings: reopenedSettings,
+    evidence: {
+      primaryWindowMinimizable: toolbar.isMinimizable(),
+      primaryWindowTitleStable: toolbar.getTitle() === 'Live Subtitle',
+      minimizeControlVisible,
+      activeSessionContinuedWhileMinimized,
+      captionHiddenWhileMinimized,
+      visibleAuxiliaryWindowCountBeforeMinimize: 2,
+      minimizedAuxiliaryWindowCount,
+      nativeRestorePreservedWindowSet,
+      nativeRestorePreservedBounds,
+      nativeRestorePreservedRuntimeSnapshot,
+      secondInstanceRestoredPrimary,
+      secondInstancePreservedWindowSet,
+      secondInstancePreservedBounds,
+      auxiliaryCloseKeptPrimary,
+      rendererExitRequested: false
+    }
+  }
 }
 
 function installControlledCursorBoundary () {
@@ -1656,7 +1767,7 @@ async function runJourney () {
       nativeLayout.nativeBinaryCount !== nativeLayout.requiredNativeBinaryCount)) {
     throw new Error('packaged native binaries are not colocated in app.asar.unpacked')
   }
-  const settings = await waitFor(() => windowFor('/settings/settings.html'), 'settings renderer')
+  let settings = await waitFor(() => windowFor('/settings/settings.html'), 'settings renderer')
   const toolbar = await waitFor(() => windowFor('/toolbar/index.html'), 'toolbar renderer')
   const caption = await waitFor(() => windowFor('/caption/index.html'), 'caption renderer')
   await Promise.all([settings, toolbar, caption].map((win) => waitFor(() => !win.webContents.isLoading(), 'renderer load')))
@@ -1803,6 +1914,15 @@ async function runJourney () {
         captions.scrollWidth <= captions.clientWidth
     })()`), 'caption viewport follows the configured font size', 15000)
   })()
+
+  const lifecycleResult = await exerciseApplicationLifecycle({
+    caption,
+    toolbar,
+    settings,
+    rawSessionId
+  })
+  settings = lifecycleResult.settings
+  const applicationLifecycle = lifecycleResult.evidence
 
   await waitFor(() => rendererValue(toolbar, `!!document.querySelector('button[data-act="pause"]:not(:disabled)')`), 'pause control')
   await rendererValue(toolbar, `document.querySelector('button[data-act="pause"]').click(); true`)
@@ -1956,7 +2076,7 @@ async function runJourney () {
   if (audioFilesUnder(options.workDir).length > 0) throw new Error('product shell smoke persisted audio')
 
   const report = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: 'product-shell-smoke',
     generatedAt: new Date().toISOString(),
     result: 'pass',
@@ -2061,6 +2181,7 @@ async function runJourney () {
       translationAdvertised: false
     },
     windowInteraction,
+    applicationLifecycle,
     sourceIdentity: {
       productPayloadVersion: productPayloadIdentity.version,
       productPayloadFileCount: productPayloadIdentity.fileCount,
@@ -2083,11 +2204,19 @@ async function runJourney () {
         : ['not-packaged-i4'])
     ]
   }
-  await fsp.writeFile(options.report, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })
-  process.stdout.write(`${JSON.stringify(report)}\n`)
   await closeModelTransport()
-  if (watchdog) clearTimeout(watchdog)
-  app.quit()
+  let rendererExitObserved = false
+  const observeRendererExit = (_event, action) => {
+    if (action !== 'close' || rendererExitObserved) return
+    rendererExitObserved = true
+    applicationLifecycle.rendererExitRequested = true
+    fs.writeFileSync(options.report, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })
+    process.stdout.write(`${JSON.stringify(report)}\n`)
+    ipcMain.removeListener(CHANNELS.TOOLBAR_ACTION, observeRendererExit)
+  }
+  ipcMain.prependListener(CHANNELS.TOOLBAR_ACTION, observeRendererExit)
+  await rendererValue(toolbar, `document.querySelector('button[data-act="close"]').click(); true`).catch(() => false)
+  if (!rendererExitObserved) throw new Error('toolbar renderer exit action was not observed')
 }
 
 app.on('will-quit', (event) => {

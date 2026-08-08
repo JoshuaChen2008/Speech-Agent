@@ -156,6 +156,23 @@ const PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS = Object.freeze([
   'sharedTitlebarThemeVariantsObserved',
   'forcedColorsTitlebarRuleObserved'
 ])
+const PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS = Object.freeze([
+  'primaryWindowMinimizable',
+  'primaryWindowTitleStable',
+  'minimizeControlVisible',
+  'activeSessionContinuedWhileMinimized',
+  'captionHiddenWhileMinimized',
+  'visibleAuxiliaryWindowCountBeforeMinimize',
+  'minimizedAuxiliaryWindowCount',
+  'nativeRestorePreservedWindowSet',
+  'nativeRestorePreservedBounds',
+  'nativeRestorePreservedRuntimeSnapshot',
+  'secondInstanceRestoredPrimary',
+  'secondInstancePreservedWindowSet',
+  'secondInstancePreservedBounds',
+  'auxiliaryCloseKeptPrimary',
+  'rendererExitRequested'
+])
 const PRODUCT_SHELL_V5_LIMITATIONS = Object.freeze([
   'fake-asr-no-physical-audio',
   'controlled-model-fixtures-no-real-tensors',
@@ -374,10 +391,33 @@ function validateProductShellV5Identity (value) {
   return value
 }
 
-function validateProductShellV5Envelope (report) {
+function validateProductShellV6ApplicationLifecycle (value) {
+  if (!hasExactKeys(value, PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS)) {
+    throw new Error('product-shell v6 application lifecycle has missing or unknown fields')
+  }
+  const countFields = new Set([
+    'visibleAuxiliaryWindowCountBeforeMinimize',
+    'minimizedAuxiliaryWindowCount'
+  ])
+  for (const key of PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS) {
+    if (countFields.has(key)) {
+      if (!Number.isSafeInteger(value[key]) || value[key] !== 2) {
+        throw new Error(`product-shell v6 application lifecycle count is invalid: ${key}`)
+      }
+    } else if (value[key] !== true) {
+      throw new Error(`product-shell v6 application lifecycle observation is incomplete: ${key}`)
+    }
+  }
+  assertNoWindowInteractionSensitiveFields(value, 'applicationLifecycle')
+  return value
+}
+
+function validateProductShellV5Envelope (report, schemaVersion = 5) {
+  const hasApplicationLifecycle = schemaVersion === 6
   const expectedRootKeys = [
     'schemaVersion', 'kind', 'generatedAt', 'result', 'gateStatus', 'runtime', 'journey',
     'windowInteraction', 'sourceIdentity', 'privacy', 'limitations',
+    ...(hasApplicationLifecycle ? ['applicationLifecycle'] : []),
     ...(report.packaging ? ['packaging', 'qualification'] : [])
   ]
   if (!hasExactKeys(report, expectedRootKeys) ||
@@ -390,11 +430,11 @@ function validateProductShellV5Envelope (report) {
         !hasExactKeys(report.packaging, PRODUCT_SHELL_PACKAGING_KEYS) ||
         !hasExactKeys(report.qualification, PRODUCT_SHELL_QUALIFICATION_KEYS)
       ))) {
-    throw new Error('product-shell v5 report envelope has missing or unknown fields')
+    throw new Error(`product-shell v${schemaVersion} report envelope has missing or unknown fields`)
   }
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(String(report.generatedAt || '')) ||
       new Date(report.generatedAt).toISOString() !== report.generatedAt) {
-    throw new Error('product-shell v5 generatedAt is invalid')
+    throw new Error(`product-shell v${schemaVersion} generatedAt is invalid`)
   }
   const expectedLimitations = [
     ...PRODUCT_SHELL_V5_LIMITATIONS,
@@ -403,20 +443,24 @@ function validateProductShellV5Envelope (report) {
       : ['not-packaged-i4'])
   ]
   if (!isExactArray(report.limitations, expectedLimitations)) {
-    throw new Error('product-shell v5 limitations are not the exact external boundary')
+    throw new Error(`product-shell v${schemaVersion} limitations are not the exact external boundary`)
   }
   validateProductShellV5WindowInteraction(report.windowInteraction)
   validateProductShellV5Identity(report.sourceIdentity)
+  if (hasApplicationLifecycle) validateProductShellV6ApplicationLifecycle(report.applicationLifecycle)
   if (report.packaging?.appIsPackaged === true && (
     report.qualification?.productPayloadVersion !== report.sourceIdentity.productPayloadVersion ||
     report.qualification?.productPayloadFileCount !== report.sourceIdentity.productPayloadFileCount ||
     report.qualification?.productPayloadSha256 !== report.sourceIdentity.productPayloadSha256
   )) throw new Error('packaged product-shell v5 source identity is not qualification-bound')
   assertNoWindowInteractionSensitiveFields(report.windowInteraction, 'windowInteraction')
+  if (hasApplicationLifecycle) {
+    assertNoWindowInteractionSensitiveFields(report.applicationLifecycle, 'applicationLifecycle')
+  }
 }
 
 function validateProductShellReport (report) {
-  if (!report || ![1, 2, 3, 4, 5].includes(report.schemaVersion) || report.kind !== 'product-shell-smoke') {
+  if (!report || ![1, 2, 3, 4, 5, 6].includes(report.schemaVersion) || report.kind !== 'product-shell-smoke') {
     throw new Error('invalid product-shell report envelope')
   }
   if (report.result !== 'pass' || report.gateStatus !== 'partial') {
@@ -471,6 +515,10 @@ function validateProductShellReport (report) {
     validateProductShellV3Journey(journey, 3, 4, 5)
     validateProductShellV5Envelope(report)
   }
+  if (report.schemaVersion === 6) {
+    validateProductShellV3Journey(journey, 3, 4, 6)
+    validateProductShellV5Envelope(report, 6)
+  }
   if (report.privacy?.physicalAudioSourceOpened !== false ||
       report.privacy?.audioPersisted !== false ||
       report.privacy?.transcriptTextPersistedInReport !== false ||
@@ -483,7 +531,7 @@ function validateProductShellReport (report) {
     'deterministic-205-segment-fixture-not-two-hour-i3',
     report.packaging?.appIsPackaged === true ? 'not-clean-machine-i4' : 'not-packaged-i4'
   ]
-  if (report.schemaVersion !== 5 && (!Array.isArray(report.limitations) ||
+  if (![5, 6].includes(report.schemaVersion) && (!Array.isArray(report.limitations) ||
       requiredLimitations.some((limitation) => !report.limitations.includes(limitation)) ||
       (report.packaging?.appIsPackaged === true && report.limitations.includes('not-packaged-i4')))) {
     throw new Error('product-shell report must preserve its external-boundary limitations')
@@ -525,6 +573,7 @@ module.exports = {
   PRODUCT_SHELL_V3_JOURNEY_KEYS,
   PRODUCT_SHELL_V5_LIMITATIONS,
   PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS,
+  PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS,
   PRODUCT_SHELL_PACKAGING_KEYS,
   PRODUCT_SHELL_QUALIFICATION_KEYS,
   readAndValidateProductShellReport,

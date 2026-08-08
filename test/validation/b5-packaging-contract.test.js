@@ -3,6 +3,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
 const releaseConfig = require('../../electron-builder.config.cjs')
 const smokeConfig = require('../../electron-builder.smoke.config.cjs')
@@ -35,7 +36,8 @@ const {
   computeProductPayloadIdentity
 } = require('../../src/main/services/product-payload-identity')
 const {
-  PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS
+  PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS,
+  PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS
 } = require('../../scripts/verify-product-shell-report')
 const {
   readAndValidatePackagedRunBindingReport,
@@ -210,6 +212,16 @@ function productShellV5Fixture () {
   }
 }
 
+function productShellV6Fixture () {
+  const report = productShellV5Fixture()
+  const applicationLifecycle = Object.fromEntries(
+    PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS.map((key) => [key, true])
+  )
+  applicationLifecycle.visibleAuxiliaryWindowCountBeforeMinimize = 2
+  applicationLifecycle.minimizedAuxiliaryWindowCount = 2
+  return { ...report, schemaVersion: 6, applicationLifecycle }
+}
+
 test('release package uses an explicit ASAR allowlist, hardened fuses and per-user NSIS', () => {
   assert.equal(releaseConfig.asar, true)
   assert.equal(releaseConfig.npmRebuild, false)
@@ -240,6 +252,20 @@ test('release package uses an explicit ASAR allowlist, hardened fuses and per-us
     assert.match(attributes, new RegExp(`^src/\\*\\*\\/\\*${escaped} text eol=lf$`, 'm'),
       `complete product ${extension} payload must be pinned to LF checkout bytes`)
   }
+})
+
+test('SEM-F18/SEM-T12: product payload identity excludes build-only type declarations omitted from ASAR', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'live-subtitle-product-payload-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  fs.mkdirSync(path.join(root, 'nested'))
+  fs.writeFileSync(path.join(root, 'runtime.js'), 'module.exports = true\n')
+  fs.writeFileSync(path.join(root, 'renderer-globals.d.ts'), 'declare const runtimeOnly: boolean\n')
+  fs.writeFileSync(path.join(root, 'nested', 'view.tsx'), 'export const view = null\n')
+
+  assert.deepEqual(
+    collectProductPayloadEntries(root).map((entry) => entry.name).sort(),
+    ['src/nested/view.tsx', 'src/runtime.js']
+  )
 })
 
 test('test-only packaged journey preserves the production layout but cannot be mistaken for release', () => {
@@ -439,6 +465,18 @@ test('packaged product v5 evidence binds J17 window interaction to the qualified
   }), /source identity|qualification-bound/)
 })
 
+test('packaged product v6 evidence adds J19 application lifecycle without weakening J17 binding', () => {
+  const report = productShellV6Fixture()
+  assert.equal(validatePackagedProductShellReport(report), report)
+  assert.throws(() => validatePackagedProductShellReport({
+    ...report,
+    applicationLifecycle: {
+      ...report.applicationLifecycle,
+      rendererExitRequested: false
+    }
+  }), /application lifecycle/)
+})
+
 test('packaged smoke source starts at packaged argv and probes native code in a utility process', () => {
   const source = fs.readFileSync(path.join(ROOT, 'scripts', 'product-shell-smoke.js'), 'utf8')
   assert.match(source, /process\.argv\.slice\(app\.isPackaged \? 1 : 2\)/)
@@ -446,7 +484,8 @@ test('packaged smoke source starts at packaged argv and probes native code in a 
   assert.match(source, /app\.asar\.unpacked/)
   assert.match(source, /releaseCandidate: false/)
   assert.match(source, /coreReadyMarkerCount/)
-  assert.match(source, /schemaVersion:\s*5/)
+  assert.match(source, /schemaVersion:\s*6/)
+  assert.match(source, /applicationLifecycle/)
   assert.match(source, /controlled-pointer-and-focus-no-human-dwm/)
   assert.match(source, /refinementContinueRangeObserved/)
   assert.match(source, /historyRefinedVersionPersistsAcrossPaging/)

@@ -2,10 +2,10 @@
 
 // @ts-check
 
-/* Canonical identity for the complete product source payload inside app.asar.
+/* Canonical identity for the complete runtime source payload inside app.asar.
    The smoke and release packages have different main entries, but both carry
-   the same src/ tree. Hashing that tree gives B5 a fail-closed bridge between
-   the exercised packaged test runtime and the exact release candidate. */
+   the same executable src/ tree. Electron Builder excludes build-only .d.ts
+   declarations, so the workspace collector mirrors that boundary. */
 
 const crypto = require('node:crypto')
 const fs = require('node:fs')
@@ -65,6 +65,7 @@ function collectProductPayloadEntries (root) {
         visit(target)
       } else if (entry.isFile()) {
         const relative = path.relative(resolvedRoot, target).replace(/\\/g, '/')
+        if (relative.endsWith('.d.ts')) continue
         entries.push({ name: `src/${relative}`, bytes: fs.readFileSync(target) })
       } else {
         throw new Error('product payload contains an unsupported filesystem entry')

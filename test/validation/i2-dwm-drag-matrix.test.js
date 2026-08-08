@@ -21,7 +21,8 @@ const {
 } = require('../../scripts/i2-dwm-drag-matrix')
 const {
   PRODUCT_SHELL_V3_JOURNEY_KEYS,
-  PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS
+  PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS,
+  PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS
 } = require('../../scripts/verify-product-shell-report')
 const { computeProductPayloadIdentity } = require('../../src/main/services/product-payload-identity')
 
@@ -149,7 +150,7 @@ function pairFor (combination, index) {
   }
 }
 
-function j17Bytes () {
+function j17Bytes (schemaVersion = 5) {
   const journey = Object.fromEntries(PRODUCT_SHELL_V3_JOURNEY_KEYS.map((key) => [key, true]))
   Object.assign(journey, {
     onboardingPreset: 'dictation',
@@ -190,8 +191,13 @@ function j17Bytes () {
     normalBodyExclusionCount: 2,
     normalForegroundPromotionCount: 2
   })
+  const applicationLifecycle = Object.fromEntries(
+    PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS.map((key) => [key, true])
+  )
+  applicationLifecycle.visibleAuxiliaryWindowCountBeforeMinimize = 2
+  applicationLifecycle.minimizedAuxiliaryWindowCount = 2
   return Buffer.from(JSON.stringify({
-    schemaVersion: 5,
+    schemaVersion,
     kind: 'product-shell-smoke',
     generatedAt: '2026-08-08T00:01:00.000Z',
     result: 'pass',
@@ -199,6 +205,7 @@ function j17Bytes () {
     runtime: { electron: '43.0.0', node: '22.0.0', rendererCount: 4, crashEventCount: 0 },
     journey,
     windowInteraction,
+    ...(schemaVersion === 6 ? { applicationLifecycle } : {}),
     sourceIdentity: {
       productPayloadVersion: PRODUCT_IDENTITY.version,
       productPayloadFileCount: PRODUCT_IDENTITY.fileCount,
@@ -245,6 +252,17 @@ test('SEM-F22/J17/I2: strict DWM matrix binds all twelve scale/theme combination
     themes: ['dark', 'light', 'high-contrast'],
     crossScaleObservationCount: 1
   })
+})
+
+test('SEM-F22/SEM-F24/J17/J19/I2: DWM matrix accepts schema-v6 while retaining the exact J17 subtree', () => {
+  const pairs = DWM_COMBINATIONS.map(pairFor)
+  const j17ReportBytes = j17Bytes(6)
+  const matrix = buildDwmMatrix({
+    generatedAt: '2026-08-08T00:03:00.000Z',
+    j17Bytes: j17ReportBytes,
+    pairs
+  })
+  assert.equal(validateDwmMatrixCompanions(matrix, { j17Bytes: j17ReportBytes, pairs }), matrix)
 })
 
 test('SEM-F22/I2: DWM matrix rejects missing, duplicate, reordered and completion-only combinations', () => {

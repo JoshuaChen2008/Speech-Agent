@@ -30,6 +30,8 @@ class FakeWindow extends EventEmitter {
     this.focused = focused
     this.destroyed = false
     this.bounds = { ...bounds }
+    this.restoredBounds = null
+    this.delayedRestoredBounds = null
     this.failOn = new Set()
   }
 
@@ -43,6 +45,11 @@ class FakeWindow extends EventEmitter {
   isMinimized () { return this.minimized }
   isFocused () { return this.focused }
   getBounds () { return { ...this.bounds } }
+
+  setBounds (bounds) {
+    this.invoke('setBounds')
+    this.bounds = { ...bounds }
+  }
 
   hide () {
     this.invoke('hide')
@@ -72,6 +79,11 @@ class FakeWindow extends EventEmitter {
     this.invoke('restore')
     this.minimized = false
     this.visible = true
+    if (this.restoredBounds) this.bounds = { ...this.restoredBounds }
+    if (this.delayedRestoredBounds) {
+      const delayedBounds = { ...this.delayedRestoredBounds }
+      setImmediate(() => { this.bounds = delayedBounds })
+    }
     this.emit('restore')
   }
 
@@ -172,6 +184,34 @@ test('SEM-F24/J19: a native minimize and an auxiliary taskbar restore operate on
   assert.equal(harness.toolbar.visible, true)
   assert.equal(harness.caption.visible, true)
   assert.equal(harness.settings.visible, true)
+  assert.deepEqual(harness.faults, [])
+})
+
+test('SEM-F24/J19: restore corrects native primary-window bounds drift before restacking', () => {
+  const harness = createHarness()
+  const expected = harness.toolbar.getBounds()
+
+  assert.equal(harness.controller.minimize(), true)
+  harness.toolbar.restoredBounds = { ...expected, x: expected.x + 48 }
+  harness.toolbar.restore()
+
+  assert.deepEqual(harness.toolbar.getBounds(), expected)
+  assert.equal(harness.calls.includes('toolbar.setBounds'), true)
+  assert.deepEqual(harness.faults, [])
+})
+
+test('SEM-F24/J19: restore corrects native primary-window bounds drift after the restore event settles', async () => {
+  const harness = createHarness()
+  const expected = harness.toolbar.getBounds()
+
+  assert.equal(harness.controller.minimize(), true)
+  harness.toolbar.delayedRestoredBounds = { ...expected, x: expected.x + 48 }
+  harness.toolbar.restore()
+  await new Promise((resolve) => setImmediate(resolve))
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.deepEqual(harness.toolbar.getBounds(), expected)
+  assert.equal(harness.calls.includes('toolbar.setBounds'), true)
   assert.deepEqual(harness.faults, [])
 })
 

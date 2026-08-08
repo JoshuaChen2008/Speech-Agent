@@ -103,7 +103,7 @@ Electron 壳层负责：
 
 字幕窗额外使用 `focusable: false`、`minimizable: false`、`skipTaskbar: true`。工具条使用稳定标题、`minimizable: true`、`skipTaskbar: false`，并在真实轮廓内提供带可访问名称的 Fluent 最小化按钮。两个窗口使用 `setAlwaysOnTop(true, 'screen-saver')` 和全屏 workspace 可见配置。
 
-主任务栏窗口的原生 `minimize` / `restore` 事件与 renderer 最小化按钮进入同一 `ApplicationWindowLifecycleController`。控制器只保存有界内存中的窗口角色、可见性与焦点引用，不保存字幕正文、设备名或路径；最小化前先收尾进行中的拖动/拉伸，恢复时不改 bounds。若辅助窗口最小化失败，必须回滚已隐藏窗口并保留可访问的主任务栏入口；若恢复中途失败，主窗口先恢复并记录固定 `role/code`，允许用户重试或退出。
+主任务栏窗口的原生 `minimize` / `restore` 事件与 renderer 最小化按钮进入同一 `ApplicationWindowLifecycleController`。控制器只在有界内存中保存窗口角色、可见性、bounds 与焦点引用，不保存字幕正文、设备名或路径；最小化前先收尾进行中的拖动/拉伸，恢复时若 Windows 改写了主窗口几何则主动恢复已保存 bounds。若辅助窗口最小化失败，必须回滚已隐藏窗口并保留可访问的主任务栏入口；若恢复中途失败，主窗口先恢复并记录固定 `role/code`，允许用户重试或退出。
 
 设置窗与字幕历史：
 

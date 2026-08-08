@@ -9,6 +9,7 @@ const {
   PRODUCT_SHELL_QUALIFICATION_KEYS,
   PRODUCT_SHELL_V3_JOURNEY_KEYS,
   PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS,
+  PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS,
   validateProductShellReport
 } = require('../../scripts/verify-product-shell-report')
 
@@ -89,6 +90,23 @@ function reportV5 () {
   }
 }
 
+function completeApplicationLifecycle () {
+  const value = Object.fromEntries(
+    PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS.map((key) => [key, true])
+  )
+  value.visibleAuxiliaryWindowCountBeforeMinimize = 2
+  value.minimizedAuxiliaryWindowCount = 2
+  return value
+}
+
+function reportV6 () {
+  return {
+    ...reportV5(),
+    schemaVersion: 6,
+    applicationLifecycle: completeApplicationLifecycle()
+  }
+}
+
 function packagedReportV5 () {
   const report = reportV5()
   report.packaging = Object.fromEntries(PRODUCT_SHELL_PACKAGING_KEYS.map((key) => [key, false]))
@@ -108,6 +126,47 @@ function packagedReportV5 () {
 test('SEM-F22/J17: product-shell schema v5 accepts exact private window interaction evidence bound to current source', () => {
   const report = reportV5()
   assert.equal(validateProductShellReport(report), report)
+})
+
+test('SEM-F24/J19: product-shell schema v6 accepts exact application lifecycle evidence', () => {
+  const report = reportV6()
+  assert.equal(validateProductShellReport(report), report)
+})
+
+test('SEM-F14/F24/J19: schema v6 rejects incomplete, unknown, false and invalid lifecycle evidence', () => {
+  const missing = structuredClone(reportV6())
+  delete missing.applicationLifecycle.rendererExitRequested
+  assert.throws(() => validateProductShellReport(missing), /application lifecycle/)
+
+  const unknown = structuredClone(reportV6())
+  unknown.applicationLifecycle.unexpected = true
+  assert.throws(() => validateProductShellReport(unknown), /application lifecycle/)
+
+  const falseClaim = structuredClone(reportV6())
+  falseClaim.applicationLifecycle.auxiliaryCloseKeptPrimary = false
+  assert.throws(() => validateProductShellReport(falseClaim), /application lifecycle/)
+
+  const fractional = structuredClone(reportV6())
+  fractional.applicationLifecycle.minimizedAuxiliaryWindowCount = 1.5
+  assert.throws(() => validateProductShellReport(fractional), /application lifecycle/)
+
+  const wrongCount = structuredClone(reportV6())
+  wrongCount.applicationLifecycle.visibleAuxiliaryWindowCountBeforeMinimize = 1
+  assert.throws(() => validateProductShellReport(wrongCount), /application lifecycle/)
+})
+
+test('SEM-F14/F24/J19: schema v6 rejects geometry, paths, device data and subtitle text', () => {
+  for (const [key, value] of [
+    ['bounds', { width: 1 }],
+    ['deviceName', 'forbidden'],
+    ['absoluteMonotonicTime', 1],
+    ['localPath', 'C:\\forbidden'],
+    ['captionText', 'forbidden']
+  ]) {
+    const report = reportV6()
+    report.applicationLifecycle[key] = value
+    assert.throws(() => validateProductShellReport(report), /application lifecycle|forbidden/)
+  }
 })
 
 test('SEM-F14/F22/J17: schema v5 rejects missing, unknown, false, out-of-range and stale candidate evidence', () => {

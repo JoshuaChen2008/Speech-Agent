@@ -25,6 +25,17 @@ function showWindow (win, inactive = false) {
   else win.show()
 }
 
+function sameBounds (left, right) {
+  return left.x === right.x && left.y === right.y &&
+    left.width === right.width && left.height === right.height
+}
+
+function restoreBounds (entry) {
+  if (!entry?.bounds || !isUsableWindow(entry.win)) return
+  const current = entry.win.getBounds()
+  if (!sameBounds(current, entry.bounds)) entry.win.setBounds(entry.bounds)
+}
+
 class ApplicationWindowLifecycleController {
   constructor ({
     getCaptionWindow,
@@ -33,6 +44,7 @@ class ApplicationWindowLifecycleController {
     getHistoryWindow,
     stopInteractions,
     restoreWindowStack,
+    schedulePostRestore = setImmediate,
     onFault = () => {}
   }) {
     for (const dependency of [
@@ -42,6 +54,7 @@ class ApplicationWindowLifecycleController {
       getHistoryWindow,
       stopInteractions,
       restoreWindowStack,
+      schedulePostRestore,
       onFault
     ]) {
       if (typeof dependency !== 'function') {
@@ -55,6 +68,7 @@ class ApplicationWindowLifecycleController {
     this.getHistoryWindow = getHistoryWindow
     this.stopInteractions = stopInteractions
     this.restoreWindowStack = restoreWindowStack
+    this.schedulePostRestore = schedulePostRestore
     this.onFault = onFault
     this.minimizedState = null
     this.transition = null
@@ -104,6 +118,7 @@ class ApplicationWindowLifecycleController {
         entry.win = win
         entry.visible = true
         entry.focused = true
+        entry.bounds = win.getBounds()
         this.minimizedState.focused = entry
       }
       return false
@@ -115,13 +130,14 @@ class ApplicationWindowLifecycleController {
   }
 
   readWindowState (win, role) {
-    if (!isUsableWindow(win)) return { role, win, visible: false, focused: false }
+    if (!isUsableWindow(win)) return { role, win, visible: false, focused: false, bounds: null }
     const minimized = typeof win.isMinimized === 'function' && win.isMinimized()
     return {
       role,
       win,
       visible: !minimized && win.isVisible(),
-      focused: typeof win.isFocused === 'function' && win.isFocused()
+      focused: typeof win.isFocused === 'function' && win.isFocused(),
+      bounds: win.getBounds()
     }
   }
 
@@ -135,11 +151,32 @@ class ApplicationWindowLifecycleController {
       (typeof primary.isFocused === 'function' && primary.isFocused()
         ? { role: 'toolbar', win: primary, visible: true, focused: true }
         : null)
-    return { primary, caption, auxiliaries, focused }
+    return {
+      primary,
+      primaryBounds: primary.getBounds(),
+      caption,
+      auxiliaries,
+      focused
+    }
   }
 
   stopActiveInteractions () {
     try { this.stopInteractions() } catch { this.reportFault('interaction-stop-failed') }
+  }
+
+  scheduleBoundsCorrection (state) {
+    this.schedulePostRestore(() => {
+      if (this.minimizedState !== null || this.transition !== null) return
+      try {
+        restoreBounds({ win: state.primary, bounds: state.primaryBounds })
+        if (state.caption.visible) restoreBounds(state.caption)
+        for (const entry of state.auxiliaries) {
+          if (entry.visible) restoreBounds(entry)
+        }
+      } catch {
+        this.reportFault('post-restore-bounds-failed')
+      }
+    })
   }
 
   minimize () {
@@ -181,12 +218,17 @@ class ApplicationWindowLifecycleController {
       if (isUsableWindow(primary)) {
         if (primary.isMinimized()) primary.restore()
         showWindow(primary)
+        restoreBounds({ win: primary, bounds: state.primaryBounds })
       }
-      if (state.caption.visible) showWindow(state.caption.win, true)
+      if (state.caption.visible) {
+        showWindow(state.caption.win, true)
+        restoreBounds(state.caption)
+      }
       for (const entry of state.auxiliaries) {
         if (!entry.visible || !isUsableWindow(entry.win)) continue
         if (entry.win.isMinimized()) entry.win.restore()
         showWindow(entry.win)
+        restoreBounds(entry)
       }
       this.restoreWindowStack()
       if (state.focused && isUsableWindow(state.focused.win)) state.focused.win.focus()
@@ -209,16 +251,22 @@ class ApplicationWindowLifecycleController {
     try {
       if (primary.isMinimized()) primary.restore()
       showWindow(primary)
-      if (state.caption.visible) showWindow(state.caption.win, true)
+      restoreBounds({ win: primary, bounds: state.primaryBounds })
+      if (state.caption.visible) {
+        showWindow(state.caption.win, true)
+        restoreBounds(state.caption)
+      }
       for (const entry of state.auxiliaries) {
         if (!entry.visible || !isUsableWindow(entry.win)) continue
         if (entry.win.isMinimized()) entry.win.restore()
         showWindow(entry.win)
+        restoreBounds(entry)
       }
       this.restoreWindowStack()
       if (state.focused && isUsableWindow(state.focused.win)) state.focused.win.focus()
       else primary.focus()
       this.minimizedState = null
+      this.scheduleBoundsCorrection(state)
       return true
     } catch {
       /* The primary is restored first, so even a later auxiliary failure keeps

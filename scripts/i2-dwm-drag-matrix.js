@@ -89,7 +89,8 @@ function validateDwmMatrix (value) {
   validateSourceIdentity(value.sourceIdentity)
 
   assertExactKeys(value.j17, ['schemaVersion', 'kind', 'result', 'reportSha256'], 'DWM matrix.j17')
-  assert.equal(value.j17.schemaVersion, 5)
+  assert.ok([5, 6].includes(value.j17.schemaVersion),
+    'DWM matrix must bind a schema-v5 or schema-v6 J17 product-shell report')
   assert.equal(value.j17.kind, 'product-shell-smoke')
   assert.equal(value.j17.result, 'pass')
   assertSha256(value.j17.reportSha256, 'DWM matrix.j17.reportSha256')
@@ -147,7 +148,8 @@ function buildDwmMatrix ({ generatedAt = new Date().toISOString(), j17Bytes, pai
   assert.ok(Array.isArray(pairs) && pairs.length === DWM_COMBINATIONS.length,
     'DWM matrix requires exactly twelve report/completion pairs')
   const j17 = validateProductShellReport(parseStrictEvidenceJson(j17Bytes, 'J17 product-shell report'))
-  assert.equal(j17.schemaVersion, 5, 'DWM matrix requires a schema-v5 J17 product-shell report')
+  assert.ok([5, 6].includes(j17.schemaVersion),
+    'DWM matrix requires a schema-v5 or schema-v6 J17 product-shell report')
 
   const byCombination = new Map()
   const reportHashes = new Set()
