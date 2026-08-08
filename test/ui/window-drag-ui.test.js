@@ -122,10 +122,12 @@ test('SEM-F22/J17: manual drag rejects non-primary starts and fails closed when 
 
 test('SEM-F22/J17: toolbar binds manual drag only to its visible non-focusable grip', () => {
   const html = source('src/toolbar/index.html')
+  const entry = source('src/toolbar/entry.js')
   const renderer = source('src/toolbar/toolbar.js')
   const styles = source('src/ui/shared/phases.css') + source('src/toolbar/toolbar.css')
 
-  assert.match(html, /manual-window-drag\.js/)
+  assert.match(html, /<script type="module" src="\.\/entry\.js"><\/script>/)
+  assert.match(entry, /manual-window-drag\.js[\s\S]*toolbar\.js/)
   assert.match(html, /<div class="grip" id="grip"[^>]+aria-hidden="true"><\/div>/)
   assert.doesNotMatch(html, /<div class="grip"[^>]+tabindex=/)
   assert.match(renderer, /bindManualWindowDrag\(\{[\s\S]*handle: grip/)
@@ -305,14 +307,18 @@ test('SEM-F22/J17: titlebar drag excludes the complete interactive composed path
 test('SEM-F22/J17: settings and subtitle history share a 48px structural titlebar and bind no body drag surface', () => {
   const settingsHtml = source('src/settings/settings.html')
   const historyHtml = source('src/history/index.html')
+  const settingsEntry = source('src/settings/entry.js')
+  const historyEntry = source('src/history/entry.js')
   const settingsScript = source('src/settings/settings.js')
   const historyScript = source('src/history/history.js')
   const settingsStyles = source('src/settings/settings.css')
   const historyStyles = source('src/history/history.css')
   const tokens = source('src/ui/shared/tokens.css')
 
-  assert.match(settingsHtml, /manual-window-drag\.js[\s\S]*settings\.js/)
-  assert.match(historyHtml, /manual-window-drag\.js[\s\S]*history\.js/)
+  assert.match(settingsHtml, /<script type="module" src="\.\/entry\.js"><\/script>/)
+  assert.match(historyHtml, /<script type="module" src="\.\/entry\.js"><\/script>/)
+  assert.match(settingsEntry, /manual-window-drag\.js[\s\S]*settings\.js/)
+  assert.match(historyEntry, /manual-window-drag\.js[\s\S]*history\.js/)
   for (const script of [settingsScript, historyScript]) {
     assert.match(script, /bindManualWindowDrag\(\{[\s\S]*handle: titlebar/)
     assert.match(script, /canStart: \(event\) => !manualWindowDrag\.isInteractiveDragEvent\(event\)/)

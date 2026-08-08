@@ -48,6 +48,7 @@ const {
 } = require('./main/window-layout-contract')
 const { WindowLayerController } = require('./main/window-layer-controller')
 const { ManualWindowInteractionController } = require('./main/manual-window-interaction-controller')
+const { loadRendererFailClosed } = require('./main/renderer-entry')
 
 const exitEvidence = createMainEvidenceBridge()
 exitEvidence.markLifecycle('main-started')
@@ -230,7 +231,7 @@ function requireSender (event, channel) {
   return { role, win, senderId: event.sender.id }
 }
 
-function makeOverlay (role, width, height, x, y, file, focusable = true) {
+function makeOverlay (role, width, height, x, y, focusable = true) {
   const win = new BrowserWindow({
     width,
     height,
@@ -270,7 +271,11 @@ function makeOverlay (role, width, height, x, y, file, focusable = true) {
   }
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  win.loadFile(file)
+  void loadRendererFailClosed(win, role, { isPackaged: app.isPackaged })
+    .catch((error) => {
+      logError(`renderer.${role}.load`, error)
+      app.quit()
+    })
   return win
 }
 
@@ -299,9 +304,9 @@ function createWindows () {
   const cx = Math.round((workAreaSize.width - capW) / 2)
   const cy = 72
 
-  captionWin = makeOverlay('caption', capW, capH, cx, cy, path.join(__dirname, 'caption', 'index.html'), false)
+  captionWin = makeOverlay('caption', capW, capH, cx, cy, false)
   captionWin.setResizable(true)
-  toolbarWin = makeOverlay('toolbar', TB_W, TB_H, cx, cy, path.join(__dirname, 'toolbar', 'index.html'), true)
+  toolbarWin = makeOverlay('toolbar', TB_W, TB_H, cx, cy, true)
 
   captionWin.webContents.on('console-message', (details) => console.log('[caption]', details.message))
   toolbarWin.webContents.on('console-message', (details) => console.log('[toolbar]', details.message))
@@ -357,7 +362,8 @@ function openSettingsWindow (initialPane = null) {
     if (initialPane) send(settingsWin, CHANNELS.SETTINGS_NAVIGATE, initialPane)
   })
   settingsWin.on('closed', () => { windowInteractionController.stopAll(); settingsWin = null })
-  settingsWin.loadFile(path.join(__dirname, 'settings', 'settings.html'))
+  void loadRendererFailClosed(settingsWin, 'settings', { isPackaged: app.isPackaged })
+    .catch((error) => logError('renderer.settings.load', error))
 }
 
 function openHistoryWindow () {
@@ -397,7 +403,8 @@ function openHistoryWindow () {
     historyWin.focus()
   })
   historyWin.on('closed', () => { windowInteractionController.stopAll(); historyWin = null })
-  historyWin.loadFile(path.join(__dirname, 'history', 'index.html'))
+  void loadRendererFailClosed(historyWin, 'history', { isPackaged: app.isPackaged })
+    .catch((error) => logError('renderer.history.load', error))
 }
 
 function persistCaptionBounds (bounds) {
