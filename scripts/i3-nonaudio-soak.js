@@ -16,7 +16,6 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const vm = require('node:vm')
 
 const { HistoryService } = require('../src/main/services/history-service')
 const { computeProductPayloadIdentity } = require('../src/main/services/product-payload-identity')
@@ -35,6 +34,7 @@ const {
 } = require('../src/runtime/storage-worker/protocol')
 const { SqliteSubtitleStore } = require('../src/runtime/storage-worker/subtitle-store')
 const { StorageWorkerService } = require('../src/runtime/storage-worker/worker-service')
+const { exerciseBoundedHistoryReact } = require('./history-react-evidence-harness')
 
 const PROJECT_ROOT = path.resolve(__dirname, '..')
 const DEV_RUNTIME = resolveRuntimeOptions({ LIVE_SUBTITLE_DEV_MODEL: DEV_MODEL_VALUE })
@@ -55,7 +55,8 @@ const LIMITS = Object.freeze({
   maxWalBytes: 64 * 1024 * 1024
 })
 const PROVENANCE_FILES = Object.freeze({
-  historyRendererSha256: 'src/history/history.js',
+  historyReactEvidenceHarnessSha256: 'scripts/history-react-evidence-harness.js',
+  historyRendererSha256: 'src/history/history-view.tsx',
   historyServiceSha256: 'src/main/services/history-service.js',
   runnerSha256: 'scripts/i3-nonaudio-soak.js',
   sessionCoordinatorSha256: 'src/main/session/session-coordinator.js',
@@ -234,143 +235,6 @@ function caption (sessionId, index, sequence, intervalMs, refined = false) {
   }
 }
 
-class FakeElement {
-  constructor (tagName = 'div') {
-    this.tagName = String(tagName).toUpperCase()
-    this.attributes = new Map()
-    this.children = []
-    this.dataset = {}
-    this.disabled = false
-    this.hidden = false
-    this.listeners = new Map()
-    this.classList = { add () {}, remove () {} }
-    this._textContent = ''
-  }
-
-  get textContent () { return this._textContent }
-
-  set textContent (value) {
-    this._textContent = String(value)
-    this.children = []
-  }
-
-  appendChild (child) {
-    this.children.push(child)
-    return child
-  }
-
-  setAttribute (name, value) { this.attributes.set(name, String(value)) }
-
-  getAttribute (name) { return this.attributes.get(name) ?? null }
-
-  addEventListener (name, callback) {
-    if (!this.listeners.has(name)) this.listeners.set(name, [])
-    this.listeners.get(name).push(callback)
-  }
-
-  click () {
-    for (const callback of this.listeners.get('click') || []) callback({ target: this })
-  }
-
-  closest () { return null }
-
-  setPointerCapture () {}
-}
-
-function nextTurn () {
-  return new Promise((resolve) => setImmediate(resolve))
-}
-
-async function waitFor (probe, label) {
-  const deadline = Date.now() + 10000
-  while (Date.now() < deadline) {
-    const value = probe()
-    if (value) return value
-    await nextTurn()
-  }
-  throw new Error(`timed out waiting for ${label}`)
-}
-
-function historyRendererSource () {
-  return fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'history', 'history.js'), 'utf8')
-}
-
-async function exerciseBoundedHistoryDom ({ history, sessionId, segmentCount, pageSamples }) {
-  const ids = [
-    'titlebar', 'close', 'refresh', 'globalStatus', 'sessionCount', 'sessionList',
-    'loadMore', 'emptyState', 'sessionDetail', 'detailSource', 'detailTitle',
-    'detailMeta', 'detailRefinement', 'exportStatus', 'previousPage', 'nextPage', 'retryPage',
-    'rangeStatus', 'timeline'
-  ]
-  const elements = new Map(ids.map((id) => [id, new FakeElement(id.includes('Page') ? 'button' : 'div')]))
-  elements.get('sessionDetail').hidden = true
-  elements.get('loadMore').hidden = true
-  elements.get('retryPage').hidden = true
-  const timeline = elements.get('timeline')
-  let maxNodes = 0
-  const originalAppend = timeline.appendChild.bind(timeline)
-  timeline.appendChild = (node) => {
-    const result = originalAppend(node)
-    maxNodes = Math.max(maxNodes, timeline.children.length)
-    return result
-  }
-  const exportButtons = ['txt', 'md', 'srt'].map((format) => {
-    const button = new FakeElement('button')
-    button.dataset.export = format
-    return button
-  })
-  const collected = []
-  const historyApi = {
-    dragEnd () {},
-    dragStart () {},
-    close () {},
-    onConfig () {},
-    async getConfig () { return { theme: 'dark', systemDark: true } },
-    async listSessions (limit, cursor) {
-      return { ok: true, value: await history.listSessions({ limit, cursor }) }
-    },
-    async getSessionPage (requestedSessionId, limit, cursor) {
-      const started = process.hrtime.bigint()
-      const page = await history.getSessionPage({ sessionId: requestedSessionId, limit, cursor })
-      pageSamples.push(durationMs(started))
-      collected.push(...page.items)
-      return { ok: true, value: page }
-    },
-    async exportSession () { return { ok: true, value: { status: 'cancelled' } } }
-  }
-  const document = {
-    documentElement: new FakeElement('html'),
-    createElement: (tagName) => new FakeElement(tagName),
-    getElementById: (id) => elements.get(id),
-    querySelectorAll: (selector) => selector === '[data-export]' ? exportButtons : []
-  }
-  document.documentElement.dataset = {}
-  const window = { addEventListener () {}, historyApi }
-  vm.runInNewContext(historyRendererSource(), { Date, Intl, console, document, window })
-
-  const sessionCard = await waitFor(() => elements.get('sessionList').children[0]?.children[0] || null,
-    'history session list')
-  sessionCard.click()
-  const expectedPageCount = Math.ceil(segmentCount / PAGE_SIZE)
-  for (let pageIndex = 0; pageIndex < expectedPageCount; pageIndex += 1) {
-    const expectedItemCount = Math.min(PAGE_SIZE, segmentCount - pageIndex * PAGE_SIZE)
-    await waitFor(() => (
-      timeline.getAttribute('aria-busy') === 'false' && timeline.children.length === expectedItemCount
-    ), `history DOM page ${pageIndex + 1}`)
-    if (pageIndex + 1 < expectedPageCount) {
-      if (elements.get('nextPage').disabled) throw new Error('history DOM ended before all fixture pages were loaded')
-      elements.get('nextPage').click()
-    }
-  }
-  if (!elements.get('nextPage').disabled || elements.get('previousPage').disabled) {
-    throw new Error('history DOM pagination controls did not reach the terminal page')
-  }
-  if (collected.length !== segmentCount || new Set(collected.map((item) => item.segmentId)).size !== segmentCount) {
-    throw new Error('history DOM pagination lost or duplicated fixture segments')
-  }
-  return { historyPageCount: expectedPageCount, maxNodes, collected }
-}
-
 function walMetrics (service, databasePath) {
   const database = service.store?.database
   if (!database) throw new Error('storage service did not retain an open SQLite database for WAL inspection')
@@ -497,11 +361,13 @@ async function runI3NonAudioSoak (options = {}) {
       gateway: recovered.gateway,
       showSaveDialog: async () => ({ canceled: false, filePath: chosenPaths.shift() })
     })
-    const dom = await exerciseBoundedHistoryDom({
+    const dom = await exerciseBoundedHistoryReact({
       history,
-      sessionId,
+      pageSize: PAGE_SIZE,
       segmentCount,
-      pageSamples
+      pageSamples,
+      projectRoot: PROJECT_ROOT,
+      durationMs
     })
     const fullTranscript = await recovered.gateway.getSessionTranscript(sessionId)
     if (fullTranscript.segments.length !== segmentCount) throw new Error('reopened transcript projection is incomplete')

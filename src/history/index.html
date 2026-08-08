@@ -2,81 +2,13 @@
 <html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; script-src 'self'; style-src 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self';">
   <link rel="stylesheet" href="../ui/shared/tokens.css">
   <link rel="stylesheet" href="history.css">
   <title>字幕历史</title>
 </head>
 <body>
-  <header class="titlebar" id="titlebar">
-    <div class="title-group">
-      <strong>字幕历史</strong>
-      <span>文本复盘，不包含录音</span>
-    </div>
-    <div class="title-actions">
-      <div class="global-status" id="globalStatus" role="status" aria-live="polite"></div>
-      <button class="text-button" id="refresh" type="button">刷新</button>
-      <button class="icon-button close-button" id="close" type="button" title="关闭" aria-label="关闭历史记录">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
-             stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-      </button>
-    </div>
-  </header>
-
-  <main class="history-layout">
-    <aside class="session-panel" aria-label="历史会话">
-      <div class="panel-heading">
-        <div>
-          <h1>会话</h1>
-          <p id="sessionCount">正在读取…</p>
-        </div>
-      </div>
-      <div class="session-list" id="sessionList" role="list"></div>
-      <button class="load-more" id="loadMore" type="button" hidden>加载更多</button>
-    </aside>
-
-    <section class="detail-panel" aria-label="字幕时间线">
-      <div class="empty-state" id="emptyState">
-        <h2>选择一条会话开始复盘</h2>
-        <p>这里只显示已经结束或被中断的字幕原文。临时字幕、译文和音频都不会进入历史。</p>
-      </div>
-
-      <div class="session-detail" id="sessionDetail" hidden>
-        <header class="detail-heading">
-          <div>
-            <div class="eyebrow" id="detailSource"></div>
-            <h2 id="detailTitle"></h2>
-            <p id="detailMeta"></p>
-            <p class="detail-refinement" id="detailRefinement" role="status"></p>
-          </div>
-          <!--
-            转写版本选择（SEM-F11）：默认原始版，用户可以明确切换到精修稿，
-            并随时切回。查看与导出共用同一个选择，不额外再问一次。
-          -->
-          <div class="version-actions" role="radiogroup" aria-label="转写版本">
-            <button type="button" data-version="original" role="radio" aria-checked="true">原始版</button>
-            <button type="button" data-version="refined" role="radio" aria-checked="false">精修稿</button>
-          </div>
-          <div class="export-actions" aria-label="导出当前所选转写版本">
-            <button type="button" data-export="txt">导出 TXT</button>
-            <button type="button" data-export="md">导出 Markdown</button>
-            <button type="button" data-export="srt">导出 SRT</button>
-          </div>
-        </header>
-        <div class="export-status" id="exportStatus" role="status" aria-live="polite"></div>
-        <nav class="timeline-navigation" aria-label="字幕批次导航">
-          <button type="button" id="previousPage" aria-controls="timeline" disabled>上一批</button>
-          <div class="range-status" id="rangeStatus" role="status" aria-live="polite" aria-atomic="true"></div>
-          <button type="button" id="nextPage" aria-controls="timeline" disabled>下一批</button>
-          <button type="button" id="retryPage" aria-controls="timeline" hidden>重试</button>
-        </nav>
-        <ol class="timeline" id="timeline" role="list" tabindex="0"
-            aria-busy="false" aria-describedby="rangeStatus"></ol>
-      </div>
-    </section>
-  </main>
-
-  <script type="module" src="./entry.js"></script>
+  <div id="root"></div>
+  <script type="module" src="./entry.tsx"></script>
 </body>
 </html>

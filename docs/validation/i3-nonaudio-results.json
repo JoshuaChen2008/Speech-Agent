@@ -56,7 +56,7 @@
     "virtualDurationMs": 7200000
   },
   "gateStatus": "partial",
-  "generatedAt": "2026-08-08T14:46:43.699Z",
+  "generatedAt": "2026-08-08T15:07:03.872Z",
   "kind": "i3-nonaudio-soak",
   "limits": {
     "maxCpuPercent": 800,
@@ -70,24 +70,24 @@
   "metrics": {
     "captionEventCount": 4000,
     "checkpointedWalFrames": 0,
-    "cpuPercent": 13.038,
-    "cpuSystemMs": 296,
-    "cpuUserMs": 734,
+    "cpuPercent": 11.173,
+    "cpuSystemMs": 78,
+    "cpuUserMs": 938,
     "exportCount": 3,
     "historyDomMaxNodes": 50,
     "historyPageCount": 72,
-    "maxHeapUsedBytes": 14632472,
+    "maxHeapUsedBytes": 77140752,
     "maxQueueDepth": 112,
-    "maxRssBytes": 99028992,
+    "maxRssBytes": 260517888,
     "pageCount": 668,
     "pageQueryCount": 72,
-    "pageQueryP95Ms": 6.224,
+    "pageQueryP95Ms": 9.293,
     "recoveredRefinedSegmentCount": 400,
     "segmentCount": 3600,
     "walBytes": 4173592,
     "walFrames": 879,
     "journalMode": "wal",
-    "wallDurationMs": 7900.025
+    "wallDurationMs": 9093.028
   },
   "privacy": {
     "persistedAudio": false,
@@ -95,9 +95,10 @@
     "reportContainsTranscriptText": false
   },
   "provenance": {
-    "historyRendererSha256": "982da11377e67aee8cd990477dee1a00e8a7dc13d7a0aed1a35b0c13550a66a8",
+    "historyReactEvidenceHarnessSha256": "a29213a875a6c267a5d9fc3dece9bc6f1e7c5d042745636a8d50f6a8dc373e33",
+    "historyRendererSha256": "a83208707e3cf055a8707d97c1936eafb0f069147b72b4a74721a1e25e1fda50",
     "historyServiceSha256": "beafb8d7590cf52d7eab29417cad34427857c1dbd537275aef64d47fef5a1584",
-    "runnerSha256": "d7406bbbedfd0da70c4d86644a45991dc609a45d62b0977dcffeecedef92c944",
+    "runnerSha256": "29be92da468463002dde768f201f24243b1621a0596c28ebdd582de530feb0e0",
     "sessionCoordinatorSha256": "85cd1190f2012e87d961d5af0f6ecbca74e93328ad0e472c6d13b275b6649189",
     "sqliteSessionRecorderSha256": "4acadaafe49b2b72ddbd1d6599a95d215d85427f79ad6a6d134f16214864b743",
     "sqliteSubtitleStoreSha256": "f7baad9291001b628787a06666375cc26497b125c41bb9ba54515d65c48ffee6",
@@ -105,7 +106,7 @@
     "storageGatewaySha256": "77c701fc12df5cffec40ed0ff93a64b334bfe39611f75709d6f601f007b4bdd8",
     "storageWorkerServiceSha256": "d66aeaf5b0ac82be7c85a8dac8490e810714b01aa5b577aeb39240aecb5161ab",
     "verifierSha256": "8014be2efdbd0d63a99a4de1a9f24ccb70eddcb158cc89b46d2d7bb731ed6ff1",
-    "productPayloadSha256": "088546b9533a86ca5f2520ba3a749ddec5df81dcda400bc464f2ea69cbd78011"
+    "productPayloadSha256": "2949c24f6cf70e718db22f9567e26a8e5e53569890877e474bbdf901a7ae72b6"
   },
   "result": "pass",
   "schemaVersion": 1

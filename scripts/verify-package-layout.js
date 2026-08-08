@@ -34,7 +34,7 @@ const REQUIRED_ASAR_ENTRIES = Object.freeze([
   '/src/settings/settings-view.tsx',
   '/src/settings/settings.css',
   '/src/history/index.html',
-  '/src/history/history.js',
+  '/src/history/history-view.tsx',
   '/src/history/history.css',
   '/src/runtime/audio-host/preload.js',
   '/src/runtime/audio-host/host.html',

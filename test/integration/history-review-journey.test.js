@@ -11,10 +11,14 @@
 const assert = require('node:assert/strict')
 const crypto = require('node:crypto')
 const fs = require('node:fs')
+const Module = require('node:module')
 const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
-const vm = require('node:vm')
+const React = require('react')
+const { act } = React
+const { createRoot } = require('react-dom/client')
+const { JSDOM } = require('jsdom')
 
 const { HistoryService } = require('../../src/main/services/history-service')
 const { SqliteSessionRecorder } = require('../../src/main/services/sqlite-session-recorder')
@@ -522,85 +526,47 @@ test('CI journey: 205 refined captions page through the real durability stack wi
   assert.deepEqual(audioFilesUnder(root), [])
 })
 
-class HistoryRendererElement {
-  constructor (tagName = 'div') {
-    this.tagName = tagName.toUpperCase()
-    this.attributes = new Map()
-    this.children = []
-    this.dataset = {}
-    this.disabled = false
-    this.hidden = false
-    this.listeners = new Map()
-    this._textContent = ''
-    this.classList = { add () {}, remove () {} }
-  }
-
-  get textContent () { return this._textContent }
-
-  set textContent (value) {
-    this._textContent = String(value)
-    if (value === '') this.children = []
-  }
-
-  appendChild (child) {
-    this.children.push(child)
-    return child
-  }
-
-  setAttribute (name, value) { this.attributes.set(name, String(value)) }
-
-  getAttribute (name) { return this.attributes.get(name) ?? null }
-
-  addEventListener (name, callback) {
-    if (!this.listeners.has(name)) this.listeners.set(name, [])
-    this.listeners.get(name).push(callback)
-  }
-
-  click () {
-    for (const callback of this.listeners.get('click') || []) callback({ target: this })
-  }
-
-  closest () { return null }
-
-  setPointerCapture () {}
-}
-
 async function settleHistoryRenderer () {
-  await new Promise((resolve) => setImmediate(resolve))
-  await new Promise((resolve) => setImmediate(resolve))
-  await new Promise((resolve) => setImmediate(resolve))
+  await act(async () => {
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+  })
 }
 
 async function waitForHistoryExport (statusElement) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     if (statusElement.textContent !== '正在准备导出…') return
-    await new Promise((resolve) => setTimeout(resolve, 5))
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 5)))
   }
   throw new Error('history renderer export did not settle')
 }
 
-function createHistoryRenderer (history) {
-  const ids = [
-    'titlebar', 'close', 'refresh', 'globalStatus', 'sessionCount', 'sessionList',
-    'loadMore', 'emptyState', 'sessionDetail', 'detailSource', 'detailTitle',
-    'detailMeta', 'detailRefinement', 'exportStatus', 'previousPage', 'nextPage', 'retryPage',
-    'rangeStatus', 'timeline'
-  ]
-  const elements = new Map(ids.map((id) => [id, new HistoryRendererElement(id.includes('Page') ? 'button' : 'div')]))
-  elements.get('sessionDetail').hidden = true
-  elements.get('loadMore').hidden = true
-  elements.get('retryPage').hidden = true
-  const exportButtons = ['txt', 'md', 'srt'].map((format) => {
-    const button = new HistoryRendererElement('button')
-    button.dataset.export = format
-    return button
-  })
-  const versionButtons = ['original', 'refined'].map((version) => {
-    const button = new HistoryRendererElement('button')
-    button.dataset.version = version
-    button.setAttribute('aria-checked', version === 'original' ? 'true' : 'false')
-    return button
-  })
+async function loadHistoryView () {
+  const filename = path.join(__dirname, '..', '..', 'src', 'history', 'history-view.tsx')
+  const { transformWithOxc } = await import('vite')
+  const transformed = await transformWithOxc(fs.readFileSync(filename, 'utf8'), filename, { lang: 'tsx' })
+  const output = transformed.code
+    .replace(/import \{([^}]+)\} from "react";/, (_, names) => `const {${names.replaceAll(' as ', ': ')}} = require("react");`)
+    .replace(/import Icons from "\.\.\/ui\/shared\/fluent-icons";/,
+      'const Icons = { iconMarkup: () => `<svg aria-hidden="true"></svg>` };')
+    .replace(/import \{([^}]+)\} from "react\/jsx-runtime";/,
+      (_, names) => `const {${names.replaceAll(' as ', ': ')}} = require("react/jsx-runtime");`)
+    .replace('export function HistoryView', 'function HistoryView') + '\nmodule.exports = { HistoryView };\n'
+  const loaded = new Module(filename, module)
+  loaded.filename = filename
+  loaded.paths = Module._nodeModulePaths(path.dirname(filename))
+  loaded._compile(output, filename)
+  return loaded.exports.HistoryView
+}
+
+async function createHistoryRenderer (history) {
+  const HistoryView = await loadHistoryView()
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://history.test/' })
+  const previous = Object.fromEntries(['window', 'document', 'HTMLElement', 'Event'].map((key) => [key, global[key]]))
+  global.window = dom.window; global.document = dom.window.document
+  global.HTMLElement = dom.window.HTMLElement; global.Event = dom.window.Event
+  global.IS_REACT_ACT_ENVIRONMENT = true
   const api = {
     dragStart () {},
     dragEnd () {},
@@ -620,23 +586,22 @@ function createHistoryRenderer (history) {
       value: await history.exportSession({ sessionId, format, version })
     })
   }
-  const document = {
-    documentElement: new HistoryRendererElement('html'),
-    createElement: (tagName) => new HistoryRendererElement(tagName),
-    getElementById: (id) => elements.get(id),
-    querySelectorAll: (selector) => {
-      if (selector === '[data-export]') return exportButtons
-      if (selector === '[data-version]') return versionButtons
-      return []
+  dom.window.historyApi = api
+  dom.window.ManualWindowDrag = {
+    bindManualWindowDrag: () => ({ end () {} }),
+    isInteractiveDragEvent: () => false
+  }
+  const reactRoot = createRoot(document.getElementById('root'))
+  await act(async () => reactRoot.render(React.createElement(HistoryView)))
+  await settleHistoryRenderer()
+  return {
+    document: dom.window.document,
+    async dispose () {
+      await act(async () => reactRoot.unmount()); dom.window.close()
+      for (const [key, value] of Object.entries(previous)) value === undefined ? delete global[key] : (global[key] = value)
+      delete global.IS_REACT_ACT_ENVIRONMENT
     }
   }
-  document.documentElement.dataset = {}
-  const window = { addEventListener () {}, historyApi: api }
-  vm.runInNewContext(
-    fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'history', 'history.js'), 'utf8'),
-    { Date, Intl, console, document, window }
-  )
-  return { elements, exportButtons, versionButtons }
 }
 
 test('CI journey: history renderer scopes version selection and export to the selected session', async (t) => {
@@ -725,42 +690,42 @@ test('CI journey: history renderer scopes version selection and export to the se
   })
   await gateway.flush()
 
-  const renderer = createHistoryRenderer(history)
-  await settleHistoryRenderer()
-  const sessionList = renderer.elements.get('sessionList')
-  const cardBySessionId = new Map(sessionList.children.map((item) => [item.children[0].dataset.sessionId, item.children[0]]))
-  const timeline = renderer.elements.get('timeline')
+  const renderer = await createHistoryRenderer(history)
+  t.after(() => renderer.dispose())
+  const cardBySessionId = new Map([...renderer.document.querySelectorAll('[data-session-id]')]
+    .map((item) => [item.dataset.sessionId, item]))
+  const timeline = renderer.document.getElementById('timeline')
 
-  cardBySessionId.get(sessionA).click()
+  await act(async () => cardBySessionId.get(sessionA).click())
   await settleHistoryRenderer()
-  assert.equal(timeline.children.length, 50)
-  assert.equal(timeline.children[0].children[1].textContent, 'session A original 0',
+  assert.equal(timeline.querySelectorAll('.timeline-item').length, 50)
+  assert.equal(timeline.querySelector('.caption-text').textContent, 'session A original 0',
     'a newly selected session starts with its first-pass final text')
 
-  renderer.versionButtons[1].click()
-  assert.equal(timeline.children[0].children[1].textContent, 'session A refined 0')
-  renderer.elements.get('nextPage').click()
+  await act(async () => renderer.document.querySelector('[data-version="refined"]').click())
+  assert.equal(timeline.querySelector('.caption-text').textContent, 'session A refined 0')
+  await act(async () => renderer.document.getElementById('nextPage').click())
   await settleHistoryRenderer()
-  assert.equal(timeline.children.length, 1)
-  assert.equal(timeline.children[0].children[1].textContent, 'session A refined 50',
+  assert.equal(timeline.querySelectorAll('.timeline-item').length, 1)
+  assert.equal(timeline.querySelector('.caption-text').textContent, 'session A refined 50',
     'the explicit choice persists while paging within the same session')
 
-  renderer.exportButtons[0].click()
-  await waitForHistoryExport(renderer.elements.get('exportStatus'))
-  assert.equal(renderer.elements.get('exportStatus').textContent, '字幕精修稿已导出')
+  await act(async () => renderer.document.querySelector('[data-export="txt"]').click())
+  await waitForHistoryExport(renderer.document.getElementById('exportStatus'))
+  assert.equal(renderer.document.getElementById('exportStatus').textContent, '字幕精修稿已导出')
   assert.match(fs.readFileSync(refinedPath, 'utf8'), /session A refined 50/,
     'the export follows the current session’s explicit refined selection')
 
-  cardBySessionId.get(sessionB).click()
+  await act(async () => cardBySessionId.get(sessionB).click())
   await settleHistoryRenderer()
-  assert.equal(timeline.children[0].children[1].textContent, 'session B original 0',
+  assert.equal(timeline.querySelector('.caption-text').textContent, 'session B original 0',
     'choosing another session resets the display to the immutable first-pass final')
-  assert.equal(renderer.versionButtons[0].getAttribute('aria-checked'), 'true')
-  assert.equal(renderer.versionButtons[1].getAttribute('aria-checked'), 'false')
+  assert.equal(renderer.document.querySelector('[data-version="original"]').getAttribute('aria-checked'), 'true')
+  assert.equal(renderer.document.querySelector('[data-version="refined"]').getAttribute('aria-checked'), 'false')
 
-  renderer.exportButtons[0].click()
-  await waitForHistoryExport(renderer.elements.get('exportStatus'))
-  assert.equal(renderer.elements.get('exportStatus').textContent, '字幕原文已导出')
+  await act(async () => renderer.document.querySelector('[data-export="txt"]').click())
+  await waitForHistoryExport(renderer.document.getElementById('exportStatus'))
+  assert.equal(renderer.document.getElementById('exportStatus').textContent, '字幕原文已导出')
   assert.match(fs.readFileSync(originalPath, 'utf8'), /session B original 0/,
     'the next session exports its reset original selection')
   assert.doesNotMatch(fs.readFileSync(originalPath, 'utf8'), /session B refined 0/)

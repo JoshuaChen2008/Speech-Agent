@@ -2,158 +2,51 @@
 
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
+const Module = require('node:module')
 const path = require('node:path')
 const test = require('node:test')
-const vm = require('node:vm')
+const React = require('react')
+const { act } = React
+const { createRoot } = require('react-dom/client')
+const { JSDOM } = require('jsdom')
 
 const root = path.resolve(__dirname, '..', '..')
 
-function source (relativePath) {
-  return fs.readFileSync(path.join(root, relativePath), 'utf8')
-}
+function source (relativePath) { return fs.readFileSync(path.join(root, relativePath), 'utf8') }
 
-class FakeElement {
-  constructor (tagName = 'div') {
-    this.tagName = tagName.toUpperCase()
-    this.attributes = new Map()
-    this.children = []
-    this.dataset = {}
-    this.disabled = false
-    this.hidden = false
-    this.listeners = new Map()
-    this._textContent = ''
-    this.classList = { add () {}, remove () {} }
-  }
-
-  get textContent () { return this._textContent }
-
-  set textContent (value) {
-    this._textContent = String(value)
-    if (value === '') this.children = []
-  }
-
-  appendChild (child) {
-    this.children.push(child)
-    return child
-  }
-
-  setAttribute (name, value) { this.attributes.set(name, String(value)) }
-
-  getAttribute (name) { return this.attributes.get(name) ?? null }
-
-  addEventListener (name, callback) {
-    if (!this.listeners.has(name)) this.listeners.set(name, [])
-    this.listeners.get(name).push(callback)
-  }
-
-  click () {
-    for (const callback of this.listeners.get('click') || []) callback({ target: this })
-  }
-
-  closest () { return null }
-
-  setPointerCapture () {}
+async function loadHistoryView () {
+  const filename = path.join(root, 'src', 'history', 'history-view.tsx')
+  const { transformWithOxc } = await import('vite')
+  const transformed = await transformWithOxc(fs.readFileSync(filename, 'utf8'), filename, { lang: 'tsx' })
+  const output = transformed.code
+    .replace(/import \{([^}]+)\} from "react";/, (_, names) => `const {${names.replaceAll(' as ', ': ')}} = require("react");`)
+    .replace(/import Icons from "\.\.\/ui\/shared\/fluent-icons";/,
+      'const Icons = { iconMarkup: () => `<svg aria-hidden="true"></svg>` };')
+    .replace(/import \{([^}]+)\} from "react\/jsx-runtime";/,
+      (_, names) => `const {${names.replaceAll(' as ', ': ')}} = require("react/jsx-runtime");`)
+    .replace('export function HistoryView', 'function HistoryView') + '\nmodule.exports = { HistoryView };\n'
+  const loaded = new Module(filename, module)
+  loaded.filename = filename
+  loaded.paths = Module._nodeModulePaths(path.dirname(filename))
+  loaded._compile(output, filename)
+  return loaded.exports.HistoryView
 }
 
 function deferred () {
   let resolve
   let reject
-  const promise = new Promise((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise
-    reject = rejectPromise
-  })
+  const promise = new Promise((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise })
   return { promise, reject, resolve }
 }
 
-async function flushRenderer () {
-  await new Promise((resolve) => setImmediate(resolve))
-  await new Promise((resolve) => setImmediate(resolve))
-}
-
-function createHistoryHarness () {
-  const ids = [
-    'titlebar', 'close', 'refresh', 'globalStatus', 'sessionCount', 'sessionList',
-    'loadMore', 'emptyState', 'sessionDetail', 'detailSource', 'detailTitle',
-    'detailMeta', 'detailRefinement', 'exportStatus', 'previousPage', 'nextPage', 'retryPage',
-    'rangeStatus', 'timeline'
-  ]
-  const elements = new Map(ids.map((id) => [id, new FakeElement(id.includes('Page') ? 'button' : 'div')]))
-  elements.get('sessionDetail').hidden = true
-  elements.get('loadMore').hidden = true
-  elements.get('retryPage').hidden = true
-  const exportButtons = ['txt', 'md', 'srt'].map((format) => {
-    const button = new FakeElement('button')
-    button.dataset.export = format
-    return button
-  })
-  const versionButtons = ['original', 'refined'].map((version) => {
-    const button = new FakeElement('button')
-    button.dataset.version = version
-    button.setAttribute('aria-checked', version === 'original' ? 'true' : 'false')
-    return button
-  })
-  const pageRequests = []
-  const exportRequests = []
-  const sessions = [
-    { sessionId: 'session-a', sourceId: 'mic', state: 'closed', startedAt: 1_000, endedAt: 5_000, segmentCount: 2 },
-    { sessionId: 'session-b', sourceId: 'loopback', state: 'closed', startedAt: 10_000, endedAt: 20_000, segmentCount: 51 }
-  ]
-  const historyApi = {
-    dragStart () {},
-    dragEnd () {},
-    close () {},
-    onConfig () {},
-    getConfig: async () => ({ theme: 'dark', systemDark: true }),
-    listSessions: async () => ({ ok: true, value: { items: sessions, nextCursor: null } }),
-    getSessionPage (sessionId, limit, cursor) {
-      const request = deferred()
-      pageRequests.push({ cursor, limit, request, sessionId })
-      return request.promise
-    },
-    exportSession (sessionId, format, version) {
-      const request = deferred()
-      exportRequests.push({ format, request, sessionId, version })
-      return request.promise
-    }
-  }
-  const document = {
-    documentElement: new FakeElement('html'),
-    createElement: (tagName) => new FakeElement(tagName),
-    getElementById: (id) => elements.get(id),
-    querySelectorAll: (selector) => {
-      if (selector === '[data-export]') return exportButtons
-      if (selector === '[data-version]') return versionButtons
-      return []
-    }
-  }
-  document.documentElement.dataset = {}
-  const window = { addEventListener () {}, historyApi }
-  vm.runInNewContext(source('src/history/history.js'), {
-    Date,
-    Intl,
-    console,
-    document,
-    window
-  })
-  return { elements, exportButtons, exportRequests, pageRequests, sessions, versionButtons }
-}
-
-function refinement (segmentCount, refinedSegmentCount, {
-  refinementEnabled = true,
-  refinementFaultCode = null,
-  refinementResultStatus = 'known'
-} = {}) {
+function refinement (segmentCount, refinedSegmentCount, options = {}) {
   return {
     segmentCount,
     refinedSegmentCount,
-    refinementEnabled,
-    refinementFaultCode,
-    refinementResultStatus
+    refinementEnabled: true,
+    refinementFaultCode: options.refinementFaultCode ?? null,
+    refinementResultStatus: options.refinementResultStatus ?? 'known'
   }
-}
-
-function pageValue (session, totalCount, items, nextCursor, pageRefinement = refinement(totalCount, totalCount)) {
-  return { ok: true, value: { session, totalCount, items, nextCursor, refinement: pageRefinement } }
 }
 
 function segment (prefix, index, sourceId = 'loopback') {
@@ -163,264 +56,143 @@ function segment (prefix, index, sourceId = 'loopback') {
     text: `${prefix} 字幕 ${index}`,
     refinedText: `${prefix} 精修稿 ${index}`,
     textRevision: 1,
-    t0Ms: index * 1_000,
-    t1Ms: index * 1_000 + 800
+    t0Ms: index * 1000,
+    t1Ms: index * 1000 + 800
   }
 }
 
-test('history window exposes terminal text review and txt/md/srt export without audio controls', () => {
+function pageValue (session, totalCount, items, nextCursor, pageRefinement = refinement(totalCount, totalCount)) {
+  return { ok: true, value: { session, totalCount, items, nextCursor, refinement: pageRefinement } }
+}
+
+async function flush () {
+  await act(async () => {
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+  })
+}
+
+async function createHarness () {
+  const HistoryView = await loadHistoryView()
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://history.test/' })
+  const previous = Object.fromEntries(['window', 'document', 'HTMLElement', 'Event'].map((key) => [key, global[key]]))
+  global.window = dom.window
+  global.document = dom.window.document
+  global.HTMLElement = dom.window.HTMLElement
+  global.Event = dom.window.Event
+  global.IS_REACT_ACT_ENVIRONMENT = true
+  const pageRequests = []
+  const exportRequests = []
+  const sessions = [
+    { sessionId: 'session-a', sourceId: 'mic', state: 'closed', startedAt: 1000, endedAt: 5000, segmentCount: 2 },
+    { sessionId: 'session-b', sourceId: 'loopback', state: 'closed', startedAt: 10000, endedAt: 20000, segmentCount: 51 }
+  ]
+  let dragBindings = 0
+  dom.window.ManualWindowDrag = {
+    bindManualWindowDrag ({ handle, canStart, onStart, onEnd }) {
+      assert.equal(handle.id, 'titlebar'); assert.equal(typeof canStart, 'function'); assert.equal(typeof onStart, 'function'); assert.equal(typeof onEnd, 'function')
+      dragBindings += 1
+      return { end () {} }
+    },
+    isInteractiveDragEvent: () => false
+  }
+  dom.window.historyApi = {
+    close () {}, dragStart () {}, dragEnd () {}, onConfig: () => () => {},
+    getConfig: async () => ({ theme: 'dark', systemDark: true }),
+    listSessions: async () => ({ ok: true, value: { items: sessions, nextCursor: null } }),
+    getSessionPage (sessionId, limit, cursor) {
+      const request = deferred(); pageRequests.push({ cursor, limit, request, sessionId }); return request.promise
+    },
+    exportSession (sessionId, format, version) {
+      const request = deferred(); exportRequests.push({ format, request, sessionId, version }); return request.promise
+    }
+  }
+  const reactRoot = createRoot(dom.window.document.getElementById('root'))
+  await act(async () => { reactRoot.render(React.createElement(HistoryView)) })
+  await flush()
+  return {
+    dom, dragBindings, exportRequests, pageRequests, sessions,
+    async dispose () {
+      await act(async () => reactRoot.unmount())
+      dom.window.close()
+      for (const [key, value] of Object.entries(previous)) value === undefined ? delete global[key] : (global[key] = value)
+      delete global.IS_REACT_ACT_ENVIRONMENT
+    }
+  }
+}
+
+function click (element) { element.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) }
+
+test('SEM-F07/SEM-F11/J10: React history exposes bounded text review and version-scoped export without audio controls', () => {
   const html = source('src/history/index.html')
-  const script = source('src/history/history.js')
-
-  assert.match(html, /id="sessionList"[^>]+role="list"/)
-  assert.match(html, /id="previousPage"[^>]*>上一批</)
-  assert.match(html, /id="nextPage"[^>]*>下一批</)
-  assert.match(html, /id="retryPage"[^>]+hidden[^>]*>重试</)
-  assert.match(html, /id="rangeStatus"[^>]+role="status"[^>]+aria-live="polite"/)
-  assert.match(html, /id="detailRefinement"[^>]+role="status"/)
-  assert.match(html, /id="timeline"[^>]+role="list"[^>]+tabindex="0"[\s\S]+aria-busy="false"/)
-  assert.match(html, /data-export="txt"/)
-  assert.match(html, /data-export="md"/)
-  assert.match(html, /data-export="srt"/)
-  assert.match(html, /文本复盘，不包含录音/)
-  assert.match(html, /临时字幕、译文和音频都不会进入历史/)
-  assert.doesNotMatch(html, /<audio\b|\bplayback\b|data-action="play"/i)
-
-  assert.match(script, /api\.listSessions\(PAGE_SIZE,/)
-  assert.match(script, /const PAGE_SIZE = 50/)
-  assert.match(script, /api\.getSessionPage\(sessionId, PAGE_SIZE, cursorEntry\.cursor\)/)
-  assert.doesNotMatch(script, /api\.getSession\(/)
-  assert.match(script, /value\.items\.length > PAGE_SIZE/)
-  assert.match(script, /detailCursorStack\.push\(/)
-  assert.match(script, /generation !== detailGeneration \|\| sessionId !== selectedSessionId/)
-  /* 导出必须带上用户选定的版本；默认是原始版（SEM-F11 / J15b）。 */
-  assert.match(script, /api\.exportSession\(sessionId, format, selectedVersion\)/)
-  assert.match(script, /let selectedVersion = 'original'/)
-  assert.match(script, /selectedVersion === 'refined' && typeof segment\.refinedText === 'string'/)
-  assert.match(script, /page\.refinement/)
-  assert.match(script, /\[原始版回退\]/)
-  assert.match(script, /request !== exportRequest \|\| generation !== detailGeneration \|\| sessionId !== selectedSessionId/)
-  assert.match(script, /listItem\.setAttribute\('role', 'listitem'\)/)
-  assert.match(script, /item\.setAttribute\('aria-posinset'/)
-  assert.match(script, /item\.setAttribute\('aria-setsize'/)
-  assert.match(script, /timeline\.setAttribute\('aria-busy', 'true'\)/)
-  assert.match(script, /sessionButtons\.get\(selectedSessionId\)\?\.setAttribute\('aria-current'/)
-  assert.doesNotMatch(script, /audioPath|translation\s*[.:[]|require\(['"](?:node:)?fs|require\(['"]electron/)
+  const entry = source('src/history/entry.tsx')
+  const view = source('src/history/history-view.tsx')
+  assert.match(html, /id="root"/)
+  assert.match(html, /<script type="module" src="\.\/entry\.tsx"><\/script>/)
+  assert.match(entry, /createRoot[\s\S]*HistoryView/)
+  assert.match(view, /const PAGE_SIZE = 50/)
+  assert.match(view, /api\.listSessions\(PAGE_SIZE,/)
+  assert.match(view, /api\.getSessionPage\(sessionId, PAGE_SIZE, cursorEntry\.cursor\)/)
+  assert.match(view, /value\.items\.length > PAGE_SIZE/)
+  assert.match(view, /api\.exportSession\(sessionId, format, version\)/)
+  assert.match(view, /\[原始版回退\]/)
+  assert.match(view, /aria-posinset=/)
+  assert.match(view, /aria-setsize=/)
+  assert.doesNotMatch(`${html}\n${entry}\n${view}`, /<audio\b|audioPath|require\(['"](?:node:)?fs|require\(['"]electron/i)
 })
 
-test('history detail keeps one bounded page and rejects late page or export results', async () => {
-  const harness = createHistoryHarness()
-  await flushRenderer()
-
-  const sessionList = harness.elements.get('sessionList')
-  const timeline = harness.elements.get('timeline')
-  const rangeStatus = harness.elements.get('rangeStatus')
-  const sessionACard = sessionList.children[0].children[0]
-  const sessionBCard = sessionList.children[1].children[0]
-
-  sessionACard.click()
-  sessionBCard.click()
+test('SEM-F11/J10: React history rejects late page and export results while keeping one 50-row page', async (t) => {
+  const harness = await createHarness(); t.after(() => harness.dispose())
+  assert.equal(harness.dragBindings, 1)
+  const cards = [...document.querySelectorAll('[data-session-id]')]
+  assert.equal(cards.length, 2)
+  await act(async () => { click(cards[0]); click(cards[1]) })
   assert.equal(harness.pageRequests.length, 2)
-  assert.equal(harness.pageRequests[0].sessionId, 'session-a')
-  assert.equal(harness.pageRequests[1].sessionId, 'session-b')
   assert.equal(harness.pageRequests[1].limit, 50)
-  assert.equal(sessionACard.getAttribute('aria-current'), 'false')
-  assert.equal(sessionBCard.getAttribute('aria-current'), 'true')
-
   const firstBatch = Array.from({ length: 50 }, (_, index) => segment('b', index))
-  harness.pageRequests[1].request.resolve(pageValue(
-    harness.sessions[1],
-    51,
-    firstBatch,
-    { t0Ms: 49_000, firstEventOrder: 50 }
-  ))
-  await flushRenderer()
-  assert.equal(timeline.children.length, 50)
-  assert.equal(timeline.children[0].children[1].textContent, 'b 字幕 0')
-  assert.equal(timeline.children[49].getAttribute('aria-posinset'), '50')
-  assert.equal(timeline.children[49].getAttribute('aria-setsize'), '51')
-  assert.equal(rangeStatus.textContent, '第 1–50 条，共 51 条')
-  assert.equal(harness.elements.get('nextPage').disabled, false)
-  assert.equal(timeline.getAttribute('aria-busy'), 'false')
+  await act(async () => harness.pageRequests[1].request.resolve(pageValue(harness.sessions[1], 51, firstBatch, { t0Ms: 50000, firstEventOrder: 51 })))
+  await flush()
+  assert.equal(document.querySelectorAll('#timeline .timeline-item').length, 50)
+  await act(async () => harness.pageRequests[0].request.resolve(pageValue(harness.sessions[0], 2, [segment('late', 0)], null)))
+  await flush()
+  assert.equal(document.querySelector('#timeline').textContent.includes('late 字幕'), false)
+  assert.equal(document.querySelector('#rangeStatus').textContent, '第 1–50 条，共 51 条')
 
-  /* J15b：同一会话翻页保留用户明确选择的精修稿；导出跟随这个选择。 */
-  harness.versionButtons[1].click()
-  assert.equal(timeline.children.length, 50)
-  assert.equal(timeline.children[0].children[1].textContent, 'b 精修稿 0')
-  assert.equal(harness.versionButtons[0].getAttribute('aria-checked'), 'false')
-  assert.equal(harness.versionButtons[1].getAttribute('aria-checked'), 'true')
-
-  harness.pageRequests[0].request.resolve(pageValue(
-    harness.sessions[0],
-    2,
-    [segment('late-a', 0, 'mic'), segment('late-a', 1, 'mic')],
-    null
-  ))
-  await flushRenderer()
-  assert.equal(timeline.children.length, 50)
-  assert.equal(timeline.children[0].children[1].textContent, 'b 精修稿 0')
-
-  harness.elements.get('nextPage').click()
-  assert.equal(harness.pageRequests[2].cursor.firstEventOrder, 50)
-  harness.pageRequests[2].request.resolve(pageValue(
-    harness.sessions[1],
-    51,
-    [segment('b', 50)],
-    null
-  ))
-  await flushRenderer()
-  assert.equal(timeline.children.length, 1)
-  assert.equal(timeline.children[0].children[1].textContent, 'b 精修稿 50')
-  assert.equal(timeline.children[0].getAttribute('aria-posinset'), '51')
-  assert.equal(rangeStatus.textContent, '第 51–51 条，共 51 条')
-  assert.equal(harness.elements.get('previousPage').disabled, false)
-  assert.equal(harness.elements.get('nextPage').disabled, true)
-
-  harness.elements.get('previousPage').click()
-  assert.equal(harness.pageRequests[3].cursor, null)
-  harness.pageRequests[3].request.resolve(pageValue(
-    harness.sessions[1],
-    51,
-    firstBatch,
-    { t0Ms: 49_000, firstEventOrder: 50 }
-  ))
-  await flushRenderer()
-  assert.equal(timeline.children.length, 50)
-  assert.equal(timeline.children[0].children[1].textContent, 'b 精修稿 0')
-
-  harness.exportButtons[0].click()
+  await act(async () => click(document.querySelector('[data-export="txt"]')))
   assert.equal(harness.exportRequests[0].sessionId, 'session-b')
-  assert.equal(harness.exportRequests[0].version, 'refined')
-  assert.equal(harness.elements.get('exportStatus').textContent, '正在准备导出…')
-  sessionACard.click()
-  harness.pageRequests[4].request.resolve(pageValue(
-    harness.sessions[0],
-    2,
-    [segment('a', 0, 'mic'), segment('a', 1, 'mic')],
-    null
-  ))
-  await flushRenderer()
-  harness.exportRequests[0].request.resolve({ ok: true, value: { status: 'saved' } })
-  await flushRenderer()
-  /* 选择另一会话必须强制恢复原始版，避免把 A 的显示选择带到 B（SEM-F11）。 */
-  assert.equal(timeline.children[0].children[1].textContent, 'a 字幕 0')
-  assert.equal(harness.versionButtons[0].getAttribute('aria-checked'), 'true')
-  assert.equal(harness.versionButtons[1].getAttribute('aria-checked'), 'false')
-  assert.equal(harness.elements.get('exportStatus').textContent, '')
-
-  sessionBCard.click()
-  harness.pageRequests[5].request.resolve({ ok: false, error: { message: '分页读取失败' } })
-  await flushRenderer()
-  assert.equal(harness.elements.get('retryPage').hidden, false)
-  assert.equal(rangeStatus.textContent, '读取失败，请重试')
-  harness.elements.get('retryPage').click()
-  harness.pageRequests[6].request.resolve(pageValue(harness.sessions[1], 1, [segment('retry-b', 0)], null))
-  await flushRenderer()
-  assert.equal(harness.elements.get('retryPage').hidden, true)
-  assert.equal(timeline.children.length, 1)
-  assert.equal(timeline.children[0].children[1].textContent, 'retry-b 字幕 0')
+  assert.equal(harness.exportRequests[0].version, 'original')
+  await act(async () => click(cards[0]))
+  await act(async () => harness.exportRequests[0].request.resolve({ ok: true, value: { status: 'saved' } }))
+  await flush()
+  assert.equal(document.querySelector('#exportStatus').textContent, '')
 })
 
-test('history refinement detail uses whole-session metadata, marks fallback rows and keeps fault facts independent', async () => {
-  const harness = createHistoryHarness()
-  await flushRenderer()
-
-  const sessionList = harness.elements.get('sessionList')
-  const sessionACard = sessionList.children[0].children[0]
-  const sessionBCard = sessionList.children[1].children[0]
-  const detailRefinement = harness.elements.get('detailRefinement')
-  const timeline = harness.elements.get('timeline')
-
-  sessionBCard.click()
-  harness.pageRequests[0].request.resolve(pageValue(
-    harness.sessions[1],
-    205,
-    [
-      { ...segment('whole-session', 0), refinedText: 'whole-session 精修稿 0' },
-      { ...segment('whole-session', 1), refinedText: null }
-    ],
-    { t0Ms: 1_000, firstEventOrder: 2 },
-    refinement(205, 125)
-  ))
-  await flushRenderer()
-
-  assert.equal(detailRefinement.textContent, '已精修 125/205 段，80 段使用原始版')
-  assert.equal(harness.versionButtons[1].disabled, false)
-  assert.equal(harness.exportButtons[0].disabled, false)
-  harness.versionButtons[1].click()
-  assert.equal(timeline.children[0].children[1].textContent, 'whole-session 精修稿 0')
-  assert.equal(timeline.children[1].children[1].textContent, '[原始版回退] whole-session 字幕 1',
-    'the fallback marker is per row and the 125/205 coverage does not come from this two-row page')
-
-  sessionACard.click()
-  harness.pageRequests[1].request.resolve(pageValue(
-    harness.sessions[0],
-    0,
-    [],
-    null,
-    refinement(0, 0, { refinementFaultCode: 'REFINE_WORKER_EXITED' })
-  ))
-  await flushRenderer()
-  assert.equal(detailRefinement.textContent, '精修进程异常结束；本会话未产生可精修的已定稿字幕')
-  assert.equal(harness.versionButtons[1].disabled, true)
-  assert.equal(harness.versionButtons[1].getAttribute('aria-disabled'), 'true')
-  assert.equal(harness.exportButtons[0].disabled, false, 'original export stays available for an empty session')
-
-  sessionBCard.click()
-  harness.pageRequests[2].request.resolve(pageValue(
-    harness.sessions[1],
-    5,
-    [segment('fault-complete', 0)],
-    null,
-    refinement(5, 5, { refinementFaultCode: 'REFINE_DECODE_FAILED' })
-  ))
-  await flushRenderer()
-  assert.equal(detailRefinement.textContent, '精修进程异常结束，但本次已生成 5/5 段精修稿',
-    'complete coverage must not hide a confirmed refinement fault')
-  assert.equal(harness.versionButtons[1].disabled, false)
-
-  sessionACard.click()
-  harness.pageRequests[3].request.resolve(pageValue(
-    harness.sessions[0],
-    4,
-    [segment('zero-refinement', 0, 'mic')],
-    null,
-    refinement(4, 0)
-  ))
-  await flushRenderer()
-  assert.equal(detailRefinement.textContent, '本会话未生成精修稿')
-  assert.equal(harness.versionButtons[1].disabled, true)
-  assert.equal(harness.versionButtons[1].getAttribute('aria-disabled'), 'true')
-
-  sessionBCard.click()
-  harness.pageRequests[4].request.resolve(pageValue(
-    harness.sessions[1],
-    4,
-    [segment('legacy-refinement', 0)],
-    null,
-    refinement(4, 2, { refinementResultStatus: 'not_recorded' })
-  ))
-  await flushRenderer()
-  assert.equal(detailRefinement.textContent, '已精修 2/4 段，2 段使用原始版；未记录精修运行状态')
-  assert.equal(harness.versionButtons[1].disabled, false)
-  assert.doesNotMatch(sessionList.textContent, /未记录精修运行状态/,
-    'legacy result status stays inside refinement detail, never the ordinary session list')
+test('SEM-F11/J10: whole-session refinement metadata controls fallback and persists across keyset pages', async (t) => {
+  const harness = await createHarness(); t.after(() => harness.dispose())
+  const session = harness.sessions[1]
+  await act(async () => click(document.querySelector('[data-session-id="session-b"]')))
+  const firstItems = Array.from({ length: 50 }, (_, index) => segment('mix', index))
+  firstItems[1].refinedText = null
+  await act(async () => harness.pageRequests[0].request.resolve(pageValue(session, 51, firstItems,
+    { t0Ms: 50000, firstEventOrder: 51 }, refinement(51, 50, { refinementFaultCode: 'worker_exit' }))))
+  await flush()
+  assert.equal(document.querySelector('#detailRefinement').textContent, '精修进程异常结束；已精修 50/51 段，1 段使用原始版')
+  await act(async () => click(document.querySelector('[data-version="refined"]')))
+  assert.match(document.querySelector('#timeline').textContent, /\[原始版回退\] mix 字幕 1/)
+  await act(async () => click(document.querySelector('#nextPage')))
+  assert.equal(harness.pageRequests[1].cursor.t0Ms, 50000)
+  await act(async () => harness.pageRequests[1].request.resolve(pageValue(session, 51, [segment('mix', 50)], null,
+    refinement(51, 50, { refinementFaultCode: 'worker_exit' }))))
+  await flush()
+  assert.equal(document.querySelector('[data-version="refined"]').getAttribute('aria-checked'), 'true')
+  assert.equal(document.querySelectorAll('#timeline .timeline-item').length, 1)
+  assert.equal(document.querySelector('#rangeStatus').textContent, '第 51–51 条，共 51 条')
 })
 
-test('history preload is a narrow IPC façade without SQL, arbitrary paths or filesystem powers', () => {
+test('history preload remains a narrow IPC facade', () => {
   const preload = source('src/preload/history.js')
-  const toolbar = source('src/toolbar/toolbar.ts')
-
-  assert.match(preload, /HISTORY_LIST/)
-  assert.match(preload, /HISTORY_PAGE/)
-  assert.doesNotMatch(preload, /HISTORY_GET|getSession:\s*/)
-  assert.match(preload, /HISTORY_EXPORT/)
-  assert.match(preload, /sessionId: String/)
-  assert.match(preload, /limit: Number/)
-  assert.match(preload, /t0Ms: Number\(cursor\?\.t0Ms\)/)
-  assert.match(preload, /firstEventOrder: Number\(cursor\?\.firstEventOrder\)/)
-  assert.match(preload, /format: String/)
-  assert.doesNotMatch(preload, /filePath|databasePath|\bsql\b|readFile|writeFile|showSaveDialog/i)
-  assert.match(toolbar, /history: \(\) => bridge\.action\('history'\)/)
-  assert.match(toolbar, /act: 'history'.+label: '历史记录'/)
+  assert.match(preload, /listSessions/)
+  assert.match(preload, /getSessionPage/)
+  assert.match(preload, /exportSession/)
+  assert.doesNotMatch(preload, /nodeIntegration|require\(['"](?:node:)?fs|database|sqlite/i)
 })

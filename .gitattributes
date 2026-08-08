@@ -39,7 +39,8 @@ docs/validation/gate-0b-realtime-candidate-summary.json text eol=lf
 # I3 non-audio source provenance is compared across developer and hosted
 # Windows worktrees. Pin every text input to LF; the runner also canonicalizes
 # legacy CRLF worktrees before hashing, without normalizing binary evidence.
-src/history/history.js text eol=lf
+src/history/history-view.tsx text eol=lf
+scripts/history-react-evidence-harness.js text eol=lf
 src/main/services/history-service.js text eol=lf
 scripts/i3-nonaudio-soak.js text eol=lf
 src/main/session/session-coordinator.js text eol=lf

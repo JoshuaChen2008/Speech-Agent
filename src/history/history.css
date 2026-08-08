@@ -1,5 +1,6 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
+#root { height: 100%; }
 
 html, body {
   margin: 0;

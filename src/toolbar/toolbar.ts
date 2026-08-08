@@ -61,6 +61,7 @@ let toolbarLayoutGeneration = 0
 let toolbarLayoutObserver: ResizeObserver | null = null
 let toolbarLayoutQueued = false
 let lastToolbarLayoutKey = ''
+let toolbarLayoutRetryTimer: ReturnType<typeof setTimeout> | null = null
 
 installSprite(document)
 grip.innerHTML = iconMarkup('grip')
@@ -69,7 +70,7 @@ grip.innerHTML = iconMarkup('grip')
 // 工具条实际轮廓：只上报现有 #toolbar.toolbar 的外接矩形。
 // generation 由主进程签发；reload 前后的 renderer 不能复用旧矩形。
 // ---------------------------------------------------------------------------
-function queueToolbarLayoutReport () {
+function queueToolbarLayoutReport (force = false) {
   if (toolbarLayoutQueued || toolbarLayoutGeneration <= 0) return
   toolbarLayoutQueued = true
   requestAnimationFrame(() => {
@@ -85,7 +86,7 @@ function queueToolbarLayoutReport () {
       }
     }
     const key = JSON.stringify(report)
-    if (key === lastToolbarLayoutKey) return
+    if (!force && key === lastToolbarLayoutKey) return
     lastToolbarLayoutKey = key
     bridge.reportToolbarLayout(report)
   })
@@ -99,14 +100,18 @@ async function initToolbarLayout () {
     const context = await bridge.getToolbarLayoutContext()
     if (!context || !Number.isSafeInteger(context.generation) || context.generation <= 0) return
     toolbarLayoutGeneration = context.generation
-    toolbarLayoutObserver = new ResizeObserver(queueToolbarLayoutReport)
+    toolbarLayoutObserver = new ResizeObserver(() => queueToolbarLayoutReport())
     toolbarLayoutObserver.observe(toolbar)
     queueToolbarLayoutReport()
+    // 导航/reload 后的首帧可能早于最终样式与字体布局。主进程会对该帧
+    // fail closed 到 fallback；稳定后强制补报一次，不能被 renderer 去重吞掉。
+    toolbarLayoutRetryTimer = setTimeout(() => queueToolbarLayoutReport(true), 100)
   } catch { /* browser preview or a navigation already invalidated this renderer */ }
 }
 
 window.addEventListener('beforeunload', () => {
   if (toolbarLayoutObserver) toolbarLayoutObserver.disconnect()
+  if (toolbarLayoutRetryTimer) clearTimeout(toolbarLayoutRetryTimer)
 })
 
 // ---------------------------------------------------------------------------
