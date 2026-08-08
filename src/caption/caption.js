@@ -29,7 +29,7 @@ const liveRegion = document.getElementById('liveRegion')
 const bridge = window.shell || {
   mouseThrough () {}, dragStart () {}, dragEnd () {},
   resizeStart () {}, resizeEnd () {},
-  onLock () {}, onConfig () {}, onCaption () {}, onCaptionState () {},
+  onLock () {}, onToolbarOverlap () {}, onConfig () {}, onCaption () {}, onCaptionState () {},
   reportCaptionViewportEviction () { return Promise.resolve(false) },
   getLock () { return Promise.reject(new Error('no shell')) },
   getConfig () { return Promise.reject(new Error('no shell')) },
@@ -41,6 +41,7 @@ let dragging = false
 let resizing = false
 let ignoring = null
 let lastX = 0, lastY = 0
+let toolbarOverlapGeneration = 0
 
 // --------------------------------------------------------------------------
 // 边缘拉伸
@@ -106,6 +107,28 @@ document.addEventListener('mousemove', (e) => {
 
 bridge.mouseThrough(true)
 ignoring = true
+
+function acceptToolbarOverlap (payload) {
+  if (!payload || !Number.isSafeInteger(payload.generation) || payload.generation <= 0 ||
+      payload.generation < toolbarOverlapGeneration ||
+      !['fallback', 'toolbar'].includes(payload.source) ||
+      !payload.rect || typeof payload.rect !== 'object') return
+  const { top, right, width, height } = payload.rect
+  if (![top, right, width, height].every(Number.isFinite) ||
+      top < 0 || right < 0 || width <= 0 || height <= 0 ||
+      top > 72 || right > 600 || width > 600 || height > 72) return
+
+  toolbarOverlapGeneration = payload.generation
+  const style = document.documentElement.style
+  style.setProperty('--toolbar-overlap-top', `${top}px`)
+  style.setProperty('--toolbar-overlap-right', `${right}px`)
+  style.setProperty('--toolbar-overlap-width', `${width}px`)
+  style.setProperty('--toolbar-overlap-height', `${height}px`)
+  /* A stationary pointer must not retain the hit result from the old hole. */
+  applyHit(lastX, lastY)
+}
+
+if (typeof bridge.onToolbarOverlap === 'function') bridge.onToolbarOverlap(acceptToolbarOverlap)
 
 // --------------------------------------------------------------------------
 // 拖动（未锁定时可拖；role=caption）

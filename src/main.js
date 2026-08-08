@@ -41,6 +41,7 @@ const { RefinementFaultLog } = require('./main/services/refinement-fault-log')
 const { RefinementNoticeStore } = require('./main/services/refinement-notice')
 const { createMainEvidenceBridge } = require('./main/services/electron-exit-evidence')
 const { PowerSessionGuard } = require('./main/services/power-session-guard')
+const { ToolbarLayoutState, WINDOW_LAYOUT } = require('./main/window-layout-contract')
 
 const exitEvidence = createMainEvidenceBridge()
 exitEvidence.markLifecycle('main-started')
@@ -67,15 +68,16 @@ const refinementNoticeStore = new RefinementNoticeStore({
 
 const windowRoles = new Map()
 let locked = false
+const toolbarLayoutState = new ToolbarLayoutState()
 
-const MARGIN = 20
-const TB_MARGIN = 16
-const INSET = 12
+const MARGIN = WINDOW_LAYOUT.captionMargin
+const TB_MARGIN = WINDOW_LAYOUT.toolbarMargin
+const INSET = WINDOW_LAYOUT.toolbarDockInset
 const CAP_W = 920
 const CAP_H = 190
 const CAP_LIMITS = Object.freeze({ minW: 480, maxW: 1600, minH: 140, maxH: 420 })
-const TB_W = 568 + TB_MARGIN * 2
-const TB_H = 40 + TB_MARGIN * 2
+const TB_W = WINDOW_LAYOUT.toolbarViewportWidth
+const TB_H = WINDOW_LAYOUT.toolbarViewportHeight
 const RESIZE_EDGES = Object.freeze(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'])
 const CHILD_SERVICE_LABELS = Object.freeze([
   'Speech Agent realtime ASR',
@@ -132,6 +134,16 @@ function send (win, channel, value) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, value)
 }
 
+function publishToolbarOverlap (overlap = toolbarLayoutState.getOverlap()) {
+  send(captionWin, CHANNELS.CAPTION_LAYOUT_TOOLBAR_OVERLAP, overlap)
+}
+
+function invalidateToolbarOverlap () {
+  const overlap = toolbarLayoutState.invalidate()
+  publishToolbarOverlap(overlap)
+  return overlap
+}
+
 function broadcastConfig () {
   const value = payload()
   for (const win of [captionWin, toolbarWin, settingsWin, historyWin]) send(win, CHANNELS.CONFIG_CHANGED, value)
@@ -164,6 +176,7 @@ function registerWindowRole (win, role) {
     windowRoles.delete(senderId)
     stopDrag(senderId)
     stopResize(senderId)
+    if (role === 'toolbar') invalidateToolbarOverlap()
   })
   win.on('blur', () => {
     stopDrag(senderId)
@@ -174,9 +187,15 @@ function registerWindowRole (win, role) {
     console.error(`[electron.window] role=${role} event=unresponsive`)
   })
   win.webContents.on('render-process-gone', (_event, details) => {
+    if (role === 'toolbar') invalidateToolbarOverlap()
     exitEvidence.recordRenderProcessGone(win.webContents, details)
     console.error(`[electron.renderer] role=${role} reason=${details.reason} exitCode=${details.exitCode}`)
   })
+  if (role === 'toolbar') {
+    win.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace) invalidateToolbarOverlap()
+    })
+  }
   win.webContents.on('preload-error', () => exitEvidence.recordPreloadError(win.webContents))
   win.webContents.on('did-fail-load', (_event, errorCode, _description, _url, isMainFrame) => {
     if (isMainFrame) console.error(`[electron.load] role=${role} errorCode=${errorCode}`)
@@ -225,6 +244,17 @@ function makeOverlay (role, width, height, x, y, file, focusable = true) {
   })
   registerWindowRole(win, role)
   hardenContents(win)
+  if (role === 'caption' || role === 'toolbar') {
+    const pinZoom = () => {
+      if (!win.isDestroyed()) win.webContents.setZoomFactor(1)
+    }
+    pinZoom()
+    win.webContents.on('did-finish-load', pinZoom)
+    win.webContents.on('zoom-changed', (event) => {
+      event.preventDefault()
+      pinZoom()
+    })
+  }
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   win.loadFile(file)
@@ -262,6 +292,7 @@ function createWindows () {
 
   captionWin.webContents.on('console-message', (details) => console.log('[caption]', details.message))
   toolbarWin.webContents.on('console-message', (details) => console.log('[toolbar]', details.message))
+  captionWin.webContents.on('did-finish-load', () => publishToolbarOverlap())
 
   const raiseToolbar = () => {
     if (toolbarWin && !toolbarWin.isDestroyed()) toolbarWin.moveTop()
@@ -700,6 +731,16 @@ ipcMain.on(CHANNELS.LOCK_TOGGLE, (event) => {
 ipcMain.handle(CHANNELS.LOCK_GET, (event) => {
   requireSender(event, CHANNELS.LOCK_GET)
   return locked
+})
+ipcMain.handle(CHANNELS.TOOLBAR_LAYOUT_GET_CONTEXT, (event) => {
+  const { win } = requireSender(event, CHANNELS.TOOLBAR_LAYOUT_GET_CONTEXT)
+  if (win !== toolbarWin) throw new Error('IPC denied for stale toolbar layout context')
+  return toolbarLayoutState.getContext()
+})
+ipcMain.on(CHANNELS.TOOLBAR_LAYOUT_REPORT_RECT, (event, report) => {
+  const { win } = requireSender(event, CHANNELS.TOOLBAR_LAYOUT_REPORT_RECT)
+  if (win !== toolbarWin) throw new Error('IPC denied for stale toolbar layout report')
+  publishToolbarOverlap(toolbarLayoutState.acceptReport(report))
 })
 ipcMain.on(CHANNELS.TOOLBAR_ACTION, (event, action) => {
   requireSender(event, CHANNELS.TOOLBAR_ACTION)

@@ -75,6 +75,9 @@ class FakeElement {
     return null
   }
   setPointerCapture () {}
+  getBoundingClientRect () {
+    return { x: 184, y: 16, width: 400, height: 40, left: 184, top: 16, right: 584, bottom: 56 }
+  }
 }
 
 async function flush () {
@@ -88,6 +91,8 @@ function createHarness () {
   elements.get('toolbar').classList.add('toolbar')
   const callbacks = {}
   const actions = []
+  const layoutReports = []
+  const observedLayoutTargets = []
   const shell = {
     mouseThrough () {}, dragStart () {}, dragEnd () {}, lockToggle () {},
     action: (name) => actions.push(name),
@@ -95,6 +100,8 @@ function createHarness () {
     onConfig: (callback) => { callbacks.config = callback },
     onSnapshot: (callback) => { callbacks.snapshot = callback },
     onRefinementNotice: (callback) => { callbacks.notice = callback },
+    getToolbarLayoutContext: async () => ({ generation: 7 }),
+    reportToolbarLayout: (report) => layoutReports.push(structuredClone(report)),
     getLock: async () => false,
     getConfig: async () => ({}),
     getSnapshot: async () => ({ revision: 1 }),
@@ -133,9 +140,14 @@ function createHarness () {
     console,
     document,
     requestAnimationFrame: (callback) => callback(),
+    ResizeObserver: class {
+      constructor (callback) { this.callback = callback }
+      observe (target) { observedLayoutTargets.push(target) }
+      disconnect () {}
+    },
     window
   })
-  return { actions, callbacks, elements }
+  return { actions, callbacks, elements, layoutReports, observedLayoutTargets }
 }
 
 test('toolbar renderer shows and dismisses a post-session status without creating another row', async () => {
@@ -165,4 +177,15 @@ test('toolbar renderer shows and dismisses a post-session status without creatin
 
   callbacks.notice(null)
   assert.equal(status.classList.contains('refinement-notice'), false)
+})
+
+test('SEM-F22/J17: toolbar reports its existing contour with the main-issued generation', async () => {
+  const { elements, layoutReports, observedLayoutTargets } = createHarness()
+  await flush()
+
+  assert.deepEqual(observedLayoutTargets, [elements.get('toolbar')])
+  assert.deepEqual(layoutReports, [{
+    generation: 7,
+    rect: { x: 184, y: 16, width: 400, height: 40 }
+  }])
 })

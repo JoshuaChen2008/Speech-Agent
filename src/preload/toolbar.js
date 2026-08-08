@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('shell', {
   lockToggle: () => ipcRenderer.send(CHANNELS.LOCK_TOGGLE),
   getLock: () => ipcRenderer.invoke(CHANNELS.LOCK_GET),
   onLock: (callback) => subscribe(CHANNELS.LOCK_CHANGED, callback),
+  getToolbarLayoutContext: () => ipcRenderer.invoke(CHANNELS.TOOLBAR_LAYOUT_GET_CONTEXT),
+  reportToolbarLayout: (report) => ipcRenderer.send(CHANNELS.TOOLBAR_LAYOUT_REPORT_RECT, report),
   action: (name) => ipcRenderer.send(CHANNELS.TOOLBAR_ACTION, String(name || '')),
   getConfig: () => ipcRenderer.invoke(CHANNELS.CONFIG_GET),
   onConfig: (callback) => subscribe(CHANNELS.CONFIG_CHANGED, callback),

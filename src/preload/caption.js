@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('shell', {
   resizeEnd: () => ipcRenderer.send(CHANNELS.RESIZE_END),
   getLock: () => ipcRenderer.invoke(CHANNELS.LOCK_GET),
   onLock: (callback) => subscribe(CHANNELS.LOCK_CHANGED, callback),
+  onToolbarOverlap: (callback) => subscribe(CHANNELS.CAPTION_LAYOUT_TOOLBAR_OVERLAP, callback),
   getConfig: () => ipcRenderer.invoke(CHANNELS.CONFIG_GET),
   onConfig: (callback) => subscribe(CHANNELS.CONFIG_CHANGED, callback),
   onCaption: (callback) => subscribe(CHANNELS.CAPTION_EVENT, callback),

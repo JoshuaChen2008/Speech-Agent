@@ -91,7 +91,7 @@ toolbar renderer
 3. toolbar renderer 在脚本就绪后主动读取当前 generation，不能依赖可能早于订阅发生的一次性推送。
 4. `ResizeObserver` 监听现有 `#toolbar.toolbar`；首个有效布局和后续尺寸变化都在 `requestAnimationFrame` 中去重上报。
 5. 主进程只接受当前 toolbar 主 frame、当前 generation、有限数值、正尺寸且完全位于 `600 × 72` 工具条内容区的 exact-shape 矩形。
-6. toolbar 与 caption WebContents 固定 zoom factor 为 `1`；CSS px 直接对应 Electron DIP。主进程以 `right = 600 - ceil(x + width)` 建立右侧锚点，四边向外取整并与字幕卡求交。
+6. toolbar 与 caption WebContents 固定 zoom factor 为 `1`；CSS px 直接对应 Electron DIP。主进程按 `top = INSET - TB_MARGIN + floor(y)`、`right = INSET + (TB_W - TB_MARGIN - ceil(x + width))` 建立字幕卡局部右侧锚点；越过卡片上沿或右沿的部分收缩到边界，宽度超出当前字幕卡时由 renderer 按卡片宽度裁切。
 7. 矩形非法、空交集、renderer reload、销毁或 generation 不匹配时立即回落；同代有效值到达后立即收缩。
 8. preload API 不暴露任意 channel 字符串；`src/main/ipc/channels.js` 和 `access-policy.js` 使用专用 channel 与角色白名单。
 9. 轮廓只驻留内存；诊断只允许固定错误码和计数，不记录矩形、路径或 renderer 原始异常文本。

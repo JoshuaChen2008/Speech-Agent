@@ -53,19 +53,15 @@ html, body {
 
 /* 工具条“洞”：透明占位，覆盖工具条停靠的右上角区域。
    需可被 elementFromPoint 命中（故不设 pointer-events:none）并置于最上。
-
-   ⚠ 仍是硬编码。尺寸按工具条窗最坏情况取（main.js TB_W 568 + 留白，高 40 + 留白），
-   宁可多盖一点也不能漏 —— 漏了的话字幕卡会替工具条吞掉点击。多盖的部分正好是
-   工具条自己占的位置，拖动那里等于拖整个单元，功能上无损。
-   后续交互质量优化可由主进程下发实际 overlap rect（docs/subtitle-window.md §3）；
-   当前固定洞是已知且可用的 MVP 边界，不阻断本次验收。 */
+   CSS 默认值是首帧/reload/非法报告时的 584×64 fail-safe；主进程收到
+   同代有效 #toolbar.toolbar 矩形后，通过受限 preload 立即改成实际轮廓。 */
 .tb-hole {
   position: absolute;
-  top: 0;
-  right: 0;
-  width: 584px;
-  height: 64px;
-  max-width: 100%;
+  top: var(--toolbar-overlap-top, 0px);
+  right: var(--toolbar-overlap-right, 0px);
+  width: var(--toolbar-overlap-width, 584px);
+  height: var(--toolbar-overlap-height, 64px);
+  max-width: max(0px, calc(100% - var(--toolbar-overlap-right, 0px)));
   z-index: 10;
   background: transparent;
 }

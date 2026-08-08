@@ -20,6 +20,8 @@ const bridge = window.shell || {
   mouseThrough () {}, dragStart () {}, dragEnd () {},
   lockToggle () {}, action () {},
   onLock () {}, onConfig () {}, onSnapshot () {}, onRefinementNotice () {},
+  getToolbarLayoutContext () { return Promise.reject(new Error('no shell')) },
+  reportToolbarLayout () {},
   command () { return Promise.reject(new Error('no shell')) },
   getLock () { return Promise.reject(new Error('no shell')) },
   getConfig () { return Promise.reject(new Error('no shell')) },
@@ -43,9 +45,57 @@ let runtimeSnapshotAccepted = false
 let commandPending = false
 let commandFailure = null
 let refinementNotice = null
+let toolbarLayoutGeneration = 0
+let toolbarLayoutObserver = null
+let toolbarLayoutQueued = false
+let lastToolbarLayoutKey = ''
 
 installSprite(document)
 grip.innerHTML = iconMarkup('grip')
+
+// ---------------------------------------------------------------------------
+// 工具条实际轮廓：只上报现有 #toolbar.toolbar 的外接矩形。
+// generation 由主进程签发；reload 前后的 renderer 不能复用旧矩形。
+// ---------------------------------------------------------------------------
+function queueToolbarLayoutReport () {
+  if (toolbarLayoutQueued || toolbarLayoutGeneration <= 0) return
+  toolbarLayoutQueued = true
+  requestAnimationFrame(() => {
+    toolbarLayoutQueued = false
+    const rect = toolbar.getBoundingClientRect()
+    const report = {
+      generation: toolbarLayoutGeneration,
+      rect: {
+        x: Number(rect.x),
+        y: Number(rect.y),
+        width: Number(rect.width),
+        height: Number(rect.height)
+      }
+    }
+    const key = JSON.stringify(report)
+    if (key === lastToolbarLayoutKey) return
+    lastToolbarLayoutKey = key
+    bridge.reportToolbarLayout(report)
+  })
+}
+
+async function initToolbarLayout () {
+  if (typeof bridge.getToolbarLayoutContext !== 'function' ||
+      typeof bridge.reportToolbarLayout !== 'function' ||
+      typeof ResizeObserver !== 'function') return
+  try {
+    const context = await bridge.getToolbarLayoutContext()
+    if (!context || !Number.isSafeInteger(context.generation) || context.generation <= 0) return
+    toolbarLayoutGeneration = context.generation
+    toolbarLayoutObserver = new ResizeObserver(queueToolbarLayoutReport)
+    toolbarLayoutObserver.observe(toolbar)
+    queueToolbarLayoutReport()
+  } catch { /* browser preview or a navigation already invalidated this renderer */ }
+}
+
+window.addEventListener('beforeunload', () => {
+  if (toolbarLayoutObserver) toolbarLayoutObserver.disconnect()
+})
 
 // ---------------------------------------------------------------------------
 // 运行状态来源
@@ -384,3 +434,4 @@ initLock()
 initConfig()
 initRuntime()
 initRefinementNotice()
+initToolbarLayout()

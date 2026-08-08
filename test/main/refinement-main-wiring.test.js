@@ -32,8 +32,10 @@ test('toolbar notice remains a single fixed-height inline status with explicit a
   const main = source('src/main.js')
   const script = source('src/toolbar/toolbar.js')
   const css = source('src/toolbar/toolbar.css')
+  const { WINDOW_LAYOUT } = require('../../src/main/window-layout-contract')
 
-  assert.match(main, /const TB_H = 40 \+ TB_MARGIN \* 2/)
+  assert.equal(WINDOW_LAYOUT.toolbarViewportHeight, 72)
+  assert.match(main, /const TB_H = WINDOW_LAYOUT\.toolbarViewportHeight/)
   assert.match(script, /getRefinementNotice/)
   assert.match(script, /onRefinementNotice/)
   assert.match(script, /label: '查看历史'/)
