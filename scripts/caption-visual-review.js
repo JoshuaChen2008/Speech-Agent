@@ -274,7 +274,7 @@ async function runVisualReview (options) {
   win.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  await win.loadFile(path.join(__dirname, '..', 'src', 'caption', 'index.html'))
+  await win.loadFile(path.join(__dirname, '..', 'src', 'renderer-dist', 'caption', 'index.html'))
   win.show()
   await delay(750)
 

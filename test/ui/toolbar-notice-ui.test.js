@@ -5,6 +5,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const test = require('node:test')
 const vm = require('node:vm')
+const { transpileRenderer } = require('./transpile-renderer')
 
 const root = path.resolve(__dirname, '..', '..')
 
@@ -136,7 +137,7 @@ function createHarness () {
     FIXTURES: { runtime: { unavailable: { revision: 0 } } },
     addEventListener () {}
   }
-  vm.runInNewContext(fs.readFileSync(path.join(root, 'src', 'toolbar', 'toolbar.js'), 'utf8'), {
+  vm.runInNewContext(transpileRenderer(path.join(root, 'src', 'toolbar', 'toolbar.ts')), {
     console,
     document,
     requestAnimationFrame: (callback) => callback(),

@@ -5,16 +5,18 @@ const fs = require('node:fs')
 const path = require('node:path')
 const test = require('node:test')
 const vm = require('node:vm')
+const { transpileRenderer } = require('./transpile-renderer')
 
 const reducer = require('../../src/ui/shared/caption-reducer')
 
 const root = path.resolve(__dirname, '..', '..')
 
 class FakeClassList {
-  constructor () { this.values = new Set() }
+  constructor () { this.values = new Set(); this.toggleCount = 0 }
   add (...values) { values.forEach((value) => this.values.add(value)) }
   remove (...values) { values.forEach((value) => this.values.delete(value)) }
   toggle (value, force) {
+    this.toggleCount += 1
     if (force) this.values.add(value)
     else this.values.delete(value)
   }
@@ -29,11 +31,13 @@ class FakeElement {
     this.style = { setProperty () {} }
     this.clientHeight = 120
     this._textContent = ''
+    this.textSetCount = 0
     this._rect = null
     this._rectResolver = null
   }
   set className (value) { this.classList.values = new Set(String(value).split(/\s+/).filter(Boolean)) }
   set textContent (value) {
+    this.textSetCount += 1
     this._textContent = String(value)
     if (value === '') this.children = []
   }
@@ -79,7 +83,7 @@ function segment (kind, text, revision, segmentId) {
   }
 }
 
-test('caption renderer applies a newer canonical fallback received during bootstrap', async () => {
+test('SEM-F23/J18: caption renderer applies bootstrap replacement and patches only the changing partial node', async () => {
   const initial = deferred()
   const callbacks = {}
   const elements = new Map([
@@ -111,7 +115,7 @@ test('caption renderer applies a newer canonical fallback received during bootst
     shell,
     addEventListener () {}
   }
-  vm.runInNewContext(fs.readFileSync(path.join(root, 'src', 'caption', 'caption.js'), 'utf8'), {
+  vm.runInNewContext(transpileRenderer(path.join(root, 'src', 'caption', 'caption.ts')), {
     ResizeObserver: class { observe () {} },
     console,
     document,
@@ -144,6 +148,30 @@ test('caption renderer applies a newer canonical fallback received during bootst
     ['不可变原始字幕', '当前仍在识别']
   )
   assert.equal(elements.get('captionFlow').children.at(-1).classList.values.has('partial'), true)
+
+  const [stableNode, partialNode] = elements.get('captionFlow').children
+  const stableTextSets = stableNode.textSetCount
+  const stableClassToggles = stableNode.classList.toggleCount
+  const partialTextSets = partialNode.textSetCount
+  callbacks.caption({
+    schemaVersion: 1,
+    sessionId: 'session-1',
+    sourceId: 'mic',
+    segmentId: 'partial-1',
+    sequence: 5,
+    revision: 2,
+    kind: 'partial',
+    t0: 1,
+    t1: null,
+    text: '当前识别假设继续增长',
+    translation: null
+  })
+
+  assert.equal(elements.get('captionFlow').children[0], stableNode)
+  assert.equal(stableNode.textSetCount, stableTextSets)
+  assert.equal(stableNode.classList.toggleCount, stableClassToggles)
+  assert.equal(partialNode.textSetCount, partialTextSets + 1)
+  assert.equal(partialNode.textContent, '当前识别假设继续增长')
 })
 
 test('caption renderer reports and tombstones a fully clipped prefix without leaking text or reviving it', async () => {
@@ -191,7 +219,7 @@ test('caption renderer reports and tombstones a fully clipped prefix without lea
     shell,
     addEventListener () {}
   }
-  vm.runInNewContext(fs.readFileSync(path.join(root, 'src', 'caption', 'caption.js'), 'utf8'), {
+  vm.runInNewContext(transpileRenderer(path.join(root, 'src', 'caption', 'caption.ts')), {
     ResizeObserver: class { observe () {} },
     console,
     document,

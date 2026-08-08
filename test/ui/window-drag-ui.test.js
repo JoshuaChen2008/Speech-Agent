@@ -5,6 +5,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const test = require('node:test')
 const vm = require('node:vm')
+const { transpileRenderer } = require('./transpile-renderer')
 
 const reducer = require('../../src/ui/shared/caption-reducer')
 
@@ -122,12 +123,12 @@ test('SEM-F22/J17: manual drag rejects non-primary starts and fails closed when 
 
 test('SEM-F22/J17: toolbar binds manual drag only to its visible non-focusable grip', () => {
   const html = source('src/toolbar/index.html')
-  const entry = source('src/toolbar/entry.js')
-  const renderer = source('src/toolbar/toolbar.js')
+  const entry = source('src/toolbar/entry.ts')
+  const renderer = source('src/toolbar/toolbar.ts')
   const styles = source('src/ui/shared/phases.css') + source('src/toolbar/toolbar.css')
 
-  assert.match(html, /<script type="module" src="\.\/entry\.js"><\/script>/)
-  assert.match(entry, /manual-window-drag\.js[\s\S]*toolbar\.js/)
+  assert.match(html, /<script type="module" src="\.\/entry\.ts"><\/script>/)
+  assert.match(entry, /manual-window-drag\.js[\s\S]*toolbar\.ts/)
   assert.match(html, /<div class="grip" id="grip"[^>]+aria-hidden="true"><\/div>/)
   assert.doesNotMatch(html, /<div class="grip"[^>]+tabindex=/)
   assert.match(renderer, /bindManualWindowDrag\(\{[\s\S]*handle: grip/)
@@ -183,7 +184,7 @@ function createCaptionHarness () {
     return content
   }
 
-  vm.runInNewContext(source('src/caption/caption.js'), {
+  vm.runInNewContext(transpileRenderer(path.join(root, 'src/caption/caption.ts')), {
     ResizeObserver: class { observe () {} },
     console,
     document,

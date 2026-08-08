@@ -20,7 +20,8 @@ const SCHEMA = 'caption-layout-report@v2'
 
 const PROVENANCE_FILES = Object.freeze({
   captionMarkupSha256: 'src/caption/index.html',
-  captionRendererSha256: 'src/caption/caption.js',
+  captionRendererManifestSha256: 'src/renderer-dist/manifest.json',
+  captionRendererSha256: 'src/caption/caption.ts',
   captionStyleSha256: 'src/caption/caption.css',
   captionStateContractSha256: 'src/contracts/caption-state.js',
   ipcChannelsSha256: 'src/main/ipc/channels.js',

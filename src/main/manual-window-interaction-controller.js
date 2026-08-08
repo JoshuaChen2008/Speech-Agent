@@ -76,7 +76,7 @@ class ManualWindowInteractionController {
         state.moved = true
         this.observe({ kind: 'drag-move', role: state.role })
       }
-      if (state.redock) this.dock()
+      if (state.redock) this.dock({ restoreStack: false })
     }
     if (this.dragState === state) {
       state.timer = this.setTimer(() => this.dragTick(), this.tickIntervalMs)
@@ -156,7 +156,7 @@ class ManualWindowInteractionController {
         state.moved = true
         this.observe({ kind: 'resize-move', role: 'caption' })
       }
-      this.dock()
+      this.dock({ restoreStack: false })
     }
     if (this.resizeState === state) {
       state.timer = this.setTimer(() => this.resizeTick(), this.tickIntervalMs)

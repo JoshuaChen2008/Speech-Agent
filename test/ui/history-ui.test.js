@@ -409,7 +409,7 @@ test('history refinement detail uses whole-session metadata, marks fallback rows
 
 test('history preload is a narrow IPC façade without SQL, arbitrary paths or filesystem powers', () => {
   const preload = source('src/preload/history.js')
-  const toolbar = source('src/toolbar/toolbar.js')
+  const toolbar = source('src/toolbar/toolbar.ts')
 
   assert.match(preload, /HISTORY_LIST/)
   assert.match(preload, /HISTORY_PAGE/)

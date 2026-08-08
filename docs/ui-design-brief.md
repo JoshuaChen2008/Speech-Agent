@@ -42,9 +42,9 @@
 
 | 路径/内容 | 原因 |
 |---|---|
-| `src/caption/caption.js` | 只允许 caption reducer、DOM 渲染、ARIA 和纯展示逻辑；不接 sherpa 原始结果 |
+| `src/caption/caption.ts` | 只允许 caption reducer、DOM 渲染、ARIA 和纯展示逻辑；不接 sherpa 原始结果 |
 | `src/ui/shared/caption-reducer.js` | B2.0 起 `createState/applyEvent/KEEP_SEGMENTS` 被主进程 canonical CaptionState 折叠复用（单一折叠真相），窗口/修订/会话切换语义改动会静默改变壳层行为；`selectFlow/countVisibleLines/evictCaptionPrefix` 属视觉决策但同文件，一并共同评审 |
-| `src/toolbar/toolbar.js` | 只允许把用户意图交给 `toolbarApi`，并根据 RuntimeSnapshot 渲染 |
+| `src/toolbar/toolbar.ts` | 只允许把用户意图交给 `toolbarApi`，并根据 RuntimeSnapshot 渲染 |
 | `src/settings/settings.js` | 只允许表单/view-model 逻辑；运行配置必须等待 CommandResult |
 | `src/history/history.js` | 只允许历史列表/详情/导出交互和 DOM 渲染；终态过滤、投影和文件写由主进程/SQLite 决定 |
 | BrowserWindow 宽高、边距、工具条 overlap rect | 同时影响 CSS、窗口停靠和命中测试，必须更新共享 layout contract |

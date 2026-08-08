@@ -1,6 +1,0 @@
-import '../ui/shared/icons.js'
-import '../ui/shared/appearance.js'
-import '../ui/shared/runtime-view.js'
-import '../ui/shared/fixtures.generated.js'
-import '../ui/shared/manual-window-drag.js'
-import './toolbar.js'

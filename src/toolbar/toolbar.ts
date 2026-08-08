@@ -1,5 +1,7 @@
 'use strict'
 
+;(function toolbarRenderer () {
+
 // @ts-check
 
 /* 工具条窗：命中测试 + 拖动（role=toolbar）+ 从 RuntimeSnapshot 渲染 + 发出用户意图。
@@ -20,7 +22,7 @@ const bindManualWindowDrag = window.ManualWindowDrag?.bindManualWindowDrag || ((
    也让 preload 万一没挂上时工具条仍然渲染得出来，而不是留一个空白窗难以排查。
    ⚠ 不能叫 shell —— preload 的 contextBridge 已经占了这个全局名，
    顶层 const 同名会直接 SyntaxError，整个 renderer 白屏。 */
-const bridge = window.shell || {
+const bridge: any = window.shell || {
   mouseThrough () {}, dragStart () {}, dragEnd () {},
   lockToggle () {}, action () {},
   onLock () {}, onConfig () {}, onSnapshot () {}, onRefinementNotice () {},
@@ -33,24 +35,30 @@ const bridge = window.shell || {
   getRefinementNotice () { return Promise.reject(new Error('no shell')) }
 }
 
-const wrap = document.getElementById('wrap')
-const toolbar = document.getElementById('toolbar')
-const grip = document.getElementById('grip')
-const statusHost = document.getElementById('status')
-const commandHost = document.getElementById('commands')
-const windowControlHost = document.getElementById('windowControls')
+function requireElement (id: string): HTMLElement {
+  const element = document.getElementById(id)
+  if (!element) throw new Error(`toolbar renderer element is missing: ${id}`)
+  return element
+}
+
+const wrap = requireElement('wrap')
+const toolbar = requireElement('toolbar')
+const grip = requireElement('grip')
+const statusHost = requireElement('status')
+const commandHost = requireElement('commands')
+const windowControlHost = requireElement('windowControls')
 
 let locked = false
 let dragging = false
-let ignoring = null
+let ignoring: boolean | null = null
 let lastX = 0, lastY = 0
 let snapshot = window.FIXTURES.runtime.unavailable
 let runtimeSnapshotAccepted = false
 let commandPending = false
-let commandFailure = null
-let refinementNotice = null
+let commandFailure: any | null = null
+let refinementNotice: any | null = null
 let toolbarLayoutGeneration = 0
-let toolbarLayoutObserver = null
+let toolbarLayoutObserver: ResizeObserver | null = null
 let toolbarLayoutQueued = false
 let lastToolbarLayoutKey = ''
 
@@ -110,7 +118,8 @@ function currentSnapshot () {
   return snapshot
 }
 
-async function runCommand (name) {
+/** @param {string} name */
+async function runCommand (name: string): Promise<void> {
   if (commandPending) return
   commandPending = true
   commandFailure = null
@@ -126,7 +135,7 @@ async function runCommand (name) {
   }
 }
 
-const SUPPORTED = {
+const SUPPORTED: Record<string, () => unknown> = {
   start: () => runCommand('start'),
   pause: () => runCommand('pause'),
   resume: () => runCommand('resume'),
@@ -145,17 +154,20 @@ const UNSUPPORTED_REASON = '功能尚未接入'
 // ---------------------------------------------------------------------------
 // DOM 小工具
 // ---------------------------------------------------------------------------
-function el (tag, className, text) {
+/** @param {string} tag @param {string | null=} className @param {string=} text */
+function el (tag: string, className?: string | null, text?: string): HTMLElement {
   const node = document.createElement(tag)
   if (className) node.className = className
   if (text !== undefined) node.textContent = text
   return node
 }
 
-function iconEl (name, extraClass) {
+/** @param {string} name @param {string=} extraClass */
+function iconEl (name: string, extraClass?: string): SVGElement {
   const holder = el('span')
   holder.innerHTML = iconMarkup(name)
-  const svg = holder.firstChild
+  const svg = holder.firstChild as SVGElement | null
+  if (!svg) throw new Error(`toolbar icon is missing: ${name}`)
   if (extraClass) svg.classList.add(extraClass)
   return svg
 }
@@ -166,8 +178,9 @@ function iconEl (name, extraClass) {
  *   - 运行时能力不允许（reason 来自 capabilities.limitations / lastError）
  *   - 骨架阶段壳层没接（UNSUPPORTED_REASON）
  */
-function commandButton (spec, extraClass) {
-  const button = el('button', 'act' + (extraClass ? ' ' + extraClass : ''))
+/** @param {any} spec @param {string | null=} extraClass */
+function commandButton (spec: any, extraClass?: string | null): HTMLButtonElement {
+  const button = el('button', 'act' + (extraClass ? ' ' + extraClass : '')) as HTMLButtonElement
   button.dataset.act = spec.act
   button.appendChild(iconEl(spec.icon))
   if (spec.label && spec.showLabel) button.appendChild(el('span', null, spec.label))
@@ -189,7 +202,7 @@ function commandButton (spec, extraClass) {
 // 渲染
 // ---------------------------------------------------------------------------
 /** 过渡态才转圈；listening 是可能持续两小时的稳态，不给无限动画。 */
-const SPIN = { spinner: 'cw', recover: 'ccw' }
+const SPIN: Record<string, string> = { spinner: 'cw', recover: 'ccw' }
 
 /**
  * 状态区。
@@ -200,7 +213,8 @@ const SPIN = { spinner: 'cw', recover: 'ccw' }
  * 图标是装饰性的（aria-hidden），语义全部挂在 .status 的 aria-label 上，
  * 所以 quiet 模式下屏幕阅读器读到的信息没有任何缩水。
  */
-function renderStatus (view) {
+/** @param {any} view */
+function renderStatus (view: any): void {
   statusHost.textContent = ''
   statusHost.classList.remove('refinement-notice')
   statusHost.dataset.tone = view.status.tone
@@ -246,7 +260,8 @@ function renderStatus (view) {
   }
 
   if (commandFailure) {
-    const message = statusHost.querySelector('.status-message')
+    const message = statusHost.querySelector<HTMLElement>('.status-message')
+    if (!message) throw new Error('toolbar status message is missing')
     message.textContent = commandFailure.message
     message.title = commandFailure.message
     statusHost.dataset.tone = 'danger'
@@ -254,11 +269,12 @@ function renderStatus (view) {
   }
 }
 
-function renderCommands (view) {
+/** @param {any} view */
+function renderCommands (view: any): void {
   commandHost.textContent = ''
 
   commandHost.appendChild(commandButton(view.primary))
-  view.secondary.forEach((action) => commandHost.appendChild(commandButton(action)))
+  view.secondary.forEach((action: any) => commandHost.appendChild(commandButton(action)))
 
   if (view.nextAction) {
     const cta = commandButton({
@@ -315,7 +331,8 @@ function render () {
 // ---------------------------------------------------------------------------
 // 命中测试：指针在条上 → 实心；否则穿透（窗口比条宽，右对齐留出的空白全部放行）
 // ---------------------------------------------------------------------------
-function applyHit (x, y) {
+/** @param {number} x @param {number} y */
+function applyHit (x: number, y: number): void {
   if (dragging) return
   const hit = document.elementFromPoint(x, y)
   const solid = !!(hit && hit.closest('.toolbar'))
@@ -344,7 +361,7 @@ const toolbarDrag = bindManualWindowDrag({
   classTarget: toolbar,
   onStart: () => bridge.dragStart('toolbar'),
   onEnd: () => bridge.dragEnd(),
-  onActiveChange: (active) => {
+  onActiveChange: (active: boolean) => {
     dragging = active
     if (!active) applyHit(lastX, lastY)
   }
@@ -355,9 +372,12 @@ const toolbarDrag = bindManualWindowDrag({
 // 才更新状态，这里不做乐观更新。
 // ---------------------------------------------------------------------------
 toolbar.addEventListener('click', (e) => {
-  const button = e.target.closest('.act')
+  const target = e.target as Element | null
+  const button = target?.closest<HTMLButtonElement>('.act') || null
   if (!button || button.disabled) return
-  const run = SUPPORTED[button.dataset.act]
+  const action = button.dataset.act
+  if (!action) return
+  const run = SUPPORTED[action]
   if (run) run()
 })
 
@@ -366,7 +386,8 @@ toolbar.addEventListener('click', (e) => {
 // ---------------------------------------------------------------------------
 let lockRevision = 0
 
-function applyLockState (on) {
+/** @param {boolean} on */
+function applyLockState (on: boolean): void {
   toolbarDrag.end()
   locked = !!on
   wrap.dataset.locked = locked ? 'on' : 'off'
@@ -374,7 +395,7 @@ function applyLockState (on) {
 }
 
 async function initLock () {
-  bridge.onLock((on) => {
+  bridge.onLock((on: boolean) => {
     lockRevision += 1
     applyLockState(on)
   })
@@ -385,7 +406,8 @@ async function initLock () {
   } catch { /* browser preview */ }
 }
 
-function acceptSnapshot (next) {
+/** @param {any} next */
+function acceptSnapshot (next: any): void {
   if (!next || typeof next.revision !== 'number') return
   /* The preview fixture has its own illustrative revision. It is not part of
      the live coordinator sequence, so the first real snapshot must always
@@ -404,7 +426,8 @@ async function initRuntime () {
 
 let refinementNoticeRevision = 0
 
-function acceptRefinementNotice (notice) {
+/** @param {any} notice */
+function acceptRefinementNotice (notice: any): void {
   refinementNoticeRevision += 1
   refinementNotice = notice && notice.kind === 'refinement-fault' ? notice : null
   render()
@@ -419,7 +442,8 @@ async function initRefinementNotice () {
   } catch { /* browser preview */ }
 }
 
-function applyConfig (c) {
+/** @param {any} c */
+function applyConfig (c: any): void {
   applyAppearance(document.documentElement, c)
 }
 async function initConfig () {
@@ -433,3 +457,7 @@ initConfig()
 initRuntime()
 initRefinementNotice()
 initToolbarLayout()
+
+})()
+
+export {}

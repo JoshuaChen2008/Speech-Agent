@@ -80,6 +80,9 @@ jobs:
             throw "Electron runtime version does not match the locked package version"
           }
 
+      - name: Verify renderer production bundle
+        run: npm run verify:renderer
+
       # 排在所有重步骤之前：字幕排版是本阶段改动最频繁的部分，而这一步只要一两分钟。
       # 它只启动最小字幕宿主，不证明产品组合根、真实 ASR 或人工视觉验收（见报告 boundaries）。
       - name: Qualify fixed-height caption layout

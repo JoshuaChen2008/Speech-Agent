@@ -3,7 +3,7 @@
 /* J15a / SEM-F20 固定高度字幕流的布局资格。
    --------------------------------------------------------------------------
    这是一个**最小 Electron 宿主**：只创建字幕窗、加载真实的 caption preload 与
-   真实的 `src/caption/index.html`，由主进程直接广播契约合法的 CaptionEvent。
+   真实的 Vite 生产字幕 bundle，由主进程直接广播契约合法的 CaptionEvent。
    它刻意不启动产品组合根、模型与存储 —— 目的是让「字幕排版对不对」这个问题
    能在一两分钟内单独回答，而不是等整条四窗旅程。
 
@@ -46,7 +46,8 @@ const GROWTH_STEPS = 6
 
 const PROVENANCE_FILES = Object.freeze({
   captionMarkupSha256: 'src/caption/index.html',
-  captionRendererSha256: 'src/caption/caption.js',
+  captionRendererManifestSha256: 'src/renderer-dist/manifest.json',
+  captionRendererSha256: 'src/caption/caption.ts',
   captionStyleSha256: 'src/caption/caption.css',
   captionStateContractSha256: 'src/contracts/caption-state.js',
   ipcChannelsSha256: 'src/main/ipc/channels.js',
@@ -215,7 +216,7 @@ async function main () {
     console.error('[preload]', path.basename(preloadPath), error && error.message)
   })
 
-  await win.loadFile(path.join(ROOT, 'src', 'caption', 'index.html'))
+  await win.loadFile(path.join(ROOT, 'src', 'renderer-dist', 'caption', 'index.html'))
 
   /* 前置检查而不是日志：preload 一旦静默失败（例如 sandbox 打开时 require 不到
      项目模块），所有量测都会变成 0，然后以一堆看不懂的不变量失败收场。 */

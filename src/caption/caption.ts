@@ -1,5 +1,7 @@
 'use strict'
 
+;(function captionRenderer () {
+
 // @ts-check
 
 /* 字幕窗：命中测试 + 拖动（role=caption）+ 锁定穿透 + 配置应用 + CaptionEvent 渲染。
@@ -16,17 +18,23 @@ const {
 } = window.CaptionReducer
 const { applyAppearance } = window.Appearance
 
-const wrap = document.getElementById('wrap')
-const card = document.getElementById('captionCard')
-const captions = document.getElementById('captions')
-const captionFlow = document.getElementById('captionFlow')
-const liveRegion = document.getElementById('liveRegion')
+function requireElement (id: string): HTMLElement {
+  const element = document.getElementById(id)
+  if (!element) throw new Error(`caption renderer element is missing: ${id}`)
+  return element
+}
+
+const wrap = requireElement('wrap')
+const card = requireElement('captionCard')
+const captions = requireElement('captions')
+const captionFlow = requireElement('captionFlow')
+const liveRegion = requireElement('liveRegion')
 
 /* 壳层 API。在纯浏览器里打开本页做视觉核对时不存在，降级成空操作，
    这样排版问题可以脱离 Electron 排查。
    ⚠ 不能叫 shell —— preload 的 contextBridge 已经占了这个全局名，
    顶层 const 同名会直接 SyntaxError，整个 renderer 白屏。 */
-const bridge = window.shell || {
+const bridge: any = window.shell || {
   mouseThrough () {}, dragStart () {}, dragEnd () {},
   resizeStart () {}, resizeEnd () {},
   onLock () {}, onToolbarOverlap () {}, onConfig () {}, onCaption () {}, onCaptionState () {},
@@ -39,23 +47,23 @@ const bridge = window.shell || {
 let locked = false
 let dragging = false
 let resizing = false
-let ignoring = null
+let ignoring: boolean | null = null
 let lastX = 0, lastY = 0
 let toolbarOverlapGeneration = 0
-let gesturePointerId = null
+let gesturePointerId: number | null = null
 
 // --------------------------------------------------------------------------
 // 边缘拉伸
 // 卡片内侧 8px 是拉伸带，其余是拖动区。锁定后整窗恒穿透，两者都不生效。
 // --------------------------------------------------------------------------
 const EDGE = 8
-const RESIZE_CURSOR = {
+const RESIZE_CURSOR: Record<string, string> = {
   n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize',
   ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize'
 }
 
-/** 指针落在卡片哪条边上；不在拉伸带内返回空串。 */
-function edgeAt (x, y) {
+/** 指针落在卡片哪条边上；不在拉伸带内返回空串。 @param {number} x @param {number} y */
+function edgeAt (x: number, y: number): string {
   if (locked) return ''
   const r = card.getBoundingClientRect()
   if (x < r.left || x > r.right || y < r.top || y > r.bottom) return ''
@@ -75,7 +83,8 @@ let state = createState()
 // 命中顺序固定为：透明外边距 → 工具条实际轮廓 → 8px 拉伸带 → 普通拖动。
 // 锁定态由主进程恒穿透，这里不干预。
 // --------------------------------------------------------------------------
-function captionActionAt (x, y) {
+/** @param {number} x @param {number} y */
+function captionActionAt (x: number, y: number) {
   if (locked) return { kind: 'through', edge: '' }
   const el = document.elementFromPoint(x, y)
   if (!el || !el.closest('.caption-card')) return { kind: 'through', edge: '' }
@@ -84,7 +93,8 @@ function captionActionAt (x, y) {
   return edge ? { kind: 'resize', edge } : { kind: 'drag', edge: '' }
 }
 
-function applyHit (x, y) {
+/** @param {number} x @param {number} y */
+function applyHit (x: number, y: number): void {
   if (dragging || resizing || locked) return
   const action = captionActionAt(x, y)
   const solid = action.kind === 'resize' || action.kind === 'drag'
@@ -113,7 +123,8 @@ document.addEventListener('mousemove', (e) => {
 bridge.mouseThrough(true)
 ignoring = true
 
-function acceptToolbarOverlap (payload) {
+/** @param {any} payload */
+function acceptToolbarOverlap (payload: any): void {
   if (!payload || !Number.isSafeInteger(payload.generation) || payload.generation <= 0 ||
       payload.generation < toolbarOverlapGeneration ||
       !['fallback', 'toolbar'].includes(payload.source) ||
@@ -160,7 +171,8 @@ card.addEventListener('pointerdown', (e) => {
 
 /* pointerup / pointercancel / lostpointercapture / blur 全都要收尾 ——
    主进程那边是 8ms 定时器，漏掉任何一条取消路径都会让窗口继续跟着光标跑。 */
-function endGesture (event) {
+/** @param {PointerEvent=} event */
+function endGesture (event?: Event & { pointerId?: number }): void {
   if (!dragging && !resizing) return
   if (event && Number.isInteger(event.pointerId) && event.pointerId !== gesturePointerId) return
   gesturePointerId = null
@@ -187,7 +199,8 @@ window.addEventListener('beforeunload', endGesture)
 // --------------------------------------------------------------------------
 let lockRevision = 0
 
-function applyLockState (on) {
+/** @param {boolean} on */
+function applyLockState (on: boolean): void {
   locked = !!on
   wrap.dataset.locked = locked ? 'on' : 'off'
   if (locked) endGesture()
@@ -195,7 +208,7 @@ function applyLockState (on) {
 }
 
 async function initLock () {
-  bridge.onLock((on) => {
+  bridge.onLock((on: boolean) => {
     lockRevision += 1
     applyLockState(on)
   })
@@ -213,7 +226,8 @@ async function initLock () {
 // 换行位置、行盒高度与顶部裁剪全部由 Chromium 完成。绝不在 JS 里重新实现一遍
 // 断行规则 —— 那样只会得到与 CSS 各自为政的第二套规则。
 // --------------------------------------------------------------------------
-function cssNumber (styles, name) {
+/** @param {CSSStyleDeclaration} styles @param {string} name */
+function cssNumber (styles: CSSStyleDeclaration, name: string): number {
   return parseFloat(styles.getPropertyValue(name))
 }
 
@@ -231,12 +245,34 @@ function applyViewport () {
   queueViewportEviction()
 }
 
-/** 按需增删节点、只改 textContent；不为一次 partial 刷新重建整棵子树。 */
-function render (scheduleEviction = true) {
+function patchSegmentNode (node: Element, item: any, index: number, length: number): void {
+  if (node.textContent !== item.text) node.textContent = item.text
+  node.classList.toggle('partial', item.isPartial)
+  /* 最后一个是最新段；它永远贴在底部，裁剪只发生在它上方。 */
+  node.classList.toggle('older', index < length - 1)
+  if ((node as HTMLElement).dataset.segmentId !== item.segmentId) {
+    (node as HTMLElement).dataset.segmentId = item.segmentId
+  }
+}
+
+/** 按需增删节点、只改目标段；高频 partial 不扫描或重建整棵子树。 */
+function render (scheduleEviction = true, changedSegmentId: string | null = null): void {
   const flow = selectFlow(state)
   const nodes = captionFlow.children
 
-  while (nodes.length > flow.length) captionFlow.removeChild(captionFlow.lastChild)
+  const structureStable = nodes.length === flow.length && flow.every((item: any, index: number) =>
+    (nodes[index] as HTMLElement).dataset.segmentId === item.segmentId)
+  if (structureStable && changedSegmentId) {
+    const index = flow.findIndex((item: any) => item.segmentId === changedSegmentId)
+    if (index >= 0) patchSegmentNode(nodes[index], flow[index], index, flow.length)
+    if (scheduleEviction) queueViewportEviction()
+    return
+  }
+
+  while (nodes.length > flow.length) {
+    const last = captionFlow.lastChild
+    if (last) captionFlow.removeChild(last)
+  }
   while (nodes.length < flow.length) {
     const node = document.createElement('p')
     node.className = 'seg'
@@ -244,12 +280,7 @@ function render (scheduleEviction = true) {
   }
 
   for (let i = 0; i < flow.length; i += 1) {
-    const node = nodes[i]
-    const item = flow[i]
-    if (node.textContent !== item.text) node.textContent = item.text
-    node.classList.toggle('partial', item.isPartial)
-    /* 最后一个是最新段；它永远贴在底部，裁剪只发生在它上方。 */
-    node.classList.toggle('older', i < flow.length - 1)
+    patchSegmentNode(nodes[i], flow[i], i, flow.length)
   }
   if (scheduleEviction) queueViewportEviction()
 }
@@ -316,17 +347,18 @@ function flushViewportEviction () {
   return retireFullyClippedPrefix()
 }
 
-/** 只播报定稿。partial 每秒刷新十几次，逐帧播报会让屏幕阅读器无法使用。 */
-function announce (text) {
+/** 只播报定稿。partial 每秒刷新十几次，逐帧播报会让屏幕阅读器无法使用。 @param {string} text */
+function announce (text: string): void {
   liveRegion.textContent = text
 }
 
-function ingest (event) {
+/** @param {any} event */
+function ingest (event: any): void {
   flushViewportEviction()
   const displaySuppressed = state.sessionId === event.sessionId &&
     isCaptionSegmentEvicted(state, event.segmentId)
   state = applyEvent(state, event)
-  render()
+  render(true, event.segmentId)
   if (!displaySuppressed && event.kind !== 'partial') announce(event.text)
 }
 
@@ -336,9 +368,10 @@ function ingest (event) {
    重放不做无障碍播报：那是恢复历史，不是新说的话。 */
 let bootstrapped = false
 let canonicalRevision = 0
-let bufferedCaptionInputs = []
+let bufferedCaptionInputs: Array<{type: 'event' | 'state', value: any}> = []
 
-function onCaptionEvent (event) {
+/** @param {any} event */
+function onCaptionEvent (event: any): void {
   if (!bootstrapped) {
     bufferedCaptionInputs.push({ type: 'event', value: event })
     return
@@ -346,7 +379,8 @@ function onCaptionEvent (event) {
   ingest(event)
 }
 
-function replaceCaptionState (canonical) {
+/** @param {any} canonical */
+function replaceCaptionState (canonical: any): void {
   flushViewportEviction()
   if (!canonical || !Number.isSafeInteger(canonical.revision) ||
       canonical.revision <= canonicalRevision) return
@@ -355,7 +389,8 @@ function replaceCaptionState (canonical) {
   render()
 }
 
-function onCaptionState (canonical) {
+/** @param {any} canonical */
+function onCaptionState (canonical: any): void {
   if (!bootstrapped) {
     bufferedCaptionInputs.push({ type: 'state', value: canonical })
     return
@@ -394,7 +429,8 @@ if (typeof ResizeObserver === 'function') {
 // --------------------------------------------------------------------------
 // 配置
 // --------------------------------------------------------------------------
-function applyConfig (c) {
+/** @param {any} c */
+function applyConfig (c: any): void {
   applyAppearance(document.documentElement, c)
   /* 字号变化不改变 .captions 的高度，ResizeObserver 不会触发，必须显式重算。 */
   applyViewport()
@@ -413,3 +449,7 @@ initLock()
 bridge.onCaption(onCaptionEvent)
 bridge.onCaptionState(onCaptionState)
 initCaptions()
+
+})()
+
+export {}

@@ -230,7 +230,7 @@ test('release package uses an explicit ASAR allowlist, hardened fuses and per-us
   assert.equal(releaseConfig.extraResources, undefined)
   assert.equal(releaseConfig.files.some((entry) => /models|scripts|test|docs|artifacts/i.test(entry)), false)
 
-  const textExtensions = ['.css', '.html', '.js', '.json', '.md', '.mjs']
+  const textExtensions = ['.css', '.html', '.js', '.json', '.md', '.mjs', '.ts']
   const productExtensions = [...new Set(collectProductPayloadEntries(path.join(ROOT, 'src'))
     .map((entry) => path.extname(entry.name)))].sort()
   assert.deepEqual(productExtensions, textExtensions)

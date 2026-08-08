@@ -134,7 +134,7 @@ test('SEM-F22/J17: main routes every foreground and overlay z-order entry throug
   assert.match(main, /new WindowLayerController\(\{/)
   assert.match(main, /windowLayerController\.bindForegroundWindow\(settingsWin, 'settings'\)/)
   assert.match(main, /windowLayerController\.bindForegroundWindow\(historyWin, 'history'\)/)
-  assert.match(main, /function dock \(\)[\s\S]*windowLayerController\.restoreWindowStack\(\)/)
+  assert.match(main, /function dock \(\{ restoreStack = true \} = \{\}\)[\s\S]*if \(!sameBounds\([\s\S]*if \(restoreStack\) windowLayerController\.restoreWindowStack\(\)/)
   assert.match(main, /settingsWin\.show\(\)[\s\S]*settingsWin\.focus\(\)/)
   assert.match(main, /historyWin\.show\(\)[\s\S]*historyWin\.focus\(\)/)
 })

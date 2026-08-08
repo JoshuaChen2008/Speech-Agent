@@ -47,7 +47,10 @@ const {
   toolbarDockBoundsFor
 } = require('./main/window-layout-contract')
 const { WindowLayerController } = require('./main/window-layer-controller')
-const { ManualWindowInteractionController } = require('./main/manual-window-interaction-controller')
+const {
+  ManualWindowInteractionController,
+  sameBounds
+} = require('./main/manual-window-interaction-controller')
 const { loadRendererFailClosed } = require('./main/renderer-entry')
 
 const exitEvidence = createMainEvidenceBridge()
@@ -321,10 +324,11 @@ function createWindows () {
   toolbarWin.on('closed', () => { windowInteractionController.stopAll(); toolbarWin = null })
 }
 
-function dock () {
+function dock ({ restoreStack = true } = {}) {
   if (!captionWin || captionWin.isDestroyed() || !toolbarWin || toolbarWin.isDestroyed()) return
-  toolbarWin.setBounds(toolbarDockBoundsFor(captionWin.getBounds()))
-  windowLayerController.restoreWindowStack()
+  const nextBounds = toolbarDockBoundsFor(captionWin.getBounds())
+  if (!sameBounds(toolbarWin.getBounds(), nextBounds)) toolbarWin.setBounds(nextBounds)
+  if (restoreStack) windowLayerController.restoreWindowStack()
 }
 
 function openSettingsWindow (initialPane = null) {

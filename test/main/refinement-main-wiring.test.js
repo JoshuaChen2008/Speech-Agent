@@ -30,7 +30,7 @@ test('main wires refinement fallback state, bounded diagnostics, and a memory-on
 
 test('toolbar notice remains a single fixed-height inline status with explicit actions', () => {
   const main = source('src/main.js')
-  const script = source('src/toolbar/toolbar.js')
+  const script = source('src/toolbar/toolbar.ts')
   const css = source('src/toolbar/toolbar.css')
   const { WINDOW_LAYOUT } = require('../../src/main/window-layout-contract')
 

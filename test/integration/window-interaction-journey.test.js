@@ -88,7 +88,11 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
   let cursor = { x: 300, y: 200 }
   let locked = false
   let resizePersistCount = 0
-  const dock = () => toolbar.setBounds(toolbarDockBoundsFor(caption.getBounds(), toolbar.getBounds()))
+  const dockOptions = []
+  const dock = (options) => {
+    dockOptions.push(options || null)
+    toolbar.setBounds(toolbarDockBoundsFor(caption.getBounds(), toolbar.getBounds()))
+  }
   dock()
 
   const interaction = new ManualWindowInteractionController({
@@ -111,6 +115,7 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
   assert.equal(interaction.startDrag({ role: 'caption', win: caption, senderId: 1 }), true)
   cursor = { x: 314, y: 209 }
   scheduler.runNext()
+  assert.deepEqual(dockOptions.at(-1), { restoreStack: false })
   assert.deepEqual(caption.getBounds(), { ...captionStart, x: captionStart.x + 14, y: captionStart.y + 9 })
   assert.deepEqual(toolbar.getBounds(), toolbarDockBoundsFor(caption.getBounds(), toolbar.getBounds()))
   interaction.stopDrag(1)
@@ -120,6 +125,7 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
   assert.equal(interaction.startResize({ win: caption, senderId: 1, edge: 'se' }), true)
   cursor = { x: 432, y: 268 }
   scheduler.runNext()
+  assert.deepEqual(dockOptions.at(-1), { restoreStack: false })
   assert.equal(caption.getBounds().width, beforeResize.width + 12)
   assert.equal(caption.getBounds().height, beforeResize.height + 8)
   interaction.stopResize(1)

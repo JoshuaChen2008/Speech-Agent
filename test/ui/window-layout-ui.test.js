@@ -13,7 +13,7 @@ function read (relativePath) {
 
 test('SEM-F22/J17: toolbar reports only the existing toolbar contour after obtaining a generation', () => {
   const preload = read('src/preload/toolbar.js')
-  const renderer = read('src/toolbar/toolbar.js')
+  const renderer = read('src/toolbar/toolbar.ts')
 
   assert.match(preload, /getToolbarLayoutContext: \(\) => ipcRenderer\.invoke\(CHANNELS\.TOOLBAR_LAYOUT_GET_CONTEXT\)/)
   assert.match(preload, /reportToolbarLayout: \(report\) => ipcRenderer\.send\(CHANNELS\.TOOLBAR_LAYOUT_REPORT_RECT, report\)/)
@@ -26,7 +26,7 @@ test('SEM-F22/J17: toolbar reports only the existing toolbar contour after obtai
 
 test('SEM-F22/J17: caption receives a bounded overlap and immediately refreshes hit testing', () => {
   const preload = read('src/preload/caption.js')
-  const renderer = read('src/caption/caption.js')
+  const renderer = read('src/caption/caption.ts')
   const styles = read('src/caption/caption.css')
 
   assert.match(preload, /onToolbarOverlap: \(callback\) => subscribe\(CHANNELS\.CAPTION_LAYOUT_TOOLBAR_OVERLAP, callback\)/)

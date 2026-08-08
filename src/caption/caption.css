@@ -2,7 +2,7 @@
    字幕窗：仅字幕卡片。窗口四周留白给阴影；卡片居中。
    视觉 token 来自 ../ui/shared/tokens.css，本文件不再自行定义色值/圆角/时长。
 
-   字幕是一条固定高度、底部锚定、顶部裁剪的连续流（SEM-F20）。caption.js 只负责
+   字幕是一条固定高度、底部锚定、顶部裁剪的连续流（SEM-F20）。caption.ts 只负责
    量一次可用高度并把「能完整放下几行」写进 --visible-lines；换行、行盒与裁剪全部
    交给 Chromium。这里不再给任何槽位单独的 line-clamp —— 那会从**开头**保留 N 行，
    与「保留最新、淘汰最旧」方向相反，正是长 partial 后半段看不见的原因。
@@ -73,7 +73,7 @@ html, body {
 html { --caption-line: calc(var(--fs) * var(--lh-caption)); }
 
 /* 正文区：撑满卡片内容盒，字幕流贴底。
-   caption.js 用它的 clientHeight 算能放几行，所以这里不能加额外内边距。 */
+   caption.ts 用它的 clientHeight 算能放几行，所以这里不能加额外内边距。 */
 .captions {
   flex: 1;
   min-height: 0;
@@ -84,7 +84,7 @@ html { --caption-line: calc(var(--fs) * var(--lh-caption)); }
 }
 
 /* 固定高度视口（SEM-F20）。
-   高度由 caption.js 量一次可用高度、向下取整到整行后写进 --visible-lines；
+   高度由 caption.ts 量一次可用高度、向下取整到整行后写进 --visible-lines；
    内容超出时 flex-end 让溢出发生在**顶部**，overflow:hidden 把最旧的整行裁掉，
    最新一行永远贴在底部。不做横向跑马、可见滚动条或自动增高。
    内容更新不触碰窗口 bounds —— 窗口尺寸只能由用户手动拉伸改变。 */

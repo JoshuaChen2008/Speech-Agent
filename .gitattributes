@@ -18,6 +18,9 @@ src/**/*.js text eol=lf
 src/**/*.json text eol=lf
 src/**/*.md text eol=lf
 src/**/*.mjs text eol=lf
+src/**/*.mts text eol=lf
+src/**/*.ts text eol=lf
+src/**/*.tsx text eol=lf
 
 # Downloaded CI evidence recomputes these exact text provenance inputs
 # together with the product files above.
