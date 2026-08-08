@@ -1,5 +1,10 @@
 'use strict'
 
+const manualWindowDrag = window.ManualWindowDrag || {
+  bindManualWindowDrag: () => ({ end () {} }),
+  isInteractiveDragEvent: () => true
+}
+
 let cfg = null
 let runtimeSnapshot = null
 let modelStatus = null
@@ -39,24 +44,12 @@ function showStatus (message) {
 document.getElementById('close').addEventListener('click', () => window.shell.closeSettings())
 
 const titlebar = document.querySelector('.titlebar')
-let dragging = false
-titlebar.addEventListener('pointerdown', (event) => {
-  if (event.button !== 0 || event.target.closest('button')) return
-  dragging = true
-  titlebar.classList.add('dragging')
-  window.shell.dragStart()
-  try { titlebar.setPointerCapture(event.pointerId) } catch { /* noop */ }
+manualWindowDrag.bindManualWindowDrag({
+  handle: titlebar,
+  canStart: (event) => !manualWindowDrag.isInteractiveDragEvent(event),
+  onStart: () => window.shell.dragStart(),
+  onEnd: () => window.shell.dragEnd()
 })
-function endDrag () {
-  if (!dragging) return
-  dragging = false
-  titlebar.classList.remove('dragging')
-  window.shell.dragEnd()
-}
-window.addEventListener('pointerup', endDrag)
-window.addEventListener('pointercancel', endDrag)
-titlebar.addEventListener('lostpointercapture', endDrag)
-window.addEventListener('blur', endDrag)
 
 const navItems = [...document.querySelectorAll('.nav-item')]
 const panes = [...document.querySelectorAll('.pane')]

@@ -1,6 +1,25 @@
 'use strict'
 
 ;(function exposeManualWindowDrag (global) {
+  const INTERACTIVE_DRAG_SELECTOR = [
+    'button',
+    'a[href]',
+    'input',
+    'select',
+    'textarea',
+    'summary',
+    '[contenteditable]:not([contenteditable="false"])',
+    '[role="button"]',
+    '[role="link"]',
+    '[role="checkbox"]',
+    '[role="radio"]',
+    '[role="switch"]',
+    '[role="slider"]',
+    '[role="textbox"]',
+    '[tabindex]:not([tabindex="-1"])',
+    '[data-no-drag]'
+  ].join(', ')
+
   function callSafely (callback, ...args) {
     if (typeof callback !== 'function') return undefined
     try { return callback(...args) } catch { return undefined }
@@ -11,10 +30,21 @@
     try { return callback(event) !== false } catch { return false }
   }
 
+  function isInteractiveDragEvent (event) {
+    const path = typeof event?.composedPath === 'function'
+      ? event.composedPath()
+      : [event?.target]
+    return path.some((node) => {
+      if (!node || typeof node.matches !== 'function') return false
+      try { return node.matches(INTERACTIVE_DRAG_SELECTOR) } catch { return true }
+    })
+  }
+
   function bindManualWindowDrag ({
     handle,
     classTarget = handle,
     className = 'dragging',
+    canStart,
     onStart,
     onEnd,
     onActiveChange
@@ -38,6 +68,7 @@
     function start (event) {
       if (!event || event.button !== 0 || event.isPrimary === false ||
           !Number.isInteger(event.pointerId) || activePointerId !== null) return
+      if (!startSafely(canStart, event)) return
       if (!startSafely(onStart, event)) return
 
       activePointerId = event.pointerId
@@ -59,5 +90,9 @@
     })
   }
 
-  global.ManualWindowDrag = Object.freeze({ bindManualWindowDrag })
+  global.ManualWindowDrag = Object.freeze({
+    INTERACTIVE_DRAG_SELECTOR,
+    bindManualWindowDrag,
+    isInteractiveDragEvent
+  })
 })(window)

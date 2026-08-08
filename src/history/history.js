@@ -7,6 +7,10 @@ const api = window.historyApi || {
   getSessionPage: async () => ({ ok: false, error: { message: '历史记录不可用' } }),
   exportSession: async () => ({ ok: false, error: { message: '导出不可用' } })
 }
+const manualWindowDrag = window.ManualWindowDrag || {
+  bindManualWindowDrag: () => ({ end () {} }),
+  isInteractiveDragEvent: () => true
+}
 
 const PAGE_SIZE = 50
 const titlebar = document.getElementById('titlebar')
@@ -45,7 +49,6 @@ let refinementMetadata = null
 let detailCursorStack = [{ cursor: null, offset: 0 }]
 let exportRequest = 0
 let exportPending = false
-let dragging = false
 
 function unwrap (response) {
   if (!response || response.ok !== true) {
@@ -478,23 +481,12 @@ function applyConfig (config) {
     : config.theme
 }
 
-titlebar.addEventListener('pointerdown', (event) => {
-  if (event.button !== 0 || event.target.closest('button')) return
-  dragging = true
-  titlebar.classList.add('dragging')
-  api.dragStart()
-  try { titlebar.setPointerCapture(event.pointerId) } catch { /* noop */ }
+manualWindowDrag.bindManualWindowDrag({
+  handle: titlebar,
+  canStart: (event) => !manualWindowDrag.isInteractiveDragEvent(event),
+  onStart: () => api.dragStart(),
+  onEnd: () => api.dragEnd()
 })
-function endDrag () {
-  if (!dragging) return
-  dragging = false
-  titlebar.classList.remove('dragging')
-  api.dragEnd()
-}
-window.addEventListener('pointerup', endDrag)
-window.addEventListener('pointercancel', endDrag)
-window.addEventListener('blur', endDrag)
-titlebar.addEventListener('lostpointercapture', endDrag)
 
 closeButton.addEventListener('click', () => api.close())
 refreshButton.addEventListener('click', () => { void loadSessions(true) })

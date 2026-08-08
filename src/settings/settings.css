@@ -19,11 +19,13 @@ html, body {
 
 /* 顶栏（手动拖动，不用 app-region —— 避免亚克力窗拖动闪烁） */
 .titlebar {
-  height: 44px;
+  height: 48px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 8px 0 18px;
+  border-bottom: 1px solid var(--border-window-titlebar);
+  background: var(--surface-window-titlebar);
   cursor: grab;
 }
 .titlebar.dragging { cursor: grabbing; }
@@ -57,13 +59,13 @@ html, body {
 /* 布局 */
 .layout {
   display: flex;
-  height: calc(100% - 44px);
+  height: calc(100% - 48px);
 }
 
 .onboarding {
   position: fixed;
   z-index: 20;
-  inset: 44px 0 0;
+  inset: 48px 0 0;
   display: grid;
   place-items: center;
   padding: 32px;

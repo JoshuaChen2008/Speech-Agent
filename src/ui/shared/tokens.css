@@ -88,6 +88,8 @@
 
   /* 设置窗：整页近乎透明，让 DWM acrylic 透上来 */
   --surface-settings: rgba(var(--c-white), 0.04);
+  --surface-window-titlebar: rgba(var(--c-black), 0.18);
+  --border-window-titlebar: rgba(var(--c-white), 0.10);
   --fg: var(--c-fog);
 
   /* 文字 */
@@ -121,6 +123,8 @@
   --bar-bg: var(--c-paper-50);
   --toolbar-bg: var(--c-paper-0);
   --surface-settings: rgba(var(--c-black), 0.04);
+  --surface-window-titlebar: rgba(var(--c-black), 0.08);
+  --border-window-titlebar: rgba(var(--c-black), 0.12);
   --fg: var(--c-slate-text);
 
   --text-caption: rgb(var(--c-ink-text));
@@ -297,5 +301,7 @@
 @media (forced-colors: active) {
   :root {
     --focus-color: Highlight;
+    --surface-window-titlebar: Canvas;
+    --border-window-titlebar: CanvasText;
   }
 }

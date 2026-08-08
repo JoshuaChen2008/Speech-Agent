@@ -42,6 +42,7 @@ const { RefinementNoticeStore } = require('./main/services/refinement-notice')
 const { createMainEvidenceBridge } = require('./main/services/electron-exit-evidence')
 const { PowerSessionGuard } = require('./main/services/power-session-guard')
 const { ToolbarLayoutState, WINDOW_LAYOUT, dragBoundsAt } = require('./main/window-layout-contract')
+const { WindowLayerController } = require('./main/window-layer-controller')
 
 const exitEvidence = createMainEvidenceBridge()
 exitEvidence.markLifecycle('main-started')
@@ -69,6 +70,11 @@ const refinementNoticeStore = new RefinementNoticeStore({
 const windowRoles = new Map()
 let locked = false
 const toolbarLayoutState = new ToolbarLayoutState()
+const windowLayerController = new WindowLayerController({
+  getCaptionWindow: () => captionWin,
+  getToolbarWindow: () => toolbarWin,
+  onFault: ({ role, code }) => console.error(`[window.layer] role=${role} code=${code}`)
+})
 
 const MARGIN = WINDOW_LAYOUT.captionMargin
 const TB_MARGIN = WINDOW_LAYOUT.toolbarMargin
@@ -294,12 +300,10 @@ function createWindows () {
   toolbarWin.webContents.on('console-message', (details) => console.log('[toolbar]', details.message))
   captionWin.webContents.on('did-finish-load', () => publishToolbarOverlap())
 
-  const raiseToolbar = () => {
-    if (toolbarWin && !toolbarWin.isDestroyed()) toolbarWin.moveTop()
-  }
-  captionWin.once('ready-to-show', () => { captionWin.show(); raiseToolbar() })
+  const restoreWindowStack = () => windowLayerController.restoreWindowStack()
+  captionWin.once('ready-to-show', () => { captionWin.show(); restoreWindowStack() })
   toolbarWin.once('ready-to-show', () => { toolbarWin.show(); dock() })
-  setTimeout(raiseToolbar, 300)
+  setTimeout(restoreWindowStack, 300)
 
   captionWin.on('closed', () => { stopResize(null, true); stopDrag(null, true); captionWin = null })
   toolbarWin.on('closed', () => { stopDrag(null, true); toolbarWin = null })
@@ -314,7 +318,7 @@ function dock () {
   const x = Math.round(cardRight - INSET - (toolbar.width - TB_MARGIN))
   const y = Math.round(cardTop + INSET - TB_MARGIN)
   toolbarWin.setBounds({ x, y, width: TB_W, height: TB_H })
-  toolbarWin.moveTop()
+  windowLayerController.restoreWindowStack()
 }
 
 function openSettingsWindow (initialPane = null) {
@@ -343,10 +347,12 @@ function openSettingsWindow (initialPane = null) {
     }
   })
   registerWindowRole(settingsWin, 'settings')
+  windowLayerController.bindForegroundWindow(settingsWin, 'settings')
   hardenContents(settingsWin)
   settingsWin.webContents.on('console-message', (details) => console.log('[settings]', details.message))
   settingsWin.once('ready-to-show', () => {
     settingsWin.show()
+    settingsWin.focus()
     if (initialPane) send(settingsWin, CHANNELS.SETTINGS_NAVIGATE, initialPane)
   })
   settingsWin.on('closed', () => { stopDrag(null, true); settingsWin = null })
@@ -382,9 +388,13 @@ function openHistoryWindow () {
     }
   })
   registerWindowRole(historyWin, 'history')
+  windowLayerController.bindForegroundWindow(historyWin, 'history')
   hardenContents(historyWin)
   historyWin.webContents.on('console-message', (details) => console.log('[history]', details.message))
-  historyWin.once('ready-to-show', () => historyWin.show())
+  historyWin.once('ready-to-show', () => {
+    historyWin.show()
+    historyWin.focus()
+  })
   historyWin.on('closed', () => { stopDrag(null, true); historyWin = null })
   historyWin.loadFile(path.join(__dirname, 'history', 'index.html'))
 }

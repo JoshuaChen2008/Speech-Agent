@@ -258,3 +258,77 @@ test('SEM-F22/J17: caption drag and resize starts fail closed when the preload c
   window.dispatch('pointerup', pointer())
   assert.deepEqual(calls, [])
 })
+
+const INTERACTIVE_DRAG_SELECTOR = [
+  'button',
+  'a[href]',
+  'input',
+  'select',
+  'textarea',
+  'summary',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="button"]',
+  '[role="link"]',
+  '[role="checkbox"]',
+  '[role="radio"]',
+  '[role="switch"]',
+  '[role="slider"]',
+  '[role="textbox"]',
+  '[tabindex]:not([tabindex="-1"])',
+  '[data-no-drag]'
+].join(', ')
+
+test('SEM-F22/J17: titlebar drag excludes the complete interactive composed path', () => {
+  const { api, window } = loadManualDrag()
+  assert.equal(api.INTERACTIVE_DRAG_SELECTOR, INTERACTIVE_DRAG_SELECTOR)
+  const interactive = {
+    matches: (selector) => selector === INTERACTIVE_DRAG_SELECTOR
+  }
+  const plain = { matches: () => false }
+  assert.equal(api.isInteractiveDragEvent({ composedPath: () => [plain, interactive] }), true)
+  assert.equal(api.isInteractiveDragEvent({ composedPath: () => [plain] }), false)
+
+  const titlebar = new FakeElement('titlebar')
+  let starts = 0
+  const controller = api.bindManualWindowDrag({
+    handle: titlebar,
+    canStart: (event) => !api.isInteractiveDragEvent(event),
+    onStart: () => { starts += 1 }
+  })
+  titlebar.dispatch('pointerdown', pointer({ composedPath: () => [interactive, titlebar] }))
+  assert.equal(starts, 0)
+  titlebar.dispatch('pointerdown', pointer({ composedPath: () => [plain, titlebar] }))
+  assert.equal(starts, 1)
+  controller.end()
+})
+
+test('SEM-F22/J17: settings and subtitle history share a 48px structural titlebar and bind no body drag surface', () => {
+  const settingsHtml = source('src/settings/settings.html')
+  const historyHtml = source('src/history/index.html')
+  const settingsScript = source('src/settings/settings.js')
+  const historyScript = source('src/history/history.js')
+  const settingsStyles = source('src/settings/settings.css')
+  const historyStyles = source('src/history/history.css')
+  const tokens = source('src/ui/shared/tokens.css')
+
+  assert.match(settingsHtml, /manual-window-drag\.js[\s\S]*settings\.js/)
+  assert.match(historyHtml, /manual-window-drag\.js[\s\S]*history\.js/)
+  for (const script of [settingsScript, historyScript]) {
+    assert.match(script, /bindManualWindowDrag\(\{[\s\S]*handle: titlebar/)
+    assert.match(script, /canStart: \(event\) => !manualWindowDrag\.isInteractiveDragEvent\(event\)/)
+    assert.doesNotMatch(script, /titlebar\.addEventListener\('pointerdown'/)
+    assert.doesNotMatch(script, /document\.(?:body|documentElement)\.addEventListener\('pointerdown'/)
+  }
+
+  assert.match(tokens, /--surface-window-titlebar:/)
+  assert.match(tokens, /--border-window-titlebar:/)
+  assert.equal((tokens.match(/--surface-window-titlebar:/g) || []).length, 3)
+  assert.equal((tokens.match(/--border-window-titlebar:/g) || []).length, 3)
+  for (const styles of [settingsStyles, historyStyles]) {
+    assert.match(styles, /\.titlebar\s*\{[\s\S]*height:\s*48px;/)
+    assert.match(styles, /background:\s*var\(--surface-window-titlebar\)/)
+    assert.match(styles, /border-bottom:\s*1px solid var\(--border-window-titlebar\)/)
+  }
+  assert.match(settingsStyles, /height:\s*calc\(100% - 48px\)/)
+  assert.match(settingsStyles, /inset:\s*48px 0 0/)
+})
