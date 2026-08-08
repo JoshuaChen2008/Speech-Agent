@@ -1,6 +1,6 @@
 # 字幕与工具条窗口规范
 
-> 状态：Rev.4 · 2026-07-31
+> 状态：Rev.5 · 2026-08-08
 > 本文只描述当前 Electron 窗口壳、交互不变量和视觉验收边界。具体视觉方案由 [ui-design-brief.md](ui-design-brief.md) 管理；运行状态和数据来自 [runtime-architecture.md](runtime-architecture.md)。
 
 ## 1. 当前结构
@@ -22,6 +22,8 @@
 - 已锁定：字幕窗恒穿透；工具条脱离并保持可交互，可用于暂停或解锁。
 - 解锁入口是工具条和 `Ctrl+Alt+L`，字幕窗内不再保留不可见 hotzone。
 - 历史与导出使用独立 `historyWin`；模型资源和首启也不展开在字幕透明窗内。
+
+本文同时记录已决定但尚未实现的目标交互。凡现状与目标不同，均按 [SEM-F22](semantic-contract.md) 与 [J17](testing-strategy.md) 视为实现缺口，不得把当前行为反向写成要求。
 
 ## 2. 职责边界
 
@@ -65,15 +67,16 @@ Electron 壳层负责：
 - **窗口宽 ≠ 遮挡宽。** 常态（idle / listening / paused / starting / stopping）条只有 **287–319**，其余区域全透明且逐像素穿透。
 - 最坏是 `error` 态（图标 + 说明文字 + 开始/停止/重试/下一步），Electron @125% DPI 实测 544。说明文字有 160px 上限，故理论上界约 554，取 568 留 14 余量。
 - 右对齐是关键：`dock()` 按 `窗口右沿 − TB_MARGIN` 反推位置，右对齐后这个假设与实际渲染恒等，**条多宽都不影响停靠精度**，公式一行没改。
-- `.bar` 是 `flex-wrap: nowrap`、`.bar-group` 是 `flex: none`，挤压只落在状态文字上（打省略号），不会把「重试 / 下一步」这些出口压没，也不会换行成两层条。
+- `#toolbar.toolbar` 是 `flex-wrap: nowrap`、`.bar-group` 是 `flex: none`，挤压只落在状态文字上（打省略号），不会把「重试 / 下一步」这些出口压没，也不会换行成两层条。
 
-这些值目前同时存在于 `src/main.js` 与 CSS 变量中，是已知的“双重真相”。当前 MVP 用最坏情况洞保证停靠工具条区域不会被字幕窗吞掉点击；实际 overlap rect 作为 MVP 后交互质量项：
+这些值目前同时存在于 `src/main.js` 与 CSS 变量中，是已知的“双重真相”。当前实现用最坏情况洞保证停靠工具条区域不会被字幕窗吞掉点击，但 [SEM-F22](semantic-contract.md) 已将实际 overlap rect 冻结为目标交互，而非可选精度优化：
 
 - 主进程拥有 BrowserWindow 外框和 overlap rect。
 - UI 拥有卡片内部尺寸、间距和视觉 token。
 - 若视觉模型改变工具条宽度、字幕高度或停靠位置，必须同时提交 layout contract 请求，不能只改 CSS。
-- 当前 `.tb-hole` 固定为 `584 × 64`，与工具条最坏宽高及留白对齐；它功能可用但会多释放一小块透明穿透区。
-- 后续实现 `onOverlap(cb)` 后，字幕窗以 CSS 变量更新实际穿透区域并淘汰固定洞；该精度优化不阻断当前 MVP。
+- 当前 `.tb-hole` 固定为 `584 × 64`，与工具条最坏宽高及留白对齐；常态下会多释放一块透明穿透区，因此属于实现缺口。
+- 目标实现由工具条 renderer 上报当前 `#toolbar.toolbar` 的真实外接矩形，并经 preload、IPC access policy 和主进程校验后换算为字幕卡局部的右侧锚定矩形。该矩形只在有界内存中服务布局，不持久化、不写日志或证据报告。
+- 窗口首帧、renderer reload、布局尚未就绪、矩形非法或 generation 陈旧时，字幕窗临时使用 `584 × 64` 最坏尺寸洞；收到同代有效矩形后必须立即收缩到真实轮廓。
 
 ## 4. BrowserWindow 不变量
 
@@ -100,12 +103,15 @@ Electron 壳层负责：
 
 字幕窗额外 `focusable: false`。两个窗口使用 `setAlwaysOnTop(true, 'screen-saver')` 和全屏 workspace 可见配置。
 
-设置窗：
+设置窗与字幕历史：
 
 - `frame: false` / hidden title bar。
-- `transparent: false` 与 `backgroundMaterial: 'acrylic'`。
-- 当前决定 `resizable: false`；若未来设置内容明显增长，再由 UI 与壳层共同评审是否允许缩放。
+- 设置窗使用 `transparent: false` 与 `backgroundMaterial: 'acrylic'`；字幕历史保持正常可聚焦/缩放窗口语义。
+- 设置窗当前决定 `resizable: false`；若未来设置内容明显增长，再由 UI 与壳层共同评审是否允许缩放。
 - 使用主进程手动拖动，避免 app-region 与 DWM acrylic 重绘不同步。
+- 两窗的顶部标题栏统一为 `48px`。只有标题栏的非交互区域可发出拖动意图，正文空白区不隐式拖动。
+- 两窗获得焦点时临时执行 `setAlwaysOnTop(true, 'screen-saver')` 并 `moveTop()`，保证位于字幕和工具条之上；失焦时立即恢复普通层级。关闭、销毁与异常路径也必须恢复，不能形成永久置顶窗口。
+- 当前设置标题栏仍为 `44px`，设置与字幕历史也尚未实施上述焦点层级往返，均属于 [SEM-F22](semantic-contract.md) 的实现缺口。
 
 ## 5. 拖动与穿透
 
@@ -118,7 +124,7 @@ Electron 壳层负责：
 - 尺寸上下限见上表，写在 `main.js` 的 `CAP_LIMITS`，宽高上限还会再被当前屏幕工作区封顶。
 - 拉伸过程中持续 `dock()`，工具条跟随。
 - 锁定时禁止拉伸，`applyLock(true)` 会立刻收尾进行中的拉伸。
-- 拉伸带优先于工具条「洞」，否则洞盖住的右上角就再也拉不动。
+- 工具条实际轮廓先保持穿透；轮廓以外的卡片内侧 `8px` 拉伸带再优先于普通拖动。
 - 结束时把尺寸写回 `config.captionWidth / captionHeight` 并广播。
 
 **字号不随窗口缩放。** 用户手动改变窗口后，新宽高决定一行能放下多少字和固定视口能容纳多少行；字幕内容本身绝不能自动 resize 窗口。可见行数由实际内容高度与字号计算，`config.maxLines` 不再作为 previous/current 各槽位的独立裁剪上限；满高后按 [固定高度字幕流设计](subtitle-flow-and-transcript-versions.md) 淘汰最旧视觉行。
@@ -126,6 +132,14 @@ Electron 壳层负责：
 ### 5.1 手动拖动
 
 renderer 在可拖区域发出 `dragStart(role)` 意图，主进程通过全局光标和固定宽高的 `setBounds` 更新位置。
+
+拖动命中规则：
+
+- 字幕窗解锁时，整张**可见字幕卡**都是抓取面，但卡片内侧 `8px` 拉伸带与工具条当前真实轮廓除外；命中顺序固定为透明外边距、工具条实际轮廓、`8px` 拉伸带、普通拖动区域。
+- 字幕窗四周 `20 DIP` 透明外边距始终逐像素穿透，不是不可见抓取区。
+- 主键按下后，只要系统光标产生位移就立即按普通桌面窗口逻辑跟随；不增加定时长按，也不增加 renderer 自定义移动阈值。按下再原地松开不得改变 bounds。
+- 工具条的按钮、状态文字及控件间隙都属于工具条真实轮廓，不能把拖动意图传给字幕窗。工具条自身只有明确可见的握把可开始拖动：解锁时握把移动字幕与工具条组合，锁定时握把只移动工具条。
+- 设置与字幕历史只允许从各自 `48px` 标题栏的非交互区域开始拖动；标题栏内的按钮、链接、输入控件及正文区域均不得触发拖动。
 
 必须覆盖：
 
@@ -142,7 +156,8 @@ renderer 在可拖区域发出 `dragStart(role)` 意图，主进程通过全局�
 
 - 透明区域默认穿透。
 - 指针进入真实字幕卡或工具条时临时恢复交互。
-- 字幕卡在工具条 overlap rect 内保持穿透，让上层 toolbarWin 接管事件。
+- 字幕卡在工具条当前真实 overlap rect 内保持穿透，让上层 toolbarWin 接管事件；该 rect 是工具条 `#toolbar.toolbar` 的外接矩形，包含状态文字与控件间隙，不按 alpha 像素挖出碎片。
+- 实际 rect 尚未到达、renderer reload 或报告非法/陈旧时只允许临时使用 `584 × 64` 最坏尺寸回落；同代有效 rect 到达后立即替换，不能继续保留固定大洞。
 - 拖动期间暂停 elementFromPoint 命中计算。
 - mousemove 使用 requestAnimationFrame 节流。
 - 锁定时 captionWin 恒穿透，renderer 不能把它重新变成实心。
@@ -199,6 +214,8 @@ renderer 在可拖区域发出 `dragStart(role)` 意图，主进程通过全局�
 - 历史：正常可聚焦，已支持终态会话选择、keyset 分页、带时间戳正文和 txt/md/srt 导出；搜索与两小时详情 DOM 回收后置到对应阶段。
 - 首启：选择会议/个人听写预设，说明权限、模型下载和云端文本边界。
 - 未实现功能在骨架阶段必须标注“演示模式”或禁用，不能让用户误以为已生效。
+- 设置与字幕历史标题栏使用同一个主题感知的中性加深表面 token，并以 `1px` 底部分隔线与正文区分；它只表达窗口结构，不复用选中、警告、成功或运行 phase 颜色。
+- 中性标题栏需覆盖深色、浅色与系统高对比；设置与字幕历史的组件 CSS 不得各自硬编码两套近似颜色。
 
 ## 9. 视觉与性能验收
 
@@ -209,13 +226,17 @@ renderer 在可拖区域发出 `dragStart(role)` 意图，主进程通过全局�
 - partial 高频更新不产生明显 layout thrash 或持续 DOM 分配。
 - 无持续大面积 `backdrop-filter`；常驻透明窗动效遵守 reduced motion。
 - 工具条在常态、锁定、监听和错误时均可发现、可键盘操作。
+- 解锁字幕卡除 `8px` 拉伸带和工具条真实轮廓外可从连续点位立即拖动；透明外边距仍穿透，原地点击零位移，工具条只由明确握把拖动。
+- 工具条 quiet / attention / 会话状态通知宽度变化、首帧、reload、非法与陈旧矩形回落均不产生断续抓取区。
+- 设置与字幕历史聚焦时位于字幕和工具条之上，失焦后恢复普通层级；两窗的 `48px` 标题栏可拖且全部交互控件与正文不触发拖动。
 - 开 DevTools 导致透明失效仍视为 Electron 调试限制，不当作产品 bug。
 
 ## 10. 当前状态与后续项
 
-1. 当前 MVP 以 `584 × 64` 最坏情况洞保证工具条命中；由主进程下发实际 overlap rect、消除 JS/CSS 尺寸双重真相属于 MVP 后交互质量项，不阻断本轮验收。
+1. [SEM-F22](semantic-contract.md) 与 [J17](testing-strategy.md) 已决定以工具条实际 overlap rect 取代常态固定大洞；`584 × 64` 只保留为首帧、reload、非法或陈旧报告时的临时 fail-safe。当前工作树仍是固定洞，本轮未修改产品代码。
 2. B1 已完成 pointercancel/lostpointercapture、blur/destroyed 与主进程拖动/缩放互斥清理。
 3. B1 已把字幕接到稳定节点 + CaptionEvent reducer，并移除 renderer 假流。
 4. B1 已把工具条升级为完整 RuntimeSnapshot + CommandResult。
 5. B1 已让设置页识别 Capabilities；默认 Gate 0B profile 为空，开发 profile 只能由显式开关启用。
-6. 视觉/UI 的 V1–V2 方案和状态矩阵已交付；历史窗口和模型资源页均已接真实主进程契约并通过开发态及 packaged 四窗口 Electron 旅程，205 段详情已验证五页往返且 DOM≤50。I3 非音频预资格又在 3,600 段/72 页下保持 DOM≤50；MVP 不展示翻译开关。J15a 可见非音频 DWM runner、单次/矩阵严格校验与 fail-closed 契约测试为实现完成/尚未验收；尚无 36 例实机 matrix 报告。物理音频、DPI/人工视觉、真实两小时声源与 I4 继续按发布门禁验收。
+6. 视觉/UI 的 V1–V2 方案和状态矩阵已交付；历史窗口和模型资源页均已接真实主进程契约并通过开发态及 packaged 四窗口 Electron 旅程，205 段详情已验证五页往返且 DOM≤50。I3 非音频预资格又在 3,600 段/72 页下保持 DOM≤50；MVP 不展示翻译开关。J15a 可见非音频 DWM runner、单次/矩阵严格校验与 fail-closed 契约测试为实现完成·尚未验收；尚无 36 例实机 matrix 报告。物理音频、DPI/人工视觉、真实两小时声源与 I4 继续按发布门禁验收。
+7. J17 的动态命中、握把、设置/字幕历史 `48px` 标题栏与焦点层级往返当前状态为已决定；本轮只登记和对齐文档，未修改产品代码或执行 I2 `dwm-drag`。
