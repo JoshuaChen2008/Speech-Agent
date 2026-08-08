@@ -94,6 +94,18 @@ function dragBoundsAt (start, origin, point) {
   }
 }
 
+function toolbarDockBoundsFor (captionBounds) {
+  const cardRight = captionBounds.x + captionBounds.width - WINDOW_LAYOUT.captionMargin
+  const cardTop = captionBounds.y + WINDOW_LAYOUT.captionMargin
+  return {
+    x: Math.round(cardRight - WINDOW_LAYOUT.toolbarDockInset -
+      (WINDOW_LAYOUT.toolbarViewportWidth - WINDOW_LAYOUT.toolbarMargin)),
+    y: Math.round(cardTop + WINDOW_LAYOUT.toolbarDockInset - WINDOW_LAYOUT.toolbarMargin),
+    width: WINDOW_LAYOUT.toolbarViewportWidth,
+    height: WINDOW_LAYOUT.toolbarViewportHeight
+  }
+}
+
 class ToolbarLayoutState {
   constructor () {
     this.generation = 1
@@ -125,5 +137,6 @@ module.exports = {
   ToolbarLayoutState,
   WINDOW_LAYOUT,
   dragBoundsAt,
-  projectToolbarReport
+  projectToolbarReport,
+  toolbarDockBoundsFor
 }

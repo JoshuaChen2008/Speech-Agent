@@ -109,7 +109,10 @@ test('SEM-F22/J17: an unchanged system pointer preserves bounds and the first de
     height: 190
   })
 
-  const main = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8')
-  assert.match(main, /const nextBounds = dragBoundsAt\(state\.start, state\.origin, point\)/)
-  assert.match(main, /if \(!sameBounds\(nextBounds, state\.lastBounds\)\) \{[\s\S]*state\.win\.setBounds\(nextBounds\)/)
+  const controller = fs.readFileSync(
+    path.join(root, 'src', 'main', 'manual-window-interaction-controller.js'),
+    'utf8'
+  )
+  assert.match(controller, /const nextBounds = dragBoundsAt\(state\.start, state\.origin, point\)/)
+  assert.match(controller, /if \(!sameBounds\(nextBounds, state\.lastBounds\)\) \{[\s\S]*state\.win\.setBounds\(nextBounds\)/)
 })

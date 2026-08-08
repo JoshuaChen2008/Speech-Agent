@@ -11,11 +11,41 @@
 
 const assert = require('node:assert/strict')
 const { parseStrictEvidenceJson } = require('./strict-evidence-json')
+const { IDENTITY_VERSION: PRODUCT_PAYLOAD_IDENTITY_VERSION } = require('../src/main/services/product-payload-identity')
 
 const LEGACY_SCENARIOS = Object.freeze(['pause-refine', 'worker-crash-retry', 'dwm-drag'])
 const RECOVERY_SCENARIOS = Object.freeze(['device-removal-retry', 'sleep-wake-retry'])
 const SCENARIOS = Object.freeze([...LEGACY_SCENARIOS, ...RECOVERY_SCENARIOS])
 const SOURCES = Object.freeze(['loopback', 'mic'])
+const DWM_SCALE_PERCENTS = Object.freeze([100, 125, 150, 200])
+const DWM_THEMES = Object.freeze(['dark', 'light', 'high-contrast'])
+const DWM_COMBINATIONS = Object.freeze(DWM_SCALE_PERCENTS.flatMap((scalePercent) =>
+  DWM_THEMES.map((theme) => Object.freeze({ scalePercent, theme }))))
+const DWM_TOOLBAR_STATES = Object.freeze(['quiet', 'attention', 'session-status-notice'])
+const DWM_RESIZE_TARGETS = Object.freeze([
+  'north-edge', 'east-edge', 'south-edge', 'west-edge',
+  'north-east-corner', 'south-east-corner', 'south-west-corner', 'north-west-corner'
+])
+const DWM_NORMAL_WINDOW_ROLES = Object.freeze(['settings', 'history'])
+const DWM_OBSERVATION_IDS = Object.freeze([
+  'caption-left-drag',
+  'caption-center-drag',
+  'caption-right-drag',
+  'caption-multiline-blank-drag',
+  'caption-stationary-press-release',
+  'transparent-margin-through',
+  ...DWM_TOOLBAR_STATES.map((state) => `toolbar-${state}`),
+  ...DWM_RESIZE_TARGETS.map((target) => `resize-${target}`),
+  'grip-unlocked',
+  'grip-locked',
+  'locked-caption-through',
+  'settings-foreground-titlebar',
+  'settings-body-controls-static',
+  'history-foreground-titlebar',
+  'history-body-controls-static',
+  'foreground-demotion',
+  'titlebar-neutral-structure'
+])
 const TRANSPORT_FIELDS = Object.freeze([
   'capturedFrames', 'sentFrames', 'ingestedFrames', 'droppedFrames',
   'creditStalls', 'maxQueuedMsObserved', 'acknowledgedFrames',
@@ -43,6 +73,16 @@ const RECOVERY_OPERATOR_ACTIONS = Object.freeze({
   'sleep-wake-retry': 'system-resumed-after-sleep'
 })
 const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+const SHA256_PATTERN = /^[a-f0-9]{64}$/
+const DWM_LEGACY_LIMITATIONS = Object.freeze([
+  'This interaction report does not attest physical device removal or OS sleep/wake.',
+  'No captured audio, transcript text, device name, model path, or local audio path is persisted in this evidence.'
+])
+const DWM_V3_LIMITATIONS = Object.freeze([
+  'Operator completion records one visible scale and theme combination only and cannot independently produce pass.',
+  'Current I2 acceptance requires the strict twelve-combination matrix and a bound J17 product-shell report.',
+  'No captured audio, transcript text, device name, model path, local audio path, geometry, coordinate, or absolute monotonic time is persisted in this evidence.'
+])
 
 function assertPlainRecord (value, label) {
   assert.ok(value !== null && typeof value === 'object' && !Array.isArray(value), `${label} must be an object`)
@@ -88,7 +128,7 @@ function inspectSafeValue (value, keyPath = 'report') {
   if (!value || typeof value !== 'object') return
   for (const [key, nested] of Object.entries(value)) {
     assert.doesNotMatch(key,
-      /^(?:capturedPcmBase64|pcm(?:16)?Base64|samples|audioBase64|audioFile|audioFilePath|transcript|transcriptText|captionText|joinedFinalText|joinedRefinedText|deviceLabel|deviceName|localPath|modelDir|modelPath|text)$/i,
+      /^(?:capturedPcmBase64|pcm(?:16)?Base64|samples|audioBase64|audioFile|audioFilePath|transcript|transcriptText|captionText|joinedFinalText|joinedRefinedText|deviceLabel|deviceName|localPath|modelDir|modelPath|text|x|y|top|right|bottom|left|width|height|rect|bounds|coordinates|screenPosition|windowPosition|toolbarRect|absoluteMonotonicTime|clockOffset|displayId)$/i,
       `${keyPath}.${key} is a forbidden sensitive field`)
     inspectSafeValue(nested, `${keyPath}.${key}`)
   }
@@ -110,13 +150,17 @@ function parseArguments (argv) {
     progress: null,
     completion: null,
     physicalMicPreflight: null,
+    scalePercent: null,
+    theme: null,
+    crossScaleFromPercent: null,
     timeoutSeconds: 90
   }
   const seen = new Set()
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index]
     const value = argv[index + 1]
-    if (!['--scenario', '--source', '--report', '--progress', '--completion', '--physical-mic-preflight', '--timeout-seconds'].includes(flag)) {
+    if (!['--scenario', '--source', '--report', '--progress', '--completion', '--physical-mic-preflight',
+      '--scale-percent', '--theme', '--cross-scale-from-percent', '--timeout-seconds'].includes(flag)) {
       throw new Error(`Unknown argument: ${flag}`)
     }
     if (seen.has(flag)) throw new Error(`${flag} must be provided at most once`)
@@ -129,6 +173,9 @@ function parseArguments (argv) {
     else if (flag === '--progress') options.progress = value
     else if (flag === '--completion') options.completion = value
     else if (flag === '--physical-mic-preflight') options.physicalMicPreflight = value
+    else if (flag === '--scale-percent') options.scalePercent = Number(value)
+    else if (flag === '--theme') options.theme = value
+    else if (flag === '--cross-scale-from-percent') options.crossScaleFromPercent = Number(value)
     else options.timeoutSeconds = Number(value)
   }
   if (!SCENARIOS.includes(options.scenario)) throw new Error(`--scenario must be one of ${SCENARIOS.join(', ')}`)
@@ -149,6 +196,18 @@ function parseArguments (argv) {
   }
   if (!operatorScenario && (options.progress || options.completion)) {
     throw new Error('--progress and --completion are only valid for operator interaction scenarios')
+  }
+  if (options.scenario === 'dwm-drag') {
+    if (!DWM_SCALE_PERCENTS.includes(options.scalePercent) || !DWM_THEMES.includes(options.theme)) {
+      throw new Error('dwm-drag requires --scale-percent 100|125|150|200 and --theme dark|light|high-contrast')
+    }
+    if (options.crossScaleFromPercent !== null &&
+        (!DWM_SCALE_PERCENTS.includes(options.crossScaleFromPercent) ||
+          options.crossScaleFromPercent === options.scalePercent)) {
+      throw new Error('--cross-scale-from-percent must be a different supported scale')
+    }
+  } else if (options.scalePercent !== null || options.theme !== null || options.crossScaleFromPercent !== null) {
+    throw new Error('DWM scale and theme arguments are only valid for dwm-drag')
   }
   return options
 }
@@ -198,21 +257,200 @@ function validateTransportSnapshot (value, label) {
   for (const field of TRANSPORT_FIELDS) assertNullableNonNegativeInteger(value[field], `${label}.${field}`)
 }
 
-function buildDwmProgress ({ sourceId, state, transport, operatorCompletionObserved }) {
+function assertSha256 (value, label) {
+  assert.equal(typeof value, 'string', `${label} must be a string`)
+  assert.match(value, SHA256_PATTERN, `${label} must be lowercase SHA-256`)
+}
+
+function validateDwmCombination (value, label = 'DWM combination') {
+  assertExactKeys(value, ['scalePercent', 'theme'], label)
+  assert.ok(DWM_SCALE_PERCENTS.includes(value.scalePercent), `${label}.scalePercent is invalid`)
+  assert.ok(DWM_THEMES.includes(value.theme), `${label}.theme is invalid`)
+  return value
+}
+
+function validateDwmConfirmations (confirmations) {
+  assert.ok(Array.isArray(confirmations), 'DWM observations must be an array')
+  assert.equal(confirmations.length, DWM_OBSERVATION_IDS.length, 'DWM observations are missing or duplicated')
+  const seen = new Set()
+  for (const id of confirmations) {
+    assert.ok(DWM_OBSERVATION_IDS.includes(id), `DWM observation is unknown: ${id}`)
+    assert.equal(seen.has(id), false, `DWM observation is duplicated: ${id}`)
+    seen.add(id)
+  }
+  for (const id of DWM_OBSERVATION_IDS) assert.equal(seen.has(id), true, `DWM observation is missing: ${id}`)
+}
+
+function completeDwmChecks () {
+  return {
+    caption: {
+      leftImmediateContinuousDrag: true,
+      centerImmediateContinuousDrag: true,
+      rightImmediateContinuousDrag: true,
+      multilineBlankImmediateContinuousDrag: true,
+      stationaryPressReleaseBoundsUnchanged: true,
+      transparentMarginPassedThrough: true
+    },
+    toolbarStates: DWM_TOOLBAR_STATES.map((state) => ({
+      state,
+      contourDidNotStartCaptionDrag: true,
+      adjacentCaptionStartedDrag: true
+    })),
+    resizeTargets: DWM_RESIZE_TARGETS.map((target) => ({ target, resizePrecededDrag: true })),
+    grip: {
+      unlockedOnlyGripStartedDrag: true,
+      unlockedGripMovedCaptionToolbarPair: true,
+      lockedOnlyGripStartedDrag: true,
+      lockedGripMovedToolbarOnly: true,
+      lockedCaptionPassedThrough: true,
+      lockedCaptionResizeDisabled: true
+    },
+    normalWindows: DWM_NORMAL_WINDOW_ROLES.map((role) => ({
+      role,
+      focusedAboveOverlays: true,
+      blurRestoredNormalLayer: true,
+      titlebarDraggable: true,
+      bodyDidNotDrag: true,
+      controlsDidNotDrag: true
+    })),
+    titlebar: {
+      settingsStructurallyDistinct: true,
+      historyStructurallyDistinct: true,
+      sharedNeutralTreatment: true,
+      notReadAsRuntimeState: true
+    }
+  }
+}
+
+function validateDwmChecks (value, label = 'DWM checks') {
+  assertExactKeys(value, ['caption', 'toolbarStates', 'resizeTargets', 'grip', 'normalWindows', 'titlebar'], label)
+  assertExactKeys(value.caption, [
+    'leftImmediateContinuousDrag', 'centerImmediateContinuousDrag', 'rightImmediateContinuousDrag',
+    'multilineBlankImmediateContinuousDrag', 'stationaryPressReleaseBoundsUnchanged',
+    'transparentMarginPassedThrough'
+  ], `${label}.caption`)
+  for (const [key, observed] of Object.entries(value.caption)) {
+    assert.equal(observed, true, `${label}.caption.${key} must be true`)
+  }
+  assert.ok(Array.isArray(value.toolbarStates), `${label}.toolbarStates must be an array`)
+  assert.equal(value.toolbarStates.length, DWM_TOOLBAR_STATES.length, `${label}.toolbarStates is incomplete`)
+  value.toolbarStates.forEach((entry, index) => {
+    assertExactKeys(entry, ['state', 'contourDidNotStartCaptionDrag', 'adjacentCaptionStartedDrag'],
+      `${label}.toolbarStates[${index}]`)
+    assert.equal(entry.state, DWM_TOOLBAR_STATES[index])
+    assert.equal(entry.contourDidNotStartCaptionDrag, true)
+    assert.equal(entry.adjacentCaptionStartedDrag, true)
+  })
+  assert.ok(Array.isArray(value.resizeTargets), `${label}.resizeTargets must be an array`)
+  assert.equal(value.resizeTargets.length, DWM_RESIZE_TARGETS.length, `${label}.resizeTargets is incomplete`)
+  value.resizeTargets.forEach((entry, index) => {
+    assertExactKeys(entry, ['target', 'resizePrecededDrag'], `${label}.resizeTargets[${index}]`)
+    assert.equal(entry.target, DWM_RESIZE_TARGETS[index])
+    assert.equal(entry.resizePrecededDrag, true)
+  })
+  assertExactKeys(value.grip, [
+    'unlockedOnlyGripStartedDrag', 'unlockedGripMovedCaptionToolbarPair',
+    'lockedOnlyGripStartedDrag', 'lockedGripMovedToolbarOnly',
+    'lockedCaptionPassedThrough', 'lockedCaptionResizeDisabled'
+  ], `${label}.grip`)
+  for (const [key, observed] of Object.entries(value.grip)) assert.equal(observed, true, `${label}.grip.${key} must be true`)
+  assert.ok(Array.isArray(value.normalWindows), `${label}.normalWindows must be an array`)
+  assert.equal(value.normalWindows.length, DWM_NORMAL_WINDOW_ROLES.length, `${label}.normalWindows is incomplete`)
+  value.normalWindows.forEach((entry, index) => {
+    assertExactKeys(entry, [
+      'role', 'focusedAboveOverlays', 'blurRestoredNormalLayer',
+      'titlebarDraggable', 'bodyDidNotDrag', 'controlsDidNotDrag'
+    ], `${label}.normalWindows[${index}]`)
+    assert.equal(entry.role, DWM_NORMAL_WINDOW_ROLES[index])
+    for (const key of ['focusedAboveOverlays', 'blurRestoredNormalLayer', 'titlebarDraggable', 'bodyDidNotDrag', 'controlsDidNotDrag']) {
+      assert.equal(entry[key], true, `${label}.normalWindows[${index}].${key} must be true`)
+    }
+  })
+  assertExactKeys(value.titlebar, [
+    'settingsStructurallyDistinct', 'historyStructurallyDistinct',
+    'sharedNeutralTreatment', 'notReadAsRuntimeState'
+  ], `${label}.titlebar`)
+  for (const [key, observed] of Object.entries(value.titlebar)) assert.equal(observed, true, `${label}.titlebar.${key} must be true`)
+  return value
+}
+
+function validateDwmCrossScale (value, label = 'DWM crossScale') {
+  assertExactKeys(value, ['observed', 'criticalHitMatrixRepeated'], label)
+  assert.equal(typeof value.observed, 'boolean')
+  assert.equal(typeof value.criticalHitMatrixRepeated, 'boolean')
+  assert.equal(value.criticalHitMatrixRepeated, value.observed,
+    `${label}.criticalHitMatrixRepeated must match observed`)
+  return value
+}
+
+function validateProductPayloadBinding (value, label = 'product payload') {
+  assert.equal(value.productPayloadVersion, PRODUCT_PAYLOAD_IDENTITY_VERSION, `${label} version is invalid`)
+  assertNonNegativeInteger(value.productPayloadFileCount, `${label}.productPayloadFileCount`)
+  assert.ok(value.productPayloadFileCount > 0, `${label}.productPayloadFileCount must be positive`)
+  assertSha256(value.productPayloadSha256, `${label}.productPayloadSha256`)
+}
+
+function dwmOperatorCompletion ({
+  confirmations,
+  runBindingSha256,
+  productPayloadVersion,
+  productPayloadFileCount,
+  productPayloadSha256,
+  combination,
+  crossScaleObserved = false
+}) {
+  validateDwmConfirmations(confirmations)
+  const completion = {
+    schemaVersion: 3,
+    kind: 'i2-dwm-drag-operator-completion',
+    scenario: 'dwm-drag',
+    runBindingSha256,
+    productPayloadVersion,
+    productPayloadFileCount,
+    productPayloadSha256,
+    combination: { ...combination },
+    observed: true,
+    checks: completeDwmChecks(),
+    crossScale: {
+      observed: crossScaleObserved === true,
+      criticalHitMatrixRepeated: crossScaleObserved === true
+    }
+  }
+  validateDwmOperatorCompletion(completion)
+  return completion
+}
+
+function buildDwmProgress ({
+  sourceId,
+  state,
+  transport,
+  operatorCompletionObserved,
+  runBindingSha256,
+  productPayloadVersion,
+  productPayloadFileCount,
+  productPayloadSha256,
+  combination
+}) {
   if (!SOURCES.includes(sourceId)) throw new TypeError('progress sourceId is invalid')
   if (!PROGRESS_STATES.includes(state)) throw new TypeError('progress state is invalid')
   validateTransportSnapshot(transport.before, 'progress transport.before')
   validateTransportSnapshot(transport.after, 'progress transport.after')
   if (transport.delta !== null) validateTransportDelta(transport.delta, 'progress transport.delta')
-  return {
-    schemaVersion: 1,
+  const progress = {
+    schemaVersion: 3,
     kind: 'i2-dwm-drag-progress',
     scenario: 'dwm-drag',
     sourceId,
     state,
+    runBindingSha256,
+    productPayloadVersion,
+    productPayloadFileCount,
+    productPayloadSha256,
+    combination: { ...combination },
     operatorCompletionObserved: operatorCompletionObserved === true,
     transport
   }
+  return validateDwmProgress(progress)
 }
 
 function validateTransportDelta (value, label) {
@@ -227,14 +465,35 @@ function validateTransportDelta (value, label) {
 
 function validateDwmProgress (value) {
   assertSafeInteractionValue(value)
+  if (value?.schemaVersion === 1) {
+    assertExactKeys(value, [
+      'schemaVersion', 'kind', 'scenario', 'sourceId', 'state', 'operatorCompletionObserved', 'transport'
+    ], 'legacy DWM progress')
+    assert.equal(value.kind, 'i2-dwm-drag-progress')
+    assert.equal(value.scenario, 'dwm-drag')
+    assert.ok(SOURCES.includes(value.sourceId))
+    assert.ok(PROGRESS_STATES.includes(value.state))
+    assert.equal(typeof value.operatorCompletionObserved, 'boolean')
+    assertExactKeys(value.transport, ['comparison', 'before', 'after', 'delta'], 'legacy DWM progress.transport')
+    assert.equal(value.transport.comparison, 'same-capture-generation')
+    validateTransportSnapshot(value.transport.before, 'legacy DWM progress.transport.before')
+    validateTransportSnapshot(value.transport.after, 'legacy DWM progress.transport.after')
+    validateTransportDelta(value.transport.delta, 'legacy DWM progress.transport.delta')
+    return value
+  }
   assertExactKeys(value, [
-    'schemaVersion', 'kind', 'scenario', 'sourceId', 'state', 'operatorCompletionObserved', 'transport'
+    'schemaVersion', 'kind', 'scenario', 'sourceId', 'state', 'runBindingSha256',
+    'productPayloadVersion', 'productPayloadFileCount', 'productPayloadSha256',
+    'combination', 'operatorCompletionObserved', 'transport'
   ], 'DWM progress')
-  assert.equal(value.schemaVersion, 1)
+  assert.equal(value.schemaVersion, 3)
   assert.equal(value.kind, 'i2-dwm-drag-progress')
   assert.equal(value.scenario, 'dwm-drag')
   assert.ok(SOURCES.includes(value.sourceId))
   assert.ok(PROGRESS_STATES.includes(value.state))
+  assertSha256(value.runBindingSha256, 'DWM progress.runBindingSha256')
+  validateProductPayloadBinding(value, 'DWM progress product payload')
+  validateDwmCombination(value.combination, 'DWM progress.combination')
   assert.equal(typeof value.operatorCompletionObserved, 'boolean')
   assertExactKeys(value.transport, ['comparison', 'before', 'after', 'delta'], 'DWM progress.transport')
   assert.equal(value.transport.comparison, 'same-capture-generation')
@@ -247,11 +506,32 @@ function validateDwmProgress (value) {
 function parseOperatorCompletion (bytes) {
   const value = parseStrictEvidenceJson(bytes, 'DWM operator completion')
   assertSafeInteractionValue(value)
-  assertExactKeys(value, ['schemaVersion', 'kind', 'scenario', 'observed'], 'DWM operator completion')
-  assert.equal(value.schemaVersion, 1)
+  if (value?.schemaVersion === 1) {
+    assertExactKeys(value, ['schemaVersion', 'kind', 'scenario', 'observed'], 'legacy DWM operator completion')
+    assert.equal(value.kind, 'i2-dwm-drag-operator-completion')
+    assert.equal(value.scenario, 'dwm-drag')
+    assert.equal(value.observed, true, 'operator completion must explicitly record observed=true')
+    return value
+  }
+  return validateDwmOperatorCompletion(value)
+}
+
+function validateDwmOperatorCompletion (value) {
+  assertSafeInteractionValue(value)
+  assertExactKeys(value, [
+    'schemaVersion', 'kind', 'scenario', 'runBindingSha256',
+    'productPayloadVersion', 'productPayloadFileCount', 'productPayloadSha256',
+    'combination', 'observed', 'checks', 'crossScale'
+  ], 'DWM operator completion')
+  assert.equal(value.schemaVersion, 3)
   assert.equal(value.kind, 'i2-dwm-drag-operator-completion')
   assert.equal(value.scenario, 'dwm-drag')
+  assertSha256(value.runBindingSha256, 'DWM operator completion.runBindingSha256')
+  validateProductPayloadBinding(value, 'DWM operator completion product payload')
+  validateDwmCombination(value.combination, 'DWM operator completion.combination')
   assert.equal(value.observed, true, 'operator completion must explicitly record observed=true')
+  validateDwmChecks(value.checks, 'DWM operator completion.checks')
+  validateDwmCrossScale(value.crossScale, 'DWM operator completion.crossScale')
   return value
 }
 
@@ -341,8 +621,9 @@ function buildInteractionReport ({
   deviceRecovery
 }) {
   const recoveryReport = RECOVERY_SCENARIOS.includes(scenario)
+  const dwmReport = scenario === 'dwm-drag'
   return {
-    schemaVersion: recoveryReport ? 2 : 1,
+    schemaVersion: dwmReport ? 3 : (recoveryReport ? 2 : 1),
     kind: 'i2-live-interaction',
     executedAt,
     scenario,
@@ -359,7 +640,9 @@ function buildInteractionReport ({
       reportContainsAudioPath: false,
       reportContainsDeviceName: false
     },
-    limitations: recoveryReport
+    limitations: dwmReport
+      ? [...DWM_V3_LIMITATIONS]
+      : recoveryReport
       ? [
           'Operator completion records the external action only and cannot independently produce pass.',
           'No captured audio, transcript text, device name, model path, or local audio path is persisted in this evidence.'
@@ -434,7 +717,110 @@ function validateInteractionTransport (transport, scenario, result) {
   }
 }
 
-function validateScenarioEvidence (scenario, value, result) {
+function validateDwmV3ScenarioEvidence (value, result) {
+  assertExactKeys(value, [
+    'mode', 'rendererAssets', 'manualSetBounds', 'runBindingSha256',
+    'operatorCompletionObserved', 'operatorCompletionSha256', 'combination', 'checks', 'crossScale',
+    'productPayloadVersion', 'productPayloadFileCount', 'productPayloadSha256',
+    'productionReuse', 'automaticObservation', 'controllerCounts'
+  ], 'scenarioEvidence')
+  assert.equal(value.mode, 'production-dwm-harness')
+  assert.equal(value.rendererAssets, 'caption-toolbar-settings-history')
+  assert.equal(value.manualSetBounds, true)
+  assertSha256(value.runBindingSha256, 'scenarioEvidence.runBindingSha256')
+  assert.equal(typeof value.operatorCompletionObserved, 'boolean')
+  if (value.operatorCompletionSha256 !== null) assertSha256(value.operatorCompletionSha256, 'scenarioEvidence.operatorCompletionSha256')
+  validateDwmCombination(value.combination, 'scenarioEvidence.combination')
+  if (value.operatorCompletionObserved) {
+    validateDwmChecks(value.checks, 'scenarioEvidence.checks')
+    validateDwmCrossScale(value.crossScale, 'scenarioEvidence.crossScale')
+  } else {
+    assert.equal(value.operatorCompletionSha256, null)
+    assert.equal(value.checks, null)
+    assert.equal(value.crossScale, null)
+  }
+  validateProductPayloadBinding(value, 'scenarioEvidence product payload')
+
+  assertExactKeys(value.productionReuse, [
+    'interactionController', 'windowLayerController', 'ipcAccessPolicy',
+    'windowRoles', 'preloadRoles', 'pageRoles', 'mainProcessManualBoundsUpdates'
+  ], 'scenarioEvidence.productionReuse')
+  for (const key of ['interactionController', 'windowLayerController', 'ipcAccessPolicy', 'mainProcessManualBoundsUpdates']) {
+    assert.equal(value.productionReuse[key], true, `scenarioEvidence.productionReuse.${key} must be true`)
+  }
+  for (const key of ['windowRoles', 'preloadRoles', 'pageRoles']) {
+    assert.deepEqual(value.productionReuse[key], ['caption', 'toolbar', 'settings', 'history'])
+  }
+
+  assertExactKeys(value.automaticObservation, [
+    'actualScaleMatched', 'systemThemeMatched', 'rendererScaleMatched',
+    'displayCount', 'distinctScaleFactorCount', 'crossScaleMoveObserved',
+    'fromScalePercent', 'toScalePercent'
+  ], 'scenarioEvidence.automaticObservation')
+  for (const key of ['actualScaleMatched', 'systemThemeMatched', 'rendererScaleMatched', 'crossScaleMoveObserved']) {
+    assert.equal(typeof value.automaticObservation[key], 'boolean',
+      `scenarioEvidence.automaticObservation.${key} must be boolean`)
+  }
+  for (const key of ['displayCount', 'distinctScaleFactorCount']) {
+    assertNonNegativeInteger(value.automaticObservation[key], `scenarioEvidence.automaticObservation.${key}`)
+    assert.ok(value.automaticObservation[key] <= 16, `scenarioEvidence.automaticObservation.${key} is out of range`)
+  }
+  assert.ok(DWM_SCALE_PERCENTS.includes(value.automaticObservation.fromScalePercent))
+  assert.ok(DWM_SCALE_PERCENTS.includes(value.automaticObservation.toScalePercent))
+  assert.equal(value.automaticObservation.toScalePercent, value.combination.scalePercent)
+  const crossScaleObserved = value.crossScale?.observed === true
+  assert.equal(value.automaticObservation.crossScaleMoveObserved, crossScaleObserved)
+  if (crossScaleObserved) {
+    assert.ok(value.automaticObservation.displayCount >= 2)
+    assert.ok(value.automaticObservation.distinctScaleFactorCount >= 2)
+    assert.ok(value.automaticObservation.distinctScaleFactorCount <= value.automaticObservation.displayCount)
+    assert.notEqual(value.automaticObservation.fromScalePercent, value.automaticObservation.toScalePercent)
+  } else {
+    assert.equal(value.automaticObservation.fromScalePercent, value.automaticObservation.toScalePercent)
+  }
+
+  const countKeys = [
+    'windowLoadCount', 'toolbarLayoutReportCount', 'captionDragStartCount',
+    'captionMovedDragCount', 'captionStationaryPressReleaseCount', 'toolbarGripDragStartCount',
+    'resizeStartCount', 'settingsTitlebarDragStartCount', 'historyTitlebarDragStartCount',
+    'lockTransitionCount', 'focusPromotionCount', 'focusDemotionCount'
+  ]
+  assertExactKeys(value.controllerCounts, countKeys, 'scenarioEvidence.controllerCounts')
+  for (const key of countKeys) {
+    assertNonNegativeInteger(value.controllerCounts[key], `scenarioEvidence.controllerCounts.${key}`)
+    assert.ok(value.controllerCounts[key] <= 1000000, `scenarioEvidence.controllerCounts.${key} is out of range`)
+  }
+
+  if (result === 'pass-manual-observed') {
+    assert.equal(value.operatorCompletionObserved, true)
+    assert.notEqual(value.checks, null)
+    assert.notEqual(value.crossScale, null)
+    assertSha256(value.operatorCompletionSha256, 'scenarioEvidence.operatorCompletionSha256')
+    assert.equal(value.automaticObservation.actualScaleMatched, true)
+    assert.equal(value.automaticObservation.systemThemeMatched, true)
+    assert.equal(value.automaticObservation.rendererScaleMatched, true)
+    const minima = {
+      windowLoadCount: 4,
+      toolbarLayoutReportCount: 3,
+      captionDragStartCount: 5,
+      captionMovedDragCount: 4,
+      captionStationaryPressReleaseCount: 1,
+      toolbarGripDragStartCount: 2,
+      resizeStartCount: 8,
+      settingsTitlebarDragStartCount: 1,
+      historyTitlebarDragStartCount: 1,
+      lockTransitionCount: 2,
+      focusPromotionCount: 2,
+      focusDemotionCount: 2
+    }
+    for (const [key, minimum] of Object.entries(minima)) {
+      assert.ok(value.controllerCounts[key] >= minimum,
+        `scenarioEvidence.controllerCounts.${key} must be at least ${minimum}`)
+    }
+  }
+}
+
+function validateScenarioEvidence (scenario, value, result, schemaVersion) {
   if (scenario === 'pause-refine') {
     assertExactKeys(value, [
       'pauseAcknowledged', 'resumeAcknowledged', 'finalBeforePause', 'refinementPendingAtPause',
@@ -537,6 +923,10 @@ function validateScenarioEvidence (scenario, value, result) {
     }
     return
   }
+  if (scenario === 'dwm-drag' && schemaVersion === 3) {
+    validateDwmV3ScenarioEvidence(value, result)
+    return
+  }
   assertExactKeys(value, [
     'mode', 'rendererAssets', 'manualSetBounds', 'operatorCompletionObserved'
   ], 'scenarioEvidence')
@@ -553,12 +943,13 @@ function validateInteractionReport (report, expectedScenario = null) {
     'schemaVersion', 'kind', 'executedAt', 'scenario', 'sourceId', 'result', 'runtime', 'counts',
     'scenarioEvidence', 'transport', 'deviceRecovery', 'privacy', 'limitations'
   ], 'interaction report')
-  assert.ok(report.schemaVersion === 1 || report.schemaVersion === 2, 'schemaVersion must be 1 or 2')
+  assert.ok([1, 2, 3].includes(report.schemaVersion), 'schemaVersion must be 1, 2 or 3')
   assert.equal(report.kind, 'i2-live-interaction')
   assertIsoTimestamp(report.executedAt, 'executedAt')
   assert.ok(SCENARIOS.includes(report.scenario), 'scenario is invalid')
   if (report.schemaVersion === 1) assert.ok(LEGACY_SCENARIOS.includes(report.scenario), 'schema v1 scenario is invalid')
   if (report.schemaVersion === 2) assert.ok(RECOVERY_SCENARIOS.includes(report.scenario), 'schema v2 scenario is invalid')
+  if (report.schemaVersion === 3) assert.equal(report.scenario, 'dwm-drag', 'schema v3 scenario is invalid')
   if (expectedScenario !== null) assert.equal(report.scenario, expectedScenario)
   assert.ok(SOURCES.includes(report.sourceId), 'sourceId is invalid')
   const allowedResults = report.scenario === 'dwm-drag'
@@ -567,7 +958,7 @@ function validateInteractionReport (report, expectedScenario = null) {
   assert.ok(allowedResults.includes(report.result), 'result is invalid for scenario')
   validateRuntime(report.runtime)
   validateCounts(report.counts)
-  validateScenarioEvidence(report.scenario, report.scenarioEvidence, report.result)
+  validateScenarioEvidence(report.scenario, report.scenarioEvidence, report.result, report.schemaVersion)
   validateInteractionTransport(report.transport, report.scenario, report.result)
   validateDeviceRecovery(report.deviceRecovery, report.scenario, report.result)
   assert.deepEqual(report.privacy, {
@@ -576,19 +967,26 @@ function validateInteractionReport (report, expectedScenario = null) {
     reportContainsAudioPath: false,
     reportContainsDeviceName: false
   })
-  assert.deepEqual(report.limitations, report.schemaVersion === 2
+  assert.deepEqual(report.limitations, report.schemaVersion === 3
+    ? [...DWM_V3_LIMITATIONS]
+    : report.schemaVersion === 2
     ? [
         'Operator completion records the external action only and cannot independently produce pass.',
         'No captured audio, transcript text, device name, model path, or local audio path is persisted in this evidence.'
       ]
-    : [
-        'This interaction report does not attest physical device removal or OS sleep/wake.',
-        'No captured audio, transcript text, device name, model path, or local audio path is persisted in this evidence.'
-      ])
+    : [...DWM_LEGACY_LIMITATIONS])
   return report
 }
 
 module.exports = {
+  DWM_COMBINATIONS,
+  DWM_NORMAL_WINDOW_ROLES,
+  DWM_OBSERVATION_IDS,
+  DWM_RESIZE_TARGETS,
+  DWM_SCALE_PERCENTS,
+  DWM_THEMES,
+  DWM_TOOLBAR_STATES,
+  DWM_V3_LIMITATIONS,
   LOSS_FIELDS,
   RECOVERY_FAULT_CODES,
   RECOVERY_OPERATOR_ACTIONS,
@@ -602,6 +1000,8 @@ module.exports = {
   buildDwmProgress,
   buildInteractionReport,
   buildRecoveryProgress,
+  completeDwmChecks,
+  dwmOperatorCompletion,
   parseArguments,
   parseOperatorCompletion,
   parseRecoveryOperatorCompletion,
@@ -609,6 +1009,9 @@ module.exports = {
   transportDelta,
   transportSnapshot,
   validateDwmProgress,
+  validateDwmChecks,
+  validateDwmCombination,
+  validateDwmOperatorCompletion,
   validateInteractionReport,
   validateRecoveryProgress,
   validateTransportSnapshot

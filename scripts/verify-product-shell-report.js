@@ -5,6 +5,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { parseStrictEvidenceJson } = require('./strict-evidence-json')
+const { computeProductPayloadIdentity } = require('../src/main/services/product-payload-identity')
 
 const PRODUCT_SHELL_V2_JOURNEY_KEYS = Object.freeze([
   'onboardingPreset',
@@ -121,6 +122,76 @@ const PRODUCT_SHELL_V3_JOURNEY_KEYS = Object.freeze([
   'coreReadinessSource',
   'translationAdvertised'
 ])
+
+const PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS = Object.freeze([
+  'firstFrameFallbackObserved',
+  'validContourObserved',
+  'validContourShrinkObserved',
+  'toolbarStateContourChangeObserved',
+  'reloadGenerationFallbackObserved',
+  'reloadValidRecoveryObserved',
+  'invalidContourFallbackObserved',
+  'staleGenerationFallbackObserved',
+  'postFailureRecoveryObserved',
+  'layoutFallbackObservationCount',
+  'layoutRecoveryObservationCount',
+  'transparentMarginPassThroughObserved',
+  'toolbarContourPriorityObserved',
+  'resizeBandObserved',
+  'visibleCardDragPointCount',
+  'firstPointerDeltaObserved',
+  'stationaryPressReleaseStable',
+  'gestureCancellationObservationCount',
+  'nonGripToolbarDragRejected',
+  'unlockedGripMovesCaptionGroup',
+  'lockedGripMovesToolbarOnly',
+  'normalTitlebarDragCount',
+  'normalInteractiveExclusionCount',
+  'normalBodyExclusionCount',
+  'normalForegroundPromotionCount',
+  'rapidFocusSwitchObserved',
+  'focusLossDemotionObserved',
+  'focusedDragBlurCancellationObserved',
+  'sharedTitlebarStructureObserved',
+  'sharedTitlebarThemeVariantsObserved',
+  'forcedColorsTitlebarRuleObserved'
+])
+const PRODUCT_SHELL_V5_LIMITATIONS = Object.freeze([
+  'fake-asr-no-physical-audio',
+  'controlled-model-fixtures-no-real-tensors',
+  'deterministic-205-segment-fixture-not-two-hour-i3',
+  'controlled-pointer-and-focus-no-human-dwm',
+  'no-system-dpi-or-mixed-scale-qualification'
+])
+const PRODUCT_SHELL_PACKAGING_KEYS = Object.freeze([
+  'appIsPackaged',
+  'defaultApp',
+  'smokeMainFromAsar',
+  'productMainFromAsar',
+  'storageUtilityRoundTrip',
+  'nativeBinaryCount',
+  'nativeAddonLoadedInUtility',
+  'nativeApiSurfaceReady',
+  'nativeProbeExactExitCode',
+  'nativeProbeFatalObserved',
+  'packagedDb0Status',
+  'packagedDb0CheckCount',
+  'packagedDb0Wal',
+  'packagedDb0Reopen',
+  'packagedDb0Integrity',
+  'packagedDb0ExactExitCode',
+  'releaseCandidate',
+  'installedViaNsis'
+])
+const PRODUCT_SHELL_QUALIFICATION_KEYS = Object.freeze([
+  'runId',
+  'phase',
+  'freshProductReportSha256',
+  'productPayloadVersion',
+  'productPayloadFileCount',
+  'productPayloadSha256'
+])
+const SHA256_PATTERN = /^[a-f0-9]{64}$/
 
 function hasExactKeys (value, keys) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
@@ -248,8 +319,104 @@ function validateProductShellV3Journey (journey, expectedCoreReadyMarkerCount = 
   }
 }
 
+function assertNoWindowInteractionSensitiveFields (value, pathLabel = 'report') {
+  if (!value || typeof value !== 'object') return
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => assertNoWindowInteractionSensitiveFields(entry, `${pathLabel}[${index}]`))
+    return
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    if (/^(?:x|y|top|right|bottom|left|width|height|rect|bounds|geometry|coordinates|screenPosition|windowPosition|toolbarRect|deviceName|deviceLabel|displayId|absoluteMonotonicTime|clockOffset|localPath|captionText|transcriptText|text)$/i.test(key)) {
+      throw new Error(`product-shell window interaction contains forbidden field: ${pathLabel}.${key}`)
+    }
+    assertNoWindowInteractionSensitiveFields(nested, `${pathLabel}.${key}`)
+  }
+}
+
+function validateProductShellV5WindowInteraction (value) {
+  if (!hasExactKeys(value, PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS)) {
+    throw new Error('product-shell v5 window interaction has missing or unknown fields')
+  }
+  const countMinimums = {
+    layoutFallbackObservationCount: 4,
+    layoutRecoveryObservationCount: 4,
+    visibleCardDragPointCount: 2,
+    gestureCancellationObservationCount: 6,
+    normalTitlebarDragCount: 2,
+    normalInteractiveExclusionCount: 2,
+    normalBodyExclusionCount: 2,
+    normalForegroundPromotionCount: 2
+  }
+  for (const key of PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS) {
+    if (Object.hasOwn(countMinimums, key)) {
+      if (!Number.isSafeInteger(value[key]) || value[key] < countMinimums[key] || value[key] > 1000000) {
+        throw new Error(`product-shell v5 window interaction count is invalid: ${key}`)
+      }
+    } else if (value[key] !== true) {
+      throw new Error(`product-shell v5 window interaction observation is incomplete: ${key}`)
+    }
+  }
+  assertNoWindowInteractionSensitiveFields(value, 'windowInteraction')
+  return value
+}
+
+function validateProductShellV5Identity (value) {
+  if (!hasExactKeys(value, [
+    'productPayloadVersion', 'productPayloadFileCount', 'productPayloadSha256'
+  ])) throw new Error('product-shell v5 source identity has missing or unknown fields')
+  const expected = computeProductPayloadIdentity()
+  if (value.productPayloadVersion !== expected.version ||
+      value.productPayloadFileCount !== expected.fileCount ||
+      value.productPayloadSha256 !== expected.sha256 ||
+      !SHA256_PATTERN.test(String(value.productPayloadSha256 || ''))) {
+    throw new Error('product-shell v5 source identity does not match the current candidate')
+  }
+  return value
+}
+
+function validateProductShellV5Envelope (report) {
+  const expectedRootKeys = [
+    'schemaVersion', 'kind', 'generatedAt', 'result', 'gateStatus', 'runtime', 'journey',
+    'windowInteraction', 'sourceIdentity', 'privacy', 'limitations',
+    ...(report.packaging ? ['packaging', 'qualification'] : [])
+  ]
+  if (!hasExactKeys(report, expectedRootKeys) ||
+      !hasExactKeys(report.runtime, ['electron', 'node', 'rendererCount', 'crashEventCount']) ||
+      !hasExactKeys(report.privacy, [
+        'physicalAudioSourceOpened', 'audioPersisted',
+        'transcriptTextPersistedInReport', 'localPathsPersistedInReport'
+      ]) ||
+      (report.packaging && (
+        !hasExactKeys(report.packaging, PRODUCT_SHELL_PACKAGING_KEYS) ||
+        !hasExactKeys(report.qualification, PRODUCT_SHELL_QUALIFICATION_KEYS)
+      ))) {
+    throw new Error('product-shell v5 report envelope has missing or unknown fields')
+  }
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(String(report.generatedAt || '')) ||
+      new Date(report.generatedAt).toISOString() !== report.generatedAt) {
+    throw new Error('product-shell v5 generatedAt is invalid')
+  }
+  const expectedLimitations = [
+    ...PRODUCT_SHELL_V5_LIMITATIONS,
+    ...(report.packaging?.appIsPackaged === true
+      ? ['not-clean-machine-i4', 'packaged-test-variant-not-release-installer']
+      : ['not-packaged-i4'])
+  ]
+  if (!isExactArray(report.limitations, expectedLimitations)) {
+    throw new Error('product-shell v5 limitations are not the exact external boundary')
+  }
+  validateProductShellV5WindowInteraction(report.windowInteraction)
+  validateProductShellV5Identity(report.sourceIdentity)
+  if (report.packaging?.appIsPackaged === true && (
+    report.qualification?.productPayloadVersion !== report.sourceIdentity.productPayloadVersion ||
+    report.qualification?.productPayloadFileCount !== report.sourceIdentity.productPayloadFileCount ||
+    report.qualification?.productPayloadSha256 !== report.sourceIdentity.productPayloadSha256
+  )) throw new Error('packaged product-shell v5 source identity is not qualification-bound')
+  assertNoWindowInteractionSensitiveFields(report.windowInteraction, 'windowInteraction')
+}
+
 function validateProductShellReport (report) {
-  if (!report || ![1, 2, 3, 4].includes(report.schemaVersion) || report.kind !== 'product-shell-smoke') {
+  if (!report || ![1, 2, 3, 4, 5].includes(report.schemaVersion) || report.kind !== 'product-shell-smoke') {
     throw new Error('invalid product-shell report envelope')
   }
   if (report.result !== 'pass' || report.gateStatus !== 'partial') {
@@ -300,6 +467,10 @@ function validateProductShellReport (report) {
   if (report.schemaVersion === 2) validateProductShellV2Journey(journey)
   if (report.schemaVersion === 3) validateProductShellV3Journey(journey)
   if (report.schemaVersion === 4) validateProductShellV3Journey(journey, 3, 4, 4)
+  if (report.schemaVersion === 5) {
+    validateProductShellV3Journey(journey, 3, 4, 5)
+    validateProductShellV5Envelope(report)
+  }
   if (report.privacy?.physicalAudioSourceOpened !== false ||
       report.privacy?.audioPersisted !== false ||
       report.privacy?.transcriptTextPersistedInReport !== false ||
@@ -312,9 +483,9 @@ function validateProductShellReport (report) {
     'deterministic-205-segment-fixture-not-two-hour-i3',
     report.packaging?.appIsPackaged === true ? 'not-clean-machine-i4' : 'not-packaged-i4'
   ]
-  if (!Array.isArray(report.limitations) ||
+  if (report.schemaVersion !== 5 && (!Array.isArray(report.limitations) ||
       requiredLimitations.some((limitation) => !report.limitations.includes(limitation)) ||
-      (report.packaging?.appIsPackaged === true && report.limitations.includes('not-packaged-i4'))) {
+      (report.packaging?.appIsPackaged === true && report.limitations.includes('not-packaged-i4')))) {
     throw new Error('product-shell report must preserve its external-boundary limitations')
   }
   const serialized = JSON.stringify(report)
@@ -352,6 +523,10 @@ if (require.main === module) {
 module.exports = {
   PRODUCT_SHELL_V2_JOURNEY_KEYS,
   PRODUCT_SHELL_V3_JOURNEY_KEYS,
+  PRODUCT_SHELL_V5_LIMITATIONS,
+  PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS,
+  PRODUCT_SHELL_PACKAGING_KEYS,
+  PRODUCT_SHELL_QUALIFICATION_KEYS,
   readAndValidateProductShellReport,
   validateProductShellReport
 }

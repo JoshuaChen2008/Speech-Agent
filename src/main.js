@@ -41,8 +41,13 @@ const { RefinementFaultLog } = require('./main/services/refinement-fault-log')
 const { RefinementNoticeStore } = require('./main/services/refinement-notice')
 const { createMainEvidenceBridge } = require('./main/services/electron-exit-evidence')
 const { PowerSessionGuard } = require('./main/services/power-session-guard')
-const { ToolbarLayoutState, WINDOW_LAYOUT, dragBoundsAt } = require('./main/window-layout-contract')
+const {
+  ToolbarLayoutState,
+  WINDOW_LAYOUT,
+  toolbarDockBoundsFor
+} = require('./main/window-layout-contract')
 const { WindowLayerController } = require('./main/window-layer-controller')
+const { ManualWindowInteractionController } = require('./main/manual-window-interaction-controller')
 
 const exitEvidence = createMainEvidenceBridge()
 exitEvidence.markLifecycle('main-started')
@@ -76,15 +81,19 @@ const windowLayerController = new WindowLayerController({
   onFault: ({ role, code }) => console.error(`[window.layer] role=${role} code=${code}`)
 })
 
-const MARGIN = WINDOW_LAYOUT.captionMargin
-const TB_MARGIN = WINDOW_LAYOUT.toolbarMargin
-const INSET = WINDOW_LAYOUT.toolbarDockInset
 const CAP_W = 920
 const CAP_H = 190
 const CAP_LIMITS = Object.freeze({ minW: 480, maxW: 1600, minH: 140, maxH: 420 })
 const TB_W = WINDOW_LAYOUT.toolbarViewportWidth
 const TB_H = WINDOW_LAYOUT.toolbarViewportHeight
-const RESIZE_EDGES = Object.freeze(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'])
+const windowInteractionController = new ManualWindowInteractionController({
+  getCursorScreenPoint: () => screen.getCursorScreenPoint(),
+  getCaptionWindow: () => captionWin,
+  getLocked: () => locked,
+  getCaptionLimits: captionLimits,
+  dock,
+  onCaptionResizeEnd: persistCaptionBounds
+})
 const CHILD_SERVICE_LABELS = Object.freeze([
   'Speech Agent realtime ASR',
   'Speech Agent offline refinement',
@@ -180,13 +189,11 @@ function registerWindowRole (win, role) {
   win.webContents.once('destroyed', () => {
     unregisterExitEvidence()
     windowRoles.delete(senderId)
-    stopDrag(senderId)
-    stopResize(senderId)
+    windowInteractionController.stopForSender(senderId)
     if (role === 'toolbar') invalidateToolbarOverlap()
   })
   win.on('blur', () => {
-    stopDrag(senderId)
-    stopResize(senderId)
+    windowInteractionController.stopForSender(senderId)
   })
   win.on('unresponsive', () => {
     exitEvidence.recordUnresponsive(win.webContents)
@@ -305,19 +312,13 @@ function createWindows () {
   toolbarWin.once('ready-to-show', () => { toolbarWin.show(); dock() })
   setTimeout(restoreWindowStack, 300)
 
-  captionWin.on('closed', () => { stopResize(null, true); stopDrag(null, true); captionWin = null })
-  toolbarWin.on('closed', () => { stopDrag(null, true); toolbarWin = null })
+  captionWin.on('closed', () => { windowInteractionController.stopAll(); captionWin = null })
+  toolbarWin.on('closed', () => { windowInteractionController.stopAll(); toolbarWin = null })
 }
 
 function dock () {
   if (!captionWin || captionWin.isDestroyed() || !toolbarWin || toolbarWin.isDestroyed()) return
-  const caption = captionWin.getBounds()
-  const toolbar = toolbarWin.getBounds()
-  const cardRight = caption.x + caption.width - MARGIN
-  const cardTop = caption.y + MARGIN
-  const x = Math.round(cardRight - INSET - (toolbar.width - TB_MARGIN))
-  const y = Math.round(cardTop + INSET - TB_MARGIN)
-  toolbarWin.setBounds({ x, y, width: TB_W, height: TB_H })
+  toolbarWin.setBounds(toolbarDockBoundsFor(captionWin.getBounds()))
   windowLayerController.restoreWindowStack()
 }
 
@@ -355,7 +356,7 @@ function openSettingsWindow (initialPane = null) {
     settingsWin.focus()
     if (initialPane) send(settingsWin, CHANNELS.SETTINGS_NAVIGATE, initialPane)
   })
-  settingsWin.on('closed', () => { stopDrag(null, true); settingsWin = null })
+  settingsWin.on('closed', () => { windowInteractionController.stopAll(); settingsWin = null })
   settingsWin.loadFile(path.join(__dirname, 'settings', 'settings.html'))
 }
 
@@ -395,119 +396,11 @@ function openHistoryWindow () {
     historyWin.show()
     historyWin.focus()
   })
-  historyWin.on('closed', () => { stopDrag(null, true); historyWin = null })
+  historyWin.on('closed', () => { windowInteractionController.stopAll(); historyWin = null })
   historyWin.loadFile(path.join(__dirname, 'history', 'index.html'))
 }
 
-let dragState = null
-
-function sameBounds (left, right) {
-  return left.x === right.x && left.y === right.y &&
-    left.width === right.width && left.height === right.height
-}
-
-function dragTick () {
-  const state = dragState
-  if (!state) return
-  if (!state.win || state.win.isDestroyed()) {
-    stopDrag(null, true)
-    return
-  }
-  const point = screen.getCursorScreenPoint()
-  const nextBounds = dragBoundsAt(state.start, state.origin, point)
-  if (!sameBounds(nextBounds, state.lastBounds)) {
-    state.win.setBounds(nextBounds)
-    state.lastBounds = nextBounds
-    if (state.redock) dock()
-  }
-  if (dragState === state) state.timer = setTimeout(dragTick, 8)
-}
-
-function startDrag (event) {
-  const { role, win: sender, senderId } = requireSender(event, CHANNELS.DRAG_START)
-  stopDrag(null, true)
-  stopResize(null, true)
-  let target = sender
-  let redock = false
-  if (role === 'toolbar' && !locked) {
-    target = captionWin
-    redock = true
-  } else if (role === 'caption') {
-    if (locked) return
-    redock = true
-  }
-  if (!target || target.isDestroyed()) return
-  const point = screen.getCursorScreenPoint()
-  const bounds = target.getBounds()
-  dragState = {
-    senderId,
-    win: target,
-    origin: point,
-    start: bounds,
-    lastBounds: bounds,
-    redock,
-    timer: null
-  }
-  dragTick()
-}
-
-function stopDrag (senderId, force = false) {
-  if (!dragState || (!force && dragState.senderId !== senderId)) return
-  if (dragState.timer) clearTimeout(dragState.timer)
-  dragState = null
-}
-
-let resizeState = null
-
-function resizeTick () {
-  const state = resizeState
-  if (!state) return
-  if (!state.win || state.win.isDestroyed()) {
-    stopResize(null, true)
-    return
-  }
-  const point = screen.getCursorScreenPoint()
-  const dx = point.x - state.origin.x
-  const dy = point.y - state.origin.y
-  let width = state.start.width
-  let height = state.start.height
-  if (state.edge.includes('e')) width = state.start.width + dx
-  if (state.edge.includes('w')) width = state.start.width - dx
-  if (state.edge.includes('s')) height = state.start.height + dy
-  if (state.edge.includes('n')) height = state.start.height - dy
-  width = clamp(width, state.limits.minW, state.limits.maxW)
-  height = clamp(height, state.limits.minH, state.limits.maxH)
-  const x = state.edge.includes('w') ? state.start.x + state.start.width - width : state.start.x
-  const y = state.edge.includes('n') ? state.start.y + state.start.height - height : state.start.y
-  state.win.setBounds({ x, y, width, height })
-  dock()
-  if (resizeState === state) state.timer = setTimeout(resizeTick, 8)
-}
-
-function startResize (event, edge) {
-  const { win, senderId } = requireSender(event, CHANNELS.RESIZE_START)
-  if (win !== captionWin || locked || !RESIZE_EDGES.includes(edge)) return
-  stopDrag(null, true)
-  stopResize(null, true)
-  resizeState = {
-    senderId,
-    win,
-    edge,
-    start: win.getBounds(),
-    origin: screen.getCursorScreenPoint(),
-    limits: captionLimits(win),
-    timer: null
-  }
-  resizeTick()
-}
-
-function stopResize (senderId, force = false) {
-  if (!resizeState || (!force && resizeState.senderId !== senderId)) return
-  const state = resizeState
-  if (state.timer) clearTimeout(state.timer)
-  resizeState = null
-  if (!state.win || state.win.isDestroyed()) return
-  const bounds = state.win.getBounds()
+function persistCaptionBounds (bounds) {
   try {
     config.set({ captionWidth: bounds.width, captionHeight: bounds.height })
     broadcastConfig()
@@ -518,10 +411,7 @@ function stopResize (senderId, force = false) {
 
 function applyLock (on) {
   locked = on
-  if (on) {
-    stopResize(null, true)
-    stopDrag(null, true)
-  }
+  if (on) windowInteractionController.stopAll()
   if (captionWin && !captionWin.isDestroyed()) {
     if (on) captionWin.setIgnoreMouseEvents(true, { forward: true })
     send(captionWin, CHANNELS.LOCK_CHANGED, on)
@@ -720,15 +610,21 @@ ipcMain.on(CHANNELS.MOUSE_THROUGH, (event, ignore) => {
   if (win === captionWin && locked && !ignore) return
   win.setIgnoreMouseEvents(!!ignore, { forward: true })
 })
-ipcMain.on(CHANNELS.DRAG_START, startDrag)
+ipcMain.on(CHANNELS.DRAG_START, (event) => {
+  const sender = requireSender(event, CHANNELS.DRAG_START)
+  windowInteractionController.startDrag(sender)
+})
 ipcMain.on(CHANNELS.DRAG_END, (event) => {
   const { senderId } = requireSender(event, CHANNELS.DRAG_END)
-  stopDrag(senderId)
+  windowInteractionController.stopDrag(senderId)
 })
-ipcMain.on(CHANNELS.RESIZE_START, startResize)
+ipcMain.on(CHANNELS.RESIZE_START, (event, edge) => {
+  const { win, senderId } = requireSender(event, CHANNELS.RESIZE_START)
+  windowInteractionController.startResize({ win, senderId, edge })
+})
 ipcMain.on(CHANNELS.RESIZE_END, (event) => {
   const { senderId } = requireSender(event, CHANNELS.RESIZE_END)
-  stopResize(senderId)
+  windowInteractionController.stopResize(senderId)
 })
 ipcMain.on(CHANNELS.LOCK_TOGGLE, (event) => {
   requireSender(event, CHANNELS.LOCK_TOGGLE)
@@ -947,8 +843,7 @@ async function bootstrapApplication () {
 
 function cleanupUiRuntime () {
   globalShortcut.unregisterAll()
-  stopDrag(null, true)
-  stopResize(null, true)
+  windowInteractionController.stopAll()
   if (powerSessionGuard) {
     powerSessionGuard.stop()
     powerSessionGuard = null

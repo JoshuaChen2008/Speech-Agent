@@ -31,8 +31,12 @@ const {
 } = require('../../scripts/qualify-nsis-lifecycle')
 const {
   IDENTITY_VERSION,
-  collectProductPayloadEntries
+  collectProductPayloadEntries,
+  computeProductPayloadIdentity
 } = require('../../src/main/services/product-payload-identity')
+const {
+  PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS
+} = require('../../scripts/verify-product-shell-report')
 const {
   readAndValidatePackagedRunBindingReport,
   sha256File
@@ -161,6 +165,48 @@ function productShellV4Fixture () {
       coreReadyMarkerCount: 3,
       resourceCount: 4
     }
+  }
+}
+
+function productShellV5Fixture () {
+  const report = productShellV4Fixture()
+  const identity = computeProductPayloadIdentity()
+  const windowInteraction = Object.fromEntries(
+    PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS.map((key) => [key, true])
+  )
+  Object.assign(windowInteraction, {
+    layoutFallbackObservationCount: 4,
+    layoutRecoveryObservationCount: 4,
+    visibleCardDragPointCount: 2,
+    gestureCancellationObservationCount: 6,
+    normalTitlebarDragCount: 2,
+    normalInteractiveExclusionCount: 2,
+    normalBodyExclusionCount: 2,
+    normalForegroundPromotionCount: 2
+  })
+  const sourceIdentity = {
+    productPayloadVersion: identity.version,
+    productPayloadFileCount: identity.fileCount,
+    productPayloadSha256: identity.sha256
+  }
+  return {
+    ...report,
+    schemaVersion: 5,
+    qualification: {
+      ...report.qualification,
+      ...sourceIdentity
+    },
+    windowInteraction,
+    sourceIdentity,
+    limitations: [
+      'fake-asr-no-physical-audio',
+      'controlled-model-fixtures-no-real-tensors',
+      'deterministic-205-segment-fixture-not-two-hour-i3',
+      'controlled-pointer-and-focus-no-human-dwm',
+      'no-system-dpi-or-mixed-scale-qualification',
+      'not-clean-machine-i4',
+      'packaged-test-variant-not-release-installer'
+    ]
   }
 }
 
@@ -381,6 +427,18 @@ test('packaged product v4 evidence requires the SEM-F21 three-core-marker and fo
   }), /v4 user journey/)
 })
 
+test('packaged product v5 evidence binds J17 window interaction to the qualified product payload', () => {
+  const report = productShellV5Fixture()
+  assert.equal(validatePackagedProductShellReport(report), report)
+  assert.throws(() => validatePackagedProductShellReport({
+    ...report,
+    qualification: {
+      ...report.qualification,
+      productPayloadSha256: '0'.repeat(64)
+    }
+  }), /source identity|qualification-bound/)
+})
+
 test('packaged smoke source starts at packaged argv and probes native code in a utility process', () => {
   const source = fs.readFileSync(path.join(ROOT, 'scripts', 'product-shell-smoke.js'), 'utf8')
   assert.match(source, /process\.argv\.slice\(app\.isPackaged \? 1 : 2\)/)
@@ -388,7 +446,8 @@ test('packaged smoke source starts at packaged argv and probes native code in a 
   assert.match(source, /app\.asar\.unpacked/)
   assert.match(source, /releaseCandidate: false/)
   assert.match(source, /coreReadyMarkerCount/)
-  assert.match(source, /schemaVersion:\s*4/)
+  assert.match(source, /schemaVersion:\s*5/)
+  assert.match(source, /controlled-pointer-and-focus-no-human-dwm/)
   assert.match(source, /refinementContinueRangeObserved/)
   assert.match(source, /historyRefinedVersionPersistsAcrossPaging/)
   assert.match(source, /postSessionRefinementNoticeShown/)

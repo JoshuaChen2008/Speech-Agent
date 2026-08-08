@@ -4,38 +4,14 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
-const { validateProductShellReport } = require('./verify-product-shell-report')
+const {
+  PRODUCT_SHELL_PACKAGING_KEYS: PACKAGING_KEYS,
+  PRODUCT_SHELL_QUALIFICATION_KEYS: QUALIFICATION_KEYS,
+  validateProductShellReport
+} = require('./verify-product-shell-report')
 const { parseStrictEvidenceJson } = require('./strict-evidence-json')
 const { IDENTITY_VERSION } = require('../src/main/services/product-payload-identity')
 
-const PACKAGING_KEYS = Object.freeze([
-  'appIsPackaged',
-  'defaultApp',
-  'smokeMainFromAsar',
-  'productMainFromAsar',
-  'storageUtilityRoundTrip',
-  'nativeBinaryCount',
-  'nativeAddonLoadedInUtility',
-  'nativeApiSurfaceReady',
-  'nativeProbeExactExitCode',
-  'nativeProbeFatalObserved',
-  'packagedDb0Status',
-  'packagedDb0CheckCount',
-  'packagedDb0Wal',
-  'packagedDb0Reopen',
-  'packagedDb0Integrity',
-  'packagedDb0ExactExitCode',
-  'releaseCandidate',
-  'installedViaNsis'
-])
-const QUALIFICATION_KEYS = Object.freeze([
-  'runId',
-  'phase',
-  'freshProductReportSha256',
-  'productPayloadVersion',
-  'productPayloadFileCount',
-  'productPayloadSha256'
-])
 const RUN_ID_PATTERN = /^b5-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 

@@ -6,12 +6,15 @@ const path = require('node:path')
 const test = require('node:test')
 
 const {
+  DWM_OBSERVATION_IDS,
   RECOVERY_FAULT_CODES,
   RECOVERY_SCENARIOS,
   TRANSPORT_FIELDS,
   buildDwmProgress,
   buildInteractionReport,
   buildRecoveryProgress,
+  completeDwmChecks,
+  dwmOperatorCompletion,
   parseArguments,
   parseOperatorCompletion,
   parseRecoveryOperatorCompletion,
@@ -22,13 +25,74 @@ const {
   validateInteractionReport,
   validateRecoveryProgress
 } = require('../../scripts/i2-interaction-protocol')
-const { validateInteractionEvidence } = require('../../scripts/verify-i2-interaction-report')
-const { completionPath } = require('../../scripts/complete-i2-dwm-drag')
+const { computeProductPayloadIdentity } = require('../../src/main/services/product-payload-identity')
+const crypto = require('node:crypto')
+const {
+  validateDwmCompanion,
+  validateInteractionEvidence
+} = require('../../scripts/verify-i2-interaction-report')
+const {
+  completionPath,
+  parseArguments: parseDwmCompletionArguments,
+  writeCompletion: writeDwmCompletion
+} = require('../../scripts/complete-i2-dwm-drag')
 const {
   parseArguments: parseRecoveryCompletionArguments,
   writeCompletion: writeRecoveryCompletion
 } = require('../../scripts/complete-i2-recovery-action')
 const { assertDistinctOutputPaths, stimulusPathForScenario } = require('../../scripts/i2-live-interaction')
+
+const PRODUCT_IDENTITY = computeProductPayloadIdentity()
+
+function completeDwmScenarioEvidence () {
+  return {
+    mode: 'production-dwm-harness',
+    rendererAssets: 'caption-toolbar-settings-history',
+    manualSetBounds: true,
+    runBindingSha256: 'b'.repeat(64),
+    operatorCompletionObserved: true,
+    operatorCompletionSha256: 'c'.repeat(64),
+    combination: { scalePercent: 100, theme: 'dark' },
+    checks: completeDwmChecks(),
+    crossScale: { observed: false, criticalHitMatrixRepeated: false },
+    productPayloadVersion: PRODUCT_IDENTITY.version,
+    productPayloadFileCount: PRODUCT_IDENTITY.fileCount,
+    productPayloadSha256: PRODUCT_IDENTITY.sha256,
+    productionReuse: {
+      interactionController: true,
+      windowLayerController: true,
+      ipcAccessPolicy: true,
+      windowRoles: ['caption', 'toolbar', 'settings', 'history'],
+      preloadRoles: ['caption', 'toolbar', 'settings', 'history'],
+      pageRoles: ['caption', 'toolbar', 'settings', 'history'],
+      mainProcessManualBoundsUpdates: true
+    },
+    automaticObservation: {
+      actualScaleMatched: true,
+      systemThemeMatched: true,
+      rendererScaleMatched: true,
+      displayCount: 1,
+      distinctScaleFactorCount: 1,
+      crossScaleMoveObserved: false,
+      fromScalePercent: 100,
+      toScalePercent: 100
+    },
+    controllerCounts: {
+      windowLoadCount: 4,
+      toolbarLayoutReportCount: 3,
+      captionDragStartCount: 5,
+      captionMovedDragCount: 4,
+      captionStationaryPressReleaseCount: 1,
+      toolbarGripDragStartCount: 2,
+      resizeStartCount: 8,
+      settingsTitlebarDragStartCount: 1,
+      historyTitlebarDragStartCount: 1,
+      lockTransitionCount: 2,
+      focusPromotionCount: 2,
+      focusDemotionCount: 2
+    }
+  }
+}
 
 function transport (capturedFrames = 10) {
   const value = Object.fromEntries(TRANSPORT_FIELDS.map((field) => [field, 0]))
@@ -68,7 +132,7 @@ function reportFor (scenario, result = 'pass') {
             sqliteSessionClosed: true, sqliteSourceMatched: true, sqlitePersistedSegmentCount: 2,
             sqlitePersistedAtLeastObservedFinals: true
           }
-        : { mode: 'manual-dwm-harness', rendererAssets: 'caption-toolbar', manualSetBounds: true, operatorCompletionObserved: true }
+        : completeDwmScenarioEvidence()
   return buildInteractionReport({
     executedAt: '2026-08-01T12:00:00.000Z',
     scenario,
@@ -97,7 +161,8 @@ test('interaction argument parser requires explicit source, scenario, mic prefli
     '--scenario', 'pause-refine', '--source', 'loopback', '--report', '.artifacts/i2/report.json'
   ]), {
     scenario: 'pause-refine', source: 'loopback', report: '.artifacts/i2/report.json', progress: null,
-    completion: null, physicalMicPreflight: null, timeoutSeconds: 90
+    completion: null, physicalMicPreflight: null, scalePercent: null, theme: null,
+    crossScaleFromPercent: null, timeoutSeconds: 90
   })
   assert.throws(() => parseArguments([
     '--scenario', 'dwm-drag', '--source', 'loopback', '--report', '.artifacts/i2/report.json'
@@ -109,7 +174,8 @@ test('interaction argument parser requires explicit source, scenario, mic prefli
   ]), {
     scenario: 'device-removal-retry', source: 'loopback', report: '.artifacts/i2/report.json',
     progress: '.artifacts/i2/progress.json', completion: '.artifacts/i2/completion.json',
-    physicalMicPreflight: null, timeoutSeconds: 90
+    physicalMicPreflight: null, scalePercent: null, theme: null, crossScaleFromPercent: null,
+    timeoutSeconds: 90
   })
   assert.throws(() => parseArguments([
     '--scenario', 'sleep-wake-retry', '--source', 'loopback', '--report', '.artifacts/i2/report.json',
@@ -169,7 +235,7 @@ test('transport snapshots expose only counters and same-generation deltas retain
 test('strict verifier accepts automated and manual interaction reports but rejects evidence that overclaims device actions', () => {
   for (const scenario of ['pause-refine', 'worker-crash-retry', 'dwm-drag']) {
     const report = reportFor(scenario)
-    assert.equal(report.schemaVersion, 1)
+    assert.equal(report.schemaVersion, scenario === 'dwm-drag' ? 3 : 1)
     assert.equal(validateInteractionReport(report, scenario), report)
     assert.equal(validateInteractionEvidence(Buffer.from(JSON.stringify(report)), scenario).scenario, scenario)
   }
@@ -192,6 +258,36 @@ test('strict verifier accepts automated and manual interaction reports but rejec
   const crossGenerationDelta = reportFor('worker-crash-retry')
   crossGenerationDelta.transport.delta = transport(1)
   assert.throws(() => validateInteractionReport(crossGenerationDelta), /cross-generation/)
+})
+
+test('SEM-F22/J17/I2: schema-v3 DWM evidence requires the complete unique observation matrix and current product hash', () => {
+  const report = reportFor('dwm-drag')
+  assert.equal(report.schemaVersion, 3)
+  assert.deepEqual(validateInteractionEvidence(Buffer.from(JSON.stringify(report)), 'dwm-drag'), report)
+
+  const completionOnly = structuredClone(report)
+  completionOnly.scenarioEvidence.productionReuse.interactionController = false
+  assert.throws(() => validateInteractionReport(completionOnly), /interactionController|true/)
+
+  const missing = structuredClone(report)
+  delete missing.scenarioEvidence.checks.caption.leftImmediateContinuousDrag
+  assert.throws(() => validateInteractionReport(missing), /missing|unknown fields/)
+
+  const duplicate = structuredClone(report)
+  duplicate.scenarioEvidence.checks.toolbarStates[1].state = 'quiet'
+  assert.throws(() => validateInteractionReport(duplicate), /attention/)
+
+  const unknown = structuredClone(report)
+  unknown.scenarioEvidence.checks.resizeTargets[0].target = 'unknown-target'
+  assert.throws(() => validateInteractionReport(unknown), /north-edge/)
+
+  const overCount = structuredClone(report)
+  overCount.scenarioEvidence.controllerCounts.windowLoadCount = 1000001
+  assert.throws(() => validateInteractionReport(overCount), /windowLoadCount/)
+
+  const staleCandidate = structuredClone(report)
+  staleCandidate.scenarioEvidence.productPayloadSha256 = '0'.repeat(64)
+  assert.throws(() => validateInteractionEvidence(Buffer.from(JSON.stringify(staleCandidate)), 'dwm-drag'), /product payload identity/)
 })
 
 test('recovery pass requires product-observed fault, release, no auto reacquire, Retry and persisted caption continuity', () => {
@@ -234,11 +330,28 @@ test('DWM progress and completion files are bounded, text-free hand-off evidence
     sourceId: 'loopback',
     state: 'completed',
     operatorCompletionObserved: true,
+    runBindingSha256: 'b'.repeat(64),
+    productPayloadVersion: PRODUCT_IDENTITY.version,
+    productPayloadFileCount: PRODUCT_IDENTITY.fileCount,
+    productPayloadSha256: PRODUCT_IDENTITY.sha256,
+    combination: { scalePercent: 100, theme: 'dark' },
     transport: {
       comparison: 'same-capture-generation', before, after, delta: transportDelta(before, after, true)
     }
   })
   assert.equal(validateDwmProgress(progress), progress)
+  const completion = dwmOperatorCompletion({
+    confirmations: DWM_OBSERVATION_IDS,
+    runBindingSha256: 'b'.repeat(64),
+    productPayloadVersion: PRODUCT_IDENTITY.version,
+    productPayloadFileCount: PRODUCT_IDENTITY.fileCount,
+    productPayloadSha256: PRODUCT_IDENTITY.sha256,
+    combination: { scalePercent: 100, theme: 'dark' }
+  })
+  assert.deepEqual(parseOperatorCompletion(Buffer.from(JSON.stringify(completion))), completion)
+  assert.equal(completion.schemaVersion, 3)
+  assert.equal(completion.checks.resizeTargets.length, 8)
+
   assert.deepEqual(parseOperatorCompletion(Buffer.from(JSON.stringify({
     schemaVersion: 1,
     kind: 'i2-dwm-drag-operator-completion',
@@ -250,6 +363,9 @@ test('DWM progress and completion files are bounded, text-free hand-off evidence
     scenario: 'dwm-drag',
     observed: true
   })
+  assert.throws(() => dwmOperatorCompletion({
+    confirmations: [...DWM_OBSERVATION_IDS.slice(1), DWM_OBSERVATION_IDS[1]]
+  }), /missing|duplicate|observation/)
   assert.throws(() => parseOperatorCompletion(Buffer.from(JSON.stringify({
     schemaVersion: 1,
     kind: 'i2-dwm-drag-operator-completion',
@@ -258,6 +374,55 @@ test('DWM progress and completion files are bounded, text-free hand-off evidence
   }))), /observed=true/)
   assert.match(completionPath('.artifacts/i2-interaction/dwm.completion.json'), /\.artifacts[\\/]i2-interaction/)
   assert.throws(() => completionPath('../outside.json'), /under \.artifacts/)
+
+  const bytes = Buffer.from(`${JSON.stringify(completion, null, 2)}\n`)
+  const report = reportFor('dwm-drag')
+  report.scenarioEvidence.operatorCompletionSha256 = crypto.createHash('sha256').update(bytes).digest('hex')
+  assert.deepEqual(validateDwmCompanion(report, bytes), completion)
+
+  const wrongBinding = structuredClone(completion)
+  wrongBinding.runBindingSha256 = 'd'.repeat(64)
+  assert.throws(() => validateDwmCompanion(report, Buffer.from(JSON.stringify(wrongBinding))), /strictEqual|Expected/)
+})
+
+test('DWM completion helper binds one explicit checklist to awaiting progress and writes once', () => {
+  const root = `.artifacts/i2-dwm-completion-contract-${process.pid}-${Date.now()}`
+  const options = parseDwmCompletionArguments([
+    '--progress', `${root}/progress.json`, '--completion', `${root}/completion.json`
+  ])
+  const before = transport(2)
+  const progress = buildDwmProgress({
+    sourceId: 'loopback',
+    state: 'awaiting-operator-completion',
+    operatorCompletionObserved: false,
+    runBindingSha256: 'b'.repeat(64),
+    productPayloadVersion: PRODUCT_IDENTITY.version,
+    productPayloadFileCount: PRODUCT_IDENTITY.fileCount,
+    productPayloadSha256: PRODUCT_IDENTITY.sha256,
+    combination: { scalePercent: 100, theme: 'dark' },
+    transport: {
+      comparison: 'same-capture-generation',
+      before,
+      after: before,
+      delta: transportDelta(before, before, true)
+    }
+  })
+  try {
+    const completion = writeDwmCompletion({
+      completion: options.completion,
+      progress,
+      confirmations: DWM_OBSERVATION_IDS,
+      crossScaleObserved: false
+    })
+    assert.deepEqual(parseOperatorCompletion(fs.readFileSync(options.completion)), completion)
+    assert.throws(() => writeDwmCompletion({
+      completion: options.completion,
+      progress,
+      confirmations: DWM_OBSERVATION_IDS
+    }), /refusing to overwrite/)
+  } finally {
+    fs.rmSync(path.dirname(options.completion), { recursive: true, force: true })
+  }
 })
 
 test('recovery progress and completion are bounded attestations that cannot name devices or carry caption text', () => {

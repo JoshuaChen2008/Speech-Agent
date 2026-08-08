@@ -12,13 +12,15 @@ const fs = require('node:fs')
 const fsp = require('node:fs/promises')
 const path = require('node:path')
 const crypto = require('node:crypto')
-const { app, BrowserWindow, dialog, utilityProcess } = require('electron')
+const { app, BrowserWindow, dialog, nativeTheme, screen, utilityProcess } = require('electron')
 const modelManagerModule = require('../src/main/services/model-manager')
 const modelRuntimeModule = require('../src/main/services/model-runtime')
 const { FakeRuntimeAdapter } = require('../src/main/session/fake-runtime-adapter')
 const {
   computeProductPayloadIdentity
 } = require('../src/main/services/product-payload-identity')
+const windowLayoutContract = require('../src/main/window-layout-contract')
+const { ToolbarLayoutState } = windowLayoutContract
 const {
   OPERATIONS,
   PROTOCOL_VERSION,
@@ -49,6 +51,32 @@ const CORE_RESOURCE_IDS = Object.freeze([
 const REFINEMENT_RESOURCE_IDS = Object.freeze(['x-asr-offline'])
 const B5_RUN_ID_PATTERN = /^b5-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
+
+/* Read-only product-shell instrumentation. The production class still owns
+   every generation transition and projection; this wrapper records only an
+   in-memory source/generation sequence so the report never contains geometry. */
+const toolbarLayoutProbe = []
+for (const method of ['getOverlap', 'invalidate', 'acceptReport']) {
+  const original = ToolbarLayoutState.prototype[method]
+  ToolbarLayoutState.prototype[method] = function observedToolbarLayout (...args) {
+    const result = original.apply(this, args)
+    toolbarLayoutProbe.push({
+      method,
+      generation: result.generation,
+      source: result.source,
+      width: result.rect.width,
+      height: result.rect.height
+    })
+    return result
+  }
+}
+class ObservedToolbarLayoutState extends ToolbarLayoutState {
+  constructor (...args) {
+    super(...args)
+    this.getOverlap()
+  }
+}
+windowLayoutContract.ToolbarLayoutState = ObservedToolbarLayoutState
 
 function isWithin (parent, child) {
   const relative = path.relative(path.resolve(parent), path.resolve(child))
@@ -137,6 +165,550 @@ async function waitFor (probe, label, timeoutMs = 12000) {
 function rendererValue (win, expression) {
   if (!win || win.isDestroyed()) throw new Error('renderer window is unavailable')
   return win.webContents.executeJavaScript(expression)
+}
+
+function sameWindowBounds (left, right) {
+  return left.x === right.x && left.y === right.y &&
+    left.width === right.width && left.height === right.height
+}
+
+function installControlledCursorBoundary () {
+  const original = screen.getCursorScreenPoint
+  let point = original.call(screen)
+  screen.getCursorScreenPoint = () => ({ ...point })
+  if (screen.getCursorScreenPoint().x !== point.x || screen.getCursorScreenPoint().y !== point.y) {
+    throw new Error('controlled cursor boundary could not be installed')
+  }
+  return {
+    set (next) { point = { x: Math.round(next.x), y: Math.round(next.y) } },
+    restore () { screen.getCursorScreenPoint = original }
+  }
+}
+
+async function rendererPointerPoint (win, targetExpression, pointExpression) {
+  return rendererValue(win, `(() => {
+    const target = ${targetExpression}
+    if (!target) throw new Error('pointer target unavailable')
+    const point = (${pointExpression})(target)
+    return { x: Number(point.x), y: Number(point.y) }
+  })()`)
+}
+
+async function dispatchRendererPointer (win, targetExpression, point, type, pointerId) {
+  const literal = JSON.stringify({ ...point, type, pointerId })
+  return rendererValue(win, `(() => {
+    const target = ${targetExpression}
+    const detail = ${literal}
+    if (!target) throw new Error('pointer target unavailable')
+    return target.dispatchEvent(new PointerEvent(detail.type, {
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+      pointerId: detail.pointerId,
+      pointerType: 'mouse',
+      isPrimary: true,
+      button: 0,
+      buttons: detail.type === 'pointerdown' ? 1 : 0,
+      clientX: detail.x,
+      clientY: detail.y
+    }))
+  })()`)
+}
+
+function screenPointForRenderer (win, point) {
+  const bounds = win.getBounds()
+  return { x: bounds.x + point.x, y: bounds.y + point.y }
+}
+
+async function assertRendererGestureMoves ({
+  sourceWindow,
+  targetWindow,
+  targetExpression,
+  pointExpression,
+  pointerId,
+  cursor,
+  delta = { x: 13, y: 9 },
+  endType = 'pointerup',
+  afterStart = null
+}) {
+  const localPoint = await rendererPointerPoint(sourceWindow, targetExpression, pointExpression)
+  const origin = screenPointForRenderer(sourceWindow, localPoint)
+  const before = targetWindow.getBounds()
+  cursor.set(origin)
+  await dispatchRendererPointer(sourceWindow, targetExpression, localPoint, 'pointerdown', pointerId)
+  if (afterStart) await afterStart()
+  cursor.set({ x: origin.x + delta.x, y: origin.y + delta.y })
+  const moved = await waitFor(() => {
+    const next = targetWindow.getBounds()
+    return sameWindowBounds(next, before) ? null : next
+  }, 'manual window first pointer delta', 3000)
+  const endTarget = endType === 'lostpointercapture' ? targetExpression : 'window'
+  await dispatchRendererPointer(sourceWindow, endTarget, localPoint, endType, pointerId)
+  const ended = targetWindow.getBounds()
+  cursor.set({ x: origin.x + delta.x * 2, y: origin.y + delta.y * 2 })
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  if (!sameWindowBounds(targetWindow.getBounds(), ended)) throw new Error(`${endType} did not stop manual window movement`)
+  return { before, moved, ended }
+}
+
+async function assertRendererGestureStatic ({
+  sourceWindow,
+  targetWindow,
+  targetExpression,
+  pointExpression,
+  pointerId,
+  cursor,
+  endType = 'pointerup'
+}) {
+  const localPoint = await rendererPointerPoint(sourceWindow, targetExpression, pointExpression)
+  const origin = screenPointForRenderer(sourceWindow, localPoint)
+  const before = targetWindow.getBounds()
+  cursor.set(origin)
+  await dispatchRendererPointer(sourceWindow, targetExpression, localPoint, 'pointerdown', pointerId)
+  cursor.set({ x: origin.x + 19, y: origin.y + 11 })
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  const endTarget = endType === 'lostpointercapture' ? targetExpression : 'window'
+  await dispatchRendererPointer(sourceWindow, endTarget, localPoint, endType, pointerId)
+  if (!sameWindowBounds(targetWindow.getBounds(), before)) throw new Error('excluded pointer target moved a window')
+  return true
+}
+
+async function reportCurrentToolbarContour (toolbar, generationOverride = null) {
+  return rendererValue(toolbar, `(async () => {
+    const context = await window.shell.getToolbarLayoutContext()
+    const rect = document.getElementById('toolbar').getBoundingClientRect()
+    const generation = ${generationOverride === null ? 'context.generation' : Number(generationOverride)}
+    window.shell.reportToolbarLayout({
+      generation,
+      rect: { x: Number(rect.x), y: Number(rect.y), width: Number(rect.width), height: Number(rect.height) }
+    })
+    return { generation: context.generation, width: Number(rect.width), height: Number(rect.height) }
+  })()`)
+}
+
+async function waitForLayoutProbe (startIndex, predicate, label) {
+  return waitFor(() => toolbarLayoutProbe.slice(startIndex).find(predicate) || null, label, 5000)
+}
+
+async function beginWindowInteractionLayoutProbe (toolbar, caption) {
+  await rendererValue(caption, `(() => {
+    window.__j17ToolbarOverlapEvents = []
+    window.shell.onToolbarOverlap((value) => window.__j17ToolbarOverlapEvents.push(value))
+    return true
+  })()`)
+  const firstFrameFallbackObserved = toolbarLayoutProbe.some((entry) =>
+    entry.generation === 1 && entry.source === 'fallback')
+  const beforeValid = toolbarLayoutProbe.length
+  const attention = await reportCurrentToolbarContour(toolbar)
+  await waitForLayoutProbe(beforeValid, (entry) => entry.method === 'acceptReport' && entry.source === 'toolbar',
+    'initial valid toolbar contour')
+  return {
+    attention,
+    firstFrameFallbackObserved
+  }
+}
+
+async function observeToolbarStateContourChange (toolbar, probe) {
+  const before = toolbarLayoutProbe.length
+  const quiet = await reportCurrentToolbarContour(toolbar)
+  await waitForLayoutProbe(before, (entry) => entry.method === 'acceptReport' && entry.source === 'toolbar',
+    'quiet toolbar contour')
+  probe.quiet = quiet
+  probe.toolbarStateContourChangeObserved = quiet.width !== probe.attention.width || quiet.height !== probe.attention.height
+}
+
+async function completeWindowInteractionLayoutProbe (toolbar, probe) {
+  const current = await rendererValue(toolbar, 'window.shell.getToolbarLayoutContext()')
+  const beforeInvalid = toolbarLayoutProbe.length
+  await rendererValue(toolbar, `(() => {
+    window.shell.reportToolbarLayout({
+      generation: ${current.generation},
+      rect: { x: -1, y: 0, width: 1, height: 1 }
+    })
+    return true
+  })()`)
+  await waitForLayoutProbe(beforeInvalid,
+    (entry) => entry.method === 'acceptReport' && entry.source === 'fallback',
+    'invalid toolbar contour fallback')
+  const beforeInvalidRecovery = toolbarLayoutProbe.length
+  await reportCurrentToolbarContour(toolbar)
+  await waitForLayoutProbe(beforeInvalidRecovery,
+    (entry) => entry.method === 'acceptReport' && entry.source === 'toolbar',
+    'invalid toolbar contour recovery')
+
+  const generationBeforeReload = current.generation
+  const beforeReload = toolbarLayoutProbe.length
+  toolbar.webContents.reload()
+  await waitFor(() => !toolbar.webContents.isLoading(), 'toolbar renderer reload')
+  const generationAfterReload = await waitFor(async () => {
+    const next = await rendererValue(toolbar, 'window.shell.getToolbarLayoutContext()')
+    return next.generation > generationBeforeReload ? next.generation : 0
+  }, 'toolbar reload generation')
+  await waitForLayoutProbe(beforeReload,
+    (entry) => entry.method === 'invalidate' && entry.source === 'fallback' && entry.generation === generationAfterReload,
+    'toolbar reload fallback')
+  await waitForLayoutProbe(beforeReload,
+    (entry) => entry.method === 'acceptReport' && entry.source === 'toolbar' && entry.generation === generationAfterReload,
+    'toolbar reload recovery')
+
+  const beforeStale = toolbarLayoutProbe.length
+  await reportCurrentToolbarContour(toolbar, generationBeforeReload)
+  await waitForLayoutProbe(beforeStale,
+    (entry) => entry.method === 'acceptReport' && entry.source === 'fallback' && entry.generation === generationAfterReload,
+    'stale toolbar generation fallback')
+  const beforeStaleRecovery = toolbarLayoutProbe.length
+  await reportCurrentToolbarContour(toolbar)
+  await waitForLayoutProbe(beforeStaleRecovery,
+    (entry) => entry.method === 'acceptReport' && entry.source === 'toolbar' && entry.generation === generationAfterReload,
+    'stale toolbar generation recovery')
+
+  const fallbacks = toolbarLayoutProbe.filter((entry) => entry.source === 'fallback')
+  const recoveries = toolbarLayoutProbe.filter((entry) => entry.source === 'toolbar')
+  return {
+    firstFrameFallbackObserved: probe.firstFrameFallbackObserved,
+    validContourObserved: recoveries.length > 0,
+    validContourShrinkObserved: recoveries.some((entry) => entry.width < 584 || entry.height < 64),
+    toolbarStateContourChangeObserved: probe.toolbarStateContourChangeObserved,
+    reloadGenerationFallbackObserved: true,
+    reloadValidRecoveryObserved: true,
+    invalidContourFallbackObserved: true,
+    staleGenerationFallbackObserved: true,
+    postFailureRecoveryObserved: true,
+    layoutFallbackObservationCount: fallbacks.length,
+    layoutRecoveryObservationCount: recoveries.length
+  }
+}
+
+async function assertStationaryPressRelease ({
+  sourceWindow,
+  targetWindow,
+  targetExpression,
+  pointExpression,
+  pointerId,
+  cursor
+}) {
+  const point = await rendererPointerPoint(sourceWindow, targetExpression, pointExpression)
+  const origin = screenPointForRenderer(sourceWindow, point)
+  const before = targetWindow.getBounds()
+  cursor.set(origin)
+  await dispatchRendererPointer(sourceWindow, targetExpression, point, 'pointerdown', pointerId)
+  await dispatchRendererPointer(sourceWindow, 'window', point, 'pointerup', pointerId)
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  if (!sameWindowBounds(targetWindow.getBounds(), before)) throw new Error('stationary press/release changed window bounds')
+  return true
+}
+
+async function assertCancellationBeforeMove ({
+  sourceWindow,
+  targetWindow,
+  targetExpression,
+  pointExpression,
+  pointerId,
+  cursor,
+  cancel
+}) {
+  const point = await rendererPointerPoint(sourceWindow, targetExpression, pointExpression)
+  const origin = screenPointForRenderer(sourceWindow, point)
+  const before = targetWindow.getBounds()
+  cursor.set(origin)
+  await dispatchRendererPointer(sourceWindow, targetExpression, point, 'pointerdown', pointerId)
+  await cancel(point)
+  cursor.set({ x: origin.x + 23, y: origin.y + 15 })
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  if (!sameWindowBounds(targetWindow.getBounds(), before)) throw new Error('gesture cancellation left manual movement active')
+  return true
+}
+
+async function exerciseOverlayWindowInteractions ({ caption, toolbar, cursor }) {
+  const card = "document.getElementById('captionCard')"
+  const grip = "document.getElementById('grip')"
+  const center = `target => { const r = target.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } }`
+  const cardLeft = `target => { const r = target.getBoundingClientRect(); return { x: r.left + 80, y: r.top + r.height * 0.55 } }`
+  const cardMiddle = `target => { const r = target.getBoundingClientRect(); return { x: r.left + r.width * 0.42, y: r.bottom - 28 } }`
+  const cardResizeWest = `target => { const r = target.getBoundingClientRect(); return { x: r.left + 3, y: r.top + r.height * 0.55 } }`
+
+  await assertRendererGestureStatic({
+    sourceWindow: caption,
+    targetWindow: caption,
+    targetExpression: 'document.documentElement',
+    pointExpression: 'target => ({ x: 4, y: 4 })',
+    pointerId: 101,
+    cursor
+  })
+  await assertRendererGestureStatic({
+    sourceWindow: caption,
+    targetWindow: caption,
+    targetExpression: "document.querySelector('.tb-hole')",
+    pointExpression: center,
+    pointerId: 102,
+    cursor
+  })
+
+  await assertRendererGestureMoves({
+    sourceWindow: caption,
+    targetWindow: caption,
+    targetExpression: card,
+    pointExpression: cardLeft,
+    pointerId: 103,
+    cursor,
+    endType: 'pointerup'
+  })
+  await assertRendererGestureMoves({
+    sourceWindow: caption,
+    targetWindow: caption,
+    targetExpression: card,
+    pointExpression: cardMiddle,
+    pointerId: 104,
+    cursor,
+    endType: 'pointercancel'
+  })
+  await assertRendererGestureMoves({
+    sourceWindow: caption,
+    targetWindow: caption,
+    targetExpression: card,
+    pointExpression: cardLeft,
+    pointerId: 105,
+    cursor,
+    endType: 'lostpointercapture'
+  })
+  await assertStationaryPressRelease({
+    sourceWindow: caption,
+    targetWindow: caption,
+    targetExpression: card,
+    pointExpression: cardMiddle,
+    pointerId: 106,
+    cursor
+  })
+  await assertRendererGestureMoves({
+    sourceWindow: caption,
+    targetWindow: caption,
+    targetExpression: card,
+    pointExpression: cardResizeWest,
+    pointerId: 107,
+    cursor,
+    delta: { x: -12, y: 0 },
+    endType: 'pointerup'
+  })
+
+  await assertCancellationBeforeMove({
+    sourceWindow: caption,
+    targetWindow: caption,
+    targetExpression: card,
+    pointExpression: cardLeft,
+    pointerId: 108,
+    cursor,
+    cancel: (point) => dispatchRendererPointer(caption, 'window', point, 'blur', 108)
+  })
+  await assertRendererGestureStatic({
+    sourceWindow: toolbar,
+    targetWindow: caption,
+    targetExpression: "document.getElementById('status')",
+    pointExpression: center,
+    pointerId: 109,
+    cursor
+  })
+  await assertRendererGestureMoves({
+    sourceWindow: toolbar,
+    targetWindow: caption,
+    targetExpression: grip,
+    pointExpression: center,
+    pointerId: 110,
+    cursor,
+    endType: 'pointerup'
+  })
+  await assertCancellationBeforeMove({
+    sourceWindow: toolbar,
+    targetWindow: caption,
+    targetExpression: grip,
+    pointExpression: center,
+    pointerId: 111,
+    cursor,
+    cancel: () => rendererValue(toolbar, `window.dispatchEvent(new Event('beforeunload')); true`)
+  })
+
+  const captionBeforeLock = caption.getBounds()
+  await assertCancellationBeforeMove({
+    sourceWindow: caption,
+    targetWindow: caption,
+    targetExpression: card,
+    pointExpression: cardLeft,
+    pointerId: 112,
+    cursor,
+    cancel: async () => {
+      await rendererValue(toolbar, `document.querySelector('button[data-act="lock"]').click(); true`)
+      await waitFor(() => rendererValue(toolbar, 'window.shell.getLock()'), 'toolbar lock state')
+    }
+  })
+  await assertRendererGestureStatic({
+    sourceWindow: caption,
+    targetWindow: caption,
+    targetExpression: card,
+    pointExpression: cardLeft,
+    pointerId: 113,
+    cursor
+  })
+  const toolbarBeforeLockedGrip = toolbar.getBounds()
+  await assertRendererGestureMoves({
+    sourceWindow: toolbar,
+    targetWindow: toolbar,
+    targetExpression: grip,
+    pointExpression: center,
+    pointerId: 114,
+    cursor,
+    endType: 'pointerup'
+  })
+  if (!sameWindowBounds(caption.getBounds(), captionBeforeLock) ||
+      sameWindowBounds(toolbar.getBounds(), toolbarBeforeLockedGrip)) {
+    throw new Error('locked grip did not isolate movement to the toolbar')
+  }
+  await rendererValue(toolbar, `document.querySelector('button[data-act="lock"]').click(); true`)
+  await waitFor(async () => (await rendererValue(toolbar, 'window.shell.getLock()')) === false, 'toolbar unlock state')
+
+  return {
+    transparentMarginPassThroughObserved: true,
+    toolbarContourPriorityObserved: true,
+    resizeBandObserved: true,
+    visibleCardDragPointCount: 2,
+    firstPointerDeltaObserved: true,
+    stationaryPressReleaseStable: true,
+    gestureCancellationObservationCount: 6,
+    nonGripToolbarDragRejected: true,
+    unlockedGripMovesCaptionGroup: true,
+    lockedGripMovesToolbarOnly: true
+  }
+}
+
+async function exerciseNormalWindowInteractions ({ settings, history, toolbar, cursor }) {
+  const center = `target => { const r = target.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } }`
+  await assertRendererGestureMoves({
+    sourceWindow: settings,
+    targetWindow: settings,
+    targetExpression: "document.querySelector('.titlebar')",
+    pointExpression: center,
+    pointerId: 201,
+    cursor
+  })
+  await assertRendererGestureMoves({
+    sourceWindow: history,
+    targetWindow: history,
+    targetExpression: "document.querySelector('.titlebar')",
+    pointExpression: center,
+    pointerId: 202,
+    cursor
+  })
+  await assertRendererGestureStatic({
+    sourceWindow: settings,
+    targetWindow: settings,
+    targetExpression: "document.getElementById('close')",
+    pointExpression: center,
+    pointerId: 203,
+    cursor
+  })
+  await assertRendererGestureStatic({
+    sourceWindow: history,
+    targetWindow: history,
+    targetExpression: "document.getElementById('close')",
+    pointExpression: center,
+    pointerId: 204,
+    cursor
+  })
+  await assertRendererGestureStatic({
+    sourceWindow: settings,
+    targetWindow: settings,
+    targetExpression: "document.querySelector('main.content')",
+    pointExpression: center,
+    pointerId: 205,
+    cursor
+  })
+  await assertRendererGestureStatic({
+    sourceWindow: history,
+    targetWindow: history,
+    targetExpression: "document.querySelector('main.history-layout')",
+    pointExpression: center,
+    pointerId: 206,
+    cursor
+  })
+
+  settings.show(); settings.focus()
+  await waitFor(() => settings.isAlwaysOnTop(), 'settings foreground promotion')
+  history.show(); history.focus()
+  await waitFor(() => history.isAlwaysOnTop() && !settings.isAlwaysOnTop(), 'settings to history rapid focus switch')
+  toolbar.focus()
+  await waitFor(() => !history.isAlwaysOnTop(), 'history focus loss demotion')
+
+  settings.show(); settings.focus()
+  await waitFor(() => settings.isAlwaysOnTop(), 'settings promotion before blur cancellation')
+  await assertCancellationBeforeMove({
+    sourceWindow: settings,
+    targetWindow: settings,
+    targetExpression: "document.querySelector('.titlebar')",
+    pointExpression: center,
+    pointerId: 207,
+    cursor,
+    cancel: async () => {
+      settings.blur()
+      await waitFor(() => !settings.isAlwaysOnTop(), 'settings drag blur demotion')
+    }
+  })
+
+  return {
+    normalTitlebarDragCount: 2,
+    normalInteractiveExclusionCount: 2,
+    normalBodyExclusionCount: 2,
+    normalForegroundPromotionCount: 2,
+    rapidFocusSwitchObserved: true,
+    focusLossDemotionObserved: true,
+    focusedDragBlurCancellationObserved: true
+  }
+}
+
+async function exerciseSharedTitlebarThemes (settings, history) {
+  const originalThemeSource = nativeTheme.themeSource
+  const inspect = (win) => rendererValue(win, `(() => {
+    const root = getComputedStyle(document.documentElement)
+    const titlebar = document.querySelector('.titlebar')
+    const titlebarStyle = getComputedStyle(titlebar)
+    return {
+      surface: root.getPropertyValue('--surface-window-titlebar').trim(),
+      border: root.getPropertyValue('--border-window-titlebar').trim(),
+      background: titlebarStyle.backgroundColor,
+      borderBottom: titlebarStyle.borderBottomColor
+    }
+  })()`)
+  const variants = []
+  try {
+    for (const theme of ['dark', 'light']) {
+      nativeTheme.themeSource = theme
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      const [settingsValue, historyValue] = await Promise.all([inspect(settings), inspect(history)])
+      if (!settingsValue.surface || !settingsValue.border ||
+          settingsValue.surface !== historyValue.surface || settingsValue.border !== historyValue.border ||
+          !settingsValue.background || !historyValue.background ||
+          !settingsValue.borderBottom || !historyValue.borderBottom) {
+        throw new Error(`shared titlebar token mismatch in ${theme}`)
+      }
+      variants.push(settingsValue.surface)
+    }
+  } finally {
+    nativeTheme.themeSource = originalThemeSource
+  }
+  const forcedColorsTitlebarRuleObserved = await rendererValue(settings, `(() => {
+    const visit = (rules) => [...rules].some((rule) => {
+      if (rule.conditionText && rule.conditionText.includes('forced-colors') &&
+          rule.cssText.includes('--surface-window-titlebar') &&
+          rule.cssText.includes('--border-window-titlebar')) return true
+      return rule.cssRules ? visit(rule.cssRules) : false
+    })
+    return [...document.styleSheets].some((sheet) => visit(sheet.cssRules))
+  })()`)
+  if (!forcedColorsTitlebarRuleObserved || variants.length !== 2 || variants[0] === variants[1]) {
+    throw new Error('shared titlebar theme variants are incomplete')
+  }
+  return {
+    sharedTitlebarStructureObserved: true,
+    sharedTitlebarThemeVariantsObserved: true,
+    forcedColorsTitlebarRuleObserved: true
+  }
 }
 
 async function waitForHistoryPage (win, firstPosition, lastPosition) {
@@ -342,7 +914,7 @@ function inspectRawOriginalExportArtifact (filePath) {
 }
 
 const options = parseArguments(process.argv.slice(app.isPackaged ? 1 : 2))
-const productPayloadIdentity = app.isPackaged ? computeProductPayloadIdentity() : null
+const productPayloadIdentity = computeProductPayloadIdentity()
 const userDataDir = path.join(options.workDir, 'user-data')
 const legacyDirectory = path.join(userDataDir, 'sessions')
 const exportDirectory = path.join(options.workDir, 'exports')
@@ -748,6 +1320,7 @@ app.on('web-contents-created', (_event, contents) => {
 
 let watchdog = null
 let smokeFailed = false
+let controlledCursorBoundary = null
 
 app.whenReady().then(() => {
   watchdog = setTimeout(() => {
@@ -1087,6 +1660,8 @@ async function runJourney () {
   const toolbar = await waitFor(() => windowFor('/toolbar/index.html'), 'toolbar renderer')
   const caption = await waitFor(() => windowFor('/caption/index.html'), 'caption renderer')
   await Promise.all([settings, toolbar, caption].map((win) => waitFor(() => !win.webContents.isLoading(), 'renderer load')))
+  controlledCursorBoundary = installControlledCursorBoundary()
+  const layoutProbe = await beginWindowInteractionLayoutProbe(toolbar, caption)
 
   await rendererValue(settings, `document.querySelector('[data-preset="dictation"]').click(); true`)
   await waitFor(() => rendererValue(settings, `document.getElementById('onboarding').hidden`), 'dictation onboarding')
@@ -1149,6 +1724,7 @@ async function runJourney () {
 
   await waitFor(() => rendererValue(toolbar, `window.shell.getSnapshot().then(s => s.phase === 'idle' && s.capabilities.canStart)`), 'idle runtime')
   await waitFor(() => rendererValue(toolbar, `!!document.querySelector('button[data-act="start"]:not(:disabled)')`), 'start control')
+  await observeToolbarStateContourChange(toolbar, layoutProbe)
 
   const refinementResumeSeed = seedInterruptedModelDownload(
     userDataDir,
@@ -1242,6 +1818,23 @@ async function runJourney () {
   await rendererValue(toolbar, `document.querySelector('button[data-act="history"]').click(); true`)
   const history = await waitFor(() => windowFor('/history/index.html'), 'history renderer')
   await waitFor(() => !history.webContents.isLoading(), 'history load')
+  const windowInteraction = {
+    ...await completeWindowInteractionLayoutProbe(toolbar, layoutProbe),
+    ...await exerciseOverlayWindowInteractions({
+      caption,
+      toolbar,
+      cursor: controlledCursorBoundary
+    }),
+    ...await exerciseNormalWindowInteractions({
+      settings,
+      history,
+      toolbar,
+      cursor: controlledCursorBoundary
+    }),
+    ...await exerciseSharedTitlebarThemes(settings, history)
+  }
+  controlledCursorBoundary.restore()
+  controlledCursorBoundary = null
   const historyCount = await waitFor(async () => {
     const count = await rendererValue(history, `document.querySelectorAll('.session-card').length`)
     return count === 3 ? count : 0
@@ -1363,7 +1956,7 @@ async function runJourney () {
   if (audioFilesUnder(options.workDir).length > 0) throw new Error('product shell smoke persisted audio')
 
   const report = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: 'product-shell-smoke',
     generatedAt: new Date().toISOString(),
     result: 'pass',
@@ -1467,6 +2060,12 @@ async function runJourney () {
       coreReadinessSource: 'settings-click-controlled-install',
       translationAdvertised: false
     },
+    windowInteraction,
+    sourceIdentity: {
+      productPayloadVersion: productPayloadIdentity.version,
+      productPayloadFileCount: productPayloadIdentity.fileCount,
+      productPayloadSha256: productPayloadIdentity.sha256
+    },
     privacy: {
       physicalAudioSourceOpened: false,
       audioPersisted: false,
@@ -1477,6 +2076,8 @@ async function runJourney () {
       'fake-asr-no-physical-audio',
       'controlled-model-fixtures-no-real-tensors',
       'deterministic-205-segment-fixture-not-two-hour-i3',
+      'controlled-pointer-and-focus-no-human-dwm',
+      'no-system-dpi-or-mixed-scale-qualification',
       ...(app.isPackaged
         ? ['not-clean-machine-i4', 'packaged-test-variant-not-release-installer']
         : ['not-packaged-i4'])
@@ -1491,6 +2092,10 @@ async function runJourney () {
 
 app.on('will-quit', (event) => {
   if (watchdog) clearTimeout(watchdog)
+  if (controlledCursorBoundary) {
+    controlledCursorBoundary.restore()
+    controlledCursorBoundary = null
+  }
   void closeModelTransport().catch(() => {})
   if (smokeFailed) {
     /* Electron's app.quit() may otherwise normalize a failed smoke to status

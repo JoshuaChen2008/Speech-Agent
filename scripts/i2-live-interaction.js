@@ -17,8 +17,17 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
-const { app, BrowserWindow, ipcMain, powerMonitor, screen } = require('electron')
+const crypto = require('node:crypto')
+const { app, BrowserWindow, ipcMain, nativeTheme, powerMonitor, screen } = require('electron')
 const CHANNELS = require('../src/main/ipc/channels')
+const { isRoleAllowed } = require('../src/main/ipc/access-policy')
+const { ManualWindowInteractionController } = require('../src/main/manual-window-interaction-controller')
+const { WindowLayerController } = require('../src/main/window-layer-controller')
+const {
+  ToolbarLayoutState,
+  toolbarDockBoundsFor
+} = require('../src/main/window-layout-contract')
+const { computeProductPayloadIdentity } = require('../src/main/services/product-payload-identity')
 const { DEFAULT_CONFIG } = require('../src/main/services/config-store')
 const { SubtitleApplicationRuntime } = require('../src/main/services/subtitle-application-runtime')
 const { PowerSessionGuard } = require('../src/main/services/power-session-guard')
@@ -220,16 +229,50 @@ class DwmDragHarness {
     this.roles = new Map()
     this.captionWindow = null
     this.toolbarWindow = null
-    this.dragState = null
+    this.settingsWindow = null
+    this.historyWindow = null
+    this.locked = false
     this.disposers = []
     this.unsubscribeSnapshot = null
     this.unsubscribeCaption = null
+    this.scalePoll = null
+    this.visitedScalePercents = new Set()
+    this.layoutState = new ToolbarLayoutState()
+    this.counts = {
+      windowLoadCount: 0,
+      toolbarLayoutReportCount: 0,
+      captionDragStartCount: 0,
+      captionMovedDragCount: 0,
+      captionStationaryPressReleaseCount: 0,
+      toolbarGripDragStartCount: 0,
+      resizeStartCount: 0,
+      settingsTitlebarDragStartCount: 0,
+      historyTitlebarDragStartCount: 0,
+      lockTransitionCount: 0,
+      focusPromotionCount: 0,
+      focusDemotionCount: 0
+    }
+    this.layerController = new WindowLayerController({
+      getCaptionWindow: () => this.captionWindow,
+      getToolbarWindow: () => this.toolbarWindow
+    })
+    this.interactionController = new ManualWindowInteractionController({
+      getCursorScreenPoint: () => screen.getCursorScreenPoint(),
+      getCaptionWindow: () => this.captionWindow,
+      getLocked: () => this.locked,
+      getCaptionLimits: () => ({ minW: 480, maxW: 1600, minH: 140, maxH: 420 }),
+      dock: () => this.dock(),
+      onObservation: (event) => this.observeInteraction(event)
+    })
   }
 
-  windowFor (event) {
+  windowFor (event, channel) {
     const role = this.roles.get(event.sender.id)
     const win = BrowserWindow.fromWebContents(event.sender)
-    if (!role || !win || win.isDestroyed()) throw new Error('untrusted DWM harness sender')
+    const mainFrame = event.senderFrame && event.senderFrame === event.sender.mainFrame
+    if (!role || !win || win.isDestroyed() || !mainFrame || !isRoleAllowed(channel, role)) {
+      throw new Error('untrusted DWM harness sender')
+    }
     return { role, win, senderId: event.sender.id }
   }
 
@@ -243,13 +286,20 @@ class DwmDragHarness {
     this.disposers.push(() => ipcMain.removeHandler(channel))
   }
 
-  createWindow (role, options, file) {
+  send (win, channel, value) {
+    if (win && !win.isDestroyed()) win.webContents.send(channel, value)
+  }
+
+  publishToolbarOverlap (overlap = this.layoutState.getOverlap()) {
+    this.send(this.captionWindow, CHANNELS.CAPTION_LAYOUT_TOOLBAR_OVERLAP, overlap)
+  }
+
+  createWindow (role, options, file, overlay) {
     const win = new BrowserWindow({
       ...options,
-      frame: false,
-      transparent: true,
-      backgroundColor: '#00000000',
-      alwaysOnTop: true,
+      ...(overlay
+        ? { frame: false, transparent: true, backgroundColor: '#00000000', alwaysOnTop: true }
+        : { titleBarStyle: 'hidden', backgroundColor: '#00000000' }),
       show: false,
       webPreferences: {
         preload: path.join(PROJECT_ROOT, 'src', 'preload', `${role}.js`),
@@ -260,11 +310,32 @@ class DwmDragHarness {
       }
     })
     this.roles.set(win.webContents.id, role)
-    win.webContents.once('destroyed', () => this.roles.delete(win.webContents.id))
+    const senderId = win.webContents.id
+    win.webContents.once('destroyed', () => {
+      this.roles.delete(senderId)
+      this.interactionController.stopForSender(senderId)
+      if (role === 'toolbar') this.publishToolbarOverlap(this.layoutState.invalidate())
+    })
+    win.on('blur', () => this.interactionController.stopForSender(senderId))
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     win.webContents.on('will-navigate', (event) => event.preventDefault())
-    win.setAlwaysOnTop(true, 'screen-saver')
-    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    if (role === 'toolbar') {
+      win.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+        if (isMainFrame && !isInPlace) this.publishToolbarOverlap(this.layoutState.invalidate())
+      })
+    }
+    if (role === 'caption') win.webContents.on('did-finish-load', () => this.publishToolbarOverlap())
+    if (overlay) {
+      win.setAlwaysOnTop(true, 'screen-saver')
+      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+      const pinZoom = () => { if (!win.isDestroyed()) win.webContents.setZoomFactor(1) }
+      pinZoom()
+      win.webContents.on('did-finish-load', pinZoom)
+    } else {
+      this.layerController.bindForegroundWindow(win, role)
+      win.on('focus', () => { this.counts.focusPromotionCount += 1 })
+      win.on('blur', () => { this.counts.focusDemotionCount += 1 })
+    }
     return win.loadFile(file).then(() => win)
   }
 
@@ -272,44 +343,33 @@ class DwmDragHarness {
     const caption = this.captionWindow
     const toolbar = this.toolbarWindow
     if (!caption || !toolbar || caption.isDestroyed() || toolbar.isDestroyed()) return
-    const bounds = caption.getBounds()
-    toolbar.setBounds({ x: bounds.x + bounds.width - 568 - 16, y: bounds.y + 16, width: 600, height: 72 })
-    toolbar.moveTop()
+    toolbar.setBounds(toolbarDockBoundsFor(caption.getBounds()))
+    this.layerController.restoreWindowStack()
   }
 
-  stopDrag (senderId = null, force = false) {
-    if (!this.dragState || (!force && this.dragState.senderId !== senderId)) return
-    if (this.dragState.timer) clearTimeout(this.dragState.timer)
-    this.dragState = null
-  }
-
-  dragTick () {
-    const state = this.dragState
-    if (!state || !state.win || state.win.isDestroyed()) return this.stopDrag(null, true)
-    const point = screen.getCursorScreenPoint()
-    state.win.setBounds({ x: point.x - state.offX, y: point.y - state.offY, width: state.width, height: state.height })
-    if (state.redock) this.dock()
-    if (this.dragState === state) state.timer = setTimeout(() => this.dragTick(), 8)
-  }
-
-  startDrag (event) {
-    const { role, win: sender, senderId } = this.windowFor(event)
-    this.stopDrag(null, true)
-    const target = role === 'toolbar' ? this.captionWindow : sender
-    if (!target || target.isDestroyed()) return
-    const point = screen.getCursorScreenPoint()
-    const bounds = target.getBounds()
-    this.dragState = {
-      senderId,
-      win: target,
-      offX: point.x - bounds.x,
-      offY: point.y - bounds.y,
-      width: bounds.width,
-      height: bounds.height,
-      redock: role === 'toolbar' || role === 'caption',
-      timer: null
+  observeInteraction (event) {
+    if (event.kind === 'drag-start') {
+      if (event.role === 'caption') this.counts.captionDragStartCount += 1
+      else if (event.role === 'toolbar') this.counts.toolbarGripDragStartCount += 1
+      else if (event.role === 'settings') this.counts.settingsTitlebarDragStartCount += 1
+      else if (event.role === 'history') this.counts.historyTitlebarDragStartCount += 1
+    } else if (event.kind === 'drag-end' && event.role === 'caption') {
+      if (event.moved) this.counts.captionMovedDragCount += 1
+      else this.counts.captionStationaryPressReleaseCount += 1
+    } else if (event.kind === 'resize-start') {
+      this.counts.resizeStartCount += 1
     }
-    this.dragTick()
+  }
+
+  applyLock (value) {
+    this.locked = value === true
+    this.counts.lockTransitionCount += 1
+    this.interactionController.stopAll()
+    if (this.captionWindow && !this.captionWindow.isDestroyed() && this.locked) {
+      this.captionWindow.setIgnoreMouseEvents(true, { forward: true })
+    }
+    this.send(this.captionWindow, CHANNELS.LOCK_CHANGED, this.locked)
+    this.send(this.toolbarWindow, CHANNELS.LOCK_CHANGED, this.locked)
   }
 
   registerIpc () {
@@ -319,30 +379,87 @@ class DwmDragHarness {
       onboardingPreset: 'meeting',
       mic: false,
       loopback: true,
-      systemDark: true
+      systemDark: nativeTheme.shouldUseDarkColors
     }
     this.registerOn(CHANNELS.MOUSE_THROUGH, (event, ignore) => {
-      const { win } = this.windowFor(event)
+      const { win } = this.windowFor(event, CHANNELS.MOUSE_THROUGH)
+      if (win === this.captionWindow && this.locked && !ignore) return
       win.setIgnoreMouseEvents(!!ignore, { forward: true })
     })
-    this.registerOn(CHANNELS.DRAG_START, (event) => this.startDrag(event))
-    this.registerOn(CHANNELS.DRAG_END, (event) => {
-      const { senderId } = this.windowFor(event)
-      this.stopDrag(senderId)
+    this.registerOn(CHANNELS.DRAG_START, (event) => {
+      this.interactionController.startDrag(this.windowFor(event, CHANNELS.DRAG_START))
     })
-    this.registerHandle(CHANNELS.LOCK_GET, (event) => { this.windowFor(event); return false })
-    this.registerHandle(CHANNELS.CONFIG_GET, (event) => { this.windowFor(event); return config })
+    this.registerOn(CHANNELS.DRAG_END, (event) => {
+      const { senderId } = this.windowFor(event, CHANNELS.DRAG_END)
+      this.interactionController.stopDrag(senderId)
+    })
+    this.registerOn(CHANNELS.RESIZE_START, (event, edge) => {
+      const { win, senderId } = this.windowFor(event, CHANNELS.RESIZE_START)
+      this.interactionController.startResize({ win, senderId, edge })
+    })
+    this.registerOn(CHANNELS.RESIZE_END, (event) => {
+      const { senderId } = this.windowFor(event, CHANNELS.RESIZE_END)
+      this.interactionController.stopResize(senderId)
+    })
+    this.registerOn(CHANNELS.LOCK_TOGGLE, (event) => {
+      this.windowFor(event, CHANNELS.LOCK_TOGGLE)
+      this.applyLock(!this.locked)
+    })
+    this.registerHandle(CHANNELS.LOCK_GET, (event) => { this.windowFor(event, CHANNELS.LOCK_GET); return this.locked })
+    this.registerHandle(CHANNELS.CONFIG_GET, (event) => { this.windowFor(event, CHANNELS.CONFIG_GET); return config })
+    this.registerHandle(CHANNELS.CONFIG_UPDATE, (event) => { this.windowFor(event, CHANNELS.CONFIG_UPDATE); return config })
+    this.registerHandle(CHANNELS.PRESET_SELECT, (event) => { this.windowFor(event, CHANNELS.PRESET_SELECT); return config })
+    this.registerHandle(CHANNELS.MODEL_STATUS_GET, (event) => { this.windowFor(event, CHANNELS.MODEL_STATUS_GET); return null })
+    this.registerHandle(CHANNELS.REFINEMENT_NOTICE_GET, (event) => { this.windowFor(event, CHANNELS.REFINEMENT_NOTICE_GET); return null })
     this.registerHandle(CHANNELS.CAPTION_STATE_GET, (event) => {
-      this.windowFor(event)
+      this.windowFor(event, CHANNELS.CAPTION_STATE_GET)
       return this.coordinator.getCaptionState()
     })
     this.registerHandle(CHANNELS.RUNTIME_GET, (event) => {
-      this.windowFor(event)
+      this.windowFor(event, CHANNELS.RUNTIME_GET)
       return this.coordinator.getSnapshot()
     })
     this.registerHandle(CHANNELS.RUNTIME_COMMAND, async (event, name) => {
-      this.windowFor(event)
+      this.windowFor(event, CHANNELS.RUNTIME_COMMAND)
       return this.coordinator.command(String(name || ''))
+    })
+    this.registerHandle(CHANNELS.HISTORY_LIST, (event) => {
+      this.windowFor(event, CHANNELS.HISTORY_LIST)
+      return { ok: true, value: { items: [], nextCursor: null } }
+    })
+    this.registerHandle(CHANNELS.HISTORY_PAGE, (event) => {
+      this.windowFor(event, CHANNELS.HISTORY_PAGE)
+      return { ok: false, error: { code: 'DWM_HARNESS_EMPTY', message: 'No session selected' } }
+    })
+    this.registerHandle(CHANNELS.HISTORY_EXPORT, (event) => {
+      this.windowFor(event, CHANNELS.HISTORY_EXPORT)
+      return { ok: false, error: { code: 'DWM_HARNESS_EMPTY', message: 'No session selected' } }
+    })
+    this.registerHandle(CHANNELS.CAPTION_VIEWPORT_EVICT, (event) => {
+      this.windowFor(event, CHANNELS.CAPTION_VIEWPORT_EVICT)
+      return false
+    })
+    this.registerHandle(CHANNELS.TOOLBAR_LAYOUT_GET_CONTEXT, (event) => {
+      this.windowFor(event, CHANNELS.TOOLBAR_LAYOUT_GET_CONTEXT)
+      return this.layoutState.getContext()
+    })
+    this.registerOn(CHANNELS.TOOLBAR_LAYOUT_REPORT_RECT, (event, report) => {
+      this.windowFor(event, CHANNELS.TOOLBAR_LAYOUT_REPORT_RECT)
+      this.counts.toolbarLayoutReportCount += 1
+      this.publishToolbarOverlap(this.layoutState.acceptReport(report))
+    })
+    this.registerOn(CHANNELS.TOOLBAR_ACTION, (event, action) => {
+      this.windowFor(event, CHANNELS.TOOLBAR_ACTION)
+      const target = action === 'history' ? this.historyWindow : this.settingsWindow
+      if (target && !target.isDestroyed()) { target.show(); target.focus() }
+    })
+    this.registerOn(CHANNELS.SETTINGS_CLOSE, (event) => {
+      const { win } = this.windowFor(event, CHANNELS.SETTINGS_CLOSE)
+      win.hide()
+    })
+    this.registerOn(CHANNELS.HISTORY_CLOSE, (event) => {
+      const { win } = this.windowFor(event, CHANNELS.HISTORY_CLOSE)
+      win.hide()
     })
   }
 
@@ -352,10 +469,18 @@ class DwmDragHarness {
     const captionX = Math.round((display.width - 920) / 2)
     this.captionWindow = await this.createWindow('caption', {
       width: 920, height: 190, x: captionX, y: 72, resizable: false, focusable: false, skipTaskbar: true
-    }, path.join(PROJECT_ROOT, 'src', 'caption', 'index.html'))
+    }, path.join(PROJECT_ROOT, 'src', 'caption', 'index.html'), true)
+    this.captionWindow.setResizable(true)
     this.toolbarWindow = await this.createWindow('toolbar', {
       width: 600, height: 72, x: captionX + 304, y: 88, resizable: false, focusable: true, skipTaskbar: true
-    }, path.join(PROJECT_ROOT, 'src', 'toolbar', 'index.html'))
+    }, path.join(PROJECT_ROOT, 'src', 'toolbar', 'index.html'), true)
+    this.settingsWindow = await this.createWindow('settings', {
+      width: 880, height: 620, resizable: false, maximizable: false, skipTaskbar: false
+    }, path.join(PROJECT_ROOT, 'src', 'settings', 'settings.html'), false)
+    this.historyWindow = await this.createWindow('history', {
+      width: 1060, height: 720, minWidth: 780, minHeight: 520, resizable: true, skipTaskbar: false
+    }, path.join(PROJECT_ROOT, 'src', 'history', 'index.html'), false)
+    this.counts.windowLoadCount = 4
     this.unsubscribeSnapshot = this.coordinator.onSnapshot((snapshot) => {
       if (this.toolbarWindow && !this.toolbarWindow.isDestroyed()) this.toolbarWindow.webContents.send(CHANNELS.RUNTIME_CHANGED, snapshot)
     })
@@ -364,11 +489,47 @@ class DwmDragHarness {
     })
     this.captionWindow.showInactive()
     this.toolbarWindow.showInactive()
+    this.settingsWindow.show()
+    this.historyWindow.show()
     this.dock()
+    const observeScale = () => {
+      if (!this.captionWindow || this.captionWindow.isDestroyed()) return
+      const scalePercent = Math.round(screen.getDisplayMatching(this.captionWindow.getBounds()).scaleFactor * 100)
+      this.visitedScalePercents.add(scalePercent)
+    }
+    observeScale()
+    this.scalePoll = setInterval(observeScale, 250)
+  }
+
+  async automaticObservation (options) {
+    const displays = screen.getAllDisplays()
+    const scalePercents = displays.map((display) => Math.round(display.scaleFactor * 100))
+    const currentScalePercent = Math.round(screen.getDisplayMatching(this.captionWindow.getBounds()).scaleFactor * 100)
+    const highContrast = nativeTheme.shouldUseHighContrastColors === true
+    const actualTheme = highContrast ? 'high-contrast' : (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
+    const rendererScalePercents = await Promise.all([this.captionWindow, this.toolbarWindow].map((win) =>
+      win.webContents.executeJavaScript('Math.round(window.devicePixelRatio * 100)')
+    ))
+    const crossScaleMoveObserved = options.crossScaleFromPercent !== null &&
+      this.visitedScalePercents.has(options.crossScaleFromPercent) &&
+      this.visitedScalePercents.has(options.scalePercent)
+    return {
+      actualScaleMatched: currentScalePercent === options.scalePercent,
+      systemThemeMatched: actualTheme === options.theme,
+      rendererScaleMatched: rendererScalePercents.every((value) => value === options.scalePercent),
+      displayCount: displays.length,
+      distinctScaleFactorCount: new Set(scalePercents).size,
+      crossScaleMoveObserved,
+      fromScalePercent: crossScaleMoveObserved ? options.crossScaleFromPercent : options.scalePercent,
+      toScalePercent: options.scalePercent
+    }
   }
 
   dispose () {
-    this.stopDrag(null, true)
+    this.interactionController.stopAll()
+    this.layerController.dispose()
+    if (this.scalePoll) clearInterval(this.scalePoll)
+    this.scalePoll = null
     if (this.unsubscribeSnapshot) this.unsubscribeSnapshot()
     if (this.unsubscribeCaption) this.unsubscribeCaption()
     this.unsubscribeSnapshot = null
@@ -376,18 +537,26 @@ class DwmDragHarness {
     for (const dispose of this.disposers.splice(0)) {
       try { dispose() } catch { /* teardown isolation */ }
     }
-    for (const win of [this.captionWindow, this.toolbarWindow]) {
+    for (const win of [this.captionWindow, this.toolbarWindow, this.settingsWindow, this.historyWindow]) {
       if (win && !win.isDestroyed()) win.destroy()
     }
     this.captionWindow = null
     this.toolbarWindow = null
+    this.settingsWindow = null
+    this.historyWindow = null
   }
 }
 
 async function awaitDwmCompletion (completionPath, timeoutSeconds) {
   const deadline = Date.now() + timeoutSeconds * 1000
   while (Date.now() <= deadline) {
-    if (fs.existsSync(completionPath)) return parseOperatorCompletion(fs.readFileSync(completionPath))
+    if (fs.existsSync(completionPath)) {
+      const bytes = fs.readFileSync(completionPath)
+      return {
+        value: parseOperatorCompletion(bytes),
+        sha256: crypto.createHash('sha256').update(bytes).digest('hex')
+      }
+    }
     await delay(250)
   }
   return null
@@ -531,13 +700,23 @@ async function runDwmDrag ({ coordinator, getAdapter, play, sourceId, options, w
       while (!stopPlayback) await play()
     })().catch((error) => { playbackFailure = error })
     writeProgress('awaiting-operator-completion', initialTransport, false)
-    const completion = await awaitDwmCompletion(options.completion, options.timeoutSeconds)
+    const completionRecord = await awaitDwmCompletion(options.completion, options.timeoutSeconds)
     stopPlayback = true
     await playbackLoop
     if (playbackFailure) throw playbackFailure
     const after = await readLiveTransport(activeAdapter, sourceId)
     const transport = { comparison: 'same-capture-generation', before, after, delta: transportDelta(before, after, true) }
-    const operatorCompletionObserved = completion !== null
+    const completion = completionRecord?.value || null
+    const protocol = options.dwmProtocol
+    const automaticObservation = await harness.automaticObservation(options)
+    const completionMatches = completion?.schemaVersion === 3 &&
+      completion.runBindingSha256 === protocol.runBindingSha256 &&
+      completion.productPayloadVersion === protocol.productPayloadVersion &&
+      completion.productPayloadFileCount === protocol.productPayloadFileCount &&
+      completion.productPayloadSha256 === protocol.productPayloadSha256 &&
+      JSON.stringify(completion.combination) === JSON.stringify(protocol.combination) &&
+      completion.crossScale.observed === automaticObservation.crossScaleMoveObserved
+    const operatorCompletionObserved = completionMatches === true
     writeProgress('completed', transport, operatorCompletionObserved)
     const stopped = await coordinator.command('stop')
     if (!stopped.ok) throw new Error('coordinator stop after DWM drag failed')
@@ -548,15 +727,49 @@ async function runDwmDrag ({ coordinator, getAdapter, play, sourceId, options, w
       after: finalAfter,
       delta: transportDelta(before, finalAfter, true)
     }
+    const minimumCountsObserved =
+      harness.counts.windowLoadCount >= 4 &&
+      harness.counts.toolbarLayoutReportCount >= 3 &&
+      harness.counts.captionDragStartCount >= 5 &&
+      harness.counts.captionMovedDragCount >= 4 &&
+      harness.counts.captionStationaryPressReleaseCount >= 1 &&
+      harness.counts.toolbarGripDragStartCount >= 2 &&
+      harness.counts.resizeStartCount >= 8 &&
+      harness.counts.settingsTitlebarDragStartCount >= 1 &&
+      harness.counts.historyTitlebarDragStartCount >= 1 &&
+      harness.counts.lockTransitionCount >= 2 &&
+      harness.counts.focusPromotionCount >= 2 &&
+      harness.counts.focusDemotionCount >= 2
+    const automaticBoundaryMatched = automaticObservation.actualScaleMatched &&
+      automaticObservation.systemThemeMatched && automaticObservation.rendererScaleMatched
     return {
-      result: operatorCompletionObserved && cleanTransport(finalAfter)
+      result: operatorCompletionObserved && minimumCountsObserved && automaticBoundaryMatched && cleanTransport(finalAfter)
         ? 'pass-manual-observed'
         : 'inconclusive-manual-observation',
       scenarioEvidence: {
-        mode: 'manual-dwm-harness',
-        rendererAssets: 'caption-toolbar',
+        mode: 'production-dwm-harness',
+        rendererAssets: 'caption-toolbar-settings-history',
         manualSetBounds: true,
-        operatorCompletionObserved
+        runBindingSha256: protocol.runBindingSha256,
+        operatorCompletionObserved,
+        operatorCompletionSha256: operatorCompletionObserved ? completionRecord.sha256 : null,
+        combination: { ...protocol.combination },
+        checks: operatorCompletionObserved ? completion.checks : null,
+        crossScale: operatorCompletionObserved ? completion.crossScale : null,
+        productPayloadVersion: protocol.productPayloadVersion,
+        productPayloadFileCount: protocol.productPayloadFileCount,
+        productPayloadSha256: protocol.productPayloadSha256,
+        productionReuse: {
+          interactionController: true,
+          windowLayerController: true,
+          ipcAccessPolicy: true,
+          windowRoles: ['caption', 'toolbar', 'settings', 'history'],
+          preloadRoles: ['caption', 'toolbar', 'settings', 'history'],
+          pageRoles: ['caption', 'toolbar', 'settings', 'history'],
+          mainProcessManualBoundsUpdates: true
+        },
+        automaticObservation,
+        controllerCounts: { ...harness.counts }
       },
       transport: finalTransport
     }
@@ -765,7 +978,7 @@ async function runRecoveryInteraction ({
   }
 }
 
-function failureEvidence (scenario) {
+function failureEvidence (scenario, options = null, dwmProtocol = null) {
   if (scenario === 'pause-refine') {
     return {
       pauseAcknowledged: false, resumeAcknowledged: false, finalBeforePause: 0,
@@ -808,7 +1021,53 @@ function failureEvidence (scenario) {
       sqlitePersistedAtLeastObservedFinals: false
     }
   }
-  return { mode: 'manual-dwm-harness', rendererAssets: 'caption-toolbar', manualSetBounds: true, operatorCompletionObserved: false }
+  return {
+    mode: 'production-dwm-harness',
+    rendererAssets: 'caption-toolbar-settings-history',
+    manualSetBounds: true,
+    runBindingSha256: dwmProtocol.runBindingSha256,
+    operatorCompletionObserved: false,
+    operatorCompletionSha256: null,
+    combination: { ...dwmProtocol.combination },
+    checks: null,
+    crossScale: null,
+    productPayloadVersion: dwmProtocol.productPayloadVersion,
+    productPayloadFileCount: dwmProtocol.productPayloadFileCount,
+    productPayloadSha256: dwmProtocol.productPayloadSha256,
+    productionReuse: {
+      interactionController: true,
+      windowLayerController: true,
+      ipcAccessPolicy: true,
+      windowRoles: ['caption', 'toolbar', 'settings', 'history'],
+      preloadRoles: ['caption', 'toolbar', 'settings', 'history'],
+      pageRoles: ['caption', 'toolbar', 'settings', 'history'],
+      mainProcessManualBoundsUpdates: true
+    },
+    automaticObservation: {
+      actualScaleMatched: false,
+      systemThemeMatched: false,
+      rendererScaleMatched: false,
+      displayCount: 0,
+      distinctScaleFactorCount: 0,
+      crossScaleMoveObserved: false,
+      fromScalePercent: options.scalePercent,
+      toScalePercent: options.scalePercent
+    },
+    controllerCounts: {
+      windowLoadCount: 0,
+      toolbarLayoutReportCount: 0,
+      captionDragStartCount: 0,
+      captionMovedDragCount: 0,
+      captionStationaryPressReleaseCount: 0,
+      toolbarGripDragStartCount: 0,
+      resizeStartCount: 0,
+      settingsTitlebarDragStartCount: 0,
+      historyTitlebarDragStartCount: 0,
+      lockTransitionCount: 0,
+      focusPromotionCount: 0,
+      focusDemotionCount: 0
+    }
+  }
 }
 
 async function main () {
@@ -831,6 +1090,19 @@ async function main () {
   app.setPath('userData', runUserDataPath)
   await app.whenReady()
 
+  const dwmProtocol = options.scenario === 'dwm-drag'
+    ? (() => {
+        const identity = computeProductPayloadIdentity()
+        return {
+          runBindingSha256: crypto.randomBytes(32).toString('hex'),
+          productPayloadVersion: identity.version,
+          productPayloadFileCount: identity.fileCount,
+          productPayloadSha256: identity.sha256,
+          combination: { scalePercent: options.scalePercent, theme: options.theme }
+        }
+      })()
+    : null
+
   let applicationRuntime = null
   let result = 'fail'
   let scenarioOutcome = null
@@ -850,6 +1122,7 @@ async function main () {
       : buildDwmProgress({
           sourceId: options.source,
           state,
+          ...dwmProtocol,
           transport: payload,
           operatorCompletionObserved
         })
@@ -895,7 +1168,14 @@ async function main () {
     } else if (options.scenario === 'worker-crash-retry') {
       scenarioOutcome = await runWorkerCrashRetry({ coordinator, getAdapter: composition.getAdapter, play, sourceId: options.source, captions, workers })
     } else if (options.scenario === 'dwm-drag') {
-      scenarioOutcome = await runDwmDrag({ coordinator, getAdapter: composition.getAdapter, play, sourceId: options.source, options: { ...options, completion: completionPath }, writeProgress })
+      scenarioOutcome = await runDwmDrag({
+        coordinator,
+        getAdapter: composition.getAdapter,
+        play,
+        sourceId: options.source,
+        options: { ...options, completion: completionPath, dwmProtocol },
+        writeProgress
+      })
     } else {
       scenarioOutcome = await runRecoveryInteraction({
         coordinator,
@@ -918,7 +1198,7 @@ async function main () {
       writeProgress('failed', {})
     }
     scenarioOutcome = scenarioOutcome || {
-      scenarioEvidence: failureEvidence(options.scenario),
+      scenarioEvidence: failureEvidence(options.scenario, options, dwmProtocol),
       transport: {
         comparison: options.scenario === 'worker-crash-retry' || RECOVERY_SCENARIOS.includes(options.scenario)
           ? 'cross-recovery-generation'
