@@ -11,6 +11,10 @@
 const { installSprite, iconMarkup } = window.Icons
 const { buildRuntimeView } = window.RuntimeView
 const { applyAppearance } = window.Appearance
+const bindManualWindowDrag = window.ManualWindowDrag?.bindManualWindowDrag || (() => ({
+  end () {},
+  isDragging () { return false }
+}))
 
 /* 壳层 API。缺失时降级成空操作：既让本页能在纯浏览器里做视觉核对，
    也让 preload 万一没挂上时工具条仍然渲染得出来，而不是留一个空白窗难以排查。
@@ -332,26 +336,19 @@ bridge.mouseThrough(true)
 ignoring = true
 
 // ---------------------------------------------------------------------------
-// 拖动：未锁定 → 拖整个单元（主进程改移字幕窗并停靠）；已锁定 → 拖工具条自身
+// 拖动：只有持续可见的握把可以开始。未锁定时主进程移动字幕窗并重停靠，
+// 已锁定时主进程只移动工具条自身。
 // ---------------------------------------------------------------------------
-toolbar.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || e.target.closest('.act')) return
-  dragging = true
-  toolbar.classList.add('dragging')
-  bridge.dragStart('toolbar')
-  try { toolbar.setPointerCapture(e.pointerId) } catch { /* noop */ }
+const toolbarDrag = bindManualWindowDrag({
+  handle: grip,
+  classTarget: toolbar,
+  onStart: () => bridge.dragStart('toolbar'),
+  onEnd: () => bridge.dragEnd(),
+  onActiveChange: (active) => {
+    dragging = active
+    if (!active) applyHit(lastX, lastY)
+  }
 })
-function endDrag () {
-  if (!dragging) return
-  dragging = false
-  toolbar.classList.remove('dragging')
-  bridge.dragEnd()
-  applyHit(lastX, lastY)
-}
-window.addEventListener('pointerup', endDrag)
-window.addEventListener('pointercancel', endDrag)
-toolbar.addEventListener('lostpointercapture', endDrag)
-window.addEventListener('blur', endDrag)
 
 // ---------------------------------------------------------------------------
 // 用户意图：只转交，不预判成功。壳层回执到位后（B1 的 CommandResult）
@@ -370,6 +367,7 @@ toolbar.addEventListener('click', (e) => {
 let lockRevision = 0
 
 function applyLockState (on) {
+  toolbarDrag.end()
   locked = !!on
   wrap.dataset.locked = locked ? 'on' : 'off'
   render()

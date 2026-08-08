@@ -85,6 +85,15 @@ function projectToolbarReport (report, expectedGeneration) {
   }
 }
 
+function dragBoundsAt (start, origin, point) {
+  return {
+    x: start.x + point.x - origin.x,
+    y: start.y + point.y - origin.y,
+    width: start.width,
+    height: start.height
+  }
+}
+
 class ToolbarLayoutState {
   constructor () {
     this.generation = 1
@@ -115,5 +124,6 @@ module.exports = {
   FALLBACK_OVERLAP_RECT,
   ToolbarLayoutState,
   WINDOW_LAYOUT,
+  dragBoundsAt,
   projectToolbarReport
 }

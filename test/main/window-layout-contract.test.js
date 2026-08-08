@@ -95,3 +95,21 @@ test('SEM-F22/J17: main owns generation lifecycle and fixed role-scoped layout c
   assert.match(main, /CHANNELS\.TOOLBAR_LAYOUT_REPORT_RECT/)
   assert.match(main, /CHANNELS\.CAPTION_LAYOUT_TOOLBAR_OVERLAP/)
 })
+
+test('SEM-F22/J17: an unchanged system pointer preserves bounds and the first delta projects immediately', () => {
+  const { dragBoundsAt } = require('../../src/main/window-layout-contract')
+  const start = { x: 100, y: 70, width: 920, height: 190 }
+  const origin = { x: 240, y: 120 }
+
+  assert.deepEqual(dragBoundsAt(start, origin, origin), start)
+  assert.deepEqual(dragBoundsAt(start, origin, { x: 241, y: 118 }), {
+    x: 101,
+    y: 68,
+    width: 920,
+    height: 190
+  })
+
+  const main = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8')
+  assert.match(main, /const nextBounds = dragBoundsAt\(state\.start, state\.origin, point\)/)
+  assert.match(main, /if \(!sameBounds\(nextBounds, state\.lastBounds\)\) \{[\s\S]*state\.win\.setBounds\(nextBounds\)/)
+})

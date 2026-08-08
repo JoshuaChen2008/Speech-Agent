@@ -135,7 +135,7 @@
 .grip {
   display: grid;
   place-items: center;
-  width: 18px;
+  width: 24px;
   height: 30px;
   flex: none;
   color: var(--text-toolbar);

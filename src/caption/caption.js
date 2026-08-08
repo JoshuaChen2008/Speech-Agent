@@ -42,6 +42,7 @@ let resizing = false
 let ignoring = null
 let lastX = 0, lastY = 0
 let toolbarOverlapGeneration = 0
+let gesturePointerId = null
 
 // --------------------------------------------------------------------------
 // 边缘拉伸
@@ -71,18 +72,22 @@ function edgeAt (x, y) {
 let state = createState()
 
 // --------------------------------------------------------------------------
-// 命中测试：指针在卡片上 → 实心；否则穿透。锁定态由主进程恒穿透，这里不干预。
+// 命中顺序固定为：透明外边距 → 工具条实际轮廓 → 8px 拉伸带 → 普通拖动。
+// 锁定态由主进程恒穿透，这里不干预。
 // --------------------------------------------------------------------------
+function captionActionAt (x, y) {
+  if (locked) return { kind: 'through', edge: '' }
+  const el = document.elementFromPoint(x, y)
+  if (!el || !el.closest('.caption-card')) return { kind: 'through', edge: '' }
+  if (el.closest('.tb-hole')) return { kind: 'toolbar', edge: '' }
+  const edge = edgeAt(x, y)
+  return edge ? { kind: 'resize', edge } : { kind: 'drag', edge: '' }
+}
+
 function applyHit (x, y) {
   if (dragging || resizing || locked) return
-  const el = document.elementFromPoint(x, y)
-  // 工具条“洞”内放行穿透，让工具条窗接管；洞外的卡片才算实心。
-  // 但拉伸带优先于洞 —— 否则洞盖住的右上角就再也拉不动了。
-  // 洞是从卡片右上角起算的一大片，而工具条实际停靠时内缩 12px，
-  // 所以 8px 的拉伸带落在工具条按钮之外，两者不会抢事件。
-  const overHole = !!(el && el.closest('.tb-hole'))
-  const onEdge = edgeAt(x, y) !== ''
-  const solid = (onEdge || !overHole) && !!(el && el.closest('.caption-card'))
+  const action = captionActionAt(x, y)
+  const solid = action.kind === 'resize' || action.kind === 'drag'
   const next = !solid
   if (next !== ignoring) {
     ignoring = next
@@ -99,8 +104,8 @@ document.addEventListener('mousemove', (e) => {
     hitQueued = false
     applyHit(lastX, lastY)
     if (!dragging && !resizing) {
-      const edge = edgeAt(lastX, lastY)
-      card.style.cursor = edge ? RESIZE_CURSOR[edge] : ''
+      const action = captionActionAt(lastX, lastY)
+      card.style.cursor = action.kind === 'resize' ? RESIZE_CURSOR[action.edge] : ''
     }
   })
 })
@@ -134,22 +139,31 @@ if (typeof bridge.onToolbarOverlap === 'function') bridge.onToolbarOverlap(accep
 // 拖动（未锁定时可拖；role=caption）
 // --------------------------------------------------------------------------
 card.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || locked) return
-  const edge = edgeAt(e.clientX, e.clientY)
-  if (edge) {
+  if (e.button !== 0 || e.isPrimary === false || !Number.isInteger(e.pointerId) ||
+      locked || gesturePointerId !== null) return
+  const action = captionActionAt(e.clientX, e.clientY)
+  if (action.kind !== 'resize' && action.kind !== 'drag') return
+  try {
+    if (action.kind === 'resize') bridge.resizeStart(action.edge)
+    else bridge.dragStart('caption')
+  } catch { return }
+
+  gesturePointerId = e.pointerId
+  if (action.kind === 'resize') {
     resizing = true
-    bridge.resizeStart(edge)
   } else {
     dragging = true
     card.classList.add('dragging')
-    bridge.dragStart('caption')
   }
   try { card.setPointerCapture(e.pointerId) } catch { /* noop */ }
 })
 
 /* pointerup / pointercancel / lostpointercapture / blur 全都要收尾 ——
    主进程那边是 8ms 定时器，漏掉任何一条取消路径都会让窗口继续跟着光标跑。 */
-function endGesture () {
+function endGesture (event) {
+  if (!dragging && !resizing) return
+  if (event && Number.isInteger(event.pointerId) && event.pointerId !== gesturePointerId) return
+  gesturePointerId = null
   if (resizing) {
     resizing = false
     bridge.resizeEnd()
@@ -166,6 +180,7 @@ window.addEventListener('pointerup', endGesture)
 window.addEventListener('pointercancel', endGesture)
 card.addEventListener('lostpointercapture', endGesture)
 window.addEventListener('blur', endGesture)
+window.addEventListener('beforeunload', endGesture)
 
 // --------------------------------------------------------------------------
 // 锁定：主进程已把本窗设为恒穿透；这里只更新视觉
@@ -175,7 +190,8 @@ let lockRevision = 0
 function applyLockState (on) {
   locked = !!on
   wrap.dataset.locked = locked ? 'on' : 'off'
-  if (!locked) { ignoring = null; applyHit(lastX, lastY) }
+  if (locked) endGesture()
+  else { ignoring = null; applyHit(lastX, lastY) }
 }
 
 async function initLock () {

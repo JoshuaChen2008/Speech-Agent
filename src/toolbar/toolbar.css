@@ -39,7 +39,7 @@ html, body {
 .toolbar {
   background: transparent;
   box-shadow: none;
-  cursor: grab;
+  cursor: default;
   opacity: 0.45;
   transition: opacity var(--dur-slow) var(--ease),
               background-color var(--dur-slow) var(--ease),
@@ -50,10 +50,8 @@ html, body {
   filter: var(--icon-halo);
 }
 
-/* 嵌入时藏起分隔线和握把：整张字幕卡都可以拖，不需要额外的抓取目标，
-   握把只在脱离后才有存在意义。 */
-.wrap[data-locked="off"] .sep,
-.wrap[data-locked="off"] .grip { display: none; }
+/* 嵌入时只藏分隔线；握把在两种锁定状态下都是唯一拖动入口。 */
+.wrap[data-locked="off"] .sep { display: none; }
 
 /* 提亮，但仍然不长外壳 */
 .toolbar:hover,

@@ -41,7 +41,7 @@ const { RefinementFaultLog } = require('./main/services/refinement-fault-log')
 const { RefinementNoticeStore } = require('./main/services/refinement-notice')
 const { createMainEvidenceBridge } = require('./main/services/electron-exit-evidence')
 const { PowerSessionGuard } = require('./main/services/power-session-guard')
-const { ToolbarLayoutState, WINDOW_LAYOUT } = require('./main/window-layout-contract')
+const { ToolbarLayoutState, WINDOW_LAYOUT, dragBoundsAt } = require('./main/window-layout-contract')
 
 const exitEvidence = createMainEvidenceBridge()
 exitEvidence.markLifecycle('main-started')
@@ -317,12 +317,6 @@ function dock () {
   toolbarWin.moveTop()
 }
 
-function intendedSize (win) {
-  if (win === toolbarWin) return { width: TB_W, height: TB_H }
-  const bounds = win.getBounds()
-  return { width: bounds.width, height: bounds.height }
-}
-
 function openSettingsWindow (initialPane = null) {
   if (settingsWin && !settingsWin.isDestroyed()) {
     if (settingsWin.isMinimized()) settingsWin.restore()
@@ -397,6 +391,11 @@ function openHistoryWindow () {
 
 let dragState = null
 
+function sameBounds (left, right) {
+  return left.x === right.x && left.y === right.y &&
+    left.width === right.width && left.height === right.height
+}
+
 function dragTick () {
   const state = dragState
   if (!state) return
@@ -405,13 +404,12 @@ function dragTick () {
     return
   }
   const point = screen.getCursorScreenPoint()
-  state.win.setBounds({
-    x: point.x - state.offX,
-    y: point.y - state.offY,
-    width: state.width,
-    height: state.height
-  })
-  if (state.redock) dock()
+  const nextBounds = dragBoundsAt(state.start, state.origin, point)
+  if (!sameBounds(nextBounds, state.lastBounds)) {
+    state.win.setBounds(nextBounds)
+    state.lastBounds = nextBounds
+    if (state.redock) dock()
+  }
   if (dragState === state) state.timer = setTimeout(dragTick, 8)
 }
 
@@ -431,14 +429,12 @@ function startDrag (event) {
   if (!target || target.isDestroyed()) return
   const point = screen.getCursorScreenPoint()
   const bounds = target.getBounds()
-  const size = intendedSize(target)
   dragState = {
     senderId,
     win: target,
-    offX: point.x - bounds.x,
-    offY: point.y - bounds.y,
-    width: size.width,
-    height: size.height,
+    origin: point,
+    start: bounds,
+    lastBounds: bounds,
     redock,
     timer: null
   }
