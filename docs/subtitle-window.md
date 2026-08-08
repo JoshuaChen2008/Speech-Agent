@@ -23,7 +23,7 @@
 - 解锁入口是工具条和 `Ctrl+Alt+L`，字幕窗内不再保留不可见 hotzone。
 - 历史与导出使用独立 `historyWin`；模型资源和首启也不展开在字幕透明窗内。
 
-本文同时记录已决定但尚未实现的目标交互。凡现状与目标不同，均按 [SEM-F22](semantic-contract.md) 与 [J17](testing-strategy.md) 视为实现缺口，不得把当前行为反向写成要求。
+本文同时记录窗口交互要求、已达到联合验收完成的确定性范围与仍待 I2 实机验收的外部边界。凡代码现状与要求不同，均按 [SEM-F22](semantic-contract.md) 与 [J17](testing-strategy.md) 视为实现缺口，不得把当前行为反向写成要求。
 
 ## 2. 职责边界
 
@@ -69,13 +69,12 @@ Electron 壳层负责：
 - 右对齐是关键：`dock()` 按 `窗口右沿 − TB_MARGIN` 反推位置，右对齐后这个假设与实际渲染恒等，**条多宽都不影响停靠精度**，公式一行没改。
 - `#toolbar.toolbar` 是 `flex-wrap: nowrap`、`.bar-group` 是 `flex: none`，挤压只落在状态文字上（打省略号），不会把「重试 / 下一步」这些出口压没，也不会换行成两层条。
 
-这些值目前同时存在于 `src/main.js` 与 CSS 变量中，是已知的“双重真相”。当前实现用最坏情况洞保证停靠工具条区域不会被字幕窗吞掉点击，但 [SEM-F22](semantic-contract.md) 已将实际 overlap rect 冻结为目标交互，而非可选精度优化：
+窗口几何常量仍同时存在于 `src/main.js` 与 CSS 变量中，是已知的“双重真相”；工具条排除区已经按 [SEM-F22](semantic-contract.md) 使用实际 overlap rect，最坏尺寸只作为临时 fail-safe：
 
 - 主进程拥有 BrowserWindow 外框和 overlap rect。
 - UI 拥有卡片内部尺寸、间距和视觉 token。
 - 若视觉模型改变工具条宽度、字幕高度或停靠位置，必须同时提交 layout contract 请求，不能只改 CSS。
-- 当前 `.tb-hole` 固定为 `584 × 64`，与工具条最坏宽高及留白对齐；常态下会多释放一块透明穿透区，因此属于实现缺口。
-- 目标实现由工具条 renderer 上报当前 `#toolbar.toolbar` 的真实外接矩形，并经 preload、IPC access policy 和主进程校验后换算为字幕卡局部的右侧锚定矩形。该矩形只在有界内存中服务布局，不持久化、不写日志或证据报告。
+- `.tb-hole` 由工具条 renderer 上报当前 `#toolbar.toolbar` 的真实外接矩形，并经 preload、IPC access policy 和主进程校验后换算为字幕卡局部的右侧锚定矩形。该矩形只在有界内存中服务布局，不持久化、不写日志或证据报告。
 - 窗口首帧、renderer reload、布局尚未就绪、矩形非法或 generation 陈旧时，字幕窗临时使用 `584 × 64` 最坏尺寸洞；收到同代有效矩形后必须立即收缩到真实轮廓。
 
 ## 4. BrowserWindow 不变量
@@ -111,7 +110,7 @@ Electron 壳层负责：
 - 使用主进程手动拖动，避免 app-region 与 DWM acrylic 重绘不同步。
 - 两窗的顶部标题栏统一为 `48px`。只有标题栏的非交互区域可发出拖动意图，正文空白区不隐式拖动。
 - 两窗获得焦点时临时执行 `setAlwaysOnTop(true, 'screen-saver')` 并 `moveTop()`，保证位于字幕和工具条之上；失焦时立即恢复普通层级。关闭、销毁与异常路径也必须恢复，不能形成永久置顶窗口。
-- 当前设置标题栏仍为 `44px`，设置与字幕历史也尚未实施上述焦点层级往返，均属于 [SEM-F22](semantic-contract.md) 的实现缺口。
+- 设置与字幕历史标题栏均为 `48px`，并已接入上述焦点层级往返。
 
 ## 5. 拖动与穿透
 
@@ -233,10 +232,10 @@ renderer 在可拖区域发出 `dragStart(role)` 意图，主进程通过全局�
 
 ## 10. 当前状态与后续项
 
-1. [SEM-F22](semantic-contract.md) 与 [J17](testing-strategy.md) 已决定以工具条实际 overlap rect 取代常态固定大洞；`584 × 64` 只保留为首帧、reload、非法或陈旧报告时的临时 fail-safe。当前工作树仍是固定洞，本轮未修改产品代码。
+1. [SEM-F22](semantic-contract.md) 与 [J17](testing-strategy.md) 已以工具条实际 overlap rect 取代常态固定大洞；`584 × 64` 只保留为首帧、reload、非法或陈旧报告时的临时 fail-safe。
 2. B1 已完成 pointercancel/lostpointercapture、blur/destroyed 与主进程拖动/缩放互斥清理。
 3. B1 已把字幕接到稳定节点 + CaptionEvent reducer，并移除 renderer 假流。
 4. B1 已把工具条升级为完整 RuntimeSnapshot + CommandResult。
 5. B1 已让设置页识别 Capabilities；默认 Gate 0B profile 为空，开发 profile 只能由显式开关启用。
 6. 视觉/UI 的 V1–V2 方案和状态矩阵已交付；历史窗口和模型资源页均已接真实主进程契约并通过开发态及 packaged 四窗口 Electron 旅程，205 段详情已验证五页往返且 DOM≤50。I3 非音频预资格又在 3,600 段/72 页下保持 DOM≤50；MVP 不展示翻译开关。J15a 可见非音频 DWM runner、单次/矩阵严格校验与 fail-closed 契约测试为实现完成·尚未验收；尚无 36 例实机 matrix 报告。物理音频、DPI/人工视觉、真实两小时声源与 I4 继续按发布门禁验收。
-7. J17 的动态命中、握把、设置/字幕历史 `48px` 标题栏与焦点层级往返当前状态为已决定；本轮只登记和对齐文档，未修改产品代码或执行 I2 `dwm-drag`。
+7. J17 的动态命中、握把、设置/字幕历史 `48px` 标题栏、共享主题 token 与焦点层级往返已达到联合验收完成；I2 `dwm-drag` v3 单组合报告、操作者 completion 与 12 组合严格矩阵为实现完成·尚未验收，尚未执行当前候选的 12 组合人工 DWM/DPI/异缩放观察。

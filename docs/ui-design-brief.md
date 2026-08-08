@@ -258,7 +258,7 @@ UI 规则：
 ## 6. Contract request 状态
 
 > 提出方：视觉/UI 层 · 2026-08-08 · 对应 V1–V3 与 SEM-F22/J17
-> 状态：既有 A1–A3、stop/retry、history 与资源管理证据保持不变；A4 实际 overlap rect 与 A5 正常窗口焦点层级均为已决定。当前工作树未修改产品代码；权限入口仍随音频门禁延期。
+> 状态：既有 A1–A3、stop/retry、history 与资源管理证据保持不变；A4 实际 overlap rect 与 A5 正常窗口焦点层级已随 J17 达到联合验收完成。权限入口仍随音频门禁延期。
 
 ### 6.1 A 类 · 阻塞型
 
@@ -273,7 +273,7 @@ UI 规则：
 - `resume ≠ start`。有真会话状态后，把两者压成同一个 toggle 会产生错误的状态迁移。
 - UI **刻意不做乐观更新**（§8 要求任何"看起来已成功"都能追溯到后端）。所以在回执到位前，点击的表现是"看起来没反应"——这是设计使然，不是 bug。
 
-**A4（SEM-F22 / J17 必需）**：工具条 renderer 把当前 `#toolbar.toolbar` 外接矩形连同主进程签发的 renderer generation 送入受约束 IPC；主进程严格校验、换算为字幕卡局部的右侧锚定矩形，再由 `onOverlap(cb)` 推送给字幕窗。目前 `caption.css` 的 `.tb-hole` 固定为 `584 × 64`，常态会形成过大的透明穿透区。目标只在首帧、reload、布局未就绪、非法或陈旧矩形时用该最坏尺寸回落；同代有效矩形到达后立即收缩。矩形只服务有界内存布局，不写日志、数据库、导出或证据报告。见 [subtitle-window.md §3](subtitle-window.md)。
+**A4（SEM-F22 / J17 必需）**：工具条 renderer 把当前 `#toolbar.toolbar` 外接矩形连同主进程签发的 renderer generation 送入受约束 IPC；主进程严格校验、换算为字幕卡局部的右侧锚定矩形，再由 `onOverlap(cb)` 推送给字幕窗。`caption.css` 的 `.tb-hole` 只在首帧、reload、布局未就绪、非法或陈旧矩形时使用 `584 × 64` 最坏尺寸回落；同代有效矩形到达后立即收缩。矩形只服务有界内存布局，不写日志、数据库、导出或证据报告。该范围已随 J17 达到联合验收完成，见 [subtitle-window.md §3](subtitle-window.md)。
 
 **A5（SEM-F22 / J17 必需）**：主进程统一管理设置与字幕历史的焦点层级。任一窗口获得焦点时临时进入与字幕/工具条相同的 `screen-saver` 层并 `moveTop()`，失焦、关闭、销毁或异常清理时恢复普通层级；两窗都不得永久置顶。renderer 仅负责 `48px` 标题栏的拖动意图、交互控件排除和共享中性 token，不得直接调用 Electron 层级 API。
 
