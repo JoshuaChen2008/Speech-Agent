@@ -47,17 +47,16 @@
     style.setProperty('--bar-alpha', String(clampNumber(cfg.opacity, 0, 1, 0.86)))
     style.setProperty('--toolbar-alpha', String(clampNumber(cfg.toolbarOpacity, 0, 1, 0.82)))
 
-    /* 自定义底色同时覆盖字幕卡和工具条：两者共享色相，只有 alpha 不同。
-       留空必须 removeProperty 而不是写回默认值 —— 否则内联样式会盖住
-       tokens.css 里的 [data-theme] 分支，深浅主题就切不动了。 */
+    /* 自定义底色只覆盖字幕卡。留空必须 removeProperty 而不是写回默认值 ——
+       否则内联样式会盖住 tokens.css 里的 [data-theme] 分支，深浅主题就切不动。
+       同时清理旧版本可能留下的 --toolbar-bg 内联值，保证工具条回到固定配色。 */
     const triplet = hexToTriplet(cfg.barColor)
     if (triplet) {
       style.setProperty('--bar-bg', triplet)
-      style.setProperty('--toolbar-bg', triplet)
     } else {
       style.removeProperty('--bar-bg')
-      style.removeProperty('--toolbar-bg')
     }
+    style.removeProperty('--toolbar-bg')
   }
 
   const api = { hexToTriplet, clampNumber, applyAppearance }

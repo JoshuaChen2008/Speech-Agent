@@ -773,9 +773,10 @@ async function exerciseNormalWindowInteractions ({ settings, history, toolbar, c
   }
 }
 
-async function exerciseSharedTitlebarThemes (settings, history) {
+async function exerciseSharedTitlebarThemes (settings, history, toolbar, caption) {
   const originalThemeSource = nativeTheme.themeSource
-  const inspect = (win) => rendererValue(win, `(() => {
+  const originalConfig = await rendererValue(settings, 'window.shell.getConfig()')
+  const inspectTitlebar = (win) => rendererValue(win, `(() => {
     const root = getComputedStyle(document.documentElement)
     const titlebar = document.querySelector('.titlebar')
     const titlebarStyle = getComputedStyle(titlebar)
@@ -786,12 +787,39 @@ async function exerciseSharedTitlebarThemes (settings, history) {
       borderBottom: titlebarStyle.borderBottomColor
     }
   })()`)
+  const inspectToolbar = () => rendererValue(toolbar, `(() => {
+    const bar = document.getElementById('toolbar')
+    const button = bar.querySelector('.act')
+    const grip = document.getElementById('grip')
+    const phase = bar.querySelector('.status-icon')
+    const style = getComputedStyle(bar)
+    const rect = bar.getBoundingClientRect()
+    return {
+      theme: document.documentElement.dataset.theme,
+      background: style.backgroundColor,
+      shadow: style.boxShadow,
+      button: getComputedStyle(button).color,
+      grip: getComputedStyle(grip).color,
+      phase: getComputedStyle(phase).color,
+      width: rect.width,
+      height: rect.height
+    }
+  })()`)
+  const inspectCaption = () => rendererValue(caption, `(() => {
+    const card = document.getElementById('captionCard')
+    const style = getComputedStyle(card)
+    return { background: style.backgroundColor, width: card.getBoundingClientRect().width }
+  })()`)
   const variants = []
+  const toolbarVariants = []
   try {
     for (const theme of ['dark', 'light']) {
       nativeTheme.themeSource = theme
+      await rendererValue(settings, `window.shell.setConfig({ theme: '${theme}' })`)
       await new Promise((resolve) => setTimeout(resolve, 80))
-      const [settingsValue, historyValue] = await Promise.all([inspect(settings), inspect(history)])
+      const [settingsValue, historyValue, toolbarValue] = await Promise.all([
+        inspectTitlebar(settings), inspectTitlebar(history), inspectToolbar()
+      ])
       if (!settingsValue.surface || !settingsValue.border ||
           settingsValue.surface !== historyValue.surface || settingsValue.border !== historyValue.border ||
           !settingsValue.background || !historyValue.background ||
@@ -799,8 +827,68 @@ async function exerciseSharedTitlebarThemes (settings, history) {
         throw new Error(`shared titlebar token mismatch in ${theme}`)
       }
       variants.push(settingsValue.surface)
+      toolbarVariants.push(toolbarValue)
+    }
+
+    nativeTheme.themeSource = 'dark'
+    await rendererValue(settings, `window.shell.setConfig({ theme: 'auto' })`)
+    await waitFor(async () => (await inspectToolbar()).theme === 'dark', 'automatic dark toolbar theme')
+    toolbarVariants.push(await inspectToolbar())
+
+    const fixedProjection = (value) => ({
+      background: value.background,
+      shadow: value.shadow,
+      button: value.button,
+      grip: value.grip,
+      phase: value.phase,
+      width: value.width,
+      height: value.height
+    })
+    if (toolbarVariants.some((value) =>
+      JSON.stringify(fixedProjection(value)) !== JSON.stringify(fixedProjection(toolbarVariants[0])))) {
+      throw new Error('toolbar palette or contour changed across dark, light, and automatic themes')
+    }
+
+    const captionBeforeColor = await inspectCaption()
+    const toolbarBeforeColor = await inspectToolbar()
+    await rendererValue(settings, `window.shell.setConfig({ barColor: '#123456' })`)
+    const captionWithColor = await waitFor(async () => {
+      const value = await inspectCaption()
+      return value.background !== captionBeforeColor.background ? value : null
+    }, 'caption-only custom background')
+    const toolbarWithColor = await inspectToolbar()
+    if (toolbarWithColor.background !== toolbarBeforeColor.background ||
+        toolbarWithColor.button !== toolbarBeforeColor.button ||
+        toolbarWithColor.grip !== toolbarBeforeColor.grip ||
+        toolbarWithColor.width !== toolbarBeforeColor.width ||
+        toolbarWithColor.height !== toolbarBeforeColor.height ||
+        captionWithColor.width !== captionBeforeColor.width) {
+      throw new Error('caption custom background leaked into toolbar palette or contour')
+    }
+
+    const captionBeforeOpacity = await inspectCaption()
+    const toolbarBeforeOpacity = await inspectToolbar()
+    await rendererValue(settings, `window.shell.setConfig({ toolbarOpacity: 0.31 })`)
+    const toolbarWithOpacity = await waitFor(async () => {
+      const value = await inspectToolbar()
+      return value.background !== toolbarBeforeOpacity.background ? value : null
+    }, 'toolbar-only surface opacity')
+    const captionWithOpacity = await inspectCaption()
+    if (toolbarWithOpacity.button !== toolbarBeforeOpacity.button ||
+        toolbarWithOpacity.grip !== toolbarBeforeOpacity.grip ||
+        toolbarWithOpacity.phase !== toolbarBeforeOpacity.phase ||
+        toolbarWithOpacity.width !== toolbarBeforeOpacity.width ||
+        toolbarWithOpacity.height !== toolbarBeforeOpacity.height ||
+        captionWithOpacity.background !== captionBeforeOpacity.background ||
+        captionWithOpacity.width !== captionBeforeOpacity.width) {
+      throw new Error('toolbar surface opacity leaked into controls, caption, or contour')
     }
   } finally {
+    await rendererValue(settings, `window.shell.setConfig(${JSON.stringify({
+      theme: originalConfig.theme,
+      barColor: originalConfig.barColor,
+      toolbarOpacity: originalConfig.toolbarOpacity
+    })})`)
     nativeTheme.themeSource = originalThemeSource
   }
   const forcedColorsTitlebarRuleObserved = await rendererValue(settings, `(() => {
@@ -812,7 +900,8 @@ async function exerciseSharedTitlebarThemes (settings, history) {
     })
     return [...document.styleSheets].some((sheet) => visit(sheet.cssRules))
   })()`)
-  if (!forcedColorsTitlebarRuleObserved || variants.length !== 2 || variants[0] === variants[1]) {
+  if (!forcedColorsTitlebarRuleObserved || variants.length !== 2 || variants[0] === variants[1] ||
+      toolbarVariants.length !== 3) {
     throw new Error('shared titlebar theme variants are incomplete')
   }
   return {
@@ -1951,7 +2040,7 @@ async function runJourney () {
       toolbar,
       cursor: controlledCursorBoundary
     }),
-    ...await exerciseSharedTitlebarThemes(settings, history)
+    ...await exerciseSharedTitlebarThemes(settings, history, toolbar, caption)
   }
   controlledCursorBoundary.restore()
   controlledCursorBoundary = null

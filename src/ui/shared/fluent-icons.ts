@@ -2,7 +2,7 @@ import alert from '@fluentui/svg-icons/icons/alert_20_regular.svg?raw'
 import arrowClockwise from '@fluentui/svg-icons/icons/arrow_clockwise_20_regular.svg?raw'
 import box from '@fluentui/svg-icons/icons/box_20_regular.svg?raw'
 import dismiss from '@fluentui/svg-icons/icons/dismiss_20_regular.svg?raw'
-import drag from '@fluentui/svg-icons/icons/drag_20_regular.svg?raw'
+import reorderDotsVertical from '@fluentui/svg-icons/icons/re_order_dots_vertical_20_regular.svg?raw'
 import history from '@fluentui/svg-icons/icons/history_20_regular.svg?raw'
 import key from '@fluentui/svg-icons/icons/key_20_regular.svg?raw'
 import lockClosed from '@fluentui/svg-icons/icons/lock_closed_20_regular.svg?raw'
@@ -33,7 +33,7 @@ const ICONS: Readonly<Record<string, string>> = Object.freeze({
   settings,
   model: box,
   permission: key,
-  grip: drag,
+  grip: reorderDotsVertical,
   history,
   lock: lockClosed,
   unlock: lockOpen,

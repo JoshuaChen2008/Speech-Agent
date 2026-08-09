@@ -13,6 +13,9 @@ test('SEM-F23/J18: toolbar semantic icons resolve to pinned Fluent System Icons 
   assert.match(entry, /ui\/shared\/fluent-icons\.ts/)
   assert.doesNotMatch(source, /<path|<circle|<rect|<polygon/)
   assert.match(source, /fill="currentColor"/)
+  assert.match(source, /re_order_dots_vertical_20_regular\.svg\?raw/)
+  assert.match(source, /grip:\s*reorderDotsVertical/)
+  assert.doesNotMatch(source, /drag_20_regular\.svg\?raw/)
 
   const assetPaths = [...source.matchAll(/from '(@fluentui\/svg-icons\/icons\/[^']+\.svg\?raw)'/g)]
     .map((match) => match[1].replace('@fluentui/svg-icons/', '').replace('?raw', ''))

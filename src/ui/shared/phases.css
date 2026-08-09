@@ -40,6 +40,24 @@
    V2 后半真工具条改用 .bar 后，toolbar.css 里重复的 .sep 要删掉。
    -------------------------------------------------------------------------- */
 .bar {
+  --surface-toolbar: var(--overlay-surface-toolbar);
+  --text-toolbar: var(--overlay-text-toolbar);
+  --text-toolbar-hover: var(--overlay-text-toolbar-hover);
+  --tint-hover: var(--overlay-tint-hover);
+  --tint-active: var(--overlay-tint-active);
+  --tint-sep: var(--overlay-tint-sep);
+  --hairline: var(--overlay-hairline);
+  --icon-halo: var(--overlay-icon-halo);
+  --shadow-bar: var(--overlay-shadow-bar);
+  --tone-neutral: var(--overlay-tone-neutral);
+  --tone-busy: var(--overlay-tone-busy);
+  --tone-live: var(--overlay-tone-live);
+  --tone-warn: var(--overlay-tone-warn);
+  --tone-danger: var(--overlay-tone-danger);
+  --tone-wash-busy: var(--overlay-tone-wash-busy);
+  --tone-wash-live: var(--overlay-tone-wash-live);
+  --tone-wash-warn: var(--overlay-tone-wash-warn);
+  --tone-wash-danger: var(--overlay-tone-wash-danger);
   display: inline-flex;
   align-items: center;
   flex-wrap: nowrap;          /* 宁可截断状态文字，也绝不换行成两层条 */

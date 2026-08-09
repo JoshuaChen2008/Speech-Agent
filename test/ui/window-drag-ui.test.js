@@ -125,6 +125,7 @@ test('SEM-F22/J17: toolbar binds manual drag only to its visible non-focusable g
   const html = source('src/toolbar/index.html')
   const entry = source('src/toolbar/entry.ts')
   const renderer = source('src/toolbar/toolbar.ts')
+  const icons = source('src/ui/shared/fluent-icons.ts')
   const styles = source('src/ui/shared/phases.css') + source('src/toolbar/toolbar.css')
 
   assert.match(html, /<script type="module" src="\.\/entry\.ts"><\/script>/)
@@ -135,6 +136,8 @@ test('SEM-F22/J17: toolbar binds manual drag only to its visible non-focusable g
   assert.doesNotMatch(renderer, /toolbar\.addEventListener\('pointerdown'/)
   assert.doesNotMatch(styles, /data-locked="off"[^}]*\.grip\s*\{\s*display:\s*none/)
   assert.match(styles, /\.grip\s*\{[\s\S]*width:\s*24px;[\s\S]*height:\s*30px;/)
+  assert.match(icons, /re_order_dots_vertical_20_regular\.svg\?raw/)
+  assert.match(icons, /grip:\s*reorderDotsVertical/)
 })
 
 function createCaptionHarness () {

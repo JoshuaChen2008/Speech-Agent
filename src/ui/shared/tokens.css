@@ -79,12 +79,32 @@
    §3 表面与文字（主题相关）
    -------------------------------------------------------------------------- */
 :root {
-  /* 字幕卡与工具条：底色三元组与不透明度分开。
-     颜色是用户可调项（config.barColor，留空则跟随主题）；
-     两个不透明度各有一个滑杆，都可以一路调到 0（全透明）。 */
+  /* 字幕卡底色跟随主题，也允许 config.barColor 覆盖。 */
   --bar-bg: var(--c-ink-900);
   --toolbar-bg: var(--c-ink-950);
   --surface-toolbar: rgba(var(--toolbar-bg), var(--toolbar-alpha));
+
+  /* 悬浮工具条使用固定的深色表面与浅色控件，不随普通主题或字幕底色翻转。
+     phases.css 在 .bar 边界把通用语义 token 映射到这一组固定 token。 */
+  --overlay-toolbar-bg: var(--c-ink-950);
+  --overlay-surface-toolbar: rgba(var(--overlay-toolbar-bg), var(--toolbar-alpha));
+  --overlay-text-toolbar: rgba(var(--c-white), 0.82);
+  --overlay-text-toolbar-hover: rgb(var(--c-white));
+  --overlay-tint-hover: rgba(var(--c-white), 0.12);
+  --overlay-tint-active: rgba(var(--c-white), 0.18);
+  --overlay-tint-sep: rgba(var(--c-white), 0.20);
+  --overlay-hairline: rgba(var(--c-white), 0.06);
+  --overlay-icon-halo: drop-shadow(0 1px 2px rgba(var(--c-black), 0.8));
+  --overlay-shadow-bar: 0 6px 18px rgba(var(--c-black), 0.34);
+  --overlay-tone-neutral: var(--overlay-text-toolbar);
+  --overlay-tone-busy: rgb(var(--c-accent));
+  --overlay-tone-live: rgb(var(--c-red));
+  --overlay-tone-warn: rgb(var(--c-amber));
+  --overlay-tone-danger: rgb(var(--c-red-soft));
+  --overlay-tone-wash-busy: rgba(var(--c-accent), 0.14);
+  --overlay-tone-wash-live: rgba(var(--c-red), 0.14);
+  --overlay-tone-wash-warn: rgba(var(--c-amber), 0.14);
+  --overlay-tone-wash-danger: rgba(var(--c-red-soft), 0.14);
 
   /* 长期窗口表面：DWM Mica 不可用或高对比接管时仍保持不透明可读。 */
   --surface-settings: rgb(32, 32, 32);
@@ -259,8 +279,8 @@
   --toolbar-alpha: 0.82;   /* config.toolbarOpacity · 0–1，与字幕卡各自独立 */
 }
 
-/* config.barColor 非空时，renderer 会把 --bar-bg 和 --toolbar-bg 一起覆盖成
-   同一个三元组（两者共享色相，只有 alpha 不同）。留空则由上面的主题默认值决定。 */
+/* config.barColor 非空时，renderer 只覆盖 --bar-bg；留空则由主题默认值决定。
+   config.toolbarOpacity 只复合 --overlay-surface-toolbar 的透明度。 */
 
 /* config.maxLines 已不参与字幕排版（SEM-F20 / docs/subtitle-window.md §5.0）。
    固定高度字幕流的可见行数由实际可用高度与当前字号决定：caption.ts 调用
