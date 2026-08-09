@@ -4,6 +4,7 @@
 - 日期：2026-08-09
 - 决策者：项目负责人
 - 依赖：ADR 0002、ADR 0004
+- 补充：ADR 0011 已取代下文第 8 项对正式 Agent 首版本地 Agent 模型 provider 的要求；识别 provider、两类 provider 分离及其它决策保持不变。
 
 ## 背景
 
@@ -18,7 +19,7 @@
 5. 只有明确断开、稳定 provider 错误或宽松的连接存活检测失败才触发本地降级。普通延迟波动不触发切换；降级后同一会话单向使用本地识别，不自动切回云端。
 6. 当前段可使用有界内存 PCM 补齐本地上下文，PCM 使用后释放，永不持久化。云端已经提交的首次稳定转写保持不可变；本地链路只继续尚未提交的内容。
 7. 已确认关键词和范围在会话开始时冻结，并通过 provider 能力适配；provider 不支持时明确降级，不做会后字符串替换。
-8. 两类 provider 分别通过项目自有窄接口、能力描述和 registry 接入。隔离 Agent 内核开发入口先接通一个 OpenAI-compatible 云端参考实现与确定性测试 provider，本地 Agent 模型 provider 只冻结接口；进入正式 Agent 产品切片时仍必须补齐本地 Agent 模型实现。识别 provider 的首个产品切片继续同时保留本地权威识别并接通云端参考实现；以后增加 FunASR 一类云端识别适配器时，不修改字幕事件、会话状态或 Agent 产物契约。
+8. 两类 provider 分别通过项目自有窄接口、能力描述和 registry 接入。隔离 Agent 内核开发入口先接通一个 OpenAI-compatible 云端参考实现与确定性测试 provider，本地 Agent 模型 provider 只冻结接口；正式 Agent 首版按 ADR 0011 只闭合 Agent 模型 provider 的配置、启动环境凭据、冻结和降级，真实 DeepSeek 公网与本地 Agent 模型 provider 都后置。识别 provider 的首个产品切片继续同时保留本地权威识别并接通云端参考实现；以后增加 FunASR 一类云端识别适配器时，不修改字幕事件、会话状态或 Agent 产物契约。
 
 ## 取舍
 

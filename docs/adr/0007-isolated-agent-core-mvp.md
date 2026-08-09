@@ -4,6 +4,7 @@
 - 日期：2026-08-09
 - 决策者：项目负责人
 - 依赖：ADR 0002、ADR 0003、ADR 0005
+- 补充：ADR 0011 已取代下文第 4 项对正式 Agent 首版本地 Agent 模型 provider 的要求；本 ADR 的隔离入口、OpenAI-compatible 参考实现和 `safeStorage` 证据保持不变，不要求把隔离入口直接迁入正式产品。
 
 ## 背景
 
@@ -14,7 +15,7 @@ Agent 系统尚无运行实现。直接同时接入字幕停止事件、会后�
 1. 首个实现切片是隔离 Agent 内核开发入口，只验证 Pi Agent Loop、静态第一方插件 registry、能力白名单、`ModelGateway`、调试聊天、执行预览、固定 recipe 专用子 Agent、后台 Agent 任务与 SQLite 恢复。
 2. 该入口拥有独立 main、renderer、preload、IPC access policy、utility process、userData、SQLite 和诊断目录；不得导入或启动正式字幕主进程。
 3. 输入只使用由真实 storage worker 写入隔离 SQLite 的无音频合成终态会话。参考插件只能生成明确标记为 `reference-output` 的结构化产物，不实现会后结构化纪要、增强文本、个人记忆或确认关键词。
-4. 首个真实 Agent 模型 provider 是用户配置的 OpenAI-compatible HTTPS 服务，并配一个只用于自动化测试的确定性 provider。本地 Agent 模型 provider 只冻结接口，留到正式 Agent 产品切片实现。
+4. 首个真实 Agent 模型 provider 是隔离 Agent 内核开发入口中由用户配置的 OpenAI-compatible HTTPS 服务，并配一个只用于自动化测试的确定性 provider。本地 Agent 模型 provider 只冻结接口；正式 Agent 首版按 ADR 0011 只闭合 DeepSeek 非敏感配置表、启动环境凭据、冻结和降级，真实 DeepSeek 公网与本地 Agent 模型 provider 都后置。
 5. 开发入口、Pi 依赖和 Agent renderer 产物不得进入正式安装包或正式导航。隔离库的数据不迁移到正式产品 userData。
 6. J23 只验收 Agent 内核。J21/J22 必须等真实字幕输入、个人记忆、固定业务工具和正式产品 UI 接入后分别闭合。
 

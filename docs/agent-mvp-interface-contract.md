@@ -1,6 +1,6 @@
 # 正式 Agent 首版接口合同
 
-> 证据状态：已决定。D3 的正式 SQLite 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切，以及 D6 的 production `StorageWorkerHost` storage utility transport 子边界均为实现完成·尚未验收。D6 已经过真实 Electron utility process，覆盖策略先行、claim 后 exact-child 强制退出与退出同一性、replacement 未重放策略前拒绝领取、租约到期后同 `runId` 恢复、重复对账和三项结果各自最多提交一次，并由父测试独立复算 SQLite 身份与隐私负扫描；它仍不表示 PluginHost/Loop 已进入 Agent utility，也未接入 `MeetingStopped`、正式 `StorageGateway`、preload/IPC、renderer、记忆检索、确认关键词或发布包。本文冻结正式产品接口职责，不表示 J13/J20/J21/J22/J24 已有完整产品证据。
+> 证据状态：已决定。D3 的正式 SQLite 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切，以及 D6 的 production `StorageWorkerHost` storage utility transport 子边界均为实现完成·尚未验收。D6 已经过真实 Electron utility process，覆盖策略先行、claim 后 exact-child 强制退出与退出同一性、replacement 未重放策略前拒绝领取、租约到期后同 `runId` 恢复、重复对账和三项结果各自最多提交一次，并由父测试独立复算 SQLite 身份与隐私负扫描；它仍不表示 PluginHost/Loop 已进入 Agent utility，也未接入 `MeetingStopped`、正式 `StorageGateway`、preload/IPC、renderer、记忆检索、确认关键词或发布包。ADR 0011 另冻结正式首版的 DeepSeek 非敏感配置表、启动环境凭据、provider/model/预算冻结和降级；本文不表示真实 DeepSeek 已接入，也不表示 J13/J20/J21/J22/J24 已有完整产品证据。
 
 ## 1. 边界与版本
 
@@ -55,6 +55,27 @@ type AgentEligibilityContext = {
   localModelReady: boolean
 }
 
+type AgentProviderBootstrapConfig = {
+  providerId: 'deepseek'
+  providerKind: 'cloud'
+  apiStyle: 'openai-chat-completions'
+  baseUrl: 'https://api.deepseek.com'
+  model: string
+  maxChunkInputBytes: number
+  maxResultBytes: number
+  timeoutMs: number
+}
+
+type AgentProviderPublicState = {
+  provider: {
+    providerId: 'deepseek'
+    providerKind: 'cloud'
+    model: string
+  } | null
+  configurationSource: 'trusted_config_table'
+  credentialState: 'startup_environment' | 'missing' | 'invalid'
+}
+
 type EventRange = {
   fromEventOrder: number
   throughEventOrder: number
@@ -99,7 +120,9 @@ type PluginResult =
 
 `InputReference` 在任务创建时冻结。自动重试沿用同一 `runId`；用户主动重新生成使用新的 `runId`。`AgentEligibility` 是 Agent 处理资格，不是后台 Agent 任务状态。只有 `ready` 可以创建或领取任务；其余结果不调用 Agent 模型 provider，并由设置或历史界面显示下一动作。判定顺序固定为：`session_not_terminal → no_committed_transcript → outside_automatic_window`（仅自动请求）`→ agent_disabled → provider_not_configured → cloud_disclosure_required/credential_unavailable`（仅云端 Agent 模型 provider）`→ local_model_not_ready`（仅本地 Agent 模型 provider）`→ ready`。用户请求不受自动处理时间边界限制，但不能绕过其它条件。零条首次稳定转写没有合法 `inputWatermark`，因此不创建后台 Agent 任务，历史详情返回 `no_committed_transcript`，而不是伪造成功任务。
 
-`AgentEligibilityContext` 只由受信任的主进程从 ConfigStore、系统凭据存储与本地模型就绪证明组合，并以 exact object 交给 storage worker；renderer、插件或 Agent 模型 provider 不得提供或覆盖该对象。storage worker 仍负责读取会话、首次稳定转写和终态事实，并按上述固定顺序复算资格。上下文只携带非敏感事实：`credentialAvailable` 是布尔值，不能携带、持久化或返回凭据；`providerId/providerKind/model` 只有三者同时形成有效配置才算已配置。`memoryEnabled` 不改变会话级 Agent 处理资格；`memoryProcessingSince` 只决定自动对账是否为该终态会话创建个人记忆任务。Agent 总开关或个人记忆从不生效转为生效时写入新边界，任一关闭时该边界为 `null`；因此自动记忆任务同时要求会话位于 `automaticProcessingSince` 与 `memoryProcessingSince` 之内。用户明确请求可忽略两个时间边界，但 `memory-extraction` 仍要求个人记忆开启。云端资格只读取披露与凭据事实，本地资格只读取模型就绪事实；无关字段不能绕过适用分支。
+`AgentEligibilityContext` 只由受信任的主进程从 `AgentProviderConfigCatalog`、ConfigStore v2 的平面 Agent 设置、启动时从环境读取并只驻留主进程内存的凭据，以及本地模型就绪证明组合，并以 exact object 交给 storage worker；renderer、插件或 Agent 模型 provider 不得提供或覆盖该对象。正式 main 必须在创建任何 `BrowserWindow`、preload、renderer、Node worker、child process 或 utility process 之前读取并删除 `DEEPSEEK_API_KEY`，所有子进程环境显式排除该变量；storage worker 只得到 `credentialAvailable` 布尔值。storage worker 仍负责读取会话、首次稳定转写和终态事实，并按上述固定顺序复算资格。上下文只携带非敏感事实：`providerId/providerKind/model` 只有三者与合法 `AgentProviderBootstrapConfig` 同时成立才算已配置。`memoryEnabled` 不改变会话级 Agent 处理资格；`memoryProcessingSince` 只决定自动对账是否为该终态会话创建个人记忆任务。Agent 总开关或个人记忆从不生效转为生效时写入新边界，任一关闭时该边界为 `null`；因此自动记忆任务同时要求会话位于 `automaticProcessingSince` 与 `memoryProcessingSince` 之内。用户明确请求可忽略两个时间边界，但 `memory-extraction` 仍要求个人记忆开启。云端资格只读取披露与凭据事实，本地资格只读取模型就绪事实；`deepseek` 云端分支不要求 `localModelReady`，无关字段不能绕过适用分支。
+
+初版受信任配置表默认 `providerId='deepseek'`、`providerKind='cloud'`、`apiStyle='openai-chat-completions'`、`baseUrl='https://api.deepseek.com'`、`model='deepseek-v4-flash'`。模型标识是可配置的不透明字符串；宿主不得根据名字猜测上下文、输出、Tool Calling 或思考模式能力。`maxChunkInputBytes/maxResultBytes/timeoutMs` 必须由配置表明确给出并经过范围校验。网络请求只允许 exact origin `https://api.deepseek.com`、受控路径且拒绝 redirect；应用不自动读取 `.env` 文件，renderer 不提供 API key 写入/回读接口；缺少、全空白或超过 4096 个 UTF-8 字节的凭据均返回 `credential_unavailable`。
 
 `transcriptVersion: 'refined'` 只表示整场精修覆盖完整的冻结精修稿。`0 < N < M` 的精修覆盖不完整只是显示/导出层的混合视图，不形成首版 Agent 输入版本；用户必须明确使用权威原始转写，或者在 `N=M` 时选择完整精修稿。storage worker 必须在调用 Agent 模型 provider 前拒绝把不完整混合正文声明为 `refined`。
 
@@ -117,7 +140,7 @@ type PluginResult =
 | `MemoryCandidateSink.commit(candidate, lease)` | 校验来源、三级筛选、范围、冲突和 suppression 后提交记忆事实 | 不从摘要二次提取，不把推断直接提升为明确偏好 |
 | `JobController.request/cancel/reconcile` | 只操作 registry 中的固定任务，落实人工幂等键和终态会话对账 | 不接受任意 prompt、工具表、文件路径或 SQL |
 | `RecognitionProviderRegistry` | 注册第一方识别适配器及关键词、取消、存活检测、有序事件能力 | 不与 Agent 模型 provider 共用选择或凭据 |
-| `AgentModelProviderRegistry` | 注册本地/云端 Agent 模型能力、上下文窗口和输出预算 | 不扩张插件权限，不改变字幕会话状态 |
+| `AgentModelProviderRegistry` | 从 main-only `AgentProviderConfigCatalog` 注册 DeepSeek OpenAI-compatible 描述符及测试替身，向 `ModelGateway` 提供冻结的输入/输出预算、超时与打开模型句柄 | 不接受任意 URL，不读取 renderer key，不猜测模型能力，不扩张插件权限，不改变字幕会话状态 |
 
 `AgentInputPlanner` 是宿主内部端口，不属于插件权限。只有所有分块及归并步骤成功后才能调用 writer；中间结果只存在于本次有界执行内存中。
 
@@ -158,10 +181,8 @@ Agent 模型 provider registry 必须把上下文窗口、固定提示和输出�
 
 | Channel | Role | 精确请求 | 结果摘要 |
 |---|---|---|---|
-| `agent-settings:get` | `settings` | `{}` | Agent 总开关、Agent 模型 provider/模型非敏感状态、云端披露、个人记忆开关、`automaticProcessingSince`、`memoryProcessingSince`、revision |
-| `agent-settings:update` | `settings` | `{ expectedRevision, agentEnabled, providerId, model, memoryEnabled, cloudDisclosureAccepted }` | 新 revision；开启时建立自动处理时间边界，活动任务继续使用冻结快照，关闭 Agent 或个人记忆触发对应取消 |
-| `agent-credential:set` | `settings` | `{ providerId, apiKey }` | 仅返回 `{ credentialState }`；绝不回读 apiKey |
-| `agent-credential:clear` | `settings` | `{ providerId }` | 清除后 queued/running job 不静默更换 Agent 模型 provider |
+| `agent-settings:get` | `settings` | `{}` | Agent 总开关、`AgentProviderPublicState`、云端披露、个人记忆开关、`automaticProcessingSince`、`memoryProcessingSince`、revision；不返回 API key |
+| `agent-settings:update` | `settings` | `{ expectedRevision, agentEnabled, memoryEnabled, cloudDisclosureAccepted }` | 同一次原子读改写先核对当前 `agentSettingsRevision`；不匹配返回 `SETTINGS_REVISION_CONFLICT` 且零写入，匹配时应用开关/边界归一化并把 revision 恰好加一。活动任务继续使用冻结快照，关闭 Agent 或个人记忆触发对应取消；provider 参数只来自 main-only 配置表，不接受 renderer URL/model |
 | `recognition-terms:list` | `settings` | `{ limit, cursor, scopeFilter, lifecycleFilter }` | 候选与已确认词汇的有界页 |
 | `recognition-terms:update` | `settings` | `{ termId, expectedRevision, action, canonicalText, aliases, scopeId }` | 新 revision；只影响下一新会话快照 |
 | `agent-session:get` | `history` | `{ sessionId }` | eligibility、三项 job、当前产物和版本摘要 |
@@ -203,7 +224,9 @@ type MeetingMinutes = {
 
 - 本地 Agent job 只在无活动字幕会话时领取。活动字幕会话开始后，正在执行的本地 job 有界取消并进入可重试状态；云端 Agent job 可以继续。
 - Agent 总开关首次默认为关闭；个人记忆开关仍按 SEM-F26 默认为开启，但只在 Agent 总开关开启且处理资格为 `ready` 时生效。关闭 Agent 后不再创建或领取任务，queued/retry_wait job 取消，running job 请求取消并拒绝迟到提交；既有产物和个人记忆保留在本地。
-- `agentEnabled`、`automaticProcessingSince` 与 `memoryProcessingSince` 由主进程 `ConfigStore.aiPreferences` 原子持久化，字段名在 IPC、运行时和持久设置中统一使用 camelCase。Agent 首次为 `false/null`，每次从关闭变为开启时写入与 `sessions.ended_at` 同一 UTC epoch-millisecond 时间基准的新 Agent 边界；`agentEnabled && memoryEnabled` 每次从不生效变为生效时写入新的个人记忆边界，任一开关关闭时该边界恢复为 `null`。启动时出现非法组合必须 fail closed 为对应能力关闭，且两个绝对时点都不得进入 SEM-F14 证据报告。
+- 实现正式 Agent 设置时把当前平面 `ConfigStore` 从 schema v1 迁移到 v2，增加 exact 平面字段 `agentEnabled`、`automaticProcessingSince`、`memoryEnabled`、`memoryProcessingSince`、`cloudDisclosureAccepted` 与 `agentSettingsRevision`，迁移保留现有字幕设置。Agent 首次为关闭，两个边界为 `null`，个人记忆开关为开启，云端披露未确认；非法 Agent 字段组合统一回落到 Agent 关闭、两个边界为 `null`、披露未确认。每次更新在同一次原子读改写内核对 `expectedRevision`、归一化六个字段并把 revision 恰好加一，冲突时返回 `SETTINGS_REVISION_CONFLICT` 且零写入。renderer patch 只允许三个布尔设置和 expected revision，不得写 provider、URL、model 或凭据。
+- `DEEPSEEK_API_KEY` 只在正式 main 最早的同步启动阶段读取一次；取得 raw 值后先无条件从 `process.env` 删除，再校验并只复制合法值，且该顺序早于任何窗口、preload、renderer、worker、child 或 utility 创建。所有子进程环境显式排除该变量。只有 Agent utility 的当前调用接收私有有界副本；单次调用结束时清零副本，Agent utility 异常退出、稳定鉴权失败或应用退出时清零主进程副本并要求重启。运行中后来设置环境变量不生效，现有 job 保持冻结 provider/model，不静默切换。
+- 初版网络适配器只向 `https://api.deepseek.com` 的受控路径发送 Authorization 并拒绝 redirect；配置表任一 host/scheme/port/user-info/path 基准漂移都 fail closed 为 `provider_not_configured`。
 - 自动对账不处理 `automaticProcessingSince` 之前的终态会话；更早会话只能由用户从历史明确请求。
 - Agent 模型 provider、模型和 recipe 在 job 创建时冻结。设置更新只影响新 job，不修改运行中或历史 job。
 - 个人记忆开关关闭时，queued/retry_wait 的 memory job 取消，running memory job 请求取消并拒绝迟到提交；纪要和增强文本不受影响。重新开启只为新个人记忆自动处理边界之后结束的会话创建自动记忆任务，不复活已取消任务，也不补处理关闭期间会话；历史中的用户明确请求仍可重新提取。
@@ -213,7 +236,7 @@ type MeetingMinutes = {
 ## 8. 验收映射
 
 - J13：端口白名单、插件异常/卸载/重复触发与越权。
-- J20：识别 provider registry、Agent 模型 provider registry、确认关键词与会话冻结。
+- J20：识别 provider registry、确认关键词与会话冻结；正式 Agent 模型 provider 的配置、凭据、冻结和降级由 J7/J13/J21/J22/J24 覆盖，真实 DeepSeek 公网后置。
 - J21：三项后台 Agent 任务、产物、个人记忆及设置/历史真实链路。
 - J22：正式调试聊天、执行预览、确认和固定业务工具。
 - J24：空/短/长输入、重复动作、丢失响应、退出恢复、删除、资源仲裁、隐私与可访问状态组合。

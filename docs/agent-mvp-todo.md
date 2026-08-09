@@ -1,7 +1,7 @@
 # 正式 Agent 首版 TODO 与组合验收矩阵
 
 > 更新日期：2026-08-10
-> 证据状态：SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；D3 的正式 SQLite migration 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切，以及 D6 的正式 storage utility transport 子边界均为实现完成·尚未验收；其余正式产品项保持已决定。
+> 证据状态：SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；D3 的正式 SQLite migration 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切，以及 D6 的正式 storage utility transport 子边界均为实现完成·尚未验收；ADR 0011 的 DeepSeek 配置表、启动环境凭据、provider/model/预算冻结和降级为已决定；其余正式产品项保持已决定。
 
 ## 1. 使用方式与权威边界
 
@@ -9,7 +9,7 @@
 
 本目标中的“完整 MVP”解释为正式 Agent 首版，而不是隔离 Agent 内核开发入口。交付范围固定引用 SEM-F00/F09/F15/F16/F25–F28、SEM-T07/T10/T15、DB7、J3–J7/J12/J13/J20–J24；J23 是进入正式接线前的内核前置门禁。
 
-不进入首版：任意外部操作、通用助手、递归委派、第三方插件市场、完整个人记忆管理、逐会话敏感排除、FTS5、embedding、图关系、会中滚动增强。
+不进入首版：任意外部操作、通用助手、递归委派、第三方插件市场、完整个人记忆管理、逐会话敏感排除、FTS5、embedding、图关系、会中滚动增强、真实 DeepSeek 公网/账户/配额/模型质量验收、本地 Agent 模型 provider、API key 持久化与 renderer 凭据输入。正式首版仍必须闭合 Agent 模型 provider registry、main-only 受信任配置表、启动环境凭据状态、冻结快照和显式降级。
 
 ## 2. 当前基线
 
@@ -23,7 +23,7 @@
 | 正式 storage utility transport | 实现完成·尚未验收 | D6 使用 production `StorageWorkerHost` 跨越真实 Electron utility process：策略先行、claim 已提交后强制结束所捕获的 exact child 并等待同一退出结果、replacement 未重放策略前拒绝领取、租约到期后同一 `runId` 恢复，以及三项任务各自最多提交一次；父测试独立复算 SQLite 身份与隐私负扫描。不包含 Agent utility、`MeetingStopped`、正式 `StorageGateway` 接线、preload/IPC 或 renderer |
 | 正式字幕提交边界接线 | 已决定 | 尚无 `MeetingStopped → AgentJobReconciler` 正式实现证据 |
 | 正式三项后台 Agent 任务 | 已决定 | 三项任务共享同一冻结输入并独立执行的 UI-free 后端子边界为实现完成·尚未验收；正式触发、utility-process 运行时、用户读取/操作链路与完整 J21/J24 仍无产品证据 |
-| 识别 provider、Agent 模型 provider、确认关键词、资源仲裁 | 已决定 | 正式 registry、云端识别与本地 Agent 模型 provider 尚无实现证据 |
+| 识别 provider、Agent 模型 provider、确认关键词、资源仲裁 | 已决定 | 识别 registry、云端识别、确认关键词与资源仲裁尚无实现证据；Agent 模型 provider 按 ADR 0011 使用 `deepseek/deepseek-v4-flash` main-only 配置表与 `DEEPSEEK_API_KEY` 启动环境凭据，真实 DeepSeek 公网及本地 Agent 模型 provider 后置 |
 | 正式设置/历史/调试聊天 | 已决定 | UI/UX 由并行任务维护；正式 IPC、preload、storage 读取仍待接线 |
 | 正式打包与发布 | 已决定 | 正式包当前按设计排除隔离入口和 Pi 开发依赖 |
 
@@ -35,7 +35,7 @@
 |---|---|---|
 | `src/caption/**`、`src/toolbar/**`、`src/history/history-view.tsx`、`src/settings/settings-view.tsx` | 字幕系统前台交互 | 避让；只在接口合同中提出未来接线，不改 renderer |
 | `src/main.js`、`src/main/**`、`src/preload/**`、窗口交互相关测试与脚本 | 字幕系统后台交互和窗口生命周期 | 避让；正式 IPC 落地延后到并行改动提交后 |
-| `src/agent-mvp/renderer/**`、`docs/agent-ui-ux-handoff.md` | Agent UI/UX 交接模型 | 避让；Stage 0 UI 不作为正式产品接口依据；独立复核发现 `succeeded → 已完成` 的状态词待该并行任务按语义合同对齐 |
+| `src/agent-mvp/renderer/**`、`docs/agent-ui-ux-handoff.md` | Agent UI/UX 交接模型 | 避让；Stage 0 UI 不作为正式产品接口依据，其 provider key/safeStorage 表单也不得复制到 ADR 0011 的正式产品；独立复核发现 `succeeded → 已完成` 的状态词待该并行任务按语义合同对齐 |
 | `docs/current-ui-ux-handoff.md`、`docs/ui-design-brief.md` | UI/UX 交接 | 只读参考，不纳入本目标提交 |
 
 若后续 `docs/semantic-contract.md` 或 `docs/testing-strategy.md` 出现字幕任务的新未提交 hunk，本目标只暂存 Agent 专属 hunk；无法可靠分离时整文件让出并在此登记。
@@ -52,8 +52,8 @@
 | A5 | 会后结构化纪要 | `transcript-context`、`meeting-minutes`、固定四栏目、证据范围、空数组不臆造、版本化 UI | SEM-T07/T10 / J3–J7/J13/J21/J24 | 已决定 |
 | A6 | 增强文本 | 独立派生版本、完整输入覆盖、明确重新生成、不覆盖权威原始转写 | SEM-F16/F28 / J13/J21/J24 | 已决定 |
 | A7 | 个人记忆 | 提取/合并插件、三级筛选、范围/冲突/来源/suppression、有界检索、开关休眠 | SEM-F26/F27 / DB7/J21/J24 | 已决定 |
-| A8 | 识别 provider、Agent 模型 provider 与确认关键词 | 两个 registry、本地/云端 Agent 模型 provider、云端识别参考实现、能力声明与下一会话冻结 | SEM-F25/F27 / J20/J24 | 已决定 |
-| A9 | 正式设置与历史接线 | 受限 preload/exact IPC、任务状态、产物版本、云端披露、凭据只写、可访问状态通知 | SEM-F14/F28 / J12/J21/J24 | 已决定 |
+| A8 | 识别 provider、Agent 模型 provider 配置与确认关键词 | 识别 registry/云端识别参考实现；Agent `deepseek/deepseek-v4-flash` main-only 配置表、启动环境凭据、测试替身 registry、冻结预算与资格降级；确认关键词能力声明与下一会话冻结。真实 DeepSeek 公网及本地 Agent 模型 provider 后置 | SEM-F25/F27 / J20/J24 | 已决定 |
+| A9 | 正式设置与历史接线 | 受限 preload/exact IPC、任务状态、产物版本、云端披露、provider 公共只读状态、可访问状态通知；不提供 API key renderer IPC | SEM-F14/F28 / J12/J21/J24 | 已决定 |
 | A10 | 正式调试聊天 | 默认隐藏、选定终态会话、有界记忆、固定业务工具、执行预览/确认、记录不进记忆 | SEM-F15/F28/T10 / J13/J22/J24 | 已决定 |
 | A11 | 打包与验收 | 正式 Agent 代码进入产品包，隔离入口继续排除；core/integration/evidence、package 与适用实机证据闭合 | SEM-T03/T12/T15 / J9/J13/J20–J24 | 已决定 |
 
@@ -62,7 +62,7 @@
 1. A0 先补齐 J23；这能固定内核错误和恢复语义，但不得提升正式 Agent 状态。
 2. A1–A4 建立正式数据与生命周期骨架，且继续保证 Agent 完全不存在时字幕系统独立运行。
 3. A5 先形成“终态会话 → 会后结构化纪要 → 历史查看”的最小纵向产品闭环。
-4. A6–A8 补齐增强文本、个人记忆、识别 provider、Agent 模型 provider 与确认关键词。
+4. A6–A8 补齐增强文本、个人记忆、识别 provider、Agent 模型 provider 配置/凭据/冻结/降级与确认关键词；真实 DeepSeek 公网和本地 Agent 模型 provider 留给后续接入。
 5. A9–A10 与 UI/UX 并行任务的最终界面对接；发生冲突时继续避让 renderer，优先完成后端接口与测试 fixture。
 6. A11 收齐 SEM-T15 的组合门禁，再判定联合、实机与发布验收状态。
 
@@ -91,7 +91,7 @@ J23 的确定性 Agent 模型 provider 方案与任务领取竞态 gate 只能�
 
 ## 7. J24 正常使用边界组合矩阵
 
-所有 J24 场景使用真实 storage worker、SQLite migration、`AgentPluginHost`、job runner、正式 preload/IPC 和对应 renderer。只有 Agent 模型 provider、云网络、系统凭据存储、声卡与操作系统权限可以使用受控替身；不得用内存 repository、直接调用最终 writer 或 renderer 内 fixture 替代产品内部模块。`test/validation/agent-mvp-design-contract.test.js` 只防止设计追踪漂移，不构成任何产品旅程证据，也不得提高 J13/J20/J21/J22/J24 的验收状态。
+所有 J24 场景使用真实 storage worker、SQLite migration、`AgentPluginHost`、job runner、正式 preload/IPC 和对应 renderer。只有 Agent 模型 provider、云网络、启动环境凭据、声卡与操作系统权限可以使用受控替身；不得用内存 repository、直接调用最终 writer 或 renderer 内 fixture 替代产品内部模块。测试必须说明独立用户风险与旅程位置；文档关键词正则、重复相同可观察结果的低层旅程或固定内部调用次序不构成产品证据，应合并或删除。
 
 D3 先闭合 A2–A4 的正式存储与生命周期骨架，不触碰并行维护的 renderer。其阻断切片已登记为：DB7/ADR 0010 的 v2 → 正式 Agent v3 与交叉 catalog fail closed；J24-B01/B26 的资格优先级；J24-B04/B25 的三项任务同输入身份和重复对账幂等；J24-B05/B07/B08/B09/B11/B12/B13/B14/B18 的租约、回复重放、人工幂等、取消、错误分类、冻结 Agent 模型 provider 快照、个人记忆自动处理边界与多会话领取；J24-B21/B29/B30 的完整精修输入、陈旧输入与隐私负扫描。该切片在缺少正式 PluginHost、preload/IPC 和 renderer 前最多只能标为“实现完成·尚未验收”，不能提高 J24 状态。
 
@@ -115,7 +115,7 @@ D6 的 A4 正式 storage utility transport 子边界现为实现完成·尚未�
 | J24-B10 | 用户取消 running job，随后出现迟到 Agent 模型 provider 结果 | AbortSignal 生效；迟到结果因取消/租约校验被拒绝，不写产物 | 已决定 |
 | J24-B11 | Agent 模型 provider 出现 408、429、网络或 5xx | 在固定预算内退避并沿用同一 `runId`；不形成重试风暴，不阻塞字幕 | 已决定 |
 | J24-B12 | 凭据失效、输出 Schema 错误、越权或参数错误 | 直接 `failed`，不自动重试；显示稳定错误和下一动作 | 已决定 |
-| J24-B13 | queued/running 期间用户更改 Agent 模型 provider、模型或 recipe | 既有 job 保持冻结快照；新 job 使用新设置，不静默切换 | 已决定 |
+| J24-B13 | queued/running 期间部署新的 main-only provider 配置表或 recipe，并在稍后重启应用 | 既有 job 保持冻结 provider/model/recipe/预算；只有重启后新建 job 使用新配置，不在运行中读取文件或环境变量并静默切换 | 已决定 |
 | J24-B14 | memory job queued/running 时关闭个人记忆，关闭期间另有会话进入终态，随后重新开启 | 只取消记忆任务并拒绝迟到提交；纪要、增强文本与字幕继续。重新开启写入新的个人记忆自动处理边界，不复活已取消任务，也不自动补处理关闭期间或更早会话；用户明确请求重新提取仍需当前开关与资格满足 | 已决定 |
 | J24-B15 | 本地 Agent job 运行时开始新字幕会话 | 本地 job 有界停止并进入可重试状态；新字幕会话优先 | 已决定 |
 | J24-B16 | 云端 Agent job 运行时开始新字幕会话 | 云端请求可继续，但 SQLite 回写和 UI 更新保持有界 | 已决定 |
@@ -125,7 +125,7 @@ D6 的 A4 正式 storage utility transport 子边界现为实现完成·尚未�
 | J24-B20 | 纪要正文没有明确负责人或期限 | `owner/due` 为 `null`，不得根据音频来源或第一人称臆造身份 | 已决定 |
 | J24-B21 | 用户在 job 运行后选择另一正文版本，或选择精修覆盖不完整的混合显示正文 | 原 job 继续绑定原 `InputReference`；重新生成以新输入身份创建新版本。`refined` 只接受整场 `N=M` 的完整精修稿，不完整混合显示正文在 Agent 模型 provider 调用前被拒绝，用户可改选权威原始转写 | 已决定 |
 | J24-B22 | 个人记忆出现重复、冲突、用户删除后旧输入再次扫描 | 增加来源或 revision；明确内容优先；suppression 阻止旧来源重建 | 已决定 |
-| J24-B23 | `safeStorage` 不可用或用户清除云端凭据 | 凭据只保留本进程或被清除；renderer/SQLite/日志/报告永不返回密钥 | 已决定 |
+| J24-B23 | 首次启动没有 `DEEPSEEK_API_KEY`，key 为空白或超出 4096 个 UTF-8 字节，main-only provider 配置表/ConfigStore v2 Agent 字段损坏，运行中后来设置环境变量，或以完整启动环境重启 | key 缺失/不合法返回 `credential_unavailable`，配置表损坏返回 `provider_not_configured`，非法 Agent 设置 fail closed 为 Agent 关闭；均不创建/领取任务、不调用 Agent 模型 provider、不写产物，字幕系统继续。正式 main 在任何窗口或子进程创建前删除 key，所有子进程环境均无该变量；只有 Agent utility 当前调用收到私有副本。运行中注入仍保持降级，重启后合法配置、有效 key、云端披露、Agent 总开关、时间边界与终态已提交正文共同满足才可得到 `ready`；DeepSeek 云端分支不要求本地 Agent 模型就绪 | 已决定 |
 | J24-B24 | 状态快速变化、键盘操作、失败后重试及 renderer 重载 | 权威状态可聚焦、可读且通过 live region 通知；不只靠颜色，不重复动作 | 已决定 |
 | J24-B25 | 一条正常终态会话进入自动处理 | 三项后台 Agent 任务绑定同一输入身份并独立运行；一项失败不阻塞另外两项，各自只提交自己的产物或记忆结果 | 已决定 |
 | J24-B26 | 自动请求早于自动处理时间边界，或 Agent 总开关关闭、Agent 模型 provider 未配置、云端披露未确认、凭据不可用、本地模型未就绪 | 按固定优先级返回 `outside_automatic_window` 或对应 Agent 处理资格，不创建/领取任务、不调用 Agent 模型 provider；用户明确请求可忽略时间边界但不能绕过其它条件 | 已决定 |
@@ -147,6 +147,7 @@ D6 的 A4 正式 storage utility transport 子边界现为实现完成·尚未�
 - [Stripe Idempotent Requests](https://docs.stripe.com/api/idempotent_requests)：连接失败后的重复请求由同一幂等键返回既有结果。采纳人工动作的 client idempotency key + request digest。
 - [W3C ARIA19](https://www.w3.org/WAI/WCAG21/Techniques/aria/ARIA19)：动态错误通过 live region 通知辅助技术而不强制移动焦点。采纳 J24-B24；具体视觉样式由 UI/UX 交接任务决定。
 - [Electron `utilityProcess`](https://www.electronjs.org/docs/latest/api/utility-process)：D6 采纳 `app.whenReady()` 后创建 utility、`serviceName` 角色标识、`postMessage`/`parentPort` 通信、`error` 后等待同一 child 的 `exit`，以及结束 exact child 后才允许 replacement；该 API 参考不替代 J24 产品旅程证据。
+- [DeepSeek API Change Log](https://api-docs.deepseek.com/updates/) / [Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing/)：官方当前登记 `deepseek-v4-flash` 与 OpenAI-compatible `https://api.deepseek.com`。首版只采纳 provider/model/base URL 默认值和可替换配置形状；不把可变价格、上下文窗口、输出上限、供应商可用性或模型质量写入产品语义。
 
 ## 9. 每批改动的验证与提交纪律
 
@@ -156,6 +157,7 @@ D6 的 A4 正式 storage utility transport 子边界现为实现完成·尚未�
 - [ ] 先更新适用 SEM 行和 J/DB/I 旅程，再修改实现。
 - [ ] 避让第 3 节冲突区，只暂存本目标拥有的文件或可分离 hunk。
 - [ ] 运行受影响的定向测试，再运行 `npm run test:core`、`npm run test:integration`、`npm run test:evidence`。
+- [ ] 每条新增或保留测试能指出独立 `SEM-*`、`J* / DB* / I*` 风险；相同路径、相同失败、相同可观察结果的重复低层测试已合并或删除，且没有用源码/文档正则冒充产品旅程。
 - [ ] 使用 `gpt-5.6-luna`、`max` 推理强度的独立审阅 Agent 复核语义、真实模块边界、失败路径与 CI 组合。
 - [ ] 修复复核问题并复跑；结构化报告继续满足 SEM-F14。
 - [ ] 只在当前工作区验证成立后提交本批文件，并在本表更新证据状态和提交 SHA。
@@ -170,3 +172,4 @@ D6 的 A4 正式 storage utility transport 子边界现为实现完成·尚未�
 | D4 | 冻结输入读取、已装载任务领取闭集、正式纪要插件/宿主、确定性规划与归并、`ModelGateway` + Pi Loop、job runner 与原子产物提交后端纵切 | Luna/max：首轮指出运行中插件卸载、完整精修稿顺序两项 P1 与归并预算前置一项 P2；补齐 active abort/提交前重验、按所选事件顺序排序及零 provider 调用预检后，二次复核 P1 无、P2 无 | 定向组合 46/46；core 519/519；integration 56/56；evidence 227/227；I3 非音频报告由安全生成器重建且保持 `partial` | `daea3f6` | 实现完成·尚未验收 |
 | D5 | 增强文本、记忆提取/任务内合并、writer 分流、三项同输入独立执行、正式 v4 suppression 身份与单条个人记忆删除 | Luna/max：首轮指出无身份显式全局偏好、缺少正式删除命令旅程与 storage owner 校验三项 P2/P3；补齐后第二轮复核 P1 无、P2 无，保留 utility-process/正式 UI 证据边界 P3 | 定向组合 57/57；core 523/523；integration 60/60；evidence 227/227；I3 非音频报告只再绑定安全哈希且保持 `partial` | `589c284` | 实现完成·尚未验收 |
 | D6 | production `StorageWorkerHost` storage utility transport、策略先行、claim 后 exact-child 强制退出与同 `runId` 恢复、三项任务幂等提交 | Luna/max：首轮指出 exact-child 断言可能误报与隐私结论过度依赖自报两项 P2；补齐 captured child/exit 同一性和父测试独立 SQLite/文件负扫描后，最终复核 P1 无、P2 无；保留 transport 层提交回复丢失后的 replacement 场景 P3 | D6 定向 2/2；D3–D6 相关组合 62/62；core 523/523；integration 62/62；evidence 227/227 | `6765ce8` | 实现完成·尚未验收 |
+| D7 | ADR 0011 的 DeepSeek main-only 配置表与启动环境凭据规则、ConfigStore v2 Agent 设置迁移合同、exact origin/凭据隔离、J24-B23 边界和 Agent 测试去重规则 | Luna/max：首轮指出凭据删除时序一项 P1，以及 ConfigStore 现状、旧 ADR、本项目术语和任意 HTTPS 地址四项 P2；改为早于所有窗口/子进程删除、main-only 配置表、直接改写旧 ADR、沿用 CONTEXT 术语并冻结 DeepSeek origin 后，二次复核 P1 无、P2 无；随后采纳“先无条件删除再校验”和 revision 原子更新两项 P3 | core 523/523；integration 62/62；evidence 226/226；删除 1 条只检查文档关键词的 Agent 设计正则测试 | 本批设计提交 | 已决定 |

@@ -179,7 +179,7 @@ Stage 0 固定映射为：插件 `reference-structured-output` → `agent_jobs.a
 - Agent、个人记忆、确认关键词和调试聊天只能通过新的追加 migration 引入；不得修改既有 `INITIAL_SCHEMA_SQL` 或任何已登记 migration/checksum。Agent 未启用时这些表保持空闲，不得成为字幕系统启动前置。
 - v2 migration 为所有既有会话补 `not_recorded` 结果行；新会话创建 `known` 行并在故障确认时更新稳定故障字段。覆盖计数保持查询派生，不把 `N/M` 写成可漂移列。
 - 定期 checkpoint 由 storage worker 控制，退出时做有界 flush；不能因等待 Agent 无限阻塞退出。
-- API Key 继续由 `safeStorage` 单独保存，不进入字幕 SQLite、日志或字幕事件。
+- 正式 Agent 首版的 DeepSeek API key 不持久化：正式 main 在任何窗口、preload、renderer、worker、child 或 utility 创建前只从启动环境 `DEEPSEEK_API_KEY` 读取一次，取得 raw 值后先无条件立即从 `process.env` 删除，再校验并只把合法值复制到不参与序列化的有界 `Buffer`；所有子进程环境显式排除该变量。凭据不得进入 ConfigStore、字幕 SQLite、Agent 表、provider 配置表、renderer、其它 utility、日志、报告或字幕事件。单次 Agent 模型 provider 调用结束清零 utility 副本，Agent utility 异常退出、稳定鉴权失败或应用退出时清零主进程副本。隔离 Agent 内核开发入口继续按 ADR 0007 使用独立 `safeStorage`，不得迁移到正式 userData。
 - SQLite schema 不包含音频 BLOB、录音路径或录音恢复表；临时 PCM 不进入数据库、日志、Agent 上下文、导出或诊断产物。测试只可读取来源明确的静态合成语料，不得把现场采集音频写盘。
 - X1 未来启用 `sqlite-vec` 时，只能从固定、随应用发布且经哈希校验的路径加载；renderer 和用户可写目录不能指定任意扩展。
 

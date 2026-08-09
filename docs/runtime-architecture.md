@@ -117,9 +117,9 @@ stack、dump 或任意 Error 文本，也不配置 WER/Crashpad 或外部上传�
 
 > 三资源原子 bundle 已被 J15c 实现替代。精修模型缺失时点开关保持关闭且 fetch=0；明确下载完成后仍关闭，用户再次明确开启才影响未来会话。活动会话中禁止模型安装，但允许修改全局偏好且不改变本会话冻结值。全局偏好跨重启前复核精修 ready，缺失/损坏时把持久与有效开关回落关闭并通知；重新下载后仍不自动开启。真实 packaged 双启动已验证核心/精修分离、下载中取消、连接关闭、合法 `.part` 保留、复启 fetch=0、明确 Range 继续、安装后仍关闭、再次开启以及会话冻结。
 
-`CredentialStore / AgentRuntime / AgentPluginHost`（A1 后置）：
+`AgentProviderBootstrap / AgentRuntime / AgentPluginHost`（A1 后置）：
 
-- API Key 经 `safeStorage` 独立保存，永不进入 config、snapshot 或 renderer。
+- 正式首版把 DeepSeek 非敏感参数放在 main-only `AgentProviderConfigCatalog` 配置表；API key 只从启动环境 `DEEPSEEK_API_KEY` 读取一次，并在任何 `BrowserWindow`、preload、renderer、worker、child 或 utility 创建前从 `process.env` 删除。所有子进程使用显式排除该变量的环境，只有 Agent utility 当前调用取得私有有界副本；凭据永不进入 config、snapshot、其它进程环境、SQLite、日志或报告。隔离 Agent 内核开发入口仍单独使用 ADR 0007 的 `safeStorage`。
 - 用本项目接口包住 Pi Agent Core 或替代实现；项目宿主管理第一方插件、权限、生命周期和故障隔离，不嵌入完整 coding-agent。
 - 只读字幕上下文插件从提交边界按水位读取；增强文本和会后结构化纪要由独立内容插件生成并保存，不得启用 shell/进程/任意文件写或外部写操作。
 - 有界执行、取消、超时、重试和错误分类；Agent 失败不改变本地 ASR、SQLite 字幕或历史状态。
@@ -256,7 +256,7 @@ realtime/refine worker
 - `capturePreferences`：首选音频源和设备。
 - `asrPreferences`：产品级 profile、语言/分段偏好，以及只在新会话开始时冻结的权威识别策略、非敏感识别 provider ID 和确认关键词范围选择。
 - `refinementPreferences`：一个不区分 `mic`/`loopback`、决定未来新会话是否启用精修的全局偏好；可持久化，但启动时必须以精修模型就绪证明校正。会话开始时复制到不可变的 session context；修改或关闭不能改变活动会话，也不能删除旧会话精修稿。运行中 worker 故障只写该会话的结果，不回写全局偏好；只有应用启动时发现模型缺失或损坏才把持久偏好与有效值一起明确回落为关闭。
-- `aiPreferences`：Agent 总开关、`automaticProcessingSince`、个人记忆全局开关、`memoryProcessingSince`、目标语言和 Agent 模型 provider 非敏感信息；两个开关与各自时间边界由主进程 `ConfigStore` 原子持久化，不得复用或覆盖识别 provider 配置。
+- 正式 Agent 设置沿用平面 `ConfigStore`，实现时把 schema v1 迁移到 v2 并增加 exact 平面字段 `agentEnabled`、`automaticProcessingSince`、`memoryEnabled`、`memoryProcessingSince`、`cloudDisclosureAccepted` 与 `agentSettingsRevision`；迁移必须保留现有字幕设置，非法 Agent 字段组合统一回落到 Agent 关闭、两个边界为 `null`、披露未确认。更新必须在同一次原子读改写中核对 `expectedRevision`、归一化六个字段并把 revision 恰好加一；冲突返回 `SETTINGS_REVISION_CONFLICT` 且零写入。Agent 模型 provider 非敏感参数不写入 ConfigStore，而由 main-only `AgentProviderConfigCatalog` 提供；ConfigStore 与 renderer patch 均不得包含 provider、URL、model 或 API key。
 - `effectiveRuntimeConfig`：后端根据 Capabilities 校验后的实际值，只读发布给 UI。
 
 外观 slider 可在 renderer 即时预览，但磁盘写入需防抖。所有持久化采用白名单、版本号、迁移和 staging/rename；禁止任意 `config:set(patch)` 直接 merge 未知字段。
@@ -339,14 +339,16 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 - Agent 总开关首次默认关闭。用户开启时，主进程持久化新的 `automaticProcessingSince`；自动对账不得静默处理该时间边界之前结束的会话，更早会话只能由用户从历史明确请求。Agent 总开关与个人记忆每次从不生效转为同时生效时另存新的 `memoryProcessingSince`；自动记忆任务不得补处理该边界之前、尤其是个人记忆关闭期间的会话。
 - `AgentEligibilityEvaluator` 只返回 `ready/no_committed_transcript/outside_automatic_window/agent_disabled/provider_not_configured/cloud_disclosure_required/credential_unavailable/local_model_not_ready/session_not_terminal`。判定固定遵循正式接口合同的顺序；`outside_automatic_window` 只适用于自动请求，用户请求忽略时间边界但不绕过其它条件。只有 `ready` 能创建或领取后台 Agent 任务；其余结果不调用 Agent 模型 provider，并向设置或历史提供稳定的下一动作。
 - `ModelGateway` 冻结每个后台 Agent 任务的 Agent 模型 provider、模型、recipe 版本、超时、取消和用量边界；识别 provider 不经过该网关，也不与其共享配置。
-- `AgentModelProviderRegistry` 与识别 registry 分离，只向 `ModelGateway` 暴露受控生成、结构化输出、用量、超时和取消能力。Stage 0 隔离 Agent 内核开发入口只接通 OpenAI-compatible 云端参考实现和确定性测试 Agent 模型 provider，本地 Agent 模型 provider 只冻结接口；正式 Agent 产品切片再补本地实现。新增 Agent 模型 provider 不得扩张插件工具权限。
+- `AgentModelProviderRegistry` 与识别 registry 分离，只向 `ModelGateway` 暴露受控生成、结构化输出、用量、超时和取消能力。Stage 0 隔离 Agent 内核开发入口继续保留 OpenAI-compatible 云端参考实现、`safeStorage` 与确定性测试 Agent 模型 provider；正式首版按 ADR 0011 建立 DeepSeek main-only 配置表、启动环境凭据、provider/model/预算冻结和显式降级，CI 只替代实际 Agent 模型 provider、云网络与启动环境凭据。真实 DeepSeek 公网及本地 Agent 模型 provider 后置，新增实现不得扩张插件工具权限。
+- 正式 main 的第一段同步启动逻辑必须早于 `app.whenReady()` 后的窗口逻辑，也早于任何 `BrowserWindow`、preload、renderer、Node worker、child process 或 utility process 创建：取得 `DEEPSEEK_API_KEY` raw 值后先无条件立即从 `process.env` 删除，再校验并只复制合法值，最后建立净化后的子进程环境。缺失、全空白或超 4096 个 UTF-8 字节时投影 `credential_unavailable`；配置表不合法时投影 `provider_not_configured`。两者都不创建或领取任务。运行中后来设置环境变量不生效，正式 renderer 只读取 `AgentProviderPublicState`，不提供 key 写入或回读。
+- 初版网络适配器只允许 exact origin `https://api.deepseek.com`、受控 Chat Completions 路径并拒绝 redirect。单次调用结束时清零 Agent utility 副本；Agent utility 异常退出、稳定鉴权失败或应用退出时清零主进程副本并要求以新的启动环境重启。
 - 本地 Agent 推理是字幕系统的低优先级工作：有活动字幕会话时不启动；若运行期间新会话开始，任务收到取消信号并保持可重试状态，待无活动会话时重新执行。
 - 云端 Agent 请求可以在新字幕会话期间继续，因为它不持续占用本地模型推理资源；其 renderer 更新、SQLite 回写和日志仍必须有界，不能抢占字幕事件 FIFO 或长时间持有事务。
 - Agent 模型 provider 不可用、凭据失效、限流、超时或 worker 退出只改变后台 Agent 任务与调试聊天的 Agent 能力状态。字幕会话、SQLite 字幕事实、历史和导出保持独立。
 
 ### 11.3 后台 Agent 任务与专用子 Agent
 
-> 当前实现投影（2026-08-10）：D3 的正式 v3 migration、Agent 处理资格、自动对账与任务生命周期，D4 的冻结输入读取、已装载任务闭集、正式纪要插件/宿主、确定性分块归并、`ModelGateway` + Pi Agent Loop、job runner 和原子产物提交，D5 的正式 v4 suppression/删除、增强文本、记忆提取/任务内合并、writer 分流与三项同输入独立执行，以及 D6 经过 production `StorageWorkerHost` utility-process transport 的策略先行、claim 后 exact-child 强制退出、replacement 策略重放与同 `runId` 恢复，均为实现完成·尚未验收。D6 仍由调用进程运行 PluginHost/Loop，不表示它们已进入 Agent utility；`MeetingStopped`、正式 `StorageGateway` 接线、preload/IPC、renderer、记忆检索、确认关键词、资源仲裁与正式打包仍为已决定。
+> 当前实现投影（2026-08-10）：D3 的正式 v3 migration、Agent 处理资格、自动对账与任务生命周期，D4 的冻结输入读取、已装载任务闭集、正式纪要插件/宿主、确定性分块归并、`ModelGateway` + Pi Agent Loop、job runner 和原子产物提交，D5 的正式 v4 suppression/删除、增强文本、记忆提取/任务内合并、writer 分流与三项同输入独立执行，以及 D6 经过 production `StorageWorkerHost` utility-process transport 的策略先行、claim 后 exact-child 强制退出、replacement 策略重放与同 `runId` 恢复，均为实现完成·尚未验收。ADR 0011 的 DeepSeek 配置表、启动环境凭据、provider/model/预算冻结和降级为已决定但尚无正式实现证据。D6 仍由调用进程运行 PluginHost/Loop，不表示它们已进入 Agent utility；`MeetingStopped`、正式 `StorageGateway` 接线、provider 配置与凭据初始化、preload/IPC、renderer、记忆检索、确认关键词、资源仲裁与正式打包仍为已决定。
 
 ```text
 终态会话 + 完整输入水位
