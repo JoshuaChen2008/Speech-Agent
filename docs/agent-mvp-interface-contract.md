@@ -1,6 +1,6 @@
 # 正式 Agent 首版接口合同
 
-> 证据状态：已决定。D3 的正式 SQLite 与存储/生命周期子边界为实现完成·尚未验收；D4 的会后结构化纪要后端纵切已登记但尚无实现证据。本文冻结正式产品接口职责，不表示 J13/J20/J21/J22/J24 已有完整产品证据。
+> 证据状态：已决定。D3 的正式 SQLite 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切均为实现完成·尚未验收。D4 已经过真实 storage worker/SQLite、正式 `AgentPluginHost`、`ModelGateway`、Pi Agent Loop 与 job runner，只在 Agent 模型 provider 边界使用替身；尚未接入 `MeetingStopped`、正式 preload/IPC、renderer 或发布包。本文冻结正式产品接口职责，不表示 J13/J20/J21/J22/J24 已有完整产品证据。
 
 ## 1. 边界与版本
 

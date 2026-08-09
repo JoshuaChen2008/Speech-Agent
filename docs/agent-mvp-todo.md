@@ -1,7 +1,7 @@
 # 正式 Agent 首版 TODO 与组合验收矩阵
 
 > 更新日期：2026-08-10
-> 证据状态：SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；D3 的正式 SQLite migration 与存储/生命周期子边界为实现完成·尚未验收；其余正式产品项保持已决定。
+> 证据状态：SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；D3 的正式 SQLite migration 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切为实现完成·尚未验收；其余正式产品项保持已决定。
 
 ## 1. 使用方式与权威边界
 
@@ -18,8 +18,9 @@
 | Agent Core / Pi 适配 / `AgentPluginHost` / `ModelGateway` | 联合验收完成 | 参考插件、权限白名单、候选任务与产物已由 J23-B01–B16 跨模块旅程闭合；只属于 SEM-F29/J23 |
 | 隔离 Agent 内核开发入口 | 联合验收完成 | 顺利路径、重启、取消竞态、应用中断、utility replacement、Agent 模型 provider/越权矩阵、幂等重放与严格隐私负扫描均已有真实 Electron 联合证据 |
 | 正式 Agent SQLite 与存储/生命周期子边界 | 实现完成·尚未验收 | 正式 v3 migration、输入身份、Agent 处理资格、自动对账、策略线性化、领取/续租/转换/结果/删除幂等、跨表完整性与 tombstone 已由真实 storage worker + SQLite 子边界覆盖；不包含正式 PluginHost、job runner、preload/IPC 或 renderer |
+| 会后结构化纪要后端纵切 | 实现完成·尚未验收 | 冻结输入读取、已装载任务闭集、确定性分块/归并、正式 `transcript-context` / `meeting-minutes`、`ModelGateway` + Pi Agent Loop、租约/重试/取消/插件卸载与 SQLite 原子提交已有组合证据；不包含 `MeetingStopped`、正式 preload/IPC、renderer、utility-process transport 或实机组合 |
 | 正式字幕提交边界接线 | 已决定 | 尚无 `MeetingStopped → AgentJobReconciler` 正式实现证据 |
-| 正式三项后台 Agent 任务 | 已决定 | 会后结构化纪要、个人记忆、增强文本尚无正式插件和产物证据 |
+| 正式三项后台 Agent 任务 | 已决定 | 仅会后结构化纪要的 UI-free 后端子边界已有实现证据；个人记忆、增强文本及三项独立执行组合尚无正式插件证据 |
 | 识别 provider、Agent 模型 provider、确认关键词、资源仲裁 | 已决定 | 正式 registry、云端识别与本地 Agent 模型 provider 尚无实现证据 |
 | 正式设置/历史/调试聊天 | 已决定 | UI/UX 由并行任务维护；正式 IPC、preload、storage 读取仍待接线 |
 | 正式打包与发布 | 已决定 | 正式包当前按设计排除隔离入口和 Pi 开发依赖 |
@@ -92,7 +93,7 @@ J23 的确定性 Agent 模型 provider 方案与任务领取竞态 gate 只能�
 
 D3 先闭合 A2–A4 的正式存储与生命周期骨架，不触碰并行维护的 renderer。其阻断切片已登记为：DB7/ADR 0010 的 v2 → 正式 Agent v3 与交叉 catalog fail closed；J24-B01/B26 的资格优先级；J24-B04/B25 的三项任务同输入身份和重复对账幂等；J24-B05/B07/B08/B09/B11/B12/B13/B14/B18 的租约、回复重放、人工幂等、取消、错误分类、冻结 Agent 模型 provider 快照、个人记忆自动处理边界与多会话领取；J24-B21/B29/B30 的完整精修输入、陈旧输入与隐私负扫描。该切片在缺少正式 PluginHost、preload/IPC 和 renderer 前最多只能标为“实现完成·尚未验收”，不能提高 J24 状态。
 
-D4 已先登记 A5 的 UI-free 后端纵切：`agent.readInputSnapshot` 以完整 `InputReference` 复算冻结字幕快照；`agent.claimNextJob.availableTaskKinds` 保证宿主只领取当前已装载能力；正式 `transcript-context` / `meeting-minutes` 经真实 `AgentPluginHost`、`ModelGateway`、Pi Agent Loop、确定性输入规划和 storage worker 原子提交运行，只在 Agent 模型 provider 边界使用契约替身。阻断场景为 J24-B02/B03/B06/B10/B12/B19/B20/B27/B28/B29/B30；实现前状态保持已决定，且即使纵切闭合也不包含正式 `MeetingStopped`、preload/IPC、renderer、`mic`/`loopback` 实机组合或其余两项后台 Agent 任务，不能提升完整 J3/J13/J21/J24。
+D4 的 A5 UI-free 后端纵切现为实现完成·尚未验收：`agent.readInputSnapshot` 以完整 `InputReference` 复算并按所选 `event_order` 返回冻结字幕快照；`agent.claimNextJob.availableTaskKinds` 保证宿主只领取当前已装载能力；正式 `transcript-context` / `meeting-minutes` 经真实 `AgentPluginHost`、`ModelGateway`、Pi Agent Loop、确定性输入规划和 storage worker 原子提交运行，只在 Agent 模型 provider 边界使用契约替身。J24-B02/B03/B06/B10/B12/B19/B20/B21/B27/B28/B29 的后端子边界已覆盖短输入、完整精修稿、Unicode 长输入、保守归并预算、重试、取消、插件卸载、空栏目、身份臆造拒绝、陈旧输入与原子提交；仍不包含正式 `MeetingStopped`、preload/IPC、renderer、utility-process transport、`mic`/`loopback` 实机组合或其余两项后台 Agent 任务，不能提升完整 J3/J13/J21/J24。
 
 | 场景 | 用户边界 | 必须观察到的结果 | 证据状态 |
 |---|---|---|---|
@@ -159,3 +160,4 @@ D4 已先登记 A5 的 UI-free 后端纵切：`agent.readInputSnapshot` 以完�
 | D1 | TODO、接口合同、ADR 0009、SEM-F28/SEM-T15、J24 与设计契约测试 | Luna/max：首轮提出 P1/P2；二轮 P1/P2 无剩余；末轮 P3 五项随后按建议对齐 | 设计合同 1/1；Agent 定向组合 18/18；core 504/504；integration 34/34；evidence 227/227 | `1007cc8` | 已决定 |
 | D2 | SEM-F29/J23 隔离入口的取消竞态、错误分类、重试/中断恢复、utility replacement、六类越权、确认幂等与严格隐私矩阵 | Luna/max：首轮 3 项 P2、二轮 1 项 B16 P2，修复后最终复核 P1 无、P2 无；并行 UI 状态词登记为冲突区 P3 | core 507/507；integration 39/39；evidence 227/227 | `a68fcfd` | 联合验收完成 |
 | D3 | 正式 v3 migration、Agent 处理资格与自动对账、任务生命周期/幂等结果、个人记忆来源完整性和会话 tombstone 删除子边界 | Luna/max：首轮指出 claim 策略、结果/删除、回复重放及跨表完整性等 P1/P2；修复后末轮补齐个人记忆复合来源与陈旧续租拒绝，最终复核 P1 无、P2 无 | 定向组合 53/53；core 514/514；integration 50/50；evidence 227/227 | `9d28f6b` | 实现完成·尚未验收 |
+| D4 | 冻结输入读取、已装载任务领取闭集、正式纪要插件/宿主、确定性规划与归并、`ModelGateway` + Pi Loop、job runner 与原子产物提交后端纵切 | Luna/max：首轮指出运行中插件卸载、完整精修稿顺序两项 P1 与归并预算前置一项 P2；补齐 active abort/提交前重验、按所选事件顺序排序及零 provider 调用预检后，二次复核 P1 无、P2 无 | 定向组合 46/46；core 519/519；integration 56/56；evidence 227/227；I3 非音频报告由安全生成器重建且保持 `partial` | `daea3f6` | 实现完成·尚未验收 |
