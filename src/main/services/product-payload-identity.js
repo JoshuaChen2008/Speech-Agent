@@ -12,6 +12,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const IDENTITY_VERSION = 'live-subtitle-product-payload-v1'
+const DEVELOPMENT_ONLY_SRC_PREFIXES = Object.freeze(['agent-core/', 'agent-mvp/'])
 
 function normalizeEntryName (value) {
   if (typeof value !== 'string') throw new TypeError('product payload entry name must be a string')
@@ -66,6 +67,7 @@ function collectProductPayloadEntries (root) {
       } else if (entry.isFile()) {
         const relative = path.relative(resolvedRoot, target).replace(/\\/g, '/')
         if (relative.endsWith('.d.ts')) continue
+        if (DEVELOPMENT_ONLY_SRC_PREFIXES.some((prefix) => relative.startsWith(prefix))) continue
         entries.push({ name: `src/${relative}`, bytes: fs.readFileSync(target) })
       } else {
         throw new Error('product payload contains an unsupported filesystem entry')
@@ -81,6 +83,7 @@ function computeProductPayloadIdentity (root = path.resolve(__dirname, '..', '..
 }
 
 module.exports = {
+  DEVELOPMENT_ONLY_SRC_PREFIXES,
   IDENTITY_VERSION,
   collectProductPayloadEntries,
   computeProductPayloadIdentity,

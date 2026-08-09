@@ -1,0 +1,40 @@
+'use strict'
+
+const test = require('node:test')
+const assert = require('node:assert/strict')
+
+const { canonicalize, sha256Canonical } = require('../../src/agent-core/canonical-json')
+const { providerConfiguration } = require('../../src/agent-core/contracts')
+const { AgentPluginHost } = require('../../src/agent-core/plugin-host')
+const { referenceOutput } = require('../../src/agent-core/reference-output')
+const { MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
+const { AGENT_MVP_MIGRATIONS } = require('../../src/agent-core/storage/schema')
+const { applyMigrations } = require('../../src/runtime/storage-worker/sqlite-store')
+const { DatabaseSync } = require('node:sqlite')
+
+test('SEM-F29 / J23 canonical identity and candidate migration catalog stay fail closed', () => {
+  assert.equal(canonicalize({ z: 1, a: ['x', true] }), '{"a":["x",true],"z":1}')
+  assert.equal(sha256Canonical({ a: 1 }), sha256Canonical({ a: 1 }))
+  assert.throws(() => canonicalize([, 'x']), /sparse/)
+  assert.throws(() => canonicalize({ value: undefined }), /serializable/)
+  assert.equal(MIGRATIONS.length, 2)
+  assert.equal(AGENT_MVP_MIGRATIONS.length, 3)
+  assert.deepEqual(AGENT_MVP_MIGRATIONS.slice(0, 2), MIGRATIONS)
+  const database = new DatabaseSync(':memory:')
+  assert.throws(() => applyMigrations(database, () => 1, [{ version: 1, sql: 'SELECT 1;', checksum: 'a'.repeat(64) }]), /immutable catalog/)
+  database.close()
+})
+
+test('SEM-F29 / J23 provider and plugin capabilities reject expansion', () => {
+  const configuration = providerConfiguration({ provider: 'openai-compatible', baseUrl: 'https://models.example.test/v1/', model: 'fixture' })
+  assert.equal(configuration.baseUrl, 'https://models.example.test/v1')
+  assert.throws(() => providerConfiguration({ provider: 'openai-compatible', baseUrl: 'http://example.test', model: 'x' }), { code: 'AGENT_PROVIDER_INVALID' })
+  assert.throws(() => providerConfiguration({ provider: 'openai-compatible', baseUrl: 'https://user:secret@example.test', model: 'x' }), { code: 'AGENT_PROVIDER_INVALID' })
+  const host = new AgentPluginHost()
+  assert.equal(host.listPlugins().length, 2)
+  assert.throws(() => host.assertTool('reference-output-v1', 'shell'), { code: 'AGENT_PERMISSION_DENIED' })
+  assert.throws(() => host.assertPermission('reference-output-v1', 'network.any'), { code: 'AGENT_PERMISSION_DENIED' })
+  assert.throws(() => new AgentPluginHost([{ id: 'unsafe' }]), { code: 'AGENT_PLUGIN_INVALID' })
+  assert.deepEqual(referenceOutput({ title: 'T', bullets: ['B'] }), { title: 'T', bullets: ['B'] })
+  assert.throws(() => referenceOutput({ title: 'T', bullets: [], extra: true }), { code: 'AGENT_OUTPUT_INVALID' })
+})

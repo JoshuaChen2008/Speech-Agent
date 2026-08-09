@@ -9,7 +9,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { DatabaseSync } = require('node:sqlite')
-const { MIGRATIONS, SCHEMA_VERSION } = require('./schema')
+const { MIGRATIONS, checksum } = require('./schema')
 
 const DEFAULT_BUSY_TIMEOUT_MS = 5000
 
@@ -22,7 +22,20 @@ function rollbackQuietly (database) {
   try { database.exec('ROLLBACK') } catch { /* no active transaction */ }
 }
 
-function applyMigrations (database, now = () => Date.now()) {
+function migrationCatalog (value) {
+  const catalog = value === undefined ? MIGRATIONS : value
+  if (!Array.isArray(catalog) || catalog.length < 1 || catalog.some((migration, index) =>
+    !migration || !Number.isSafeInteger(migration.version) || migration.version !== index + 1 ||
+    typeof migration.checksum !== 'string' || !/^[a-f0-9]{64}$/.test(migration.checksum) ||
+    typeof migration.sql !== 'string' || migration.sql.length === 0 ||
+    checksum(migration.sql) !== migration.checksum)) {
+    throw new TypeError('migrations must be a contiguous immutable catalog')
+  }
+  return catalog
+}
+
+function applyMigrations (database, now = () => Date.now(), migrations = MIGRATIONS) {
+  const catalog = migrationCatalog(migrations)
   database.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version INTEGER PRIMARY KEY NOT NULL CHECK (version >= 1),
@@ -34,15 +47,15 @@ function applyMigrations (database, now = () => Date.now()) {
   const existing = database.prepare(
     'SELECT version, checksum FROM schema_migrations ORDER BY version'
   ).all()
-  const knownVersions = new Set(MIGRATIONS.map((migration) => migration.version))
+  const knownVersions = new Set(catalog.map((migration) => migration.version))
   for (const applied of existing) {
-    const migration = MIGRATIONS.find((candidate) => candidate.version === applied.version)
+    const migration = catalog.find((candidate) => candidate.version === applied.version)
     if (!migration || migration.checksum !== applied.checksum) {
       throw new Error(`schema migration checksum mismatch at version ${applied.version}`)
     }
   }
 
-  for (const migration of MIGRATIONS) {
+  for (const migration of catalog) {
     if (existing.some((applied) => applied.version === migration.version)) continue
     database.exec('BEGIN IMMEDIATE')
     try {
@@ -59,8 +72,9 @@ function applyMigrations (database, now = () => Date.now()) {
   }
 
   const userVersion = Number(scalar(database, 'PRAGMA user_version'))
-  if (userVersion !== SCHEMA_VERSION) {
-    throw new Error(`unexpected schema version ${userVersion}; expected ${SCHEMA_VERSION}`)
+  const expectedVersion = catalog[catalog.length - 1].version
+  if (userVersion !== expectedVersion) {
+    throw new Error(`unexpected schema version ${userVersion}; expected ${expectedVersion}`)
   }
   const unexpected = existing.filter((applied) => !knownVersions.has(applied.version))
   if (unexpected.length > 0) throw new Error('database schema is newer than this application')
@@ -84,7 +98,7 @@ function openSubtitleDatabase (databasePath, options = {}) {
     database.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`)
     const journalMode = String(scalar(database, 'PRAGMA journal_mode = WAL')).toLowerCase()
     if (journalMode !== 'wal') throw new Error(`WAL unavailable (journal_mode=${journalMode})`)
-    applyMigrations(database, options.now)
+    applyMigrations(database, options.now, options.migrations)
     if (Number(scalar(database, 'PRAGMA foreign_keys')) !== 1) {
       throw new Error('foreign_keys pragma is not enabled')
     }
@@ -99,6 +113,7 @@ module.exports = {
   DEFAULT_BUSY_TIMEOUT_MS,
   applyMigrations,
   openSubtitleDatabase,
+  migrationCatalog,
   rollbackQuietly,
   scalar
 }

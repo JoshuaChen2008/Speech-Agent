@@ -225,7 +225,12 @@ function productShellV6Fixture () {
 test('release package uses an explicit ASAR allowlist, hardened fuses and per-user NSIS', () => {
   assert.equal(releaseConfig.asar, true)
   assert.equal(releaseConfig.npmRebuild, false)
-  assert.deepEqual(releaseConfig.files, ['package.json', 'src/**/*'])
+  assert.deepEqual(releaseConfig.files, [
+    'package.json',
+    'src/**/*',
+    '!src/agent-core/**/*',
+    '!src/agent-mvp/**/*'
+  ])
   assert.deepEqual(releaseConfig.asarUnpack, ['node_modules/sherpa-onnx-win-x64/**/*'])
   assert.deepEqual(releaseConfig.electronFuses, {
     runAsNode: false,
@@ -241,6 +246,8 @@ test('release package uses an explicit ASAR allowlist, hardened fuses and per-us
   assert.equal(releaseConfig.nsis.packElevateHelper, false)
   assert.equal(releaseConfig.extraResources, undefined)
   assert.equal(releaseConfig.files.some((entry) => /models|scripts|test|docs|artifacts/i.test(entry)), false)
+  assert.equal(releaseConfig.files.includes('!src/agent-core/**/*'), true)
+  assert.equal(releaseConfig.files.includes('!src/agent-mvp/**/*'), true)
 
   const textExtensions = ['.css', '.html', '.js', '.json', '.md', '.mjs', '.ts', '.tsx']
   const productExtensions = [...new Set(collectProductPayloadEntries(path.join(ROOT, 'src'))
@@ -254,13 +261,17 @@ test('release package uses an explicit ASAR allowlist, hardened fuses and per-us
   }
 })
 
-test('SEM-F18/SEM-T12: product payload identity excludes build-only type declarations omitted from ASAR', (t) => {
+test('SEM-F18/SEM-F29/SEM-T12: product payload identity excludes build-only declarations and Agent development trees', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'live-subtitle-product-payload-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   fs.mkdirSync(path.join(root, 'nested'))
+  fs.mkdirSync(path.join(root, 'agent-core'))
+  fs.mkdirSync(path.join(root, 'agent-mvp'))
   fs.writeFileSync(path.join(root, 'runtime.js'), 'module.exports = true\n')
   fs.writeFileSync(path.join(root, 'renderer-globals.d.ts'), 'declare const runtimeOnly: boolean\n')
   fs.writeFileSync(path.join(root, 'nested', 'view.tsx'), 'export const view = null\n')
+  fs.writeFileSync(path.join(root, 'agent-core', 'loop.js'), 'module.exports = true\n')
+  fs.writeFileSync(path.join(root, 'agent-mvp', 'main.js'), 'module.exports = true\n')
 
   assert.deepEqual(
     collectProductPayloadEntries(root).map((entry) => entry.name).sort(),

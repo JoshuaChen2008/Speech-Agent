@@ -22,7 +22,9 @@ module.exports = {
   },
   files: [
     'package.json',
-    'src/**/*'
+    'src/**/*',
+    '!src/agent-core/**/*',
+    '!src/agent-mvp/**/*'
   ],
   asarUnpack: [
     'node_modules/sherpa-onnx-win-x64/**/*'
