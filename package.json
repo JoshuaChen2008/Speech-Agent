@@ -16,7 +16,7 @@
     "test:evidence": "node --test --experimental-test-isolation=none \"test/gate-0b/**/*.test.js\" \"test/gate-0c/**/*.test.js\" \"test/validation/**/*.test.js\"",
     "test:ci": "npm test",
     "pretest:core": "npm run verify:renderer",
-    "pretest:integration": "npm run verify:renderer",
+    "pretest:integration": "npm run verify:renderer && npm run build:agent-mvp",
     "pretest:evidence": "npm run verify:renderer",
     "electron:install": "install-electron",
     "preview:fixtures": "node scripts/build-preview-fixtures.js",

@@ -2,7 +2,7 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
-const { pathToFileURL } = require('node:url')
+const { fileURLToPath } = require('node:url')
 const electron = require('electron')
 const { AgentMvpRuntimeHost } = require('./runtime-host')
 const { AgentMvpSettingsStore } = require('./settings-store')
@@ -12,6 +12,7 @@ const { AgentCoreError } = require('../agent-core/errors')
 
 const { app, BrowserWindow, ipcMain, safeStorage } = electron
 const smokeMode = process.env.AGENT_MVP_SMOKE === '1'
+const smokePhase = process.env.AGENT_MVP_SMOKE_PHASE === 'restart' ? 'restart' : 'first'
 const dataRoot = smokeMode && process.env.AGENT_MVP_USER_DATA
   ? path.resolve(process.env.AGENT_MVP_USER_DATA)
   : path.join(app.getPath('appData'), 'Live Subtitle Agent MVP')
@@ -20,9 +21,11 @@ app.setName('Live Subtitle Agent MVP')
 
 let window = null; let runtime = null; let shuttingDown = false
 const rendererPath = path.join(__dirname, 'renderer-dist', 'index.html')
-const rendererUrl = pathToFileURL(rendererPath).toString()
 
-function allowedSender (event) { return event.senderFrame?.url === rendererUrl }
+function allowedSender (event) {
+  if (!window || window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) return false
+  try { return path.resolve(fileURLToPath(event.senderFrame.url)) === path.resolve(rendererPath) } catch { return false }
+}
 function reply (handler) {
   return async (event, payload) => {
     if (!allowedSender(event)) return { ok: false, error: { code: 'AGENT_PERMISSION_DENIED' } }
@@ -32,6 +35,79 @@ function reply (handler) {
 
 function send (channel, payload) {
   if (window && !window.isDestroyed()) window.webContents.send(channel, payload)
+}
+
+async function runRendererSmoke () {
+  return window.webContents.executeJavaScript(`(async () => {
+    window.__agentMvpSmokeStep = 'bootstrap'
+    const waitFor = async (predicate, timeoutMs = 10000) => {
+      const deadline = Date.now() + timeoutMs
+      while (Date.now() < deadline) {
+        const value = predicate()
+        if (value) return value
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+      throw Object.assign(new Error('renderer smoke timeout'), { code: 'AGENT_PROVIDER_TIMEOUT' })
+    }
+    const byTestId = (id) => document.querySelector('[data-testid="' + id + '"]')
+    const clickAndSettle = async (element) => {
+      element.click()
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      await waitFor(() => !element.disabled)
+    }
+    await waitFor(() => byTestId('provider-type'))
+    if (${JSON.stringify(smokePhase)} === 'first') {
+      window.__agentMvpSmokeStep = 'provider-cloud'
+      window.__agentMvpSmokeStep = 'provider-cloud-save'
+      const cloudState = await window.agentMvp.saveProvider({
+        provider: 'openai-compatible', baseUrl: 'https://provider.invalid/v1', model: 'journey-model',
+        cloudDisclosureAccepted: true, apiKey: 'journey-credential'
+      })
+      window.__agentMvpSmokeStep = 'provider-cloud-clear'
+      if (cloudState.hasCredential !== true) throw new Error('credential state was not updated')
+      window.__agentMvpSmokeStep = 'provider-deterministic'
+      await window.agentMvp.saveProvider({
+        provider: 'deterministic-test', baseUrl: '', model: 'fixture-model', cloudDisclosureAccepted: false, apiKey: ''
+      })
+      window.__agentMvpSmokeStep = 'fixture'
+      await clickAndSettle(byTestId('fixture-loopback'))
+      await waitFor(() => byTestId('session-item'))
+      await waitFor(() => byTestId('chat-send') && !byTestId('chat-send').disabled)
+      window.__agentMvpSmokeStep = 'chat'
+      await clickAndSettle(byTestId('chat-send'))
+      await waitFor(() => document.querySelectorAll('[data-testid="message-item"]').length >= 2)
+      window.__agentMvpSmokeStep = 'preview'
+      await clickAndSettle(byTestId('preview-reference'))
+      await waitFor(() => byTestId('preview-panel'))
+      byTestId('preview-accept').click()
+      window.__agentMvpSmokeStep = 'artifact'
+      await waitFor(() => document.querySelector('[data-testid="job-item"][data-state="succeeded"]'))
+      await waitFor(() => byTestId('artifact-item'))
+      await waitFor(() => document.querySelectorAll('[data-testid="message-item"]').length >= 5)
+    } else {
+      window.__agentMvpSmokeStep = 'restart'
+      await waitFor(() => byTestId('session-item'))
+      await waitFor(() => document.querySelectorAll('[data-testid="message-item"]').length >= 2)
+      await waitFor(() => document.querySelector('[data-testid="job-item"][data-state="succeeded"]'))
+      await waitFor(() => byTestId('artifact-item'))
+    }
+    const state = await window.agentMvp.getState()
+    window.__agentMvpSmokeStep = 'report'
+    return {
+      schemaVersion: 1,
+      result: 'pass',
+      phase: ${JSON.stringify(smokePhase)},
+      sessionCount: document.querySelectorAll('[data-testid="session-item"]').length,
+      messageCount: document.querySelectorAll('[data-testid="message-item"]').length,
+      jobCount: document.querySelectorAll('[data-testid="job-item"]').length,
+      artifactCount: document.querySelectorAll('[data-testid="artifact-item"]').length,
+      toolEventCount: document.querySelectorAll('[data-testid="tool-event"]').length,
+      credentialAvailable: state.provider.hasCredential === true,
+      credentialPersisted: state.provider.credentialPersisted === true,
+      transcriptInReport: false,
+      audioPersisted: false
+    }
+  })()`)
 }
 
 async function bootstrap () {
@@ -85,20 +161,12 @@ async function bootstrap () {
   window.on('closed', () => { window = null })
   if (smokeMode) {
     try {
-      const fixture = await runtime.createFixture('loopback')
-      const chat = await runtime.chat({ sessionId: fixture.inputRef.sessionId, prompt: '验证固定上下文工具。' })
-      const preview = await runtime.preview({ sessionId: fixture.inputRef.sessionId })
-      await runtime.confirm({ previewId: preview.previewId, decision: 'accepted' })
-      let snapshot = await runtime.snapshot()
-      const deadline = Date.now() + 10000
-      while (!snapshot.jobs.some((job) => job.state === 'succeeded') && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 25)); snapshot = await runtime.snapshot()
-      }
-      const succeeded = snapshot.jobs.some((job) => job.state === 'succeeded')
-      process.stdout.write(`${JSON.stringify({ schemaVersion: 1, result: succeeded ? 'pass' : 'fail', sessionCount: snapshot.sessions.length, messageCount: chat.messages.length, jobCount: snapshot.jobs.length, artifactCount: snapshot.artifacts.length, transcriptInReport: false, audioPersisted: false })}\n`)
+      process.stdout.write(`${JSON.stringify(await runRendererSmoke())}\n`)
       app.quit()
     } catch (error) {
-      process.stdout.write(`${JSON.stringify({ schemaVersion: 1, result: 'fail', errorCode: publicError(error).code, transcriptInReport: false, audioPersisted: false })}\n`)
+      const failureStep = await window?.webContents.executeJavaScript('window.__agentMvpSmokeStep || "bootstrap"').catch(() => 'bootstrap')
+      const rendererErrorCode = await window?.webContents.executeJavaScript('window.__agentMvpSmokeErrorCode || document.querySelector("[role=alert]")?.dataset.errorCode || null').catch(() => null)
+      process.stdout.write(`${JSON.stringify({ schemaVersion: 1, result: 'fail', errorCode: rendererErrorCode || publicError(error).code, failureStep, transcriptInReport: false, audioPersisted: false })}\n`)
       app.exit(1)
     }
   }
