@@ -346,7 +346,7 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 
 ### 11.3 后台 Agent 任务与专用子 Agent
 
-> 当前实现投影（2026-08-10）：D3 的正式 v3 migration、Agent 处理资格、自动对账与任务生命周期，D4 的冻结输入读取、已装载任务闭集、正式纪要插件/宿主、确定性分块归并、`ModelGateway` + Pi Agent Loop、job runner 和原子产物提交，以及 D5 的正式 v4 suppression/删除、增强文本、记忆提取/任务内合并、writer 分流与三项同输入独立执行，均为实现完成·尚未验收。D4/D5 组合直接使用真实 `StorageWorkerService` + SQLite，尚未经过 `StorageWorkerHost` utility-process transport；`MeetingStopped`、preload/IPC、renderer、记忆检索、确认关键词、资源仲裁与正式打包仍为已决定。
+> 当前实现投影（2026-08-10）：D3 的正式 v3 migration、Agent 处理资格、自动对账与任务生命周期，D4 的冻结输入读取、已装载任务闭集、正式纪要插件/宿主、确定性分块归并、`ModelGateway` + Pi Agent Loop、job runner 和原子产物提交，以及 D5 的正式 v4 suppression/删除、增强文本、记忆提取/任务内合并、writer 分流与三项同输入独立执行，均为实现完成·尚未验收。D6 已登记让同一后端纵切经过 production `StorageWorkerHost` utility-process transport，覆盖 claim 后 exact-child 强制退出、replacement 策略重放与同 `runId` 恢复；尚未形成实现证据，也不表示 PluginHost/Loop 已进入 Agent utility。`MeetingStopped`、正式 `StorageGateway` 接线、preload/IPC、renderer、记忆检索、确认关键词、资源仲裁与正式打包仍为已决定。
 
 ```text
 终态会话 + 完整输入水位
