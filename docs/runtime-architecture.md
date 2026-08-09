@@ -97,7 +97,7 @@ stack、dump 或任意 Error 文本，也不配置 WER/Crashpad 或外部上传�
 - `starting` 必须先等 session open ACK 才启动采集；final/refined 先同步复制进 Gateway FIFO 再广播 UI；runtime flush 后必须等 caption/close ACK 才从 `stopping` 进入 idle。
 - Gateway 每代只持有一个 utility process；exit、timeout 或坏响应使结果变为 unknown，旧 generation 精确终止并确认退出后，才以同一业务幂等载荷重放队首。业务冲突不靠重启掩盖，队列恢复耗尽则熔断并保留会话。
 - Gateway 队列上限是触发停采集的高水位，不是丢字幕边界：越线的首条字幕写入受保护溢出槽，终态 close 另有独立的有界容量；Coordinator 只显示已被持久化边界接纳的事件，停釆集边界内迟到字幕先缓冲。若用户在 storage error 时选择 stop，必须先排空字幕 backlog、持久化边界缓冲，然后才能提交 close；`adapter.stop()` 返回是终止字幕 ingress 栅栏，该调用内冲刷出的 final/refined 仍接受，返回后的退役 generation 事件明确拒绝。全部 ACK 前禁止恢复采集或进入 idle。
-- A1 再冻结 Agent 可靠消费采用事务 outbox 还是 durable cursor；两者都必须以已提交字幕水位为边界。
+- ADR 0008 已冻结 Agent 可靠消费为终态会话 durable reconciliation；它只从已提交字幕水位补建缺失任务，不向字幕事实事务加入 Agent outbox。
 - FTS5 可按历史搜索需求后加；`sqlite-vec` 明确 Deferred，不进入 B3.3 schema 或加载路径。
 - 默认组合根已以 SQLite 替代 JSONL 权威写入；冷启动先收束 stale-active、再迁移旧档，运行期不构造 JSONL writer。JSONL 只保留为旧数据导入、显式格式兼容和恢复格式，禁止长期双写。
 - 历史 renderer 只得到白名单终态会话列表、固定上限的 keyset 详情页和格式选择能力；每次只持有当前 50 条并通过 cursor 栈前后翻页。详情/列表契约以有界元数据返回整个会话的 `segmentCount` 与 `refinedSegmentCount`：前者统计全部已持久化首次 `final`，后者统计已有独立精修稿，`partial` 不进入任一值。覆盖数由 storage/main 对权威行聚合，renderer 不从当前页估算。完整 transcript 只在 main/storage worker 内供导出与迁移；SQL、数据库路径、文件系统和导出目标路径均不跨 IPC。205 段确定性多模块旅程与真实 packaged Electron 均证明五页交互、DOM 上界 50、会话级版本选择和完整导出。两小时数千段资源稳定性 I3 与干净机 I4 仍须单独验收。
@@ -254,9 +254,9 @@ realtime/refine worker
 
 - `appearancePreferences`：字号、主题、透明度、圆角、双语布局。
 - `capturePreferences`：首选音频源和设备。
-- `asrPreferences`：产品级 profile、语言/分段偏好。
+- `asrPreferences`：产品级 profile、语言/分段偏好，以及只在新会话开始时冻结的权威识别策略、非敏感识别 provider ID 和确认关键词范围选择。
 - `refinementPreferences`：一个不区分 `mic`/`loopback`、决定未来新会话是否启用精修的全局偏好；可持久化，但启动时必须以精修模型就绪证明校正。会话开始时复制到不可变的 session context；修改或关闭不能改变活动会话，也不能删除旧会话精修稿。运行中 worker 故障只写该会话的结果，不回写全局偏好；只有应用启动时发现模型缺失或损坏才把持久偏好与有效值一起明确回落为关闭。
-- `aiPreferences`：是否启用、目标语言、provider 非敏感信息。
+- `aiPreferences`：Agent 系统是否启用、个人记忆全局开关、目标语言和 Agent 模型 provider 非敏感信息；不得复用或覆盖识别 provider 配置。
 - `effectiveRuntimeConfig`：后端根据 Capabilities 校验后的实际值，只读发布给 UI。
 
 外观 slider 可在 renderer 即时预览，但磁盘写入需防抖。所有持久化采用白名单、版本号、迁移和 staging/rename；禁止任意 `config:set(patch)` 直接 merge 未知字段。
@@ -307,5 +307,74 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 7. B4/J15c ModelManager、资源页与空闲热启用已实现核心 ASR+VAD 和独立可选精修两组资源；全局偏好默认关闭、按会话冻结，缺失精修不阻止核心字幕。
 8. B5 已从当前源码重建正式 x64 ASAR/NSIS，并把 package layout、native/SQLite utility、packaged 首启与同一 `userData` 离线复启、两次 exact-child clean exit、J15b 跨会话版本选择、J15c 故障回退/工具条会话状态通知、旧 JSONL 幂等迁移、三格式完整导出和隔离 NSIS 安装/卸载绑定到安装器 SHA `d862c5fc…0de10`。同一 run ID、四份报告 SHA 与 114 文件产品载荷 SHA `a1f03ed6…9accc` 由独立 binding 报告闭合并写入 release layout；卸载后与应用无关的隔离 APPDATA 哨兵仍存在且 SHA 不变。正式应用未在 NSIS 机械探针中启动，候选未签名，且 packaged 旅程是测试 variant，不冒充精确 NSIS 安装后的干净机 I4。
 9. I3 非音频预资格已以 3,600 段/4,000 事件、虚拟两小时、SQLite 重开恢复、72 页有界 DOM 与三格式全量导出通过；真实两小时声源仍随音频测试延期。I4 非音频专用机 runner 已把同一精确安装器的公网首下、系统保存弹窗、正式 userData 卸载保留和离线重装写成严格 `pass/partial` 门禁，但尚无干净 Win11 报告；交互权限、真实来源与 I2 性能/交互/恢复缺口继续归音频测试。
-10. 字幕 MVP 通过后做 A1：`AgentRuntime` + Pi Core 隔离探针 + 项目自有插件宿主 + 凭据/可靠消费；再以第一方插件实现独立增强文本和会后结构化纪要，并通过 J3–J7/J13。
-11. 只有 X1 明确进入范围时才增加 FTS5/`sqlite-vec`，并执行 J11/DB4。
+10. 字幕 MVP 通过后做 A1：先登记并实现识别 provider 抽象、`AgentRuntime` + Pi Core 隔离探针、项目自有插件宿主、凭据与可靠消费；再以第一方插件实现独立增强文本、会后结构化纪要和个人记忆，并通过 J3–J7/J13/J20/J21。
+11. 受控 Tool Calling 与默认隐藏的调试聊天在核心 job/产物/记忆链路之后接入，并通过 J22；它不能成为字幕或会后自动任务的前置条件。
+12. 只有 X1 明确进入范围时才增加 FTS5/`sqlite-vec`，并执行 J11/DB4。
+
+## 11. Provider、个人记忆与专用子 Agent 运行时（A1/A2 设计）
+
+### 11.1 权威识别路由
+
+```text
+单路 AudioHost + 有界 PCM
+└─ RecognitionSessionRouter（会话策略冻结）
+   ├─ 纯本地权威识别
+   │  └─ SEM-F21 本地两阶段链路
+   └─ 云端主力识别与本地降级
+      ├─ CloudRecognitionAdapter ──▶ partial / 唯一 first final
+      └─ LocalRecognitionAdapter（ready，正常期间不解码）
+         └─ 仅在明确故障后接收有界 PCM 并单向接管
+```
+
+- `RecognitionSessionRouter` 只消费会话开始时冻结的策略、provider 能力、确认关键词集合版本和本地模型就绪证明；renderer 不能直接选择 adapter 或传 provider URL。
+- `RecognitionProviderRegistry` 只注册随产品发布的第一方适配器。所有适配器把流式结果归一为同一 Caption Event/会话身份语义，并以能力描述声明关键词、取消、连接存活检测和事件有序性；业务层不得按具体云服务名称分支。
+- 云端适配器必须声明并通过流式 `partial`、权威 `final`、取消、连接存活检测和有序事件能力探针。关键词提示是可选 capability；不支持时仍可识别，但必须向设置与会话诊断暴露“确认关键词未应用”。
+- 云端正常期间，本地两阶段识别链路不得持续解码。可以预载或保持资源句柄就绪，但不能用“兜底”名义继续消耗完整本地推理预算。
+- 当前段的 PCM 环形缓冲只覆盖明确、固定的最大时长。明确断开、稳定 provider 错误或连接存活检测失败时，router 原子关闭云端 generation、冻结故障边界，再把该缓冲交给新的本地 generation；旧 generation 的迟到事件必须按 generation、sequence 和 segment 身份拒绝。
+- 已经持久化的云端首次稳定转写不可重开或替换；当前尚未产生首次 `final` 的段可以由本地链路重新形成唯一 `final`。降级后同一会话不自动切回云端。
+- 普通响应变慢、瞬时抖动或单次心跳延后只能形成指标，不能触发降级。连接存活阈值必须宽松、可测试，并与冻结字幕可见延迟指标分开。
+
+### 11.2 Agent provider 与资源仲裁
+
+- `ModelGateway` 冻结每个后台 Agent 任务的 Agent 模型 provider、模型、recipe 版本、超时、取消和用量边界；识别 provider 不经过该网关，也不与其共享配置。
+- `AgentModelProviderRegistry` 与识别 registry 分离，只向 `ModelGateway` 暴露受控生成、结构化输出、用量、超时和取消能力。Stage 0 隔离 Agent 内核开发入口只接通 OpenAI-compatible 云端参考实现和确定性测试 provider，本地 Agent 模型 provider 只冻结接口；正式 Agent 产品切片再补本地实现。新增 provider 不得扩张插件工具权限。
+- 本地 Agent 推理是字幕系统的低优先级工作：有活动字幕会话时不启动；若运行期间新会话开始，任务收到取消信号并保持可重试状态，待无活动会话时重新执行。
+- 云端 Agent 请求可以在新字幕会话期间继续，因为它不持续占用本地模型推理资源；其 renderer 更新、SQLite 回写和日志仍必须有界，不能抢占字幕事件 FIFO 或长时间持有事务。
+- provider 不可用、凭据失效、限流、超时或 worker 退出只改变后台 Agent 任务与调试聊天 capability。字幕会话、SQLite 字幕事实、历史和导出保持独立。
+
+### 11.3 后台 Agent 任务与专用子 Agent
+
+```text
+终态会话 + 完整输入水位
+└─ AgentJobReconciler
+   ├─ meeting-minutes job ──▶ 固定 recipe Agent Loop ──▶ agent_artifacts
+   ├─ memory-extraction job ─▶ 固定 recipe Agent Loop ──▶ 记忆候选
+   └─ enhanced-transcript job ▶ 固定 recipe Agent Loop ──▶ agent_artifacts
+
+调试聊天
+└─ 固定业务工具 ──▶ 执行预览/用户确认 ──▶ 同一 job registry
+   └─ 一层专用子 Agent ──▶ Schema 候选 ──▶ Host 校验/提交
+```
+
+- 三种自动任务是逻辑独立的 sibling，不串联结果；provider 内部将多个请求做成本优化时也不得改变任务各自的输入、状态、重试和产物契约。
+- `AgentJobReconciler` 以终态会话和缺失 dedupe key 为事实来源，负责停止后尽力建任务、启动补建和 worker replacement 恢复；它不参与字幕事件事务。
+- 同一会话、同一任务类型同时只运行一个自动任务；全局并发再受 provider 与本机资源预算限制。取消、超时和应用退出只终止当前 run，SQLite 中的待办仍可恢复。
+- 调试聊天没有通用 `spawn_subagent`。工具名称直接表达业务意图；读取工具可直接运行，写入或产生云端费用的工具先返回执行预览，取得用户确认后才建 job。
+- 专用子 Agent 只接收固定任务说明、选中的 `sessionId + inputWatermark + transcriptVersion + digest`、所需范围内的个人记忆及 provider 配置，不继承调试聊天历史，不得继续委派。
+- 子 Agent 只返回结构化候选；`beforeToolCall` 等 Pi hook 可用于循环内阻断和观察，但最终的权限、并发、Schema 校验、写入与审计始终由 `AgentPluginHost` 执行。
+
+### 11.4 隔离 Agent 内核开发入口（SEM-F29 / J23）
+
+首个实现切片不接入上述 `MeetingStopped` 路径，而使用完全独立的开发应用：
+
+```text
+Agent MVP renderer
+└─ Agent MVP preload / exact IPC
+   └─ AgentRuntimeHost
+      ├─ Agent utility process ──▶ Pi Agent Core / ModelGateway
+      └─ Agent storage utility process ──▶ 隔离 SQLite
+```
+
+该入口不得导入 `src/main.js`、`SessionCoordinator`、audio host、实时/精修 worker 或正式 renderer access policy。它只共享可复用的 contract、SQLite 基础设施和视觉 token；独立 data root 中的合成终态会话必须由真实 storage worker 写入，不能用 renderer 内 fixture 假装已提交事实。Agent utility process 与 storage utility process 分开，插件拿不到 SQLite 句柄；凭据由 Agent 主进程在每个 run 创建时解密后只以内存参数交给 `ModelGateway`。
+
+Agent MVP 全局只运行一个 Agent Loop，后台 Agent 任务 FIFO 排队。应用退出先停止接单，再有界取消当前 Loop、持久化任务状态、关闭 Agent utility process 和 storage utility process。正式字幕系统不观察该入口的启动、退出或故障。

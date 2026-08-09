@@ -1,5 +1,7 @@
 # Live Subtitle Agent · 视觉/UI 模型交接说明
 
+> Agent 首版界面的独立交接见 [`agent-ui-ux-handoff.md`](agent-ui-ux-handoff.md)。该文档只把 SEM-F25–F28 与 J20–J22 转换为设计约束，不形成第二份产品语义权威；冲突时仍以 `semantic-contract.md` 为准。
+
 > 状态：Rev.9 · 2026-08-08
 > 目的：让擅长视觉设计的模型可以独立改进界面，同时不接触音频、ASR、模型、存储和安全实现。
 
