@@ -1,7 +1,7 @@
 # 正式 Agent 首版 TODO 与组合验收矩阵
 
 > 更新日期：2026-08-10
-> 证据状态：SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；D3 的正式 SQLite migration 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切为实现完成·尚未验收；D5 增强文本与个人记忆后端纵切已登记、实施前保持已决定；其余正式产品项保持已决定。
+> 证据状态：SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；D3 的正式 SQLite migration 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切均为实现完成·尚未验收；其余正式产品项保持已决定。
 
 ## 1. 使用方式与权威边界
 
@@ -19,8 +19,9 @@
 | 隔离 Agent 内核开发入口 | 联合验收完成 | 顺利路径、重启、取消竞态、应用中断、utility replacement、Agent 模型 provider/越权矩阵、幂等重放与严格隐私负扫描均已有真实 Electron 联合证据 |
 | 正式 Agent SQLite 与存储/生命周期子边界 | 实现完成·尚未验收 | 正式 v3 migration、输入身份、Agent 处理资格、自动对账、策略线性化、领取/续租/转换/结果/删除幂等、跨表完整性与 tombstone 已由真实 storage worker + SQLite 子边界覆盖；不包含正式 PluginHost、job runner、preload/IPC 或 renderer |
 | 会后结构化纪要后端纵切 | 实现完成·尚未验收 | 冻结输入读取、已装载任务闭集、确定性分块/归并、正式 `transcript-context` / `meeting-minutes`、`ModelGateway` + Pi Agent Loop、租约/重试/取消/插件卸载与 SQLite 原子提交已有组合证据；不包含 `MeetingStopped`、正式 preload/IPC、renderer、utility-process transport 或实机组合 |
+| 增强文本与个人记忆后端纵切 | 实现完成·尚未验收 | 正式 `enhanced-transcript`、`memory-extraction`、任务内 `memory-consolidation`、writer 分流、三项同输入独立执行、记忆三级筛选/去重/冲突/suppression 与单条删除已有真实 storage worker/SQLite/PluginHost/job runner 组合证据；不包含 `MeetingStopped`、正式 utility-process transport、preload/IPC、renderer、记忆检索或确认关键词 |
 | 正式字幕提交边界接线 | 已决定 | 尚无 `MeetingStopped → AgentJobReconciler` 正式实现证据 |
-| 正式三项后台 Agent 任务 | 已决定 | 仅会后结构化纪要的 UI-free 后端子边界已有实现证据；个人记忆、增强文本及三项独立执行组合尚无正式插件证据 |
+| 正式三项后台 Agent 任务 | 已决定 | 三项任务共享同一冻结输入并独立执行的 UI-free 后端子边界为实现完成·尚未验收；正式触发、utility-process 运行时、用户读取/操作链路与完整 J21/J24 仍无产品证据 |
 | 识别 provider、Agent 模型 provider、确认关键词、资源仲裁 | 已决定 | 正式 registry、云端识别与本地 Agent 模型 provider 尚无实现证据 |
 | 正式设置/历史/调试聊天 | 已决定 | UI/UX 由并行任务维护；正式 IPC、preload、storage 读取仍待接线 |
 | 正式打包与发布 | 已决定 | 正式包当前按设计排除隔离入口和 Pi 开发依赖 |
@@ -95,7 +96,7 @@ D3 先闭合 A2–A4 的正式存储与生命周期骨架，不触碰并行维�
 
 D4 的 A5 UI-free 后端纵切现为实现完成·尚未验收：`agent.readInputSnapshot` 以完整 `InputReference` 复算并按所选 `event_order` 返回冻结字幕快照；`agent.claimNextJob.availableTaskKinds` 保证宿主只领取当前已装载能力；正式 `transcript-context` / `meeting-minutes` 经真实 `AgentPluginHost`、`ModelGateway`、Pi Agent Loop、确定性输入规划和 storage worker 原子提交运行，只在 Agent 模型 provider 边界使用契约替身。J24-B02/B03/B06/B10/B12/B19/B20/B21/B27/B28/B29 的后端子边界已覆盖短输入、完整精修稿、Unicode 长输入、保守归并预算、重试、取消、插件卸载、空栏目、身份臆造拒绝、陈旧输入与原子提交；仍不包含正式 `MeetingStopped`、preload/IPC、renderer、utility-process transport、`mic`/`loopback` 实机组合或其余两项后台 Agent 任务，不能提升完整 J3/J13/J21/J24。
 
-D5 在实现前登记为另一项 UI-free 后端纵切：补齐正式 `enhanced-transcript`、`memory-extraction` 与任务内 `memory-consolidation` 插件，扩展固定 recipe/模型操作闭集和 job runner writer 分流；使用真实 storage worker、SQLite、PluginHost、job runner、`ModelGateway` 与 Pi Agent Loop，只在 Agent 模型 provider 边界使用替身。阻断矩阵为 J24-B19/B22/B25/B28/B31：插件依赖或运行中卸载时不误领/不迟交；记忆重复增加来源、冲突形成 revision、明确内容不被自动内容覆盖；单条个人记忆删除须在一个幂等 storage worker 事务中为每个旧来源 digest 写 suppression，再移除当前内容/revision/evidence，回复重放不得误删其它条目；三项任务共享同一 `InputReference` 且独立成败；增强文本归并失败不留部分产物；明确决定可保留、噪声与自动低置信候选丢弃、无身份的显式/自动全局偏好均不得写入。记忆只能直接读取冻结字幕快照，不能读取会后结构化纪要。D5 不包含正式 UI、`MeetingStopped`、utility-process transport、记忆检索或确认关键词，因此即使本批后端证据闭合也不得提升完整 J21/J24。
+D5 的 UI-free 后端纵切现为实现完成·尚未验收：正式 `enhanced-transcript`、`memory-extraction` 与任务内 `memory-consolidation` 插件、固定 recipe/模型操作闭集和 job runner writer 分流均纳入该后端纵切；组合使用真实 storage worker、SQLite、PluginHost、job runner、`ModelGateway` 与 Pi Agent Loop，只在 Agent 模型 provider 边界使用替身。J24-B19/B22/B25/B28/B31 已覆盖插件依赖或运行中卸载不误领/不迟交、重复来源与冲突 revision、明确内容优先、每个旧来源 digest suppression、幂等单条删除和回复重放、三项任务共享同一 `InputReference` 且独立成败、增强文本归并失败不留部分产物，以及明确决定保留、噪声/低价值候选与无身份显式/自动全局偏好丢弃。记忆仍只直接读取冻结字幕快照，不读取会后结构化纪要。D5 不包含正式 UI、`MeetingStopped`、utility-process transport、记忆检索或确认关键词，因此不提升完整 J21/J24。
 
 | 场景 | 用户边界 | 必须观察到的结果 | 证据状态 |
 |---|---|---|---|
@@ -163,3 +164,4 @@ D5 在实现前登记为另一项 UI-free 后端纵切：补齐正式 `enhanced-
 | D2 | SEM-F29/J23 隔离入口的取消竞态、错误分类、重试/中断恢复、utility replacement、六类越权、确认幂等与严格隐私矩阵 | Luna/max：首轮 3 项 P2、二轮 1 项 B16 P2，修复后最终复核 P1 无、P2 无；并行 UI 状态词登记为冲突区 P3 | core 507/507；integration 39/39；evidence 227/227 | `a68fcfd` | 联合验收完成 |
 | D3 | 正式 v3 migration、Agent 处理资格与自动对账、任务生命周期/幂等结果、个人记忆来源完整性和会话 tombstone 删除子边界 | Luna/max：首轮指出 claim 策略、结果/删除、回复重放及跨表完整性等 P1/P2；修复后末轮补齐个人记忆复合来源与陈旧续租拒绝，最终复核 P1 无、P2 无 | 定向组合 53/53；core 514/514；integration 50/50；evidence 227/227 | `9d28f6b` | 实现完成·尚未验收 |
 | D4 | 冻结输入读取、已装载任务领取闭集、正式纪要插件/宿主、确定性规划与归并、`ModelGateway` + Pi Loop、job runner 与原子产物提交后端纵切 | Luna/max：首轮指出运行中插件卸载、完整精修稿顺序两项 P1 与归并预算前置一项 P2；补齐 active abort/提交前重验、按所选事件顺序排序及零 provider 调用预检后，二次复核 P1 无、P2 无 | 定向组合 46/46；core 519/519；integration 56/56；evidence 227/227；I3 非音频报告由安全生成器重建且保持 `partial` | `daea3f6` | 实现完成·尚未验收 |
+| D5 | 增强文本、记忆提取/任务内合并、writer 分流、三项同输入独立执行、正式 v4 suppression 身份与单条个人记忆删除 | Luna/max：首轮指出无身份显式全局偏好、缺少正式删除命令旅程与 storage owner 校验三项 P2/P3；补齐后第二轮复核 P1 无、P2 无，保留 utility-process/正式 UI 证据边界 P3 | 定向组合 57/57；core 523/523；integration 60/60；evidence 227/227；I3 非音频报告只再绑定安全哈希且保持 `partial` | `589c284` | 实现完成·尚未验收 |
