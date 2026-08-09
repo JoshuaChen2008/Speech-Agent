@@ -2,9 +2,10 @@
 
 // @ts-check
 
-/* 字幕 SQLite schema 的唯一来源。
-   - 只包含字幕事实、当前投影、会话和旧 JSONL 导入审计；
-   - 不包含 translated/Agent/FTS/vector，也不包含音频 BLOB 或录音路径；
+/* 正式产品 SQLite migration 的唯一来源。
+   - 字幕基础 catalog 只包含字幕事实、当前投影、会话和旧 JSONL 导入审计；
+   - 正式 Agent v3 按 ADR 0010 另行追加，不进入 SEM-F29/J23 候选 catalog；
+   - 两个 catalog 都不包含 translated/FTS/vector、音频 BLOB 或录音路径；
    - migration checksum 是 fail-closed 边界，已应用 SQL 被改写时拒绝开库。 */
 
 const crypto = require('node:crypto')
@@ -132,11 +133,422 @@ SELECT session_id, 'not_recorded', NULL, NULL, NULL, NULL
 FROM sessions;
 `
 
+/* ADR 0010：正式 Agent v3 与隔离候选 v3 属于不同 catalog。这里不得加入
+   SEM-F29/J23 的 reference-output 约束；正式表仍与字幕事实共用同一写连接。 */
+const FORMAL_AGENT_SCHEMA_SQL = `
+CREATE TABLE session_deletion_tombstones (
+  session_id TEXT PRIMARY KEY NOT NULL CHECK (length(session_id) BETWEEN 1 AND 160),
+  deletion_idempotency_key TEXT NOT NULL UNIQUE CHECK (length(deletion_idempotency_key) BETWEEN 1 AND 160),
+  request_digest TEXT NOT NULL CHECK (length(request_digest) = 64),
+  deleted_job_count INTEGER NOT NULL CHECK (deleted_job_count >= 0),
+  deleted_artifact_count INTEGER NOT NULL CHECK (deleted_artifact_count >= 0),
+  deleted_debug_thread_count INTEGER NOT NULL CHECK (deleted_debug_thread_count >= 0),
+  deleted_memory_evidence_count INTEGER NOT NULL CHECK (deleted_memory_evidence_count >= 0),
+  deleted_orphan_memory_count INTEGER NOT NULL CHECK (deleted_orphan_memory_count >= 0),
+  deleted_at INTEGER NOT NULL CHECK (deleted_at >= 0)
+) STRICT;
+
+DROP TRIGGER caption_events_reject_delete;
+CREATE TRIGGER caption_events_reject_delete
+BEFORE DELETE ON caption_events
+WHEN NOT EXISTS (
+  SELECT 1 FROM session_deletion_tombstones AS tombstone
+  WHERE tombstone.session_id = OLD.session_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'caption_events are immutable');
+END;
+
+CREATE TRIGGER sessions_reject_deleted_identity_insert
+BEFORE INSERT ON sessions
+WHEN EXISTS (
+  SELECT 1 FROM session_deletion_tombstones AS tombstone
+  WHERE tombstone.session_id = NEW.session_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'deleted session identity cannot be reused');
+END;
+
+CREATE TABLE agent_jobs (
+  job_order INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id TEXT NOT NULL UNIQUE CHECK (length(job_id) BETWEEN 1 AND 160),
+  run_id TEXT NOT NULL UNIQUE CHECK (length(run_id) BETWEEN 1 AND 160),
+  dedupe_key TEXT NOT NULL UNIQUE CHECK (length(dedupe_key) = 64),
+  client_idempotency_key TEXT UNIQUE CHECK (
+    client_idempotency_key IS NULL OR length(client_idempotency_key) BETWEEN 1 AND 160
+  ),
+  request_digest TEXT NOT NULL CHECK (length(request_digest) = 64),
+  session_id TEXT NOT NULL,
+  plugin_id TEXT NOT NULL CHECK (plugin_id IN (
+    'meeting-minutes', 'memory-extraction', 'enhanced-transcript'
+  )),
+  artifact_kind TEXT NOT NULL CHECK (artifact_kind IN (
+    'meeting-minutes', 'memory-candidates', 'enhanced-transcript'
+  )),
+  transcript_version TEXT NOT NULL CHECK (transcript_version IN ('original', 'refined')),
+  input_watermark INTEGER NOT NULL CHECK (input_watermark >= 1),
+  input_digest TEXT NOT NULL CHECK (length(input_digest) = 64),
+  recipe_version TEXT NOT NULL CHECK (length(recipe_version) BETWEEN 1 AND 80),
+  provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 160),
+  provider_kind TEXT NOT NULL CHECK (provider_kind IN ('cloud', 'local')),
+  model TEXT NOT NULL CHECK (length(model) BETWEEN 1 AND 160),
+  state TEXT NOT NULL CHECK (state IN (
+    'queued', 'running', 'retry_wait', 'succeeded', 'failed', 'cancelled'
+  )),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count BETWEEN 0 AND 3),
+  max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts BETWEEN 1 AND 3),
+  next_attempt_at INTEGER NOT NULL CHECK (next_attempt_at >= 0),
+  lease_owner TEXT CHECK (lease_owner IS NULL OR length(lease_owner) BETWEEN 1 AND 160),
+  lease_expires_at INTEGER CHECK (lease_expires_at IS NULL OR lease_expires_at >= 0),
+  lease_renewed_from_expires_at INTEGER CHECK (
+    lease_renewed_from_expires_at IS NULL OR lease_renewed_from_expires_at >= 0
+  ),
+  cancel_requested_at INTEGER CHECK (cancel_requested_at IS NULL OR cancel_requested_at >= 0),
+  error_code TEXT CHECK (error_code IS NULL OR error_code IN (
+    'AGENT_PROVIDER_AUTH_FAILED',
+    'AGENT_PROVIDER_RATE_LIMITED',
+    'AGENT_PROVIDER_UNAVAILABLE',
+    'AGENT_PROVIDER_TIMEOUT',
+    'AGENT_OUTPUT_INVALID',
+    'AGENT_PERMISSION_DENIED',
+    'AGENT_REQUEST_INVALID',
+    'AGENT_WORKER_EXITED',
+    'AGENT_INTERNAL_FAILURE'
+  )),
+  result_digest TEXT CHECK (result_digest IS NULL OR length(result_digest) = 64),
+  result_summary_json TEXT CHECK (result_summary_json IS NULL OR json_valid(result_summary_json)),
+  requested_by TEXT NOT NULL CHECK (requested_by IN ('automatic', 'user')),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+  FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
+  UNIQUE (
+    run_id, session_id, plugin_id, artifact_kind, transcript_version,
+    input_watermark, input_digest, recipe_version, provider, model
+  ),
+  UNIQUE (
+    run_id, session_id, plugin_id, transcript_version,
+    input_watermark, input_digest, recipe_version, provider, model
+  ),
+  CHECK ((state = 'running') = (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)),
+  CHECK (state = 'running' OR lease_renewed_from_expires_at IS NULL),
+  CHECK (
+    (state = 'succeeded' AND result_digest IS NOT NULL AND result_summary_json IS NOT NULL) OR
+    (state <> 'succeeded' AND result_digest IS NULL AND result_summary_json IS NULL)
+  ),
+  CHECK (
+    (requested_by = 'automatic' AND client_idempotency_key IS NULL) OR
+    (requested_by = 'user' AND client_idempotency_key IS NOT NULL)
+  ),
+  CHECK (
+    (plugin_id = 'meeting-minutes' AND artifact_kind = 'meeting-minutes' AND recipe_version = 'meeting-minutes@1') OR
+    (plugin_id = 'memory-extraction' AND artifact_kind = 'memory-candidates' AND recipe_version = 'memory-extraction@1') OR
+    (plugin_id = 'enhanced-transcript' AND artifact_kind = 'enhanced-transcript' AND recipe_version = 'enhanced-transcript@1')
+  )
+) STRICT;
+
+CREATE TABLE agent_claim_receipts (
+  claim_idempotency_key TEXT PRIMARY KEY NOT NULL CHECK (length(claim_idempotency_key) BETWEEN 1 AND 160),
+  request_digest TEXT NOT NULL CHECK (length(request_digest) = 64),
+  run_id TEXT CHECK (run_id IS NULL OR length(run_id) BETWEEN 1 AND 160),
+  lease_owner TEXT CHECK (lease_owner IS NULL OR length(lease_owner) BETWEEN 1 AND 160),
+  lease_expires_at INTEGER CHECK (lease_expires_at IS NULL OR lease_expires_at >= 0),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  CHECK (
+    (run_id IS NULL AND lease_owner IS NULL AND lease_expires_at IS NULL) OR
+    (run_id IS NOT NULL AND lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)
+  )
+) STRICT;
+
+CREATE TABLE agent_artifacts (
+  artifact_id TEXT PRIMARY KEY NOT NULL CHECK (length(artifact_id) BETWEEN 1 AND 160),
+  run_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  plugin_id TEXT NOT NULL CHECK (plugin_id IN ('meeting-minutes', 'enhanced-transcript')),
+  type TEXT NOT NULL CHECK (type IN ('meeting-minutes', 'enhanced-transcript')),
+  content_json TEXT NOT NULL CHECK (json_valid(content_json)),
+  content_digest TEXT NOT NULL CHECK (length(content_digest) = 64),
+  transcript_version TEXT NOT NULL CHECK (transcript_version IN ('original', 'refined')),
+  input_through_event_order INTEGER NOT NULL CHECK (input_through_event_order >= 1),
+  input_digest TEXT NOT NULL CHECK (length(input_digest) = 64),
+  recipe_version TEXT NOT NULL CHECK (length(recipe_version) BETWEEN 1 AND 80),
+  provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 160),
+  model TEXT NOT NULL CHECK (length(model) BETWEEN 1 AND 160),
+  supersedes_artifact_id TEXT,
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
+  FOREIGN KEY (
+    run_id, session_id, plugin_id, type, transcript_version,
+    input_through_event_order, input_digest, recipe_version, provider, model
+  ) REFERENCES agent_jobs(
+    run_id, session_id, plugin_id, artifact_kind, transcript_version,
+    input_watermark, input_digest, recipe_version, provider, model
+  ) ON DELETE CASCADE,
+  FOREIGN KEY (supersedes_artifact_id, session_id, plugin_id, type)
+    REFERENCES agent_artifacts(artifact_id, session_id, plugin_id, type) ON DELETE RESTRICT,
+  UNIQUE (run_id, plugin_id, type),
+  UNIQUE (artifact_id, session_id, plugin_id, type),
+  CHECK (plugin_id = type)
+) STRICT;
+
+CREATE TABLE memory_scopes (
+  scope_id TEXT PRIMARY KEY NOT NULL CHECK (length(scope_id) BETWEEN 1 AND 160),
+  kind TEXT NOT NULL CHECK (kind IN ('global', 'session', 'topic', 'project')),
+  canonical_key TEXT NOT NULL CHECK (length(canonical_key) BETWEEN 1 AND 240),
+  label TEXT NOT NULL CHECK (length(label) BETWEEN 1 AND 400),
+  session_id TEXT,
+  origin TEXT NOT NULL CHECK (origin IN ('user', 'automatic')),
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'dormant', 'deleted')),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+  FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
+  UNIQUE (kind, canonical_key),
+  CHECK ((kind = 'session') = (session_id IS NOT NULL))
+) STRICT;
+
+CREATE TABLE memory_items (
+  memory_id TEXT PRIMARY KEY NOT NULL CHECK (length(memory_id) BETWEEN 1 AND 160),
+  scope_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('decision', 'conclusion', 'action-item', 'term', 'preference', 'project-fact', 'experience')),
+  semantic_key TEXT NOT NULL CHECK (length(semantic_key) BETWEEN 1 AND 240),
+  content_json TEXT NOT NULL CHECK (json_valid(content_json)),
+  origin TEXT NOT NULL CHECK (origin IN ('explicit', 'automatic')),
+  confidence_band TEXT NOT NULL CHECK (confidence_band IN ('low', 'medium', 'high')),
+  salience_band TEXT NOT NULL CHECK (salience_band IN ('low', 'medium', 'high')),
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'conflicted', 'inactive')),
+  current_revision_id TEXT CHECK (current_revision_id IS NULL OR length(current_revision_id) BETWEEN 1 AND 160),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+  FOREIGN KEY (scope_id) REFERENCES memory_scopes(scope_id) ON DELETE CASCADE,
+  FOREIGN KEY (current_revision_id, memory_id)
+    REFERENCES memory_revisions(revision_id, memory_id) ON DELETE SET NULL,
+  UNIQUE (scope_id, kind, semantic_key)
+) STRICT;
+
+CREATE TABLE memory_revisions (
+  revision_id TEXT PRIMARY KEY NOT NULL CHECK (length(revision_id) BETWEEN 1 AND 160),
+  memory_id TEXT NOT NULL,
+  operation TEXT NOT NULL CHECK (operation IN ('create', 'merge', 'replace', 'invalidate', 'user-correct')),
+  content_json TEXT CHECK (content_json IS NULL OR json_valid(content_json)),
+  previous_revision_id TEXT,
+  run_id TEXT,
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  FOREIGN KEY (memory_id) REFERENCES memory_items(memory_id) ON DELETE CASCADE,
+  FOREIGN KEY (previous_revision_id, memory_id)
+    REFERENCES memory_revisions(revision_id, memory_id) ON DELETE SET NULL,
+  FOREIGN KEY (run_id) REFERENCES agent_jobs(run_id) ON DELETE SET NULL,
+  UNIQUE (revision_id, memory_id)
+) STRICT;
+
+CREATE TABLE memory_evidence (
+  evidence_id TEXT PRIMARY KEY NOT NULL CHECK (length(evidence_id) BETWEEN 1 AND 160),
+  run_id TEXT NOT NULL CHECK (length(run_id) BETWEEN 1 AND 160),
+  memory_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  transcript_version TEXT NOT NULL CHECK (transcript_version IN ('original', 'refined')),
+  input_watermark INTEGER NOT NULL CHECK (input_watermark >= 1),
+  from_event_order INTEGER NOT NULL CHECK (from_event_order >= 1),
+  through_event_order INTEGER NOT NULL CHECK (through_event_order >= from_event_order),
+  input_digest TEXT NOT NULL CHECK (length(input_digest) = 64),
+  plugin_id TEXT NOT NULL CHECK (plugin_id = 'memory-extraction'),
+  recipe_version TEXT NOT NULL CHECK (recipe_version = 'memory-extraction@1'),
+  provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 160),
+  model TEXT NOT NULL CHECK (length(model) BETWEEN 1 AND 160),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  FOREIGN KEY (
+    run_id, session_id, plugin_id, transcript_version,
+    input_watermark, input_digest, recipe_version, provider, model
+  ) REFERENCES agent_jobs(
+    run_id, session_id, plugin_id, transcript_version,
+    input_watermark, input_digest, recipe_version, provider, model
+  ) ON DELETE CASCADE,
+  FOREIGN KEY (memory_id) REFERENCES memory_items(memory_id) ON DELETE CASCADE,
+  FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
+  UNIQUE (memory_id, session_id, transcript_version, from_event_order, through_event_order, input_digest)
+) STRICT;
+
+CREATE TABLE memory_suppressions (
+  identity_hash TEXT PRIMARY KEY NOT NULL CHECK (length(identity_hash) = 64),
+  scope_id TEXT NOT NULL,
+  source_digest TEXT NOT NULL CHECK (length(source_digest) = 64),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  FOREIGN KEY (scope_id) REFERENCES memory_scopes(scope_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE agent_debug_threads (
+  thread_id TEXT PRIMARY KEY NOT NULL CHECK (length(thread_id) BETWEEN 1 AND 160),
+  selected_session_id TEXT NOT NULL,
+  selected_input_watermark INTEGER NOT NULL CHECK (selected_input_watermark >= 1),
+  selected_transcript_version TEXT NOT NULL CHECK (selected_transcript_version IN ('original', 'refined')),
+  selected_input_digest TEXT NOT NULL CHECK (length(selected_input_digest) = 64),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  FOREIGN KEY (selected_session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE agent_debug_messages (
+  message_order INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id TEXT NOT NULL UNIQUE CHECK (length(message_id) BETWEEN 1 AND 160),
+  thread_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN (
+    'user', 'assistant', 'tool_preview', 'tool_confirmation', 'tool_result', 'status'
+  )),
+  content_json TEXT NOT NULL CHECK (json_valid(content_json)),
+  provider TEXT CHECK (provider IS NULL OR length(provider) BETWEEN 1 AND 160),
+  model TEXT CHECK (model IS NULL OR length(model) BETWEEN 1 AND 160),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  FOREIGN KEY (thread_id) REFERENCES agent_debug_threads(thread_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE recognition_terms (
+  term_id TEXT PRIMARY KEY NOT NULL CHECK (length(term_id) BETWEEN 1 AND 160),
+  scope_id TEXT NOT NULL,
+  canonical_text TEXT NOT NULL CHECK (length(canonical_text) BETWEEN 1 AND 400),
+  aliases_json TEXT NOT NULL CHECK (json_valid(aliases_json)),
+  proposal_origin TEXT NOT NULL CHECK (proposal_origin IN ('manual', 'memory-candidate')),
+  source_memory_identity_hash TEXT CHECK (
+    source_memory_identity_hash IS NULL OR length(source_memory_identity_hash) = 64
+  ),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  active INTEGER NOT NULL CHECK (active IN (0, 1)),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+  FOREIGN KEY (scope_id) REFERENCES memory_scopes(scope_id) ON DELETE CASCADE,
+  UNIQUE (scope_id, canonical_text),
+  CHECK (
+    (proposal_origin = 'manual' AND source_memory_identity_hash IS NULL) OR
+    (proposal_origin = 'memory-candidate' AND source_memory_identity_hash IS NOT NULL)
+  )
+) STRICT;
+
+CREATE TABLE recognition_term_sets (
+  term_set_version INTEGER PRIMARY KEY NOT NULL CHECK (term_set_version >= 1),
+  digest TEXT NOT NULL UNIQUE CHECK (length(digest) = 64),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  UNIQUE (term_set_version, digest)
+) STRICT;
+
+CREATE TABLE recognition_term_set_members (
+  term_set_version INTEGER NOT NULL,
+  term_id TEXT NOT NULL,
+  term_revision INTEGER NOT NULL CHECK (term_revision >= 1),
+  canonical_text TEXT NOT NULL CHECK (length(canonical_text) BETWEEN 1 AND 400),
+  aliases_json TEXT NOT NULL CHECK (json_valid(aliases_json)),
+  matched_aliases_json TEXT NOT NULL CHECK (json_valid(matched_aliases_json)),
+  PRIMARY KEY (term_set_version, term_id),
+  FOREIGN KEY (term_set_version) REFERENCES recognition_term_sets(term_set_version) ON DELETE RESTRICT,
+  FOREIGN KEY (term_id) REFERENCES recognition_terms(term_id) ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE recognition_session_configs (
+  session_id TEXT PRIMARY KEY NOT NULL,
+  strategy TEXT NOT NULL CHECK (strategy IN ('local-only', 'cloud-primary-local-fallback')),
+  primary_provider TEXT NOT NULL CHECK (length(primary_provider) BETWEEN 1 AND 160),
+  fallback_provider TEXT CHECK (fallback_provider IS NULL OR length(fallback_provider) BETWEEN 1 AND 160),
+  term_set_version INTEGER,
+  term_set_digest TEXT CHECK (term_set_digest IS NULL OR length(term_set_digest) = 64),
+  fallback_code TEXT CHECK (fallback_code IS NULL OR fallback_code IN (
+    'RECOGNITION_PROVIDER_DISCONNECTED',
+    'RECOGNITION_PROVIDER_UNAVAILABLE',
+    'RECOGNITION_PROVIDER_PROTOCOL_ERROR'
+  )),
+  fallback_at_ms INTEGER CHECK (fallback_at_ms IS NULL OR fallback_at_ms >= 0),
+  FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
+  FOREIGN KEY (term_set_version, term_set_digest)
+    REFERENCES recognition_term_sets(term_set_version, digest) ON DELETE RESTRICT,
+  CHECK (
+    (term_set_version IS NULL AND term_set_digest IS NULL) OR
+    (term_set_version IS NOT NULL AND term_set_digest IS NOT NULL)
+  ),
+  CHECK (
+    (fallback_code IS NULL AND fallback_at_ms IS NULL) OR
+    (fallback_code IS NOT NULL AND fallback_at_ms IS NOT NULL)
+  ),
+  CHECK (
+    (strategy = 'local-only' AND fallback_provider IS NULL AND fallback_code IS NULL) OR
+    (strategy = 'cloud-primary-local-fallback' AND fallback_provider IS NOT NULL)
+  ),
+  CHECK (fallback_provider IS NULL OR fallback_provider <> primary_provider)
+) STRICT;
+
+CREATE TRIGGER memory_revision_requires_memory_job_insert
+BEFORE INSERT ON memory_revisions
+WHEN NEW.run_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM agent_jobs AS job
+  WHERE job.run_id = NEW.run_id AND job.plugin_id = 'memory-extraction'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'memory revision job mismatch');
+END;
+
+CREATE TRIGGER memory_revision_requires_memory_job_update
+BEFORE UPDATE OF run_id ON memory_revisions
+WHEN NEW.run_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM agent_jobs AS job
+  WHERE job.run_id = NEW.run_id AND job.plugin_id = 'memory-extraction'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'memory revision job mismatch');
+END;
+
+CREATE TRIGGER recognition_term_set_member_snapshot_insert
+BEFORE INSERT ON recognition_term_set_members
+WHEN NOT EXISTS (
+  SELECT 1 FROM recognition_terms AS term
+  WHERE term.term_id = NEW.term_id
+    AND term.revision = NEW.term_revision
+    AND term.canonical_text = NEW.canonical_text
+    AND json(term.aliases_json) = json(NEW.aliases_json)
+)
+BEGIN
+  SELECT RAISE(ABORT, 'recognition term snapshot mismatch');
+END;
+
+CREATE TRIGGER recognition_term_set_member_immutable
+BEFORE UPDATE ON recognition_term_set_members
+BEGIN
+  SELECT RAISE(ABORT, 'recognition term set members are immutable');
+END;
+
+CREATE TRIGGER recognition_term_set_member_reject_delete
+BEFORE DELETE ON recognition_term_set_members
+BEGIN
+  SELECT RAISE(ABORT, 'recognition term set members are immutable');
+END;
+
+CREATE TRIGGER agent_debug_message_provider_pair_insert
+BEFORE INSERT ON agent_debug_messages
+WHEN (NEW.provider IS NULL) <> (NEW.model IS NULL)
+BEGIN
+  SELECT RAISE(ABORT, 'debug message provider snapshot mismatch');
+END;
+
+CREATE TRIGGER agent_debug_message_provider_pair_update
+BEFORE UPDATE OF provider, model ON agent_debug_messages
+WHEN (NEW.provider IS NULL) <> (NEW.model IS NULL)
+BEGIN
+  SELECT RAISE(ABORT, 'debug message provider snapshot mismatch');
+END;
+
+CREATE INDEX agent_jobs_claim
+  ON agent_jobs(state, provider_kind, next_attempt_at, job_order);
+CREATE INDEX agent_jobs_session
+  ON agent_jobs(session_id, job_order);
+CREATE INDEX agent_claim_receipts_run
+  ON agent_claim_receipts(run_id, created_at);
+CREATE INDEX agent_artifacts_session
+  ON agent_artifacts(session_id, created_at, artifact_id);
+CREATE INDEX memory_items_lookup
+  ON memory_items(lifecycle, scope_id, kind, updated_at);
+CREATE INDEX memory_evidence_session
+  ON memory_evidence(session_id, through_event_order);
+CREATE INDEX agent_debug_messages_thread
+  ON agent_debug_messages(thread_id, message_order);
+`
+
 function checksum (sql) {
   return crypto.createHash('sha256').update(sql, 'utf8').digest('hex')
 }
 
-const MIGRATIONS = Object.freeze([
+const SUBTITLE_BASE_MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
     checksum: checksum(INITIAL_SCHEMA_SQL),
@@ -149,12 +561,30 @@ const MIGRATIONS = Object.freeze([
   })
 ])
 
+/* MIGRATIONS/SCHEMA_VERSION remain the subtitle-only DB0 qualification catalog.
+   The product storage worker opts into FORMAL_AGENT_MIGRATIONS explicitly. */
+const MIGRATIONS = SUBTITLE_BASE_MIGRATIONS
 const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version
+
+const FORMAL_AGENT_MIGRATIONS = Object.freeze([
+  ...SUBTITLE_BASE_MIGRATIONS,
+  Object.freeze({
+    version: SUBTITLE_BASE_MIGRATIONS.length + 1,
+    checksum: checksum(FORMAL_AGENT_SCHEMA_SQL),
+    sql: FORMAL_AGENT_SCHEMA_SQL
+  })
+])
+
+const FORMAL_AGENT_SCHEMA_VERSION = FORMAL_AGENT_MIGRATIONS[FORMAL_AGENT_MIGRATIONS.length - 1].version
 
 module.exports = {
   INITIAL_SCHEMA_SQL,
   REFINEMENT_SESSION_RESULTS_SCHEMA_SQL,
+  FORMAL_AGENT_SCHEMA_SQL,
+  SUBTITLE_BASE_MIGRATIONS,
+  FORMAL_AGENT_MIGRATIONS,
   MIGRATIONS,
   SCHEMA_VERSION,
+  FORMAL_AGENT_SCHEMA_VERSION,
   checksum
 }

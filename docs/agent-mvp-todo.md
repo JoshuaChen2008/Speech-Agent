@@ -1,7 +1,7 @@
 # 正式 Agent 首版 TODO 与组合验收矩阵
 
 > 更新日期：2026-08-10
-> 证据状态：SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；本文其余正式产品项保持已决定，尚无实现证据。
+> 证据状态：SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；D3 的正式 SQLite migration 与存储/生命周期子边界为实现完成·尚未验收；其余正式产品项保持已决定。
 
 ## 1. 使用方式与权威边界
 
@@ -17,6 +17,7 @@
 |---|---|---|
 | Agent Core / Pi 适配 / `AgentPluginHost` / `ModelGateway` | 联合验收完成 | 参考插件、权限白名单、候选任务与产物已由 J23-B01–B16 跨模块旅程闭合；只属于 SEM-F29/J23 |
 | 隔离 Agent 内核开发入口 | 联合验收完成 | 顺利路径、重启、取消竞态、应用中断、utility replacement、Agent 模型 provider/越权矩阵、幂等重放与严格隐私负扫描均已有真实 Electron 联合证据 |
+| 正式 Agent SQLite 与存储/生命周期子边界 | 实现完成·尚未验收 | 正式 v3 migration、输入身份、Agent 处理资格、自动对账、策略线性化、领取/续租/转换/结果/删除幂等、跨表完整性与 tombstone 已由真实 storage worker + SQLite 子边界覆盖；不包含正式 PluginHost、job runner、preload/IPC 或 renderer |
 | 正式字幕提交边界接线 | 已决定 | 尚无 `MeetingStopped → AgentJobReconciler` 正式实现证据 |
 | 正式三项后台 Agent 任务 | 已决定 | 会后结构化纪要、个人记忆、增强文本尚无正式插件和产物证据 |
 | 识别 provider、Agent 模型 provider、确认关键词、资源仲裁 | 已决定 | 正式 registry、云端识别与本地 Agent 模型 provider 尚无实现证据 |
@@ -42,8 +43,8 @@
 |---|---|---|---|---|
 | A0 | 闭合隔离入口 | 同 `runId` 中断恢复、renderer 拒绝/取消/Agent 模型 provider 故障、主动重新运行、越权与隐私矩阵 | SEM-F29 / J23 | 联合验收完成 |
 | A1 | 冻结正式合同 | `InputReference`、任务/错误闭集、端口、IPC、产物 Schema、ADR 0009 | SEM-F15/F16/F28 / J13/J21/J22/J24 | 已决定 |
-| A2 | 正式 SQLite migration | `agent_jobs`、`agent_artifacts`、个人记忆、调试聊天、识别配置与确认关键词表进入新 migration | DB7 / J20/J21/J22/J24 | 已决定 |
-| A3 | 字幕提交边界与对账 | 终态会话、完整输入身份、Agent 处理资格、自动处理时间边界、三项后台 Agent 任务幂等补建、删除不复活 | SEM-F00/F28 / J3–J7/J21/J24 | 已决定 |
+| A2 | 正式 SQLite migration | `agent_jobs`、`agent_artifacts`、个人记忆、调试聊天、识别配置与确认关键词表进入新 migration | DB7 / J20/J21/J22/J24 | 实现完成·尚未验收 |
+| A3 | 字幕提交边界与对账 | 终态会话、完整输入身份、Agent 处理资格、Agent 与个人记忆自动处理边界、三项后台 Agent 任务幂等补建、删除不复活 | SEM-F00/F28 / J3–J7/J21/J24 | 已决定 |
 | A4 | 正式任务运行时 | lease、重试、取消、同 `runId` 恢复、人工幂等键、资源仲裁、退出收束 | SEM-F09/F12/F28 / J7/J21/J24 | 已决定 |
 | A5 | 会后结构化纪要 | `transcript-context`、`meeting-minutes`、固定四栏目、证据范围、空数组不臆造、版本化 UI | SEM-T07/T10 / J3–J7/J13/J21/J24 | 已决定 |
 | A6 | 增强文本 | 独立派生版本、完整输入覆盖、明确重新生成、不覆盖权威原始转写 | SEM-F16/F28 / J13/J21/J24 | 已决定 |
@@ -89,13 +90,15 @@ J23 的确定性 Agent 模型 provider 方案与任务领取竞态 gate 只能�
 
 所有 J24 场景使用真实 storage worker、SQLite migration、`AgentPluginHost`、job runner、正式 preload/IPC 和对应 renderer。只有 Agent 模型 provider、云网络、系统凭据存储、声卡与操作系统权限可以使用受控替身；不得用内存 repository、直接调用最终 writer 或 renderer 内 fixture 替代产品内部模块。`test/validation/agent-mvp-design-contract.test.js` 只防止设计追踪漂移，不构成任何产品旅程证据，也不得提高 J13/J20/J21/J22/J24 的验收状态。
 
+D3 先闭合 A2–A4 的正式存储与生命周期骨架，不触碰并行维护的 renderer。其阻断切片已登记为：DB7/ADR 0010 的 v2 → 正式 Agent v3 与交叉 catalog fail closed；J24-B01/B26 的资格优先级；J24-B04/B25 的三项任务同输入身份和重复对账幂等；J24-B05/B07/B08/B09/B11/B12/B13/B14/B18 的租约、回复重放、人工幂等、取消、错误分类、冻结 Agent 模型 provider 快照、个人记忆自动处理边界与多会话领取；J24-B21/B29/B30 的完整精修输入、陈旧输入与隐私负扫描。该切片在缺少正式 PluginHost、preload/IPC 和 renderer 前最多只能标为“实现完成·尚未验收”，不能提高 J24 状态。
+
 | 场景 | 用户边界 | 必须观察到的结果 | 证据状态 |
 |---|---|---|---|
 | J24-B01 | 终态会话没有首次稳定转写 | 不创建三项后台 Agent 任务、不调用 Agent 模型 provider；历史明确显示没有可处理的已提交正文 | 已决定 |
 | J24-B02 | 终态会话很短但至少有一段正文 | 不设任意时长门槛，仍按完整输入生成；无结论/待办/风险时返回空数组 | 已决定 |
 | J24-B03 | 正文超过单次 Agent 模型 provider 上下文 | ADR 0009 的确定性分块覆盖全部字幕段；任一分块失败时不提交部分产物 | 已决定 |
 | J24-B04 | `MeetingStopped`、启动扫描和 worker replacement 重复对账 | 每种自动任务只有一个 dedupe identity，不产生重复当前产物 | 已决定 |
-| J24-B05 | job 领取后、Agent 模型 provider 调用前应用退出 | 租约过期后沿用同一 `runId` 恢复；字幕历史不受影响 | 已决定 |
+| J24-B05 | job 领取已提交但 IPC 回复丢失，或领取后、Agent 模型 provider 调用前应用退出 | 同一 claim idempotency key 重放只返回原任务/租约或空结果，绝不误领下一项任务；租约过期后沿用同一 `runId` 恢复，字幕历史不受影响 | 已决定 |
 | J24-B06 | Agent 模型 provider 已返回、产物提交前 worker 退出 | 不暴露未提交产物；恢复后同一 `runId` 重新执行并只提交一次 | 已决定 |
 | J24-B07 | SQLite 已提交但 IPC 回复丢失或 renderer reload | UI 重读权威 snapshot，显示既有 job/产物，不重新入队 | 已决定 |
 | J24-B08 | 用户双击“重新生成”或 IPC 重放 | 同一 client idempotency key 返回同一 job；新的明确动作才创建新 `runId` | 已决定 |
@@ -104,14 +107,14 @@ J23 的确定性 Agent 模型 provider 方案与任务领取竞态 gate 只能�
 | J24-B11 | Agent 模型 provider 出现 408、429、网络或 5xx | 在固定预算内退避并沿用同一 `runId`；不形成重试风暴，不阻塞字幕 | 已决定 |
 | J24-B12 | 凭据失效、输出 Schema 错误、越权或参数错误 | 直接 `failed`，不自动重试；显示稳定错误和下一动作 | 已决定 |
 | J24-B13 | queued/running 期间用户更改 Agent 模型 provider、模型或 recipe | 既有 job 保持冻结快照；新 job 使用新设置，不静默切换 | 已决定 |
-| J24-B14 | memory job queued/running 时关闭个人记忆 | 只取消记忆任务并拒绝迟到提交；纪要、增强文本与字幕继续 | 已决定 |
+| J24-B14 | memory job queued/running 时关闭个人记忆，关闭期间另有会话进入终态，随后重新开启 | 只取消记忆任务并拒绝迟到提交；纪要、增强文本与字幕继续。重新开启写入新的个人记忆自动处理边界，不复活已取消任务，也不自动补处理关闭期间或更早会话；用户明确请求重新提取仍需当前开关与资格满足 | 已决定 |
 | J24-B15 | 本地 Agent job 运行时开始新字幕会话 | 本地 job 有界停止并进入可重试状态；新字幕会话优先 | 已决定 |
 | J24-B16 | 云端 Agent job 运行时开始新字幕会话 | 云端请求可继续，但 SQLite 回写和 UI 更新保持有界 | 已决定 |
-| J24-B17 | 会话删除时存在 queued/running job、产物、聊天和记忆来源 | 同一 storage worker 清理并拒绝迟到提交；后续对账不复活 | 已决定 |
+| J24-B17 | 会话删除时存在 queued/running job、产物、聊天和记忆来源，删除回复丢失后请求重放 | 同一 storage worker 先写 tombstone 再受控清理；拒绝迟到提交、清理仅由该会话支撑的记忆，相同 deletion idempotency key 不影响其它会话，后续对账不复活 | 已决定 |
 | J24-B18 | 多个终态会话连续到达 | FIFO 与并发预算确定，单个失败或限流不饿死其它会话 | 已决定 |
 | J24-B19 | 插件超时、异常、卸载或请求未授权能力 | 只隔离该插件/job；字幕、其它任务和历史保持不变 | 已决定 |
 | J24-B20 | 纪要正文没有明确负责人或期限 | `owner/due` 为 `null`，不得根据音频来源或第一人称臆造身份 | 已决定 |
-| J24-B21 | 用户在 job 运行后选择另一正文版本 | 原 job 继续绑定原 `InputReference`；重新生成以新输入身份创建新版本 | 已决定 |
+| J24-B21 | 用户在 job 运行后选择另一正文版本，或选择精修覆盖不完整的混合显示正文 | 原 job 继续绑定原 `InputReference`；重新生成以新输入身份创建新版本。`refined` 只接受整场 `N=M` 的完整精修稿，不完整混合显示正文在 Agent 模型 provider 调用前被拒绝，用户可改选权威原始转写 | 已决定 |
 | J24-B22 | 个人记忆出现重复、冲突、用户删除后旧输入再次扫描 | 增加来源或 revision；明确内容优先；suppression 阻止旧来源重建 | 已决定 |
 | J24-B23 | `safeStorage` 不可用或用户清除云端凭据 | 凭据只保留本进程或被清除；renderer/SQLite/日志/报告永不返回密钥 | 已决定 |
 | J24-B24 | 状态快速变化、键盘操作、失败后重试及 renderer 重载 | 权威状态可聚焦、可读且通过 live region 通知；不只靠颜色，不重复动作 | 已决定 |
@@ -153,3 +156,4 @@ J23 的确定性 Agent 模型 provider 方案与任务领取竞态 gate 只能�
 |---|---|---|---|---|---|
 | D1 | TODO、接口合同、ADR 0009、SEM-F28/SEM-T15、J24 与设计契约测试 | Luna/max：首轮提出 P1/P2；二轮 P1/P2 无剩余；末轮 P3 五项随后按建议对齐 | 设计合同 1/1；Agent 定向组合 18/18；core 504/504；integration 34/34；evidence 227/227 | `1007cc8` | 已决定 |
 | D2 | SEM-F29/J23 隔离入口的取消竞态、错误分类、重试/中断恢复、utility replacement、六类越权、确认幂等与严格隐私矩阵 | Luna/max：首轮 3 项 P2、二轮 1 项 B16 P2，修复后最终复核 P1 无、P2 无；并行 UI 状态词登记为冲突区 P3 | core 507/507；integration 39/39；evidence 227/227 | `a68fcfd` | 联合验收完成 |
+| D3 | 正式 v3 migration、Agent 处理资格与自动对账、任务生命周期/幂等结果、个人记忆来源完整性和会话 tombstone 删除子边界 | Luna/max：首轮指出 claim 策略、结果/删除、回复重放及跨表完整性等 P1/P2；修复后末轮补齐个人记忆复合来源与陈旧续租拒绝，最终复核 P1 无、P2 无 | 定向组合 53/53；core 514/514；integration 50/50；evidence 227/227 | 待本批提交 | 实现完成·尚未验收 |

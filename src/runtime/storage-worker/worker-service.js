@@ -3,6 +3,7 @@
 // @ts-check
 
 const { runDatabaseQualification } = require('./qualification')
+const { FORMAL_AGENT_MIGRATIONS } = require('./schema')
 const { SqliteSubtitleStore } = require('./subtitle-store')
 const {
   OPERATIONS,
@@ -22,14 +23,30 @@ const {
 
 class StorageWorkerService {
   constructor (options = {}) {
-    this.storeFactory = options.storeFactory || ((storeOptions) => new SqliteSubtitleStore(storeOptions))
+    this.storeFactory = options.storeFactory || ((storeOptions) => new SqliteSubtitleStore({
+      ...storeOptions,
+      migrations: FORMAL_AGENT_MIGRATIONS
+    }))
+    this.agentStoreFactory = options.agentStoreFactory || ((subtitleStore) => {
+      /* 保持字幕系统对 Agent 运行时代码的物理惰性：只有正式 Agent 操作到达时
+         才加载生命周期实现；字幕 open/append/close/history 不依赖该模块。 */
+      const { FormalAgentStore } = require('./formal-agent-store')
+      return new FormalAgentStore({ subtitleStore })
+    })
     this.store = null
+    this.agentStore = null
     this.shuttingDown = false
   }
 
   requireStore () {
     if (!this.store) throw new StorageError('NOT_INITIALIZED')
     return this.store
+  }
+
+  requireAgentStore () {
+    const store = this.requireStore()
+    if (!this.agentStore) this.agentStore = this.agentStoreFactory(store)
+    return this.agentStore
   }
 
   execute (request) {
@@ -91,12 +108,69 @@ class StorageWorkerService {
       assertExactKeys(payload, [])
       return this.requireStore().getStats()
     }
+    if (operation === OPERATIONS.AGENT_EVALUATE_ELIGIBILITY) {
+      assertExactKeys(payload, ['sessionId', 'requestedBy', 'eligibilityContext'])
+      return this.requireAgentStore().evaluateEligibility(payload)
+    }
+    if (operation === OPERATIONS.AGENT_RECONCILE_TERMINAL_SESSION) {
+      assertExactKeys(payload, ['sessionId', 'requestedBy', 'eligibilityContext'])
+      return this.requireAgentStore().reconcileTerminalSession(payload)
+    }
+    if (operation === OPERATIONS.AGENT_REQUEST_JOB) {
+      assertExactKeys(payload, ['inputRef', 'taskKind', 'clientIdempotencyKey', 'requestDigest', 'eligibilityContext'])
+      return this.requireAgentStore().requestJob(payload)
+    }
+    if (operation === OPERATIONS.AGENT_CLAIM_NEXT_JOB) {
+      assertExactKeys(payload, ['claimIdempotencyKey', 'owner', 'leaseMs', 'localWorkAllowed'])
+      return this.requireAgentStore().claimNextJob(payload)
+    }
+    if (operation === OPERATIONS.AGENT_RENEW_JOB_LEASE) {
+      assertExactKeys(payload, ['runId', 'lease', 'newExpiresAt'])
+      return this.requireAgentStore().renewJobLease(payload)
+    }
+    if (operation === OPERATIONS.AGENT_MARK_JOB_RETRY) {
+      assertExactKeys(payload, ['runId', 'lease', 'errorCode', 'nextAttemptAt'])
+      return this.requireAgentStore().markJobRetry(payload)
+    }
+    if (operation === OPERATIONS.AGENT_MARK_JOB_FAILED) {
+      assertExactKeys(payload, ['runId', 'lease', 'errorCode'])
+      return this.requireAgentStore().markJobFailed(payload)
+    }
+    if (operation === OPERATIONS.AGENT_REQUEST_CANCEL) {
+      assertExactKeys(payload, ['runId'])
+      return this.requireAgentStore().requestCancel(payload)
+    }
+    if (operation === OPERATIONS.AGENT_MARK_JOB_CANCELLED) {
+      assertExactKeys(payload, ['runId', 'lease'])
+      return this.requireAgentStore().markJobCancelled(payload)
+    }
+    if (operation === OPERATIONS.AGENT_COMMIT_ARTIFACT) {
+      assertExactKeys(payload, ['runId', 'lease', 'artifact'])
+      return this.requireAgentStore().commitArtifact(payload)
+    }
+    if (operation === OPERATIONS.AGENT_COMMIT_MEMORY_CANDIDATES) {
+      assertExactKeys(payload, ['runId', 'lease', 'candidates'])
+      return this.requireAgentStore().commitMemoryCandidates(payload)
+    }
+    if (operation === OPERATIONS.AGENT_APPLY_TASK_POLICY) {
+      assertExactKeys(payload, ['eligibilityContext'])
+      return this.requireAgentStore().applyTaskPolicy(payload)
+    }
+    if (operation === OPERATIONS.AGENT_GET_SESSION_DETAIL) {
+      assertExactKeys(payload, ['sessionId', 'eligibilityContext'])
+      return this.requireAgentStore().getSessionDetail(payload)
+    }
+    if (operation === OPERATIONS.AGENT_DELETE_SESSION_DATA) {
+      assertExactKeys(payload, ['sessionId', 'deletionIdempotencyKey'])
+      return this.requireAgentStore().deleteSessionData(payload)
+    }
     if (operation === OPERATIONS.SHUTDOWN) {
       assertExactKeys(payload, [])
       if (this.store) {
         this.store.close()
         this.store = null
       }
+      this.agentStore = null
       this.shuttingDown = true
       return { stopped: true }
     }

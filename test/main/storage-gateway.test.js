@@ -477,3 +477,84 @@ test('history-page business rejections are read-only, cloned and do not trip the
     ['open', { sessionId: 'new-session', sourceId: 'mic', startedAt: 2000 }]
   ])
 })
+
+test('SEM-F00/SEM-F28 Agent business rejection is isolated from the subtitle durability FIFO', async (t) => {
+  const ready = deferred()
+  const log = []
+  const gateway = new StorageGateway({
+    databasePath: DATABASE_PATH,
+    hostFactory: () => hostWith({
+      async requestAgentJob (input) {
+        await ready.promise
+        log.push(['agent', input])
+        throw new StorageError('AGENT_INPUT_CHANGED')
+      },
+      async openSession (input) {
+        log.push(['open', input])
+        return { status: 'committed' }
+      }
+    })
+  })
+  t.after(() => gateway.terminate())
+
+  const agentInput = { inputRef: { sessionId: 'terminal-a' }, taskKind: 'meeting-minutes' }
+  const requested = gateway.requestAgentJob(agentInput)
+  const opened = gateway.openSession({ sessionId: 'subtitle-b', sourceId: 'mic', startedAt: 2000 })
+  const flushed = gateway.flush()
+  agentInput.inputRef.sessionId = 'mutated'
+  ready.resolve()
+
+  await assert.rejects(requested,
+    (error) => error instanceof StorageError && error.code === 'AGENT_INPUT_CHANGED')
+  assert.deepEqual(await opened, { status: 'committed' })
+  await assert.doesNotReject(flushed)
+  assert.equal(gateway.faulted, false)
+  assert.deepEqual(log, [
+    ['agent', { inputRef: { sessionId: 'terminal-a' }, taskKind: 'meeting-minutes' }],
+    ['open', { sessionId: 'subtitle-b', sourceId: 'mic', startedAt: 2000 }]
+  ])
+})
+
+test('SEM-F28 / J24 gateway forwards formal result and deletion boundaries without widening payloads', async (t) => {
+  const log = []
+  const gateway = new StorageGateway({
+    databasePath: DATABASE_PATH,
+    hostFactory: () => hostWith({
+      async commitAgentArtifact (input) {
+        log.push(['artifact', input])
+        return { artifactId: 'artifact-1' }
+      },
+      async commitAgentMemoryCandidates (input) {
+        log.push(['memory', input])
+        return { state: 'succeeded' }
+      },
+      async deleteAgentSessionData (input) {
+        log.push(['delete', input])
+        return { deletedJobCount: 1 }
+      }
+    })
+  })
+  t.after(() => gateway.terminate())
+
+  const artifact = { runId: 'run-a', lease: { owner: 'worker', expiresAt: 1 }, artifact: { type: 'meeting-minutes' } }
+  const memory = { runId: 'run-m', lease: { owner: 'worker', expiresAt: 2 }, candidates: [] }
+  const deletion = { sessionId: 'session-a', deletionIdempotencyKey: 'delete-a' }
+  const pending = [
+    gateway.commitAgentArtifact(artifact),
+    gateway.commitAgentMemoryCandidates(memory),
+    gateway.deleteAgentSessionData(deletion)
+  ]
+  artifact.runId = 'mutated'
+  memory.candidates.push({ forbidden: true })
+  deletion.sessionId = 'mutated'
+  assert.deepEqual(await Promise.all(pending), [
+    { artifactId: 'artifact-1' },
+    { state: 'succeeded' },
+    { deletedJobCount: 1 }
+  ])
+  assert.deepEqual(log, [
+    ['artifact', { runId: 'run-a', lease: { owner: 'worker', expiresAt: 1 }, artifact: { type: 'meeting-minutes' } }],
+    ['memory', { runId: 'run-m', lease: { owner: 'worker', expiresAt: 2 }, candidates: [] }],
+    ['delete', { sessionId: 'session-a', deletionIdempotencyKey: 'delete-a' }]
+  ])
+})

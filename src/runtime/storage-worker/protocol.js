@@ -18,6 +18,20 @@ const OPERATIONS = Object.freeze({
   GET_SESSION_PAGE: 'history:get-session-page',
   LIST_SESSIONS: 'history:list-sessions',
   GET_STATS: 'storage:get-stats',
+  AGENT_EVALUATE_ELIGIBILITY: 'agent:evaluate-eligibility',
+  AGENT_RECONCILE_TERMINAL_SESSION: 'agent:reconcile-terminal-session',
+  AGENT_REQUEST_JOB: 'agent:request-job',
+  AGENT_CLAIM_NEXT_JOB: 'agent:claim-next-job',
+  AGENT_RENEW_JOB_LEASE: 'agent:renew-job-lease',
+  AGENT_MARK_JOB_RETRY: 'agent:mark-job-retry',
+  AGENT_MARK_JOB_FAILED: 'agent:mark-job-failed',
+  AGENT_REQUEST_CANCEL: 'agent:request-cancel',
+  AGENT_MARK_JOB_CANCELLED: 'agent:mark-job-cancelled',
+  AGENT_COMMIT_ARTIFACT: 'agent:commit-artifact',
+  AGENT_COMMIT_MEMORY_CANDIDATES: 'agent:commit-memory-candidates',
+  AGENT_APPLY_TASK_POLICY: 'agent:apply-task-policy',
+  AGENT_GET_SESSION_DETAIL: 'agent:get-session-detail',
+  AGENT_DELETE_SESSION_DATA: 'agent:delete-session-data',
   SHUTDOWN: 'storage:shutdown'
 })
 
@@ -45,6 +59,15 @@ const SAFE_ERROR_MESSAGES = Object.freeze({
   EVENT_IDENTITY_CONFLICT: 'Caption identity conflicts with persisted data.',
   MISSING_BASE_SEGMENT: 'A refined caption cannot create a segment.',
   INVALID_LEGACY_IMPORT: 'Legacy transcript import data is invalid.',
+  AGENT_REQUEST_INVALID: 'Agent request is invalid.',
+  AGENT_SESSION_NOT_FOUND: 'Agent session was not found.',
+  AGENT_SESSION_NOT_TERMINAL: 'Agent session is not terminal.',
+  AGENT_INPUT_EMPTY: 'Agent input has no committed transcript.',
+  AGENT_INPUT_VERSION_UNAVAILABLE: 'Agent input version is unavailable.',
+  AGENT_INPUT_CHANGED: 'Agent input identity has changed.',
+  AGENT_OUTPUT_INVALID: 'Agent output is invalid.',
+  AGENT_JOB_NOT_FOUND: 'Agent job was not found.',
+  AGENT_JOB_STATE_CONFLICT: 'Agent job state conflicts with the request.',
   STORAGE_COMMAND_FAILED: 'Storage command failed.'
 })
 

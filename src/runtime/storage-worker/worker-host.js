@@ -375,6 +375,62 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.GET_STATS, {})
   }
 
+  evaluateAgentEligibility (input) {
+    return this.enqueue(OPERATIONS.AGENT_EVALUATE_ELIGIBILITY, input)
+  }
+
+  reconcileTerminalAgentSession (input) {
+    return this.enqueue(OPERATIONS.AGENT_RECONCILE_TERMINAL_SESSION, input)
+  }
+
+  requestAgentJob (input) {
+    return this.enqueue(OPERATIONS.AGENT_REQUEST_JOB, input)
+  }
+
+  claimNextAgentJob (input) {
+    return this.enqueue(OPERATIONS.AGENT_CLAIM_NEXT_JOB, input)
+  }
+
+  renewAgentJobLease (input) {
+    return this.enqueue(OPERATIONS.AGENT_RENEW_JOB_LEASE, input)
+  }
+
+  markAgentJobRetry (input) {
+    return this.enqueue(OPERATIONS.AGENT_MARK_JOB_RETRY, input)
+  }
+
+  markAgentJobFailed (input) {
+    return this.enqueue(OPERATIONS.AGENT_MARK_JOB_FAILED, input)
+  }
+
+  requestAgentCancel (input) {
+    return this.enqueue(OPERATIONS.AGENT_REQUEST_CANCEL, input)
+  }
+
+  markAgentJobCancelled (input) {
+    return this.enqueue(OPERATIONS.AGENT_MARK_JOB_CANCELLED, input)
+  }
+
+  commitAgentArtifact (input) {
+    return this.enqueue(OPERATIONS.AGENT_COMMIT_ARTIFACT, input)
+  }
+
+  commitAgentMemoryCandidates (input) {
+    return this.enqueue(OPERATIONS.AGENT_COMMIT_MEMORY_CANDIDATES, input)
+  }
+
+  applyAgentTaskPolicy (input) {
+    return this.enqueue(OPERATIONS.AGENT_APPLY_TASK_POLICY, input)
+  }
+
+  getAgentSessionDetail (input) {
+    return this.enqueue(OPERATIONS.AGENT_GET_SESSION_DETAIL, input)
+  }
+
+  deleteAgentSessionData (input) {
+    return this.enqueue(OPERATIONS.AGENT_DELETE_SESSION_DATA, input)
+  }
+
   shutdown () {
     if (this.shutdownPromise) return this.shutdownPromise
     this.closing = true

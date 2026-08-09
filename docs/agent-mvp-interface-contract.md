@@ -41,9 +41,63 @@ type AgentEligibility =
   | 'credential_unavailable'
   | 'local_model_not_ready'
   | 'session_not_terminal'
+
+type AgentEligibilityContext = {
+  agentEnabled: boolean
+  memoryEnabled: boolean
+  automaticProcessingSince: number | null
+  memoryProcessingSince: number | null
+  providerId: string | null
+  providerKind: 'cloud' | 'local' | null
+  model: string | null
+  cloudDisclosureAccepted: boolean
+  credentialAvailable: boolean
+  localModelReady: boolean
+}
+
+type EventRange = {
+  fromEventOrder: number
+  throughEventOrder: number
+}
+
+type MeetingMinutesArtifact = {
+  type: 'meeting-minutes'
+  content: {
+    overview: string
+    conclusions: Array<{ text: string, evidence: EventRange[] }>
+    actionItems: Array<{ text: string, owner: string | null, due: string | null, evidence: EventRange[] }>
+    risks: Array<{ text: string, evidence: EventRange[] }>
+  }
+}
+
+type EnhancedTranscriptArtifact = {
+  type: 'enhanced-transcript'
+  content: {
+    paragraphs: Array<{ text: string, evidence: EventRange[] }>
+  }
+}
+
+type MemoryCandidate = {
+  kind: 'decision' | 'conclusion' | 'action-item' | 'term' | 'preference' | 'project-fact' | 'experience'
+  semanticKey: string
+  scope: {
+    kind: 'global' | 'session' | 'topic' | 'project'
+    canonicalKey: string
+    label: string
+  }
+  origin: 'explicit' | 'automatic'
+  content: Record<string, JsonValue>
+  evidence: EventRange[]
+  confidenceBand: 'low' | 'medium' | 'high'
+  salienceBand: 'low' | 'medium' | 'high'
+}
 ```
 
 `InputReference` 在任务创建时冻结。自动重试沿用同一 `runId`；用户主动重新生成使用新的 `runId`。`AgentEligibility` 是 Agent 处理资格，不是后台 Agent 任务状态。只有 `ready` 可以创建或领取任务；其余结果不调用 Agent 模型 provider，并由设置或历史界面显示下一动作。判定顺序固定为：`session_not_terminal → no_committed_transcript → outside_automatic_window`（仅自动请求）`→ agent_disabled → provider_not_configured → cloud_disclosure_required/credential_unavailable`（仅云端 Agent 模型 provider）`→ local_model_not_ready`（仅本地 Agent 模型 provider）`→ ready`。用户请求不受自动处理时间边界限制，但不能绕过其它条件。零条首次稳定转写没有合法 `inputWatermark`，因此不创建后台 Agent 任务，历史详情返回 `no_committed_transcript`，而不是伪造成功任务。
+
+`AgentEligibilityContext` 只由受信任的主进程从 ConfigStore、系统凭据存储与本地模型就绪证明组合，并以 exact object 交给 storage worker；renderer、插件或 Agent 模型 provider 不得提供或覆盖该对象。storage worker 仍负责读取会话、首次稳定转写和终态事实，并按上述固定顺序复算资格。上下文只携带非敏感事实：`credentialAvailable` 是布尔值，不能携带、持久化或返回凭据；`providerId/providerKind/model` 只有三者同时形成有效配置才算已配置。`memoryEnabled` 不改变会话级 Agent 处理资格；`memoryProcessingSince` 只决定自动对账是否为该终态会话创建个人记忆任务。Agent 总开关或个人记忆从不生效转为生效时写入新边界，任一关闭时该边界为 `null`；因此自动记忆任务同时要求会话位于 `automaticProcessingSince` 与 `memoryProcessingSince` 之内。用户明确请求可忽略两个时间边界，但 `memory-extraction` 仍要求个人记忆开启。云端资格只读取披露与凭据事实，本地资格只读取模型就绪事实；无关字段不能绕过适用分支。
+
+`transcriptVersion: 'refined'` 只表示整场精修覆盖完整的冻结精修稿。`0 < N < M` 的精修覆盖不完整只是显示/导出层的混合视图，不形成首版 Agent 输入版本；用户必须明确使用权威原始转写，或者在 `N=M` 时选择完整精修稿。storage worker 必须在调用 Agent 模型 provider 前拒绝把不完整混合正文声明为 `refined`。
 
 稳定错误码沿用 `docs/data-architecture.md` 的闭集。408、429、网络/5xx 和 worker 退出可在预算内进入 `retry_wait`；鉴权、Schema、权限、参数和内部不变量错误进入 `failed`；用户取消进入 `cancelled` 且不得恢复。原始 Error、stack、凭据、正文和本地绝对路径不得进入跨进程错误或证据报告。
 
@@ -65,23 +119,28 @@ type AgentEligibility =
 
 ## 4. Storage worker 协议
 
-正式 migration 必须追加到既有 immutable catalog；不得修改 `INITIAL_SCHEMA_SQL`，也不得把隔离入口候选数据库迁入正式 userData。
+正式 migration 必须按 ADR 0010 追加到正式 immutable catalog：共享字幕基础 v1/v2，但使用独立于隔离入口候选 v3 的正式 Agent v3。不得修改既有 migration SQL/checksum，不得把隔离入口候选数据库迁入正式 userData，两个 catalog 交叉打开必须 fail closed。
 
 | 操作 | 请求身份 | 返回或副作用 |
 |---|---|---|
-| `agent.evaluateEligibility` | `{ sessionId, requestedBy: 'automatic' | 'user' }` | 按固定优先级返回闭集 `AgentEligibility`；自动请求还校验 ADR 0008 的 `automaticProcessingSince`，用户请求忽略该时间边界 |
-| `agent.reconcileTerminalSession` | `{ sessionId, requestedBy: 'automatic' }` | 复算终态、完整输入身份与 Agent 处理资格；只有 `ready` 幂等补建三项后台 Agent 任务，其余只返回资格结果 |
-| `agent.claimNextJob` | `{ owner, leaseMs, localWorkAllowed }` | 短事务领取一项符合资源策略的任务并返回 lease |
-| `agent.renewJobLease` | `{ runId, lease, leaseMs }` | 只延长当前有效租约；陈旧租约 fail closed |
-| `agent.markJobRetry` | `{ runId, lease, errorCode, nextAttemptAt }` | 沿用同一 `runId`，增加尝试事实 |
-| `agent.commitArtifact` | `{ runId, lease, artifact }` | 原子写产物并把 job 置为 `succeeded` |
-| `agent.commitMemoryCandidates` | `{ runId, lease, candidates }` | 原子写候选/来源/修订并把 job 置为 `succeeded` |
-| `agent.requestJob` | `{ inputRef, taskKind, clientIdempotencyKey, requestDigest }` | 只接受当前终态会话且 Agent 处理资格为 `ready` 的现行输入身份；相同 key+digest 返回既有 job，相同 key+不同 digest 或陈旧输入拒绝 |
+| `agent.evaluateEligibility` | `{ sessionId, requestedBy: 'automatic' \| 'user', eligibilityContext }` | exact 校验受信任主进程提供的非敏感 `AgentEligibilityContext`，再按固定优先级返回闭集 `AgentEligibility`；自动请求还校验 ADR 0008 的 `automaticProcessingSince`，用户请求忽略该时间边界 |
+| `agent.reconcileTerminalSession` | `{ sessionId, requestedBy: 'automatic', eligibilityContext }` | 复算终态、完整输入身份与 Agent 处理资格；只有 `ready` 幂等补建纪要与增强文本，且仅在个人记忆自动处理边界内补建记忆任务，其余只返回资格结果 |
+| `agent.claimNextJob` | `{ claimIdempotencyKey, owner, leaseMs, localWorkAllowed }` | 在同一事务内按最近一次 `applyTaskPolicy` 建立的当前受信任开关、时间边界、冻结 provider/model 可执行事实和资源策略领取任务并写 claim receipt；worker replacement 后未重新应用策略时 fail closed 为空结果；未知回复以同一 key 重放时只返回原任务/租约或空结果，绝不领取下一项任务 |
+| `agent.renewJobLease` | `{ runId, lease, newExpiresAt }` | 只把当前有效租约延长到调用方冻结的绝对到期时点；同一旧 lease + `newExpiresAt` 重放返回当前结果，陈旧租约 fail closed |
+| `agent.markJobRetry` | `{ runId, lease, errorCode, nextAttemptAt }` | 沿用同一 `runId`，增加尝试事实；相同已提交状态转换重放返回当前任务，不形成第二次转换 |
+| `agent.markJobFailed` | `{ runId, lease, errorCode }` | 只接受不可重试错误闭集并把当前租约任务置为 `failed`；不保存原始 Error/stack；相同终态重放返回当前任务 |
+| `agent.markJobCancelled` | `{ runId, lease }` | 只在当前有效租约已有取消请求时收束为 `cancelled`；清空租约与错误码，后续不恢复；相同终态重放返回当前任务 |
+| `agent.commitArtifact` | `{ runId, lease, artifact: MeetingMinutesArtifact \| EnhancedTranscriptArtifact }` | 重读并匹配冻结输入身份，按闭合 Schema 校验正文与事件范围，由 storage worker 计算 canonical digest；在同一事务中写产物并把 job 置为 `succeeded`。同一 `runId` 与相同产物重放返回既有结果，内容或身份不同 fail closed |
+| `agent.commitMemoryCandidates` | `{ runId, lease, candidates: MemoryCandidate[] }` | 重读并匹配冻结输入身份；在同一事务中执行低价值/低置信自动推断丢弃、无身份全局偏好拒绝、suppression、范围、去重、冲突、revision 与来源提交，再把 job 置为 `succeeded`。同一 `runId` 的成功重放只返回既有计数，不二次写入 |
+| `agent.requestJob` | `{ inputRef, taskKind, clientIdempotencyKey, requestDigest, eligibilityContext }` | exact 校验上下文，只接受当前终态会话且 Agent 处理资格为 `ready` 的现行输入身份；相同 key+digest 返回既有 job，相同 key+不同 digest 或陈旧输入拒绝 |
 | `agent.requestCancel` | `{ runId }` | queued/retry_wait 立即取消；running 写取消请求并拒绝迟到提交 |
-| `agent.getSessionDetail` | `{ sessionId }` | 返回 eligibility、三项任务状态、当前及历史产物版本，不返回凭据 |
-| `agent.deleteSessionData` | `{ sessionId }` | 与会话删除同一 storage worker 内清理任务、产物、聊天关联和记忆来源；对账不得复活 |
+| `agent.applyTaskPolicy` | `{ eligibilityContext }` | 在一个 storage worker 命令内建立当前非敏感策略 generation 并执行取消：Agent 总开关关闭时取消全部 queued/retry_wait 并请求取消 running；只关闭个人记忆时仅作用于 `memory-extraction`，重新开启不复活已取消任务。worker 首启/replacement 未收到该命令前不得领取任务 |
+| `agent.getSessionDetail` | `{ sessionId, eligibilityContext }` | 以当前非敏感上下文复算 eligibility，返回三项任务公开状态、当前及历史产物版本；不返回凭据、lease owner、lease 到期时点或其它 worker 控制字段 |
+| `agent.deleteSessionData` | `{ sessionId, deletionIdempotencyKey }` | 在同一 storage worker 事务内写删除 tombstone，再受控删除字幕事实、任务、产物、聊天关联和记忆来源并清理仅由该会话支撑的记忆；迟到提交和后续对账 fail closed，相同 key 重放不影响其它会话 |
 
 所有任务领取、网络推理和结果提交必须分离：SQLite 事务内不得执行网络请求或模型推理。
+
+`applyTaskPolicy` 的 `eligibilityContext` 仍由受信任主进程提供；其 `providerId/providerKind/model` 表示当前可以执行的 Agent 模型 provider 快照。storage worker 只领取与该三元组完全相同、当前资格仍满足的 job；设置变化与 claim 通过同一 worker FIFO 线性化，凭据清除、本地模型失效、Agent/个人记忆关闭或时间边界变化必须在下一次 claim 前 fail closed。策略 generation 只存在于当前 worker 内存；replacement 后主进程必须重新应用，未应用状态不能领取任何任务。`claimIdempotencyKey` 的 receipt 只保存稳定身份、请求 digest、`runId` 与 lease 元数据，不保存正文、凭据、路径或原始错误。
 
 ## 5. 正式 IPC / preload 合同
 
@@ -89,7 +148,7 @@ type AgentEligibility =
 
 | Channel | Role | 精确请求 | 结果摘要 |
 |---|---|---|---|
-| `agent-settings:get` | `settings` | `{}` | Agent 总开关、Agent 模型 provider/模型非敏感状态、云端披露、个人记忆开关、`automaticProcessingSince`、revision |
+| `agent-settings:get` | `settings` | `{}` | Agent 总开关、Agent 模型 provider/模型非敏感状态、云端披露、个人记忆开关、`automaticProcessingSince`、`memoryProcessingSince`、revision |
 | `agent-settings:update` | `settings` | `{ expectedRevision, agentEnabled, providerId, model, memoryEnabled, cloudDisclosureAccepted }` | 新 revision；开启时建立自动处理时间边界，活动任务继续使用冻结快照，关闭 Agent 或个人记忆触发对应取消 |
 | `agent-credential:set` | `settings` | `{ providerId, apiKey }` | 仅返回 `{ credentialState }`；绝不回读 apiKey |
 | `agent-credential:clear` | `settings` | `{ providerId }` | 清除后 queued/running job 不静默更换 Agent 模型 provider |
@@ -124,20 +183,20 @@ type MeetingMinutes = {
 
 ### 6.2 增强文本
 
-增强文本是独立派生版本，包含段落化正文及可回到输入事件范围的映射；它不能替换、删除或静默遮蔽权威原始转写。
+增强文本是独立派生版本，固定为 `paragraphs[]`；每段只包含 `text` 与至少一个可回到冻结输入的 `EventRange`。它不能替换、删除或静默遮蔽权威原始转写。
 
 ### 6.3 个人记忆候选
 
-候选必须是原子结构，包含 `kind/scope/origin/content/evidence/confidenceBand/salienceBand`。模型只能提出候选；宿主决定去重、冲突、revision、suppression 和当前投影。
+候选必须是上述闭合原子结构，包含稳定 `semanticKey`、范围、来源性质、对象型 `content`、至少一个 `EventRange`、置信档与显著性档。`salienceBand=low` 的候选和 `origin=automatic && confidenceBand=low` 的推断直接丢弃；没有用户身份事实时，`origin=automatic` 的全局 `preference` 也不得写入。模型只能提出候选；宿主决定去重、冲突、revision、suppression 和当前投影。
 
 ## 7. 资源与设置变化
 
 - 本地 Agent job 只在无活动字幕会话时领取。活动字幕会话开始后，正在执行的本地 job 有界取消并进入可重试状态；云端 Agent job 可以继续。
 - Agent 总开关首次默认为关闭；个人记忆开关仍按 SEM-F26 默认为开启，但只在 Agent 总开关开启且处理资格为 `ready` 时生效。关闭 Agent 后不再创建或领取任务，queued/retry_wait job 取消，running job 请求取消并拒绝迟到提交；既有产物和个人记忆保留在本地。
-- `agentEnabled` 与 `automaticProcessingSince` 由主进程 `ConfigStore.aiPreferences` 原子持久化，字段名在 IPC、运行时和持久设置中统一使用 camelCase。首次为 `false/null`，每次从关闭变为开启时写入与 `sessions.ended_at` 同一 UTC epoch-millisecond 时间基准的新边界；关闭时恢复 `false/null`。启动时出现非法组合必须 fail closed 为关闭，且该绝对时点不得进入 SEM-F14 证据报告。
+- `agentEnabled`、`automaticProcessingSince` 与 `memoryProcessingSince` 由主进程 `ConfigStore.aiPreferences` 原子持久化，字段名在 IPC、运行时和持久设置中统一使用 camelCase。Agent 首次为 `false/null`，每次从关闭变为开启时写入与 `sessions.ended_at` 同一 UTC epoch-millisecond 时间基准的新 Agent 边界；`agentEnabled && memoryEnabled` 每次从不生效变为生效时写入新的个人记忆边界，任一开关关闭时该边界恢复为 `null`。启动时出现非法组合必须 fail closed 为对应能力关闭，且两个绝对时点都不得进入 SEM-F14 证据报告。
 - 自动对账不处理 `automaticProcessingSince` 之前的终态会话；更早会话只能由用户从历史明确请求。
 - Agent 模型 provider、模型和 recipe 在 job 创建时冻结。设置更新只影响新 job，不修改运行中或历史 job。
-- 个人记忆开关关闭时，queued/retry_wait 的 memory job 取消，running memory job 请求取消并拒绝迟到提交；纪要和增强文本不受影响。
+- 个人记忆开关关闭时，queued/retry_wait 的 memory job 取消，running memory job 请求取消并拒绝迟到提交；纪要和增强文本不受影响。重新开启只为新个人记忆自动处理边界之后结束的会话创建自动记忆任务，不复活已取消任务，也不补处理关闭期间会话；历史中的用户明确请求仍可重新提取。
 - 会话删除优先于任何迟到 Agent 提交；删除后的终态会话不能被 reconciliation 再次发现。
 - 应用退出先停止接单，再取消当前 Loop、持久化权威状态、关闭 Agent utility 与 storage utility；下一次启动对账恢复同一 `runId`。
 

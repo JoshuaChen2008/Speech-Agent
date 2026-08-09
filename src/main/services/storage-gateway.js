@@ -34,6 +34,25 @@ const READ_ONLY_OPERATIONS = new Set([
   'listSessions',
   'getStats'
 ])
+/* Agent 任务事实仍经同一 storage worker 串行写入，但确定性 Agent 业务拒绝
+   只拒绝该请求，绝不能熔断字幕事实 FIFO。队满时这些低优先级请求也不占用
+   为字幕 durable write 保留的溢出槽。未知传输结果仍以同一幂等身份重放。 */
+const ISOLATED_AGENT_OPERATIONS = new Set([
+  'evaluateAgentEligibility',
+  'reconcileTerminalAgentSession',
+  'requestAgentJob',
+  'claimNextAgentJob',
+  'renewAgentJobLease',
+  'markAgentJobRetry',
+  'markAgentJobFailed',
+  'requestAgentCancel',
+  'markAgentJobCancelled',
+  'commitAgentArtifact',
+  'commitAgentMemoryCandidates',
+  'applyAgentTaskPolicy',
+  'getAgentSessionDetail',
+  'deleteAgentSessionData'
+])
 const TRANSPORT_CODES = new Set([
   'NOT_INITIALIZED',
   'STORAGE_WORKER_EXITED',
@@ -304,6 +323,62 @@ class StorageGateway {
     return this.enqueue('getStats', null)
   }
 
+  evaluateAgentEligibility (input) {
+    return this.enqueue('evaluateAgentEligibility', input)
+  }
+
+  reconcileTerminalAgentSession (input) {
+    return this.enqueue('reconcileTerminalAgentSession', input)
+  }
+
+  requestAgentJob (input) {
+    return this.enqueue('requestAgentJob', input)
+  }
+
+  claimNextAgentJob (input) {
+    return this.enqueue('claimNextAgentJob', input)
+  }
+
+  renewAgentJobLease (input) {
+    return this.enqueue('renewAgentJobLease', input)
+  }
+
+  markAgentJobRetry (input) {
+    return this.enqueue('markAgentJobRetry', input)
+  }
+
+  markAgentJobFailed (input) {
+    return this.enqueue('markAgentJobFailed', input)
+  }
+
+  requestAgentCancel (input) {
+    return this.enqueue('requestAgentCancel', input)
+  }
+
+  markAgentJobCancelled (input) {
+    return this.enqueue('markAgentJobCancelled', input)
+  }
+
+  commitAgentArtifact (input) {
+    return this.enqueue('commitAgentArtifact', input)
+  }
+
+  commitAgentMemoryCandidates (input) {
+    return this.enqueue('commitAgentMemoryCandidates', input)
+  }
+
+  applyAgentTaskPolicy (input) {
+    return this.enqueue('applyAgentTaskPolicy', input)
+  }
+
+  getAgentSessionDetail (input) {
+    return this.enqueue('getAgentSessionDetail', input)
+  }
+
+  deleteAgentSessionData (input) {
+    return this.enqueue('deleteAgentSessionData', input)
+  }
+
   invoke (host, item) {
     switch (item.operation) {
       case 'openSession': return host.openSession(item.payload)
@@ -316,6 +391,20 @@ class StorageGateway {
       case 'getSessionPage': return host.getSessionPage(item.payload)
       case 'listSessions': return host.listSessions(item.payload)
       case 'getStats': return host.getStats()
+      case 'evaluateAgentEligibility': return host.evaluateAgentEligibility(item.payload)
+      case 'reconcileTerminalAgentSession': return host.reconcileTerminalAgentSession(item.payload)
+      case 'requestAgentJob': return host.requestAgentJob(item.payload)
+      case 'claimNextAgentJob': return host.claimNextAgentJob(item.payload)
+      case 'renewAgentJobLease': return host.renewAgentJobLease(item.payload)
+      case 'markAgentJobRetry': return host.markAgentJobRetry(item.payload)
+      case 'markAgentJobFailed': return host.markAgentJobFailed(item.payload)
+      case 'requestAgentCancel': return host.requestAgentCancel(item.payload)
+      case 'markAgentJobCancelled': return host.markAgentJobCancelled(item.payload)
+      case 'commitAgentArtifact': return host.commitAgentArtifact(item.payload)
+      case 'commitAgentMemoryCandidates': return host.commitAgentMemoryCandidates(item.payload)
+      case 'applyAgentTaskPolicy': return host.applyAgentTaskPolicy(item.payload)
+      case 'getAgentSessionDetail': return host.getAgentSessionDetail(item.payload)
+      case 'deleteAgentSessionData': return host.deleteAgentSessionData(item.payload)
       default: throw new TypeError(`unsupported gateway operation: ${item.operation}`)
     }
   }
@@ -367,7 +456,7 @@ class StorageGateway {
       } catch (error) {
         if (this.stopped || this.queue[0] !== item) return
         if (!isTransportFailure(error)) {
-          if (READ_ONLY_OPERATIONS.has(item.operation)) {
+          if (READ_ONLY_OPERATIONS.has(item.operation) || ISOLATED_AGENT_OPERATIONS.has(item.operation)) {
             this.queue.shift()
             if (!item.reported) item.reject(error)
             /* 查询的确定性业务拒绝只属于该查询 promise。flush 是持久化

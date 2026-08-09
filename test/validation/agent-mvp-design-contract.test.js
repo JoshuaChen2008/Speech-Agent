@@ -14,8 +14,10 @@ test('SEM-T15 / J24 正式 Agent 首版设计追踪保持闭合', () => {
   const testing = read('docs/testing-strategy.md')
   const todo = read('docs/agent-mvp-todo.md')
   const interfaces = read('docs/agent-mvp-interface-contract.md')
+  const dataArchitecture = read('docs/data-architecture.md')
   const reconciliationAdr = read('docs/adr/0008-terminal-session-agent-job-reconciliation.md')
   const adr = read('docs/adr/0009-deterministic-agent-input-planning.md')
+  const migrationAdr = read('docs/adr/0010-separate-isolated-and-formal-agent-migration-catalogs.md')
 
   for (const term of [
     '字幕提交边界',
@@ -24,6 +26,7 @@ test('SEM-T15 / J24 正式 Agent 首版设计追踪保持闭合', () => {
     '会后结构化纪要',
     '增强文本',
     '个人记忆',
+    '个人记忆自动处理边界',
     '确认关键词'
   ]) assert.match(context, new RegExp(`\\*\\*${term}`))
 
@@ -71,6 +74,23 @@ test('SEM-T15 / J24 正式 Agent 首版设计追踪保持闭合', () => {
     'session_not_terminal'
   ]) assert.match(interfaces, new RegExp(`'${eligibility}'`))
   assert.match(interfaces, /判定顺序固定为/)
+  for (const field of [
+    'agentEnabled',
+    'memoryEnabled',
+    'automaticProcessingSince',
+    'memoryProcessingSince',
+    'providerId',
+    'providerKind',
+    'cloudDisclosureAccepted',
+    'credentialAvailable',
+    'localModelReady'
+  ]) assert.match(interfaces, new RegExp(field))
+  assert.match(interfaces, /agent\.applyTaskPolicy/)
+  assert.match(interfaces, /agent\.claimNextJob[\s\S]*claimIdempotencyKey/)
+  assert.match(interfaces, /agent\.commitArtifact[\s\S]*同一事务中写产物/)
+  assert.match(interfaces, /agent\.commitMemoryCandidates[\s\S]*低价值\/低置信/)
+  assert.match(interfaces, /agent\.deleteSessionData[\s\S]*tombstone/)
+  assert.match(interfaces, /getSessionDetail[\s\S]*不返回凭据、lease owner、lease 到期时点/)
 
   for (const channel of [
     'agent-settings:get',
@@ -86,9 +106,18 @@ test('SEM-T15 / J24 正式 Agent 首版设计追踪保持闭合', () => {
 
   assert.match(reconciliationAdr, /no_committed_transcript/)
   assert.match(reconciliationAdr, /automaticProcessingSince/)
+  assert.match(reconciliationAdr, /memoryProcessingSince/)
   assert.match(adr, /全部首次稳定转写/)
   assert.match(adr, /Unicode code point/)
   assert.match(adr, /不持久化分块正文或模型中间输出/)
+  assert.match(migrationAdr, /候选 Agent v3/)
+  assert.match(migrationAdr, /正式 Agent v3/)
+  assert.match(migrationAdr, /交叉打开失败/)
+  assert.match(dataArchitecture, /provider_kind/)
+  assert.match(dataArchitecture, /agent_claim_receipts/)
+  assert.match(dataArchitecture, /session_deletion_tombstones/)
+  assert.match(dataArchitecture, /revision 必须属于同一 `memory_id`/)
+  assert.match(dataArchitecture, /交叉打开必须 fail closed/)
   assert.match(todo, /J24-B25[\s\S]*三项后台 Agent 任务/)
   assert.match(todo, /J24-B26[\s\S]*outside_automatic_window/)
   assert.match(todo, /J24-B30[\s\S]*报告不含字幕正文/)

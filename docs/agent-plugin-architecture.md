@@ -256,7 +256,7 @@ flowchart LR
   TERMS -->|用户确认后| NEXT["下一新会话关键词快照"]
 ```
 
-Agent 总开关首次默认关闭。用户开启时由宿主记录新的 `automaticProcessingSince`；自动对账只覆盖该时间边界之后结束、至少包含一条首次稳定转写且 Agent 处理资格为 `ready` 的终态会话。自动请求遇到更早会话时返回 `outside_automatic_window`，更早会话只允许用户从历史明确请求；`no_committed_transcript`、未配置 Agent 模型 provider、云端披露未确认、凭据不可用或本地模型未就绪都不创建或领取任务，也不调用 Agent 模型 provider。资格按接口合同的固定优先级计算，不能由 renderer 自行推断。
+Agent 总开关首次默认关闭。用户开启时由宿主记录新的 `automaticProcessingSince`；自动对账只覆盖该时间边界之后结束、至少包含一条首次稳定转写且 Agent 处理资格为 `ready` 的终态会话。Agent 总开关与个人记忆每次从不生效转为同时生效时另存新的 `memoryProcessingSince`；自动记忆任务还要求会话不早于该边界，重新开启不得补处理关闭期间会话。自动请求遇到更早会话时返回 `outside_automatic_window`，更早会话只允许用户从历史明确请求；`no_committed_transcript`、未配置 Agent 模型 provider、云端披露未确认、凭据不可用或本地模型未就绪都不创建或领取任务，也不调用 Agent 模型 provider。资格按接口合同的固定优先级计算，不能由 renderer 自行推断。
 
 会后结构化纪要、个人记忆和增强文本只共享同一 `sessionId + inputWatermark + transcriptVersion + digest`，不共享成功条件。记忆提取直接读取权威原始转写，不读取纪要；Agent 模型 provider 可以在内部合并模型请求节省成本，但外部仍表现为三项独立的后台 Agent 任务、`runId` 和结果。`AgentInputPlanner` 优先按字幕段边界确定性分块；单个字幕段超过预算时按 Unicode code point 范围完整分片，所有分块和归并成功后才允许提交，任一阶段失败都不得留下部分产物。
 
@@ -279,7 +279,7 @@ Agent 总开关首次默认关闭。用户开启时由宿主记录新的 `automa
 2. 本地 Agent 重任务只在没有活动字幕会话时运行；新会话开始会让当前本地任务有界停止并稍后重试。
 3. 云端 Agent 任务可以继续，但 SQLite 回写和 renderer 更新必须有界。
 4. Agent 模型 provider、插件、后台 Agent 任务、调试聊天或个人记忆故障都不能改变字幕会话状态。
-5. 全局关闭个人记忆会使现有条目休眠，不自动删除；下一新会话不再读取由个人记忆产生的确认关键词。
+5. 全局关闭个人记忆会使现有条目休眠，不自动删除；下一新会话不再读取由个人记忆产生的确认关键词。重新开启形成新的个人记忆自动处理边界，不自动补处理关闭期间会话。
 
 ### 10.5 首版产品表面与实施顺序
 

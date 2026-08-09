@@ -1,6 +1,6 @@
 'use strict'
 
-const { MIGRATIONS, checksum } = require('../../runtime/storage-worker/schema')
+const { SUBTITLE_BASE_MIGRATIONS, checksum } = require('../../runtime/storage-worker/schema')
 
 const AGENT_MVP_SCHEMA_SQL = `
 CREATE TABLE agent_jobs (
@@ -86,8 +86,8 @@ CREATE INDEX agent_debug_messages_thread ON agent_debug_messages(thread_id, mess
 `
 
 const AGENT_MVP_MIGRATIONS = Object.freeze([
-  ...MIGRATIONS,
-  Object.freeze({ version: MIGRATIONS.length + 1, sql: AGENT_MVP_SCHEMA_SQL, checksum: checksum(AGENT_MVP_SCHEMA_SQL) })
+  ...SUBTITLE_BASE_MIGRATIONS,
+  Object.freeze({ version: SUBTITLE_BASE_MIGRATIONS.length + 1, sql: AGENT_MVP_SCHEMA_SQL, checksum: checksum(AGENT_MVP_SCHEMA_SQL) })
 ])
 
 module.exports = { AGENT_MVP_MIGRATIONS, AGENT_MVP_SCHEMA_SQL }
