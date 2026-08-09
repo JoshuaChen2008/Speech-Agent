@@ -271,7 +271,7 @@ function evidenceItem (value, validEventOrders, actionItem = false) {
     evidence: evidenceRanges(value.evidence, validEventOrders)
   }
   if (actionItem) {
-    if (value.owner !== null) boundedText(value.owner, 400)
+    if (value.owner !== null) throw new StorageError('AGENT_OUTPUT_INVALID')
     if (value.due !== null) boundedText(value.due, 400)
     result.owner = value.owner
     result.due = value.due
@@ -384,6 +384,30 @@ function userRequestIdentity ({ inputRef, taskKind, eligibilityContext: context 
 
 function makeUserRequestDigest (value) {
   return sha256Canonical(userRequestIdentity(value))
+}
+
+function deleteMemoryGraph (database, memoryId) {
+  const deletedEvidenceCount = Number(database.prepare(`
+    SELECT COUNT(*) AS count FROM memory_evidence WHERE memory_id = ?
+  `).get(memoryId).count)
+  const deletedRevisionCount = Number(database.prepare(`
+    SELECT COUNT(*) AS count FROM memory_revisions WHERE memory_id = ?
+  `).get(memoryId).count)
+
+  /* Both revision pointers use composite foreign keys that include memory_id.
+     Clear only the nullable pointer columns before deleting revisions so
+     ON DELETE SET NULL never attempts to null the non-null identity column. */
+  database.prepare(`
+    UPDATE memory_items SET current_revision_id = NULL WHERE memory_id = ?
+  `).run(memoryId)
+  database.prepare(`
+    UPDATE memory_revisions SET previous_revision_id = NULL WHERE memory_id = ?
+  `).run(memoryId)
+  database.prepare('DELETE FROM memory_evidence WHERE memory_id = ?').run(memoryId)
+  database.prepare('DELETE FROM memory_revisions WHERE memory_id = ?').run(memoryId)
+  const deleted = database.prepare('DELETE FROM memory_items WHERE memory_id = ?').run(memoryId)
+  if (Number(deleted.changes) !== 1) throw new StorageError('AGENT_REQUEST_INVALID')
+  return { deletedEvidenceCount, deletedRevisionCount }
 }
 
 class FormalAgentStore {
@@ -1220,7 +1244,7 @@ class FormalAgentStore {
       for (const candidate of candidates) {
         const filtered = candidate.salienceBand === 'low' ||
           (candidate.origin === 'automatic' && candidate.confidenceBand === 'low') ||
-          (candidate.kind === 'preference' && candidate.scope.kind === 'global' && candidate.origin === 'automatic')
+          (candidate.kind === 'preference' && candidate.scope.kind === 'global')
         if (filtered) {
           discardedCandidateCount += 1
           continue
@@ -1356,6 +1380,82 @@ class FormalAgentStore {
     }
   }
 
+  deleteMemoryItem (input) {
+    this.assertOpen()
+    exactObject(input, ['memoryId', 'deletionIdempotencyKey'])
+    const memoryId = boundedString(input.memoryId)
+    const deletionIdempotencyKey = boundedString(input.deletionIdempotencyKey)
+    const requestDigest = sha256Canonical({ memoryId })
+    const database = this.database
+    const deletionResult = (row) => ({
+      memoryId: row.memory_id,
+      suppressedSourceCount: Number(row.suppressed_source_count),
+      deletedEvidenceCount: Number(row.deleted_evidence_count),
+      deletedRevisionCount: Number(row.deleted_revision_count),
+      deletedAt: Number(row.deleted_at)
+    })
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const prior = database.prepare(`
+        SELECT * FROM memory_deletion_receipts WHERE deletion_idempotency_key = ?
+      `).get(deletionIdempotencyKey)
+      if (prior) {
+        if (prior.request_digest !== requestDigest || prior.memory_id !== memoryId) {
+          throw new StorageError('AGENT_REQUEST_INVALID')
+        }
+        database.exec('COMMIT')
+        return deletionResult(prior)
+      }
+
+      const memory = database.prepare(`
+        SELECT memory_id, scope_id, kind, semantic_key
+        FROM memory_items WHERE memory_id = ?
+      `).get(memoryId)
+      if (!memory) throw new StorageError('AGENT_REQUEST_INVALID')
+      const sourceDigests = database.prepare(`
+        SELECT DISTINCT input_digest
+        FROM memory_evidence WHERE memory_id = ?
+        ORDER BY input_digest
+      `).all(memoryId).map((row) => row.input_digest)
+      const identityHash = sha256Canonical({
+        scopeId: memory.scope_id,
+        kind: memory.kind,
+        semanticKey: memory.semantic_key
+      })
+      const deletedAt = this.nowValue()
+      for (const sourceDigest of sourceDigests) {
+        database.prepare(`
+          INSERT INTO memory_suppressions(identity_hash, scope_id, source_digest, created_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(identity_hash, source_digest) DO NOTHING
+        `).run(identityHash, memory.scope_id, sourceDigest, deletedAt)
+      }
+      const { deletedEvidenceCount, deletedRevisionCount } = deleteMemoryGraph(database, memoryId)
+      database.prepare(`
+        INSERT INTO memory_deletion_receipts(
+          deletion_idempotency_key, request_digest, memory_id, suppressed_source_count,
+          deleted_evidence_count, deleted_revision_count, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        deletionIdempotencyKey,
+        requestDigest,
+        memoryId,
+        sourceDigests.length,
+        deletedEvidenceCount,
+        deletedRevisionCount,
+        deletedAt
+      )
+      const receipt = database.prepare(`
+        SELECT * FROM memory_deletion_receipts WHERE deletion_idempotency_key = ?
+      `).get(deletionIdempotencyKey)
+      database.exec('COMMIT')
+      return deletionResult(receipt)
+    } catch (error) {
+      rollbackQuietly(database)
+      throw error
+    }
+  }
+
   deleteSessionData (input) {
     this.assertOpen()
     exactObject(input, ['sessionId', 'deletionIdempotencyKey'])
@@ -1426,7 +1526,7 @@ class FormalAgentStore {
         deletedMemoryEvidenceCount, deletedOrphanMemoryCount, now
       )
       for (const row of orphanRows) {
-        database.prepare('DELETE FROM memory_items WHERE memory_id = ?').run(row.memory_id)
+        deleteMemoryGraph(database, row.memory_id)
       }
       database.prepare('DELETE FROM memory_evidence WHERE session_id = ?').run(sessionId)
       database.prepare('DELETE FROM memory_scopes WHERE session_id = ?').run(sessionId)

@@ -694,6 +694,20 @@ test('SEM-F26/SEM-F28 / J24-B06/B07/B10/B22 atomically commits artifacts and per
       risks: []
     }
   }
+  assert.equal(client.raw(OPERATIONS.AGENT_COMMIT_ARTIFACT, {
+    runId: minutesJob.runId,
+    lease: minutesJob.lease,
+    artifact: {
+      ...minutesArtifact,
+      content: {
+        ...minutesArtifact.content,
+        actionItems: [{
+          ...minutesArtifact.content.actionItems[0],
+          owner: 'invented owner'
+        }]
+      }
+    }
+  }).error.code, 'AGENT_OUTPUT_INVALID')
   const committedMinutes = client.call(OPERATIONS.AGENT_COMMIT_ARTIFACT, {
     runId: minutesJob.runId, lease: minutesJob.lease, artifact: minutesArtifact
   })

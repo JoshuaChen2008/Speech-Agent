@@ -544,6 +544,39 @@ CREATE INDEX agent_debug_messages_thread
   ON agent_debug_messages(thread_id, message_order);
 `
 
+/* D5 单条个人记忆删除必须为每个既有来源 digest 保留 suppression，且回执
+   不得保存被删内容。正式 v3 已不可变，因此用追加 v4 扩展复合身份。 */
+const FORMAL_AGENT_MEMORY_DELETION_SCHEMA_SQL = `
+ALTER TABLE memory_suppressions RENAME TO memory_suppressions_v3;
+
+CREATE TABLE memory_suppressions (
+  identity_hash TEXT NOT NULL CHECK (length(identity_hash) = 64),
+  scope_id TEXT NOT NULL,
+  source_digest TEXT NOT NULL CHECK (length(source_digest) = 64),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  PRIMARY KEY (identity_hash, source_digest),
+  FOREIGN KEY (scope_id) REFERENCES memory_scopes(scope_id) ON DELETE CASCADE
+) STRICT;
+
+INSERT INTO memory_suppressions(identity_hash, scope_id, source_digest, created_at)
+SELECT identity_hash, scope_id, source_digest, created_at
+FROM memory_suppressions_v3;
+
+DROP TABLE memory_suppressions_v3;
+
+CREATE TABLE memory_deletion_receipts (
+  deletion_idempotency_key TEXT PRIMARY KEY NOT NULL CHECK (
+    length(deletion_idempotency_key) BETWEEN 1 AND 160
+  ),
+  request_digest TEXT NOT NULL CHECK (length(request_digest) = 64),
+  memory_id TEXT NOT NULL CHECK (length(memory_id) BETWEEN 1 AND 160),
+  suppressed_source_count INTEGER NOT NULL CHECK (suppressed_source_count >= 0),
+  deleted_evidence_count INTEGER NOT NULL CHECK (deleted_evidence_count >= 0),
+  deleted_revision_count INTEGER NOT NULL CHECK (deleted_revision_count >= 0),
+  deleted_at INTEGER NOT NULL CHECK (deleted_at >= 0)
+) STRICT;
+`
+
 function checksum (sql) {
   return crypto.createHash('sha256').update(sql, 'utf8').digest('hex')
 }
@@ -572,6 +605,11 @@ const FORMAL_AGENT_MIGRATIONS = Object.freeze([
     version: SUBTITLE_BASE_MIGRATIONS.length + 1,
     checksum: checksum(FORMAL_AGENT_SCHEMA_SQL),
     sql: FORMAL_AGENT_SCHEMA_SQL
+  }),
+  Object.freeze({
+    version: SUBTITLE_BASE_MIGRATIONS.length + 2,
+    checksum: checksum(FORMAL_AGENT_MEMORY_DELETION_SCHEMA_SQL),
+    sql: FORMAL_AGENT_MEMORY_DELETION_SCHEMA_SQL
   })
 ])
 
@@ -581,6 +619,7 @@ module.exports = {
   INITIAL_SCHEMA_SQL,
   REFINEMENT_SESSION_RESULTS_SCHEMA_SQL,
   FORMAL_AGENT_SCHEMA_SQL,
+  FORMAL_AGENT_MEMORY_DELETION_SCHEMA_SQL,
   SUBTITLE_BASE_MIGRATIONS,
   FORMAL_AGENT_MIGRATIONS,
   MIGRATIONS,

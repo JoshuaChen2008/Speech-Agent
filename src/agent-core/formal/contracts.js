@@ -18,6 +18,12 @@ const TERMINAL_ERROR_CODES = Object.freeze([
   'AGENT_INTERNAL_FAILURE'
 ])
 
+const TASK_RECIPE_VERSIONS = Object.freeze({
+  'meeting-minutes': 'meeting-minutes@1',
+  'memory-extraction': 'memory-extraction@1',
+  'enhanced-transcript': 'enhanced-transcript@1'
+})
+
 function exactObject (value, keys, code = 'AGENT_REQUEST_INVALID') {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new AgentCoreError(code)
   const actual = Object.keys(value).sort()
@@ -93,8 +99,8 @@ function claimedJob (value) {
   exactObject(value, CLAIMED_JOB_KEYS)
   const ref = inputReference(value.inputRef)
   exactObject(value.lease, ['owner', 'expiresAt'], 'AGENT_JOB_STATE_CONFLICT')
-  if (value.state !== 'running' || value.taskKind !== 'meeting-minutes' ||
-      value.recipeVersion !== 'meeting-minutes@1' || value.sessionId !== ref.sessionId ||
+  if (value.state !== 'running' || !Object.hasOwn(TASK_RECIPE_VERSIONS, value.taskKind) ||
+      value.recipeVersion !== TASK_RECIPE_VERSIONS[value.taskKind] || value.sessionId !== ref.sessionId ||
       !['cloud', 'local'].includes(value.providerKind) ||
       !Number.isSafeInteger(value.attemptCount) || value.attemptCount < 1 ||
       !Number.isSafeInteger(value.maxAttempts) || value.maxAttempts < value.attemptCount ||
@@ -176,6 +182,88 @@ function meetingMinutesArtifact (value, options = {}) {
   }
 }
 
+function enhancedTranscriptArtifact (value, options = {}) {
+  exactObject(value, ['type', 'content'], 'AGENT_OUTPUT_INVALID')
+  exactObject(value.content, ['paragraphs'], 'AGENT_OUTPUT_INVALID')
+  if (value.type !== 'enhanced-transcript' || !Array.isArray(value.content.paragraphs) ||
+      value.content.paragraphs.length < 1 || value.content.paragraphs.length > 1000) {
+    throw new AgentCoreError('AGENT_OUTPUT_INVALID')
+  }
+  const validEventOrders = options.validEventOrders instanceof Set
+    ? options.validEventOrders
+    : new Set(options.validEventOrders || [])
+  if (validEventOrders.size < 1) throw new AgentCoreError('AGENT_OUTPUT_INVALID')
+  return {
+    type: 'enhanced-transcript',
+    content: {
+      paragraphs: value.content.paragraphs.map((item) =>
+        evidenceItem(item, validEventOrders, false, false)
+      )
+    }
+  }
+}
+
+const MEMORY_KINDS = Object.freeze([
+  'decision', 'conclusion', 'action-item', 'term', 'preference', 'project-fact', 'experience'
+])
+const MEMORY_SCOPE_KINDS = Object.freeze(['global', 'session', 'topic', 'project'])
+const MEMORY_BANDS = Object.freeze(['low', 'medium', 'high'])
+
+function memoryCandidate (value, options = {}) {
+  exactObject(value, [
+    'kind', 'semanticKey', 'scope', 'origin', 'content', 'evidence', 'confidenceBand', 'salienceBand'
+  ], 'AGENT_OUTPUT_INVALID')
+  exactObject(value.scope, ['kind', 'canonicalKey', 'label'], 'AGENT_OUTPUT_INVALID')
+  if (!MEMORY_KINDS.includes(value.kind) || !MEMORY_SCOPE_KINDS.includes(value.scope.kind) ||
+      !['explicit', 'automatic'].includes(value.origin) ||
+      !MEMORY_BANDS.includes(value.confidenceBand) || !MEMORY_BANDS.includes(value.salienceBand) ||
+      !value.content || typeof value.content !== 'object' || Array.isArray(value.content)) {
+    throw new AgentCoreError('AGENT_OUTPUT_INVALID')
+  }
+  const validEventOrders = options.validEventOrders instanceof Set
+    ? options.validEventOrders
+    : new Set(options.validEventOrders || [])
+  const sessionId = boundedString(options.sessionId, 1, 160, 'AGENT_OUTPUT_INVALID')
+  const semanticKey = boundedString(value.semanticKey, 1, 240, 'AGENT_OUTPUT_INVALID')
+  const canonicalKey = boundedString(value.scope.canonicalKey, 1, 240, 'AGENT_OUTPUT_INVALID')
+  const label = boundedString(value.scope.label, 1, 400, 'AGENT_OUTPUT_INVALID')
+  if (value.scope.kind === 'session' && canonicalKey !== sessionId) {
+    throw new AgentCoreError('AGENT_OUTPUT_INVALID')
+  }
+  let content
+  try {
+    const serialized = canonicalize(value.content)
+    if (Buffer.byteLength(serialized, 'utf8') > 16384) throw new Error('content too large')
+    content = JSON.parse(serialized)
+  } catch {
+    throw new AgentCoreError('AGENT_OUTPUT_INVALID')
+  }
+  if (!Array.isArray(value.evidence) || value.evidence.length < 1 || value.evidence.length > 64) {
+    throw new AgentCoreError('AGENT_OUTPUT_INVALID')
+  }
+  return {
+    kind: value.kind,
+    semanticKey,
+    scope: { kind: value.scope.kind, canonicalKey, label },
+    origin: value.origin,
+    content,
+    evidence: value.evidence.map((range) => evidenceRange(range, validEventOrders)),
+    confidenceBand: value.confidenceBand,
+    salienceBand: value.salienceBand
+  }
+}
+
+function memoryExtractionOutput (value, options = {}) {
+  exactObject(value, ['type', 'candidates'], 'AGENT_OUTPUT_INVALID')
+  if (value.type !== 'memory-candidates' || !Array.isArray(value.candidates) || value.candidates.length > 200) {
+    throw new AgentCoreError('AGENT_OUTPUT_INVALID')
+  }
+  return {
+    type: 'memory-candidates',
+    candidates: value.candidates.map((candidate) => memoryCandidate(candidate, options))
+  }
+}
+
 function canonicalBytes (value, code = 'AGENT_REQUEST_INVALID') {
   try {
     return Buffer.byteLength(canonicalize(value), 'utf8')
@@ -200,13 +288,20 @@ function runtimeError (error) {
 
 module.exports = {
   CLAIMED_JOB_KEYS,
+  MEMORY_BANDS,
+  MEMORY_KINDS,
+  MEMORY_SCOPE_KINDS,
   RETRYABLE_ERROR_CODES,
+  TASK_RECIPE_VERSIONS,
   TERMINAL_ERROR_CODES,
   boundedString,
   canonicalBytes,
   claimedJob,
   exactObject,
+  enhancedTranscriptArtifact,
   inputReference,
+  memoryCandidate,
+  memoryExtractionOutput,
   meetingMinutesArtifact,
   providerLimits,
   runtimeError,

@@ -19,9 +19,18 @@ const DESCRIPTOR_KEYS = Object.freeze([
   'providerId', 'providerKind', 'model', 'maxChunkInputBytes', 'maxResultBytes', 'openModel'
 ])
 
+const RECIPE_OPERATIONS = Object.freeze({
+  'meeting-minutes@1': Object.freeze(['meeting-minutes.chunk', 'meeting-minutes.merge']),
+  'memory-extraction@1': Object.freeze(['memory-extraction.chunk']),
+  'enhanced-transcript@1': Object.freeze(['enhanced-transcript.chunk', 'enhanced-transcript.merge'])
+})
+
 const SYSTEM_PROMPTS = Object.freeze({
   'meeting-minutes.chunk': 'Generate one bounded meeting-minutes JSON object from this complete input chunk. Return JSON only with type meeting-minutes and content overview, conclusions, actionItems, risks. Every non-overview item needs evidence event-order ranges. The input has no speaker identity, so every actionItems owner must be null. Do not invent absent conclusions, action items, risks, owners, or due dates.',
-  'meeting-minutes.merge': 'Merge every supplied meeting-minutes candidate into one bounded meeting-minutes JSON object. Return JSON only with type meeting-minutes and content overview, conclusions, actionItems, risks. Preserve valid evidence event-order ranges, use empty arrays for absent sections, and keep every actionItems owner null because no speaker identity is available.'
+  'meeting-minutes.merge': 'Merge every supplied meeting-minutes candidate into one bounded meeting-minutes JSON object. Return JSON only with type meeting-minutes and content overview, conclusions, actionItems, risks. Preserve valid evidence event-order ranges, use empty arrays for absent sections, and keep every actionItems owner null because no speaker identity is available.',
+  'enhanced-transcript.chunk': 'Rewrite the complete supplied transcript chunk for readability without adding facts. Return JSON only with type enhanced-transcript and content paragraphs. Every paragraph must contain text and evidence event-order ranges, and the paragraphs together must cover every supplied eventOrder.',
+  'enhanced-transcript.merge': 'Merge every supplied enhanced-transcript candidate into one bounded enhanced-transcript JSON object without adding facts. Return JSON only with type enhanced-transcript and content paragraphs. Preserve evidence event-order ranges and cover every source eventOrder represented by the candidates.',
+  'memory-extraction.chunk': 'Extract only atomic structured memory candidates directly from this transcript chunk. Return JSON only with type memory-candidates and candidates. Each candidate must contain kind, semanticKey, scope, origin, content, evidence, confidenceBand, and salienceBand. Do not use summaries, invent speaker identity, or turn an automatic first-person expression into a global preference. Return an empty candidates array when nothing qualifies.'
 })
 
 function identity (value) {
@@ -30,7 +39,7 @@ function identity (value) {
       typeof value.providerId !== 'string' || value.providerId.length < 1 || value.providerId.length > 160 ||
       !['cloud', 'local'].includes(value.providerKind) ||
       typeof value.model !== 'string' || value.model.length < 1 || value.model.length > 160 ||
-      value.recipeVersion !== 'meeting-minutes@1') {
+      !Object.hasOwn(RECIPE_OPERATIONS, value.recipeVersion)) {
     throw new AgentCoreError('AGENT_REQUEST_INVALID')
   }
   return { ...value }
@@ -105,7 +114,7 @@ class ModelGateway {
     ))
     const binding = this.bindings.get(requestIdentity.runId)
     if (!binding || !sameIdentity(binding.identity, requestIdentity) ||
-        !Object.hasOwn(SYSTEM_PROMPTS, rawRequest.operation) ||
+        !RECIPE_OPERATIONS[requestIdentity.recipeVersion].includes(rawRequest.operation) ||
         !rawRequest.input || typeof rawRequest.input !== 'object' || Array.isArray(rawRequest.input) ||
         canonicalBytes(rawRequest.input) > binding.limits.maxChunkInputBytes) {
       throw new AgentCoreError('AGENT_REQUEST_INVALID')
@@ -146,6 +155,7 @@ module.exports = {
   DESCRIPTOR_KEYS,
   IDENTITY_KEYS,
   ModelGateway,
+  RECIPE_OPERATIONS,
   REQUEST_KEYS,
   SYSTEM_PROMPTS,
   descriptor,

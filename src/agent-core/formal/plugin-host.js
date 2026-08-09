@@ -9,13 +9,17 @@ const {
   throwIfAborted,
   transcriptSnapshot
 } = require('./contracts')
+const { EnhancedTranscriptPlugin } = require('./enhanced-transcript-plugin')
 const { MeetingMinutesPlugin } = require('./meeting-minutes-plugin')
+const { MemoryExtractionPlugin } = require('./memory-extraction-plugin')
 
 const MANIFEST_KEYS = Object.freeze([
   'id', 'version', 'apiVersion', 'kind', 'activationEvents', 'requires',
   'permissions', 'contributes', 'failurePolicy', 'timeoutMs'
 ])
-const ALLOWED_PERMISSIONS = Object.freeze(['transcript.read', 'model.invoke', 'artifact.write'])
+const ALLOWED_PERMISSIONS = Object.freeze([
+  'transcript.read', 'model.invoke', 'artifact.write', 'memory.candidate.write'
+])
 
 const FORMAL_PLUGINS = Object.freeze([
   Object.freeze({
@@ -30,20 +34,52 @@ const FORMAL_PLUGINS = Object.freeze([
     requires: Object.freeze(['transcript-context']),
     permissions: Object.freeze(['transcript.read', 'model.invoke', 'artifact.write']),
     contributes: Object.freeze(['artifact:meeting-minutes']), failurePolicy: 'isolate', timeoutMs: 120000
+  }),
+  Object.freeze({
+    id: 'enhanced-transcript', version: '1.0.0', apiVersion: '1', kind: 'artifact-generator',
+    activationEvents: Object.freeze(['onMeetingStopped', 'onUserRequest']),
+    requires: Object.freeze(['transcript-context']),
+    permissions: Object.freeze(['transcript.read', 'model.invoke', 'artifact.write']),
+    contributes: Object.freeze(['artifact:enhanced-transcript']), failurePolicy: 'isolate', timeoutMs: 120000
+  }),
+  Object.freeze({
+    id: 'memory-consolidation', version: '1.0.0', apiVersion: '1', kind: 'memory-processor',
+    activationEvents: Object.freeze(['onMeetingStopped', 'onUserRequest']),
+    requires: Object.freeze([]), permissions: Object.freeze(['memory.candidate.write']),
+    contributes: Object.freeze(['memory:consolidation']), failurePolicy: 'isolate', timeoutMs: 120000
+  }),
+  Object.freeze({
+    id: 'memory-extraction', version: '1.0.0', apiVersion: '1', kind: 'memory-processor',
+    activationEvents: Object.freeze(['onMeetingStopped', 'onUserRequest']),
+    requires: Object.freeze(['transcript-context', 'memory-consolidation']),
+    permissions: Object.freeze(['transcript.read', 'model.invoke', 'memory.candidate.write']),
+    contributes: Object.freeze(['memory:candidates']), failurePolicy: 'isolate', timeoutMs: 120000
   })
 ])
 
 const FORMAL_RECIPES = Object.freeze({
   'meeting-minutes@1': Object.freeze({
     id: 'meeting-minutes@1', taskKind: 'meeting-minutes', pluginId: 'meeting-minutes',
-    contextPluginId: 'transcript-context', artifactKind: 'meeting-minutes'
+    contextPluginId: 'transcript-context', resultKind: 'artifact', writerPermission: 'artifact.write',
+    operations: Object.freeze(['meeting-minutes.chunk', 'meeting-minutes.merge'])
+  }),
+  'memory-extraction@1': Object.freeze({
+    id: 'memory-extraction@1', taskKind: 'memory-extraction', pluginId: 'memory-extraction',
+    contextPluginId: 'transcript-context', resultKind: 'memory-candidates',
+    writerPermission: 'memory.candidate.write', operations: Object.freeze(['memory-extraction.chunk'])
+  }),
+  'enhanced-transcript@1': Object.freeze({
+    id: 'enhanced-transcript@1', taskKind: 'enhanced-transcript', pluginId: 'enhanced-transcript',
+    contextPluginId: 'transcript-context', resultKind: 'artifact', writerPermission: 'artifact.write',
+    operations: Object.freeze(['enhanced-transcript.chunk', 'enhanced-transcript.merge'])
   })
 })
 
 function validateManifest (manifest) {
   exactObject(manifest, MANIFEST_KEYS, 'AGENT_PLUGIN_INVALID')
   if (typeof manifest.id !== 'string' || typeof manifest.version !== 'string' || manifest.apiVersion !== '1' ||
-      !['context-provider', 'artifact-generator'].includes(manifest.kind) || manifest.failurePolicy !== 'isolate' ||
+      !['context-provider', 'artifact-generator', 'memory-processor'].includes(manifest.kind) ||
+      manifest.failurePolicy !== 'isolate' ||
       !Number.isSafeInteger(manifest.timeoutMs) || manifest.timeoutMs < 1 || manifest.timeoutMs > 120000) {
     throw new AgentCoreError('AGENT_PLUGIN_INVALID')
   }
@@ -89,15 +125,17 @@ class AgentPluginHost {
     this.inputPlanner = inputPlanner
     this.modelGateway = modelGateway
     this.registry = new Map(FORMAL_PLUGINS
-      .filter((manifest) => !disabledPluginIds.includes(manifest.id))
       .map((manifest) => [manifest.id, validateManifest(manifest)]))
     validateDependencies(this.registry)
-    const manifestTimeout = FORMAL_PLUGINS.find((manifest) => manifest.id === 'meeting-minutes').timeoutMs
+    for (const pluginId of disabledPluginIds) this.registry.delete(pluginId)
+    const manifestTimeout = Math.max(...FORMAL_PLUGINS.map((manifest) => manifest.timeoutMs))
     this.timeoutMs = timeoutMs === undefined ? manifestTimeout : timeoutMs
     if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs < 1 || this.timeoutMs > manifestTimeout) {
       throw new AgentCoreError('AGENT_PLUGIN_INVALID')
     }
     this.minutes = new MeetingMinutesPlugin()
+    this.enhancedTranscript = new EnhancedTranscriptPlugin()
+    this.memoryExtraction = new MemoryExtractionPlugin()
     this.activeExecutions = new Set()
   }
 
@@ -112,9 +150,16 @@ class AgentPluginHost {
   }
 
   availableTaskKinds () {
-    return this.registry.has('meeting-minutes') && this.registry.has('transcript-context')
-      ? ['meeting-minutes']
-      : []
+    return Object.values(FORMAL_RECIPES)
+      .filter((recipe) => {
+        try {
+          this.assertRecipeAvailable(recipe)
+          return true
+        } catch {
+          return false
+        }
+      })
+      .map((recipe) => recipe.taskKind)
   }
 
   unload (pluginId) {
@@ -142,9 +187,17 @@ class AgentPluginHost {
   }
 
   assertRecipeAvailable (recipe) {
-    if (!this.registry.has(recipe.pluginId) || !this.registry.has(recipe.contextPluginId)) {
-      throw new AgentCoreError('AGENT_PLUGIN_INVALID')
+    const pluginIds = new Set()
+    const visit = (pluginId) => {
+      if (pluginIds.has(pluginId)) return
+      const manifest = this.registry.get(pluginId)
+      if (!manifest) throw new AgentCoreError('AGENT_PLUGIN_INVALID')
+      pluginIds.add(pluginId)
+      for (const required of manifest.requires) visit(required)
     }
+    visit(recipe.pluginId)
+    if (!pluginIds.has(recipe.contextPluginId)) throw new AgentCoreError('AGENT_PLUGIN_INVALID')
+    return pluginIds
   }
 
   assertJobAvailable (rawJob) {
@@ -162,7 +215,7 @@ class AgentPluginHost {
     const recipe = this.getRecipe(job.recipeVersion)
     this.assertPermission(recipe, 'transcript.read')
     this.assertPermission(recipe, 'model.invoke')
-    this.assertPermission(recipe, 'artifact.write')
+    this.assertPermission(recipe, recipe.writerPermission)
 
     const controller = new AbortController()
     let timedOut = false
@@ -172,7 +225,7 @@ class AgentPluginHost {
     const execution = {
       controller,
       invalidated: false,
-      pluginIds: new Set([recipe.pluginId, recipe.contextPluginId])
+      pluginIds: this.assertRecipeAvailable(recipe)
     }
     this.activeExecutions.add(execution)
     const assertActive = () => {
@@ -203,7 +256,7 @@ class AgentPluginHost {
       assertActive()
       const plan = this.inputPlanner.plan(snapshot, limits)
       const invokeModel = async (operation, input, signal) => {
-        if (!['meeting-minutes.chunk', 'meeting-minutes.merge'].includes(operation)) {
+        if (!recipe.operations.includes(operation)) {
           throw new AgentCoreError('AGENT_PERMISSION_DENIED')
         }
         assertActive()
@@ -220,9 +273,18 @@ class AgentPluginHost {
         assertActive()
         return result
       }
-      const artifact = await this.minutes.generate({ job, plan, limits, invokeModel, signal: controller.signal })
+      let value
+      if (job.taskKind === 'meeting-minutes') {
+        value = await this.minutes.generate({ job, plan, limits, invokeModel, signal: controller.signal })
+      } else if (job.taskKind === 'enhanced-transcript') {
+        value = await this.enhancedTranscript.generate({ job, plan, limits, invokeModel, signal: controller.signal })
+      } else if (job.taskKind === 'memory-extraction') {
+        value = await this.memoryExtraction.extract({ job, plan, limits, invokeModel, signal: controller.signal })
+      } else {
+        throw new AgentCoreError('AGENT_PLUGIN_INVALID')
+      }
       assertActive()
-      return artifact
+      return { kind: recipe.resultKind, value }
     }
 
     try {

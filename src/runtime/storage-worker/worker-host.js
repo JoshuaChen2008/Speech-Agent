@@ -423,6 +423,10 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.AGENT_COMMIT_MEMORY_CANDIDATES, input)
   }
 
+  deleteAgentMemoryItem (input) {
+    return this.enqueue(OPERATIONS.AGENT_DELETE_MEMORY_ITEM, input)
+  }
+
   applyAgentTaskPolicy (input) {
     return this.enqueue(OPERATIONS.AGENT_APPLY_TASK_POLICY, input)
   }

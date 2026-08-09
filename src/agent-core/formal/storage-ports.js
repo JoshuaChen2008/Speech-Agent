@@ -29,4 +29,17 @@ class ArtifactWriter {
   }
 }
 
-module.exports = { ArtifactWriter, TranscriptReader }
+class MemoryCandidateSink {
+  constructor (storage) {
+    if (!storage || typeof storage.commitAgentMemoryCandidates !== 'function') {
+      throw new AgentCoreError('AGENT_REQUEST_INVALID')
+    }
+    this.storage = storage
+  }
+
+  commit (runId, lease, candidates) {
+    return this.storage.commitAgentMemoryCandidates({ runId, lease, candidates })
+  }
+}
+
+module.exports = { ArtifactWriter, MemoryCandidateSink, TranscriptReader }

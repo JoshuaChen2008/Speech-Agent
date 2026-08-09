@@ -30,6 +30,7 @@ const OPERATIONS = Object.freeze({
   AGENT_MARK_JOB_CANCELLED: 'agent:mark-job-cancelled',
   AGENT_COMMIT_ARTIFACT: 'agent:commit-artifact',
   AGENT_COMMIT_MEMORY_CANDIDATES: 'agent:commit-memory-candidates',
+  AGENT_DELETE_MEMORY_ITEM: 'agent:delete-memory-item',
   AGENT_APPLY_TASK_POLICY: 'agent:apply-task-policy',
   AGENT_GET_SESSION_DETAIL: 'agent:get-session-detail',
   AGENT_DELETE_SESSION_DATA: 'agent:delete-session-data',

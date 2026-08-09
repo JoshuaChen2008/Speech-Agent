@@ -79,7 +79,8 @@ function workerClient (t, databasePath, clock) {
     markAgentJobFailed: async (input) => call(OPERATIONS.AGENT_MARK_JOB_FAILED, input),
     requestAgentCancel: async (input) => call(OPERATIONS.AGENT_REQUEST_CANCEL, input),
     markAgentJobCancelled: async (input) => call(OPERATIONS.AGENT_MARK_JOB_CANCELLED, input),
-    commitAgentArtifact: async (input) => call(OPERATIONS.AGENT_COMMIT_ARTIFACT, input)
+    commitAgentArtifact: async (input) => call(OPERATIONS.AGENT_COMMIT_ARTIFACT, input),
+    commitAgentMemoryCandidates: async (input) => call(OPERATIONS.AGENT_COMMIT_MEMORY_CANDIDATES, input)
   }
   return { call, service, storage }
 }
@@ -265,6 +266,7 @@ function runtime (client, provider, clock, options = {}) {
     transcriptReader: new TranscriptReader(client.storage),
     inputPlanner: new AgentInputPlanner(),
     modelGateway,
+    disabledPluginIds: ['enhanced-transcript', 'memory-consolidation', 'memory-extraction'],
     timeoutMs: options.timeoutMs
   })
   const runner = new AgentJobRunner({

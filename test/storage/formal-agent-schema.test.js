@@ -9,6 +9,7 @@ const test = require('node:test')
 const { AgentMvpStore } = require('../../src/agent-core/storage/agent-store')
 const { AGENT_MVP_MIGRATIONS } = require('../../src/agent-core/storage/schema')
 const {
+  FORMAL_AGENT_MEMORY_DELETION_SCHEMA_SQL,
   FORMAL_AGENT_MIGRATIONS,
   FORMAL_AGENT_SCHEMA_SQL,
   FORMAL_AGENT_SCHEMA_VERSION,
@@ -41,7 +42,7 @@ function appendFinal (store, sessionId, text) {
   store.closeSession({ sessionId, sourceId: 'loopback', endedAt: 200, state: 'closed' })
 }
 
-test('DB7 / ADR 0010 upgrades subtitle v2 to formal Agent v3 without changing subtitle facts', (t) => {
+test('DB7 / ADR 0010 upgrades subtitle v2 through formal Agent v4 without changing subtitle facts', (t) => {
   const databasePath = path.join(tempRoot(t), 'formal.sqlite3')
   const base = new SqliteSubtitleStore({ databasePath, now: () => 1000 })
   appendFinal(base, 'formal-upgrade', 'synthetic committed transcript')
@@ -75,6 +76,7 @@ test('DB7 / ADR 0010 upgrades subtitle v2 to formal Agent v3 without changing su
       'agent_jobs',
       'caption_events',
       'legacy_imports',
+      'memory_deletion_receipts',
       'memory_evidence',
       'memory_items',
       'memory_revisions',
@@ -104,8 +106,11 @@ test('ADR 0010 keeps isolated candidate v3 byte-stable and rejects cross-catalog
   assert.equal(AGENT_MVP_MIGRATIONS[2].checksum, 'b4edadc4f78b6ff37da5cdd879a1065328d2f57ddad299f39025e596a84dc2d2')
   assert.deepEqual(AGENT_MVP_MIGRATIONS.slice(0, 2), SUBTITLE_BASE_MIGRATIONS)
   assert.deepEqual(FORMAL_AGENT_MIGRATIONS.slice(0, 2), SUBTITLE_BASE_MIGRATIONS)
+  assert.equal(FORMAL_AGENT_MIGRATIONS[2].checksum, '52b7eef5a0d024b92d424cc0e911aa1aee7cc0223ad3bacba41283558a988eff')
+  assert.equal(FORMAL_AGENT_MIGRATIONS[3].checksum, '3c0174d2528f1d2a586779edef95d035ccbb55266fcbabd27b4fa17313c8759c')
   assert.notEqual(AGENT_MVP_MIGRATIONS[2].checksum, FORMAL_AGENT_MIGRATIONS[2].checksum)
   assert.doesNotMatch(FORMAL_AGENT_SCHEMA_SQL, /reference-output|deterministic-test/)
+  assert.doesNotMatch(FORMAL_AGENT_MEMORY_DELETION_SCHEMA_SQL, /audio|pcm|wav|recording|path|credential|api_key/i)
 
   const root = tempRoot(t)
   const candidatePath = path.join(root, 'candidate.sqlite3')
@@ -123,6 +128,47 @@ test('ADR 0010 keeps isolated candidate v3 byte-stable and rejects cross-catalog
     () => new AgentMvpStore({ databasePath: formalPath }),
     /checksum mismatch at version 3/
   )
+})
+
+test('DB7 / J24-B22 upgrades formal v3 suppression identity to one row per old source digest', (t) => {
+  const databasePath = path.join(tempRoot(t), 'formal-v3-v4.sqlite3')
+  const v3 = new SqliteSubtitleStore({
+    databasePath,
+    migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 3),
+    now: () => 1000
+  })
+  v3.database.prepare(`
+    INSERT INTO memory_scopes(
+      scope_id, kind, canonical_key, label, session_id, origin, lifecycle, created_at, updated_at
+    ) VALUES ('scope-v3', 'global', 'global:v3', 'Global v3', NULL, 'user', 'active', 1, 1)
+  `).run()
+  v3.database.prepare(`
+    INSERT INTO memory_suppressions(identity_hash, scope_id, source_digest, created_at)
+    VALUES (?, 'scope-v3', ?, 1)
+  `).run('a'.repeat(64), 'b'.repeat(64))
+  v3.close()
+
+  const v4 = new SqliteSubtitleStore({
+    databasePath,
+    migrations: FORMAL_AGENT_MIGRATIONS,
+    now: () => 2000
+  })
+  try {
+    v4.database.prepare(`
+      INSERT INTO memory_suppressions(identity_hash, scope_id, source_digest, created_at)
+      VALUES (?, 'scope-v3', ?, 2)
+    `).run('a'.repeat(64), 'c'.repeat(64))
+    assert.equal(v4.database.prepare(
+      "SELECT COUNT(*) AS count FROM memory_suppressions WHERE identity_hash = ?"
+    ).get('a'.repeat(64)).count, 2)
+    assert.deepEqual(v4.database.prepare('PRAGMA table_info(memory_suppressions)').all()
+      .filter((column) => Number(column.pk) > 0)
+      .sort((left, right) => Number(left.pk) - Number(right.pk))
+      .map((column) => column.name), ['identity_hash', 'source_digest'])
+    assert.equal(Number(v4.database.prepare('PRAGMA user_version').get().user_version), 4)
+  } finally {
+    v4.close()
+  }
 })
 
 test('DB7 formal Agent constraints reject candidate task semantics and sensitive schema expansion', (t) => {

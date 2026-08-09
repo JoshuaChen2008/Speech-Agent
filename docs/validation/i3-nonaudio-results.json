@@ -56,7 +56,7 @@
     "virtualDurationMs": 7200000
   },
   "gateStatus": "partial",
-  "generatedAt": "2026-08-09T20:28:56.052Z",
+  "generatedAt": "2026-08-09T21:26:44.848Z",
   "kind": "i3-nonaudio-soak",
   "limits": {
     "maxCpuPercent": 800,
@@ -70,24 +70,24 @@
   "metrics": {
     "captionEventCount": 4000,
     "checkpointedWalFrames": 0,
-    "cpuPercent": 22.926,
-    "cpuSystemMs": 562,
-    "cpuUserMs": 1344,
+    "cpuPercent": 14.416,
+    "cpuSystemMs": 188,
+    "cpuUserMs": 1015,
     "exportCount": 3,
     "historyDomMaxNodes": 50,
     "historyPageCount": 72,
-    "maxHeapUsedBytes": 131680200,
+    "maxHeapUsedBytes": 77183736,
     "maxQueueDepth": 112,
-    "maxRssBytes": 287240192,
+    "maxRssBytes": 230137856,
     "pageCount": 668,
     "pageQueryCount": 72,
-    "pageQueryP95Ms": 7.75,
+    "pageQueryP95Ms": 7.913,
     "recoveredRefinedSegmentCount": 400,
     "segmentCount": 3600,
     "walBytes": 4173592,
     "walFrames": 879,
     "journalMode": "wal",
-    "wallDurationMs": 8313.86
+    "wallDurationMs": 8344.698
   },
   "privacy": {
     "persistedAudio": false,
@@ -104,9 +104,9 @@
     "sqliteSubtitleStoreSha256": "f7baad9291001b628787a06666375cc26497b125c41bb9ba54515d65c48ffee6",
     "strictEvidenceParserSha256": "5155fc8df5449133a8d9710a581fbd03bedfb44729da3c5d910a81df74b5e63e",
     "storageGatewaySha256": "aa13da433cf6896e05ea5537998997a7e0049854db2ed14d49b7d04a491d0e9d",
-    "storageWorkerServiceSha256": "bec87b8ded6a056edb7e29b648e5620df4926428a774d4903cce9affa70deab0",
+    "storageWorkerServiceSha256": "b535e6f584a8d1d2dce5e266f4bfa50008ae0efb79cd93f0ed7dd844df255abc",
     "verifierSha256": "8014be2efdbd0d63a99a4de1a9f24ccb70eddcb158cc89b46d2d7bb731ed6ff1",
-    "productPayloadSha256": "ae033c17c1f1eecbfe4ca438b9eb4bb05f831845395bcf628c3443e7db649a1a"
+    "productPayloadSha256": "26f103220a14265efb4b626634b6049dfa75abf4bc9fae7e834a7fe80b48f26a"
   },
   "result": "pass",
   "schemaVersion": 1

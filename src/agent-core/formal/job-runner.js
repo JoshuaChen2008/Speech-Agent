@@ -7,7 +7,7 @@ const {
   boundedString,
   runtimeError
 } = require('./contracts')
-const { ArtifactWriter } = require('./storage-ports')
+const { ArtifactWriter, MemoryCandidateSink } = require('./storage-ports')
 
 const DEFAULT_RETRY_DELAYS_MS = Object.freeze([2000, 10000])
 
@@ -74,7 +74,8 @@ class AgentJobRunner {
   } = {}) {
     const requiredStorageMethods = [
       'claimNextAgentJob', 'renewAgentJobLease', 'markAgentJobRetry', 'markAgentJobFailed',
-      'requestAgentCancel', 'markAgentJobCancelled', 'commitAgentArtifact'
+      'requestAgentCancel', 'markAgentJobCancelled', 'commitAgentArtifact',
+      'commitAgentMemoryCandidates'
     ]
     if (!storage || requiredStorageMethods.some((method) => typeof storage[method] !== 'function') ||
         !pluginHost || typeof pluginHost.availableTaskKinds !== 'function' ||
@@ -92,6 +93,7 @@ class AgentJobRunner {
     this.retryDelaysMs = [...retryDelaysMs]
     this.now = now
     this.writer = new ArtifactWriter(storage)
+    this.memorySink = new MemoryCandidateSink(storage)
     this.runs = new Map()
     this.cancelRequested = new Set()
   }
@@ -122,12 +124,19 @@ class AgentJobRunner {
     keeper.start()
     let keeperState = null
     try {
-      const artifact = await this.pluginHost.executeJob(job, { signal: controller.signal })
+      const pluginResult = await this.pluginHost.executeJob(job, { signal: controller.signal })
       keeperState = await keeper.stop()
       if (keeperState.failure) throw keeperState.failure
       this.pluginHost.assertJobAvailable(job)
-      const committed = await this.writer.commit(job.runId, keeperState.lease, artifact)
-      return { runId: job.runId, jobState: 'succeeded', artifact: committed }
+      if (pluginResult.kind === 'artifact') {
+        const committed = await this.writer.commit(job.runId, keeperState.lease, pluginResult.value)
+        return { runId: job.runId, jobState: 'succeeded', artifact: committed, memory: null }
+      }
+      if (pluginResult.kind === 'memory-candidates') {
+        const committed = await this.memorySink.commit(job.runId, keeperState.lease, pluginResult.value)
+        return { runId: job.runId, jobState: 'succeeded', artifact: null, memory: committed }
+      }
+      throw new AgentCoreError('AGENT_INTERNAL_FAILURE')
     } catch (rawError) {
       if (!keeperState) keeperState = await keeper.stop()
       const error = runtimeError(keeperState.failure || rawError)
