@@ -322,6 +322,60 @@ const MEMORY_KINDS = Object.freeze([
 ])
 const MEMORY_SCOPE_KINDS = Object.freeze(['global', 'session', 'topic', 'project'])
 const MEMORY_BANDS = Object.freeze(['low', 'medium', 'high'])
+const MEMORY_QUERY_CANDIDATE_LIMIT = 256
+
+function memoryQuery (value) {
+  exactObject(value, ['scopeRefs', 'kinds', 'semanticKeys', 'maxItems', 'maxSerializedBytes'])
+  if (!Array.isArray(value.scopeRefs) || value.scopeRefs.length < 1 || value.scopeRefs.length > 16 ||
+      !Array.isArray(value.kinds) || value.kinds.length < 1 || value.kinds.length > MEMORY_KINDS.length ||
+      !Array.isArray(value.semanticKeys) || value.semanticKeys.length > 64 ||
+      !Number.isSafeInteger(value.maxItems) || value.maxItems < 1 || value.maxItems > 20 ||
+      !Number.isSafeInteger(value.maxSerializedBytes) ||
+      value.maxSerializedBytes < 256 || value.maxSerializedBytes > 65536) {
+    throw new StorageError('AGENT_REQUEST_INVALID')
+  }
+  const scopeRefs = value.scopeRefs.map((scope) => {
+    exactObject(scope, ['kind', 'canonicalKey'])
+    if (!MEMORY_SCOPE_KINDS.includes(scope.kind)) throw new StorageError('AGENT_REQUEST_INVALID')
+    return {
+      kind: scope.kind,
+      canonicalKey: boundedText(scope.canonicalKey, 240, false, 'AGENT_REQUEST_INVALID')
+    }
+  })
+  if (new Set(scopeRefs.map((scope) => `${scope.kind}\u0000${scope.canonicalKey}`)).size !== scopeRefs.length ||
+      value.kinds.some((kind) => !MEMORY_KINDS.includes(kind)) ||
+      new Set(value.kinds).size !== value.kinds.length) {
+    throw new StorageError('AGENT_REQUEST_INVALID')
+  }
+  const semanticKeys = value.semanticKeys.map((key) =>
+    boundedText(key, 240, false, 'AGENT_REQUEST_INVALID')
+  )
+  if (new Set(semanticKeys).size !== semanticKeys.length) {
+    throw new StorageError('AGENT_REQUEST_INVALID')
+  }
+  return {
+    scopeRefs,
+    kinds: [...value.kinds],
+    semanticKeys,
+    maxItems: value.maxItems,
+    maxSerializedBytes: value.maxSerializedBytes
+  }
+}
+
+function memoryDormantReason (context) {
+  if (!context) throw new StorageError('AGENT_REQUEST_INVALID')
+  if (!context.agentEnabled) return 'agent_disabled'
+  if (!context.memoryEnabled) return 'memory_disabled'
+  const configuration = providerSnapshot(context)
+  if (!configuration) return 'provider_not_configured'
+  if (configuration.providerKind === 'cloud') {
+    if (!context.cloudDisclosureAccepted) return 'cloud_disclosure_required'
+    if (!context.credentialAvailable) return 'credential_unavailable'
+  } else if (!context.localModelReady) {
+    return 'local_model_not_ready'
+  }
+  return null
+}
 
 function memoryCandidate (value, validEventOrders, sessionId) {
   exactObject(value, [
@@ -1377,6 +1431,153 @@ class FormalAgentStore {
     } catch (error) {
       rollbackQuietly(database)
       throw error
+    }
+  }
+
+  readMemoryContext (input) {
+    this.assertOpen()
+    const query = memoryQuery(input)
+    const reason = memoryDormantReason(this.currentPolicy)
+    if (reason !== null) {
+      return {
+        availability: 'dormant',
+        reason,
+        items: [],
+        itemCount: 0,
+        serializedBytes: 0,
+        hasMore: false
+      }
+    }
+
+    const scopePredicate = query.scopeRefs
+      .map(() => '(scope.kind = ? AND scope.canonical_key = ?)')
+      .join(' OR ')
+    const kindPredicate = query.kinds.map(() => '?').join(', ')
+    const semanticPredicate = query.semanticKeys.length === 0
+      ? ''
+      : `AND item.semantic_key IN (${query.semanticKeys.map(() => '?').join(', ')})`
+    const scopeParameters = query.scopeRefs.flatMap((scope) => [scope.kind, scope.canonicalKey])
+    const rows = this.database.prepare(`
+      SELECT
+        item.memory_id,
+        item.kind,
+        item.semantic_key,
+        item.content_json,
+        item.origin,
+        item.confidence_band,
+        item.salience_band,
+        item.current_revision_id,
+        item.updated_at,
+        scope.kind AS scope_kind,
+        scope.canonical_key,
+        scope.label,
+        revision.memory_id AS revision_memory_id,
+        revision.content_json AS revision_content_json,
+        (
+          SELECT COUNT(*) FROM memory_evidence AS evidence
+          WHERE evidence.memory_id = item.memory_id
+        ) AS evidence_count
+      FROM memory_items AS item
+      JOIN memory_scopes AS scope ON scope.scope_id = item.scope_id
+      LEFT JOIN memory_revisions AS revision
+        ON revision.revision_id = item.current_revision_id
+       AND revision.memory_id = item.memory_id
+      WHERE scope.lifecycle = 'active'
+        AND item.lifecycle = 'active'
+        AND (${scopePredicate})
+        AND item.kind IN (${kindPredicate})
+        ${semanticPredicate}
+      ORDER BY
+        CASE item.origin WHEN 'explicit' THEN 0 ELSE 1 END,
+        CASE item.salience_band WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+        CASE item.confidence_band WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+        evidence_count DESC,
+        item.updated_at DESC,
+        item.memory_id ASC
+      LIMIT ?
+    `).all(
+      ...scopeParameters,
+      ...query.kinds,
+      ...query.semanticKeys,
+      MEMORY_QUERY_CANDIDATE_LIMIT
+    )
+
+    /* 命中读取上限时保守报告 hasMore；不为精确探测第 257 条而读取其正文。 */
+    let hasMore = rows.length === MEMORY_QUERY_CANDIDATE_LIMIT
+    let serializedBytes = 0
+    const items = []
+    for (const row of rows) {
+      if (items.length >= query.maxItems) {
+        hasMore = true
+        break
+      }
+      if (row.current_revision_id === null || row.revision_memory_id !== row.memory_id ||
+          row.revision_content_json !== row.content_json) {
+        throw new StorageError('STORAGE_COMMAND_FAILED')
+      }
+      let content
+      try {
+        content = JSON.parse(row.content_json)
+        if (!content || typeof content !== 'object' || Array.isArray(content) ||
+            canonicalize(content) !== row.content_json) {
+          throw new Error('invalid memory projection')
+        }
+      } catch {
+        throw new StorageError('STORAGE_COMMAND_FAILED')
+      }
+      const evidence = this.database.prepare(`
+        SELECT
+          session_id,
+          transcript_version,
+          input_watermark,
+          from_event_order,
+          through_event_order,
+          input_digest
+        FROM memory_evidence
+        WHERE memory_id = ?
+        ORDER BY created_at DESC, evidence_id DESC
+        LIMIT 8
+      `).all(row.memory_id).map((source) => ({
+        sessionId: source.session_id,
+        transcriptVersion: source.transcript_version,
+        inputWatermark: Number(source.input_watermark),
+        fromEventOrder: Number(source.from_event_order),
+        throughEventOrder: Number(source.through_event_order),
+        inputDigest: source.input_digest
+      }))
+      const item = {
+        memoryId: row.memory_id,
+        scope: {
+          kind: row.scope_kind,
+          canonicalKey: row.canonical_key,
+          label: row.label
+        },
+        kind: row.kind,
+        semanticKey: row.semantic_key,
+        content,
+        origin: row.origin,
+        confidenceBand: row.confidence_band,
+        salienceBand: row.salience_band,
+        revisionId: row.current_revision_id,
+        updatedAt: Number(row.updated_at),
+        evidenceCount: Number(row.evidence_count),
+        evidence
+      }
+      const itemBytes = Buffer.byteLength(canonicalize(item), 'utf8')
+      if (serializedBytes + itemBytes > query.maxSerializedBytes) {
+        hasMore = true
+        continue
+      }
+      items.push(item)
+      serializedBytes += itemBytes
+    }
+    return {
+      availability: 'ready',
+      reason: null,
+      items,
+      itemCount: items.length,
+      serializedBytes,
+      hasMore
     }
   }
 

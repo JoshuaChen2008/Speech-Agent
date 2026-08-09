@@ -1,7 +1,7 @@
 'use strict'
 
 const { AgentCoreError } = require('../errors')
-const { inputReference } = require('./contracts')
+const { inputReference, memoryProjection, memoryQuery } = require('./contracts')
 
 class TranscriptReader {
   constructor (storage) {
@@ -13,6 +13,20 @@ class TranscriptReader {
 
   readSnapshot (inputRef) {
     return this.storage.readAgentInputSnapshot({ inputRef: inputReference(inputRef) })
+  }
+}
+
+class MemoryReader {
+  constructor (storage) {
+    if (!storage || typeof storage.readAgentMemoryContext !== 'function') {
+      throw new AgentCoreError('AGENT_REQUEST_INVALID')
+    }
+    this.storage = storage
+  }
+
+  async query (query) {
+    const request = memoryQuery(query)
+    return memoryProjection(await this.storage.readAgentMemoryContext(request), request)
   }
 }
 
@@ -42,4 +56,4 @@ class MemoryCandidateSink {
   }
 }
 
-module.exports = { ArtifactWriter, MemoryCandidateSink, TranscriptReader }
+module.exports = { ArtifactWriter, MemoryCandidateSink, MemoryReader, TranscriptReader }

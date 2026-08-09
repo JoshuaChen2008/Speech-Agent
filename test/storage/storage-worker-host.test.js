@@ -246,6 +246,7 @@ test('SEM-F28 formal Agent host methods preserve exact operation and payload ide
     ['markAgentJobCancelled', OPERATIONS.AGENT_MARK_JOB_CANCELLED, { runId: 'run', lease: {} }],
     ['commitAgentArtifact', OPERATIONS.AGENT_COMMIT_ARTIFACT, { runId: 'run', lease: {}, artifact: {} }],
     ['commitAgentMemoryCandidates', OPERATIONS.AGENT_COMMIT_MEMORY_CANDIDATES, { runId: 'run', lease: {}, candidates: [] }],
+    ['readAgentMemoryContext', OPERATIONS.AGENT_READ_MEMORY_CONTEXT, { scopeRefs: [], kinds: [], semanticKeys: [], maxItems: 1, maxSerializedBytes: 256 }],
     ['deleteAgentMemoryItem', OPERATIONS.AGENT_DELETE_MEMORY_ITEM, { memoryId: 'memory', deletionIdempotencyKey: 'delete-memory' }],
     ['applyAgentTaskPolicy', OPERATIONS.AGENT_APPLY_TASK_POLICY, { eligibilityContext: {} }],
     ['getAgentSessionDetail', OPERATIONS.AGENT_GET_SESSION_DETAIL, { sessionId: 's', eligibilityContext: {} }],

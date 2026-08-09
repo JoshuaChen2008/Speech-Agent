@@ -156,6 +156,10 @@ class StorageWorkerService {
       assertExactKeys(payload, ['runId', 'lease', 'candidates'])
       return this.requireAgentStore().commitMemoryCandidates(payload)
     }
+    if (operation === OPERATIONS.AGENT_READ_MEMORY_CONTEXT) {
+      assertExactKeys(payload, ['scopeRefs', 'kinds', 'semanticKeys', 'maxItems', 'maxSerializedBytes'])
+      return this.requireAgentStore().readMemoryContext(payload)
+    }
     if (operation === OPERATIONS.AGENT_DELETE_MEMORY_ITEM) {
       assertExactKeys(payload, ['memoryId', 'deletionIdempotencyKey'])
       return this.requireAgentStore().deleteMemoryItem(payload)

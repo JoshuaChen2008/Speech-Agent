@@ -208,6 +208,131 @@ const MEMORY_KINDS = Object.freeze([
 ])
 const MEMORY_SCOPE_KINDS = Object.freeze(['global', 'session', 'topic', 'project'])
 const MEMORY_BANDS = Object.freeze(['low', 'medium', 'high'])
+const MEMORY_DORMANT_REASONS = Object.freeze([
+  'agent_disabled',
+  'memory_disabled',
+  'provider_not_configured',
+  'cloud_disclosure_required',
+  'credential_unavailable',
+  'local_model_not_ready'
+])
+
+function memoryQuery (value) {
+  exactObject(value, ['scopeRefs', 'kinds', 'semanticKeys', 'maxItems', 'maxSerializedBytes'])
+  if (!Array.isArray(value.scopeRefs) || value.scopeRefs.length < 1 || value.scopeRefs.length > 16 ||
+      !Array.isArray(value.kinds) || value.kinds.length < 1 || value.kinds.length > MEMORY_KINDS.length ||
+      !Array.isArray(value.semanticKeys) || value.semanticKeys.length > 64 ||
+      !Number.isSafeInteger(value.maxItems) || value.maxItems < 1 || value.maxItems > 20 ||
+      !Number.isSafeInteger(value.maxSerializedBytes) ||
+      value.maxSerializedBytes < 256 || value.maxSerializedBytes > 65536) {
+    throw new AgentCoreError('AGENT_REQUEST_INVALID')
+  }
+  const scopeRefs = value.scopeRefs.map((scope) => {
+    exactObject(scope, ['kind', 'canonicalKey'])
+    if (!MEMORY_SCOPE_KINDS.includes(scope.kind)) throw new AgentCoreError('AGENT_REQUEST_INVALID')
+    return { kind: scope.kind, canonicalKey: boundedString(scope.canonicalKey, 1, 240) }
+  })
+  if (new Set(scopeRefs.map((scope) => `${scope.kind}\u0000${scope.canonicalKey}`)).size !== scopeRefs.length ||
+      value.kinds.some((kind) => !MEMORY_KINDS.includes(kind)) ||
+      new Set(value.kinds).size !== value.kinds.length) {
+    throw new AgentCoreError('AGENT_REQUEST_INVALID')
+  }
+  const semanticKeys = value.semanticKeys.map((key) => boundedString(key, 1, 240))
+  if (new Set(semanticKeys).size !== semanticKeys.length) throw new AgentCoreError('AGENT_REQUEST_INVALID')
+  return {
+    scopeRefs,
+    kinds: [...value.kinds],
+    semanticKeys,
+    maxItems: value.maxItems,
+    maxSerializedBytes: value.maxSerializedBytes
+  }
+}
+
+function memoryProjection (value, rawQuery) {
+  const query = memoryQuery(rawQuery)
+  exactObject(value, [
+    'availability', 'reason', 'items', 'itemCount', 'serializedBytes', 'hasMore'
+  ])
+  if (!['ready', 'dormant'].includes(value.availability) ||
+      typeof value.hasMore !== 'boolean' ||
+      !Number.isSafeInteger(value.itemCount) || value.itemCount < 0 || value.itemCount > query.maxItems ||
+      !Number.isSafeInteger(value.serializedBytes) || value.serializedBytes < 0 ||
+      value.serializedBytes > query.maxSerializedBytes || !Array.isArray(value.items) ||
+      value.items.length !== value.itemCount) {
+    throw new AgentCoreError('AGENT_REQUEST_INVALID')
+  }
+  if (value.availability === 'dormant') {
+    if (!MEMORY_DORMANT_REASONS.includes(value.reason) || value.items.length !== 0 ||
+        value.serializedBytes !== 0 || value.hasMore) {
+      throw new AgentCoreError('AGENT_REQUEST_INVALID')
+    }
+    return { ...value, items: [] }
+  }
+  if (value.reason !== null) throw new AgentCoreError('AGENT_REQUEST_INVALID')
+  const seen = new Set()
+  const requestedScopes = new Set(query.scopeRefs.map((scope) => `${scope.kind}\u0000${scope.canonicalKey}`))
+  const items = value.items.map((item) => {
+    exactObject(item, [
+      'memoryId', 'scope', 'kind', 'semanticKey', 'content', 'origin',
+      'confidenceBand', 'salienceBand', 'revisionId', 'updatedAt',
+      'evidenceCount', 'evidence'
+    ])
+    exactObject(item.scope, ['kind', 'canonicalKey', 'label'])
+    if (!MEMORY_SCOPE_KINDS.includes(item.scope.kind) || !MEMORY_KINDS.includes(item.kind) ||
+        !requestedScopes.has(`${item.scope.kind}\u0000${item.scope.canonicalKey}`) ||
+        !query.kinds.includes(item.kind) ||
+        (query.semanticKeys.length > 0 && !query.semanticKeys.includes(item.semanticKey)) ||
+        !['explicit', 'automatic'].includes(item.origin) ||
+        !MEMORY_BANDS.includes(item.confidenceBand) || !MEMORY_BANDS.includes(item.salienceBand) ||
+        !item.content || typeof item.content !== 'object' || Array.isArray(item.content) ||
+        !Number.isSafeInteger(item.updatedAt) || item.updatedAt < 0 ||
+        !Number.isSafeInteger(item.evidenceCount) || item.evidenceCount < 0 ||
+        !Array.isArray(item.evidence) || item.evidence.length > 8 ||
+        item.evidence.length > item.evidenceCount) {
+      throw new AgentCoreError('AGENT_REQUEST_INVALID')
+    }
+    const memoryId = boundedString(item.memoryId)
+    if (seen.has(memoryId)) throw new AgentCoreError('AGENT_REQUEST_INVALID')
+    seen.add(memoryId)
+    boundedString(item.scope.canonicalKey, 1, 240)
+    boundedString(item.scope.label, 1, 400)
+    boundedString(item.semanticKey, 1, 240)
+    boundedString(item.revisionId)
+    const evidence = item.evidence.map((source) => {
+      exactObject(source, [
+        'sessionId', 'transcriptVersion', 'inputWatermark', 'fromEventOrder',
+        'throughEventOrder', 'inputDigest'
+      ])
+      if (!['original', 'refined'].includes(source.transcriptVersion) ||
+          !Number.isSafeInteger(source.inputWatermark) || source.inputWatermark < 1 ||
+          !Number.isSafeInteger(source.fromEventOrder) || source.fromEventOrder < 1 ||
+          !Number.isSafeInteger(source.throughEventOrder) ||
+          source.throughEventOrder < source.fromEventOrder ||
+          source.throughEventOrder > source.inputWatermark ||
+          typeof source.inputDigest !== 'string' || !/^[a-f0-9]{64}$/.test(source.inputDigest)) {
+        throw new AgentCoreError('AGENT_REQUEST_INVALID')
+      }
+      boundedString(source.sessionId)
+      return { ...source }
+    })
+    try {
+      if (Buffer.byteLength(canonicalize(item.content), 'utf8') > 16384) {
+        throw new Error('memory content too large')
+      }
+    } catch {
+      throw new AgentCoreError('AGENT_REQUEST_INVALID')
+    }
+    return {
+      ...item,
+      scope: { ...item.scope },
+      content: structuredClone(item.content),
+      evidence
+    }
+  })
+  const serializedBytes = items.reduce((total, item) => total + canonicalBytes(item), 0)
+  if (serializedBytes !== value.serializedBytes) throw new AgentCoreError('AGENT_REQUEST_INVALID')
+  return { ...value, items }
+}
 
 function memoryCandidate (value, options = {}) {
   exactObject(value, [
@@ -302,6 +427,8 @@ module.exports = {
   inputReference,
   memoryCandidate,
   memoryExtractionOutput,
+  memoryProjection,
+  memoryQuery,
   meetingMinutesArtifact,
   providerLimits,
   runtimeError,

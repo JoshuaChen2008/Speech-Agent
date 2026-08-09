@@ -6,11 +6,12 @@ const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 
+const { canonicalBytes } = require('../../src/agent-core/formal/contracts')
 const { AgentInputPlanner } = require('../../src/agent-core/formal/input-planner')
 const { AgentJobRunner } = require('../../src/agent-core/formal/job-runner')
 const { ModelGateway } = require('../../src/agent-core/formal/model-gateway')
 const { AgentPluginHost } = require('../../src/agent-core/formal/plugin-host')
-const { TranscriptReader } = require('../../src/agent-core/formal/storage-ports')
+const { MemoryReader, TranscriptReader } = require('../../src/agent-core/formal/storage-ports')
 const {
   FormalAgentStore,
   makeUserRequestDigest
@@ -26,7 +27,7 @@ const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/sc
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
 
-function cloudContext () {
+function cloudContext (overrides = {}) {
   return {
     agentEnabled: true,
     memoryEnabled: true,
@@ -37,7 +38,8 @@ function cloudContext () {
     model: 'model-primary',
     cloudDisclosureAccepted: true,
     credentialAvailable: true,
-    localModelReady: false
+    localModelReady: false,
+    ...overrides
   }
 }
 
@@ -89,7 +91,8 @@ function journeyClient (t, clock) {
     requestAgentCancel: async (input) => call(OPERATIONS.AGENT_REQUEST_CANCEL, input),
     markAgentJobCancelled: async (input) => call(OPERATIONS.AGENT_MARK_JOB_CANCELLED, input),
     commitAgentArtifact: async (input) => call(OPERATIONS.AGENT_COMMIT_ARTIFACT, input),
-    commitAgentMemoryCandidates: async (input) => call(OPERATIONS.AGENT_COMMIT_MEMORY_CANDIDATES, input)
+    commitAgentMemoryCandidates: async (input) => call(OPERATIONS.AGENT_COMMIT_MEMORY_CANDIDATES, input),
+    readAgentMemoryContext: async (input) => call(OPERATIONS.AGENT_READ_MEMORY_CONTEXT, input)
   }
   return { call, service, storage }
 }
@@ -443,8 +446,140 @@ test('SEM-F13/F28 / J24-B03/B28 retries enhanced merge without a partial artifac
   ).get().count, 2)
 })
 
-test('SEM-F26 / J21/J24-B22 deletes one memory with multi-source suppression and idempotent replay', async (t) => {
+test('SEM-F26 / D8/J24-B14/B22 storage-worker sub-boundary reads bounded current memory and preserves its dormant projection', async (t) => {
   const clock = { value: 40000 }
+  const client = journeyClient(t, clock)
+  const sessionId = 'bounded-memory-session'
+  createTerminalSession(client, sessionId, [
+    'synthetic decision input',
+    'synthetic project phase input'
+  ])
+  const provider = new DeterministicThreeTaskProvider()
+  const { runner } = runtime(client, provider, clock, ['meeting-minutes', 'enhanced-transcript'])
+  assert.equal((await runner.runNext({
+    claimIdempotencyKey: 'bounded-memory-claim',
+    localWorkAllowed: false
+  })).jobState, 'succeeded')
+
+  const reader = new MemoryReader(client.storage)
+  const query = {
+    scopeRefs: [
+      { kind: 'session', canonicalKey: sessionId },
+      { kind: 'project', canonicalKey: 'project:fixture' }
+    ],
+    kinds: ['decision', 'term', 'project-fact'],
+    semanticKeys: [],
+    maxItems: 20,
+    maxSerializedBytes: 65536
+  }
+  const active = await reader.query(query)
+  assert.equal(active.availability, 'ready')
+  assert.equal(active.reason, null)
+  assert.deepEqual(active.items.map((item) => item.semanticKey), [
+    'term:fixture',
+    'decision:release'
+  ])
+  assert.equal(active.items.some((item) => item.semanticKey === 'project:phase'), false)
+  assert.deepEqual(active.items.map((item) => item.evidenceCount), [2, 1])
+  assert.equal(active.items.every((item) => item.evidence.length === item.evidenceCount), true)
+  assert.equal(active.serializedBytes, active.items.reduce(
+    (total, item) => total + canonicalBytes(item),
+    0
+  ))
+  assert.equal(active.hasMore, false)
+
+  const termBytes = canonicalBytes(active.items[0])
+  assert.equal(termBytes > 256, true)
+  const termOnly = { ...query, semanticKeys: ['term:fixture'] }
+  const tooSmall = await reader.query({ ...termOnly, maxSerializedBytes: termBytes - 1 })
+  assert.deepEqual(tooSmall.items, [])
+  assert.equal(tooSmall.serializedBytes, 0)
+  assert.equal(tooSmall.hasMore, true)
+  const exactFit = await reader.query({ ...termOnly, maxSerializedBytes: termBytes })
+  assert.equal(exactFit.items.length, 1)
+  assert.equal(exactFit.serializedBytes, termBytes)
+  const oneItem = await reader.query({ ...query, maxItems: 1 })
+  assert.deepEqual(oneItem.items.map((item) => item.semanticKey), ['term:fixture'])
+  assert.equal(oneItem.hasMore, true)
+
+  const database = client.service.store.database
+  const memoryFacts = () => ({
+    items: database.prepare('SELECT * FROM memory_items ORDER BY memory_id').all(),
+    revisions: database.prepare('SELECT * FROM memory_revisions ORDER BY revision_id').all(),
+    evidence: database.prepare('SELECT * FROM memory_evidence ORDER BY evidence_id').all()
+  })
+  const beforeDormant = memoryFacts()
+  const dormantCases = [
+    ['agent_disabled', cloudContext({
+      agentEnabled: false,
+      automaticProcessingSince: null,
+      memoryProcessingSince: null
+    })],
+    ['memory_disabled', cloudContext({
+      memoryEnabled: false,
+      memoryProcessingSince: null
+    })],
+    ['provider_not_configured', cloudContext({
+      providerId: null,
+      providerKind: null,
+      model: null
+    })],
+    ['cloud_disclosure_required', cloudContext({ cloudDisclosureAccepted: false })],
+    ['credential_unavailable', cloudContext({ credentialAvailable: false })],
+    ['local_model_not_ready', cloudContext({
+      providerId: 'local-primary',
+      providerKind: 'local',
+      model: 'local-model',
+      cloudDisclosureAccepted: false,
+      credentialAvailable: false,
+      localModelReady: false
+    })]
+  ]
+  for (const [reason, eligibilityContext] of dormantCases) {
+    client.call(OPERATIONS.AGENT_APPLY_TASK_POLICY, { eligibilityContext })
+    const dormant = await reader.query(query)
+    assert.deepEqual(dormant, {
+      availability: 'dormant',
+      reason,
+      items: [],
+      itemCount: 0,
+      serializedBytes: 0,
+      hasMore: false
+    })
+    assert.deepEqual(memoryFacts(), beforeDormant)
+  }
+
+  client.call(OPERATIONS.AGENT_APPLY_TASK_POLICY, { eligibilityContext: cloudContext() })
+  assert.deepEqual(
+    (await reader.query(query)).items.map((item) => item.semanticKey),
+    active.items.map((item) => item.semanticKey)
+  )
+  assert.deepEqual(memoryFacts(), beforeDormant)
+
+  client.service.agentStore = null
+  await assert.rejects(reader.query(query), (error) => error.code === 'AGENT_REQUEST_INVALID')
+  client.call(OPERATIONS.AGENT_APPLY_TASK_POLICY, { eligibilityContext: cloudContext() })
+  assert.equal((await reader.query(query)).availability, 'ready')
+
+  await assert.rejects(reader.query({
+    ...query,
+    scopeRefs: [query.scopeRefs[0], query.scopeRefs[0]]
+  }), (error) => error.code === 'AGENT_REQUEST_INVALID')
+
+  database.exec('BEGIN IMMEDIATE')
+  try {
+    database.prepare(`
+      UPDATE memory_items SET content_json = '{"tampered":true}'
+      WHERE semantic_key = 'term:fixture'
+    `).run()
+    await assert.rejects(reader.query(termOnly), (error) => error.code === 'STORAGE_COMMAND_FAILED')
+  } finally {
+    database.exec('ROLLBACK')
+  }
+})
+
+test('SEM-F26 / J21/J24-B22 deletes one memory with multi-source suppression and idempotent replay', async (t) => {
+  const clock = { value: 50000 }
   const client = journeyClient(t, clock)
   const firstSessionId = 'suppressed-memory-session-a'
   const first = createTerminalSession(client, firstSessionId, [
