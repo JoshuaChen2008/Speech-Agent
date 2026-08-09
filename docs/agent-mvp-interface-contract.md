@@ -1,6 +1,6 @@
 # 正式 Agent 首版接口合同
 
-> 证据状态：已决定。D3 的正式 SQLite 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切均为实现完成·尚未验收。D5 已经过真实 storage worker/SQLite、正式 `AgentPluginHost`、`ModelGateway`、Pi Agent Loop 与 job runner，只在 Agent 模型 provider 边界使用替身，并覆盖三项任务独立成败、记忆三级筛选/冲突/suppression 与单条删除；D6 已登记 production `StorageWorkerHost` 的策略先行、exact-child 强制退出与同 `runId` 恢复子边界，但尚未形成实现证据。仍未接入 `MeetingStopped`、Agent utility、正式 preload/IPC、renderer、记忆检索、确认关键词或发布包。本文冻结正式产品接口职责，不表示 J13/J20/J21/J22/J24 已有完整产品证据。
+> 证据状态：已决定。D3 的正式 SQLite 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切，以及 D6 的 production `StorageWorkerHost` storage utility transport 子边界均为实现完成·尚未验收。D6 已经过真实 Electron utility process，覆盖策略先行、claim 后 exact-child 强制退出与退出同一性、replacement 未重放策略前拒绝领取、租约到期后同 `runId` 恢复、重复对账和三项结果各自最多提交一次，并由父测试独立复算 SQLite 身份与隐私负扫描；它仍不表示 PluginHost/Loop 已进入 Agent utility，也未接入 `MeetingStopped`、正式 `StorageGateway`、preload/IPC、renderer、记忆检索、确认关键词或发布包。本文冻结正式产品接口职责，不表示 J13/J20/J21/J22/J24 已有完整产品证据。
 
 ## 1. 边界与版本
 
