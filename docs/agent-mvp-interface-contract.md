@@ -127,7 +127,7 @@ Agent 模型 provider registry 必须把上下文窗口、固定提示和输出�
 
 ## 4. Storage worker 协议
 
-正式 migration 必须按 ADR 0010 追加到正式 immutable catalog：共享字幕基础 v1/v2，但使用独立于隔离入口候选 v3 的正式 Agent v3。不得修改既有 migration SQL/checksum，不得把隔离入口候选数据库迁入正式 userData，两个 catalog 交叉打开必须 fail closed。
+正式 migration 必须按 ADR 0010 追加到正式 immutable catalog：共享字幕基础 v1/v2，使用独立于隔离入口候选 v3 的正式 Agent v3，并以正式 v4 把 suppression 身份扩展为 `identity hash + source digest` 复合键、加入不含记忆正文的删除回执。不得修改既有 migration SQL/checksum，不得把隔离入口候选数据库迁入正式 userData，两个 catalog 交叉打开必须 fail closed。
 
 | 操作 | 请求身份 | 返回或副作用 |
 |---|---|---|
@@ -141,6 +141,7 @@ Agent 模型 provider registry 必须把上下文窗口、固定提示和输出�
 | `agent.markJobCancelled` | `{ runId, lease }` | 只在当前有效租约已有取消请求时收束为 `cancelled`；清空租约与错误码，后续不恢复；相同终态重放返回当前任务 |
 | `agent.commitArtifact` | `{ runId, lease, artifact: MeetingMinutesArtifact \| EnhancedTranscriptArtifact }` | 重读并匹配冻结输入身份，按闭合 Schema 校验正文与事件范围，由 storage worker 计算 canonical digest；在同一事务中写产物并把 job 置为 `succeeded`。同一 `runId` 与相同产物重放返回既有结果，内容或身份不同 fail closed |
 | `agent.commitMemoryCandidates` | `{ runId, lease, candidates: MemoryCandidate[] }` | 重读并匹配冻结输入身份；在同一事务中执行低价值/低置信自动推断丢弃、无身份全局偏好拒绝、suppression、范围、去重、冲突、revision 与来源提交，再把 job 置为 `succeeded`。同一 `runId` 的成功重放只返回既有计数，不二次写入 |
+| `agent.deleteMemoryItem` | `{ memoryId, deletionIdempotencyKey }` | 在同一事务中为该条目每个既有来源 digest 写入 `identity hash + source digest` suppression，再物理删除当前条目、revision 与 evidence；回执只含稳定 ID、计数和删除时点，不含记忆正文。相同 key+请求重放同一结果，相同 key+不同请求 fail closed |
 | `agent.requestJob` | `{ inputRef, taskKind, clientIdempotencyKey, requestDigest, eligibilityContext }` | exact 校验上下文，只接受当前终态会话且 Agent 处理资格为 `ready` 的现行输入身份；相同 key+digest 返回既有 job，相同 key+不同 digest 或陈旧输入拒绝 |
 | `agent.requestCancel` | `{ runId }` | queued/retry_wait 立即取消；running 写取消请求并拒绝迟到提交 |
 | `agent.applyTaskPolicy` | `{ eligibilityContext }` | 在一个 storage worker 命令内建立当前非敏感策略 generation 并执行取消：Agent 总开关关闭时取消全部 queued/retry_wait 并请求取消 running；只关闭个人记忆时仅作用于 `memory-extraction`，重新开启不复活已取消任务。worker 首启/replacement 未收到该命令前不得领取任务 |
@@ -196,7 +197,7 @@ type MeetingMinutes = {
 
 ### 6.3 个人记忆候选
 
-候选必须是上述闭合原子结构，包含稳定 `semanticKey`、范围、来源性质、对象型 `content`、至少一个 `EventRange`、置信档与显著性档。`salienceBand=low` 的候选和 `origin=automatic && confidenceBand=low` 的推断直接丢弃；没有用户身份事实时，`origin=automatic` 的全局 `preference` 也不得写入。模型只能提出候选；宿主决定去重、冲突、revision、suppression 和当前投影。
+候选必须是上述闭合原子结构，包含稳定 `semanticKey`、范围、来源性质、对象型 `content`、至少一个 `EventRange`、置信档与显著性档。`salienceBand=low` 的候选和 `origin=automatic && confidenceBand=low` 的推断直接丢弃；冻结字幕快照没有用户身份事实，因此 `memory-extraction` 返回的全局 `preference` 无论标成 `explicit` 还是 `automatic` 都不得写入。模型只能提出候选；宿主决定去重、冲突、revision、suppression 和当前投影。全局偏好以后只能由独立的用户明确确认入口建立，不能复用模型候选提交端口。
 
 ## 7. 资源与设置变化
 
