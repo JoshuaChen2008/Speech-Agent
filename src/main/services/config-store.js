@@ -20,6 +20,8 @@ const DEFAULT_CONFIG = Object.freeze({
   opacity: 0.86,
   toolbarOpacity: 0.82,
   barColor: null,
+  // null = 跟随 tokens.css 的默认白（与主题无关，见 tokens.css §3）
+  captionTextColor: null,
   radius: 10,
   captionWidth: 920,
   captionHeight: 190,
@@ -42,6 +44,7 @@ const FIELD_RULES = Object.freeze({
   opacity: (value) => isFiniteRange(value, 0, 1),
   toolbarOpacity: (value) => isFiniteRange(value, 0, 1),
   barColor: (value) => value === null || (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)),
+  captionTextColor: (value) => value === null || (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)),
   radius: (value) => isIntegerRange(value, 6, 16),
   captionWidth: (value) => isIntegerRange(value, 480, 1600),
   captionHeight: (value) => isIntegerRange(value, 140, 420),

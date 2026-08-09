@@ -60,7 +60,18 @@ test('SEM-F23/J18: toolbar palette stays fixed while caption color and toolbar o
   }
   assert.match(tokens, /--overlay-surface-toolbar:\s*rgba\(var\(--overlay-toolbar-bg\), var\(--toolbar-alpha\)\)/)
   assert.doesNotMatch(tokens.match(/:root\[data-theme="light"\]\s*\{[\s\S]*?\n\}/)?.[0] || '', /--overlay-/)
-  assert.match(toolbar, /\.toolbar\s*\{[\s\S]*background:\s*var\(--surface-toolbar\);[\s\S]*opacity:\s*1;/)
+  /* 「用什么颜色」由固定覆盖层决定（上面几条），「画不画外壳」由锁定状态决定。
+     两件事正交，各自单独断言 —— 用跨规则的宽松正则会让两边互相掩护。
+     未锁定：嵌入字幕卡，不画属于自己的表面；锁定：脱离卡片，必须自己长出来。 */
+  const embedded = toolbar.match(/^\.toolbar\s*\{([^}]*)\}/m)?.[1] || ''
+  assert.match(embedded, /background:\s*transparent;/)
+  assert.match(embedded, /box-shadow:\s*none;/)
+  assert.doesNotMatch(embedded, /opacity:\s*1;/)
+
+  const detached = toolbar.match(/\.wrap\[data-locked="on"\]\s+\.toolbar\s*\{([^}]*)\}/)?.[1] || ''
+  assert.match(detached, /background:\s*var\(--surface-toolbar\);/)
+  assert.match(detached, /opacity:\s*1;/)
+
   assert.match(settings, />字幕背景颜色 </)
   assert.match(settings, /aria-label="字幕背景颜色"/)
 
@@ -79,4 +90,50 @@ test('SEM-F23/J18: toolbar palette stays fixed while caption color and toolbar o
   assert.equal(values.get('--bar-bg'), '18, 52, 86')
   assert.equal(values.get('--toolbar-alpha'), '0.31')
   assert.equal(values.has('--toolbar-bg'), false)
+})
+
+/* 字幕卡是半透明浮在任意画面上的，底下是视频 / 网页 / 桌面，和应用主题无关。
+   所以字幕文字色是一根独立受控的轴：深色和浅色主题都不许碰它。 */
+test('SEM-F20/J18: caption text colour is theme independent, user overridable and falls back to the default', () => {
+  const tokens = read('src/ui/shared/tokens.css')
+  const settings = read('src/settings/settings-view.tsx')
+
+  assert.match(tokens, /--caption-text:\s*var\(--c-white\)/)
+  assert.match(tokens, /--text-caption:\s*rgb\(var\(--caption-text\)\)/)
+  assert.match(tokens, /--text-caption-partial:\s*rgba\(var\(--caption-text\), 0\.60\)/)
+
+  /* 注释里会提到这些 token 名，先剥掉再断言，免得说明文字自己把测试喂饱 */
+  const lightTheme = (tokens.match(/:root\[data-theme="light"\]\s*\{[\s\S]*?\n\}/)?.[0] || '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+  assert.notEqual(lightTheme, '', 'light theme block must exist')
+  for (const token of ['--text-caption', '--text-caption-partial', '--text-shadow-caption']) {
+    assert.doesNotMatch(lightTheme, new RegExp(`${token}:`), `${token} must not follow the theme`)
+  }
+
+  assert.match(settings, />字幕文字颜色 </)
+  assert.match(settings, /aria-label="字幕文字颜色"/)
+  assert.match(settings, /captionTextColor: null/)
+
+  const values = new Map()
+  const element = {
+    dataset: {},
+    style: {
+      setProperty: (name, value) => values.set(name, value),
+      removeProperty: (name) => values.delete(name)
+    }
+  }
+  const base = {
+    theme: 'light', systemDark: false, fontSize: 30, radius: 10,
+    opacity: 0.86, toolbarOpacity: 0.82, barColor: null
+  }
+
+  applyAppearance(element, { ...base, captionTextColor: '#ffcc00' })
+  assert.equal(values.get('--caption-text'), '255, 204, 0')
+
+  /* 还原默认必须是 removeProperty。写回默认值会让内联样式盖住 tokens.css，
+     等于把这一项永久钉死在「当时的默认」上。 */
+  applyAppearance(element, { ...base, captionTextColor: null })
+  assert.equal(values.has('--caption-text'), false)
+  applyAppearance(element, { ...base, captionTextColor: 'not-a-colour' })
+  assert.equal(values.has('--caption-text'), false)
 })

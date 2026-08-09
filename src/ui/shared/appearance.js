@@ -57,6 +57,16 @@
       style.removeProperty('--bar-bg')
     }
     style.removeProperty('--toolbar-bg')
+
+    /* 字幕文字色。走和 barColor 完全一样的路径，兜底也一样：非法或留空
+       一律 removeProperty，回到 tokens.css §3 的默认白。两个主题都不覆盖
+       那个默认值，所以「还原默认」在深色和浅色下得到的是同一个结果。 */
+    const captionTextTriplet = hexToTriplet(cfg.captionTextColor)
+    if (captionTextTriplet) {
+      style.setProperty('--caption-text', captionTextTriplet)
+    } else {
+      style.removeProperty('--caption-text')
+    }
   }
 
   const api = { hexToTriplet, clampNumber, applyAppearance }

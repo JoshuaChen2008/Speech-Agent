@@ -39,6 +39,7 @@ const RENDERER_CONFIG_KEYS = Object.freeze([
   'opacity',
   'toolbarOpacity',
   'barColor',
+  'captionTextColor',
   'radius',
   'theme',
   'bilingual',

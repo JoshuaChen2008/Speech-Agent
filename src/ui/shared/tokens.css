@@ -113,9 +113,19 @@
   --fg: var(--c-fog);
 
   /* 文字 */
-  --text-caption: rgb(var(--c-white));
-  --text-caption-partial: rgba(var(--c-white), 0.60);
+
+  /* 字幕文字色与主题完全解耦，深色和浅色主题都不覆盖它。
+     理由：字幕卡是半透明浮在任意画面上的，底下是视频、网页或桌面，
+     和应用主题没有关系 —— 跟着主题翻黑只在「浅色主题 + 浅色卡底 +
+     底下画面也浅」三者同时成立时才对，其余情况都是错的。
+     默认白 + 深色描边，唯一的覆盖来源是 config.captionTextColor
+     （appearance.js 只写 --caption-text 这一个三元组）。
+     partial 从同一个色推导，不单独设一项，保持既有的弱化层次。 */
+  --caption-text: var(--c-white);
+  --text-caption: rgb(var(--caption-text));
+  --text-caption-partial: rgba(var(--caption-text), 0.60);
   --text-shadow-caption: 0 1px 3px rgba(var(--c-black), 0.5);
+
   --text-toolbar: rgba(var(--c-white), 0.82);
   --text-toolbar-hover: rgb(var(--c-white));
 
@@ -147,9 +157,9 @@
   --border-window-titlebar: rgba(var(--c-black), 0.12);
   --fg: var(--c-slate-text);
 
-  --text-caption: rgb(var(--c-ink-text));
-  --text-caption-partial: rgba(var(--c-ink-text), 0.55);
-  --text-shadow-caption: 0 1px 2px rgba(var(--c-white), 0.4);
+  /* ⚠ 这里刻意不覆盖 --text-caption / --text-caption-partial /
+     --text-shadow-caption：字幕文字色是独立受控的一根轴，见 §3 的说明。
+     加回来会让浅色主题下的字幕重新跟着主题翻黑。 */
   --text-toolbar: rgba(var(--c-ink-text), 0.72);
   --text-toolbar-hover: rgb(var(--c-ink-text));
 
@@ -280,6 +290,9 @@
 }
 
 /* config.barColor 非空时，renderer 只覆盖 --bar-bg；留空则由主题默认值决定。
+   config.captionTextColor 同理，只覆盖 --caption-text；留空回到 §3 的默认白。
+   两者都必须用 removeProperty 而不是写回默认值 —— 内联样式会盖住
+   [data-theme] 分支，写回默认值等于把主题切换钉死。
    config.toolbarOpacity 只复合 --overlay-surface-toolbar 的透明度。 */
 
 /* config.maxLines 已不参与字幕排版（SEM-F20 / docs/subtitle-window.md §5.0）。

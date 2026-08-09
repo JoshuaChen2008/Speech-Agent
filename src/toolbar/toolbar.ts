@@ -100,8 +100,8 @@ async function initToolbarLayout () {
     const context = await bridge.getToolbarLayoutContext()
     if (!context || !Number.isSafeInteger(context.generation) || context.generation <= 0) return
     toolbarLayoutGeneration = context.generation
-    toolbarLayoutObserver = new ResizeObserver(() => queueToolbarLayoutReport())
-    toolbarLayoutObserver.observe(toolbar)
+    /* 观察者已在命中测试一节建好（它同时给命中矩形标脏）。generation 到位前
+       queueToolbarLayoutReport 自行短路，所以这里只补一次首报。 */
     queueToolbarLayoutReport()
     // 导航/reload 后的首帧可能早于最终样式与字体布局。主进程会对该帧
     // fail closed 到 fallback；稳定后强制补报一次，不能被 renderer 去重吞掉。
@@ -337,24 +337,58 @@ function render () {
 
 // ---------------------------------------------------------------------------
 // 命中测试：指针在条上 → 实心；否则穿透（窗口比条宽，右对齐留出的空白全部放行）
+//
+// 穿透状态一翻转，光标就换主人：穿透时由下面那个应用画（网页里就是 I 形），
+// 实心时才是本窗的箭头。所以判定每抖一次，用户就看见光标闪一次。
+// 两条措施把抖动摁死：
+//   1. 迟滞：进入用真实轮廓，离开要超出 6px。工具条上报的轮廓经主进程取整后
+//      变成字幕窗的洞，洞比条最多大 1px；那一圈里两个窗都会说「不是我的」，
+//      迟滞带必须盖过它。
+//   2. 同步判定：矩形比较几乎零成本，不再压进 rAF —— 那一帧延迟正好发生在
+//      光标扫过边缘的时候，判定用的永远是上一帧的答案。
 // ---------------------------------------------------------------------------
+const HIT_EXIT_MARGIN = 6
+
+let toolbarRect: DOMRect | null = null
+
+/* 每帧读 getBoundingClientRect 会反复触发强制布局。条的几何只在重渲染和
+   ResizeObserver 回调后才可能变，所以标脏、下一次 mousemove 时才真正量。 */
+function invalidateToolbarRect (): void {
+  toolbarRect = null
+  queueToolbarLayoutReport()
+}
+
+if (typeof ResizeObserver === 'function') {
+  toolbarLayoutObserver = new ResizeObserver(() => invalidateToolbarRect())
+  toolbarLayoutObserver.observe(toolbar)
+}
+
 /** @param {number} x @param {number} y */
 function applyHit (x: number, y: number): void {
   if (dragging) return
-  const hit = document.elementFromPoint(x, y)
-  const solid = !!(hit && hit.closest('.toolbar'))
+  if (!toolbarRect) toolbarRect = toolbar.getBoundingClientRect()
+  const rect = toolbarRect
+  /* 已经实心时才外扩：进入保持精确，离开才需要粘性 */
+  const margin = ignoring === false ? HIT_EXIT_MARGIN : 0
+  const solid = x >= rect.left - margin && x <= rect.right + margin &&
+                y >= rect.top - margin && y <= rect.bottom + margin
   const next = !solid
   if (next !== ignoring) {
     ignoring = next
     bridge.mouseThrough(next)
   }
 }
-let hitQueued = false
 document.addEventListener('mousemove', (e) => {
   lastX = e.clientX; lastY = e.clientY
-  if (hitQueued) return
-  hitQueued = true
-  requestAnimationFrame(() => { hitQueued = false; applyHit(lastX, lastY) })
+  applyHit(lastX, lastY)
+})
+/* 光标一跳跃出整个窗口时不会再有 mousemove。窗口比条宽得多（左右各 16px、
+   上下各 16px 透明边距 > 6px 迟滞带），正常移动摸不到这条路径；留着是防止
+   任何情况下卡在实心态 —— 那会让 600×72 这块区域整个挡住下面的应用。 */
+document.addEventListener('mouseleave', () => {
+  if (dragging || ignoring === true) return
+  ignoring = true
+  bridge.mouseThrough(true)
 })
 bridge.mouseThrough(true)
 ignoring = true

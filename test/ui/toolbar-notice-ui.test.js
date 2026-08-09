@@ -94,8 +94,10 @@ function createHarness () {
   const actions = []
   const layoutReports = []
   const observedLayoutTargets = []
+  const throughCalls = []
   const shell = {
-    mouseThrough () {}, dragStart () {}, dragEnd () {}, lockToggle () {},
+    mouseThrough: (ignore) => throughCalls.push(ignore),
+    dragStart () {}, dragEnd () {}, lockToggle () {},
     action: (name) => actions.push(name),
     onLock: (callback) => { callbacks.lock = callback },
     onConfig: (callback) => { callbacks.config = callback },
@@ -109,11 +111,18 @@ function createHarness () {
     getRefinementNotice: async () => null,
     command: async () => ({ ok: true })
   }
+  const documentListeners = new Map()
   const document = {
     documentElement: new FakeElement('html'),
     getElementById: (id) => elements.get(id),
     createElement: (tagName) => new FakeElement(tagName),
-    addEventListener () {},
+    addEventListener (name, callback) {
+      if (!documentListeners.has(name)) documentListeners.set(name, [])
+      documentListeners.get(name).push(callback)
+    },
+    dispatch (name, event = {}) {
+      for (const callback of documentListeners.get(name) || []) callback(event)
+    },
     elementFromPoint: () => elements.get('toolbar')
   }
   const window = {
@@ -148,7 +157,7 @@ function createHarness () {
     },
     window
   })
-  return { actions, callbacks, elements, layoutReports, observedLayoutTargets }
+  return { actions, callbacks, document, elements, layoutReports, observedLayoutTargets, throughCalls }
 }
 
 test('toolbar renderer shows and dismisses a post-session status without creating another row', async () => {
@@ -189,6 +198,39 @@ test('SEM-F22/J17: toolbar reports its existing contour with the main-issued gen
     generation: 7,
     rect: { x: 184, y: 16, width: 400, height: 40 }
   }])
+})
+
+/* 穿透状态一翻转，光标就换主人：穿透时由下面那个应用画，实心时才是本窗的箭头。
+   所以判定每抖一次用户就看见光标闪一次。进入必须精确（否则条外一圈会白白吃掉
+   下面应用的点击），离开必须粘住（否则边缘 1px 抖动就来回翻）。
+   条的轮廓在本 harness 里是 184..584 × 16..56。 */
+test('SEM-F22/J17: toolbar mouse-through enters on the exact contour and leaves only past the hysteresis band', async () => {
+  const { document, throughCalls } = createHarness()
+  await flush()
+
+  assert.deepEqual(throughCalls, [true], '首帧未指到条，一律放行')
+
+  throughCalls.length = 0
+  document.dispatch('mousemove', { clientX: 300, clientY: 30 })
+  assert.deepEqual(throughCalls, [false], '压在条上立刻变实心')
+
+  throughCalls.length = 0
+  document.dispatch('mousemove', { clientX: 588, clientY: 30 })
+  assert.deepEqual(throughCalls, [], '离开轮廓 4px 仍在迟滞带内，不翻转')
+
+  document.dispatch('mousemove', { clientX: 592, clientY: 30 })
+  assert.deepEqual(throughCalls, [true], '超出 6px 才恢复穿透')
+
+  throughCalls.length = 0
+  document.dispatch('mousemove', { clientX: 588, clientY: 30 })
+  assert.deepEqual(throughCalls, [], '进入不带迟滞：真实轮廓之外一律穿透')
+
+  document.dispatch('mousemove', { clientX: 580, clientY: 30 })
+  assert.deepEqual(throughCalls, [false], '回到真实轮廓内才变实心')
+
+  throughCalls.length = 0
+  document.dispatch('mouseleave', {})
+  assert.deepEqual(throughCalls, [true], '指针离开整个窗口时不能卡在实心态')
 })
 
 test('SEM-F24/J19: toolbar exposes an accessible Fluent minimize action', async () => {
