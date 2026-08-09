@@ -20,6 +20,8 @@
     "pretest:evidence": "npm run verify:renderer",
     "electron:install": "install-electron",
     "preview:fixtures": "node scripts/build-preview-fixtures.js",
+    "build:agent-mvp": "vite build --config vite.agent-mvp.config.mts",
+    "start:agent-mvp": "npm run build:agent-mvp && electron src/agent-mvp/main.js",
     "prepackage:smoke": "npm run verify:renderer",
     "package:smoke": "electron-builder --config electron-builder.smoke.config.cjs --win dir --x64 --publish never",
     "prepackage:release": "npm run verify:renderer",

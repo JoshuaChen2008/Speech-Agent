@@ -40,12 +40,12 @@ function debugMessageContent (role, value) {
     return { text: value.text }
   }
   if (role === 'tool_preview') {
-    if (keys !== 'cloudDisclosure,inputRef,recipeId,runId' || typeof value.runId !== 'string' || value.recipeId !== 'reference-output-v1' || typeof value.cloudDisclosure !== 'boolean') throw new AgentCoreError('AGENT_REQUEST_INVALID')
-    return { runId: value.runId, recipeId: value.recipeId, inputRef: inputReference(value.inputRef), cloudDisclosure: value.cloudDisclosure }
+    if (keys !== 'cloudDisclosure,inputRef,previewId,recipeId' || typeof value.previewId !== 'string' || value.recipeId !== 'reference-output-v1' || typeof value.cloudDisclosure !== 'boolean') throw new AgentCoreError('AGENT_REQUEST_INVALID')
+    return { previewId: value.previewId, recipeId: value.recipeId, inputRef: inputReference(value.inputRef), cloudDisclosure: value.cloudDisclosure }
   }
   if (role === 'tool_confirmation') {
-    if (keys !== 'decision,runId' || typeof value.runId !== 'string' || !['accepted', 'rejected'].includes(value.decision)) throw new AgentCoreError('AGENT_REQUEST_INVALID')
-    return { runId: value.runId, decision: value.decision }
+    if (keys !== 'decision,previewId' || typeof value.previewId !== 'string' || !['accepted', 'rejected'].includes(value.decision)) throw new AgentCoreError('AGENT_REQUEST_INVALID')
+    return { previewId: value.previewId, decision: value.decision }
   }
   if (role === 'tool_result') {
     if (keys !== 'artifactId,runId,state' || typeof value.runId !== 'string' ||
@@ -316,6 +316,14 @@ class AgentMvpStore {
     return { threadId, inputRef: ref }
   }
 
+  getOrCreateDebugThread (inputRef) {
+    const ref = inputReference(inputRef)
+    const row = this.database.prepare(`SELECT thread_id FROM agent_debug_threads
+      WHERE session_id=? AND transcript_version=? AND input_watermark=? AND input_digest=?
+      ORDER BY created_at DESC, thread_id DESC LIMIT 1`).get(ref.sessionId, ref.transcriptVersion, ref.inputWatermark, ref.inputDigest)
+    return row ? { threadId: row.thread_id, inputRef: ref } : this.createDebugThread(ref)
+  }
+
   appendDebugMessage ({ threadId, role, content, provider = null, model = null }) {
     boundedString(threadId, 1, 160)
     if (!['user', 'assistant', 'tool_preview', 'tool_confirmation', 'tool_result', 'status'].includes(role)) throw new AgentCoreError('AGENT_REQUEST_INVALID')
@@ -332,6 +340,13 @@ class AgentMvpStore {
     boundedString(threadId, 1, 160)
     return this.database.prepare(`SELECT message_id,thread_id,role,content_json,provider,model,created_at FROM agent_debug_messages WHERE thread_id=? ORDER BY message_order`).all(threadId).map((row) => ({
       messageId: row.message_id, threadId: row.thread_id, role: row.role, content: JSON.parse(row.content_json), provider: row.provider, model: row.model, createdAt: Number(row.created_at)
+    }))
+  }
+
+  listArtifacts () {
+    return this.database.prepare('SELECT * FROM agent_artifacts ORDER BY created_at DESC, artifact_id DESC').all().map((row) => ({
+      artifactId: row.artifact_id, runId: row.run_id, sessionId: row.session_id, type: row.type,
+      content: JSON.parse(row.content_json), contentDigest: row.content_digest, createdAt: Number(row.created_at)
     }))
   }
 

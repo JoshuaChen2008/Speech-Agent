@@ -1,6 +1,7 @@
 node_modules/
 dist/
 src/renderer-dist/
+src/agent-mvp/renderer-dist/
 out/
 *.log
 .DS_Store
