@@ -1,6 +1,6 @@
 # 正式 Agent 首版接口合同
 
-> 证据状态：已决定。本文冻结正式产品接口职责，不表示 J13/J20/J21/J22/J24 已有实现证据。
+> 证据状态：已决定。D3 的正式 SQLite 与存储/生命周期子边界为实现完成·尚未验收；D4 的会后结构化纪要后端纵切已登记但尚无实现证据。本文冻结正式产品接口职责，不表示 J13/J20/J21/J22/J24 已有完整产品证据。
 
 ## 1. 边界与版本
 
@@ -117,6 +117,8 @@ type MemoryCandidate = {
 
 `AgentInputPlanner` 是宿主内部端口，不属于插件权限。只有所有分块及归并步骤成功后才能调用 writer；中间结果只存在于本次有界执行内存中。
 
+Agent 模型 provider registry 必须把上下文窗口、固定提示和输出预留折算成保守的 `maxChunkInputBytes`，`AgentInputPlanner` 再以 canonical JSON 的 UTF-8 字节数判定边界。该字节预算是避免超过上下文窗口的保守上限，不是对 token 数的产品展示值。规划优先保持完整字幕段；只有单段自身超过预算时才按 Unicode code point 的 `[fromCodePoint, throughCodePoint)` 分片。分片必须可按原顺序无损重建每段正文，且每个分块都保留原 `eventOrder` 作为证据身份。归并采用有界、确定性批次；如果预算不足以容纳至少两个受限中间结果，任务在调用 Agent 模型 provider 前 fail closed。宿主不得把输入分块或中间结果写入 SQLite、日志或报告。
+
 ## 4. Storage worker 协议
 
 正式 migration 必须按 ADR 0010 追加到正式 immutable catalog：共享字幕基础 v1/v2，但使用独立于隔离入口候选 v3 的正式 Agent v3。不得修改既有 migration SQL/checksum，不得把隔离入口候选数据库迁入正式 userData，两个 catalog 交叉打开必须 fail closed。
@@ -125,7 +127,8 @@ type MemoryCandidate = {
 |---|---|---|
 | `agent.evaluateEligibility` | `{ sessionId, requestedBy: 'automatic' \| 'user', eligibilityContext }` | exact 校验受信任主进程提供的非敏感 `AgentEligibilityContext`，再按固定优先级返回闭集 `AgentEligibility`；自动请求还校验 ADR 0008 的 `automaticProcessingSince`，用户请求忽略该时间边界 |
 | `agent.reconcileTerminalSession` | `{ sessionId, requestedBy: 'automatic', eligibilityContext }` | 复算终态、完整输入身份与 Agent 处理资格；只有 `ready` 幂等补建纪要与增强文本，且仅在个人记忆自动处理边界内补建记忆任务，其余只返回资格结果 |
-| `agent.claimNextJob` | `{ claimIdempotencyKey, owner, leaseMs, localWorkAllowed }` | 在同一事务内按最近一次 `applyTaskPolicy` 建立的当前受信任开关、时间边界、冻结 provider/model 可执行事实和资源策略领取任务并写 claim receipt；worker replacement 后未重新应用策略时 fail closed 为空结果；未知回复以同一 key 重放时只返回原任务/租约或空结果，绝不领取下一项任务 |
+| `agent.readInputSnapshot` | `{ inputRef }` | storage worker 从首次稳定转写事实重建指定 `original` 或完整 `refined` 快照并复算完整输入身份；只在四字段逐项一致时按 `event_order` 返回正文段，否则以 `AGENT_INPUT_CHANGED` fail closed；不读取 `partial` 或把 `segments.text` 当作原始正文 |
+| `agent.claimNextJob` | `{ claimIdempotencyKey, owner, leaseMs, localWorkAllowed, availableTaskKinds }` | exact 校验受信任宿主当前已装载且可执行的固定 `AgentTaskKind[]`，在同一事务内按最近一次 `applyTaskPolicy` 建立的当前受信任开关、时间边界、冻结 provider/model、插件可用性和资源策略领取兼容任务并写 claim receipt；未装载任务保持排队且不调用 Agent 模型 provider；worker replacement 后未重新应用策略时 fail closed 为空结果；未知回复以同一 key 与同一可用任务集合重放时只返回原任务/租约或空结果，绝不领取下一项任务 |
 | `agent.renewJobLease` | `{ runId, lease, newExpiresAt }` | 只把当前有效租约延长到调用方冻结的绝对到期时点；同一旧 lease + `newExpiresAt` 重放返回当前结果，陈旧租约 fail closed |
 | `agent.markJobRetry` | `{ runId, lease, errorCode, nextAttemptAt }` | 沿用同一 `runId`，增加尝试事实；相同已提交状态转换重放返回当前任务，不形成第二次转换 |
 | `agent.markJobFailed` | `{ runId, lease, errorCode }` | 只接受不可重试错误闭集并把当前租约任务置为 `failed`；不保存原始 Error/stack；相同终态重放返回当前任务 |

@@ -86,7 +86,8 @@ test('SEM-T15 / J24 正式 Agent 首版设计追踪保持闭合', () => {
     'localModelReady'
   ]) assert.match(interfaces, new RegExp(field))
   assert.match(interfaces, /agent\.applyTaskPolicy/)
-  assert.match(interfaces, /agent\.claimNextJob[\s\S]*claimIdempotencyKey/)
+  assert.match(interfaces, /agent\.readInputSnapshot[\s\S]*AGENT_INPUT_CHANGED/)
+  assert.match(interfaces, /agent\.claimNextJob[\s\S]*claimIdempotencyKey[\s\S]*availableTaskKinds/)
   assert.match(interfaces, /agent\.commitArtifact[\s\S]*同一事务中写产物/)
   assert.match(interfaces, /agent\.commitMemoryCandidates[\s\S]*低价值\/低置信/)
   assert.match(interfaces, /agent\.deleteSessionData[\s\S]*tombstone/)
@@ -109,6 +110,7 @@ test('SEM-T15 / J24 正式 Agent 首版设计追踪保持闭合', () => {
   assert.match(reconciliationAdr, /memoryProcessingSince/)
   assert.match(adr, /全部首次稳定转写/)
   assert.match(adr, /Unicode code point/)
+  assert.match(adr, /canonical JSON 的 UTF-8 字节数/)
   assert.match(adr, /不持久化分块正文或模型中间输出/)
   assert.match(migrationAdr, /候选 Agent v3/)
   assert.match(migrationAdr, /正式 Agent v3/)

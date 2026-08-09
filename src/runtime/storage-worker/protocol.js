@@ -20,6 +20,7 @@ const OPERATIONS = Object.freeze({
   GET_STATS: 'storage:get-stats',
   AGENT_EVALUATE_ELIGIBILITY: 'agent:evaluate-eligibility',
   AGENT_RECONCILE_TERMINAL_SESSION: 'agent:reconcile-terminal-session',
+  AGENT_READ_INPUT_SNAPSHOT: 'agent:read-input-snapshot',
   AGENT_REQUEST_JOB: 'agent:request-job',
   AGENT_CLAIM_NEXT_JOB: 'agent:claim-next-job',
   AGENT_RENEW_JOB_LEASE: 'agent:renew-job-lease',

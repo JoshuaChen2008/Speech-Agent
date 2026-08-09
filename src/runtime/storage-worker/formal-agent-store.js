@@ -143,6 +143,15 @@ function taskDefinition (taskKind) {
   return task
 }
 
+function availableTaskKinds (value) {
+  if (!Array.isArray(value) || value.length > AUTOMATIC_TASK_KINDS.length ||
+      value.some((taskKind) => !Object.hasOwn(FORMAL_AGENT_TASKS, taskKind)) ||
+      new Set(value).size !== value.length) {
+    throw new StorageError('AGENT_REQUEST_INVALID')
+  }
+  return [...value].sort()
+}
+
 function leaseValue (value) {
   exactObject(value, ['owner', 'expiresAt'], 'AGENT_JOB_STATE_CONFLICT')
   return {
@@ -486,7 +495,7 @@ class FormalAgentStore {
         t1Ms: Number(refined ? row.refined_t1_ms : row.original_t1_ms),
         text: refined ? row.refined_text : row.original_text
       }
-    })
+    }).sort((left, right) => left.eventOrder - right.eventOrder)
     const inputWatermark = Math.max(...items.map((item) => item.eventOrder))
     const digestPayload = { sessionId, inputWatermark, transcriptVersion: input.transcriptVersion, items }
     const ref = {
@@ -496,6 +505,20 @@ class FormalAgentStore {
       inputDigest: sha256Canonical(digestPayload)
     }
     return { inputRef: ref, items }
+  }
+
+  readInputSnapshot (input) {
+    this.assertOpen()
+    exactObject(input, ['inputRef'])
+    const expected = inputReference(input.inputRef)
+    const snapshot = this.readInput({
+      sessionId: expected.sessionId,
+      transcriptVersion: expected.transcriptVersion
+    })
+    if (!sameInputReference(snapshot.inputRef, expected)) {
+      throw new StorageError('AGENT_INPUT_CHANGED')
+    }
+    return snapshot
   }
 
   evaluateEligibility (input) {
@@ -731,9 +754,10 @@ class FormalAgentStore {
 
   claimNextJob (input) {
     this.assertOpen()
-    exactObject(input, ['claimIdempotencyKey', 'owner', 'leaseMs', 'localWorkAllowed'])
+    exactObject(input, ['claimIdempotencyKey', 'owner', 'leaseMs', 'localWorkAllowed', 'availableTaskKinds'])
     const claimIdempotencyKey = boundedString(input.claimIdempotencyKey)
     const owner = boundedString(input.owner)
+    const taskKinds = availableTaskKinds(input.availableTaskKinds)
     if (!Number.isSafeInteger(input.leaseMs) || input.leaseMs < 1000 || input.leaseMs > 120000 ||
         typeof input.localWorkAllowed !== 'boolean') {
       throw new StorageError('AGENT_REQUEST_INVALID')
@@ -741,7 +765,8 @@ class FormalAgentStore {
     const requestDigest = sha256Canonical({
       owner,
       leaseMs: input.leaseMs,
-      localWorkAllowed: input.localWorkAllowed
+      localWorkAllowed: input.localWorkAllowed,
+      availableTaskKinds: taskKinds
     })
     const now = this.nowValue()
     const expiresAt = now + input.leaseMs
@@ -773,7 +798,7 @@ class FormalAgentStore {
         (configuration.providerKind === 'cloud' && context.cloudDisclosureAccepted && context.credentialAvailable) ||
         (configuration.providerKind === 'local' && context.localModelReady)
       ))
-      if (!providerReady) {
+      if (!providerReady || taskKinds.length === 0) {
         database.prepare(`
           INSERT INTO agent_claim_receipts(
             claim_idempotency_key, request_digest, run_id, lease_owner, lease_expires_at, created_at
@@ -782,6 +807,7 @@ class FormalAgentStore {
         database.exec('COMMIT')
         return null
       }
+      const taskPlaceholders = taskKinds.map(() => '?').join(', ')
       const row = database.prepare(`
         SELECT agent_jobs.* FROM agent_jobs
         JOIN sessions ON sessions.session_id = agent_jobs.session_id
@@ -792,6 +818,7 @@ class FormalAgentStore {
           AND agent_jobs.provider = ?
           AND agent_jobs.provider_kind = ?
           AND agent_jobs.model = ?
+          AND agent_jobs.plugin_id IN (${taskPlaceholders})
           AND (? = 1 OR agent_jobs.provider_kind = 'cloud')
           AND (
             agent_jobs.requested_by = 'user' OR sessions.ended_at >= ?
@@ -809,6 +836,7 @@ class FormalAgentStore {
         configuration.providerId,
         configuration.providerKind,
         configuration.model,
+        ...taskKinds,
         input.localWorkAllowed ? 1 : 0,
         context.automaticProcessingSince,
         context.memoryEnabled ? 1 : 0,

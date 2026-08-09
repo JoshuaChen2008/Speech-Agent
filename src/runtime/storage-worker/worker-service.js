@@ -116,12 +116,16 @@ class StorageWorkerService {
       assertExactKeys(payload, ['sessionId', 'requestedBy', 'eligibilityContext'])
       return this.requireAgentStore().reconcileTerminalSession(payload)
     }
+    if (operation === OPERATIONS.AGENT_READ_INPUT_SNAPSHOT) {
+      assertExactKeys(payload, ['inputRef'])
+      return this.requireAgentStore().readInputSnapshot(payload)
+    }
     if (operation === OPERATIONS.AGENT_REQUEST_JOB) {
       assertExactKeys(payload, ['inputRef', 'taskKind', 'clientIdempotencyKey', 'requestDigest', 'eligibilityContext'])
       return this.requireAgentStore().requestJob(payload)
     }
     if (operation === OPERATIONS.AGENT_CLAIM_NEXT_JOB) {
-      assertExactKeys(payload, ['claimIdempotencyKey', 'owner', 'leaseMs', 'localWorkAllowed'])
+      assertExactKeys(payload, ['claimIdempotencyKey', 'owner', 'leaseMs', 'localWorkAllowed', 'availableTaskKinds'])
       return this.requireAgentStore().claimNextJob(payload)
     }
     if (operation === OPERATIONS.AGENT_RENEW_JOB_LEASE) {

@@ -92,6 +92,8 @@ J23 的确定性 Agent 模型 provider 方案与任务领取竞态 gate 只能�
 
 D3 先闭合 A2–A4 的正式存储与生命周期骨架，不触碰并行维护的 renderer。其阻断切片已登记为：DB7/ADR 0010 的 v2 → 正式 Agent v3 与交叉 catalog fail closed；J24-B01/B26 的资格优先级；J24-B04/B25 的三项任务同输入身份和重复对账幂等；J24-B05/B07/B08/B09/B11/B12/B13/B14/B18 的租约、回复重放、人工幂等、取消、错误分类、冻结 Agent 模型 provider 快照、个人记忆自动处理边界与多会话领取；J24-B21/B29/B30 的完整精修输入、陈旧输入与隐私负扫描。该切片在缺少正式 PluginHost、preload/IPC 和 renderer 前最多只能标为“实现完成·尚未验收”，不能提高 J24 状态。
 
+D4 已先登记 A5 的 UI-free 后端纵切：`agent.readInputSnapshot` 以完整 `InputReference` 复算冻结字幕快照；`agent.claimNextJob.availableTaskKinds` 保证宿主只领取当前已装载能力；正式 `transcript-context` / `meeting-minutes` 经真实 `AgentPluginHost`、`ModelGateway`、Pi Agent Loop、确定性输入规划和 storage worker 原子提交运行，只在 Agent 模型 provider 边界使用契约替身。阻断场景为 J24-B02/B03/B06/B10/B12/B19/B20/B27/B28/B29/B30；实现前状态保持已决定，且即使纵切闭合也不包含正式 `MeetingStopped`、preload/IPC、renderer、`mic`/`loopback` 实机组合或其余两项后台 Agent 任务，不能提升完整 J3/J13/J21/J24。
+
 | 场景 | 用户边界 | 必须观察到的结果 | 证据状态 |
 |---|---|---|---|
 | J24-B01 | 终态会话没有首次稳定转写 | 不创建三项后台 Agent 任务、不调用 Agent 模型 provider；历史明确显示没有可处理的已提交正文 | 已决定 |
@@ -112,7 +114,7 @@ D3 先闭合 A2–A4 的正式存储与生命周期骨架，不触碰并行维�
 | J24-B16 | 云端 Agent job 运行时开始新字幕会话 | 云端请求可继续，但 SQLite 回写和 UI 更新保持有界 | 已决定 |
 | J24-B17 | 会话删除时存在 queued/running job、产物、聊天和记忆来源，删除回复丢失后请求重放 | 同一 storage worker 先写 tombstone 再受控清理；拒绝迟到提交、清理仅由该会话支撑的记忆，相同 deletion idempotency key 不影响其它会话，后续对账不复活 | 已决定 |
 | J24-B18 | 多个终态会话连续到达 | FIFO 与并发预算确定，单个失败或限流不饿死其它会话 | 已决定 |
-| J24-B19 | 插件超时、异常、卸载或请求未授权能力 | 只隔离该插件/job；字幕、其它任务和历史保持不变 | 已决定 |
+| J24-B19 | 插件超时、异常、卸载或请求未授权能力 | 当前未装载的任务不被领取；运行中的失败只隔离该插件/job；字幕、其它任务和历史保持不变 | 已决定 |
 | J24-B20 | 纪要正文没有明确负责人或期限 | `owner/due` 为 `null`，不得根据音频来源或第一人称臆造身份 | 已决定 |
 | J24-B21 | 用户在 job 运行后选择另一正文版本，或选择精修覆盖不完整的混合显示正文 | 原 job 继续绑定原 `InputReference`；重新生成以新输入身份创建新版本。`refined` 只接受整场 `N=M` 的完整精修稿，不完整混合显示正文在 Agent 模型 provider 调用前被拒绝，用户可改选权威原始转写 | 已决定 |
 | J24-B22 | 个人记忆出现重复、冲突、用户删除后旧输入再次扫描 | 增加来源或 revision；明确内容优先；suppression 阻止旧来源重建 | 已决定 |

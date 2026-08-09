@@ -13,6 +13,8 @@ const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/sc
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
 
+const ALL_AGENT_TASK_KINDS = Object.freeze(['enhanced-transcript', 'meeting-minutes', 'memory-extraction'])
+
 function journeyEnvironment (t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'formal-agent-journey-'))
   const clients = []
@@ -46,12 +48,16 @@ function serviceFor (databasePath, clock, idState) {
   })
   let requestNumber = 0
   const raw = (operation, payload, idempotencyKey) => {
+    const normalizedPayload = operation === OPERATIONS.AGENT_CLAIM_NEXT_JOB &&
+      !Object.hasOwn(payload, 'availableTaskKinds')
+      ? { ...payload, availableTaskKinds: ALL_AGENT_TASK_KINDS }
+      : payload
     const request = {
       version: PROTOCOL_VERSION,
       type: 'storage:request',
       requestId: `formal-request-${++requestNumber}`,
       operation,
-      payload
+      payload: normalizedPayload
     }
     if (idempotencyKey !== undefined) request.idempotencyKey = idempotencyKey
     return service.handle(request)
@@ -622,6 +628,27 @@ test('SEM-F28 / J24-B21 rejects an incomplete refined mixed view as Agent input'
   })
   assert.equal(response.ok, false)
   assert.equal(response.error.code, 'AGENT_INPUT_VERSION_UNAVAILABLE')
+})
+
+test('SEM-F28 / J24-B21 returns a complete refined snapshot in selected event order', (t) => {
+  const clock = { value: 85000 }
+  const environment = journeyEnvironment(t)
+  const client = environment.track(serviceFor(environment.databasePath, clock, { value: 0 }))
+  createSession(client, {
+    sessionId: 'complete-refined-session',
+    captions: ['synthetic original one', 'synthetic original two'],
+    refinedCaptionIndexes: [1, 0]
+  })
+
+  const computed = client.service.requireAgentStore().readInput({
+    sessionId: 'complete-refined-session',
+    transcriptVersion: 'refined'
+  })
+  const snapshot = client.call(OPERATIONS.AGENT_READ_INPUT_SNAPSHOT, { inputRef: computed.inputRef })
+  assert.deepEqual(snapshot.items.map((item) => item.eventOrder), [3, 4])
+  assert.deepEqual(snapshot.items.map((item) => item.segmentId), ['segment-2', 'segment-1'])
+  assert.equal(snapshot.inputRef.inputWatermark, 4)
+  assert.deepEqual(snapshot.inputRef, computed.inputRef)
 })
 
 test('SEM-F26/SEM-F28 / J24-B06/B07/B10/B22 atomically commits artifacts and personal-memory facts', (t) => {

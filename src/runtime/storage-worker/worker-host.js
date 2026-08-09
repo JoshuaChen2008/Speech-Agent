@@ -383,6 +383,10 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.AGENT_RECONCILE_TERMINAL_SESSION, input)
   }
 
+  readAgentInputSnapshot (input) {
+    return this.enqueue(OPERATIONS.AGENT_READ_INPUT_SNAPSHOT, input)
+  }
+
   requestAgentJob (input) {
     return this.enqueue(OPERATIONS.AGENT_REQUEST_JOB, input)
   }
