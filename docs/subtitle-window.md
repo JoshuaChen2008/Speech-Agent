@@ -103,7 +103,38 @@ Electron 壳层负责：
 
 字幕窗额外使用 `focusable: false`、`minimizable: false`、`skipTaskbar: true`。工具条使用稳定标题、`minimizable: true`、`skipTaskbar: false`，并在真实轮廓内提供带可访问名称的 Fluent 最小化按钮。两个窗口使用 `setAlwaysOnTop(true, 'screen-saver')` 和全屏 workspace 可见配置。
 
-主任务栏窗口的原生 `minimize` / `restore` 事件与 renderer 最小化按钮进入同一 `ApplicationWindowLifecycleController`。控制器只在有界内存中保存窗口角色、可见性、bounds 与焦点引用，不保存字幕正文、设备名或路径；最小化前先收尾进行中的拖动/拉伸，恢复时若 Windows 改写了主窗口几何则主动恢复已保存 bounds。若辅助窗口最小化失败，必须回滚已隐藏窗口并保留可访问的主任务栏入口；若恢复中途失败，主窗口先恢复并记录固定 `role/code`，允许用户重试或退出。
+主任务栏窗口的原生 `minimize` / `restore` 事件与 renderer 最小化按钮进入同一 `ApplicationWindowLifecycleController`。控制器只在有界内存中保存窗口角色、可见性、bounds、焦点引用与窗口交互代次，不保存字幕正文、设备名、路径或指针坐标。每次最小化事务先推进一次窗口交互代次、停止主进程拖动/拉伸、把字幕窗和工具条切到原生鼠标穿透并通知全部 renderer 静默取消本地手势。每次任务栏恢复或第二实例 `restoreOrShow` 事务再推进一次，并在该次恢复事务内依次发送同一新代次的 `suspend` 与 `resume`；恢复时若 Windows 改写了主窗口几何则主动恢复已保存 bounds，待窗口集合、bounds 与层级收敛后，再把当前系统光标换算成各窗口局部 DIP 坐标并要求 renderer 按当前指针重新执行命中判定。指针静止时也必须恢复正确命中。`did-finish-load` 重放当前窗口交互代次，过期代次的穿透、拖动或拉伸意图一律拒绝。若辅助窗口最小化失败，必须回滚已隐藏窗口并保留可访问的主任务栏入口；若恢复中途失败，主窗口先恢复并记录固定 `role/code`，允许用户重试或退出。
+
+生命周期同步使用仅由主进程发送的 `window:interaction-sync` 严格联合载荷：
+
+```js
+{ schemaVersion: 1, generation, phase: 'suspend' }
+{ schemaVersion: 1, generation, phase: 'resume', pointer: { x, y } | null }
+```
+
+`suspend` 的 exact keyset 只能是 `schemaVersion/generation/phase`；`resume` 必须额外且只额外包含 `pointer`。`generation` 是正安全整数窗口交互代次。caption/toolbar 的 `pointer` 必须是 exact `{ x, y }` 且两项都是有限数值，可以位于窗口局部范围外；设置窗与字幕历史的 `pointer` 必须显式为 `null`，不能缺省。四个 preload 在转发回调前缓存该代次，并把既有 renderer 调用迁移为下列 exact 载荷：
+
+```js
+// window:mouse-through
+{ schemaVersion: 1, generation, ignore: boolean }
+// window:drag-start / window:drag-end / window:resize-end
+{ schemaVersion: 1, generation }
+// window:resize-start
+{ schemaVersion: 1, generation, edge: 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw' }
+```
+
+主进程只接受当前代次。caption/toolbar 每次处理 `resume` 都必须把本地 `ignoring` 设为未知并强制发送一次同代 `window:mouse-through`，即使命中结果与上次相同；该消息同时作为命中同步确认。确认等待上限为 1000ms。迟到但仍属当前代次的合法确认可以结束降级；旧代次永不恢复。`did-finish-load` 在应用已最小化时重放 `suspend`，在可见且 bounds 已知时先设置原生鼠标穿透再重放 `resume`。
+
+固定失败结果及优先级如下；上方失败先决定结果，后续超时不得覆盖它：
+
+| 优先级 | `code` | 字幕窗 | 工具条 | 重试 |
+|---:|---|---|---|---|
+| 1 | `interaction-pass-through-failed` | 保持隐藏并拒绝当前代次交互 | 恢复主任务栏窗口并请求实心命中；若原生 setter 仍失败，任务栏入口继续作为重试入口 | 下一次恢复事务 |
+| 2 | `interaction-pointer-unavailable` | 保持可见且原生鼠标穿透 | 整个工具条 BrowserWindow 实心命中 | `did-finish-load` 或下一次恢复事务 |
+| 3 | `interaction-sync-timeout` | 保持可见且原生鼠标穿透 | 整个工具条 BrowserWindow 实心命中 | 迟到的当前代次合法确认、`did-finish-load` 或下一次恢复事务 |
+| 4 | `stale-interaction-generation` | 不改变当前代次状态 | 不改变当前代次状态 | 只等待当前代次合法意图 |
+
+失败记录只含固定 `role/code`。任何失败都必须停止旧 timer、旧 renderer 意图和旧 rAF；指针坐标、原始错误与 stack 不进入诊断或报告。
 
 设置窗与字幕历史：
 
@@ -152,8 +183,10 @@ renderer 在可拖区域发出 `dragStart(role)` 意图，主进程通过全局�
 - renderer blur/destroy
 - 重复 dragStart
 - 锁定状态变化
+- 应用最小化/恢复与第二实例恢复
 
 主进程在任何取消路径都要停止拖动 timer，不能只依赖 renderer 正常发出 dragEnd。
+最小化取消当前手势而不续接：renderer 必须清空活动 pointer ID、pointer capture、dragging/resizing、CSS 状态和待执行的命中 rAF，但不得在生命周期手势重置后补发旧窗口交互代次的 dragEnd/resizeEnd。恢复后只有下一次新的主键按下才能开始拖动。
 timer 间隔是实现细节（当前 16ms，对齐一帧）；取消语义不依赖具体数值。
 
 ### 5.2 逐像素命中
@@ -165,6 +198,8 @@ timer 间隔是实现细节（当前 16ms，对齐一帧）；取消语义不依
 - 拖动期间暂停 elementFromPoint 命中计算。
 - mousemove 使用 requestAnimationFrame 节流。
 - 锁定时 captionWin 恒穿透，renderer 不能把它重新变成实心。
+- 最小化/恢复以独立于工具条布局代次的窗口交互代次同步。恢复前 captionWin/toolbarWin 先保持原生鼠标穿透，恢复后 renderer 使用同代局部 DIP 光标位置主动执行现有命中判定，并只允许同代 `mouseThrough` 改变原生命中；锁定字幕窗始终穿透，字幕窗内的工具条轮廓由字幕窗穿透后交给工具条自身按真实轮廓接管。旧代次与旧 rAF 不能覆盖新状态。
+- 指针坐标只在有界内存 IPC 中存在；固定诊断和所有证据报告不得包含坐标、绝对路径、设备名、字幕正文或绝对单调时刻。
 
 ## 6. 字幕渲染不变量
 
