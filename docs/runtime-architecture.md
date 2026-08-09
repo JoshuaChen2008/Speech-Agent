@@ -348,7 +348,7 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 
 ### 11.3 后台 Agent 任务与专用子 Agent
 
-> 当前实现投影（2026-08-10）：D3 的正式 v3 migration、Agent 处理资格、自动对账与任务生命周期，D4 的冻结输入读取、已装载任务闭集、正式纪要插件/宿主、确定性分块归并、`ModelGateway` + Pi Agent Loop、job runner 和原子产物提交，D5 的正式 v4 suppression/删除、增强文本、记忆提取/任务内合并、writer 分流与三项同输入独立执行，以及 D6 经过 production `StorageWorkerHost` utility-process transport 的策略先行、claim 后 exact-child 强制退出、replacement 策略重放与同 `runId` 恢复，均为实现完成·尚未验收。D8 已决定补齐 UI-free `MemoryReader` 有界读取与休眠投影，登记本段不构成实现证据。ADR 0011 的 DeepSeek 配置表、启动环境凭据、provider/model/预算冻结和降级为已决定但尚无正式实现证据。D6 仍由调用进程运行 PluginHost/Loop，不表示它们已进入 Agent utility；`MeetingStopped`、正式 `StorageGateway` 接线、provider 配置与凭据初始化、preload/IPC、renderer、确认关键词、资源仲裁与正式打包仍为已决定。
+> 当前实现投影（2026-08-10）：D3 的正式 v3 migration、Agent 处理资格、自动对账与任务生命周期，D4 的冻结输入读取、已装载任务闭集、正式纪要插件/宿主、确定性分块归并、`ModelGateway` + Pi Agent Loop、job runner 和原子产物提交，D5 的正式 v4 suppression/删除、增强文本、记忆提取/任务内合并、writer 分流与三项同输入独立执行，D6 经过 production `StorageWorkerHost` utility-process transport 的策略先行、claim 后 exact-child 强制退出、replacement 策略重放与同 `runId` 恢复，以及 D8 的 `MemoryReader → StorageWorkerService/FormalAgentStore` 有界读取、休眠/恢复与 active/current revision 投影子边界，均为实现完成·尚未验收。ADR 0011 的 DeepSeek 配置表、启动环境凭据、provider/model/预算冻结和降级为已决定但尚无正式实现证据。D6 仍由调用进程运行 PluginHost/Loop，不表示它们已进入 Agent utility；D8 也未进入正式 `StorageGateway`、Agent utility、preload/IPC、renderer 或 recipe。`MeetingStopped`、provider 配置与凭据初始化、确认关键词、资源仲裁与正式打包仍为已决定。
 
 ```text
 终态会话 + 完整输入水位

@@ -1,6 +1,6 @@
 # 正式 Agent 首版接口合同
 
-> 证据状态：已决定。D3 的正式 SQLite 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切，以及 D6 的 production `StorageWorkerHost` storage utility transport 子边界均为实现完成·尚未验收。D6 已经过真实 Electron utility process，覆盖策略先行、claim 后 exact-child 强制退出与退出同一性、replacement 未重放策略前拒绝领取、租约到期后同 `runId` 恢复、重复对账和三项结果各自最多提交一次，并由父测试独立复算 SQLite 身份与隐私负扫描；它仍不表示 PluginHost/Loop 已进入 Agent utility，也未接入 `MeetingStopped`、正式 `StorageGateway`、preload/IPC、renderer、确认关键词或发布包。D8 已登记 `MemoryReader` UI-free 有界读取与休眠投影，登记本身不构成实现证据。ADR 0011 另冻结正式首版的 DeepSeek 非敏感配置表、启动环境凭据、provider/model/预算冻结和降级；本文不表示真实 DeepSeek 已接入，也不表示 J13/J20/J21/J22/J24 已有完整产品证据。
+> 证据状态：已决定。D3 的正式 SQLite 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切、D6 的 production `StorageWorkerHost` storage utility transport 子边界，以及 D8 的 `MemoryReader → StorageWorkerService/FormalAgentStore` UI-free storage-worker 子边界均为实现完成·尚未验收。D6 已经过真实 Electron utility process，覆盖策略先行、claim 后 exact-child 强制退出与退出同一性、replacement 未重放策略前拒绝领取、租约到期后同 `runId` 恢复、重复对账和三项结果各自最多提交一次，并由父测试独立复算 SQLite 身份与隐私负扫描。D8 覆盖受信任策略门控、休眠/恢复、active/current revision 投影、固定排序、完整条目字节预算和 replacement 策略重放；它仍未进入正式 `StorageGateway`、Agent utility、preload/IPC、renderer 或 recipe，不能作为正式 J21 用户读取路径。ADR 0011 另冻结正式首版的 DeepSeek 非敏感配置表、启动环境凭据、provider/model/预算冻结和降级；本文不表示真实 DeepSeek 已接入，也不表示 J13/J20/J21/J22/J24 已有完整产品证据。
 
 ## 1. 边界与版本
 
@@ -201,7 +201,9 @@ Agent 模型 provider registry 必须把上下文窗口、固定提示和输出�
 
 `MemoryReader.query` 是 UI-free 的 Agent 内部读取端口，不是 renderer 的记忆管理列表。请求必须完整给出 1–16 个不重复的 `scopeRefs`、1–7 个不重复的 `kinds`、0–64 个不重复的 exact `semanticKeys`、`maxItems=1..20` 和 `maxSerializedBytes=256..65536`；它不接受自由文本、SQL、任意排序、cursor 或调用方提供的开关/资格。storage worker 只读取最近一次 `agent.applyTaskPolicy` 建立的受信任策略；worker 首启或 replacement 尚未重放策略时以 `AGENT_REQUEST_INVALID` fail closed。Agent 或个人记忆关闭，以及 Agent 模型 provider 配置、云端披露、凭据或本地模型就绪条件不满足时，返回带稳定 `reason` 的 `availability='dormant'`、零条目且不查询或改写记忆表；重新满足条件后，既有条目重新进入读取候选，不通过开关批量改写 lifecycle。
 
-可读取候选必须同时满足 scope 为 `active`、item 为 `active`、当前 revision 属于该 item 且正文与当前投影一致。排序固定为明确内容优先、显著性高到低、置信高到低、来源证据数多到少、`updatedAt` 新到旧、`memoryId` 升序；每条最多返回最近 8 条无正文来源引用。单次查询最多扫描排序后的 256 个候选；条目按 canonical JSON 的完整 UTF-8 字节计入预算，只整条纳入而不截断 `content` 或来源，任一候选因条目数、字节数或扫描上限省略时 `hasMore=true`。`serializedBytes` 是实际返回 item 对象 canonical JSON 字节数之和。首版 exact `semanticKeys` 为空表示不增加语义键过滤；不读取字幕 FTS，不创建向量或图索引。
+可读取候选必须同时满足 scope 为 `active`、item 为 `active`、当前 revision 属于该 item 且正文与当前投影一致。排序固定为明确内容优先、显著性高到低、置信高到低、来源证据数多到少、`updatedAt` 新到旧、`memoryId` 升序；每条最多返回最近 8 条无正文来源引用。单次查询最多读取排序后的 256 个候选；命中该上限时保守返回 `hasMore=true`，不得为精确探测第 257 条而读取其正文。条目按 canonical JSON 的完整 UTF-8 字节计入预算，只整条纳入而不截断 `content` 或来源，任一候选因条目数或字节数省略时也必须 `hasMore=true`。`serializedBytes` 是实际返回 item 对象 canonical JSON 字节数之和。首版 exact `semanticKeys` 为空表示不增加语义键过滤；不读取字幕 FTS，不创建向量或图索引。
+
+D8 只闭合 `MemoryReader → StorageWorkerService/FormalAgentStore` 的 UI-free storage-worker 子边界，并登记 `StorageWorkerHost` 的精确 operation 映射；它没有修改并行任务负责的正式 `StorageGateway`，也没有加入 preload/IPC、renderer、Agent utility 或正式 recipe。因此本批不得宣称形成 J21 的正式用户读取路径；后续接线必须让正式 `StorageGateway` 暴露同一窄方法并以真实 gateway/utility/renderer 旅程重新验收，不能用本批自建 service client 代替。
 
 ## 4. Storage worker 协议
 
