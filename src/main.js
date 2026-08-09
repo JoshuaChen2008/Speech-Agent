@@ -56,6 +56,10 @@ const {
   ManualWindowInteractionController,
   sameBounds
 } = require('./main/manual-window-interaction-controller')
+const {
+  WindowInteractionGenerationController
+} = require('./main/window-interaction-generation-controller')
+const { isInteractionReadyIntent } = require('./contracts/window-interaction')
 const { loadRendererFailClosed } = require('./main/renderer-entry')
 
 const exitEvidence = createMainEvidenceBridge()
@@ -104,12 +108,31 @@ const windowInteractionController = new ManualWindowInteractionController({
   dock,
   onCaptionResizeEnd: persistCaptionBounds
 })
+const windowInteractionGenerationController = new WindowInteractionGenerationController({
+  getWindow: (role) => ({
+    caption: captionWin,
+    toolbar: toolbarWin,
+    settings: settingsWin,
+    history: historyWin
+  })[role] || null,
+  getCursorScreenPoint: () => screen.getCursorScreenPoint(),
+  getLocked: () => locked,
+  sendSync: (win, value) => {
+    if (!win || win.isDestroyed()) return false
+    win.webContents.send(CHANNELS.WINDOW_INTERACTION_SYNC, value)
+    return true
+  },
+  onFault: ({ role, code }) => console.error(`[window.interaction] role=${role} code=${code}`)
+})
 const applicationWindowLifecycleController = new ApplicationWindowLifecycleController({
   getCaptionWindow: () => captionWin,
   getToolbarWindow: () => toolbarWin,
   getSettingsWindow: () => settingsWin,
   getHistoryWindow: () => historyWin,
   stopInteractions: () => windowInteractionController.stopAll(),
+  beginInteractionTransaction: () => windowInteractionGenerationController.beginTransaction(),
+  resumeInteractions: (generation) => windowInteractionGenerationController.resume(generation),
+  degradeInteractions: (generation) => windowInteractionGenerationController.degradeForRestoreFailure(generation),
   restoreWindowStack: () => windowLayerController.restoreWindowStack(),
   onFault: ({ role, code }) => console.error(`[window.lifecycle] role=${role} code=${code}`)
 })
@@ -203,12 +226,14 @@ refinementNoticeStore.onChanged(broadcastRefinementNotice)
 
 function registerWindowRole (win, role) {
   const senderId = win.webContents.id
+  let navigationEpoch = 0
   const unregisterExitEvidence = exitEvidence.registerWebContents(win.webContents, role)
   windowRoles.set(senderId, role)
   win.webContents.once('destroyed', () => {
     unregisterExitEvidence()
     windowRoles.delete(senderId)
     windowInteractionController.stopForSender(senderId)
+    windowInteractionGenerationController.releaseRole(role)
     if (role === 'toolbar') invalidateToolbarOverlap()
   })
   win.on('blur', () => {
@@ -219,16 +244,30 @@ function registerWindowRole (win, role) {
     console.error(`[electron.window] role=${role} event=unresponsive`)
   })
   win.webContents.on('render-process-gone', (_event, details) => {
+    navigationEpoch += 1
+    windowInteractionController.stopForSender(senderId)
+    windowInteractionGenerationController.failClosedAfterRendererGone(role)
     if (role === 'toolbar') invalidateToolbarOverlap()
     exitEvidence.recordRenderProcessGone(win.webContents, details)
     console.error(`[electron.renderer] role=${role} reason=${details.reason} exitCode=${details.exitCode}`)
   })
-  if (role === 'toolbar') {
-    win.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
-      if (isMainFrame && !isInPlace) invalidateToolbarOverlap()
-    })
-  }
+  win.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+    if (!isMainFrame || isInPlace) return
+    navigationEpoch += 1
+    windowInteractionController.stopForSender(senderId)
+    windowInteractionGenerationController.suspendRoleForReload(role)
+    if (role === 'toolbar') invalidateToolbarOverlap()
+  })
   win.webContents.on('preload-error', () => exitEvidence.recordPreloadError(win.webContents))
+  win.webContents.on('did-finish-load', () => {
+    const replayEpoch = navigationEpoch
+    windowInteractionController.stopForSender(senderId)
+    setImmediate(() => {
+      if (replayEpoch === navigationEpoch && windowRoles.get(senderId) === role && !win.isDestroyed()) {
+        windowInteractionGenerationController.replay(role)
+      }
+    })
+  })
   win.webContents.on('did-fail-load', (_event, errorCode, _description, _url, isMainFrame) => {
     if (isMainFrame) console.error(`[electron.load] role=${role} errorCode=${errorCode}`)
   })
@@ -288,11 +327,6 @@ function makeOverlay (role, width, height, x, y, focusable = true) {
   }
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  void loadRendererFailClosed(win, role, { isPackaged: app.isPackaged })
-    .catch((error) => {
-      logError(`renderer.${role}.load`, error)
-      app.quit()
-    })
   return win
 }
 
@@ -322,8 +356,10 @@ function createWindows () {
   const cy = 72
 
   captionWin = makeOverlay('caption', capW, capH, cx, cy, false)
+  const captionPassThroughPrepared = windowInteractionGenerationController.prepareOverlay('caption')
   captionWin.setResizable(true)
   toolbarWin = makeOverlay('toolbar', TB_W, TB_H, cx, cy, true)
+  windowInteractionGenerationController.prepareOverlay('toolbar')
   applicationWindowLifecycleController.bindPrimaryWindow(toolbarWin)
 
   captionWin.webContents.on('console-message', (details) => console.log('[caption]', details.message))
@@ -338,7 +374,7 @@ function createWindows () {
     if (overlayPairShown || !captionReady || !toolbarReady ||
         !captionWin || captionWin.isDestroyed() || !toolbarWin || toolbarWin.isDestroyed()) return
     overlayPairShown = true
-    captionWin.show()
+    if (captionPassThroughPrepared) captionWin.show()
     toolbarWin.show()
     dock()
     restoreWindowStack()
@@ -354,6 +390,13 @@ function createWindows () {
     app.quit()
   })
   toolbarWin.on('closed', () => { windowInteractionController.stopAll(); toolbarWin = null })
+  for (const [win, role] of [[captionWin, 'caption'], [toolbarWin, 'toolbar']]) {
+    void loadRendererFailClosed(win, role, { isPackaged: app.isPackaged })
+      .catch((error) => {
+        logError(`renderer.${role}.load`, error)
+        app.quit()
+      })
+  }
 }
 
 function dock ({ restoreStack = true } = {}) {
@@ -452,7 +495,7 @@ function applyLock (on) {
   locked = on
   if (on) windowInteractionController.stopAll()
   if (captionWin && !captionWin.isDestroyed()) {
-    if (on) captionWin.setIgnoreMouseEvents(true, { forward: true })
+    if (on) windowInteractionGenerationController.prepareOverlay('caption')
     send(captionWin, CHANNELS.LOCK_CHANGED, on)
   }
   send(toolbarWin, CHANNELS.LOCK_CHANGED, on)
@@ -644,25 +687,34 @@ function setRefinementPreference (enabled) {
   }
 }
 
-ipcMain.on(CHANNELS.MOUSE_THROUGH, (event, ignore) => {
-  const { win } = requireSender(event, CHANNELS.MOUSE_THROUGH)
-  if (win === captionWin && locked && !ignore) return
-  win.setIgnoreMouseEvents(!!ignore, { forward: true })
+ipcMain.on(CHANNELS.WINDOW_INTERACTION_READY, (event, intent) => {
+  const { role, senderId } = requireSender(event, CHANNELS.WINDOW_INTERACTION_READY)
+  if (!isInteractionReadyIntent(intent)) return
+  windowInteractionController.stopForSender(senderId)
+  windowInteractionGenerationController.replay(role)
 })
-ipcMain.on(CHANNELS.DRAG_START, (event) => {
+ipcMain.on(CHANNELS.MOUSE_THROUGH, (event, intent) => {
+  const { role } = requireSender(event, CHANNELS.MOUSE_THROUGH)
+  windowInteractionGenerationController.acceptMouseThrough(role, intent)
+})
+ipcMain.on(CHANNELS.DRAG_START, (event, intent) => {
   const sender = requireSender(event, CHANNELS.DRAG_START)
+  if (!windowInteractionGenerationController.acceptGesture(sender.role, intent)) return
   windowInteractionController.startDrag(sender)
 })
-ipcMain.on(CHANNELS.DRAG_END, (event) => {
-  const { senderId } = requireSender(event, CHANNELS.DRAG_END)
+ipcMain.on(CHANNELS.DRAG_END, (event, intent) => {
+  const { role, senderId } = requireSender(event, CHANNELS.DRAG_END)
+  if (!windowInteractionGenerationController.acceptGesture(role, intent)) return
   windowInteractionController.stopDrag(senderId)
 })
-ipcMain.on(CHANNELS.RESIZE_START, (event, edge) => {
-  const { win, senderId } = requireSender(event, CHANNELS.RESIZE_START)
-  windowInteractionController.startResize({ win, senderId, edge })
+ipcMain.on(CHANNELS.RESIZE_START, (event, intent) => {
+  const { role, win, senderId } = requireSender(event, CHANNELS.RESIZE_START)
+  if (!windowInteractionGenerationController.acceptResizeStart(role, intent)) return
+  windowInteractionController.startResize({ win, senderId, edge: intent.edge })
 })
-ipcMain.on(CHANNELS.RESIZE_END, (event) => {
-  const { senderId } = requireSender(event, CHANNELS.RESIZE_END)
+ipcMain.on(CHANNELS.RESIZE_END, (event, intent) => {
+  const { role, senderId } = requireSender(event, CHANNELS.RESIZE_END)
+  if (!windowInteractionGenerationController.acceptGesture(role, intent)) return
   windowInteractionController.stopResize(senderId)
 })
 ipcMain.on(CHANNELS.LOCK_TOGGLE, (event) => {

@@ -43,6 +43,9 @@ class ApplicationWindowLifecycleController {
     getSettingsWindow,
     getHistoryWindow,
     stopInteractions,
+    beginInteractionTransaction,
+    resumeInteractions,
+    degradeInteractions,
     restoreWindowStack,
     schedulePostRestore = setImmediate,
     onFault = () => {}
@@ -53,6 +56,9 @@ class ApplicationWindowLifecycleController {
       getSettingsWindow,
       getHistoryWindow,
       stopInteractions,
+      beginInteractionTransaction,
+      resumeInteractions,
+      degradeInteractions,
       restoreWindowStack,
       schedulePostRestore,
       onFault
@@ -67,11 +73,15 @@ class ApplicationWindowLifecycleController {
     this.getSettingsWindow = getSettingsWindow
     this.getHistoryWindow = getHistoryWindow
     this.stopInteractions = stopInteractions
+    this.beginInteractionTransaction = beginInteractionTransaction
+    this.resumeInteractions = resumeInteractions
+    this.degradeInteractions = degradeInteractions
     this.restoreWindowStack = restoreWindowStack
     this.schedulePostRestore = schedulePostRestore
     this.onFault = onFault
     this.minimizedState = null
     this.transition = null
+    this.restoreCommitToken = 0
     this.boundPrimaryWindows = new WeakSet()
     this.boundAuxiliaryWindows = new WeakSet()
   }
@@ -164,17 +174,28 @@ class ApplicationWindowLifecycleController {
     try { this.stopInteractions() } catch { this.reportFault('interaction-stop-failed') }
   }
 
-  scheduleBoundsCorrection (state) {
+  resumeInteractionGeneration (generation) {
+    return this.resumeInteractions(generation)
+  }
+
+  degradeInteractionGeneration (generation) {
+    return this.degradeInteractions(generation)
+  }
+
+  scheduleBoundsCorrection (state, interactionGeneration, restoreCommitToken) {
     this.schedulePostRestore(() => {
-      if (this.minimizedState !== null || this.transition !== null) return
+      if (restoreCommitToken !== this.restoreCommitToken ||
+          this.minimizedState !== null || this.transition !== null) return
       try {
         restoreBounds({ win: state.primary, bounds: state.primaryBounds })
         if (state.caption.visible) restoreBounds(state.caption)
         for (const entry of state.auxiliaries) {
           if (entry.visible) restoreBounds(entry)
         }
+        this.resumeInteractionGeneration(interactionGeneration)
       } catch {
         this.reportFault('post-restore-bounds-failed')
+        this.degradeInteractionGeneration(interactionGeneration)
       }
     })
   }
@@ -195,7 +216,9 @@ class ApplicationWindowLifecycleController {
 
     this.minimizedState = state
     this.transition = 'minimizing'
+    this.restoreCommitToken += 1
     this.stopActiveInteractions()
+    const interactionGeneration = this.beginInteractionTransaction()
     try {
       if (state.caption.visible && isUsableWindow(state.caption.win)) state.caption.win.hide()
       for (const entry of state.auxiliaries) {
@@ -205,7 +228,12 @@ class ApplicationWindowLifecycleController {
       return true
     } catch {
       this.reportFault('minimize-failed')
-      if (this.rollbackMinimize(state)) this.minimizedState = null
+      if (this.rollbackMinimize(state)) {
+        this.minimizedState = null
+        this.resumeInteractionGeneration(interactionGeneration)
+      } else {
+        this.degradeInteractionGeneration(interactionGeneration)
+      }
       return false
     } finally {
       this.transition = null
@@ -247,7 +275,9 @@ class ApplicationWindowLifecycleController {
 
     const state = this.minimizedState
     this.transition = 'restoring'
+    const restoreCommitToken = ++this.restoreCommitToken
     this.stopActiveInteractions()
+    const interactionGeneration = this.beginInteractionTransaction()
     try {
       if (primary.isMinimized()) primary.restore()
       showWindow(primary)
@@ -266,7 +296,7 @@ class ApplicationWindowLifecycleController {
       if (state.focused && isUsableWindow(state.focused.win)) state.focused.win.focus()
       else primary.focus()
       this.minimizedState = null
-      this.scheduleBoundsCorrection(state)
+      this.scheduleBoundsCorrection(state, interactionGeneration, restoreCommitToken)
       return true
     } catch {
       /* The primary is restored first, so even a later auxiliary failure keeps
@@ -277,6 +307,7 @@ class ApplicationWindowLifecycleController {
         showWindow(primary)
         primary.focus()
       } catch { this.reportFault('primary-restore-failed') }
+      this.degradeInteractionGeneration(interactionGeneration)
       return false
     } finally {
       this.transition = null
@@ -289,7 +320,9 @@ class ApplicationWindowLifecycleController {
     if (this.minimizedState) return this.restore()
 
     this.transition = 'showing'
+    const restoreCommitToken = ++this.restoreCommitToken
     this.stopActiveInteractions()
+    const interactionGeneration = this.beginInteractionTransaction()
     try {
       if (primary.isMinimized()) primary.restore()
       const caption = this.getCaptionWindow()
@@ -297,9 +330,21 @@ class ApplicationWindowLifecycleController {
       showWindow(primary)
       this.restoreWindowStack()
       primary.focus()
+      this.schedulePostRestore(() => {
+        if (restoreCommitToken === this.restoreCommitToken &&
+            this.transition === null && this.minimizedState === null) {
+          this.resumeInteractionGeneration(interactionGeneration)
+        }
+      })
       return true
     } catch {
       this.reportFault('show-failed')
+      try {
+        if (primary.isMinimized()) primary.restore()
+        showWindow(primary)
+        primary.focus()
+      } catch { this.reportFault('primary-restore-failed') }
+      this.degradeInteractionGeneration(interactionGeneration)
       return false
     } finally {
       this.transition = null

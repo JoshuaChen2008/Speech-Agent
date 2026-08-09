@@ -9,6 +9,7 @@ const ROLE_ACCESS = Object.freeze({
   [CHANNELS.DRAG_END]: Object.freeze(['caption', 'toolbar', 'settings', 'history']),
   [CHANNELS.RESIZE_START]: Object.freeze(['caption']),
   [CHANNELS.RESIZE_END]: Object.freeze(['caption']),
+  [CHANNELS.WINDOW_INTERACTION_READY]: Object.freeze(['caption', 'toolbar', 'settings', 'history']),
   [CHANNELS.LOCK_TOGGLE]: Object.freeze(['toolbar']),
   [CHANNELS.LOCK_GET]: Object.freeze(['caption', 'toolbar']),
   [CHANNELS.TOOLBAR_LAYOUT_GET_CONTEXT]: Object.freeze(['toolbar']),

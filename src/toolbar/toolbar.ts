@@ -14,6 +14,7 @@ const { installSprite, iconMarkup } = window.Icons
 const { buildRuntimeView } = window.RuntimeView
 const { applyAppearance } = window.Appearance
 const bindManualWindowDrag = window.ManualWindowDrag?.bindManualWindowDrag || (() => ({
+  cancel () {},
   end () {},
   isDragging () { return false }
 }))
@@ -25,7 +26,7 @@ const bindManualWindowDrag = window.ManualWindowDrag?.bindManualWindowDrag || ((
 const bridge: any = window.shell || {
   mouseThrough () {}, dragStart () {}, dragEnd () {},
   lockToggle () {}, action () {},
-  onLock () {}, onConfig () {}, onSnapshot () {}, onRefinementNotice () {},
+  onInteractionSync () {}, onLock () {}, onConfig () {}, onSnapshot () {}, onRefinementNotice () {},
   getToolbarLayoutContext () { return Promise.reject(new Error('no shell')) },
   reportToolbarLayout () {},
   command () { return Promise.reject(new Error('no shell')) },
@@ -52,6 +53,8 @@ let locked = false
 let dragging = false
 let ignoring: boolean | null = null
 let lastX = 0, lastY = 0
+let interactionGeneration = 0
+let interactionPhase = 'resume'
 let snapshot = window.FIXTURES.runtime.unavailable
 let runtimeSnapshotAccepted = false
 let commandPending = false
@@ -363,9 +366,9 @@ if (typeof ResizeObserver === 'function') {
   toolbarLayoutObserver.observe(toolbar)
 }
 
-/** @param {number} x @param {number} y */
-function applyHit (x: number, y: number): void {
-  if (dragging) return
+/** @param {number} x @param {number} y @param {boolean=} force */
+function applyHit (x: number, y: number, force = false): void {
+  if (interactionPhase !== 'resume' || dragging) return
   if (!toolbarRect) toolbarRect = toolbar.getBoundingClientRect()
   const rect = toolbarRect
   /* 已经实心时才外扩：进入保持精确，离开才需要粘性 */
@@ -373,7 +376,7 @@ function applyHit (x: number, y: number): void {
   const solid = x >= rect.left - margin && x <= rect.right + margin &&
                 y >= rect.top - margin && y <= rect.bottom + margin
   const next = !solid
-  if (next !== ignoring) {
+  if (force || next !== ignoring) {
     ignoring = next
     bridge.mouseThrough(next)
   }
@@ -386,12 +389,10 @@ document.addEventListener('mousemove', (e) => {
    上下各 16px 透明边距 > 6px 迟滞带），正常移动摸不到这条路径；留着是防止
    任何情况下卡在实心态 —— 那会让 600×72 这块区域整个挡住下面的应用。 */
 document.addEventListener('mouseleave', () => {
-  if (dragging || ignoring === true) return
+  if (interactionPhase !== 'resume' || dragging || ignoring === true) return
   ignoring = true
   bridge.mouseThrough(true)
 })
-bridge.mouseThrough(true)
-ignoring = true
 
 // ---------------------------------------------------------------------------
 // 拖动：只有持续可见的握把可以开始。未锁定时主进程移动字幕窗并重停靠，
@@ -407,6 +408,29 @@ const toolbarDrag = bindManualWindowDrag({
     if (!active) applyHit(lastX, lastY)
   }
 })
+
+/** @param {any} value */
+function acceptInteractionSync (value: any): void {
+  if (!value || value.schemaVersion !== 1 || !Number.isSafeInteger(value.generation) ||
+      value.generation <= 0 || value.generation < interactionGeneration ||
+      (value.phase !== 'suspend' && value.phase !== 'resume')) return
+  if (value.phase === 'suspend' && Object.keys(value).length !== 3) return
+  if (value.phase === 'resume' && (Object.keys(value).length !== 4 || !value.pointer ||
+      Object.keys(value.pointer).length !== 2 ||
+      !Number.isFinite(value.pointer.x) || !Number.isFinite(value.pointer.y))) return
+
+  interactionGeneration = value.generation
+  interactionPhase = 'suspend'
+  toolbarDrag.cancel()
+  ignoring = null
+  interactionPhase = value.phase
+  if (value.phase === 'suspend') return
+  lastX = value.pointer.x
+  lastY = value.pointer.y
+  applyHit(lastX, lastY, true)
+}
+
+if (typeof bridge.onInteractionSync === 'function') bridge.onInteractionSync(acceptInteractionSync)
 
 // ---------------------------------------------------------------------------
 // 用户意图：只转交，不预判成功。壳层回执到位后（B1 的 CommandResult）

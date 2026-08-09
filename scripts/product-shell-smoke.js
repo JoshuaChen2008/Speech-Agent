@@ -23,12 +23,16 @@ const {
 const windowLayoutContract = require('../src/main/window-layout-contract')
 const { ToolbarLayoutState } = windowLayoutContract
 const {
+  WindowInteractionGenerationController
+} = require('../src/main/window-interaction-generation-controller')
+const {
   OPERATIONS,
   PROTOCOL_VERSION,
   makeCaptionEventId,
   makeCloseSessionKey,
   makeOpenSessionKey
 } = require('../src/runtime/storage-worker/protocol')
+
 const { StorageWorkerService } = require('../src/runtime/storage-worker/worker-service')
 const { WORKER_PATH: STORAGE_WORKER_PATH } = require('../src/runtime/storage-worker/worker-host')
 const {
@@ -78,6 +82,38 @@ class ObservedToolbarLayoutState extends ToolbarLayoutState {
   }
 }
 windowLayoutContract.ToolbarLayoutState = ObservedToolbarLayoutState
+
+const windowInteractionGenerationProbe = []
+let observedWindowInteractionGenerationController = null
+for (const method of [
+  'beginTransaction', 'resume', 'acceptMouseThrough', 'acceptGesture',
+  'acceptResizeStart', 'suspendRoleForReload', 'replay', 'setNativeIgnore'
+]) {
+  const original = WindowInteractionGenerationController.prototype[method]
+  WindowInteractionGenerationController.prototype[method] = function observedWindowInteractionGeneration (...args) {
+    observedWindowInteractionGenerationController = this
+    let result
+    try {
+      result = original.apply(this, args)
+      return result
+    } finally {
+      const state = this.getState()
+      windowInteractionGenerationProbe.push({
+        method,
+        role: typeof args[0] === 'string' ? args[0] : null,
+        argumentGeneration: Number.isSafeInteger(args[0])
+          ? args[0]
+          : (Number.isSafeInteger(args[1]?.generation) ? args[1].generation : null),
+        generation: state.generation,
+        phase: state.phase,
+        ignore: typeof args[1] === 'boolean'
+          ? args[1]
+          : (typeof args[1]?.ignore === 'boolean' ? args[1].ignore : null),
+        accepted: result === true
+      })
+    }
+  }
+}
 
 function isWithin (parent, child) {
   const relative = path.relative(path.resolve(parent), path.resolve(child))
@@ -194,7 +230,7 @@ function applicationBoundsMismatchRoles (windows, expected) {
     .map(([role]) => role)
 }
 
-async function exerciseApplicationLifecycle ({ caption, toolbar, settings, rawSessionId }) {
+async function exerciseApplicationLifecycle ({ caption, toolbar, settings, rawSessionId, cursor }) {
   const minimizeControlVisible = await rendererValue(toolbar, `(() => {
     const button = document.querySelector('button[data-act="minimize"]')
     return !!button && button.getAttribute('aria-label') === '最小化'
@@ -206,13 +242,52 @@ async function exerciseApplicationLifecycle ({ caption, toolbar, settings, rawSe
   await waitFor(() => history.isFocused(), 'lifecycle history focus')
 
   const windows = { caption, toolbar, settings, history }
+  await Promise.all(Object.entries(windows).map(([role, win]) => rendererValue(win, `(() => {
+    window.__j19InteractionSync = []
+    const interactionApi = ${role === 'history' ? 'window.historyApi' : 'window.shell'}
+    interactionApi.onInteractionSync((value) => window.__j19InteractionSync.push({
+      schemaVersion: value.schemaVersion,
+      generation: value.generation,
+      phase: value.phase,
+      pointerPresent: value.phase === 'resume' && value.pointer !== null
+    }))
+    return '${role}'
+  })()`)))
+  const generationProbeStart = windowInteractionGenerationProbe.length
+  const initialGeneration = observedWindowInteractionGenerationController?.getState().generation
+  if (!Number.isSafeInteger(initialGeneration)) throw new Error('window interaction generation controller was not observed')
+  await Promise.all(Object.entries(windows).map(([role, win]) => waitFor(() => rendererValue(win,
+    `window.__j19InteractionSync.at(-1)?.phase === 'resume'`), `${role} initial interaction resume`)))
   const visibleBefore = visibleApplicationWindowRoles(windows)
-  const boundsBefore = Object.fromEntries(Object.entries(windows).map(([role, win]) => [role, win.getBounds()]))
   const snapshotBefore = await rendererValue(toolbar, `window.shell.getSnapshot()`)
   if (snapshotBefore.phase !== 'listening' || snapshotBefore.sessionId !== rawSessionId ||
       visibleBefore.join(',') !== 'caption,toolbar,settings,history') {
     throw new Error('application lifecycle did not start from four visible windows and one listening session')
   }
+
+  const captionCard = "document.getElementById('captionCard')"
+  const captionDragPoint = `target => { const r = target.getBoundingClientRect(); return { x: r.left + 80, y: r.top + r.height * 0.55 } }`
+  const activePoint = await rendererPointerPoint(caption, captionCard, captionDragPoint)
+  const activeOrigin = screenPointForRenderer(caption, activePoint)
+  const captionBoundsBeforeGesture = caption.getBounds()
+  cursor.set(activeOrigin)
+  await dispatchRendererPointer(caption, captionCard, activePoint, 'pointerdown', 901)
+  const preMinimizeRendererState = await rendererValue(caption, `(() => ({
+    dragging: document.getElementById('captionCard').classList.contains('dragging'),
+    locked: document.getElementById('wrap').dataset.locked === 'on',
+    phase: window.__j19InteractionSync.at(-1)?.phase || null,
+    generation: window.__j19InteractionSync.at(-1)?.generation || null
+  }))()`)
+  if (!preMinimizeRendererState.dragging) {
+    throw new Error(`pre-minimize renderer gesture rejected locked=${preMinimizeRendererState.locked} phase=${preMinimizeRendererState.phase} generation=${preMinimizeRendererState.generation}`)
+  }
+  cursor.set({ x: activeOrigin.x + 7, y: activeOrigin.y + 5 })
+  const captionBoundsBeforeMinimize = await waitFor(() => {
+    const next = caption.getBounds()
+    return sameWindowBounds(next, captionBoundsBeforeGesture) ? null : next
+  }, 'pre-minimize active caption gesture')
+  const boundsBefore = Object.fromEntries(Object.entries(windows).map(([role, win]) => [role, win.getBounds()]))
+  const stationaryOrigin = screenPointForRenderer(caption, activePoint)
 
   await rendererValue(toolbar, `document.querySelector('button[data-act="minimize"]').click(); true`)
   await waitFor(() => toolbar.isMinimized() && !caption.isVisible() &&
@@ -223,7 +298,11 @@ async function exerciseApplicationLifecycle ({ caption, toolbar, settings, rawSe
     snapshotWhileMinimized.phase === 'listening' && snapshotWhileMinimized.sessionId === rawSessionId
   const captionHiddenWhileMinimized = !caption.isVisible()
   const minimizedAuxiliaryWindowCount = [settings, history].filter((win) => win.isMinimized()).length
+  cursor.set({ x: stationaryOrigin.x + 29, y: stationaryOrigin.y + 17 })
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  const preMinimizeGestureResetObserved = sameWindowBounds(caption.getBounds(), captionBoundsBeforeMinimize)
 
+  cursor.set(stationaryOrigin)
   toolbar.restore()
   await waitFor(() => visibleApplicationWindowRoles(windows).join(',') === visibleBefore.join(',') &&
     !toolbar.isMinimized() && !settings.isMinimized() && !history.isMinimized() &&
@@ -235,20 +314,70 @@ async function exerciseApplicationLifecycle ({ caption, toolbar, settings, rawSe
   const nativeRestorePreservedRuntimeSnapshot =
     JSON.stringify(nativeSnapshot) === JSON.stringify(snapshotBefore)
 
+  const nativeRestoreGeneration = observedWindowInteractionGenerationController.getState().generation
+  const stationaryPointerHitIntentObserved = await waitFor(() => windowInteractionGenerationProbe
+    .slice(generationProbeStart)
+    .some((entry) => entry.method === 'acceptMouseThrough' && entry.role === 'caption' &&
+      entry.argumentGeneration === nativeRestoreGeneration && entry.ignore === false && entry.accepted),
+  'stationary caption hit intent after native restore')
+  await assertRendererGestureMoves({
+    sourceWindow: caption,
+    targetWindow: caption,
+    targetExpression: captionCard,
+    pointExpression: captionDragPoint,
+    pointerId: 902,
+    cursor,
+    endType: 'pointerup'
+  })
+  const postRestoreCaptionDragIntentObserved = true
+
+  const staleGenerationIntentRejected = observedWindowInteractionGenerationController.acceptGesture('caption', {
+    schemaVersion: 1,
+    generation: nativeRestoreGeneration - 1
+  }) === false
+  const boundsBeforeSecondMinimize = Object.fromEntries(
+    Object.entries(windows).map(([role, win]) => [role, win.getBounds()])
+  )
+
+  await rendererValue(toolbar, `document.querySelector('button[data-act="lock"]').click(); true`)
+  await waitFor(() => rendererValue(toolbar, 'window.shell.getLock()'), 'lifecycle lock before second restore')
+
   await rendererValue(toolbar, `document.querySelector('button[data-act="minimize"]').click(); true`)
   await waitFor(() => toolbar.isMinimized() && !caption.isVisible() &&
     settings.isMinimized() && history.isMinimized(), 'second application minimize')
   app.emit('second-instance')
   await waitFor(() => visibleApplicationWindowRoles(windows).join(',') === visibleBefore.join(',') &&
     !toolbar.isMinimized(), 'second-instance restore visibility')
-  const secondInstanceMismatchRoles = applicationBoundsMismatchRoles(windows, boundsBefore)
+  const secondInstanceMismatchRoles = applicationBoundsMismatchRoles(windows, boundsBeforeSecondMinimize)
   if (secondInstanceMismatchRoles.length > 0) {
     throw new Error(`second-instance restore changed bounds for roles=${secondInstanceMismatchRoles.join(',')}`)
   }
   const secondInstanceRestoredPrimary = toolbar.isVisible() && !toolbar.isMinimized()
   const secondInstancePreservedWindowSet =
     visibleApplicationWindowRoles(windows).join(',') === visibleBefore.join(',')
-  const secondInstancePreservedBounds = applicationBoundsPreserved(windows, boundsBefore)
+  const secondInstancePreservedBounds = applicationBoundsPreserved(windows, boundsBeforeSecondMinimize)
+  const secondInstanceRestoreGeneration = observedWindowInteractionGenerationController.getState().generation
+  const lockedCaptionPassThroughIntentObserved = await waitFor(() => windowInteractionGenerationProbe
+    .slice(generationProbeStart)
+    .some((entry) => entry.method === 'acceptMouseThrough' && entry.role === 'caption' &&
+      entry.argumentGeneration === secondInstanceRestoreGeneration && entry.ignore === true && entry.accepted),
+  'locked caption pass-through intent after second-instance restore')
+  await rendererValue(toolbar, `document.querySelector('button[data-act="lock"]').click(); true`)
+  await waitFor(async () => (await rendererValue(toolbar, 'window.shell.getLock()')) === false,
+    'lifecycle unlock after second restore')
+
+  const rendererSyncs = Object.fromEntries(await Promise.all(Object.entries(windows).map(async ([role, win]) => [
+    role,
+    await rendererValue(win, '[...window.__j19InteractionSync]')
+  ])))
+  const beginGenerations = windowInteractionGenerationProbe.slice(generationProbeStart)
+    .filter((entry) => entry.method === 'beginTransaction')
+    .map((entry) => entry.generation)
+  const expectedGenerations = [1, 2, 3, 4].map((offset) => initialGeneration + offset)
+  const sameGenerationSuspendResumeObserved = [nativeRestoreGeneration, secondInstanceRestoreGeneration]
+    .every((generation) => Object.values(rendererSyncs).every((events) =>
+      events.some((entry) => entry.generation === generation && entry.phase === 'suspend') &&
+      events.some((entry) => entry.generation === generation && entry.phase === 'resume')))
 
   await rendererValue(settings, `document.getElementById('close').click(); true`)
   await waitFor(() => settings.isDestroyed(), 'settings local close')
@@ -263,6 +392,22 @@ async function exerciseApplicationLifecycle ({ caption, toolbar, settings, rawSe
 
   return {
     settings: reopenedSettings,
+    interactionContext: {
+      generationProbeStart,
+      generationAdvanceCount: beginGenerations.length,
+      preMinimizeGestureResetObserved,
+      minimizeGenerationAdvanced: beginGenerations[0] === expectedGenerations[0],
+      nativeRestoreGenerationAdvanced: beginGenerations[1] === expectedGenerations[1],
+      secondInstanceRestoreGenerationAdvanced:
+        beginGenerations[2] === expectedGenerations[2] && beginGenerations[3] === expectedGenerations[3],
+      sameGenerationSuspendResumeObserved,
+      stationaryPointerHitIntentObserved,
+      postRestoreCaptionDragIntentObserved,
+      staleGenerationIntentRejected,
+      nativePassThroughIntentObserved: windowInteractionGenerationProbe.slice(generationProbeStart).some((entry) =>
+        entry.method === 'setNativeIgnore' && entry.role === 'caption' && entry.ignore === true && entry.accepted),
+      lockedCaptionPassThroughIntentObserved
+    },
     evidence: {
       primaryWindowMinimizable: toolbar.isMinimizable(),
       primaryWindowTitleStable: toolbar.getTitle() === 'Live Subtitle',
@@ -776,6 +921,7 @@ async function exerciseNormalWindowInteractions ({ settings, history, toolbar, c
 async function exerciseSharedTitlebarThemes (settings, history, toolbar, caption) {
   const originalThemeSource = nativeTheme.themeSource
   const originalConfig = await rendererValue(settings, 'window.shell.getConfig()')
+  const originalLocked = await rendererValue(toolbar, 'window.shell.getLock()')
   const inspectTitlebar = (win) => rendererValue(win, `(() => {
     const root = getComputedStyle(document.documentElement)
     const titlebar = document.querySelector('.titlebar')
@@ -866,6 +1012,10 @@ async function exerciseSharedTitlebarThemes (settings, history, toolbar, caption
       throw new Error('caption custom background leaked into toolbar palette or contour')
     }
 
+    if (!originalLocked) {
+      await rendererValue(toolbar, `document.querySelector('button[data-act="lock"]').click(); true`)
+      await waitFor(() => rendererValue(toolbar, 'window.shell.getLock()'), 'toolbar surface lock state')
+    }
     const captionBeforeOpacity = await inspectCaption()
     const toolbarBeforeOpacity = await inspectToolbar()
     await rendererValue(settings, `window.shell.setConfig({ toolbarOpacity: 0.31 })`)
@@ -890,6 +1040,12 @@ async function exerciseSharedTitlebarThemes (settings, history, toolbar, caption
       toolbarOpacity: originalConfig.toolbarOpacity
     })})`)
     nativeTheme.themeSource = originalThemeSource
+    const currentLocked = await rendererValue(toolbar, 'window.shell.getLock()')
+    if (currentLocked !== originalLocked) {
+      await rendererValue(toolbar, `document.querySelector('button[data-act="lock"]').click(); true`)
+      await waitFor(async () => (await rendererValue(toolbar, 'window.shell.getLock()')) === originalLocked,
+        'toolbar surface lock state restore')
+    }
   }
   const forcedColorsTitlebarRuleObserved = await rendererValue(settings, `(() => {
     const visit = (rules) => [...rules].some((rule) => {
@@ -2008,10 +2164,12 @@ async function runJourney () {
     caption,
     toolbar,
     settings,
-    rawSessionId
+    rawSessionId,
+    cursor: controlledCursorBoundary
   })
   settings = lifecycleResult.settings
   const applicationLifecycle = lifecycleResult.evidence
+  const interactionLifecycleContext = lifecycleResult.interactionContext
 
   await waitFor(() => rendererValue(toolbar, `!!document.querySelector('button[data-act="pause"]:not(:disabled)')`), 'pause control')
   await rendererValue(toolbar, `document.querySelector('button[data-act="pause"]').click(); true`)
@@ -2041,6 +2199,22 @@ async function runJourney () {
       cursor: controlledCursorBoundary
     }),
     ...await exerciseSharedTitlebarThemes(settings, history, toolbar, caption)
+  }
+  const reloadProbe = windowInteractionGenerationProbe.slice(interactionLifecycleContext.generationProbeStart)
+  const interactionLifecycle = {
+    generationAdvanceCount: interactionLifecycleContext.generationAdvanceCount,
+    preMinimizeGestureResetObserved: interactionLifecycleContext.preMinimizeGestureResetObserved,
+    minimizeGenerationAdvanced: interactionLifecycleContext.minimizeGenerationAdvanced,
+    nativeRestoreGenerationAdvanced: interactionLifecycleContext.nativeRestoreGenerationAdvanced,
+    secondInstanceRestoreGenerationAdvanced: interactionLifecycleContext.secondInstanceRestoreGenerationAdvanced,
+    sameGenerationSuspendResumeObserved: interactionLifecycleContext.sameGenerationSuspendResumeObserved,
+    stationaryPointerHitIntentObserved: interactionLifecycleContext.stationaryPointerHitIntentObserved,
+    postRestoreCaptionDragIntentObserved: interactionLifecycleContext.postRestoreCaptionDragIntentObserved,
+    staleGenerationIntentRejected: interactionLifecycleContext.staleGenerationIntentRejected,
+    reloadCurrentGenerationReplayed: reloadProbe.some((entry) => entry.method === 'suspendRoleForReload' && entry.role === 'toolbar') &&
+      reloadProbe.some((entry) => entry.method === 'replay' && entry.role === 'toolbar' && entry.accepted),
+    nativePassThroughIntentObserved: interactionLifecycleContext.nativePassThroughIntentObserved,
+    lockedCaptionPassThroughIntentObserved: interactionLifecycleContext.lockedCaptionPassThroughIntentObserved
   }
   controlledCursorBoundary.restore()
   controlledCursorBoundary = null
@@ -2165,7 +2339,7 @@ async function runJourney () {
   if (audioFilesUnder(options.workDir).length > 0) throw new Error('product shell smoke persisted audio')
 
   const report = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: 'product-shell-smoke',
     generatedAt: new Date().toISOString(),
     result: 'pass',
@@ -2271,6 +2445,7 @@ async function runJourney () {
     },
     windowInteraction,
     applicationLifecycle,
+    interactionLifecycle,
     sourceIdentity: {
       productPayloadVersion: productPayloadIdentity.version,
       productPayloadFileCount: productPayloadIdentity.fileCount,

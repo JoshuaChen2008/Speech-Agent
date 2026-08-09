@@ -37,7 +37,8 @@ const {
 } = require('../../src/main/services/product-payload-identity')
 const {
   PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS,
-  PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS
+  PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS,
+  PRODUCT_SHELL_V7_INTERACTION_LIFECYCLE_KEYS
 } = require('../../scripts/verify-product-shell-report')
 const {
   readAndValidatePackagedRunBindingReport,
@@ -220,6 +221,15 @@ function productShellV6Fixture () {
   applicationLifecycle.visibleAuxiliaryWindowCountBeforeMinimize = 2
   applicationLifecycle.minimizedAuxiliaryWindowCount = 2
   return { ...report, schemaVersion: 6, applicationLifecycle }
+}
+
+function productShellV7Fixture () {
+  const report = productShellV6Fixture()
+  const interactionLifecycle = Object.fromEntries(
+    PRODUCT_SHELL_V7_INTERACTION_LIFECYCLE_KEYS.map((key) => [key, true])
+  )
+  interactionLifecycle.generationAdvanceCount = 4
+  return { ...report, schemaVersion: 7, interactionLifecycle }
 }
 
 test('release package uses an explicit ASAR allowlist, hardened fuses and per-user NSIS', () => {
@@ -488,6 +498,18 @@ test('packaged product v6 evidence adds J19 application lifecycle without weaken
   }), /application lifecycle/)
 })
 
+test('packaged product v7 evidence binds J17/J19 interaction-generation recovery to the same product payload', () => {
+  const report = productShellV7Fixture()
+  assert.equal(validatePackagedProductShellReport(report), report)
+  assert.throws(() => validatePackagedProductShellReport({
+    ...report,
+    interactionLifecycle: {
+      ...report.interactionLifecycle,
+      staleGenerationIntentRejected: false
+    }
+  }), /interaction lifecycle/)
+})
+
 test('packaged smoke source starts at packaged argv and probes native code in a utility process', () => {
   const source = fs.readFileSync(path.join(ROOT, 'scripts', 'product-shell-smoke.js'), 'utf8')
   assert.match(source, /process\.argv\.slice\(app\.isPackaged \? 1 : 2\)/)
@@ -495,8 +517,9 @@ test('packaged smoke source starts at packaged argv and probes native code in a 
   assert.match(source, /app\.asar\.unpacked/)
   assert.match(source, /releaseCandidate: false/)
   assert.match(source, /coreReadyMarkerCount/)
-  assert.match(source, /schemaVersion:\s*6/)
+  assert.match(source, /schemaVersion:\s*7/)
   assert.match(source, /applicationLifecycle/)
+  assert.match(source, /interactionLifecycle/)
   assert.match(source, /controlled-pointer-and-focus-no-human-dwm/)
   assert.match(source, /refinementContinueRangeObserved/)
   assert.match(source, /historyRefinedVersionPersistsAcrossPaging/)

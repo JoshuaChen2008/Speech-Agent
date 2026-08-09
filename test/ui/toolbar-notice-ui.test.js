@@ -95,10 +95,12 @@ function createHarness () {
   const layoutReports = []
   const observedLayoutTargets = []
   const throughCalls = []
+  let dragController = null
   const shell = {
     mouseThrough: (ignore) => throughCalls.push(ignore),
     dragStart () {}, dragEnd () {}, lockToggle () {},
     action: (name) => actions.push(name),
+    onInteractionSync: (callback) => { callbacks.interaction = callback },
     onLock: (callback) => { callbacks.lock = callback },
     onConfig: (callback) => { callbacks.config = callback },
     onSnapshot: (callback) => { callbacks.snapshot = callback },
@@ -144,6 +146,27 @@ function createHarness () {
     },
     Appearance: { applyAppearance () {} },
     FIXTURES: { runtime: { unavailable: { revision: 0 } } },
+    ManualWindowDrag: {
+      bindManualWindowDrag (options) {
+        let active = false
+        dragController = {
+          cancel () {
+            if (!active) return
+            active = false
+            options.onActiveChange?.(false)
+          },
+          end () {},
+          isDragging: () => active,
+          start () {
+            if (options.onStart?.() === false) return false
+            active = true
+            options.onActiveChange?.(true)
+            return true
+          }
+        }
+        return dragController
+      }
+    },
     addEventListener () {}
   }
   vm.runInNewContext(transpileRenderer(path.join(root, 'src', 'toolbar', 'toolbar.ts')), {
@@ -157,7 +180,7 @@ function createHarness () {
     },
     window
   })
-  return { actions, callbacks, document, elements, layoutReports, observedLayoutTargets, throughCalls }
+  return { actions, callbacks, document, dragController, elements, layoutReports, observedLayoutTargets, throughCalls }
 }
 
 test('toolbar renderer shows and dismisses a post-session status without creating another row', async () => {
@@ -205,9 +228,15 @@ test('SEM-F22/J17: toolbar reports its existing contour with the main-issued gen
    下面应用的点击），离开必须粘住（否则边缘 1px 抖动就来回翻）。
    条的轮廓在本 harness 里是 184..584 × 16..56。 */
 test('SEM-F22/J17: toolbar mouse-through enters on the exact contour and leaves only past the hysteresis band', async () => {
-  const { document, throughCalls } = createHarness()
+  const { callbacks, document, throughCalls } = createHarness()
   await flush()
 
+  callbacks.interaction({
+    schemaVersion: 1,
+    generation: 2,
+    phase: 'resume',
+    pointer: { x: 0, y: 0 }
+  })
   assert.deepEqual(throughCalls, [true], '首帧未指到条，一律放行')
 
   throughCalls.length = 0
@@ -231,6 +260,45 @@ test('SEM-F22/J17: toolbar mouse-through enters on the exact contour and leaves 
   throughCalls.length = 0
   document.dispatch('mouseleave', {})
   assert.deepEqual(throughCalls, [true], '指针离开整个窗口时不能卡在实心态')
+})
+
+test('SEM-F22/SEM-F24/J17/J19: toolbar resume forces a same-generation stationary-pointer acknowledgement', () => {
+  const { callbacks, throughCalls } = createHarness()
+  const resume = {
+    schemaVersion: 1,
+    generation: 4,
+    phase: 'resume',
+    pointer: { x: 300, y: 30 }
+  }
+  callbacks.interaction(resume)
+  callbacks.interaction(resume)
+  assert.deepEqual(throughCalls, [false, false])
+
+  callbacks.interaction({ schemaVersion: 1, generation: 5, phase: 'suspend' })
+  callbacks.interaction({ ...resume, generation: 4, pointer: { x: 0, y: 0 } })
+  assert.deepEqual(throughCalls, [false, false], 'an older resume cannot replace the suspended generation')
+})
+
+test('SEM-F22/SEM-F24/J17/J19: toolbar lifecycle cancellation cannot acknowledge with the pre-restore pointer', () => {
+  const { callbacks, dragController, throughCalls } = createHarness()
+  callbacks.interaction({
+    schemaVersion: 1,
+    generation: 2,
+    phase: 'resume',
+    pointer: { x: 300, y: 30 }
+  })
+  throughCalls.length = 0
+  assert.equal(dragController.start(), true)
+
+  callbacks.interaction({ schemaVersion: 1, generation: 3, phase: 'suspend' })
+  assert.deepEqual(throughCalls, [], 'silent cancel must not acknowledge from the old local pointer')
+  callbacks.interaction({
+    schemaVersion: 1,
+    generation: 3,
+    phase: 'resume',
+    pointer: { x: 0, y: 0 }
+  })
+  assert.deepEqual(throughCalls, [true])
 })
 
 test('SEM-F24/J19: toolbar exposes an accessible Fluent minimize action', async () => {

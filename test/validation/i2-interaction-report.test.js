@@ -7,6 +7,7 @@ const test = require('node:test')
 
 const {
   DWM_OBSERVATION_IDS,
+  DWM_V3_LIMITATIONS,
   RECOVERY_FAULT_CODES,
   RECOVERY_SCENARIOS,
   TRANSPORT_FIELDS,
@@ -14,6 +15,7 @@ const {
   buildInteractionReport,
   buildRecoveryProgress,
   completeDwmChecks,
+  completeDwmLifecycleChecks,
   dwmOperatorCompletion,
   parseArguments,
   parseOperatorCompletion,
@@ -54,6 +56,7 @@ function completeDwmScenarioEvidence () {
     operatorCompletionSha256: 'c'.repeat(64),
     combination: { scalePercent: 100, theme: 'dark' },
     checks: completeDwmChecks(),
+    lifecycle: completeDwmLifecycleChecks(),
     crossScale: { observed: false, criticalHitMatrixRepeated: false },
     productPayloadVersion: PRODUCT_IDENTITY.version,
     productPayloadFileCount: PRODUCT_IDENTITY.fileCount,
@@ -235,7 +238,7 @@ test('transport snapshots expose only counters and same-generation deltas retain
 test('strict verifier accepts automated and manual interaction reports but rejects evidence that overclaims device actions', () => {
   for (const scenario of ['pause-refine', 'worker-crash-retry', 'dwm-drag']) {
     const report = reportFor(scenario)
-    assert.equal(report.schemaVersion, scenario === 'dwm-drag' ? 3 : 1)
+    assert.equal(report.schemaVersion, scenario === 'dwm-drag' ? 4 : 1)
     assert.equal(validateInteractionReport(report, scenario), report)
     assert.equal(validateInteractionEvidence(Buffer.from(JSON.stringify(report)), scenario).scenario, scenario)
   }
@@ -260,9 +263,9 @@ test('strict verifier accepts automated and manual interaction reports but rejec
   assert.throws(() => validateInteractionReport(crossGenerationDelta), /cross-generation/)
 })
 
-test('SEM-F22/J17/I2: schema-v3 DWM evidence requires the complete unique observation matrix and current product hash', () => {
+test('SEM-F22/SEM-F24/J17/J19/I2: schema-v4 DWM evidence requires lifecycle observations and the current product hash', () => {
   const report = reportFor('dwm-drag')
-  assert.equal(report.schemaVersion, 3)
+  assert.equal(report.schemaVersion, 4)
   assert.deepEqual(validateInteractionEvidence(Buffer.from(JSON.stringify(report)), 'dwm-drag'), report)
 
   const completionOnly = structuredClone(report)
@@ -272,6 +275,10 @@ test('SEM-F22/J17/I2: schema-v3 DWM evidence requires the complete unique observ
   const missing = structuredClone(report)
   delete missing.scenarioEvidence.checks.caption.leftImmediateContinuousDrag
   assert.throws(() => validateInteractionReport(missing), /missing|unknown fields/)
+
+  const missingLifecycle = structuredClone(report)
+  delete missingLifecycle.scenarioEvidence.lifecycle.stationaryPointerHitObserved
+  assert.throws(() => validateInteractionReport(missingLifecycle), /lifecycle|missing|unknown fields/)
 
   const duplicate = structuredClone(report)
   duplicate.scenarioEvidence.checks.toolbarStates[1].state = 'quiet'
@@ -288,6 +295,27 @@ test('SEM-F22/J17/I2: schema-v3 DWM evidence requires the complete unique observ
   const staleCandidate = structuredClone(report)
   staleCandidate.scenarioEvidence.productPayloadSha256 = '0'.repeat(64)
   assert.throws(() => validateInteractionEvidence(Buffer.from(JSON.stringify(staleCandidate)), 'dwm-drag'), /product payload identity/)
+})
+
+test('SEM-F22/J17/I2: historical schema-v3 DWM reports and completions remain readable but do not become current v4 evidence', () => {
+  const report = reportFor('dwm-drag')
+  report.schemaVersion = 3
+  delete report.scenarioEvidence.lifecycle
+  report.limitations = [...DWM_V3_LIMITATIONS]
+  assert.equal(validateInteractionReport(report, 'dwm-drag'), report)
+  assert.deepEqual(validateInteractionEvidence(Buffer.from(JSON.stringify(report)), 'dwm-drag'), report)
+
+  const current = dwmOperatorCompletion({
+    confirmations: DWM_OBSERVATION_IDS,
+    runBindingSha256: 'b'.repeat(64),
+    productPayloadVersion: PRODUCT_IDENTITY.version,
+    productPayloadFileCount: PRODUCT_IDENTITY.fileCount,
+    productPayloadSha256: PRODUCT_IDENTITY.sha256,
+    combination: { scalePercent: 100, theme: 'dark' }
+  })
+  const legacy = { ...current, schemaVersion: 3 }
+  delete legacy.lifecycle
+  assert.deepEqual(parseOperatorCompletion(Buffer.from(JSON.stringify(legacy))), legacy)
 })
 
 test('recovery pass requires product-observed fault, release, no auto reacquire, Retry and persisted caption continuity', () => {
@@ -349,8 +377,14 @@ test('DWM progress and completion files are bounded, text-free hand-off evidence
     combination: { scalePercent: 100, theme: 'dark' }
   })
   assert.deepEqual(parseOperatorCompletion(Buffer.from(JSON.stringify(completion))), completion)
-  assert.equal(completion.schemaVersion, 3)
+  assert.equal(completion.schemaVersion, 4)
   assert.equal(completion.checks.resizeTargets.length, 8)
+  assert.deepEqual(completion.lifecycle, {
+    taskbarRestoreObserved: true,
+    stationaryPointerHitObserved: true,
+    postRestoreCaptionDragObserved: true,
+    lockedCaptionPassedThroughAfterRestore: true
+  })
 
   assert.deepEqual(parseOperatorCompletion(Buffer.from(JSON.stringify({
     schemaVersion: 1,

@@ -122,7 +122,10 @@ export function HistoryView (): ReactElement {
   useEffect(() => {
     const drag = window.ManualWindowDrag; if (!drag || !titlebar.current) return
     const controller = drag.bindManualWindowDrag({ handle: titlebar.current, canStart: (event: Event) => !drag.isInteractiveDragEvent(event), onStart: () => api.dragStart(), onEnd: () => api.dragEnd() })
-    return () => controller.end()
+    const dispose = typeof api.onInteractionSync === 'function'
+      ? api.onInteractionSync(() => controller.cancel?.())
+      : null
+    return () => { if (typeof dispose === 'function') dispose(); controller.cancel?.() }
   }, [api])
 
   const selectedSession = sessions.find((item) => item.sessionId === selected) ?? null

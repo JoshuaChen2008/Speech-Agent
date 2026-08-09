@@ -2,11 +2,13 @@
 
 const { contextBridge } = require('electron')
 const CHANNELS = require('../main/ipc/channels')
-const { ipcRenderer, subscribe } = require('./shared')
+const { createWindowInteractionBridge, ipcRenderer, subscribe } = require('./shared')
+const interaction = createWindowInteractionBridge('history')
 
 contextBridge.exposeInMainWorld('historyApi', {
-  dragStart: () => ipcRenderer.send(CHANNELS.DRAG_START),
-  dragEnd: () => ipcRenderer.send(CHANNELS.DRAG_END),
+  dragStart: interaction.dragStart,
+  dragEnd: interaction.dragEnd,
+  onInteractionSync: interaction.onInteractionSync,
   close: () => ipcRenderer.send(CHANNELS.HISTORY_CLOSE),
   getConfig: () => ipcRenderer.invoke(CHANNELS.CONFIG_GET),
   onConfig: (callback) => subscribe(CHANNELS.CONFIG_CHANGED, callback),

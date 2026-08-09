@@ -2,11 +2,13 @@
 
 const { contextBridge } = require('electron')
 const CHANNELS = require('../main/ipc/channels')
-const { ipcRenderer, subscribe } = require('./shared')
+const { createWindowInteractionBridge, ipcRenderer, subscribe } = require('./shared')
+const interaction = createWindowInteractionBridge('settings')
 
 contextBridge.exposeInMainWorld('shell', {
-  dragStart: () => ipcRenderer.send(CHANNELS.DRAG_START),
-  dragEnd: () => ipcRenderer.send(CHANNELS.DRAG_END),
+  dragStart: interaction.dragStart,
+  dragEnd: interaction.dragEnd,
+  onInteractionSync: interaction.onInteractionSync,
   closeSettings: () => ipcRenderer.send(CHANNELS.SETTINGS_CLOSE),
   getConfig: () => ipcRenderer.invoke(CHANNELS.CONFIG_GET),
   setConfig: (patch) => ipcRenderer.invoke(CHANNELS.CONFIG_UPDATE, patch),

@@ -96,7 +96,7 @@
   },
   "provenance": {
     "historyReactEvidenceHarnessSha256": "a29213a875a6c267a5d9fc3dece9bc6f1e7c5d042745636a8d50f6a8dc373e33",
-    "historyRendererSha256": "a83208707e3cf055a8707d97c1936eafb0f069147b72b4a74721a1e25e1fda50",
+    "historyRendererSha256": "eb3ae33ae85cfdf45d2c6687e49f921130e1b7aabb187e07f0af43c571a76bd0",
     "historyServiceSha256": "beafb8d7590cf52d7eab29417cad34427857c1dbd537275aef64d47fef5a1584",
     "runnerSha256": "29be92da468463002dde768f201f24243b1621a0596c28ebdd582de530feb0e0",
     "sessionCoordinatorSha256": "85cd1190f2012e87d961d5af0f6ecbca74e93328ad0e472c6d13b275b6649189",
@@ -106,7 +106,7 @@
     "storageGatewaySha256": "77c701fc12df5cffec40ed0ff93a64b334bfe39611f75709d6f601f007b4bdd8",
     "storageWorkerServiceSha256": "d66aeaf5b0ac82be7c85a8dac8490e810714b01aa5b577aeb39240aecb5161ab",
     "verifierSha256": "8014be2efdbd0d63a99a4de1a9f24ccb70eddcb158cc89b46d2d7bb731ed6ff1",
-    "productPayloadSha256": "c692c38ffb8a12e64a5413a0cb36f9bebf26db26937aeb0f9895c288babb3fff"
+    "productPayloadSha256": "23213e47db15ed2dffca7233bfe64b2f6e4317d19d1bd9eb8aafcd3d39d83090"
   },
   "result": "pass",
   "schemaVersion": 1

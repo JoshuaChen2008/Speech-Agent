@@ -162,7 +162,10 @@ export function SettingsView (): ReactElement {
     const drag = window.ManualWindowDrag; if (!drag || !titlebar.current) return
     const controller = drag.bindManualWindowDrag({ handle: titlebar.current,
       canStart: (event: Event) => !drag.isInteractiveDragEvent(event), onStart: () => shell.dragStart(), onEnd: () => shell.dragEnd() })
-    return () => controller.end()
+    const dispose = typeof shell.onInteractionSync === 'function'
+      ? shell.onInteractionSync(() => controller.cancel?.())
+      : null
+    return () => { if (typeof dispose === 'function') dispose(); controller.cancel?.() }
   }, [shell])
 
   const core = models?.core ?? fallbackGroup(); const refinement = models?.refinement ?? fallbackGroup()

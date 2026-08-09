@@ -10,6 +10,7 @@ const {
   PRODUCT_SHELL_V3_JOURNEY_KEYS,
   PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS,
   PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS,
+  PRODUCT_SHELL_V7_INTERACTION_LIFECYCLE_KEYS,
   validateProductShellReport
 } = require('../../scripts/verify-product-shell-report')
 
@@ -107,6 +108,22 @@ function reportV6 () {
   }
 }
 
+function completeInteractionLifecycle () {
+  const value = Object.fromEntries(
+    PRODUCT_SHELL_V7_INTERACTION_LIFECYCLE_KEYS.map((key) => [key, true])
+  )
+  value.generationAdvanceCount = 4
+  return value
+}
+
+function reportV7 () {
+  return {
+    ...reportV6(),
+    schemaVersion: 7,
+    interactionLifecycle: completeInteractionLifecycle()
+  }
+}
+
 function packagedReportV5 () {
   const report = reportV5()
   report.packaging = Object.fromEntries(PRODUCT_SHELL_PACKAGING_KEYS.map((key) => [key, false]))
@@ -131,6 +148,29 @@ test('SEM-F22/J17: product-shell schema v5 accepts exact private window interact
 test('SEM-F24/J19: product-shell schema v6 accepts exact application lifecycle evidence', () => {
   const report = reportV6()
   assert.equal(validateProductShellReport(report), report)
+})
+
+test('SEM-F22/SEM-F24/J17/J19: product-shell schema v7 accepts exact interaction-generation lifecycle evidence', () => {
+  const report = reportV7()
+  assert.equal(validateProductShellReport(report), report)
+})
+
+test('SEM-F14/F22/F24/J17/J19: schema v7 rejects incomplete, false, invalid and sensitive interaction lifecycle evidence', () => {
+  const missing = structuredClone(reportV7())
+  delete missing.interactionLifecycle.reloadCurrentGenerationReplayed
+  assert.throws(() => validateProductShellReport(missing), /interaction lifecycle/)
+
+  const falseClaim = structuredClone(reportV7())
+  falseClaim.interactionLifecycle.stationaryPointerHitIntentObserved = false
+  assert.throws(() => validateProductShellReport(falseClaim), /interaction lifecycle/)
+
+  const wrongCount = structuredClone(reportV7())
+  wrongCount.interactionLifecycle.generationAdvanceCount = 3
+  assert.throws(() => validateProductShellReport(wrongCount), /generation count/)
+
+  const sensitive = structuredClone(reportV7())
+  sensitive.interactionLifecycle.coordinates = [1, 2]
+  assert.throws(() => validateProductShellReport(sensitive), /interaction lifecycle|forbidden/)
 })
 
 test('SEM-F14/F24/J19: schema v6 rejects incomplete, unknown, false and invalid lifecycle evidence', () => {

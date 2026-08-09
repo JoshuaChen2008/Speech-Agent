@@ -100,7 +100,7 @@ class FakeWindow extends EventEmitter {
   }
 }
 
-function createHarness ({ settingsFocused = true } = {}) {
+function createHarness ({ settingsFocused = true, schedulePostRestore = setImmediate } = {}) {
   const calls = []
   const faults = []
   const caption = new FakeWindow('caption', calls, {
@@ -121,13 +121,20 @@ function createHarness ({ settingsFocused = true } = {}) {
   })
   let stopCount = 0
   let stackCount = 0
+  let interactionGeneration = 1
+  const resumedGenerations = []
+  const degradedGenerations = []
   const controller = new ApplicationWindowLifecycleController({
     getCaptionWindow: () => caption,
     getToolbarWindow: () => toolbar,
     getSettingsWindow: () => settings,
     getHistoryWindow: () => history,
     stopInteractions: () => { stopCount += 1 },
+    beginInteractionTransaction: () => { interactionGeneration += 1; return interactionGeneration },
+    resumeInteractions: (generation) => { resumedGenerations.push(generation); return true },
+    degradeInteractions: (generation) => { degradedGenerations.push(generation); return true },
     restoreWindowStack: () => { stackCount += 1 },
+    schedulePostRestore,
     onFault: (fault) => faults.push(fault)
   })
   controller.bindPrimaryWindow(toolbar)
@@ -142,9 +149,24 @@ function createHarness ({ settingsFocused = true } = {}) {
     settings,
     toolbar,
     getStackCount: () => stackCount,
-    getStopCount: () => stopCount
+    getStopCount: () => stopCount,
+    getInteractionGeneration: () => interactionGeneration,
+    getResumedGenerations: () => [...resumedGenerations],
+    getDegradedGenerations: () => [...degradedGenerations]
   }
 }
+
+test('SEM-F22/SEM-F24/J17/J19: minimize and restore use separate generations while suspend and resume share the restore generation', async () => {
+  const harness = createHarness()
+  assert.equal(harness.controller.minimize(), true)
+  assert.equal(harness.getInteractionGeneration(), 2)
+  assert.deepEqual(harness.getResumedGenerations(), [])
+
+  harness.toolbar.restore()
+  assert.equal(harness.getInteractionGeneration(), 3)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(harness.getResumedGenerations(), [3])
+})
 
 test('SEM-F24/J19: app minimize and taskbar restore preserve the visible window set, bounds and focus', () => {
   const harness = createHarness()
@@ -241,6 +263,22 @@ test('SEM-F24/J19: a minimize failure rolls back to a taskbar-reachable primary 
   assert.doesNotMatch(JSON.stringify(harness.faults), /private-path/)
 })
 
+test('SEM-F22/SEM-F24/T04/J17/J19: a failed minimize rollback degrades the same interaction generation for retry', () => {
+  const harness = createHarness()
+  harness.settings.failOn.add('minimize')
+  harness.toolbar.failOn.add('show')
+
+  assert.equal(harness.controller.minimize(), false)
+  assert.equal(harness.toolbar.visible, true)
+  assert.deepEqual(harness.getDegradedGenerations(), [2])
+  assert.deepEqual(harness.getResumedGenerations(), [])
+  assert.deepEqual(harness.faults, [
+    { role: 'application', code: 'minimize-failed' },
+    { role: 'application', code: 'minimize-rollback-failed' }
+  ])
+  assert.doesNotMatch(JSON.stringify(harness.faults), /private-path/)
+})
+
 test('SEM-F24/J19: a restore failure exposes the primary and keeps the same window set retryable', () => {
   const harness = createHarness()
   assert.equal(harness.controller.minimize(), true)
@@ -249,6 +287,8 @@ test('SEM-F24/J19: a restore failure exposes the primary and keeps the same wind
   assert.equal(harness.controller.restore(), false)
   assert.equal(harness.toolbar.visible, true)
   assert.equal(harness.toolbar.minimized, false)
+  assert.deepEqual(harness.getDegradedGenerations(), [3])
+  assert.deepEqual(harness.getResumedGenerations(), [])
   assert.deepEqual(harness.faults, [{ role: 'application', code: 'restore-failed' }])
 
   harness.settings.failOn.delete('restore')
@@ -256,6 +296,62 @@ test('SEM-F24/J19: a restore failure exposes the primary and keeps the same wind
   assert.equal(harness.caption.visible, true)
   assert.equal(harness.settings.visible, true)
   assert.equal(harness.settings.minimized, false)
+})
+
+test('SEM-F22/SEM-F24/T04/J17/J19: a newer restore transaction invalidates an older delayed bounds correction', () => {
+  const scheduled = []
+  const harness = createHarness({ schedulePostRestore: (callback) => scheduled.push(callback) })
+  const original = harness.toolbar.getBounds()
+
+  assert.equal(harness.controller.minimize(), true)
+  assert.equal(harness.controller.restore(), true)
+  assert.equal(scheduled.length, 1)
+
+  harness.toolbar.bounds = { ...original, x: original.x + 31 }
+  assert.equal(harness.controller.restoreOrShow(), true)
+  assert.equal(scheduled.length, 2)
+
+  scheduled[0]()
+  assert.deepEqual(harness.toolbar.getBounds(), { ...original, x: original.x + 31 })
+  assert.deepEqual(harness.getResumedGenerations(), [])
+
+  scheduled[1]()
+  assert.deepEqual(harness.getResumedGenerations(), [4])
+})
+
+test('SEM-F22/SEM-F24/T04/J17/J19: post-restore bounds failure degrades instead of resuming hit testing', () => {
+  const scheduled = []
+  const harness = createHarness({ schedulePostRestore: (callback) => scheduled.push(callback) })
+
+  assert.equal(harness.controller.minimize(), true)
+  assert.equal(harness.controller.restore(), true)
+  harness.toolbar.bounds.x += 19
+  harness.toolbar.failOn.add('setBounds')
+  scheduled.shift()()
+
+  assert.deepEqual(harness.getResumedGenerations(), [])
+  assert.deepEqual(harness.getDegradedGenerations(), [3])
+  assert.deepEqual(harness.faults, [
+    { role: 'application', code: 'post-restore-bounds-failed' }
+  ])
+  assert.doesNotMatch(JSON.stringify(harness.faults), /private-path/)
+})
+
+test('SEM-F22/SEM-F24/T04/J17/J19: restoreOrShow failure keeps the primary reachable and closes the interaction generation', () => {
+  const harness = createHarness()
+  harness.toolbar.minimized = true
+  harness.toolbar.visible = false
+  harness.toolbar.failOn.add('focus')
+
+  assert.equal(harness.controller.restoreOrShow(), false)
+  assert.equal(harness.toolbar.minimized, false)
+  assert.equal(harness.toolbar.visible, true)
+  assert.deepEqual(harness.getDegradedGenerations(), [2])
+  assert.deepEqual(harness.getResumedGenerations(), [])
+  assert.deepEqual(harness.faults, [
+    { role: 'application', code: 'show-failed' },
+    { role: 'application', code: 'primary-restore-failed' }
+  ])
 })
 
 test('SEM-F24/J19: overlay roles expose one stable Windows taskbar primary', () => {
@@ -279,4 +375,9 @@ test('SEM-F24/J19: main routes primary close, renderer minimize and second insta
   assert.match(source, /action === 'minimize'\) applicationWindowLifecycleController\.minimize\(\)/)
   assert.match(source, /app\.on\('second-instance',[\s\S]{0,100}applicationWindowLifecycleController\.restoreOrShow\(\)/)
   assert.match(source, /app\.setAppUserModelId\(WINDOWS_APP_USER_MODEL_ID\)/)
+  assert.match(source, /did-start-navigation[\s\S]{0,240}stopForSender\(senderId\)[\s\S]{0,160}suspendRoleForReload\(role\)/)
+  assert.match(source, /render-process-gone[\s\S]{0,180}stopForSender\(senderId\)[\s\S]{0,180}failClosedAfterRendererGone\(role\)/)
+  assert.match(source, /did-finish-load[\s\S]{0,140}stopForSender\(senderId\)[\s\S]{0,260}replay\(role\)/)
+  assert.match(source, /const replayEpoch = navigationEpoch[\s\S]{0,260}replayEpoch === navigationEpoch/)
+  assert.match(source, /if \(captionPassThroughPrepared\) captionWin\.show\(\)/)
 })

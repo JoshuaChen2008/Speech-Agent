@@ -27,7 +27,7 @@ const DWM_RESIZE_TARGETS = Object.freeze([
   'north-east-corner', 'south-east-corner', 'south-west-corner', 'north-west-corner'
 ])
 const DWM_NORMAL_WINDOW_ROLES = Object.freeze(['settings', 'history'])
-const DWM_OBSERVATION_IDS = Object.freeze([
+const DWM_V3_OBSERVATION_IDS = Object.freeze([
   'caption-left-drag',
   'caption-center-drag',
   'caption-right-drag',
@@ -45,6 +45,16 @@ const DWM_OBSERVATION_IDS = Object.freeze([
   'history-body-controls-static',
   'foreground-demotion',
   'titlebar-neutral-structure'
+])
+const DWM_LIFECYCLE_OBSERVATION_IDS = Object.freeze([
+  'application-taskbar-restore',
+  'caption-stationary-restore-hit',
+  'caption-post-restore-drag',
+  'locked-caption-post-restore-through'
+])
+const DWM_OBSERVATION_IDS = Object.freeze([
+  ...DWM_V3_OBSERVATION_IDS,
+  ...DWM_LIFECYCLE_OBSERVATION_IDS
 ])
 const TRANSPORT_FIELDS = Object.freeze([
   'capturedFrames', 'sentFrames', 'ingestedFrames', 'droppedFrames',
@@ -81,6 +91,11 @@ const DWM_LEGACY_LIMITATIONS = Object.freeze([
 const DWM_V3_LIMITATIONS = Object.freeze([
   'Operator completion records one visible scale and theme combination only and cannot independently produce pass.',
   'Current I2 acceptance requires the strict twelve-combination matrix and a bound J17 product-shell report.',
+  'No captured audio, transcript text, device name, model path, local audio path, geometry, coordinate, or absolute monotonic time is persisted in this evidence.'
+])
+const DWM_V4_LIMITATIONS = Object.freeze([
+  'Operator completion records one visible scale and theme combination only and cannot independently produce pass.',
+  'Current I2 acceptance requires the strict twelve-combination schema-v4 matrix and a bound schema-v7 J17 product-shell report.',
   'No captured audio, transcript text, device name, model path, local audio path, geometry, coordinate, or absolute monotonic time is persisted in this evidence.'
 ])
 
@@ -269,16 +284,38 @@ function validateDwmCombination (value, label = 'DWM combination') {
   return value
 }
 
-function validateDwmConfirmations (confirmations) {
+function validateDwmConfirmations (confirmations, observationIds = DWM_OBSERVATION_IDS) {
   assert.ok(Array.isArray(confirmations), 'DWM observations must be an array')
-  assert.equal(confirmations.length, DWM_OBSERVATION_IDS.length, 'DWM observations are missing or duplicated')
+  assert.equal(confirmations.length, observationIds.length, 'DWM observations are missing or duplicated')
   const seen = new Set()
   for (const id of confirmations) {
-    assert.ok(DWM_OBSERVATION_IDS.includes(id), `DWM observation is unknown: ${id}`)
+    assert.ok(observationIds.includes(id), `DWM observation is unknown: ${id}`)
     assert.equal(seen.has(id), false, `DWM observation is duplicated: ${id}`)
     seen.add(id)
   }
-  for (const id of DWM_OBSERVATION_IDS) assert.equal(seen.has(id), true, `DWM observation is missing: ${id}`)
+  for (const id of observationIds) assert.equal(seen.has(id), true, `DWM observation is missing: ${id}`)
+}
+
+function completeDwmLifecycleChecks () {
+  return {
+    taskbarRestoreObserved: true,
+    stationaryPointerHitObserved: true,
+    postRestoreCaptionDragObserved: true,
+    lockedCaptionPassedThroughAfterRestore: true
+  }
+}
+
+function validateDwmLifecycleChecks (value, label = 'DWM lifecycle') {
+  assertExactKeys(value, [
+    'taskbarRestoreObserved',
+    'stationaryPointerHitObserved',
+    'postRestoreCaptionDragObserved',
+    'lockedCaptionPassedThroughAfterRestore'
+  ], label)
+  for (const [key, observed] of Object.entries(value)) {
+    assert.equal(observed, true, `${label}.${key} must be true`)
+  }
+  return value
 }
 
 function completeDwmChecks () {
@@ -401,7 +438,7 @@ function dwmOperatorCompletion ({
 }) {
   validateDwmConfirmations(confirmations)
   const completion = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: 'i2-dwm-drag-operator-completion',
     scenario: 'dwm-drag',
     runBindingSha256,
@@ -411,6 +448,7 @@ function dwmOperatorCompletion ({
     combination: { ...combination },
     observed: true,
     checks: completeDwmChecks(),
+    lifecycle: completeDwmLifecycleChecks(),
     crossScale: {
       observed: crossScaleObserved === true,
       criticalHitMatrixRepeated: crossScaleObserved === true
@@ -437,7 +475,7 @@ function buildDwmProgress ({
   validateTransportSnapshot(transport.after, 'progress transport.after')
   if (transport.delta !== null) validateTransportDelta(transport.delta, 'progress transport.delta')
   const progress = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: 'i2-dwm-drag-progress',
     scenario: 'dwm-drag',
     sourceId,
@@ -486,7 +524,7 @@ function validateDwmProgress (value) {
     'productPayloadVersion', 'productPayloadFileCount', 'productPayloadSha256',
     'combination', 'operatorCompletionObserved', 'transport'
   ], 'DWM progress')
-  assert.equal(value.schemaVersion, 3)
+  assert.ok([3, 4].includes(value.schemaVersion), 'DWM progress schemaVersion must be 3 or 4')
   assert.equal(value.kind, 'i2-dwm-drag-progress')
   assert.equal(value.scenario, 'dwm-drag')
   assert.ok(SOURCES.includes(value.sourceId))
@@ -518,12 +556,15 @@ function parseOperatorCompletion (bytes) {
 
 function validateDwmOperatorCompletion (value) {
   assertSafeInteractionValue(value)
+  const schemaVersion = value?.schemaVersion
   assertExactKeys(value, [
     'schemaVersion', 'kind', 'scenario', 'runBindingSha256',
     'productPayloadVersion', 'productPayloadFileCount', 'productPayloadSha256',
-    'combination', 'observed', 'checks', 'crossScale'
+    'combination', 'observed', 'checks',
+    ...(schemaVersion === 4 ? ['lifecycle'] : []),
+    'crossScale'
   ], 'DWM operator completion')
-  assert.equal(value.schemaVersion, 3)
+  assert.ok([3, 4].includes(schemaVersion), 'DWM operator completion schemaVersion must be 3 or 4')
   assert.equal(value.kind, 'i2-dwm-drag-operator-completion')
   assert.equal(value.scenario, 'dwm-drag')
   assertSha256(value.runBindingSha256, 'DWM operator completion.runBindingSha256')
@@ -531,6 +572,7 @@ function validateDwmOperatorCompletion (value) {
   validateDwmCombination(value.combination, 'DWM operator completion.combination')
   assert.equal(value.observed, true, 'operator completion must explicitly record observed=true')
   validateDwmChecks(value.checks, 'DWM operator completion.checks')
+  if (schemaVersion === 4) validateDwmLifecycleChecks(value.lifecycle, 'DWM operator completion.lifecycle')
   validateDwmCrossScale(value.crossScale, 'DWM operator completion.crossScale')
   return value
 }
@@ -623,7 +665,7 @@ function buildInteractionReport ({
   const recoveryReport = RECOVERY_SCENARIOS.includes(scenario)
   const dwmReport = scenario === 'dwm-drag'
   return {
-    schemaVersion: dwmReport ? 3 : (recoveryReport ? 2 : 1),
+    schemaVersion: dwmReport ? 4 : (recoveryReport ? 2 : 1),
     kind: 'i2-live-interaction',
     executedAt,
     scenario,
@@ -641,7 +683,7 @@ function buildInteractionReport ({
       reportContainsDeviceName: false
     },
     limitations: dwmReport
-      ? [...DWM_V3_LIMITATIONS]
+      ? [...DWM_V4_LIMITATIONS]
       : recoveryReport
       ? [
           'Operator completion records the external action only and cannot independently produce pass.',
@@ -717,10 +759,11 @@ function validateInteractionTransport (transport, scenario, result) {
   }
 }
 
-function validateDwmV3ScenarioEvidence (value, result) {
+function validateDwmScenarioEvidence (value, result, schemaVersion) {
   assertExactKeys(value, [
     'mode', 'rendererAssets', 'manualSetBounds', 'runBindingSha256',
     'operatorCompletionObserved', 'operatorCompletionSha256', 'combination', 'checks', 'crossScale',
+    ...(schemaVersion === 4 ? ['lifecycle'] : []),
     'productPayloadVersion', 'productPayloadFileCount', 'productPayloadSha256',
     'productionReuse', 'automaticObservation', 'controllerCounts'
   ], 'scenarioEvidence')
@@ -733,10 +776,12 @@ function validateDwmV3ScenarioEvidence (value, result) {
   validateDwmCombination(value.combination, 'scenarioEvidence.combination')
   if (value.operatorCompletionObserved) {
     validateDwmChecks(value.checks, 'scenarioEvidence.checks')
+    if (schemaVersion === 4) validateDwmLifecycleChecks(value.lifecycle, 'scenarioEvidence.lifecycle')
     validateDwmCrossScale(value.crossScale, 'scenarioEvidence.crossScale')
   } else {
     assert.equal(value.operatorCompletionSha256, null)
     assert.equal(value.checks, null)
+    if (schemaVersion === 4) assert.equal(value.lifecycle, null)
     assert.equal(value.crossScale, null)
   }
   validateProductPayloadBinding(value, 'scenarioEvidence product payload')
@@ -794,6 +839,7 @@ function validateDwmV3ScenarioEvidence (value, result) {
   if (result === 'pass-manual-observed') {
     assert.equal(value.operatorCompletionObserved, true)
     assert.notEqual(value.checks, null)
+    if (schemaVersion === 4) assert.notEqual(value.lifecycle, null)
     assert.notEqual(value.crossScale, null)
     assertSha256(value.operatorCompletionSha256, 'scenarioEvidence.operatorCompletionSha256')
     assert.equal(value.automaticObservation.actualScaleMatched, true)
@@ -923,8 +969,8 @@ function validateScenarioEvidence (scenario, value, result, schemaVersion) {
     }
     return
   }
-  if (scenario === 'dwm-drag' && schemaVersion === 3) {
-    validateDwmV3ScenarioEvidence(value, result)
+  if (scenario === 'dwm-drag' && [3, 4].includes(schemaVersion)) {
+    validateDwmScenarioEvidence(value, result, schemaVersion)
     return
   }
   assertExactKeys(value, [
@@ -943,13 +989,14 @@ function validateInteractionReport (report, expectedScenario = null) {
     'schemaVersion', 'kind', 'executedAt', 'scenario', 'sourceId', 'result', 'runtime', 'counts',
     'scenarioEvidence', 'transport', 'deviceRecovery', 'privacy', 'limitations'
   ], 'interaction report')
-  assert.ok([1, 2, 3].includes(report.schemaVersion), 'schemaVersion must be 1, 2 or 3')
+  assert.ok([1, 2, 3, 4].includes(report.schemaVersion), 'schemaVersion must be 1, 2, 3 or 4')
   assert.equal(report.kind, 'i2-live-interaction')
   assertIsoTimestamp(report.executedAt, 'executedAt')
   assert.ok(SCENARIOS.includes(report.scenario), 'scenario is invalid')
   if (report.schemaVersion === 1) assert.ok(LEGACY_SCENARIOS.includes(report.scenario), 'schema v1 scenario is invalid')
   if (report.schemaVersion === 2) assert.ok(RECOVERY_SCENARIOS.includes(report.scenario), 'schema v2 scenario is invalid')
   if (report.schemaVersion === 3) assert.equal(report.scenario, 'dwm-drag', 'schema v3 scenario is invalid')
+  if (report.schemaVersion === 4) assert.equal(report.scenario, 'dwm-drag', 'schema v4 scenario is invalid')
   if (expectedScenario !== null) assert.equal(report.scenario, expectedScenario)
   assert.ok(SOURCES.includes(report.sourceId), 'sourceId is invalid')
   const allowedResults = report.scenario === 'dwm-drag'
@@ -967,7 +1014,9 @@ function validateInteractionReport (report, expectedScenario = null) {
     reportContainsAudioPath: false,
     reportContainsDeviceName: false
   })
-  assert.deepEqual(report.limitations, report.schemaVersion === 3
+  assert.deepEqual(report.limitations, report.schemaVersion === 4
+    ? [...DWM_V4_LIMITATIONS]
+    : report.schemaVersion === 3
     ? [...DWM_V3_LIMITATIONS]
     : report.schemaVersion === 2
     ? [
@@ -980,13 +1029,16 @@ function validateInteractionReport (report, expectedScenario = null) {
 
 module.exports = {
   DWM_COMBINATIONS,
+  DWM_LIFECYCLE_OBSERVATION_IDS,
   DWM_NORMAL_WINDOW_ROLES,
   DWM_OBSERVATION_IDS,
+  DWM_V3_OBSERVATION_IDS,
   DWM_RESIZE_TARGETS,
   DWM_SCALE_PERCENTS,
   DWM_THEMES,
   DWM_TOOLBAR_STATES,
   DWM_V3_LIMITATIONS,
+  DWM_V4_LIMITATIONS,
   LOSS_FIELDS,
   RECOVERY_FAULT_CODES,
   RECOVERY_OPERATOR_ACTIONS,
@@ -1001,6 +1053,7 @@ module.exports = {
   buildInteractionReport,
   buildRecoveryProgress,
   completeDwmChecks,
+  completeDwmLifecycleChecks,
   dwmOperatorCompletion,
   parseArguments,
   parseOperatorCompletion,
@@ -1010,6 +1063,7 @@ module.exports = {
   transportSnapshot,
   validateDwmProgress,
   validateDwmChecks,
+  validateDwmLifecycleChecks,
   validateDwmCombination,
   validateDwmOperatorCompletion,
   validateInteractionReport,

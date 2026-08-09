@@ -709,7 +709,7 @@ async function runDwmDrag ({ coordinator, getAdapter, play, sourceId, options, w
     const completion = completionRecord?.value || null
     const protocol = options.dwmProtocol
     const automaticObservation = await harness.automaticObservation(options)
-    const completionMatches = completion?.schemaVersion === 3 &&
+    const completionMatches = completion?.schemaVersion === 4 &&
       completion.runBindingSha256 === protocol.runBindingSha256 &&
       completion.productPayloadVersion === protocol.productPayloadVersion &&
       completion.productPayloadFileCount === protocol.productPayloadFileCount &&
@@ -755,6 +755,7 @@ async function runDwmDrag ({ coordinator, getAdapter, play, sourceId, options, w
         operatorCompletionSha256: operatorCompletionObserved ? completionRecord.sha256 : null,
         combination: { ...protocol.combination },
         checks: operatorCompletionObserved ? completion.checks : null,
+        lifecycle: operatorCompletionObserved ? completion.lifecycle : null,
         crossScale: operatorCompletionObserved ? completion.crossScale : null,
         productPayloadVersion: protocol.productPayloadVersion,
         productPayloadFileCount: protocol.productPayloadFileCount,
@@ -1030,6 +1031,7 @@ function failureEvidence (scenario, options = null, dwmProtocol = null) {
     operatorCompletionSha256: null,
     combination: { ...dwmProtocol.combination },
     checks: null,
+    lifecycle: null,
     crossScale: null,
     productPayloadVersion: dwmProtocol.productPayloadVersion,
     productPayloadFileCount: dwmProtocol.productPayloadFileCount,

@@ -6,6 +6,8 @@ module.exports = Object.freeze({
   DRAG_END: 'window:drag-end',
   RESIZE_START: 'window:resize-start',
   RESIZE_END: 'window:resize-end',
+  WINDOW_INTERACTION_READY: 'window:interaction-ready',
+  WINDOW_INTERACTION_SYNC: 'window:interaction-sync',
   LOCK_TOGGLE: 'window:lock-toggle',
   LOCK_GET: 'window:lock-get',
   LOCK_CHANGED: 'window:lock-changed',

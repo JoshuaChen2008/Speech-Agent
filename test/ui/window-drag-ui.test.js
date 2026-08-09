@@ -53,6 +53,7 @@ class FakeElement extends FakeEventTarget {
     return { x: 20, y: 20, left: 20, top: 20, right: 460, bottom: 160, width: 440, height: 140 }
   }
   setPointerCapture (pointerId) { this.capturedPointers.push(pointerId) }
+  releasePointerCapture (pointerId) { this.releasedPointers = [...(this.releasedPointers || []), pointerId] }
 }
 
 function loadManualDrag () {
@@ -121,6 +122,27 @@ test('SEM-F22/J17: manual drag rejects non-primary starts and fails closed when 
   assert.equal(classTarget.classList.contains('dragging'), false)
 })
 
+test('SEM-F22/SEM-F24/J17/J19: lifecycle cancellation clears local drag state without ending an obsolete generation', () => {
+  const { api } = loadManualDrag()
+  const handle = new FakeElement('grip')
+  const classTarget = new FakeElement('toolbar')
+  const calls = []
+  const controller = api.bindManualWindowDrag({
+    handle,
+    classTarget,
+    onStart: () => calls.push('start'),
+    onEnd: () => calls.push('end')
+  })
+
+  handle.dispatch('pointerdown', pointer())
+  controller.cancel()
+  controller.cancel()
+  assert.deepEqual(calls, ['start'])
+  assert.equal(controller.isDragging(), false)
+  assert.equal(classTarget.classList.contains('dragging'), false)
+  assert.deepEqual(handle.releasedPointers, [7])
+})
+
 test('SEM-F22/J17: toolbar binds manual drag only to its visible non-focusable grip', () => {
   const html = source('src/toolbar/index.html')
   const entry = source('src/toolbar/entry.ts')
@@ -140,7 +162,7 @@ test('SEM-F22/J17: toolbar binds manual drag only to its visible non-focusable g
   assert.match(icons, /grip:\s*reorderDotsVertical/)
 })
 
-function createCaptionHarness () {
+function createCaptionHarness ({ deferFrames = false } = {}) {
   const window = new FakeEventTarget()
   const wrap = new FakeElement('wrap')
   const card = new FakeElement('caption-card')
@@ -165,6 +187,7 @@ function createCaptionHarness () {
     dragEnd: () => calls.push(['dragEnd']),
     resizeStart: (edge) => calls.push(['resizeStart', edge]),
     resizeEnd: () => calls.push(['resizeEnd']),
+    onInteractionSync: (callback) => { callbacks.interaction = callback },
     onLock: (callback) => { callbacks.lock = callback },
     onToolbarOverlap: (callback) => { callbacks.overlap = callback },
     onConfig () {}, onCaption () {}, onCaptionState () {},
@@ -176,6 +199,8 @@ function createCaptionHarness () {
   window.shell = shell
   window.CaptionReducer = reducer
   window.Appearance = { applyAppearance () {} }
+  const frames = []
+  let nextFrameId = 0
 
   const document = new FakeEventTarget()
   document.documentElement = new FakeElement('html')
@@ -192,11 +217,27 @@ function createCaptionHarness () {
     console,
     document,
     getComputedStyle: () => ({ getPropertyValue: (name) => name === '--fs' ? '24' : '1.25' }),
-    requestAnimationFrame: (callback) => callback(),
+    cancelAnimationFrame () {},
+    requestAnimationFrame: (callback) => {
+      if (!deferFrames) return callback()
+      const id = ++nextFrameId
+      frames.push([id, callback])
+      return id
+    },
     window
   })
   calls.length = 0
-  return { callbacks, calls, card, document, shell, window }
+  return {
+    callbacks,
+    calls,
+    card,
+    document,
+    runFrames: () => {
+      while (frames.length > 0) frames.shift()[1]()
+    },
+    shell,
+    window
+  }
 }
 
 test('SEM-F22/J17: caption hit priority is margin then toolbar contour then 8px resize band then drag', () => {
@@ -244,6 +285,68 @@ test('SEM-F22/J17: caption unload, blur, lost capture and lock transition close 
     assert.deepEqual(calls.slice(0, 2), [['dragStart', 'caption'], ['dragEnd']], terminal)
     assert.equal(card.classList.contains('dragging'), false, terminal)
   }
+})
+
+test('SEM-F22/SEM-F24/J17/J19: caption lifecycle reset silently cancels gestures and re-hits a stationary pointer', () => {
+  const { callbacks, calls, card } = createCaptionHarness()
+  callbacks.interaction({
+    schemaVersion: 1,
+    generation: 2,
+    phase: 'resume',
+    pointer: { x: 100, y: 80 }
+  })
+  assert.deepEqual(calls, [['through', false]])
+
+  calls.length = 0
+  card.dispatch('pointerdown', pointer({ clientX: 100, clientY: 80 }))
+  assert.deepEqual(calls, [['dragStart', 'caption']])
+  callbacks.interaction({ schemaVersion: 1, generation: 3, phase: 'suspend' })
+  assert.deepEqual(calls, [['dragStart', 'caption']], 'lifecycle reset must not emit an obsolete dragEnd')
+  assert.equal(card.classList.contains('dragging'), false)
+  assert.deepEqual(card.releasedPointers, [7])
+
+  callbacks.interaction({
+    schemaVersion: 1,
+    generation: 3,
+    phase: 'resume',
+    pointer: { x: 100, y: 80 }
+  })
+  callbacks.interaction({
+    schemaVersion: 1,
+    generation: 3,
+    phase: 'resume',
+    pointer: { x: 100, y: 80 }
+  })
+  assert.deepEqual(calls.slice(-2), [['through', false], ['through', false]],
+    'each resume forces its own same-generation acknowledgement')
+
+  const before = calls.length
+  callbacks.interaction({
+    schemaVersion: 1,
+    generation: 2,
+    phase: 'resume',
+    pointer: { x: 10, y: 10 }
+  })
+  assert.equal(calls.length, before)
+})
+
+test('SEM-F22/SEM-F24/J17/J19: a queued same-generation hit frame cannot overwrite the resumed pointer', () => {
+  const { callbacks, calls, runFrames } = createCaptionHarness({ deferFrames: true })
+  callbacks.interaction({
+    schemaVersion: 1,
+    generation: 2,
+    phase: 'resume',
+    pointer: { x: 100, y: 80 }
+  })
+  callbacks.interaction({ schemaVersion: 1, generation: 3, phase: 'suspend' })
+  callbacks.interaction({
+    schemaVersion: 1,
+    generation: 3,
+    phase: 'resume',
+    pointer: { x: 10, y: 10 }
+  })
+  runFrames()
+  assert.deepEqual(calls, [['through', true]])
 })
 
 test('SEM-F22/J17: caption drag and resize starts fail closed when the preload call throws', () => {
@@ -326,6 +429,7 @@ test('SEM-F22/J17: settings and subtitle history share a 48px structural titleba
   for (const script of [settingsScript, historyScript]) {
     assert.match(script, /bindManualWindowDrag\(\{[\s\S]*handle: titlebar(?:\.current)?/)
     assert.match(script, /canStart: \(event(?:: Event)?\) => !(?:manualWindowDrag|drag)\.isInteractiveDragEvent\(event\)/)
+    assert.match(script, /onInteractionSync[\s\S]*controller\.cancel/)
     assert.doesNotMatch(script, /titlebar\.addEventListener\('pointerdown'/)
     assert.doesNotMatch(script, /document\.(?:body|documentElement)\.addEventListener\('pointerdown'/)
   }

@@ -12,6 +12,12 @@ const {
   ManualWindowInteractionController
 } = require('../../src/main/manual-window-interaction-controller')
 const { WindowLayerController } = require('../../src/main/window-layer-controller')
+const {
+  ApplicationWindowLifecycleController
+} = require('../../src/main/application-window-lifecycle-controller')
+const {
+  WindowInteractionGenerationController
+} = require('../../src/main/window-interaction-generation-controller')
 
 class FakeWindow extends EventEmitter {
   constructor (role, bounds) {
@@ -24,10 +30,24 @@ class FakeWindow extends EventEmitter {
     this.setBoundsCalls = 0
     this.setPositionCalls = 0
     this.webContents = new EventEmitter()
+    this.visible = true
+    this.minimized = false
+    this.focused = false
+    this.ignoreCalls = []
   }
 
   getBounds () { return { ...this.bounds } }
   isDestroyed () { return this.destroyed }
+  isVisible () { return this.visible }
+  isMinimized () { return this.minimized }
+  isFocused () { return this.focused }
+  hide () { this.visible = false; this.focused = false }
+  show () { this.visible = true }
+  showInactive () { this.visible = true }
+  minimize () { this.minimized = true; this.visible = false; this.focused = false; this.emit('minimize') }
+  restore () { this.minimized = false; this.visible = true; this.emit('restore') }
+  focus () { this.focused = true }
+  setIgnoreMouseEvents (ignore, options) { this.ignoreCalls.push([ignore, options]) }
   moveTop () { this.moves += 1 }
   setAlwaysOnTop (on) { this.alwaysOnTop = on }
   setBounds (bounds) {
@@ -52,6 +72,12 @@ function controlledScheduler () {
       assert.ok(entry, 'an interaction tick must be scheduled')
       callbacks.delete(entry[0])
       entry[1]()
+    },
+    runAll () {
+      for (const [id, callback] of [...callbacks]) {
+        callbacks.delete(id)
+        callback()
+      }
     },
     setTimer (callback) {
       const id = ++nextId
@@ -187,4 +213,155 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
   interaction.stopForSender(3)
   cursor = { x: 740, y: 440 }
   assert.equal(scheduler.size(), 0, 'blur cancellation must remove the pending drag tick')
+})
+
+test('SEM-F22/SEM-F24/SEM-T04/J17/J19: lifecycle, generation and manual bounds form one restore journey', () => {
+  const caption = new FakeWindow('caption', { x: 100, y: 80, width: 920, height: 190 })
+  const toolbar = new FakeWindow('toolbar', { x: 420, y: 92, width: 600, height: 72 })
+  const settings = new FakeWindow('settings', { x: 180, y: 120, width: 880, height: 620 })
+  const history = new FakeWindow('history', { x: 220, y: 140, width: 1060, height: 720 })
+  const windows = { caption, toolbar, settings, history }
+  const senderIds = { caption: 1, toolbar: 2, settings: 3, history: 4 }
+  const manualTimers = controlledScheduler()
+  const generationTimers = controlledScheduler()
+  const postRestore = []
+  const syncs = []
+  const faults = []
+  const ackRoles = new Set(['caption', 'toolbar'])
+  let cursor = { x: 300, y: 180 }
+  let locked = false
+
+  const manual = new ManualWindowInteractionController({
+    clearTimer: manualTimers.clearTimer,
+    dock: () => toolbar.setBounds(toolbarDockBoundsFor(caption.getBounds(), toolbar.getBounds())),
+    getCaptionLimits: () => ({ minW: 480, maxW: 1600, minH: 140, maxH: 420 }),
+    getCaptionWindow: () => caption,
+    getToolbarWindow: () => toolbar,
+    getCursorScreenPoint: () => ({ ...cursor }),
+    getLocked: () => locked,
+    onCaptionResizeEnd: () => {},
+    setTimer: manualTimers.setTimer
+  })
+
+  let generation
+  generation = new WindowInteractionGenerationController({
+    clearTimer: generationTimers.clearTimer,
+    getCursorScreenPoint: () => ({ ...cursor }),
+    getLocked: () => locked,
+    getWindow: (role) => windows[role],
+    onFault: (fault) => faults.push(fault),
+    sendSync: (win, payload) => {
+      syncs.push([win.role, payload])
+      if (payload.phase === 'resume' && ackRoles.has(win.role)) {
+        generation.acceptMouseThrough(win.role, {
+          schemaVersion: 1,
+          generation: payload.generation,
+          ignore: win.role === 'toolbar'
+        })
+      }
+      return true
+    },
+    setTimer: generationTimers.setTimer
+  })
+
+  const lifecycle = new ApplicationWindowLifecycleController({
+    getCaptionWindow: () => caption,
+    getToolbarWindow: () => toolbar,
+    getSettingsWindow: () => settings,
+    getHistoryWindow: () => history,
+    stopInteractions: () => manual.stopAll(),
+    beginInteractionTransaction: () => generation.beginTransaction(),
+    resumeInteractions: (value) => generation.resume(value),
+    degradeInteractions: (value) => generation.degradeForRestoreFailure(value),
+    restoreWindowStack: () => {},
+    schedulePostRestore: (callback) => postRestore.push(callback),
+    onFault: (fault) => faults.push(fault)
+  })
+  lifecycle.bindPrimaryWindow(toolbar)
+  lifecycle.bindAuxiliaryWindow(settings, 'settings')
+  lifecycle.bindAuxiliaryWindow(history, 'history')
+
+  const initialBounds = caption.getBounds()
+  assert.equal(manual.startDrag({ role: 'caption', win: caption, senderId: senderIds.caption }), true)
+  assert.equal(manualTimers.size(), 1)
+  assert.equal(lifecycle.minimize(), true)
+  assert.equal(generation.getState().generation, 2)
+  assert.equal(manualTimers.size(), 0, 'minimize must stop the old manual drag without renderer terminal events')
+  cursor = { x: 345, y: 211 }
+  assert.deepEqual(caption.getBounds(), initialBounds)
+
+  assert.equal(lifecycle.restore(), true)
+  assert.equal(generation.getState().generation, 3)
+  postRestore.shift()()
+  assert.deepEqual(generation.getState(), { generation: 3, phase: 'resume' })
+  for (const role of Object.keys(windows)) {
+    assert.equal(syncs.some(([candidate, payload]) => candidate === role &&
+      payload.generation === 3 && payload.phase === 'suspend'), true)
+    assert.equal(syncs.some(([candidate, payload]) => candidate === role &&
+      payload.generation === 3 && payload.phase === 'resume'), true)
+  }
+  assert.equal(caption.ignoreCalls.at(-1)[0], false,
+    'the stationary local pointer is re-evaluated by the current renderer generation')
+  assert.equal(generation.acceptGesture('caption', { schemaVersion: 1, generation: 2 }), false)
+  assert.equal(generation.acceptGesture('caption', { schemaVersion: 1, generation: 3 }), true)
+
+  assert.equal(manual.startDrag({ role: 'caption', win: caption, senderId: senderIds.caption }), true)
+  cursor = { x: 358, y: 220 }
+  manualTimers.runNext()
+  assert.notDeepEqual(caption.getBounds(), initialBounds,
+    'the first new press after restore produces a current-generation drag')
+  manual.stopForSender(senderIds.caption)
+
+  generation.suspendRoleForReload('caption')
+  assert.equal(generation.acceptGesture('caption', { schemaVersion: 1, generation: 3 }), false)
+  generation.replay('caption')
+  assert.equal(generation.acceptGesture('caption', { schemaVersion: 1, generation: 3 }), true)
+
+  assert.equal(generation.failClosedAfterRendererGone('caption'), true)
+  assert.equal(caption.ignoreCalls.at(-1)[0], true,
+    'a crashed caption renderer cannot leave a solid native hit surface behind')
+  assert.equal(generation.acceptGesture('caption', { schemaVersion: 1, generation: 3 }), false)
+  generation.replay('caption')
+  assert.equal(generation.acceptGesture('caption', { schemaVersion: 1, generation: 3 }), true)
+
+  assert.equal(lifecycle.minimize(), true)
+  const generationBeforeMinimizedCrash = generation.getState().generation
+  assert.equal(generation.failClosedAfterRendererGone('toolbar'), true)
+  assert.equal(toolbar.isMinimized(), true,
+    'a toolbar renderer crash while minimized preserves the application minimize')
+  assert.equal(caption.isVisible(), false,
+    'a toolbar renderer crash while minimized does not reveal the caption')
+  assert.equal(generation.getState().generation, generationBeforeMinimizedCrash,
+    'a renderer crash does not start a restore generation')
+  assert.equal(lifecycle.restore(), true)
+  postRestore.shift()()
+  const generationAfterMinimizedCrashRestore = generation.getState().generation
+
+  assert.equal(generation.failClosedAfterRendererGone('toolbar'), true)
+  assert.equal(toolbar.ignoreCalls.at(-1)[0], false,
+    'a crashed toolbar renderer keeps the taskbar primary solid and reachable')
+  assert.equal(generation.acceptGesture('toolbar', {
+    schemaVersion: 1,
+    generation: generationAfterMinimizedCrashRestore
+  }), false)
+  generation.replay('toolbar')
+
+  ackRoles.delete('toolbar')
+  assert.equal(lifecycle.minimize(), true)
+  assert.equal(lifecycle.restore(), true)
+  postRestore.shift()()
+  generationTimers.runAll()
+  assert.deepEqual(faults.at(-1), { role: 'toolbar', code: 'interaction-sync-timeout' })
+  assert.equal(toolbar.ignoreCalls.at(-1)[0], false)
+  const current = generation.getState().generation
+  assert.equal(generation.acceptMouseThrough('toolbar', {
+    schemaVersion: 1, generation: current, ignore: true
+  }), true, 'a late current acknowledgement closes the explicit solid fallback')
+
+  locked = true
+  assert.equal(generation.acceptMouseThrough('caption', {
+    schemaVersion: 1, generation: current, ignore: false
+  }), true)
+  assert.equal(caption.ignoreCalls.at(-1)[0], true, 'locked caption remains pass-through')
+  assert.equal(faults.some((fault) => fault.code === 'stale-interaction-generation'), true)
 })

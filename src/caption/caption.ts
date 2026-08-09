@@ -37,7 +37,7 @@ const liveRegion = requireElement('liveRegion')
 const bridge: any = window.shell || {
   mouseThrough () {}, dragStart () {}, dragEnd () {},
   resizeStart () {}, resizeEnd () {},
-  onLock () {}, onToolbarOverlap () {}, onConfig () {}, onCaption () {}, onCaptionState () {},
+  onInteractionSync () {}, onLock () {}, onToolbarOverlap () {}, onConfig () {}, onCaption () {}, onCaptionState () {},
   reportCaptionViewportEviction () { return Promise.resolve(false) },
   getLock () { return Promise.reject(new Error('no shell')) },
   getConfig () { return Promise.reject(new Error('no shell')) },
@@ -51,6 +51,8 @@ let ignoring: boolean | null = null
 let lastX = 0, lastY = 0
 let toolbarOverlapGeneration = 0
 let gesturePointerId: number | null = null
+let interactionGeneration = 0
+let interactionPhase = 'resume'
 
 // --------------------------------------------------------------------------
 // 边缘拉伸
@@ -93,35 +95,50 @@ function captionActionAt (x: number, y: number) {
   return edge ? { kind: 'resize', edge } : { kind: 'drag', edge: '' }
 }
 
-/** @param {number} x @param {number} y */
-function applyHit (x: number, y: number): void {
-  if (dragging || resizing || locked) return
+/** @param {number} x @param {number} y @param {boolean=} force */
+function applyHit (x: number, y: number, force = false): void {
+  if (interactionPhase !== 'resume' || dragging || resizing) return
   const action = captionActionAt(x, y)
-  const solid = action.kind === 'resize' || action.kind === 'drag'
+  const solid = !locked && (action.kind === 'resize' || action.kind === 'drag')
   const next = !solid
-  if (next !== ignoring) {
+  if (force || next !== ignoring) {
     ignoring = next
     bridge.mouseThrough(next)
   }
 }
 
-let hitQueued = false
-document.addEventListener('mousemove', (e) => {
-  lastX = e.clientX; lastY = e.clientY
-  if (hitQueued) return
-  hitQueued = true
-  requestAnimationFrame(() => {
-    hitQueued = false
-    applyHit(lastX, lastY)
+let hitFrame: number | null = null
+let hitRevision = 0
+function cancelHitFrame (): void {
+  hitRevision += 1
+  if (hitFrame === null) return
+  if (typeof cancelAnimationFrame === 'function' && hitFrame >= 0) {
+    try { cancelAnimationFrame(hitFrame) } catch { /* revision still invalidates the callback */ }
+  }
+  hitFrame = null
+}
+
+function queueHit (force = false): void {
+  if (hitFrame !== null || interactionPhase !== 'resume') return
+  const generation = interactionGeneration
+  const revision = hitRevision
+  hitFrame = -1
+  const frame = requestAnimationFrame(() => {
+    if (generation !== interactionGeneration || revision !== hitRevision || interactionPhase !== 'resume') return
+    hitFrame = null
+    applyHit(lastX, lastY, force)
     if (!dragging && !resizing) {
       const action = captionActionAt(lastX, lastY)
       card.style.cursor = action.kind === 'resize' ? RESIZE_CURSOR[action.edge] : ''
     }
   })
-})
+  if (hitFrame !== null && revision === hitRevision) hitFrame = frame
+}
 
-bridge.mouseThrough(true)
-ignoring = true
+document.addEventListener('mousemove', (e) => {
+  lastX = e.clientX; lastY = e.clientY
+  queueHit()
+})
 
 /** @param {any} payload */
 function acceptToolbarOverlap (payload: any): void {
@@ -155,8 +172,10 @@ card.addEventListener('pointerdown', (e) => {
   const action = captionActionAt(e.clientX, e.clientY)
   if (action.kind !== 'resize' && action.kind !== 'drag') return
   try {
-    if (action.kind === 'resize') bridge.resizeStart(action.edge)
-    else bridge.dragStart('caption')
+    const accepted = action.kind === 'resize'
+      ? bridge.resizeStart(action.edge)
+      : bridge.dragStart('caption')
+    if (accepted === false) return
   } catch { return }
 
   gesturePointerId = e.pointerId
@@ -171,28 +190,58 @@ card.addEventListener('pointerdown', (e) => {
 
 /* pointerup / pointercancel / lostpointercapture / blur 全都要收尾 ——
    主进程那边是一个持续跑的定时器，漏掉任何一条取消路径都会让窗口继续跟着光标跑。 */
-/** @param {PointerEvent=} event */
-function endGesture (event?: Event & { pointerId?: number }): void {
+/** @param {PointerEvent=} event @param {boolean=} notifyMain @param {boolean=} recomputeHit */
+function endGesture (event?: Event & { pointerId?: number }, notifyMain = true, recomputeHit = true): void {
   if (!dragging && !resizing) return
   if (event && Number.isInteger(event.pointerId) && event.pointerId !== gesturePointerId) return
+  const pointerId = gesturePointerId
   gesturePointerId = null
+  if (pointerId !== null) {
+    try { card.releasePointerCapture?.(pointerId) } catch { /* noop */ }
+  }
   if (resizing) {
     resizing = false
-    bridge.resizeEnd()
+    if (notifyMain) bridge.resizeEnd()
   }
   if (dragging) {
     dragging = false
     card.classList.remove('dragging')
-    bridge.dragEnd()
+    if (notifyMain) bridge.dragEnd()
   }
   card.style.cursor = ''
-  applyHit(lastX, lastY)
+  if (recomputeHit) applyHit(lastX, lastY)
 }
 window.addEventListener('pointerup', endGesture)
 window.addEventListener('pointercancel', endGesture)
 card.addEventListener('lostpointercapture', endGesture)
 window.addEventListener('blur', endGesture)
 window.addEventListener('beforeunload', endGesture)
+
+/** @param {any} value */
+function acceptInteractionSync (value: any): void {
+  if (!value || value.schemaVersion !== 1 || !Number.isSafeInteger(value.generation) ||
+      value.generation <= 0 || value.generation < interactionGeneration ||
+      (value.phase !== 'suspend' && value.phase !== 'resume')) return
+  if (value.phase === 'suspend' && Object.keys(value).length !== 3) return
+  if (value.phase === 'resume' && (Object.keys(value).length !== 4 || !value.pointer ||
+      Object.keys(value.pointer).length !== 2 ||
+      !Number.isFinite(value.pointer.x) || !Number.isFinite(value.pointer.y))) return
+
+  cancelHitFrame()
+  endGesture(undefined, false, false)
+  interactionGeneration = value.generation
+  interactionPhase = value.phase
+  ignoring = null
+  if (value.phase === 'suspend') {
+    card.style.cursor = ''
+    return
+  }
+  lastX = value.pointer.x
+  lastY = value.pointer.y
+  queueHit(true)
+}
+
+if (typeof bridge.onInteractionSync === 'function') bridge.onInteractionSync(acceptInteractionSync)
 
 // --------------------------------------------------------------------------
 // 锁定：主进程已把本窗设为恒穿透；这里只更新视觉

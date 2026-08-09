@@ -55,15 +55,20 @@
 
     let activePointerId = null
 
-    function end (event) {
+    function finish (event, notifyEnd) {
       if (activePointerId === null) return
       if (event && Number.isInteger(event.pointerId) && event.pointerId !== activePointerId) return
 
+      const pointerId = activePointerId
       activePointerId = null
+      try { handle.releasePointerCapture?.(pointerId) } catch { /* optional browser preview */ }
       classTarget?.classList?.remove(className)
-      callSafely(onEnd, event)
+      if (notifyEnd) callSafely(onEnd, event)
       callSafely(onActiveChange, false, event)
     }
+
+    function end (event) { finish(event, true) }
+    function cancel () { finish(undefined, false) }
 
     function start (event) {
       if (!event || event.button !== 0 || event.isPrimary === false ||
@@ -85,6 +90,7 @@
     global.addEventListener('beforeunload', end)
 
     return Object.freeze({
+      cancel,
       end,
       isDragging: () => activePointerId !== null
     })

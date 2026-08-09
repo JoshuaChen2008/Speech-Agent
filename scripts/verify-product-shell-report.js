@@ -173,6 +173,20 @@ const PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS = Object.freeze([
   'auxiliaryCloseKeptPrimary',
   'rendererExitRequested'
 ])
+const PRODUCT_SHELL_V7_INTERACTION_LIFECYCLE_KEYS = Object.freeze([
+  'generationAdvanceCount',
+  'preMinimizeGestureResetObserved',
+  'minimizeGenerationAdvanced',
+  'nativeRestoreGenerationAdvanced',
+  'secondInstanceRestoreGenerationAdvanced',
+  'sameGenerationSuspendResumeObserved',
+  'stationaryPointerHitIntentObserved',
+  'postRestoreCaptionDragIntentObserved',
+  'staleGenerationIntentRejected',
+  'reloadCurrentGenerationReplayed',
+  'nativePassThroughIntentObserved',
+  'lockedCaptionPassThroughIntentObserved'
+])
 const PRODUCT_SHELL_V5_LIMITATIONS = Object.freeze([
   'fake-asr-no-physical-audio',
   'controlled-model-fixtures-no-real-tensors',
@@ -412,12 +426,31 @@ function validateProductShellV6ApplicationLifecycle (value) {
   return value
 }
 
+function validateProductShellV7InteractionLifecycle (value) {
+  if (!hasExactKeys(value, PRODUCT_SHELL_V7_INTERACTION_LIFECYCLE_KEYS)) {
+    throw new Error('product-shell v7 interaction lifecycle has missing or unknown fields')
+  }
+  for (const key of PRODUCT_SHELL_V7_INTERACTION_LIFECYCLE_KEYS) {
+    if (key === 'generationAdvanceCount') {
+      if (value[key] !== 4) {
+        throw new Error('product-shell v7 interaction lifecycle generation count is invalid')
+      }
+    } else if (value[key] !== true) {
+      throw new Error(`product-shell v7 interaction lifecycle observation is incomplete: ${key}`)
+    }
+  }
+  assertNoWindowInteractionSensitiveFields(value, 'interactionLifecycle')
+  return value
+}
+
 function validateProductShellV5Envelope (report, schemaVersion = 5) {
-  const hasApplicationLifecycle = schemaVersion === 6
+  const hasApplicationLifecycle = schemaVersion >= 6
+  const hasInteractionLifecycle = schemaVersion >= 7
   const expectedRootKeys = [
     'schemaVersion', 'kind', 'generatedAt', 'result', 'gateStatus', 'runtime', 'journey',
     'windowInteraction', 'sourceIdentity', 'privacy', 'limitations',
     ...(hasApplicationLifecycle ? ['applicationLifecycle'] : []),
+    ...(hasInteractionLifecycle ? ['interactionLifecycle'] : []),
     ...(report.packaging ? ['packaging', 'qualification'] : [])
   ]
   if (!hasExactKeys(report, expectedRootKeys) ||
@@ -448,6 +481,7 @@ function validateProductShellV5Envelope (report, schemaVersion = 5) {
   validateProductShellV5WindowInteraction(report.windowInteraction)
   validateProductShellV5Identity(report.sourceIdentity)
   if (hasApplicationLifecycle) validateProductShellV6ApplicationLifecycle(report.applicationLifecycle)
+  if (hasInteractionLifecycle) validateProductShellV7InteractionLifecycle(report.interactionLifecycle)
   if (report.packaging?.appIsPackaged === true && (
     report.qualification?.productPayloadVersion !== report.sourceIdentity.productPayloadVersion ||
     report.qualification?.productPayloadFileCount !== report.sourceIdentity.productPayloadFileCount ||
@@ -457,10 +491,13 @@ function validateProductShellV5Envelope (report, schemaVersion = 5) {
   if (hasApplicationLifecycle) {
     assertNoWindowInteractionSensitiveFields(report.applicationLifecycle, 'applicationLifecycle')
   }
+  if (hasInteractionLifecycle) {
+    assertNoWindowInteractionSensitiveFields(report.interactionLifecycle, 'interactionLifecycle')
+  }
 }
 
 function validateProductShellReport (report) {
-  if (!report || ![1, 2, 3, 4, 5, 6].includes(report.schemaVersion) || report.kind !== 'product-shell-smoke') {
+  if (!report || ![1, 2, 3, 4, 5, 6, 7].includes(report.schemaVersion) || report.kind !== 'product-shell-smoke') {
     throw new Error('invalid product-shell report envelope')
   }
   if (report.result !== 'pass' || report.gateStatus !== 'partial') {
@@ -519,6 +556,10 @@ function validateProductShellReport (report) {
     validateProductShellV3Journey(journey, 3, 4, 6)
     validateProductShellV5Envelope(report, 6)
   }
+  if (report.schemaVersion === 7) {
+    validateProductShellV3Journey(journey, 3, 4, 7)
+    validateProductShellV5Envelope(report, 7)
+  }
   if (report.privacy?.physicalAudioSourceOpened !== false ||
       report.privacy?.audioPersisted !== false ||
       report.privacy?.transcriptTextPersistedInReport !== false ||
@@ -531,7 +572,7 @@ function validateProductShellReport (report) {
     'deterministic-205-segment-fixture-not-two-hour-i3',
     report.packaging?.appIsPackaged === true ? 'not-clean-machine-i4' : 'not-packaged-i4'
   ]
-  if (![5, 6].includes(report.schemaVersion) && (!Array.isArray(report.limitations) ||
+  if (![5, 6, 7].includes(report.schemaVersion) && (!Array.isArray(report.limitations) ||
       requiredLimitations.some((limitation) => !report.limitations.includes(limitation)) ||
       (report.packaging?.appIsPackaged === true && report.limitations.includes('not-packaged-i4')))) {
     throw new Error('product-shell report must preserve its external-boundary limitations')
@@ -574,6 +615,7 @@ module.exports = {
   PRODUCT_SHELL_V5_LIMITATIONS,
   PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS,
   PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS,
+  PRODUCT_SHELL_V7_INTERACTION_LIFECYCLE_KEYS,
   PRODUCT_SHELL_PACKAGING_KEYS,
   PRODUCT_SHELL_QUALIFICATION_KEYS,
   readAndValidateProductShellReport,

@@ -2,14 +2,16 @@
 
 const { contextBridge } = require('electron')
 const CHANNELS = require('../main/ipc/channels')
-const { ipcRenderer, subscribe } = require('./shared')
+const { createWindowInteractionBridge, ipcRenderer, subscribe } = require('./shared')
+const interaction = createWindowInteractionBridge('caption')
 
 contextBridge.exposeInMainWorld('shell', {
-  mouseThrough: (ignore) => ipcRenderer.send(CHANNELS.MOUSE_THROUGH, !!ignore),
-  dragStart: () => ipcRenderer.send(CHANNELS.DRAG_START),
-  dragEnd: () => ipcRenderer.send(CHANNELS.DRAG_END),
-  resizeStart: (edge) => ipcRenderer.send(CHANNELS.RESIZE_START, String(edge || '')),
-  resizeEnd: () => ipcRenderer.send(CHANNELS.RESIZE_END),
+  mouseThrough: interaction.mouseThrough,
+  dragStart: interaction.dragStart,
+  dragEnd: interaction.dragEnd,
+  resizeStart: interaction.resizeStart,
+  resizeEnd: interaction.resizeEnd,
+  onInteractionSync: interaction.onInteractionSync,
   getLock: () => ipcRenderer.invoke(CHANNELS.LOCK_GET),
   onLock: (callback) => subscribe(CHANNELS.LOCK_CHANGED, callback),
   onToolbarOverlap: (callback) => subscribe(CHANNELS.CAPTION_LAYOUT_TOOLBAR_OVERLAP, callback),

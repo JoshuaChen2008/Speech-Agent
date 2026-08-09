@@ -11,6 +11,7 @@ const {
   TRANSPORT_FIELDS,
   buildInteractionReport,
   completeDwmChecks,
+  completeDwmLifecycleChecks,
   dwmOperatorCompletion,
   transportDelta
 } = require('../../scripts/i2-interaction-protocol')
@@ -22,7 +23,8 @@ const {
 const {
   PRODUCT_SHELL_V3_JOURNEY_KEYS,
   PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS,
-  PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS
+  PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS,
+  PRODUCT_SHELL_V7_INTERACTION_LIFECYCLE_KEYS
 } = require('../../scripts/verify-product-shell-report')
 const { computeProductPayloadIdentity } = require('../../src/main/services/product-payload-identity')
 
@@ -97,6 +99,7 @@ function pairFor (combination, index) {
     operatorCompletionSha256: digest(completionBytes),
     combination: { ...combination },
     checks: completeDwmChecks(),
+    lifecycle: completeDwmLifecycleChecks(),
     crossScale: {
       observed: crossScaleObserved,
       criticalHitMatrixRepeated: crossScaleObserved
@@ -150,7 +153,7 @@ function pairFor (combination, index) {
   }
 }
 
-function j17Bytes (schemaVersion = 5) {
+function j17Bytes (schemaVersion = 7) {
   const journey = Object.fromEntries(PRODUCT_SHELL_V3_JOURNEY_KEYS.map((key) => [key, true]))
   Object.assign(journey, {
     onboardingPreset: 'dictation',
@@ -196,6 +199,10 @@ function j17Bytes (schemaVersion = 5) {
   )
   applicationLifecycle.visibleAuxiliaryWindowCountBeforeMinimize = 2
   applicationLifecycle.minimizedAuxiliaryWindowCount = 2
+  const interactionLifecycle = Object.fromEntries(
+    PRODUCT_SHELL_V7_INTERACTION_LIFECYCLE_KEYS.map((key) => [key, true])
+  )
+  interactionLifecycle.generationAdvanceCount = 4
   return Buffer.from(JSON.stringify({
     schemaVersion,
     kind: 'product-shell-smoke',
@@ -205,7 +212,8 @@ function j17Bytes (schemaVersion = 5) {
     runtime: { electron: '43.0.0', node: '22.0.0', rendererCount: 4, crashEventCount: 0 },
     journey,
     windowInteraction,
-    ...(schemaVersion === 6 ? { applicationLifecycle } : {}),
+    ...(schemaVersion >= 6 ? { applicationLifecycle } : {}),
+    ...(schemaVersion >= 7 ? { interactionLifecycle } : {}),
     sourceIdentity: {
       productPayloadVersion: PRODUCT_IDENTITY.version,
       productPayloadFileCount: PRODUCT_IDENTITY.fileCount,
@@ -254,15 +262,20 @@ test('SEM-F22/J17/I2: strict DWM matrix binds all twelve scale/theme combination
   })
 })
 
-test('SEM-F22/SEM-F24/J17/J19/I2: DWM matrix accepts schema-v6 while retaining the exact J17 subtree', () => {
+test('SEM-F22/SEM-F24/J17/J19/I2: DWM matrix requires schema-v7 product-shell recovery evidence', () => {
   const pairs = DWM_COMBINATIONS.map(pairFor)
-  const j17ReportBytes = j17Bytes(6)
+  const j17ReportBytes = j17Bytes(7)
   const matrix = buildDwmMatrix({
     generatedAt: '2026-08-08T00:03:00.000Z',
     j17Bytes: j17ReportBytes,
     pairs
   })
   assert.equal(validateDwmMatrixCompanions(matrix, { j17Bytes: j17ReportBytes, pairs }), matrix)
+  assert.throws(() => buildDwmMatrix({
+    generatedAt: '2026-08-08T00:03:01.000Z',
+    j17Bytes: j17Bytes(6),
+    pairs
+  }), /schema-v7/)
 })
 
 test('SEM-F22/I2: DWM matrix rejects missing, duplicate, reordered and completion-only combinations', () => {
@@ -286,6 +299,7 @@ test('SEM-F22/I2: DWM matrix rejects missing, duplicate, reordered and completio
   completionOnlyReport.scenarioEvidence.operatorCompletionObserved = false
   completionOnlyReport.scenarioEvidence.operatorCompletionSha256 = null
   completionOnlyReport.scenarioEvidence.checks = null
+  completionOnlyReport.scenarioEvidence.lifecycle = null
   completionOnlyReport.scenarioEvidence.crossScale = null
   const completionOnlyPairs = [...fixture.pairs]
   completionOnlyPairs[0] = {
