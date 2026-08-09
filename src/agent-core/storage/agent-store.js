@@ -216,6 +216,8 @@ class AgentMvpStore {
     try {
       db.prepare(`UPDATE agent_jobs SET cancel_requested_at=COALESCE(cancel_requested_at,?),updated_at=?
         WHERE run_id=? AND state IN ('queued','retry_wait','running')`).run(now, now, runId)
+      db.prepare(`UPDATE agent_jobs SET state='cancelled',lease_owner=NULL,lease_expires_at=NULL,error_code=NULL,updated_at=?
+        WHERE run_id=? AND state IN ('queued','retry_wait') AND cancel_requested_at IS NOT NULL`).run(now, runId)
       const row = db.prepare('SELECT * FROM agent_jobs WHERE run_id=?').get(runId)
       if (!row) throw new AgentCoreError('AGENT_JOB_NOT_FOUND')
       db.exec('COMMIT')

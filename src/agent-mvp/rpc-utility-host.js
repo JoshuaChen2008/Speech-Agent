@@ -5,14 +5,16 @@ const { AgentCoreError } = require('../agent-core/errors')
 const { VERSION } = require('./protocol')
 
 class RpcUtilityHost {
-  constructor ({ electron, workerPath, serviceName, onEvent = () => {}, timeoutMs = 35000 }) {
+  constructor ({ electron, workerPath, serviceName, onEvent = () => {}, timeoutMs = 35000, restartOnExit = false }) {
     this.electron = electron; this.workerPath = path.resolve(workerPath); this.serviceName = serviceName
-    this.onEvent = onEvent; this.timeoutMs = timeoutMs; this.child = null; this.pending = new Map(); this.counter = 0; this.exited = null
+    this.onEvent = onEvent; this.timeoutMs = timeoutMs; this.restartOnExit = restartOnExit
+    this.child = null; this.pending = new Map(); this.counter = 0; this.exited = null; this.stopping = false
     this.exitPromise = Promise.resolve()
   }
 
   start () {
     if (this.child) return
+    if (this.stopping) throw new AgentCoreError('AGENT_WORKER_EXITED')
     const child = this.electron.utilityProcess.fork(this.workerPath, [], { serviceName: this.serviceName })
     this.child = child
     let resolveExit
@@ -20,7 +22,10 @@ class RpcUtilityHost {
     child.on('message', (message) => this.handleMessage(message))
     child.once('exit', () => {
       if (this.child === child) this.child = null
-      for (const pending of this.pending.values()) pending.reject(new AgentCoreError('AGENT_WORKER_EXITED'))
+      for (const pending of this.pending.values()) {
+        clearTimeout(pending.timer)
+        pending.reject(new AgentCoreError('AGENT_WORKER_EXITED'))
+      }
       this.pending.clear()
       resolveExit()
     })
@@ -37,6 +42,7 @@ class RpcUtilityHost {
   }
 
   request (operation, payload, timeoutMs = this.timeoutMs) {
+    if (!this.child && this.restartOnExit && !this.stopping) this.start()
     if (!this.child) return Promise.reject(new AgentCoreError('AGENT_WORKER_EXITED'))
     const requestId = `${this.serviceName}-${++this.counter}`
     return new Promise((resolve, reject) => {
@@ -51,6 +57,7 @@ class RpcUtilityHost {
   }
 
   async stop (operation) {
+    this.stopping = true
     const child = this.child
     if (!child) return
     try { await this.request(operation, {}, 5000) } catch {}

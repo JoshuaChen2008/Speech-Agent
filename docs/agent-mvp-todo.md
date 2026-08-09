@@ -1,7 +1,7 @@
 # 正式 Agent 首版 TODO 与组合验收矩阵
 
 > 更新日期：2026-08-10
-> 证据状态：已决定。SEM-F29/J23 隔离 Agent 内核开发入口为实现完成·尚未验收；本文其余正式产品项尚无实现证据。
+> 证据状态：SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；本文其余正式产品项保持已决定，尚无实现证据。
 
 ## 1. 使用方式与权威边界
 
@@ -15,8 +15,8 @@
 
 | 范围 | 证据状态 | 当前证据与缺口 |
 |---|---|---|
-| Agent Core / Pi 适配 / `AgentPluginHost` / `ModelGateway` | 实现完成·尚未验收 | 参考插件、权限白名单、候选任务与产物已有局部和联合证据；只属于 SEM-F29/J23 |
-| 隔离 Agent 内核开发入口 | 实现完成·尚未验收 | 顺利路径与成功后重启已有证据；运行中断、renderer 级失败、Agent 模型 provider 矩阵与完整隐私负扫描待闭合 |
+| Agent Core / Pi 适配 / `AgentPluginHost` / `ModelGateway` | 联合验收完成 | 参考插件、权限白名单、候选任务与产物已由 J23-B01–B16 跨模块旅程闭合；只属于 SEM-F29/J23 |
+| 隔离 Agent 内核开发入口 | 联合验收完成 | 顺利路径、重启、取消竞态、应用中断、utility replacement、Agent 模型 provider/越权矩阵、幂等重放与严格隐私负扫描均已有真实 Electron 联合证据 |
 | 正式字幕提交边界接线 | 已决定 | 尚无 `MeetingStopped → AgentJobReconciler` 正式实现证据 |
 | 正式三项后台 Agent 任务 | 已决定 | 会后结构化纪要、个人记忆、增强文本尚无正式插件和产物证据 |
 | 识别 provider、Agent 模型 provider、确认关键词、资源仲裁 | 已决定 | 正式 registry、云端识别与本地 Agent 模型 provider 尚无实现证据 |
@@ -31,7 +31,7 @@
 |---|---|---|
 | `src/caption/**`、`src/toolbar/**`、`src/history/history-view.tsx`、`src/settings/settings-view.tsx` | 字幕系统前台交互 | 避让；只在接口合同中提出未来接线，不改 renderer |
 | `src/main.js`、`src/main/**`、`src/preload/**`、窗口交互相关测试与脚本 | 字幕系统后台交互和窗口生命周期 | 避让；正式 IPC 落地延后到并行改动提交后 |
-| `src/agent-mvp/renderer/**`、`docs/agent-ui-ux-handoff.md` | Agent UI/UX 交接模型 | 避让；Stage 0 UI 不作为正式产品接口依据 |
+| `src/agent-mvp/renderer/**`、`docs/agent-ui-ux-handoff.md` | Agent UI/UX 交接模型 | 避让；Stage 0 UI 不作为正式产品接口依据；独立复核发现 `succeeded → 已完成` 的状态词待该并行任务按语义合同对齐 |
 | `docs/current-ui-ux-handoff.md`、`docs/ui-design-brief.md` | UI/UX 交接 | 只读参考，不纳入本目标提交 |
 
 若后续 `docs/semantic-contract.md` 或 `docs/testing-strategy.md` 出现字幕任务的新未提交 hunk，本目标只暂存 Agent 专属 hunk；无法可靠分离时整文件让出并在此登记。
@@ -40,7 +40,7 @@
 
 | ID | 交付项 | 必须落地的接口/事实 | 阻断证据 | 证据状态 |
 |---|---|---|---|---|
-| A0 | 闭合隔离入口 | 同 `runId` 中断恢复、renderer 拒绝/取消/Agent 模型 provider 故障、主动重新运行、越权与隐私矩阵 | SEM-F29 / J23 | 实现完成·尚未验收 |
+| A0 | 闭合隔离入口 | 同 `runId` 中断恢复、renderer 拒绝/取消/Agent 模型 provider 故障、主动重新运行、越权与隐私矩阵 | SEM-F29 / J23 | 联合验收完成 |
 | A1 | 冻结正式合同 | `InputReference`、任务/错误闭集、端口、IPC、产物 Schema、ADR 0009 | SEM-F15/F16/F28 / J13/J21/J22/J24 | 已决定 |
 | A2 | 正式 SQLite migration | `agent_jobs`、`agent_artifacts`、个人记忆、调试聊天、识别配置与确认关键词表进入新 migration | DB7 / J20/J21/J22/J24 | 已决定 |
 | A3 | 字幕提交边界与对账 | 终态会话、完整输入身份、Agent 处理资格、自动处理时间边界、三项后台 Agent 任务幂等补建、删除不复活 | SEM-F00/F28 / J3–J7/J21/J24 | 已决定 |
@@ -62,7 +62,30 @@
 5. A9–A10 与 UI/UX 并行任务的最终界面对接；发生冲突时继续避让 renderer，优先完成后端接口与测试 fixture。
 6. A11 收齐 SEM-T15 的组合门禁，再判定联合、实机与发布验收状态。
 
-## 6. J24 正常使用边界组合矩阵
+## 6. J23 隔离入口阻断组合矩阵
+
+J23 的确定性 Agent 模型 provider 方案与任务领取竞态 gate 只能由测试进程在启动前选择，renderer、preload 和产品 IPC 均不得读取或改变故障方案或调度 gate。除 Agent 模型 provider、系统凭据存储、确定性调度 gate 和应用/utility 强制中断外，场景必须保留真实 React renderer、preload、exact IPC、两个 Electron utility process、`AgentPluginHost`、任务调度、storage worker 与候选 SQLite。跨进程报告只允许稳定枚举、计数、布尔值和身份哈希。
+
+| 场景 | 用户边界 | 必须观察到的结果 | 证据状态 |
+|---|---|---|---|
+| J23-B01 | 顺利执行调试聊天与参考任务，然后正常重启 | 固定读取工具只执行一次；聊天、任务和产物从 SQLite 恢复，不重复入队 | 联合验收完成 |
+| J23-B02 | 用户在执行预览中选择拒绝 | 持久化拒绝确认，但不创建后台 Agent 任务、不调用 Agent 模型 provider、不写产物 | 联合验收完成 |
+| J23-B03 | 用户取消尚未领取的后台 Agent 任务 | 任务进入 `cancelled`，`errorCode=null`，重启后不恢复，不写产物 | 联合验收完成 |
+| J23-B04 | 用户在 claim 已提交但宿主尚未登记 `running` 的窗口取消，或取消已经调用 Agent 模型 provider 的 `running` 任务 | 前一竞态必须在调用 Agent 模型 provider 前收束；后一场景传播 AbortSignal，取消/租约校验拒绝迟到提交；两者最终均为 `cancelled` 且无产物 | 联合验收完成 |
+| J23-B05 | Agent 模型 provider 返回 408 | 映射为 `AGENT_PROVIDER_TIMEOUT`，预算内沿用同一 `runId` 重试并只提交一个产物 | 联合验收完成 |
+| J23-B06 | Agent 模型 provider 返回 429 | 映射为 `AGENT_PROVIDER_RATE_LIMITED`，预算内沿用同一 `runId` 重试并只提交一个产物 | 联合验收完成 |
+| J23-B07 | Agent 模型 provider 返回网络错误或 5xx | 映射为 `AGENT_PROVIDER_UNAVAILABLE`，预算内沿用同一 `runId` 重试并只提交一个产物 | 联合验收完成 |
+| J23-B08 | Agent 模型 provider 鉴权失败 | 第一次尝试后以 `AGENT_PROVIDER_AUTH_FAILED` 进入 `failed`，不自动重试、不写产物 | 联合验收完成 |
+| J23-B09 | Agent 模型 provider 返回不符合固定 Schema 的输出 | 第一次尝试后以 `AGENT_OUTPUT_INVALID` 进入 `failed`，不自动重试、不写产物 | 联合验收完成 |
+| J23-B10 | 模型经真实 Agent utility 请求未授权工具、递归委派或任意 shell/进程/文件/网络/SQL 能力 | 请求必须到达真实 Pi Tool Calling 与 `AgentPluginHost` 权限边界并 fail closed；任务以 `AGENT_PERMISSION_DENIED` 终止且字幕系统未启动 | 联合验收完成 |
+| J23-B11 | 后台 Agent 任务领取后应用被强制中断并重新启动 | 只在租约过期后回收；沿用同一 `runId`，增加尝试次数并最多提交一个产物 | 联合验收完成 |
+| J23-B12 | Agent utility 在任务执行中退出并由宿主替换 | 当前尝试映射为 `AGENT_WORKER_EXITED`；替换后的 utility 沿用同一 `runId` 恢复，不重启 storage utility | 联合验收完成 |
+| J23-B13 | 用户明确再次生成同一输入；同一确认动作经 renderer/preload/exact IPC 被并发或顺序重复投递 | 新动作创建新 `runId` 和产物版本；同一 `clientIdempotencyKey + requestDigest` 只创建一项任务并返回同一 `runId` | 联合验收完成 |
+| J23-B14 | SQLite 已提交后 renderer reload | renderer 经 preload/IPC 重读权威 snapshot；已有状态、消息和产物可见且不重新入队 | 联合验收完成 |
+| J23-B15 | `safeStorage` 不可用后设置云端凭据，并重启开发入口 | 当前进程只显示会话凭据；凭据文件不存在，重启后凭据不可用 | 联合验收完成 |
+| J23-B16 | strict reader 扫描运行 stdout/stderr、跨进程报告实际序列化内容、候选 SQLite 与受控数据文件，并对正式包执行布局负扫描 | 扫描器不得信任报告内自报布尔值；动态哨兵证明实际内容不含内部思维过程或受控凭据，并拒绝现场音频或音频路径、原始 Error/stack、本地绝对路径；报告不含合成字幕正文，正式包排除 Agent 开发入口、Pi 依赖与 renderer 产物 | 联合验收完成 |
+
+## 7. J24 正常使用边界组合矩阵
 
 所有 J24 场景使用真实 storage worker、SQLite migration、`AgentPluginHost`、job runner、正式 preload/IPC 和对应 renderer。只有 Agent 模型 provider、云网络、系统凭据存储、声卡与操作系统权限可以使用受控替身；不得用内存 repository、直接调用最终 writer 或 renderer 内 fixture 替代产品内部模块。`test/validation/agent-mvp-design-contract.test.js` 只防止设计追踪漂移，不构成任何产品旅程证据，也不得提高 J13/J20/J21/J22/J24 的验收状态。
 
@@ -102,7 +125,7 @@
 | J24-B32 | 调试聊天读取终态会话、显示工具事件、预览并确认固定任务后重启 | 聊天与任务从独立 SQLite 恢复，不进入个人记忆；拒绝确认时不创建任务 | 已决定 |
 | J24-B33 | `mic` 与 `loopback` 单路会话分别组合精修、暂停/恢复、worker replacement、设备丢失、系统休眠/恢复与 Agent 模型 provider 失败 | 来源始终互斥；暂停/恢复与 worker replacement 不改变会话和输入身份，设备/休眠故障按 J6 明示重试或进入终态；会后结构化纪要和字幕历史只消费已提交正文且不重复，Agent 失败不改变字幕事实，符合 SEM-T07/J3–J7 | 已决定 |
 
-## 7. 外部参考及采纳范围
+## 8. 外部参考及采纳范围
 
 - [Microsoft Teams Recap](https://support.microsoft.com/en-us/teams/meetings/recap-in-microsoft-teams)：AI recap 依赖已经转写的会后内容，并明确可能不准确。采纳“正文先于派生产物、用户能回看来源”的边界，不采纳其账号和录制体系。
 - [Google Meet Take notes for me](https://support.google.com/meet/answer/14754931?hl=En)：明确处理会后生成、用户同意、连接问题、短会话和未生成结果。采纳显式云端披露、空/短会话与失败可见性；不照搬 15 分钟建议阈值。
@@ -112,7 +135,7 @@
 - [Stripe Idempotent Requests](https://docs.stripe.com/api/idempotent_requests)：连接失败后的重复请求由同一幂等键返回既有结果。采纳人工动作的 client idempotency key + request digest。
 - [W3C ARIA19](https://www.w3.org/WAI/WCAG21/Techniques/aria/ARIA19)：动态错误通过 live region 通知辅助技术而不强制移动焦点。采纳 J24-B24；具体视觉样式由 UI/UX 交接任务决定。
 
-## 8. 每批改动的验证与提交纪律
+## 9. 每批改动的验证与提交纪律
 
 每个较大批次执行以下闭环：
 
@@ -124,8 +147,9 @@
 - [ ] 修复复核问题并复跑；结构化报告继续满足 SEM-F14。
 - [ ] 只在当前工作区验证成立后提交本批文件，并在本表更新证据状态和提交 SHA。
 
-## 9. 批次记录
+## 10. 批次记录
 
 | 批次 | 范围 | 独立审阅 Agent | 本地验证 | 提交 | 证据状态 |
 |---|---|---|---|---|---|
 | D1 | TODO、接口合同、ADR 0009、SEM-F28/SEM-T15、J24 与设计契约测试 | Luna/max：首轮提出 P1/P2；二轮 P1/P2 无剩余；末轮 P3 五项随后按建议对齐 | 设计合同 1/1；Agent 定向组合 18/18；core 504/504；integration 34/34；evidence 227/227 | `1007cc8` | 已决定 |
+| D2 | SEM-F29/J23 隔离入口的取消竞态、错误分类、重试/中断恢复、utility replacement、六类越权、确认幂等与严格隐私矩阵 | Luna/max：首轮 3 项 P2、二轮 1 项 B16 P2，修复后最终复核 P1 无、P2 无；并行 UI 状态词登记为冲突区 P3 | core 507/507；integration 39/39；evidence 227/227 | — | 联合验收完成 |

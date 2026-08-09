@@ -33,8 +33,11 @@ test('SEM-T15 / J24 正式 Agent 首版设计追踪保持闭合', () => {
   assert.match(semantic, /\*\*SEM-T15\*\*[\s\S]*J24/)
   assert.match(semantic, /\*\*SEM-T15\*\*[\s\S]*SEM-T07\/J3–J7/)
   assert.match(testing, /\| J24 \|/)
+  assert.match(testing, /J23-B01–B16/)
   assert.match(testing, /J24-B01–B33/)
 
+  const isolatedBoundaryCases = todo.match(/^\| J23-B\d{2} \|/gm) || []
+  assert.equal(isolatedBoundaryCases.length, 16)
   const boundaryCases = todo.match(/^\| J24-B\d{2} \|/gm) || []
   assert.equal(boundaryCases.length, 33)
   for (const id of ['A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10', 'A11']) {

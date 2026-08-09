@@ -1,6 +1,6 @@
 # Agent 插件、个人记忆与 Provider 架构
 
-> 状态：已决定；由 [ADR 0003](adr/0003-project-owned-agent-plugin-host.md)、[ADR 0005](adr/0005-separate-recognition-and-agent-providers.md)、[ADR 0006](adr/0006-local-structured-personal-memory.md)、[ADR 0007](adr/0007-isolated-agent-core-mvp.md)、[ADR 0008](adr/0008-terminal-session-agent-job-reconciliation.md) 与 [ADR 0009](adr/0009-deterministic-agent-input-planning.md) 共同约束。SEM-F29/J23 隔离 Agent 内核开发入口为实现完成·尚未验收；正式 Agent 产品接线、个人记忆与 J21/J22/J24 保持已决定，尚无实现证据
+> 状态：已决定；由 [ADR 0003](adr/0003-project-owned-agent-plugin-host.md)、[ADR 0005](adr/0005-separate-recognition-and-agent-providers.md)、[ADR 0006](adr/0006-local-structured-personal-memory.md)、[ADR 0007](adr/0007-isolated-agent-core-mvp.md)、[ADR 0008](adr/0008-terminal-session-agent-job-reconciliation.md) 与 [ADR 0009](adr/0009-deterministic-agent-input-planning.md) 共同约束。SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；正式 Agent 产品接线、个人记忆与 J21/J22/J24 保持已决定，尚无实现证据
 >
 > 日期：2026-08-09
 >
@@ -202,8 +202,8 @@ AgentRuntime（对产品保持稳定）
 | Fake/Realtime adapter、audio host、worker host/core 都拒绝长度不为 1 的来源数组 | 对齐 | `mic` 与 `loopback` 仅在不同会话/独立实机 smoke 中验证 |
 | Runtime fixtures 为单路状态；J4 联合旅程验证 UI/config/runtime/SQLite 拒绝双路、活动期拒绝换源、停止后新会话隔离 | 对齐 | Agent 产物接入后需在同一 J4 继续扩展断言 |
 | 默认产品旅程只把 final/refined 文字事实写入 SQLite，JSONL 仅迁移/导出；产品诊断、smoke 与 Gate runner 只输出无正文结构化指标 | 对齐 | J12 的打包版应用数据目录检查仍待 I4 |
-| `@earendil-works/pi-agent-core` / `pi-ai` 锁定 `0.84.1`，项目自有 `AgentPluginHost`、`ModelGateway` 与 Pi 适配器位于 `src/agent-core/` | 对齐 SEM-F15/F16/F29 的隔离内核切片；不嵌入完整 coding-agent runtime | J23 完整失败/恢复联合矩阵尚未闭合；不得提升 J13/J21/J22 |
-| `src/agent-mvp/` 提供独立 main、React renderer、preload、exact IPC、Agent/storage utility process、独立 userData/SQLite 与 OpenAI-compatible/确定性测试 Agent 模型 provider | 对齐 ADR 0007；只读取真实 storage worker 写入的无音频合成终态会话，参考产物固定为 `reference-output` | 当前为实现完成·尚未验收；运行中断后同 `runId` 恢复、renderer 级拒绝/取消/Agent 模型 provider 故障矩阵待补 |
+| `@earendil-works/pi-agent-core` / `pi-ai` 锁定 `0.84.1`，项目自有 `AgentPluginHost`、`ModelGateway` 与 Pi 适配器位于 `src/agent-core/` | 对齐 SEM-F15/F16/F29 的隔离内核切片；不嵌入完整 coding-agent runtime | J23-B01–B16 已达到联合验收完成；不得据此提升 J13/J21/J22 |
+| `src/agent-mvp/` 提供独立 main、React renderer、preload、exact IPC、Agent/storage utility process、独立 userData/SQLite 与 OpenAI-compatible/确定性测试 Agent 模型 provider | 对齐 ADR 0007；只读取真实 storage worker 写入的无音频合成终态会话，参考产物固定为 `reference-output` | 隔离入口已达到联合验收完成；正式字幕提交边界、正式业务插件和正式产品 UI 仍保持已决定 |
 | 正式字幕运行时未导入 `src/agent-core/` / `src/agent-mvp/`，正式安装包显式排除两棵开发树与 Pi 依赖 | 对齐 SEM-F00/F29 的独立与打包边界 | `MeetingStopped`、正式 SQLite migration、会后结构化纪要、个人记忆、增强文本、确认关键词与正式调试聊天保持已决定，尚无实现证据 |
 
 ## 10. 首版完整运行设计

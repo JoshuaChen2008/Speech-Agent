@@ -82,7 +82,7 @@ test('SEM-F29 / J23 cancellation is terminal with no error code and debug messag
   const store = fixtureStore(t)
   const input = store.createFixtureSession({ captions: ['cancel'] })
   const queued = store.createUserJob({ inputRef: input.inputRef, provider: 'deterministic-test', model: 'fixture-model', clientIdempotencyKey: 'cancel-queued' })
-  store.requestCancel(queued.job.runId)
+  assert.equal(store.requestCancel(queued.job.runId).state, 'cancelled')
   assert.equal(store.claimNext('runner'), null)
   assert.equal(store.getJob(queued.job.runId).state, 'cancelled')
   assert.equal(store.getJob(queued.job.runId).errorCode, null)

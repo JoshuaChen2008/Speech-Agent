@@ -17,6 +17,15 @@ function assistantText (messages) {
   return assistant.content.filter((part) => part.type === 'text').map((part) => part.text).join('')
 }
 
+function providerFailure (value) {
+  const message = String(value || '')
+  if (/401|403/i.test(message)) return new AgentCoreError('AGENT_PROVIDER_AUTH_FAILED')
+  if (/408|timeout/i.test(message)) return new AgentCoreError('AGENT_PROVIDER_TIMEOUT', { retryable: true })
+  if (/429|rate.?limit/i.test(message)) return new AgentCoreError('AGENT_PROVIDER_RATE_LIMITED', { retryable: true })
+  if (/api.?key|auth/i.test(message)) return new AgentCoreError('AGENT_PROVIDER_AUTH_FAILED')
+  return new AgentCoreError('AGENT_PROVIDER_UNAVAILABLE', { retryable: true })
+}
+
 class PiAgentAdapter {
   async run ({ resolvedModel, systemPrompt, prompt, tools = [], maxTurns = 2, timeoutMs = 30000, signal, onEvent = () => {} }) {
     const { Agent } = await import('@earendil-works/pi-agent-core')
@@ -41,17 +50,13 @@ class PiAgentAdapter {
       await agent.waitForIdle()
       if (signal?.aborted) throw new AgentCoreError('AGENT_CANCELLED')
       if (timedOut) throw new AgentCoreError('AGENT_PROVIDER_TIMEOUT', { retryable: true })
-      if (agent.state.errorMessage) throw new AgentCoreError('AGENT_PROVIDER_UNAVAILABLE', { retryable: true })
+      if (agent.state.errorMessage) throw providerFailure(agent.state.errorMessage)
       return { text: assistantText(agent.state.messages) }
     } catch (error) {
       if (signal?.aborted) throw new AgentCoreError('AGENT_CANCELLED')
       if (timedOut) throw new AgentCoreError('AGENT_PROVIDER_TIMEOUT', { retryable: true })
       if (error instanceof AgentCoreError) throw error
-      const message = String(error?.message || '')
-      if (/401|403|api.?key|auth/i.test(message)) throw new AgentCoreError('AGENT_PROVIDER_AUTH_FAILED')
-      if (/408|timeout/i.test(message)) throw new AgentCoreError('AGENT_PROVIDER_TIMEOUT', { retryable: true })
-      if (/429|rate.?limit/i.test(message)) throw new AgentCoreError('AGENT_PROVIDER_RATE_LIMITED', { retryable: true })
-      throw new AgentCoreError('AGENT_PROVIDER_UNAVAILABLE', { retryable: true })
+      throw providerFailure(error?.message)
     } finally {
       clearTimeout(timer)
       signal?.removeEventListener('abort', abort)
@@ -60,4 +65,4 @@ class PiAgentAdapter {
   }
 }
 
-module.exports = { PiAgentAdapter, assistantText, publicEvent }
+module.exports = { PiAgentAdapter, assistantText, providerFailure, publicEvent }

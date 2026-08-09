@@ -9,10 +9,16 @@ const { AgentMvpSettingsStore } = require('./settings-store')
 const { CredentialVault } = require('./credential-vault')
 const { exact, publicError } = require('./protocol')
 const { AgentCoreError } = require('../agent-core/errors')
+const { REPORT_SCHEMA_VERSION, runSmokeScenario } = require('./smoke-harness')
 
 const { app, BrowserWindow, ipcMain, safeStorage } = electron
 const smokeMode = process.env.AGENT_MVP_SMOKE === '1'
-const smokePhase = process.env.AGENT_MVP_SMOKE_PHASE === 'restart' ? 'restart' : 'first'
+const smokeScenario = smokeMode ? (process.env.AGENT_MVP_SMOKE_SCENARIO || 'happy-restart') : 'happy-restart'
+const smokePhase = smokeMode ? (process.env.AGENT_MVP_SMOKE_PHASE || 'first') : 'first'
+const smokeCredential = smokeMode && typeof process.env.AGENT_MVP_SMOKE_CREDENTIAL === 'string' && /^[a-f0-9]{48}$/.test(process.env.AGENT_MVP_SMOKE_CREDENTIAL)
+  ? process.env.AGENT_MVP_SMOKE_CREDENTIAL
+  : 'journey-credential'
+const SMOKE_SCENARIOS = new Set(['happy-restart', 'boundary-matrix', 'interruption-recovery', 'worker-replacement', 'credential-session-only'])
 const dataRoot = smokeMode && process.env.AGENT_MVP_USER_DATA
   ? path.resolve(process.env.AGENT_MVP_USER_DATA)
   : path.join(app.getPath('appData'), 'Live Subtitle Agent MVP')
@@ -37,83 +43,16 @@ function send (channel, payload) {
   if (window && !window.isDestroyed()) window.webContents.send(channel, payload)
 }
 
-async function runRendererSmoke () {
-  return window.webContents.executeJavaScript(`(async () => {
-    window.__agentMvpSmokeStep = 'bootstrap'
-    const waitFor = async (predicate, timeoutMs = 10000) => {
-      const deadline = Date.now() + timeoutMs
-      while (Date.now() < deadline) {
-        const value = predicate()
-        if (value) return value
-        await new Promise((resolve) => setTimeout(resolve, 25))
-      }
-      throw Object.assign(new Error('renderer smoke timeout'), { code: 'AGENT_PROVIDER_TIMEOUT' })
-    }
-    const byTestId = (id) => document.querySelector('[data-testid="' + id + '"]')
-    const clickAndSettle = async (element) => {
-      element.click()
-      await new Promise((resolve) => setTimeout(resolve, 25))
-      await waitFor(() => !element.disabled)
-    }
-    await waitFor(() => byTestId('provider-type'))
-    if (${JSON.stringify(smokePhase)} === 'first') {
-      window.__agentMvpSmokeStep = 'provider-cloud'
-      window.__agentMvpSmokeStep = 'provider-cloud-save'
-      const cloudState = await window.agentMvp.saveProvider({
-        provider: 'openai-compatible', baseUrl: 'https://provider.invalid/v1', model: 'journey-model',
-        cloudDisclosureAccepted: true, apiKey: 'journey-credential'
-      })
-      window.__agentMvpSmokeStep = 'provider-cloud-clear'
-      if (cloudState.hasCredential !== true) throw new Error('credential state was not updated')
-      window.__agentMvpSmokeStep = 'provider-deterministic'
-      await window.agentMvp.saveProvider({
-        provider: 'deterministic-test', baseUrl: '', model: 'fixture-model', cloudDisclosureAccepted: false, apiKey: ''
-      })
-      window.__agentMvpSmokeStep = 'fixture'
-      await clickAndSettle(byTestId('fixture-loopback'))
-      await waitFor(() => byTestId('session-item'))
-      await waitFor(() => byTestId('chat-send') && !byTestId('chat-send').disabled)
-      window.__agentMvpSmokeStep = 'chat'
-      await clickAndSettle(byTestId('chat-send'))
-      await waitFor(() => document.querySelectorAll('[data-testid="message-item"]').length >= 2)
-      window.__agentMvpSmokeStep = 'preview'
-      await clickAndSettle(byTestId('preview-reference'))
-      await waitFor(() => byTestId('preview-panel'))
-      byTestId('preview-accept').click()
-      window.__agentMvpSmokeStep = 'artifact'
-      await waitFor(() => document.querySelector('[data-testid="job-item"][data-state="succeeded"]'))
-      await waitFor(() => byTestId('artifact-item'))
-      await waitFor(() => document.querySelectorAll('[data-testid="message-item"]').length >= 5)
-    } else {
-      window.__agentMvpSmokeStep = 'restart'
-      await waitFor(() => byTestId('session-item'))
-      await waitFor(() => document.querySelectorAll('[data-testid="message-item"]').length >= 2)
-      await waitFor(() => document.querySelector('[data-testid="job-item"][data-state="succeeded"]'))
-      await waitFor(() => byTestId('artifact-item'))
-    }
-    const state = await window.agentMvp.getState()
-    window.__agentMvpSmokeStep = 'report'
-    return {
-      schemaVersion: 1,
-      result: 'pass',
-      phase: ${JSON.stringify(smokePhase)},
-      sessionCount: document.querySelectorAll('[data-testid="session-item"]').length,
-      messageCount: document.querySelectorAll('[data-testid="message-item"]').length,
-      jobCount: document.querySelectorAll('[data-testid="job-item"]').length,
-      artifactCount: document.querySelectorAll('[data-testid="artifact-item"]').length,
-      toolEventCount: document.querySelectorAll('[data-testid="tool-event"]').length,
-      credentialAvailable: state.provider.hasCredential === true,
-      credentialPersisted: state.provider.credentialPersisted === true,
-      transcriptInReport: false,
-      audioPersisted: false
-    }
-  })()`)
-}
-
 async function bootstrap () {
+  if (!SMOKE_SCENARIOS.has(smokeScenario)) throw new AgentCoreError('AGENT_REQUEST_INVALID')
+  let claimsEnabled = smokeScenario !== 'boundary-matrix'
+  let delayNextClaimContinuation = smokeMode && smokeScenario === 'boundary-matrix'
   fs.mkdirSync(path.join(dataRoot, 'agent-diagnostics'), { recursive: true })
   const settings = new AgentMvpSettingsStore(path.join(dataRoot, 'agent-mvp-settings.json'))
-  const vault = new CredentialVault({ safeStorage, credentialPath: path.join(dataRoot, 'agent-provider.credential') })
+  const credentialStorage = smokeMode && smokeScenario === 'credential-session-only'
+    ? { isEncryptionAvailable: () => false }
+    : safeStorage
+  const vault = new CredentialVault({ safeStorage: credentialStorage, credentialPath: path.join(dataRoot, 'agent-provider.credential') })
   const providerSnapshot = async (job = null) => {
     const value = settings.get()
     if (job && (job.provider !== value.provider || job.model !== value.model)) throw new AgentCoreError('AGENT_REQUEST_INVALID')
@@ -126,7 +65,15 @@ async function bootstrap () {
   }
   runtime = new AgentMvpRuntimeHost({
     electron, databasePath: path.join(dataRoot, 'agent-mvp.sqlite'), providerSnapshot,
-    onChanged: (snapshot) => send('agent-mvp:state', snapshot), onEvent: (event) => send('agent-mvp:event', event)
+    onChanged: (snapshot) => send('agent-mvp:state', snapshot), onEvent: (event) => send('agent-mvp:event', event),
+    leaseMs: smokeMode && smokeScenario === 'interruption-recovery' ? 1000 : smokeMode && smokeScenario === 'boundary-matrix' ? 10000 : smokeMode ? 5000 : 60000,
+    retryDelaysMs: smokeMode && smokeScenario === 'boundary-matrix' ? [300, 600] : smokeMode && smokeScenario === 'worker-replacement' ? [500, 1000] : smokeMode ? [100, 200] : [2000, 10000],
+    claimGate: () => claimsEnabled,
+    afterClaim: async () => {
+      if (!delayNextClaimContinuation) return
+      delayNextClaimContinuation = false
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+    }
   })
   await runtime.start()
 
@@ -161,12 +108,27 @@ async function bootstrap () {
   window.on('closed', () => { window = null })
   if (smokeMode) {
     try {
-      process.stdout.write(`${JSON.stringify(await runRendererSmoke())}\n`)
+      const report = await runSmokeScenario({
+        window, runtime, scenario: smokeScenario, phase: smokePhase,
+        resumeClaims: () => { claimsEnabled = true }, smokeCredential
+      })
+      const line = `${JSON.stringify(report)}\n`
+      if (smokeScenario === 'interruption-recovery' && smokePhase === 'interrupt') {
+        await new Promise((resolve) => process.stdout.write(line, resolve))
+        process.exit(86)
+        return
+      }
+      process.stdout.write(line)
       app.quit()
     } catch (error) {
       const failureStep = await window?.webContents.executeJavaScript('window.__agentMvpSmokeStep || "bootstrap"').catch(() => 'bootstrap')
       const rendererErrorCode = await window?.webContents.executeJavaScript('window.__agentMvpSmokeErrorCode || document.querySelector("[role=alert]")?.dataset.errorCode || null').catch(() => null)
-      process.stdout.write(`${JSON.stringify({ schemaVersion: 1, result: 'fail', errorCode: rendererErrorCode || publicError(error).code, failureStep, transcriptInReport: false, audioPersisted: false })}\n`)
+      process.stdout.write(`${JSON.stringify({
+        schemaVersion: REPORT_SCHEMA_VERSION, result: 'fail', scenario: smokeScenario, phase: smokePhase,
+        errorCode: rendererErrorCode || publicError(error).code, failureStep,
+        transcriptInReport: false, audioPersisted: false, credentialInReport: false,
+        internalThoughtInReport: false, localPathInReport: false
+      })}\n`)
       app.exit(1)
     }
   }

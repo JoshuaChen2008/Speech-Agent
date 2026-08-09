@@ -45,6 +45,52 @@ test('SEM-F29 / J23 Agent execution service exposes only projected events and fi
   assert.equal(events.filter((event) => event.event.type === 'tool_execution_start').length, 1)
 })
 
+test('SEM-F29 / J23-B05–B10 deterministic Agent 模型 provider matrix preserves retry and terminal classifications', async () => {
+  const service = new AgentExecutionService({ scenario: 'boundary-matrix', phase: 'matrix' })
+  const input = {
+    inputRef: { sessionId: 'fixture-session', inputWatermark: 1, transcriptVersion: 'original', inputDigest: 'a'.repeat(64) },
+    items: [{ segmentId: 'segment-1', sourceId: 'loopback', text: 'synthetic fixture text' }]
+  }
+  const provider = { provider: 'deterministic-test', configuration: { provider: 'deterministic-test', baseUrl: '', model: 'fixture-model' }, apiKey: null }
+  let requestOrder = 0
+  const invoke = (runId) => service.handle(request(AGENT.RUN_REFERENCE, { runId, input, provider }, `request-${runId}-${++requestOrder}`))
+
+  for (const [runId, code] of [
+    ['timeout-run', 'AGENT_PROVIDER_TIMEOUT'],
+    ['rate-run', 'AGENT_PROVIDER_RATE_LIMITED'],
+    ['unavailable-run', 'AGENT_PROVIDER_UNAVAILABLE']
+  ]) {
+    const failedAttempt = await invoke(runId)
+    assert.equal(failedAttempt.ok, false)
+    assert.equal(failedAttempt.error.code, code)
+    assert.equal((await invoke(runId)).ok, true)
+  }
+  for (const [runId, code] of [
+    ['auth-run', 'AGENT_PROVIDER_AUTH_FAILED'],
+    ['schema-run', 'AGENT_OUTPUT_INVALID'],
+    ['permission-run', 'AGENT_PERMISSION_DENIED']
+  ]) {
+    const failed = await invoke(runId)
+    assert.equal(failed.ok, false)
+    assert.equal(failed.error.code, code)
+  }
+})
+
+test('SEM-F29 / J23-B04 running cancellation rejects a delayed Agent 模型 provider result', async () => {
+  const service = new AgentExecutionService({ scenario: 'worker-replacement', phase: 'replace' })
+  const input = {
+    inputRef: { sessionId: 'fixture-session', inputWatermark: 1, transcriptVersion: 'original', inputDigest: 'a'.repeat(64) },
+    items: [{ segmentId: 'segment-1', sourceId: 'loopback', text: 'synthetic fixture text' }]
+  }
+  const provider = { provider: 'deterministic-test', configuration: { provider: 'deterministic-test', baseUrl: '', model: 'fixture-model' }, apiKey: null }
+  const pending = service.handle(request(AGENT.RUN_REFERENCE, { runId: 'cancel-run', input, provider }, 'cancel-request'))
+  await new Promise((resolve) => setTimeout(resolve, 25))
+  assert.equal(service.cancel('cancel-run').cancelled, true)
+  const cancelled = await pending
+  assert.equal(cancelled.ok, false)
+  assert.equal(cancelled.error.code, 'AGENT_CANCELLED')
+})
+
 test('SEM-F29 credentials are encrypted when safeStorage is available and session-only otherwise', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vault-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
@@ -84,7 +130,7 @@ test('SEM-F29 isolated main and preload do not import subtitle runtime or expose
   assert.match(main, /contextIsolation:\s*true/)
 })
 
-test('SEM-F29 / J23 shutdown cancels work claimed after drain has begun stopping', async () => {
+test('AgentMvpRuntimeHost unit: shutdown cancels work claimed after drain has begun stopping', async () => {
   let releaseClaim
   const claim = new Promise((resolve) => { releaseClaim = resolve })
   const storageOperations = []
@@ -112,7 +158,8 @@ test('SEM-F29 / J23 shutdown cancels work claimed after drain has begun stopping
   releaseClaim({ runId: 'late-claim', lease: { owner: 'agent-mvp-runtime', expiresAt: Date.now() + 60000 } })
   await Promise.all([draining, stopping])
 
-  assert.deepEqual(storageOperations, [STORAGE.CLAIM, STORAGE.CANCEL_REQUEST, STORAGE.CANCEL_COMMIT])
+  assert.deepEqual(storageOperations.slice(0, 3), [STORAGE.CLAIM, STORAGE.CANCEL_REQUEST, STORAGE.CANCEL_COMMIT])
+  assert.deepEqual(storageOperations.slice(3).sort(), [STORAGE.LIST_ARTIFACTS, STORAGE.LIST_JOBS, STORAGE.LIST_SESSIONS].sort())
   assert.equal(agentOperations.includes(AGENT.RUN_REFERENCE), false)
   assert.equal(runtime.running, null)
 })

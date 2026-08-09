@@ -4,7 +4,12 @@ const { AgentExecutionService, OPERATIONS } = require('./agent-service')
 const { requestEnvelope, failure, response } = require('./protocol')
 
 const post = (message) => { try { process.parentPort.postMessage(message) } catch {} }
-const service = new AgentExecutionService({ emit: post })
+const service = new AgentExecutionService({
+  emit: post,
+  scenario: process.env.AGENT_MVP_SMOKE === '1' ? process.env.AGENT_MVP_SMOKE_SCENARIO : 'happy-restart',
+  phase: process.env.AGENT_MVP_SMOKE_PHASE || 'first',
+  hiddenThoughtCanary: process.env.AGENT_MVP_SMOKE === '1' ? (process.env.AGENT_MVP_SMOKE_THOUGHT || '') : ''
+})
 let queue = Promise.resolve()
 
 process.parentPort.on('message', (event) => {
