@@ -1,7 +1,7 @@
 # 正式 Agent 首版 TODO 与组合验收矩阵
 
 > 更新日期：2026-08-10
-> 证据状态：SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；D3 的正式 SQLite migration 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切为实现完成·尚未验收；其余正式产品项保持已决定。
+> 证据状态：SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；D3 的正式 SQLite migration 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切为实现完成·尚未验收；D5 增强文本与个人记忆后端纵切已登记、实施前保持已决定；其余正式产品项保持已决定。
 
 ## 1. 使用方式与权威边界
 
@@ -94,6 +94,8 @@ J23 的确定性 Agent 模型 provider 方案与任务领取竞态 gate 只能�
 D3 先闭合 A2–A4 的正式存储与生命周期骨架，不触碰并行维护的 renderer。其阻断切片已登记为：DB7/ADR 0010 的 v2 → 正式 Agent v3 与交叉 catalog fail closed；J24-B01/B26 的资格优先级；J24-B04/B25 的三项任务同输入身份和重复对账幂等；J24-B05/B07/B08/B09/B11/B12/B13/B14/B18 的租约、回复重放、人工幂等、取消、错误分类、冻结 Agent 模型 provider 快照、个人记忆自动处理边界与多会话领取；J24-B21/B29/B30 的完整精修输入、陈旧输入与隐私负扫描。该切片在缺少正式 PluginHost、preload/IPC 和 renderer 前最多只能标为“实现完成·尚未验收”，不能提高 J24 状态。
 
 D4 的 A5 UI-free 后端纵切现为实现完成·尚未验收：`agent.readInputSnapshot` 以完整 `InputReference` 复算并按所选 `event_order` 返回冻结字幕快照；`agent.claimNextJob.availableTaskKinds` 保证宿主只领取当前已装载能力；正式 `transcript-context` / `meeting-minutes` 经真实 `AgentPluginHost`、`ModelGateway`、Pi Agent Loop、确定性输入规划和 storage worker 原子提交运行，只在 Agent 模型 provider 边界使用契约替身。J24-B02/B03/B06/B10/B12/B19/B20/B21/B27/B28/B29 的后端子边界已覆盖短输入、完整精修稿、Unicode 长输入、保守归并预算、重试、取消、插件卸载、空栏目、身份臆造拒绝、陈旧输入与原子提交；仍不包含正式 `MeetingStopped`、preload/IPC、renderer、utility-process transport、`mic`/`loopback` 实机组合或其余两项后台 Agent 任务，不能提升完整 J3/J13/J21/J24。
+
+D5 在实现前登记为另一项 UI-free 后端纵切：补齐正式 `enhanced-transcript`、`memory-extraction` 与任务内 `memory-consolidation` 插件，扩展固定 recipe/模型操作闭集和 job runner writer 分流；使用真实 storage worker、SQLite、PluginHost、job runner、`ModelGateway` 与 Pi Agent Loop，只在 Agent 模型 provider 边界使用替身。阻断矩阵为 J24-B19/B22/B25/B28/B31：插件依赖或运行中卸载时不误领/不迟交；记忆重复增加来源、冲突形成 revision、明确内容不被自动内容覆盖、suppression 阻止重建；三项任务共享同一 `InputReference` 且独立成败；增强文本归并失败不留部分产物；明确决定可保留、噪声与自动低置信候选丢弃、无身份自动全局偏好不得写入。记忆只能直接读取冻结字幕快照，不能读取会后结构化纪要。D5 不包含正式 UI、`MeetingStopped`、utility-process transport、记忆检索或确认关键词，因此即使本批后端证据闭合也不得提升完整 J21/J24。
 
 | 场景 | 用户边界 | 必须观察到的结果 | 证据状态 |
 |---|---|---|---|

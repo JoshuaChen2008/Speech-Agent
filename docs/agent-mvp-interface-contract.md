@@ -1,6 +1,6 @@
 # 正式 Agent 首版接口合同
 
-> 证据状态：已决定。D3 的正式 SQLite 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切均为实现完成·尚未验收。D4 已经过真实 storage worker/SQLite、正式 `AgentPluginHost`、`ModelGateway`、Pi Agent Loop 与 job runner，只在 Agent 模型 provider 边界使用替身；尚未接入 `MeetingStopped`、正式 preload/IPC、renderer 或发布包。本文冻结正式产品接口职责，不表示 J13/J20/J21/J22/J24 已有完整产品证据。
+> 证据状态：已决定。D3 的正式 SQLite 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切均为实现完成·尚未验收。D5 已登记增强文本与个人记忆后端纵切，实施前不改变其证据状态。D4 已经过真实 storage worker/SQLite、正式 `AgentPluginHost`、`ModelGateway`、Pi Agent Loop 与 job runner，只在 Agent 模型 provider 边界使用替身；尚未接入 `MeetingStopped`、正式 preload/IPC、renderer 或发布包。本文冻结正式产品接口职责，不表示 J13/J20/J21/J22/J24 已有完整产品证据。
 
 ## 1. 边界与版本
 
@@ -91,6 +91,10 @@ type MemoryCandidate = {
   confidenceBand: 'low' | 'medium' | 'high'
   salienceBand: 'low' | 'medium' | 'high'
 }
+
+type PluginResult =
+  | { kind: 'artifact', value: MeetingMinutesArtifact | EnhancedTranscriptArtifact }
+  | { kind: 'memory-candidates', value: MemoryCandidate[] }
 ```
 
 `InputReference` 在任务创建时冻结。自动重试沿用同一 `runId`；用户主动重新生成使用新的 `runId`。`AgentEligibility` 是 Agent 处理资格，不是后台 Agent 任务状态。只有 `ready` 可以创建或领取任务；其余结果不调用 Agent 模型 provider，并由设置或历史界面显示下一动作。判定顺序固定为：`session_not_terminal → no_committed_transcript → outside_automatic_window`（仅自动请求）`→ agent_disabled → provider_not_configured → cloud_disclosure_required/credential_unavailable`（仅云端 Agent 模型 provider）`→ local_model_not_ready`（仅本地 Agent 模型 provider）`→ ready`。用户请求不受自动处理时间边界限制，但不能绕过其它条件。零条首次稳定转写没有合法 `inputWatermark`，因此不创建后台 Agent 任务，历史详情返回 `no_committed_transcript`，而不是伪造成功任务。
@@ -116,6 +120,8 @@ type MemoryCandidate = {
 | `AgentModelProviderRegistry` | 注册本地/云端 Agent 模型能力、上下文窗口和输出预算 | 不扩张插件权限，不改变字幕会话状态 |
 
 `AgentInputPlanner` 是宿主内部端口，不属于插件权限。只有所有分块及归并步骤成功后才能调用 writer；中间结果只存在于本次有界执行内存中。
+
+固定 recipe 与模型操作闭集为：`meeting-minutes@1` 只允许 `meeting-minutes.chunk/merge`，`enhanced-transcript@1` 只允许 `enhanced-transcript.chunk/merge`，`memory-extraction@1` 只允许 `memory-extraction.chunk`。`memory-consolidation` 不创建第四项后台任务，也不再次调用模型；它在记忆任务的有界内存中按分块顺序校验并汇总候选，再由 `MemoryCandidateSink` 一次提交。`AgentPluginHost` 以 `PluginResult` 分流到唯一匹配的 writer，插件不得选择 SQLite 表或绕过宿主提交。
 
 Agent 模型 provider registry 必须把上下文窗口、固定提示和输出预留折算成保守的 `maxChunkInputBytes`，`AgentInputPlanner` 再以 canonical JSON 的 UTF-8 字节数判定边界。该字节预算是避免超过上下文窗口的保守上限，不是对 token 数的产品展示值。规划优先保持完整字幕段；只有单段自身超过预算时才按 Unicode code point 的 `[fromCodePoint, throughCodePoint)` 分片。分片必须可按原顺序无损重建每段正文，且每个分块都保留原 `eventOrder` 作为证据身份。归并采用有界、确定性批次；如果预算不足以容纳至少两个受限中间结果，任务在调用 Agent 模型 provider 前 fail closed。宿主不得把输入分块或中间结果写入 SQLite、日志或报告。
 
