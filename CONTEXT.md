@@ -13,6 +13,7 @@
 | **Agent 能力插件（Agent Capability Plugin）** | 向 Agent 插件宿主贡献一种窄能力的第一方模块，首版类型包括上下文提供器、内容产物生成器和质量评估器。 | 一个插件同时拥有音频、ASR、数据库和 UI 的“大模块”；任意第三方代码包。 |
 | **Agent 模型 provider（Agent Model Provider）** | 为摘要、增强文本、个人记忆和调试聊天提供模型推理的本地或云端服务选择；它与识别 provider 相互独立。 | “AI provider”——容易与权威识别服务混淆；也不得因选择它而改变字幕会话。 |
 | **后台 Agent 任务（Background Agent Job）** | 在字幕提交边界之后，围绕固定输入快照异步生成一种 Agent 产物或记忆结果的可恢复工作单元。 | 字幕会话的一部分；阻塞会话停止或应用退出的同步后处理。 |
+| **Agent 处理资格（Agent Processing Eligibility）** | 由请求来源、Agent 总开关、终态会话的已提交正文、自动处理时间边界、Agent 模型 provider 配置及云端披露等事实按固定优先级共同决定的闭集结果，表示一个冻结输入是否可以创建或运行后台 Agent 任务。 | 后台 Agent 任务状态；模型就绪状态；用一次 IPC 成败代替持久资格事实。 |
 | **专用子 Agent（Scoped Sub-agent）** | Agent 插件宿主为一种固定 recipe 创建的单层、隔离且有界的 Agent Loop，只能使用该 recipe 批准的能力。 | 可传入任意提示词或递归委派的通用 `spawn_subagent`；完整 coding Agent。 |
 | **调试聊天（Agent Debug Chat）** | 默认隐藏、供开发与验证使用的基础聊天界面，只围绕用户明确选择的终态会话、个人记忆和受控业务工具工作。 | 面向普通用户的通用助手；自动记忆来源；内部思维过程查看器。 |
 | **隔离 Agent 内核开发入口（Isolated Agent Core Development Entry）** | 只在开发环境启动的独立 Agent 验证应用，使用独立 renderer、IPC、进程、数据目录和 SQLite，验证 Agent Loop、能力权限、后台 Agent 任务、恢复与调试聊天；它不启动或接入字幕系统，也不进入正式安装包。 | 正式 Agent 产品入口；字幕系统隐藏入口；已经实现会后结构化纪要、个人记忆或确认关键词。 |

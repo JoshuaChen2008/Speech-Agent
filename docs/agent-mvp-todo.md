@@ -1,0 +1,131 @@
+# 正式 Agent 首版 TODO 与组合验收矩阵
+
+> 更新日期：2026-08-09
+> 证据状态：已决定。SEM-F29/J23 隔离 Agent 内核开发入口为实现完成·尚未验收；本文其余正式产品项尚无实现证据。
+
+## 1. 使用方式与权威边界
+
+本文是执行追踪表，不替代语义权威。冲突时仍按 `docs/semantic-contract.md` > ADR > 架构文档 > 本文 > 代码现状处理。
+
+本目标中的“完整 MVP”解释为正式 Agent 首版，而不是隔离 Agent 内核开发入口。交付范围固定引用 SEM-F00/F09/F15/F16/F25–F28、SEM-T07/T10/T15、DB7、J3–J7/J12/J13/J20–J24；J23 是进入正式接线前的内核前置门禁。
+
+不进入首版：任意外部操作、通用助手、递归委派、第三方插件市场、完整个人记忆管理、逐会话敏感排除、FTS5、embedding、图关系、会中滚动增强。
+
+## 2. 当前基线
+
+| 范围 | 证据状态 | 当前证据与缺口 |
+|---|---|---|
+| Agent Core / Pi 适配 / `AgentPluginHost` / `ModelGateway` | 实现完成·尚未验收 | 参考插件、权限白名单、候选任务与产物已有局部和联合证据；只属于 SEM-F29/J23 |
+| 隔离 Agent 内核开发入口 | 实现完成·尚未验收 | 顺利路径与成功后重启已有证据；运行中断、renderer 级失败、Agent 模型 provider 矩阵与完整隐私负扫描待闭合 |
+| 正式字幕提交边界接线 | 已决定 | 尚无 `MeetingStopped → AgentJobReconciler` 正式实现证据 |
+| 正式三项后台 Agent 任务 | 已决定 | 会后结构化纪要、个人记忆、增强文本尚无正式插件和产物证据 |
+| 识别 provider、Agent 模型 provider、确认关键词、资源仲裁 | 已决定 | 正式 registry、云端识别与本地 Agent 模型 provider 尚无实现证据 |
+| 正式设置/历史/调试聊天 | 已决定 | UI/UX 由并行任务维护；正式 IPC、preload、storage 读取仍待接线 |
+| 正式打包与发布 | 已决定 | 正式包当前按设计排除隔离入口和 Pi 开发依赖 |
+
+## 3. 冲突区登记
+
+以下路径在 2026-08-09 的工作树中已有并行任务改动，本目标暂不写入、不暂存、不提交：
+
+| 冲突区 | 所属并行任务 | 本目标策略 |
+|---|---|---|
+| `src/caption/**`、`src/toolbar/**`、`src/history/history-view.tsx`、`src/settings/settings-view.tsx` | 字幕系统前台交互 | 避让；只在接口合同中提出未来接线，不改 renderer |
+| `src/main.js`、`src/main/**`、`src/preload/**`、窗口交互相关测试与脚本 | 字幕系统后台交互和窗口生命周期 | 避让；正式 IPC 落地延后到并行改动提交后 |
+| `src/agent-mvp/renderer/**`、`docs/agent-ui-ux-handoff.md` | Agent UI/UX 交接模型 | 避让；Stage 0 UI 不作为正式产品接口依据 |
+| `docs/current-ui-ux-handoff.md`、`docs/ui-design-brief.md` | UI/UX 交接 | 只读参考，不纳入本目标提交 |
+
+若后续 `docs/semantic-contract.md` 或 `docs/testing-strategy.md` 出现字幕任务的新未提交 hunk，本目标只暂存 Agent 专属 hunk；无法可靠分离时整文件让出并在此登记。
+
+## 4. 里程碑 TODO
+
+| ID | 交付项 | 必须落地的接口/事实 | 阻断证据 | 证据状态 |
+|---|---|---|---|---|
+| A0 | 闭合隔离入口 | 同 `runId` 中断恢复、renderer 拒绝/取消/Agent 模型 provider 故障、主动重新运行、越权与隐私矩阵 | SEM-F29 / J23 | 实现完成·尚未验收 |
+| A1 | 冻结正式合同 | `InputReference`、任务/错误闭集、端口、IPC、产物 Schema、ADR 0009 | SEM-F15/F16/F28 / J13/J21/J22/J24 | 已决定 |
+| A2 | 正式 SQLite migration | `agent_jobs`、`agent_artifacts`、个人记忆、调试聊天、识别配置与确认关键词表进入新 migration | DB7 / J20/J21/J22/J24 | 已决定 |
+| A3 | 字幕提交边界与对账 | 终态会话、完整输入身份、Agent 处理资格、自动处理时间边界、三项后台 Agent 任务幂等补建、删除不复活 | SEM-F00/F28 / J3–J7/J21/J24 | 已决定 |
+| A4 | 正式任务运行时 | lease、重试、取消、同 `runId` 恢复、人工幂等键、资源仲裁、退出收束 | SEM-F09/F12/F28 / J7/J21/J24 | 已决定 |
+| A5 | 会后结构化纪要 | `transcript-context`、`meeting-minutes`、固定四栏目、证据范围、空数组不臆造、版本化 UI | SEM-T07/T10 / J3–J7/J13/J21/J24 | 已决定 |
+| A6 | 增强文本 | 独立派生版本、完整输入覆盖、明确重新生成、不覆盖权威原始转写 | SEM-F16/F28 / J13/J21/J24 | 已决定 |
+| A7 | 个人记忆 | 提取/合并插件、三级筛选、范围/冲突/来源/suppression、有界检索、开关休眠 | SEM-F26/F27 / DB7/J21/J24 | 已决定 |
+| A8 | 识别 provider、Agent 模型 provider 与确认关键词 | 两个 registry、本地/云端 Agent 模型 provider、云端识别参考实现、能力声明与下一会话冻结 | SEM-F25/F27 / J20/J24 | 已决定 |
+| A9 | 正式设置与历史接线 | 受限 preload/exact IPC、任务状态、产物版本、云端披露、凭据只写、可访问状态通知 | SEM-F14/F28 / J12/J21/J24 | 已决定 |
+| A10 | 正式调试聊天 | 默认隐藏、选定终态会话、有界记忆、固定业务工具、执行预览/确认、记录不进记忆 | SEM-F15/F28/T10 / J13/J22/J24 | 已决定 |
+| A11 | 打包与验收 | 正式 Agent 代码进入产品包，隔离入口继续排除；core/integration/evidence、package 与适用实机证据闭合 | SEM-T03/T12/T15 / J9/J13/J20–J24 | 已决定 |
+
+## 5. 实施顺序
+
+1. A0 先补齐 J23；这能固定内核错误和恢复语义，但不得提升正式 Agent 状态。
+2. A1–A4 建立正式数据与生命周期骨架，且继续保证 Agent 完全不存在时字幕系统独立运行。
+3. A5 先形成“终态会话 → 会后结构化纪要 → 历史查看”的最小纵向产品闭环。
+4. A6–A8 补齐增强文本、个人记忆、识别 provider、Agent 模型 provider 与确认关键词。
+5. A9–A10 与 UI/UX 并行任务的最终界面对接；发生冲突时继续避让 renderer，优先完成后端接口与测试 fixture。
+6. A11 收齐 SEM-T15 的组合门禁，再判定联合、实机与发布验收状态。
+
+## 6. J24 正常使用边界组合矩阵
+
+所有 J24 场景使用真实 storage worker、SQLite migration、`AgentPluginHost`、job runner、正式 preload/IPC 和对应 renderer。只有 Agent 模型 provider、云网络、系统凭据存储、声卡与操作系统权限可以使用受控替身；不得用内存 repository、直接调用最终 writer 或 renderer 内 fixture 替代产品内部模块。`test/validation/agent-mvp-design-contract.test.js` 只防止设计追踪漂移，不构成任何产品旅程证据，也不得提高 J13/J20/J21/J22/J24 的验收状态。
+
+| 场景 | 用户边界 | 必须观察到的结果 | 证据状态 |
+|---|---|---|---|
+| J24-B01 | 终态会话没有首次稳定转写 | 不创建三项后台 Agent 任务、不调用 Agent 模型 provider；历史明确显示没有可处理的已提交正文 | 已决定 |
+| J24-B02 | 终态会话很短但至少有一段正文 | 不设任意时长门槛，仍按完整输入生成；无结论/待办/风险时返回空数组 | 已决定 |
+| J24-B03 | 正文超过单次 Agent 模型 provider 上下文 | ADR 0009 的确定性分块覆盖全部字幕段；任一分块失败时不提交部分产物 | 已决定 |
+| J24-B04 | `MeetingStopped`、启动扫描和 worker replacement 重复对账 | 每种自动任务只有一个 dedupe identity，不产生重复当前产物 | 已决定 |
+| J24-B05 | job 领取后、Agent 模型 provider 调用前应用退出 | 租约过期后沿用同一 `runId` 恢复；字幕历史不受影响 | 已决定 |
+| J24-B06 | Agent 模型 provider 已返回、产物提交前 worker 退出 | 不暴露未提交产物；恢复后同一 `runId` 重新执行并只提交一次 | 已决定 |
+| J24-B07 | SQLite 已提交但 IPC 回复丢失或 renderer reload | UI 重读权威 snapshot，显示既有 job/产物，不重新入队 | 已决定 |
+| J24-B08 | 用户双击“重新生成”或 IPC 重放 | 同一 client idempotency key 返回同一 job；新的明确动作才创建新 `runId` | 已决定 |
+| J24-B09 | 用户取消 queued/retry_wait job | 立即进入 `cancelled`，重启和对账不恢复该人工 run | 已决定 |
+| J24-B10 | 用户取消 running job，随后出现迟到 Agent 模型 provider 结果 | AbortSignal 生效；迟到结果因取消/租约校验被拒绝，不写产物 | 已决定 |
+| J24-B11 | Agent 模型 provider 出现 408、429、网络或 5xx | 在固定预算内退避并沿用同一 `runId`；不形成重试风暴，不阻塞字幕 | 已决定 |
+| J24-B12 | 凭据失效、输出 Schema 错误、越权或参数错误 | 直接 `failed`，不自动重试；显示稳定错误和下一动作 | 已决定 |
+| J24-B13 | queued/running 期间用户更改 Agent 模型 provider、模型或 recipe | 既有 job 保持冻结快照；新 job 使用新设置，不静默切换 | 已决定 |
+| J24-B14 | memory job queued/running 时关闭个人记忆 | 只取消记忆任务并拒绝迟到提交；纪要、增强文本与字幕继续 | 已决定 |
+| J24-B15 | 本地 Agent job 运行时开始新字幕会话 | 本地 job 有界停止并进入可重试状态；新字幕会话优先 | 已决定 |
+| J24-B16 | 云端 Agent job 运行时开始新字幕会话 | 云端请求可继续，但 SQLite 回写和 UI 更新保持有界 | 已决定 |
+| J24-B17 | 会话删除时存在 queued/running job、产物、聊天和记忆来源 | 同一 storage worker 清理并拒绝迟到提交；后续对账不复活 | 已决定 |
+| J24-B18 | 多个终态会话连续到达 | FIFO 与并发预算确定，单个失败或限流不饿死其它会话 | 已决定 |
+| J24-B19 | 插件超时、异常、卸载或请求未授权能力 | 只隔离该插件/job；字幕、其它任务和历史保持不变 | 已决定 |
+| J24-B20 | 纪要正文没有明确负责人或期限 | `owner/due` 为 `null`，不得根据音频来源或第一人称臆造身份 | 已决定 |
+| J24-B21 | 用户在 job 运行后选择另一正文版本 | 原 job 继续绑定原 `InputReference`；重新生成以新输入身份创建新版本 | 已决定 |
+| J24-B22 | 个人记忆出现重复、冲突、用户删除后旧输入再次扫描 | 增加来源或 revision；明确内容优先；suppression 阻止旧来源重建 | 已决定 |
+| J24-B23 | `safeStorage` 不可用或用户清除云端凭据 | 凭据只保留本进程或被清除；renderer/SQLite/日志/报告永不返回密钥 | 已决定 |
+| J24-B24 | 状态快速变化、键盘操作、失败后重试及 renderer 重载 | 权威状态可聚焦、可读且通过 live region 通知；不只靠颜色，不重复动作 | 已决定 |
+| J24-B25 | 一条正常终态会话进入自动处理 | 三项后台 Agent 任务绑定同一输入身份并独立运行；一项失败不阻塞另外两项，各自只提交自己的产物或记忆结果 | 已决定 |
+| J24-B26 | 自动请求早于自动处理时间边界，或 Agent 总开关关闭、Agent 模型 provider 未配置、云端披露未确认、凭据不可用、本地模型未就绪 | 按固定优先级返回 `outside_automatic_window` 或对应 Agent 处理资格，不创建/领取任务、不调用 Agent 模型 provider；用户明确请求可忽略时间边界但不能绕过其它条件 | 已决定 |
+| J24-B27 | 输入恰好位于上下文预算、超过一单位，或单个字幕段本身超预算 | 预算边界可重复；超长单段按 Unicode code point 范围完整分片，不切 surrogate pair、不丢字符 | 已决定 |
+| J24-B28 | 全部分块成功后归并失败，或归并期间 worker 退出 | 不提交部分产物；沿用同一 `runId` 从冻结输入重新执行，最终最多一个产物 | 已决定 |
+| J24-B29 | 请求或提交使用陈旧 `inputWatermark/inputDigest/transcriptVersion` | storage worker 复算后在 Agent 模型 provider 调用前或 writer 提交前拒绝，不读取超前投影、不写产物 | 已决定 |
+| J24-B30 | 任务、聊天、退出恢复和报告经过隐私负扫描 | SQLite/日志/报告不含现场音频、音频路径、凭据、本地绝对路径、原始 Error/stack；报告不含字幕正文 | 已决定 |
+| J24-B31 | 个人记忆正常提取同时包含明确决定、噪声和无身份第一人称表达 | 明确决定可进入长期结构化记忆，噪声丢弃，无身份表达不得静默成为全局个人偏好 | 已决定 |
+| J24-B32 | 调试聊天读取终态会话、显示工具事件、预览并确认固定任务后重启 | 聊天与任务从独立 SQLite 恢复，不进入个人记忆；拒绝确认时不创建任务 | 已决定 |
+| J24-B33 | `mic` 与 `loopback` 单路会话分别组合精修、暂停/恢复、worker replacement、设备丢失、系统休眠/恢复与 Agent 模型 provider 失败 | 来源始终互斥；暂停/恢复与 worker replacement 不改变会话和输入身份，设备/休眠故障按 J6 明示重试或进入终态；会后结构化纪要和字幕历史只消费已提交正文且不重复，Agent 失败不改变字幕事实，符合 SEM-T07/J3–J7 | 已决定 |
+
+## 7. 外部参考及采纳范围
+
+- [Microsoft Teams Recap](https://support.microsoft.com/en-us/teams/meetings/recap-in-microsoft-teams)：AI recap 依赖已经转写的会后内容，并明确可能不准确。采纳“正文先于派生产物、用户能回看来源”的边界，不采纳其账号和录制体系。
+- [Google Meet Take notes for me](https://support.google.com/meet/answer/14754931?hl=En)：明确处理会后生成、用户同意、连接问题、短会话和未生成结果。采纳显式云端披露、空/短会话与失败可见性；不照搬 15 分钟建议阈值。
+- [Zoom Meeting Summary Templates](https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0080366)：摘要依赖 transcript，用户可在会后查看和切换模板。采纳“输入存在性与版本化重新生成”，不进入首版自定义模板。
+- [Azure Asynchronous Request-Reply](https://learn.microsoft.com/en-us/azure/architecture/patterns/asynchronous-request-reply)：异步操作公开持久状态、取消和幂等键。采纳 SQLite job 作为权威状态，不让一次 IPC 回复成为事实来源。
+- [Azure Retry Pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/retry)：只对短暂故障做有界重试，并区分不可重试错误。采纳单层重试、固定预算和稳定错误分类。
+- [Stripe Idempotent Requests](https://docs.stripe.com/api/idempotent_requests)：连接失败后的重复请求由同一幂等键返回既有结果。采纳人工动作的 client idempotency key + request digest。
+- [W3C ARIA19](https://www.w3.org/WAI/WCAG21/Techniques/aria/ARIA19)：动态错误通过 live region 通知辅助技术而不强制移动焦点。采纳 J24-B24；具体视觉样式由 UI/UX 交接任务决定。
+
+## 8. 每批改动的验证与提交纪律
+
+每个较大批次执行以下闭环：
+
+- [ ] 重新读取 `CONTEXT.md`，逐项核对需求、测试名、报告字段与提交信息。
+- [ ] 先更新适用 SEM 行和 J/DB/I 旅程，再修改实现。
+- [ ] 避让第 3 节冲突区，只暂存本目标拥有的文件或可分离 hunk。
+- [ ] 运行受影响的定向测试，再运行 `npm run test:core`、`npm run test:integration`、`npm run test:evidence`。
+- [ ] 使用 `gpt-5.6-luna`、`max` 推理强度的独立审阅 Agent 复核语义、真实模块边界、失败路径与 CI 组合。
+- [ ] 修复复核问题并复跑；结构化报告继续满足 SEM-F14。
+- [ ] 只在当前工作区验证成立后提交本批文件，并在本表更新证据状态和提交 SHA。
+
+## 9. 批次记录
+
+| 批次 | 范围 | 独立审阅 Agent | 本地验证 | 提交 | 证据状态 |
+|---|---|---|---|---|---|
+| D1 | TODO、接口合同、ADR 0009、SEM-F28/SEM-T15、J24 与设计契约测试 | Luna/max：首轮提出 P1/P2；二轮 P1/P2 无剩余；末轮 P3 五项随后按建议对齐 | 设计合同 1/1；Agent 定向组合 18/18；core 504/504；integration 34/34；evidence 227/227 | — | 已决定 |

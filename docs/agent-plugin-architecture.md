@@ -1,6 +1,6 @@
 # Agent 插件、个人记忆与 Provider 架构
 
-> 状态：已决定；由 [ADR 0003](adr/0003-project-owned-agent-plugin-host.md)、[ADR 0005](adr/0005-separate-recognition-and-agent-providers.md)、[ADR 0006](adr/0006-local-structured-personal-memory.md)、[ADR 0007](adr/0007-isolated-agent-core-mvp.md) 与 [ADR 0008](adr/0008-terminal-session-agent-job-reconciliation.md) 共同约束，Agent 系统尚无实现证据
+> 状态：已决定；由 [ADR 0003](adr/0003-project-owned-agent-plugin-host.md)、[ADR 0005](adr/0005-separate-recognition-and-agent-providers.md)、[ADR 0006](adr/0006-local-structured-personal-memory.md)、[ADR 0007](adr/0007-isolated-agent-core-mvp.md)、[ADR 0008](adr/0008-terminal-session-agent-job-reconciliation.md) 与 [ADR 0009](adr/0009-deterministic-agent-input-planning.md) 共同约束。SEM-F29/J23 隔离 Agent 内核开发入口为实现完成·尚未验收；正式 Agent 产品接线、个人记忆与 J21/J22/J24 保持已决定，尚无实现证据
 >
 > 日期：2026-08-09
 >
@@ -91,7 +91,7 @@ flowchart LR
 
 - `TranscriptReader`：按 `sessionId + inputWatermark + transcriptVersion + digest` 读取已经提交的明确正文版本。
 - `MemoryReader`：按启用状态、范围、类型和预算读取当前个人记忆投影。
-- `ModelGateway`：由宿主管理 provider、凭据、超时、取消和用量。
+- `ModelGateway`：由宿主管理 Agent 模型 provider、凭据、超时、取消和用量。
 - `ArtifactWriter`：只写版本化 `agent_artifacts`，不能写 `caption_events/segments`。
 - `MemoryCandidateSink`：只接受结构化候选；来源、合并、冲突与 SQLite 提交由宿主处理。
 - `JobController`：只允许请求 registry 中已经登记的固定后台任务，不接受任意提示词或工具集。
@@ -202,7 +202,9 @@ AgentRuntime（对产品保持稳定）
 | Fake/Realtime adapter、audio host、worker host/core 都拒绝长度不为 1 的来源数组 | 对齐 | `mic` 与 `loopback` 仅在不同会话/独立实机 smoke 中验证 |
 | Runtime fixtures 为单路状态；J4 联合旅程验证 UI/config/runtime/SQLite 拒绝双路、活动期拒绝换源、停止后新会话隔离 | 对齐 | Agent 产物接入后需在同一 J4 继续扩展断言 |
 | 默认产品旅程只把 final/refined 文字事实写入 SQLite，JSONL 仅迁移/导出；产品诊断、smoke 与 Gate runner 只输出无正文结构化指标 | 对齐 | J12 的打包版应用数据目录检查仍待 I4 |
-| 项目尚未安装或实现 Pi/Agent runtime | 尚无框架锁定 | 先做 A1 ESM/Electron 探针，再实现 PluginHost；不影响当前字幕主线 |
+| `@earendil-works/pi-agent-core` / `pi-ai` 锁定 `0.84.1`，项目自有 `AgentPluginHost`、`ModelGateway` 与 Pi 适配器位于 `src/agent-core/` | 对齐 SEM-F15/F16/F29 的隔离内核切片；不嵌入完整 coding-agent runtime | J23 完整失败/恢复联合矩阵尚未闭合；不得提升 J13/J21/J22 |
+| `src/agent-mvp/` 提供独立 main、React renderer、preload、exact IPC、Agent/storage utility process、独立 userData/SQLite 与 OpenAI-compatible/确定性测试 Agent 模型 provider | 对齐 ADR 0007；只读取真实 storage worker 写入的无音频合成终态会话，参考产物固定为 `reference-output` | 当前为实现完成·尚未验收；运行中断后同 `runId` 恢复、renderer 级拒绝/取消/Agent 模型 provider 故障矩阵待补 |
+| 正式字幕运行时未导入 `src/agent-core/` / `src/agent-mvp/`，正式安装包显式排除两棵开发树与 Pi 依赖 | 对齐 SEM-F00/F29 的独立与打包边界 | `MeetingStopped`、正式 SQLite migration、会后结构化纪要、个人记忆、增强文本、确认关键词与正式调试聊天保持已决定，尚无实现证据 |
 
 ## 10. 首版完整运行设计
 
@@ -225,13 +227,15 @@ Stage 0 的参考产物不能显示或导出成会后结构化纪要、增强文
 
 识别策略在会话开始时冻结；Agent 模型 provider 在每个后台 Agent 任务创建时冻结。任意组合都不能改变字幕系统优先、权威原始转写唯一和个人记忆本地持久化三条边界。
 
-两套 registry 使用不同接口和能力描述，不在业务层按厂商名称分支。Stage 0 隔离 Agent 内核开发入口只实现 OpenAI-compatible 云端 Agent 模型 provider 和确定性测试 provider，本地 Agent 模型 provider 只冻结接口；正式 Agent 产品切片再补本地实现。识别 provider 的首个产品切片仍保留本地权威识别并接通一个云端参考实现的正常与故障路径；以后加入 FunASR 一类云端识别适配器时，只扩展识别 registry，不改 Caption Event、SessionCoordinator、个人记忆或 Agent 产物契约。
+两套 registry 使用不同接口和能力描述，不在业务层按厂商名称分支。Stage 0 隔离 Agent 内核开发入口只实现 OpenAI-compatible 云端 Agent 模型 provider 和确定性测试 Agent 模型 provider，本地 Agent 模型 provider 只冻结接口；正式 Agent 产品切片再补本地实现。识别 provider 的首个产品切片仍保留本地权威识别并接通一个云端参考实现的正常与故障路径；以后加入 FunASR 一类云端识别适配器时，只扩展识别 registry，不改 Caption Event、SessionCoordinator、个人记忆或 Agent 产物契约。
 
 ### 10.2 会后任务与个人记忆流水线
 
 ```mermaid
 flowchart LR
-  STOP["MeetingStopped\n完整提交水位"] --> RECON["AgentJobReconciler"]
+  STOP["MeetingStopped\n完整提交水位"] --> ELIG{"AgentEligibility\n处理资格闭集"}
+  ELIG -->|ready| RECON["AgentJobReconciler"]
+  ELIG -->|其余结果| NEXTACTION["设置或历史显示下一动作\n不创建/领取任务"]
   RECON --> MINUTES["会后结构化纪要 job"]
   RECON --> MEMORY["个人记忆提取 job"]
   RECON --> ENHANCE["增强文本 job"]
@@ -252,7 +256,9 @@ flowchart LR
   TERMS -->|用户确认后| NEXT["下一新会话关键词快照"]
 ```
 
-纪要、个人记忆和增强文本只共享输入，不共享成功条件。记忆提取直接读取权威原始转写，不读取纪要；provider 可以在内部合并模型请求节省成本，但外部仍表现为三个独立 job、run 和结果。
+Agent 总开关首次默认关闭。用户开启时由宿主记录新的 `automaticProcessingSince`；自动对账只覆盖该时间边界之后结束、至少包含一条首次稳定转写且 Agent 处理资格为 `ready` 的终态会话。自动请求遇到更早会话时返回 `outside_automatic_window`，更早会话只允许用户从历史明确请求；`no_committed_transcript`、未配置 Agent 模型 provider、云端披露未确认、凭据不可用或本地模型未就绪都不创建或领取任务，也不调用 Agent 模型 provider。资格按接口合同的固定优先级计算，不能由 renderer 自行推断。
+
+会后结构化纪要、个人记忆和增强文本只共享同一 `sessionId + inputWatermark + transcriptVersion + digest`，不共享成功条件。记忆提取直接读取权威原始转写，不读取纪要；Agent 模型 provider 可以在内部合并模型请求节省成本，但外部仍表现为三项独立的后台 Agent 任务、`runId` 和结果。`AgentInputPlanner` 优先按字幕段边界确定性分块；单个字幕段超过预算时按 Unicode code point 范围完整分片，所有分块和归并成功后才允许提交，任一阶段失败都不得留下部分产物。
 
 个人记忆的当前投影只保存可检索的结构化条目；来源证据和变更追加保存。重复事实增加来源，冲突事实形成新 revision，明确内容不被自动推断覆盖。没有说话人身份时，正文中的倾向只能先归入会话或项目范围，不能静默成为全局用户偏好。
 
@@ -263,21 +269,21 @@ flowchart LR
 - 读取类：读取用户明确选择的终态会话、当前会后结构化纪要、当前个人记忆和后台 Agent 任务状态。
 - 请求类：重新生成会后结构化纪要、重新提取个人记忆、重新生成增强文本。
 
-读取类工具直接执行。请求类工具先返回会话、输入水位、recipe、provider、可能费用和将生成的新版本预览；用户确认后才入队。工具只请求 registry 中的固定任务，不能传任意 system prompt、文件路径、SQL 或工具列表。
+读取类工具直接执行。请求类工具先返回会话、输入水位、recipe、Agent 模型 provider、可能费用和将生成的新版本预览；用户确认后才入队。工具只请求 registry 中的固定任务，不能传任意 system prompt、文件路径、SQL 或工具列表。
 
-专用子 Agent 是一次隔离的 Pi Agent Loop，不是独立产品进程：它只拿到固定任务 envelope 和固定能力，一层结束后返回 Schema 候选。自动重试沿用 `runId`；主动重新生成使用新 `runId`，保留两个产物版本。UI 可以展示工具事件、任务状态、耗时、provider、模型、水位和来源，但不展示内部思维过程。
+专用子 Agent 是一次隔离的 Pi Agent Loop，不是独立产品进程：它只拿到固定任务 envelope 和固定能力，一层结束后返回 Schema 候选。自动重试沿用 `runId`；主动重新生成使用新 `runId`，保留两个产物版本。UI 可以展示工具事件、任务状态、耗时、Agent 模型 provider、模型、水位和来源，但不展示内部思维过程。
 
 ### 10.4 资源与失败优先级
 
 1. 字幕系统始终最高优先级。
 2. 本地 Agent 重任务只在没有活动字幕会话时运行；新会话开始会让当前本地任务有界停止并稍后重试。
 3. 云端 Agent 任务可以继续，但 SQLite 回写和 renderer 更新必须有界。
-4. Agent provider、插件、job、调试聊天或个人记忆故障都不能改变字幕会话状态。
+4. Agent 模型 provider、插件、后台 Agent 任务、调试聊天或个人记忆故障都不能改变字幕会话状态。
 5. 全局关闭个人记忆会使现有条目休眠，不自动删除；下一新会话不再读取由个人记忆产生的确认关键词。
 
 ### 10.5 首版产品表面与实施顺序
 
-普通用户表面只包含：设置中的 provider/个人记忆/确认关键词，字幕历史中的会后结构化纪要，以及默认隐藏的调试聊天。完整个人记忆管理、逐会话敏感标记、第三方插件、通用 Agent 聊天、外部待办执行、FTS5、图数据库和向量数据库均不进入首版。
+普通用户表面只包含：设置中的识别 provider、Agent 模型 provider、个人记忆与确认关键词，字幕历史中的会后结构化纪要，以及默认隐藏的调试聊天。完整个人记忆管理、逐会话敏感标记、第三方插件、通用 Agent 聊天、外部待办执行、FTS5、图数据库和向量数据库均不进入首版。
 
 实施顺序固定为：
 
@@ -290,4 +296,4 @@ flowchart LR
 7. 云端识别 provider 与本地单向降级；
 8. 只有未来范围明确后再考虑 FTS5、embedding、图关系或第三方插件。
 
-Agent 首版 UI/UX 的非权威视觉交接见 [`agent-ui-ux-handoff.md`](agent-ui-ux-handoff.md)。
+Agent 首版 UI/UX 的非权威视觉交接见 [`agent-ui-ux-handoff.md`](agent-ui-ux-handoff.md)。正式产品的可执行追踪、接口职责与长会话输入决策分别见 [`agent-mvp-todo.md`](agent-mvp-todo.md)、[`agent-mvp-interface-contract.md`](agent-mvp-interface-contract.md) 与 [ADR 0009](adr/0009-deterministic-agent-input-planning.md)。

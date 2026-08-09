@@ -256,7 +256,7 @@ realtime/refine worker
 - `capturePreferences`：首选音频源和设备。
 - `asrPreferences`：产品级 profile、语言/分段偏好，以及只在新会话开始时冻结的权威识别策略、非敏感识别 provider ID 和确认关键词范围选择。
 - `refinementPreferences`：一个不区分 `mic`/`loopback`、决定未来新会话是否启用精修的全局偏好；可持久化，但启动时必须以精修模型就绪证明校正。会话开始时复制到不可变的 session context；修改或关闭不能改变活动会话，也不能删除旧会话精修稿。运行中 worker 故障只写该会话的结果，不回写全局偏好；只有应用启动时发现模型缺失或损坏才把持久偏好与有效值一起明确回落为关闭。
-- `aiPreferences`：Agent 系统是否启用、个人记忆全局开关、目标语言和 Agent 模型 provider 非敏感信息；不得复用或覆盖识别 provider 配置。
+- `aiPreferences`：Agent 总开关、`automaticProcessingSince`、个人记忆全局开关、目标语言和 Agent 模型 provider 非敏感信息；总开关与时间边界由主进程 `ConfigStore` 原子持久化，不得复用或覆盖识别 provider 配置。
 - `effectiveRuntimeConfig`：后端根据 Capabilities 校验后的实际值，只读发布给 UI。
 
 外观 slider 可在 renderer 即时预览，但磁盘写入需防抖。所有持久化采用白名单、版本号、迁移和 staging/rename；禁止任意 `config:set(patch)` 直接 merge 未知字段。
@@ -334,33 +334,39 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 - 已经持久化的云端首次稳定转写不可重开或替换；当前尚未产生首次 `final` 的段可以由本地链路重新形成唯一 `final`。降级后同一会话不自动切回云端。
 - 普通响应变慢、瞬时抖动或单次心跳延后只能形成指标，不能触发降级。连接存活阈值必须宽松、可测试，并与冻结字幕可见延迟指标分开。
 
-### 11.2 Agent provider 与资源仲裁
+### 11.2 Agent 模型 provider、处理资格与资源仲裁
 
+- Agent 总开关首次默认关闭。用户开启时，主进程持久化新的 `automaticProcessingSince`；自动对账不得静默处理该时间边界之前结束的会话，更早会话只能由用户从历史明确请求。
+- `AgentEligibilityEvaluator` 只返回 `ready/no_committed_transcript/outside_automatic_window/agent_disabled/provider_not_configured/cloud_disclosure_required/credential_unavailable/local_model_not_ready/session_not_terminal`。判定固定遵循正式接口合同的顺序；`outside_automatic_window` 只适用于自动请求，用户请求忽略时间边界但不绕过其它条件。只有 `ready` 能创建或领取后台 Agent 任务；其余结果不调用 Agent 模型 provider，并向设置或历史提供稳定的下一动作。
 - `ModelGateway` 冻结每个后台 Agent 任务的 Agent 模型 provider、模型、recipe 版本、超时、取消和用量边界；识别 provider 不经过该网关，也不与其共享配置。
-- `AgentModelProviderRegistry` 与识别 registry 分离，只向 `ModelGateway` 暴露受控生成、结构化输出、用量、超时和取消能力。Stage 0 隔离 Agent 内核开发入口只接通 OpenAI-compatible 云端参考实现和确定性测试 provider，本地 Agent 模型 provider 只冻结接口；正式 Agent 产品切片再补本地实现。新增 provider 不得扩张插件工具权限。
+- `AgentModelProviderRegistry` 与识别 registry 分离，只向 `ModelGateway` 暴露受控生成、结构化输出、用量、超时和取消能力。Stage 0 隔离 Agent 内核开发入口只接通 OpenAI-compatible 云端参考实现和确定性测试 Agent 模型 provider，本地 Agent 模型 provider 只冻结接口；正式 Agent 产品切片再补本地实现。新增 Agent 模型 provider 不得扩张插件工具权限。
 - 本地 Agent 推理是字幕系统的低优先级工作：有活动字幕会话时不启动；若运行期间新会话开始，任务收到取消信号并保持可重试状态，待无活动会话时重新执行。
 - 云端 Agent 请求可以在新字幕会话期间继续，因为它不持续占用本地模型推理资源；其 renderer 更新、SQLite 回写和日志仍必须有界，不能抢占字幕事件 FIFO 或长时间持有事务。
-- provider 不可用、凭据失效、限流、超时或 worker 退出只改变后台 Agent 任务与调试聊天 capability。字幕会话、SQLite 字幕事实、历史和导出保持独立。
+- Agent 模型 provider 不可用、凭据失效、限流、超时或 worker 退出只改变后台 Agent 任务与调试聊天 capability。字幕会话、SQLite 字幕事实、历史和导出保持独立。
 
 ### 11.3 后台 Agent 任务与专用子 Agent
 
 ```text
 终态会话 + 完整输入水位
-└─ AgentJobReconciler
-   ├─ meeting-minutes job ──▶ 固定 recipe Agent Loop ──▶ agent_artifacts
-   ├─ memory-extraction job ─▶ 固定 recipe Agent Loop ──▶ 记忆候选
-   └─ enhanced-transcript job ▶ 固定 recipe Agent Loop ──▶ agent_artifacts
+└─ AgentEligibilityEvaluator（处理资格闭集）
+   └─ ready + 自动处理时间边界内
+      └─ AgentJobReconciler
+         ├─ meeting-minutes job ──▶ 固定 recipe Agent Loop ──▶ agent_artifacts
+         ├─ memory-extraction job ─▶ 固定 recipe Agent Loop ──▶ 记忆候选
+         └─ enhanced-transcript job ▶ 固定 recipe Agent Loop ──▶ agent_artifacts
 
 调试聊天
 └─ 固定业务工具 ──▶ 执行预览/用户确认 ──▶ 同一 job registry
    └─ 一层专用子 Agent ──▶ Schema 候选 ──▶ Host 校验/提交
 ```
 
-- 三种自动任务是逻辑独立的 sibling，不串联结果；provider 内部将多个请求做成本优化时也不得改变任务各自的输入、状态、重试和产物契约。
-- `AgentJobReconciler` 以终态会话和缺失 dedupe key 为事实来源，负责停止后尽力建任务、启动补建和 worker replacement 恢复；它不参与字幕事件事务。
-- 同一会话、同一任务类型同时只运行一个自动任务；全局并发再受 provider 与本机资源预算限制。取消、超时和应用退出只终止当前 run，SQLite 中的待办仍可恢复。
+- 三项后台 Agent 任务逻辑独立，不串联结果；Agent 模型 provider 内部将多个请求做成本优化时也不得改变任务各自的输入、状态、重试和产物契约。
+- `AgentJobReconciler` 只以 Agent 处理资格为 `ready`、处于自动处理时间边界内的终态会话和缺失 dedupe key 为事实来源，负责停止后尽力建任务，并在启动、worker replacement 或 Agent 模型 provider 恢复时补建；它不参与字幕事件事务。零条首次稳定转写返回 `no_committed_transcript`，不创建任务。
+- 三项任务冻结同一 `sessionId + inputWatermark + transcriptVersion + digest`。`AgentInputPlanner` 优先按字幕段边界确定性分块；超预算单段按 Unicode code point 范围完整分片，全部分块和归并成功后才允许提交，失败或恢复期间不暴露部分产物。
+- 同一会话、同一任务类型同时只运行一个自动任务；全局并发再受 Agent 模型 provider 与本机资源预算限制。取消、超时和应用退出只终止当前 run，SQLite 中的待办仍可恢复。
 - 调试聊天没有通用 `spawn_subagent`。工具名称直接表达业务意图；读取工具可直接运行，写入或产生云端费用的工具先返回执行预览，取得用户确认后才建 job。
-- 专用子 Agent 只接收固定任务说明、选中的 `sessionId + inputWatermark + transcriptVersion + digest`、所需范围内的个人记忆及 provider 配置，不继承调试聊天历史，不得继续委派。
+- 用户从历史主动请求时仍必须是终态会话、当前输入身份且 Agent 处理资格为 `ready`；该路径可以处理自动时间边界之前的会话，但不能绕过总开关、Agent 模型 provider 配置、云端披露、凭据或本地模型就绪要求。
+- 专用子 Agent 只接收固定任务说明、选中的 `sessionId + inputWatermark + transcriptVersion + digest`、所需范围内的个人记忆及 Agent 模型 provider 配置，不继承调试聊天历史，不得继续委派。
 - 子 Agent 只返回结构化候选；`beforeToolCall` 等 Pi hook 可用于循环内阻断和观察，但最终的权限、并发、Schema 校验、写入与审计始终由 `AgentPluginHost` 执行。
 
 ### 11.4 隔离 Agent 内核开发入口（SEM-F29 / J23）

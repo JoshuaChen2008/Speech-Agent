@@ -23,7 +23,7 @@
 - **Hybrid retrieval（Deferred）**：FTS5 与 `sqlite-vec` 的混合检索只是后期可选项。
 - **Vertical-slice integration testing**：CI 围绕用户旅程跨模块验证，而不是只测类或函数。
 
-本设计不承诺说话人分离；一次会话只运行 `loopback` 或 `mic`；产品现在及未来都不保存原始音频；不让 Agent 产物或向量索引成为字幕事实来源，也不让云端 AI 成为本地字幕的前置依赖。
+本设计不承诺说话人分离；一次会话只运行 `loopback` 或 `mic`；产品现在及未来都不保存原始音频；不让 Agent 产物或向量索引成为字幕事实来源，也不让云端 Agent 模型 provider 成为本地字幕的前置依赖。
 
 ## 2. 目标拓扑
 
@@ -99,7 +99,7 @@ SQLite 驱动放在 storage worker 内的适配器后。当前选择 Electron/No
 
 Agent digest 统一使用 RFC 8785 JSON Canonicalization Scheme 的 UTF-8 字节并计算 SHA-256 小写十六进制。storage worker 从按 `event_order` 排序的选定正文事件与 `session_id/transcript_version/input_watermark` 计算 `input_digest`；调用方传入值只作为 expected digest，重读时必须复算比较。`AgentPluginHost` 从不可变任务字段计算自动 `dedupe_key` 和人工 `request_digest`；`ArtifactWriter` 从 Schema 校验后的 `content_json` 计算 `content_digest`。renderer、插件和模型返回的 digest 都不是权威计算结果。
 
-自动对账只扫描 `sessions.state IN ('closed', 'interrupted') AND ended_at IS NOT NULL` 的终态会话。`input_watermark` 是该输入快照消费到的最大 `caption_events.event_order`，写入产物时原值进入 `input_through_event_order`；正文版本不同即使水位相同也必须得到不同 input digest 与任务身份。
+自动对账先以 `sessions.state IN ('closed', 'interrupted') AND ended_at IS NOT NULL` 选择终态会话，再由 storage worker 计算 Agent 处理资格。只有至少一条首次稳定转写、`ended_at >= automaticProcessingSince`、Agent 总开关开启且 Agent 模型 provider 配置/云端披露/凭据或本地模型就绪条件全部满足时才返回 `ready` 并补建任务；自动请求遇到更早终态会话返回 `outside_automatic_window`，其余闭集结果也不创建或领取任务。用户从历史明确请求时忽略自动处理时间边界，但仍须使用当前输入身份并满足其它资格。`input_watermark` 是该输入快照消费到的最大 `caption_events.event_order`，写入产物时原值进入 `input_through_event_order`；正文版本不同即使水位相同也必须得到不同 input digest 与任务身份。
 
 终态历史列表或详情 envelope 必须返回会话级 `segmentCount=M`、`refinedSegmentCount=N`、`refinementResultStatus`、可空的 `refinementEnabled` 与 `refinementFaultCode`。`M` 从全部权威首次 `final` 锚点聚合，包含停止收尾、队列限界或精修故障未覆盖段；`N` 从独立精修稿聚合，`partial` 不进入任一计数。这两个计数可由有界 `COUNT` 查询派生，不要求增加可变计数列；它们不能从当前最多 50 条的详情页计算。HistoryService、工具条会话状态通知、renderer 和 exporter 必须使用同一组覆盖元数据与独立故障事实，决定完整精修、`refined-incomplete`、零精修、空会话和故障文案，避免各自推断。该通知只报告处理状态，不概括或改写字幕内容。`M=0` 且无故障时不返回 `0/0` 展示状态；有故障时显示“精修进程异常结束；本会话未产生可精修的已定稿字幕”。`not_recorded` 只在精修详情显示“未记录精修运行状态”，不进入普通历史列表。MVP 不增加逐段技术故障原因或回退筛选字段；`N < M` 不能证明 worker 崩溃，`N = M` 也不能清除已确认故障。后者必须明确显示“精修进程异常结束，但本次已生成 N/N 段精修稿”。
 
@@ -123,14 +123,16 @@ Agent digest 统一使用 RFC 8785 JSON Canonicalization Scheme 的 UTF-8 字节
 - 同一段 refined 产生新的精修版本边界，但不改变权威原始转写；后续摘要必须记录实际使用的文本版本、水位与 digest，不能把精修稿伪装成新的原始事实。
 - 增强文本和纪要结果同时保存输入水位、输入 digest、provider、model、recipe 与 `plugin_id`；UI 必须与权威原文分层显示。
 - 会后结构化纪要、个人记忆和增强文本是并列任务，直接读取同一输入快照；摘要失败不阻塞记忆，记忆也不得从摘要二次提取。
+- storage worker 以请求来源、会话、首次稳定转写数量、Agent 总开关、`automaticProcessingSince` 与冻结的 Agent 模型 provider 条件，按正式接口合同的固定优先级计算 Agent 处理资格；只有 `ready` 可以创建或领取任务。关闭 Agent 时取消 `queued/retry_wait`，对 `running` 请求取消并拒绝迟到提交，既有字幕、产物与个人记忆保持不变。
+- `AgentInputPlanner` 必须覆盖完整输入：优先按字幕段边界确定性分块，单段超过预算时按 Unicode code point 范围 `[from, through)` 完整分片，不切开 surrogate pair。所有分块及归并成功后才能提交产物；分块、归并或恢复任一失败时不得写部分产物。
 - 自动 job 的 dedupe key 固定包含 `session_id + plugin_id + artifact_kind + transcript_version + input_watermark + input_digest + recipe_version`。自动重试沿用原 `run_id`；用户主动重新运行以新 `run_id/dedupe_key` 保留新版本，并用本次动作的 `client_idempotency_key` 抵御重复点击和 IPC 重放。
 - `agent_jobs.state` 只允许 `queued/running/retry_wait/succeeded/failed/cancelled`。错误码是闭集：`AGENT_PROVIDER_AUTH_FAILED`、`AGENT_PROVIDER_RATE_LIMITED`、`AGENT_PROVIDER_UNAVAILABLE`、`AGENT_PROVIDER_TIMEOUT`、`AGENT_OUTPUT_INVALID`、`AGENT_PERMISSION_DENIED`、`AGENT_REQUEST_INVALID`、`AGENT_WORKER_EXITED`、`AGENT_INTERNAL_FAILURE`。408 映射 timeout，429 映射 rate-limited，网络/5xx 映射 unavailable；这三类与 worker exited 可以在 `max_attempts` 内重试。鉴权、Schema、权限、参数与内部错误直接进入 `failed`；取消进入 `cancelled` 且 `error_code` 为空，不得恢复。不得保存原始 Error/stack。
 - worker 领取任务时短事务写入 `lease_owner/lease_expires_at` 并增加 `attempt_count`；提交结果前再次校验租约、输入水位、digest、recipe 与取消状态。启动或 worker replacement 只回收已经过期的租约，沿用同一 `run_id` 重新排队；租约未过期不得并发执行。
-- 可靠唤醒采用终态会话 durable reconciliation，而不是让 Agent outbox 参与字幕事件事务：停止后尽力建任务，启动、worker replacement 和 provider 恢复时扫描终态会话并补齐缺失 dedupe key。
+- 可靠唤醒采用终态会话 durable reconciliation，而不是让 Agent outbox 参与字幕事件事务：停止后尽力评估资格并建任务，启动、worker replacement 和 Agent 模型 provider 恢复时只对资格为 `ready` 且处于自动处理时间边界内的终态会话补齐缺失 dedupe key。
 - pause/resume、renderer reload 或 worker replacement 不创建新摘要会话；`session_id` 变化才创建新边界。
 - Agent 模型 provider 超时、限流、断网或凭据失效只改变 Agent capability 与 job 状态，本地字幕、持久化和历史继续。
 - 首版会后纪要由 `MeetingStopped` 在完整提交水位确定后触发；插件不能自行监听原始音频，也不能由 LLM 自主执行外部待办。
-- 插件只通过 `TranscriptReader`、`MemoryReader`、`ModelGateway`、受控 writer、`Clock` 和 `Logger` 等显式端口工作。对模型 provider 的网络访问由 `ModelGateway` 统一代理；插件和专用子 Agent 没有任意数据库、网络、文件、shell 或进程能力。
+- 插件只通过 `TranscriptReader`、`MemoryReader`、`ModelGateway`、受控 writer、`Clock` 和 `Logger` 等显式端口工作。对 Agent 模型 provider 的网络访问由 `ModelGateway` 统一代理；插件和专用子 Agent 没有任意数据库、网络、文件、shell 或进程能力。
 - 网络请求和模型推理永远在 SQLite 事务外执行；结果回写时必须再次校验 job、输入水位、digest、recipe 和当前取消状态。
 
 ### 4.3 个人记忆事实与投影（A1/A2）
@@ -158,7 +160,7 @@ Agent digest 统一使用 RFC 8785 JSON Canonicalization Scheme 的 UTF-8 字节
 
 隔离 Agent 内核开发入口使用独立 userData 和 SQLite。它先应用当前正式字幕 migration 以复用 `sessions`、`caption_events` 与终态水位不变量，再应用只属于开发入口的 Agent 候选 migration，创建 `agent_jobs`、`agent_artifacts`、`agent_debug_threads` 与 `agent_debug_messages`。候选 migration 必须拥有独立版本与 checksum，但在 J21/J22 接入前不得加入正式 `SCHEMA_MIGRATIONS`，因此正式用户数据库不会因 J23 自动升级。
 
-合成终态会话只通过真实 storage worker 写入 `sessions/caption_events`，且永不含现场音频、设备名或本地路径。`agent_jobs` 只保存固定 recipe、输入引用与 digest、provider/model 快照、状态、尝试次数和稳定错误码；聊天消息可以追加用户/助手/工具预览/确认/结果事件，但不保存流式 delta 或内部思维过程。参考插件的 `agent_artifacts.type` 固定为 `reference-output`，不能使用 `meeting-minutes`、`enhanced-transcript` 或个人记忆类型。
+合成终态会话只通过真实 storage worker 写入 `sessions/caption_events`，且永不含现场音频、设备名或本地路径。`agent_jobs` 只保存固定 recipe、输入引用与 digest、Agent 模型 provider/model 快照、状态、尝试次数和稳定错误码；聊天消息可以追加用户/助手/工具预览/确认/结果事件，但不保存流式 delta 或内部思维过程。参考插件的 `agent_artifacts.type` 固定为 `reference-output`，不能使用 `meeting-minutes`、`enhanced-transcript` 或个人记忆类型。
 
 Stage 0 固定映射为：插件 `reference-structured-output` → `agent_jobs.artifact_kind = 'reference-output'` → `agent_artifacts.type = 'reference-output'`。其他值在隔离 Agent 内核开发入口中 fail closed。
 
@@ -199,7 +201,7 @@ B3.1 JSONL 是旧版过渡基线；默认组合根现已按下列顺序切到 SQ
 | **DB4 向量索引（Deferred）** | X1 启用后，refined 使旧向量立即不可服务；索引可重建；扩展不可用时 history 继续 | J11 |
 | **DB5 长稳与发布** | 数千段下数据库大小、WAL、内存和历史查询延迟有界；真实两小时声源及干净 Win11 打包版可迁移并退出 | J8 / J9；非音频预资格已过，实机仍待 |
 | **DB6 无音频持久化** | schema、应用数据目录、日志、迁移、导出和 Agent 输入均无原始音频或音频路径 | J12 / I4 |
-| **DB7 Agent 任务与个人记忆** | 同一 SQLite 单写者下，终态会话可补建三个独立任务；产物、记忆事实/投影、确认关键词和调试聊天满足输入水位、幂等、来源、删除、休眠、权限与无图/向量依赖 | J20 / J21 / J22；真实公网/provider 另走 I4 |
+| **DB7 Agent 任务与个人记忆** | 同一 SQLite 单写者下，终态会话可补建三个独立任务；产物、记忆事实/投影、确认关键词和调试聊天满足输入水位、幂等、来源、删除、休眠、权限与无图/向量依赖 | J20 / J21 / J22；真实公网/Agent 模型 provider 另走 I4 |
 
 任何 gate 只有局部测试时，只能标记“实现完成·尚未验收”。
 
