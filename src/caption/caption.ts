@@ -170,7 +170,7 @@ card.addEventListener('pointerdown', (e) => {
 })
 
 /* pointerup / pointercancel / lostpointercapture / blur 全都要收尾 ——
-   主进程那边是 8ms 定时器，漏掉任何一条取消路径都会让窗口继续跟着光标跑。 */
+   主进程那边是一个持续跑的定时器，漏掉任何一条取消路径都会让窗口继续跟着光标跑。 */
 /** @param {PointerEvent=} event */
 function endGesture (event?: Event & { pointerId?: number }): void {
   if (!dragging && !resizing) return

@@ -22,6 +22,7 @@ class FakeWindow extends EventEmitter {
     this.alwaysOnTop = false
     this.moves = 0
     this.setBoundsCalls = 0
+    this.setPositionCalls = 0
     this.webContents = new EventEmitter()
   }
 
@@ -32,6 +33,12 @@ class FakeWindow extends EventEmitter {
   setBounds (bounds) {
     this.bounds = { ...bounds }
     this.setBoundsCalls += 1
+  }
+
+  /* 拖动只移动位置，不走 resize 路径 */
+  setPosition (x, y) {
+    this.bounds = { ...this.bounds, x, y }
+    this.setPositionCalls += 1
   }
 }
 
@@ -100,6 +107,7 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
     dock,
     getCaptionLimits: () => ({ minW: 480, maxW: 1600, minH: 140, maxH: 420 }),
     getCaptionWindow: () => caption,
+    getToolbarWindow: () => toolbar,
     getCursorScreenPoint: () => ({ ...cursor }),
     getLocked: () => locked,
     onCaptionResizeEnd: () => { resizePersistCount += 1 },
@@ -108,16 +116,22 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
 
   const captionStart = caption.getBounds()
   assert.equal(interaction.startDrag({ role: 'caption', win: caption, senderId: 1 }), true)
-  assert.equal(caption.setBoundsCalls, 0, 'press without a cursor delta must not set bounds')
+  assert.equal(caption.setBoundsCalls + caption.setPositionCalls, 0,
+    'press without a cursor delta must not move the window')
   interaction.stopDrag(1)
   assert.deepEqual(caption.getBounds(), captionStart)
 
+  /* 拖动每帧只平移两个窗口，不再重新求解停靠位置。结果必须与逐帧 dock()
+     逐像素相同 —— 省掉的是每帧两次 getBounds 和一次求解，不是精度。 */
   assert.equal(interaction.startDrag({ role: 'caption', win: caption, senderId: 1 }), true)
+  const dockCallsBeforeDrag = dockOptions.length
   cursor = { x: 314, y: 209 }
   scheduler.runNext()
-  assert.deepEqual(dockOptions.at(-1), { restoreStack: false })
+  assert.equal(dockOptions.length, dockCallsBeforeDrag, 'drag ticks must not re-solve the dock position')
+  assert.equal(caption.setBoundsCalls, 0, 'drag must not take the resize path')
   assert.deepEqual(caption.getBounds(), { ...captionStart, x: captionStart.x + 14, y: captionStart.y + 9 })
-  assert.deepEqual(toolbar.getBounds(), toolbarDockBoundsFor(caption.getBounds(), toolbar.getBounds()))
+  assert.deepEqual(toolbar.getBounds(), toolbarDockBoundsFor(caption.getBounds()),
+    'the companion lands exactly where dock() would have put it')
   interaction.stopDrag(1)
 
   cursor = { x: 420, y: 260 }

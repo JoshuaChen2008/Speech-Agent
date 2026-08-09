@@ -1,6 +1,6 @@
 'use strict'
 
-const { dragBoundsAt } = require('./window-layout-contract')
+const { dragBoundsAt, toolbarDockBoundsFor } = require('./window-layout-contract')
 
 const DRAG_ROLES = Object.freeze(['caption', 'toolbar', 'settings', 'history'])
 const RESIZE_EDGES = Object.freeze(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'])
@@ -22,6 +22,7 @@ class ManualWindowInteractionController {
   constructor ({
     getCursorScreenPoint,
     getCaptionWindow,
+    getToolbarWindow,
     getLocked,
     getCaptionLimits,
     dock,
@@ -29,10 +30,13 @@ class ManualWindowInteractionController {
     onObservation = () => {},
     setTimer = setTimeout,
     clearTimer = clearTimeout,
-    tickIntervalMs = 8
+    /* Windows 的默认定时器精度是 15.6ms，8ms 兑现不了：一半的 tick 空转，
+       只会把抖动放大。对齐一帧比"要得更勤"更顺。 */
+    tickIntervalMs = 16
   }) {
     if (typeof getCursorScreenPoint !== 'function' ||
         typeof getCaptionWindow !== 'function' ||
+        typeof getToolbarWindow !== 'function' ||
         typeof getLocked !== 'function' ||
         typeof getCaptionLimits !== 'function' ||
         typeof dock !== 'function' ||
@@ -44,6 +48,7 @@ class ManualWindowInteractionController {
     }
     this.getCursorScreenPoint = getCursorScreenPoint
     this.getCaptionWindow = getCaptionWindow
+    this.getToolbarWindow = getToolbarWindow
     this.getLocked = getLocked
     this.getCaptionLimits = getCaptionLimits
     this.dock = dock
@@ -60,6 +65,24 @@ class ManualWindowInteractionController {
     try { this.onObservation(Object.freeze({ ...value })) } catch { /* evidence must not alter interaction */ }
   }
 
+  /**
+   * 拖动期间字幕窗尺寸不变，而 toolbarDockBoundsFor 只是字幕 bounds 的一次平移，
+   * 所以工具条相对字幕的偏移在整场拖动里是常量。量一次、每帧直接加，就能省掉
+   * 每帧的 dock()：那里面有两次 getBounds 和一次重新求解停靠位置。
+   * 结果与逐帧 dock() 逐像素相同（平移量都是整数，Math.round 是恒等）。
+   * 取不到工具条时留空，dragTick 退回 dock()，行为不变只是慢。
+   */
+  companionFor (redock, start) {
+    if (!redock) return { companion: null, companionOffset: null }
+    const companion = this.getToolbarWindow()
+    if (!isUsableWindow(companion)) return { companion: null, companionOffset: null }
+    const docked = toolbarDockBoundsFor(start)
+    return {
+      companion,
+      companionOffset: { x: docked.x - start.x, y: docked.y - start.y }
+    }
+  }
+
   dragTick () {
     const state = this.dragState
     if (!state) return
@@ -70,13 +93,23 @@ class ManualWindowInteractionController {
     const point = this.getCursorScreenPoint()
     const nextBounds = dragBoundsAt(state.start, state.origin, point)
     if (!sameBounds(nextBounds, state.lastBounds)) {
-      state.win.setBounds(nextBounds)
+      /* 拖动只改位置。setBounds 还要走一遍 resize 路径，而这两个都是
+         transparent + alwaysOnTop 的分层窗，每次移动都要 DWM 重新合成整窗 ——
+         每帧省下来的每一次系统调用都直接换成手感。 */
+      state.win.setPosition(nextBounds.x, nextBounds.y)
       state.lastBounds = nextBounds
       if (!state.moved) {
         state.moved = true
         this.observe({ kind: 'drag-move', role: state.role })
       }
-      if (state.redock) this.dock({ restoreStack: false })
+      if (state.companion && isUsableWindow(state.companion)) {
+        state.companion.setPosition(
+          nextBounds.x + state.companionOffset.x,
+          nextBounds.y + state.companionOffset.y
+        )
+      } else if (state.redock) {
+        this.dock({ restoreStack: false })
+      }
     }
     if (this.dragState === state) {
       state.timer = this.setTimer(() => this.dragTick(), this.tickIntervalMs)
@@ -109,7 +142,8 @@ class ManualWindowInteractionController {
       redock,
       role,
       moved: false,
-      timer: null
+      timer: null,
+      ...this.companionFor(redock, start)
     }
     this.observe({ kind: 'drag-start', role })
     this.dragTick()

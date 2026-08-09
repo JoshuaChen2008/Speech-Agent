@@ -98,6 +98,7 @@ const TB_H = WINDOW_LAYOUT.toolbarViewportHeight
 const windowInteractionController = new ManualWindowInteractionController({
   getCursorScreenPoint: () => screen.getCursorScreenPoint(),
   getCaptionWindow: () => captionWin,
+  getToolbarWindow: () => toolbarWin,
   getLocked: () => locked,
   getCaptionLimits: captionLimits,
   dock,

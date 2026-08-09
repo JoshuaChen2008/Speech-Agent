@@ -63,7 +63,7 @@ function projectToolbarReport (report, expectedGeneration) {
 
   /* dock() positions the toolbar viewport relative to the caption card. Keep
      the overlap anchored to the card's top/right edges so caption resizing
-     never requires an 8ms stream of layout reports. */
+     never requires a per-tick stream of layout reports. */
   const rawTop = WINDOW_LAYOUT.toolbarDockInset - WINDOW_LAYOUT.toolbarMargin + top
   const rawRight = WINDOW_LAYOUT.toolbarDockInset +
     (WINDOW_LAYOUT.toolbarViewportWidth - WINDOW_LAYOUT.toolbarMargin - right)

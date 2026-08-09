@@ -153,7 +153,8 @@ renderer 在可拖区域发出 `dragStart(role)` 意图，主进程通过全局�
 - 重复 dragStart
 - 锁定状态变化
 
-主进程在任何取消路径都要停止 8ms timer，不能只依赖 renderer 正常发出 dragEnd。
+主进程在任何取消路径都要停止拖动 timer，不能只依赖 renderer 正常发出 dragEnd。
+timer 间隔是实现细节（当前 16ms，对齐一帧）；取消语义不依赖具体数值。
 
 ### 5.2 逐像素命中
 
