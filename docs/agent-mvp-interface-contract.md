@@ -1,6 +1,6 @@
 # 正式 Agent 首版接口合同
 
-> 证据状态：已决定。D3 的正式 SQLite 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切，以及 D6 的 production `StorageWorkerHost` storage utility transport 子边界均为实现完成·尚未验收。D6 已经过真实 Electron utility process，覆盖策略先行、claim 后 exact-child 强制退出与退出同一性、replacement 未重放策略前拒绝领取、租约到期后同 `runId` 恢复、重复对账和三项结果各自最多提交一次，并由父测试独立复算 SQLite 身份与隐私负扫描；它仍不表示 PluginHost/Loop 已进入 Agent utility，也未接入 `MeetingStopped`、正式 `StorageGateway`、preload/IPC、renderer、记忆检索、确认关键词或发布包。ADR 0011 另冻结正式首版的 DeepSeek 非敏感配置表、启动环境凭据、provider/model/预算冻结和降级；本文不表示真实 DeepSeek 已接入，也不表示 J13/J20/J21/J22/J24 已有完整产品证据。
+> 证据状态：已决定。D3 的正式 SQLite 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切，以及 D6 的 production `StorageWorkerHost` storage utility transport 子边界均为实现完成·尚未验收。D6 已经过真实 Electron utility process，覆盖策略先行、claim 后 exact-child 强制退出与退出同一性、replacement 未重放策略前拒绝领取、租约到期后同 `runId` 恢复、重复对账和三项结果各自最多提交一次，并由父测试独立复算 SQLite 身份与隐私负扫描；它仍不表示 PluginHost/Loop 已进入 Agent utility，也未接入 `MeetingStopped`、正式 `StorageGateway`、preload/IPC、renderer、确认关键词或发布包。D8 已登记 `MemoryReader` UI-free 有界读取与休眠投影，登记本身不构成实现证据。ADR 0011 另冻结正式首版的 DeepSeek 非敏感配置表、启动环境凭据、provider/model/预算冻结和降级；本文不表示真实 DeepSeek 已接入，也不表示 J13/J20/J21/J22/J24 已有完整产品证据。
 
 ## 1. 边界与版本
 
@@ -113,6 +113,57 @@ type MemoryCandidate = {
   salienceBand: 'low' | 'medium' | 'high'
 }
 
+type MemoryQuery = {
+  scopeRefs: Array<{
+    kind: 'global' | 'session' | 'topic' | 'project'
+    canonicalKey: string
+  }>
+  kinds: Array<'decision' | 'conclusion' | 'action-item' | 'term' | 'preference' | 'project-fact' | 'experience'>
+  semanticKeys: string[]
+  maxItems: number
+  maxSerializedBytes: number
+}
+
+type MemoryProjection = {
+  availability: 'ready' | 'dormant'
+  reason:
+    | null
+    | 'agent_disabled'
+    | 'memory_disabled'
+    | 'provider_not_configured'
+    | 'cloud_disclosure_required'
+    | 'credential_unavailable'
+    | 'local_model_not_ready'
+  items: Array<{
+    memoryId: string
+    scope: {
+      kind: 'global' | 'session' | 'topic' | 'project'
+      canonicalKey: string
+      label: string
+    }
+    kind: MemoryQuery['kinds'][number]
+    semanticKey: string
+    content: Record<string, JsonValue>
+    origin: 'explicit' | 'automatic'
+    confidenceBand: 'low' | 'medium' | 'high'
+    salienceBand: 'low' | 'medium' | 'high'
+    revisionId: string
+    updatedAt: number
+    evidenceCount: number
+    evidence: Array<{
+      sessionId: string
+      transcriptVersion: 'original' | 'refined'
+      inputWatermark: number
+      fromEventOrder: number
+      throughEventOrder: number
+      inputDigest: LowercaseSha256
+    }>
+  }>
+  itemCount: number
+  serializedBytes: number
+  hasMore: boolean
+}
+
 type PluginResult =
   | { kind: 'artifact', value: MeetingMinutesArtifact | EnhancedTranscriptArtifact }
   | { kind: 'memory-candidates', value: MemoryCandidate[] }
@@ -148,6 +199,10 @@ type PluginResult =
 
 Agent 模型 provider registry 必须把上下文窗口、固定提示和输出预留折算成保守的 `maxChunkInputBytes`，`AgentInputPlanner` 再以 canonical JSON 的 UTF-8 字节数判定边界。该字节预算是避免超过上下文窗口的保守上限，不是对 token 数的产品展示值。规划优先保持完整字幕段；只有单段自身超过预算时才按 Unicode code point 的 `[fromCodePoint, throughCodePoint)` 分片。分片必须可按原顺序无损重建每段正文，且每个分块都保留原 `eventOrder` 作为证据身份。归并采用有界、确定性批次；如果预算不足以容纳至少两个受限中间结果，任务在调用 Agent 模型 provider 前 fail closed。宿主不得把输入分块或中间结果写入 SQLite、日志或报告。
 
+`MemoryReader.query` 是 UI-free 的 Agent 内部读取端口，不是 renderer 的记忆管理列表。请求必须完整给出 1–16 个不重复的 `scopeRefs`、1–7 个不重复的 `kinds`、0–64 个不重复的 exact `semanticKeys`、`maxItems=1..20` 和 `maxSerializedBytes=256..65536`；它不接受自由文本、SQL、任意排序、cursor 或调用方提供的开关/资格。storage worker 只读取最近一次 `agent.applyTaskPolicy` 建立的受信任策略；worker 首启或 replacement 尚未重放策略时以 `AGENT_REQUEST_INVALID` fail closed。Agent 或个人记忆关闭，以及 Agent 模型 provider 配置、云端披露、凭据或本地模型就绪条件不满足时，返回带稳定 `reason` 的 `availability='dormant'`、零条目且不查询或改写记忆表；重新满足条件后，既有条目重新进入读取候选，不通过开关批量改写 lifecycle。
+
+可读取候选必须同时满足 scope 为 `active`、item 为 `active`、当前 revision 属于该 item 且正文与当前投影一致。排序固定为明确内容优先、显著性高到低、置信高到低、来源证据数多到少、`updatedAt` 新到旧、`memoryId` 升序；每条最多返回最近 8 条无正文来源引用。单次查询最多扫描排序后的 256 个候选；条目按 canonical JSON 的完整 UTF-8 字节计入预算，只整条纳入而不截断 `content` 或来源，任一候选因条目数、字节数或扫描上限省略时 `hasMore=true`。`serializedBytes` 是实际返回 item 对象 canonical JSON 字节数之和。首版 exact `semanticKeys` 为空表示不增加语义键过滤；不读取字幕 FTS，不创建向量或图索引。
+
 ## 4. Storage worker 协议
 
 正式 migration 必须按 ADR 0010 追加到正式 immutable catalog：共享字幕基础 v1/v2，使用独立于隔离入口候选 v3 的正式 Agent v3，并以正式 v4 把 suppression 身份扩展为 `identity hash + source digest` 复合键、加入不含记忆正文的删除回执。不得修改既有 migration SQL/checksum，不得把隔离入口候选数据库迁入正式 userData，两个 catalog 交叉打开必须 fail closed。
@@ -164,6 +219,7 @@ Agent 模型 provider registry 必须把上下文窗口、固定提示和输出�
 | `agent.markJobCancelled` | `{ runId, lease }` | 只在当前有效租约已有取消请求时收束为 `cancelled`；清空租约与错误码，后续不恢复；相同终态重放返回当前任务 |
 | `agent.commitArtifact` | `{ runId, lease, artifact: MeetingMinutesArtifact \| EnhancedTranscriptArtifact }` | 重读并匹配冻结输入身份，按闭合 Schema 校验正文与事件范围，由 storage worker 计算 canonical digest；在同一事务中写产物并把 job 置为 `succeeded`。同一 `runId` 与相同产物重放返回既有结果，内容或身份不同 fail closed |
 | `agent.commitMemoryCandidates` | `{ runId, lease, candidates: MemoryCandidate[] }` | 重读并匹配冻结输入身份；在同一事务中执行低价值/低置信自动推断丢弃、无身份全局偏好拒绝、suppression、范围、去重、冲突、revision 与来源提交，再把 job 置为 `succeeded`。同一 `runId` 的成功重放只返回既有计数，不二次写入 |
+| `agent.readMemoryContext` | `MemoryQuery` | 只依据最近一次受信任 `applyTaskPolicy` 返回 `MemoryProjection`；关闭或资格不足时返回休眠投影，策略尚未重放时 fail closed；不接受 renderer 设置、自由文本或分页，不产生 SQLite 写入 |
 | `agent.deleteMemoryItem` | `{ memoryId, deletionIdempotencyKey }` | 在同一事务中为该条目每个既有来源 digest 写入 `identity hash + source digest` suppression，再物理删除当前条目、revision 与 evidence；回执只含稳定 ID、计数和删除时点，不含记忆正文。相同 key+请求重放同一结果，相同 key+不同请求 fail closed |
 | `agent.requestJob` | `{ inputRef, taskKind, clientIdempotencyKey, requestDigest, eligibilityContext }` | exact 校验上下文，只接受当前终态会话且 Agent 处理资格为 `ready` 的现行输入身份；相同 key+digest 返回既有 job，相同 key+不同 digest 或陈旧输入拒绝 |
 | `agent.requestCancel` | `{ runId }` | queued/retry_wait 立即取消；running 写取消请求并拒绝迟到提交 |

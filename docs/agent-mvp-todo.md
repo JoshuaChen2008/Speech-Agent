@@ -19,7 +19,7 @@
 | 隔离 Agent 内核开发入口 | 联合验收完成 | 顺利路径、重启、取消竞态、应用中断、utility replacement、Agent 模型 provider/越权矩阵、幂等重放与严格隐私负扫描均已有真实 Electron 联合证据 |
 | 正式 Agent SQLite 与存储/生命周期子边界 | 实现完成·尚未验收 | 正式 v3 migration、输入身份、Agent 处理资格、自动对账、策略线性化、领取/续租/转换/结果/删除幂等、跨表完整性与 tombstone 已由真实 storage worker + SQLite 子边界覆盖；不包含正式 PluginHost、job runner、preload/IPC 或 renderer |
 | 会后结构化纪要后端纵切 | 实现完成·尚未验收 | 冻结输入读取、已装载任务闭集、确定性分块/归并、正式 `transcript-context` / `meeting-minutes`、`ModelGateway` + Pi Agent Loop、租约/重试/取消/插件卸载与 SQLite 原子提交已有组合证据；不包含 `MeetingStopped`、正式 preload/IPC、renderer、utility-process transport 或实机组合 |
-| 增强文本与个人记忆后端纵切 | 实现完成·尚未验收 | 正式 `enhanced-transcript`、`memory-extraction`、任务内 `memory-consolidation`、writer 分流、三项同输入独立执行、记忆三级筛选/去重/冲突/suppression 与单条删除已有真实 storage worker/SQLite/PluginHost/job runner 组合证据；不包含 `MeetingStopped`、正式 utility-process transport、preload/IPC、renderer、记忆检索或确认关键词 |
+| 增强文本与个人记忆后端纵切 | 实现完成·尚未验收 | 正式 `enhanced-transcript`、`memory-extraction`、任务内 `memory-consolidation`、writer 分流、三项同输入独立执行、记忆三级筛选/去重/冲突/suppression 与单条删除已有真实 storage worker/SQLite/PluginHost/job runner 组合证据；D8 已登记 UI-free 有界读取与休眠投影但尚无实现证据；不包含 `MeetingStopped`、正式 utility-process transport、preload/IPC、renderer 或确认关键词 |
 | 正式 storage utility transport | 实现完成·尚未验收 | D6 使用 production `StorageWorkerHost` 跨越真实 Electron utility process：策略先行、claim 已提交后强制结束所捕获的 exact child 并等待同一退出结果、replacement 未重放策略前拒绝领取、租约到期后同一 `runId` 恢复，以及三项任务各自最多提交一次；父测试独立复算 SQLite 身份与隐私负扫描。不包含 Agent utility、`MeetingStopped`、正式 `StorageGateway` 接线、preload/IPC 或 renderer |
 | 正式字幕提交边界接线 | 已决定 | 尚无 `MeetingStopped → AgentJobReconciler` 正式实现证据 |
 | 正式三项后台 Agent 任务 | 已决定 | 三项任务共享同一冻结输入并独立执行的 UI-free 后端子边界为实现完成·尚未验收；正式触发、utility-process 运行时、用户读取/操作链路与完整 J21/J24 仍无产品证据 |
@@ -116,7 +116,7 @@ D6 的 A4 正式 storage utility transport 子边界现为实现完成·尚未�
 | J24-B11 | Agent 模型 provider 出现 408、429、网络或 5xx | 在固定预算内退避并沿用同一 `runId`；不形成重试风暴，不阻塞字幕 | 已决定 |
 | J24-B12 | 凭据失效、输出 Schema 错误、越权或参数错误 | 直接 `failed`，不自动重试；显示稳定错误和下一动作 | 已决定 |
 | J24-B13 | queued/running 期间部署新的 main-only provider 配置表或 recipe，并在稍后重启应用 | 既有 job 保持冻结 provider/model/recipe/预算；只有重启后新建 job 使用新配置，不在运行中读取文件或环境变量并静默切换 | 已决定 |
-| J24-B14 | memory job queued/running 时关闭个人记忆，关闭期间另有会话进入终态，随后重新开启 | 只取消记忆任务并拒绝迟到提交；纪要、增强文本与字幕继续。重新开启写入新的个人记忆自动处理边界，不复活已取消任务，也不自动补处理关闭期间或更早会话；用户明确请求重新提取仍需当前开关与资格满足 | 已决定 |
+| J24-B14 | memory job queued/running 时关闭个人记忆，关闭期间另有会话进入终态，随后重新开启 | 只取消记忆任务并拒绝迟到提交；纪要、增强文本与字幕继续。关闭期间 Agent 记忆读取返回零条目休眠投影且既有 SQLite 行不变；重新开启写入新的个人记忆自动处理边界，既有 active 记忆重新进入有界读取，但不复活已取消任务，也不自动补处理关闭期间或更早会话；用户明确请求重新提取仍需当前开关与资格满足 | 已决定 |
 | J24-B15 | 本地 Agent job 运行时开始新字幕会话 | 本地 job 有界停止并进入可重试状态；新字幕会话优先 | 已决定 |
 | J24-B16 | 云端 Agent job 运行时开始新字幕会话 | 云端请求可继续，但 SQLite 回写和 UI 更新保持有界 | 已决定 |
 | J24-B17 | 会话删除时存在 queued/running job、产物、聊天和记忆来源，删除回复丢失后请求重放 | 同一 storage worker 先写 tombstone 再受控清理；拒绝迟到提交、清理仅由该会话支撑的记忆，相同 deletion idempotency key 不影响其它会话，后续对账不复活 | 已决定 |
@@ -173,3 +173,4 @@ D6 的 A4 正式 storage utility transport 子边界现为实现完成·尚未�
 | D5 | 增强文本、记忆提取/任务内合并、writer 分流、三项同输入独立执行、正式 v4 suppression 身份与单条个人记忆删除 | Luna/max：首轮指出无身份显式全局偏好、缺少正式删除命令旅程与 storage owner 校验三项 P2/P3；补齐后第二轮复核 P1 无、P2 无，保留 utility-process/正式 UI 证据边界 P3 | 定向组合 57/57；core 523/523；integration 60/60；evidence 227/227；I3 非音频报告只再绑定安全哈希且保持 `partial` | `589c284` | 实现完成·尚未验收 |
 | D6 | production `StorageWorkerHost` storage utility transport、策略先行、claim 后 exact-child 强制退出与同 `runId` 恢复、三项任务幂等提交 | Luna/max：首轮指出 exact-child 断言可能误报与隐私结论过度依赖自报两项 P2；补齐 captured child/exit 同一性和父测试独立 SQLite/文件负扫描后，最终复核 P1 无、P2 无；保留 transport 层提交回复丢失后的 replacement 场景 P3 | D6 定向 2/2；D3–D6 相关组合 62/62；core 523/523；integration 62/62；evidence 227/227 | `6765ce8` | 实现完成·尚未验收 |
 | D7 | ADR 0011 的 DeepSeek main-only 配置表与启动环境凭据规则、ConfigStore v2 Agent 设置迁移合同、exact origin/凭据隔离、J24-B23 边界和 Agent 测试去重规则 | Luna/max：首轮指出凭据删除时序一项 P1，以及 ConfigStore 现状、旧 ADR、本项目术语和任意 HTTPS 地址四项 P2；改为早于所有窗口/子进程删除、main-only 配置表、直接改写旧 ADR、沿用 CONTEXT 术语并冻结 DeepSeek origin 后，二次复核 P1 无、P2 无；随后采纳“先无条件删除再校验”和 revision 原子更新两项 P3 | core 523/523；integration 62/62；evidence 226/226；删除 1 条只检查文档关键词的 Agent 设计正则测试 | `67d112c` | 已决定 |
+| D8 | `MemoryReader` UI-free 有界读取、受信任策略门控、active/current revision 投影、完整序列化字节预算与个人记忆休眠/恢复 | Luna/max 尚待独立复核 | 实现前登记；定向组合与三条 lane 尚待执行 | 尚待提交 | 已决定 |

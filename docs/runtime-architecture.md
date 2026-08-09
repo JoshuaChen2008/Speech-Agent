@@ -348,7 +348,7 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 
 ### 11.3 后台 Agent 任务与专用子 Agent
 
-> 当前实现投影（2026-08-10）：D3 的正式 v3 migration、Agent 处理资格、自动对账与任务生命周期，D4 的冻结输入读取、已装载任务闭集、正式纪要插件/宿主、确定性分块归并、`ModelGateway` + Pi Agent Loop、job runner 和原子产物提交，D5 的正式 v4 suppression/删除、增强文本、记忆提取/任务内合并、writer 分流与三项同输入独立执行，以及 D6 经过 production `StorageWorkerHost` utility-process transport 的策略先行、claim 后 exact-child 强制退出、replacement 策略重放与同 `runId` 恢复，均为实现完成·尚未验收。ADR 0011 的 DeepSeek 配置表、启动环境凭据、provider/model/预算冻结和降级为已决定但尚无正式实现证据。D6 仍由调用进程运行 PluginHost/Loop，不表示它们已进入 Agent utility；`MeetingStopped`、正式 `StorageGateway` 接线、provider 配置与凭据初始化、preload/IPC、renderer、记忆检索、确认关键词、资源仲裁与正式打包仍为已决定。
+> 当前实现投影（2026-08-10）：D3 的正式 v3 migration、Agent 处理资格、自动对账与任务生命周期，D4 的冻结输入读取、已装载任务闭集、正式纪要插件/宿主、确定性分块归并、`ModelGateway` + Pi Agent Loop、job runner 和原子产物提交，D5 的正式 v4 suppression/删除、增强文本、记忆提取/任务内合并、writer 分流与三项同输入独立执行，以及 D6 经过 production `StorageWorkerHost` utility-process transport 的策略先行、claim 后 exact-child 强制退出、replacement 策略重放与同 `runId` 恢复，均为实现完成·尚未验收。D8 已决定补齐 UI-free `MemoryReader` 有界读取与休眠投影，登记本段不构成实现证据。ADR 0011 的 DeepSeek 配置表、启动环境凭据、provider/model/预算冻结和降级为已决定但尚无正式实现证据。D6 仍由调用进程运行 PluginHost/Loop，不表示它们已进入 Agent utility；`MeetingStopped`、正式 `StorageGateway` 接线、provider 配置与凭据初始化、preload/IPC、renderer、确认关键词、资源仲裁与正式打包仍为已决定。
 
 ```text
 终态会话 + 完整输入水位
@@ -367,6 +367,7 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 - 三项后台 Agent 任务逻辑独立，不串联结果；Agent 模型 provider 内部将多个请求做成本优化时也不得改变任务各自的输入、状态、重试和产物契约。
 - `AgentJobReconciler` 只以 Agent 处理资格为 `ready`、处于 Agent 自动处理时间边界内的终态会话和缺失 dedupe key 为事实来源，负责停止后尽力建任务，并在启动、worker replacement 或 Agent 模型 provider 恢复时补建；记忆任务还必须处于个人记忆自动处理边界内。它不参与字幕事件事务。零条首次稳定转写返回 `no_committed_transcript`，不创建任务；精修覆盖不完整的混合显示正文不形成合法 `refined` Agent 输入。
 - 三项任务冻结同一 `sessionId + inputWatermark + transcriptVersion + digest`。`AgentInputPlanner` 优先按字幕段边界确定性分块；超预算单段按 Unicode code point 范围完整分片，全部分块和归并成功后才允许提交，失败或恢复期间不暴露部分产物。
+- `MemoryReader` 只通过 storage worker 的 `agent.readMemoryContext` 读取当前个人记忆投影。调用方必须给出有界 exact scope/type/semantic key 与条目/序列化字节预算，不能传设置或资格；storage worker 只信任本代最近一次 `applyTaskPolicy`。开关关闭或 Agent 模型 provider 条件不满足时返回零条目休眠投影，replacement 未重放策略时 fail closed；重新满足条件后读取既有 active 条目而不改写表。当前三项后台 Agent 任务不自动注入该结果，后续调试聊天或明确登记的 recipe 接入时仍须单独声明 `memory.read` 权限与模型输入预算。
 - 同一会话、同一任务类型同时只运行一个自动任务；全局并发再受 Agent 模型 provider 与本机资源预算限制。取消、超时和应用退出只终止当前 run，SQLite 中的待办仍可恢复。
 - 调试聊天没有通用 `spawn_subagent`。工具名称直接表达业务意图；读取工具可直接运行，写入或产生云端费用的工具先返回执行预览，取得用户确认后才建 job。
 - 用户从历史主动请求时仍必须是终态会话、当前输入身份且 Agent 处理资格为 `ready`；该路径可以处理自动时间边界之前的会话，但不能绕过总开关、Agent 模型 provider 配置、云端披露、凭据或本地模型就绪要求。
