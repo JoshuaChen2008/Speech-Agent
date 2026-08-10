@@ -175,6 +175,8 @@ type PluginResult =
 
 初版受信任配置表默认 `providerId='deepseek'`、`providerKind='cloud'`、`apiStyle='openai-chat-completions'`、`baseUrl='https://api.deepseek.com'`、`model='deepseek-v4-flash'`。模型标识是可配置的不透明字符串；宿主不得根据名字猜测上下文、输出、Tool Calling 或思考模式能力。`maxChunkInputBytes/maxResultBytes/timeoutMs` 必须由配置表明确给出并经过范围校验。网络请求只允许 exact origin `https://api.deepseek.com`、受控路径且拒绝 redirect；应用不自动读取 `.env` 文件，renderer 不提供 API key 写入/回读接口；缺少、全空白或超过 4096 个 UTF-8 字节的凭据均返回 `credential_unavailable`。
 
+D9 的默认受信任配置预算固定为 `maxChunkInputBytes=65536`、`maxResultBytes=16384`、`timeoutMs=60000`；它们是产品保守上限，不是从模型名推断的供应商能力。`AgentProviderBootstrap` 必须先消费并删除启动环境中所有大小写不敏感等价的 `DEEPSEEK_API_KEY` 键，再校验闭合配置表；重复等价键、非字符串、空白或 4097+ UTF-8 字节都产生 `credentialState='invalid'`，完全缺失产生 `missing`。它冻结删除后的 child environment 快照，运行中环境变化不再生效；公开投影只能包含 `providerId/providerKind/model` 与凭据来源状态，不含 URL、预算或凭据。主进程私有凭据使用有界 `Buffer`，每次调用只产生一份副本并在成功或异常后 `fill(0)`；稳定鉴权失败、Agent utility 异常退出或应用退出清零主副本且本进程不可恢复。D9 不创建窗口、worker/utility 或网络请求，也不修改 ConfigStore v1；正式 main 首行接线、ConfigStore v2、Agent utility 私有消息与 exact DeepSeek 网络适配器分别留待后续纵切。
+
 `transcriptVersion: 'refined'` 只表示整场精修覆盖完整的冻结精修稿。`0 < N < M` 的精修覆盖不完整只是显示/导出层的混合视图，不形成首版 Agent 输入版本；用户必须明确使用权威原始转写，或者在 `N=M` 时选择完整精修稿。storage worker 必须在调用 Agent 模型 provider 前拒绝把不完整混合正文声明为 `refined`。
 
 稳定错误码沿用 `docs/data-architecture.md` 的闭集。408、429、网络/5xx 和 worker 退出可在预算内进入 `retry_wait`；鉴权、Schema、权限、参数和内部不变量错误进入 `failed`；用户取消进入 `cancelled` 且不得恢复。原始 Error、stack、凭据、正文和本地绝对路径不得进入跨进程错误或证据报告。

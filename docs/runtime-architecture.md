@@ -342,6 +342,7 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 - `AgentModelProviderRegistry` 与识别 registry 分离，只向 `ModelGateway` 暴露受控生成、结构化输出、用量、超时和取消能力。Stage 0 隔离 Agent 内核开发入口继续保留 OpenAI-compatible 云端参考实现、`safeStorage` 与确定性测试 Agent 模型 provider；正式首版按 ADR 0011 建立 DeepSeek main-only 配置表、启动环境凭据、provider/model/预算冻结和显式降级，CI 只替代实际 Agent 模型 provider、云网络与启动环境凭据。真实 DeepSeek 公网及本地 Agent 模型 provider 后置，新增实现不得扩张插件工具权限。
 - 正式 main 的第一段同步启动逻辑必须早于 `app.whenReady()` 后的窗口逻辑，也早于任何 `BrowserWindow`、preload、renderer、Node worker、child process 或 utility process 创建：取得 `DEEPSEEK_API_KEY` raw 值后先无条件立即从 `process.env` 删除，再校验并只复制合法值，最后建立净化后的子进程环境。缺失、全空白或超 4096 个 UTF-8 字节时投影 `credential_unavailable`；配置表不合法时投影 `provider_not_configured`。两者都不创建或领取任务。运行中后来设置环境变量不生效，正式 renderer 只读取 `AgentProviderPublicState`，不提供 key 写入或回读。
 - 初版网络适配器只允许 exact origin `https://api.deepseek.com`、受控 Chat Completions 路径并拒绝 redirect。单次调用结束时清零 Agent utility 副本；Agent utility 异常退出、稳定鉴权失败或应用退出时清零主进程副本并要求以新的启动环境重启。
+- D9 先提供 UI-free 的 main-only bootstrap/catalog 子边界：默认保守预算为 `65536/16384` 字节与 `60000ms`，按 Windows 大小写不敏感规则删除全部 `DEEPSEEK_API_KEY` 等价键并冻结净化后的 child environment；多个等价键 fail closed。它只发布公开状态和非敏感资格事实，并以成功/异常后必清零的有界副本借用主凭据；不创建窗口、Agent utility 或网络请求，也不替代正式 main 第一段同步接线。
 - 本地 Agent 推理是字幕系统的低优先级工作：有活动字幕会话时不启动；若运行期间新会话开始，任务收到取消信号并保持可重试状态，待无活动会话时重新执行。
 - 云端 Agent 请求可以在新字幕会话期间继续，因为它不持续占用本地模型推理资源；其 renderer 更新、SQLite 回写和日志仍必须有界，不能抢占字幕事件 FIFO 或长时间持有事务。
 - Agent 模型 provider 不可用、凭据失效、限流、超时或 worker 退出只改变后台 Agent 任务与调试聊天的 Agent 能力状态。字幕会话、SQLite 字幕事实、历史和导出保持独立。

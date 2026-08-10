@@ -24,6 +24,12 @@ DeepSeek 官方当前提供 OpenAI-compatible Chat Completions 接口，模型�
 9. CI 只在 Agent 模型 provider、云网络和启动环境凭据外部边界使用确定性替身。替身必须经过真实 `AgentModelProviderRegistry → ModelGateway → Agent Loop` 请求路径；不得让测试直接提交最终产物。真实 DeepSeek 联网只在接入凭据后另建手动/实机证据，不反向改变当前任务、产物或输入身份 schema。
 10. 隔离 Agent 内核开发入口继续遵循 ADR 0007 的 `safeStorage` 设计。该已验收开发入口与本 ADR 的正式产品启动配置互不替换，隔离入口数据仍不进入正式 userData 或安装包。
 
+## D9 实现切片
+
+D9 先实现不接公网的 main-only bootstrap/catalog 子边界。默认保守预算固定为 `maxChunkInputBytes=65536`、`maxResultBytes=16384`、`timeoutMs=60000`，不从 `deepseek-v4-flash` 名称推断能力。启动消费按 Windows 环境名大小写不敏感：先收集并删除所有等价于 `DEEPSEEK_API_KEY` 的键，再验证配置与 raw 值；多个等价键一律视为歧义凭据。child environment 从删除后的启动快照复制，避免 Node worker/child 默认复制 `process.env` 时把运行中注入重新带入。主凭据和单次调用副本均使用有界、已初始化 `Buffer`；调用副本在成功或异常后清零，主副本在稳定鉴权失败、Agent utility 异常退出或应用退出时清零。
+
+本切片只向后续正式 main 提供闭合配置快照、公开状态、非敏感 Agent 处理资格事实、净化后的 child environment 和有界凭据借用生命周期；不修改当前冲突区内的 `src/main.js`/ConfigStore/preload/renderer，不创建 Agent utility，不实现 HTTP，也不把 bootstrap 自身称为正式 J24 产品链路。
+
 ## 取舍
 
 - 相比把 API key 写入 ConfigStore，本方案避免明文持久化与 renderer 凭据 IPC；代价是每次启动都必须由外部环境重新供给。

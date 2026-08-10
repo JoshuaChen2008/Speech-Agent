@@ -1,7 +1,7 @@
 # 正式 Agent 首版 TODO 与组合验收矩阵
 
 > 更新日期：2026-08-10
-> 证据状态：SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；D3 的正式 SQLite migration 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切，以及 D6 的正式 storage utility transport 子边界均为实现完成·尚未验收；ADR 0011 的 DeepSeek 配置表、启动环境凭据、provider/model/预算冻结和降级为已决定；其余正式产品项保持已决定。
+> 证据状态：SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；D3 的正式 SQLite migration 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切，以及 D6 的正式 storage utility transport 子边界均为实现完成·尚未验收；ADR 0011 的 DeepSeek 配置表、启动环境凭据、provider/model/预算冻结和降级为已决定，D9 已登记其无公网 main-only bootstrap/catalog 实现切片；其余正式产品项保持已决定。
 
 ## 1. 使用方式与权威边界
 
@@ -23,7 +23,7 @@
 | 正式 storage utility transport | 实现完成·尚未验收 | D6 使用 production `StorageWorkerHost` 跨越真实 Electron utility process：策略先行、claim 已提交后强制结束所捕获的 exact child 并等待同一退出结果、replacement 未重放策略前拒绝领取、租约到期后同一 `runId` 恢复，以及三项任务各自最多提交一次；父测试独立复算 SQLite 身份与隐私负扫描。不包含 Agent utility、`MeetingStopped`、正式 `StorageGateway` 接线、preload/IPC 或 renderer |
 | 正式字幕提交边界接线 | 已决定 | 尚无 `MeetingStopped → AgentJobReconciler` 正式实现证据 |
 | 正式三项后台 Agent 任务 | 已决定 | 三项任务共享同一冻结输入并独立执行的 UI-free 后端子边界为实现完成·尚未验收；正式触发、utility-process 运行时、用户读取/操作链路与完整 J21/J24 仍无产品证据 |
-| 识别 provider、Agent 模型 provider、确认关键词、资源仲裁 | 已决定 | 识别 registry、云端识别、确认关键词与资源仲裁尚无实现证据；Agent 模型 provider 按 ADR 0011 使用 `deepseek/deepseek-v4-flash` main-only 配置表与 `DEEPSEEK_API_KEY` 启动环境凭据，真实 DeepSeek 公网及本地 Agent 模型 provider 后置 |
+| 识别 provider、Agent 模型 provider、确认关键词、资源仲裁 | 已决定 | 识别 registry、云端识别、确认关键词与资源仲裁尚无实现证据；Agent 模型 provider 按 ADR 0011 使用 `deepseek/deepseek-v4-flash` main-only 配置表与 `DEEPSEEK_API_KEY` 启动环境凭据，D9 已登记无公网 bootstrap/catalog 子边界，真实 DeepSeek 公网及本地 Agent 模型 provider 后置 |
 | 正式设置/历史/调试聊天 | 已决定 | UI/UX 由并行任务维护；正式 IPC、preload、storage 读取仍待接线 |
 | 正式打包与发布 | 已决定 | 正式包当前按设计排除隔离入口和 Pi 开发依赖 |
 
@@ -148,6 +148,8 @@ D6 的 A4 正式 storage utility transport 子边界现为实现完成·尚未�
 - [W3C ARIA19](https://www.w3.org/WAI/WCAG21/Techniques/aria/ARIA19)：动态错误通过 live region 通知辅助技术而不强制移动焦点。采纳 J24-B24；具体视觉样式由 UI/UX 交接任务决定。
 - [Electron `utilityProcess`](https://www.electronjs.org/docs/latest/api/utility-process)：D6 采纳 `app.whenReady()` 后创建 utility、`serviceName` 角色标识、`postMessage`/`parentPort` 通信、`error` 后等待同一 child 的 `exit`，以及结束 exact child 后才允许 replacement；该 API 参考不替代 J24 产品旅程证据。
 - [DeepSeek API Change Log](https://api-docs.deepseek.com/updates/) / [Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing/)：官方当前登记 `deepseek-v4-flash` 与 OpenAI-compatible `https://api.deepseek.com`。首版只采纳 provider/model/base URL 默认值和可替换配置形状；不把可变价格、上下文窗口、输出上限、供应商可用性或模型质量写入产品语义。
+- [Node.js `process.env`](https://nodejs.org/api/process.html#processenv) / [`child_process` environment](https://nodejs.org/api/child_process.html#child_processspawncommand-args-options)：Windows 主线程环境名大小写不敏感，worker/child 会取得环境副本且 child 默认继承 `process.env`。D9 因此在校验前删除所有大小写等价凭据键，并冻结删除后的显式 child environment；该规则不表示已经创建 Agent utility。
+- [Node.js `Buffer`](https://nodejs.org/api/buffer.html#buffillvalue-offset-end-encoding)：D9 使用已初始化的有界 `Buffer` 保存主进程私有凭据与单次借用副本，并在成功、异常或失效时以 `fill(0)` 做尽力清零；不把它描述为 JavaScript/V8 进程内的绝对内存擦除保证。
 
 ## 9. 每批改动的验证与提交纪律
 
@@ -174,3 +176,4 @@ D6 的 A4 正式 storage utility transport 子边界现为实现完成·尚未�
 | D6 | production `StorageWorkerHost` storage utility transport、策略先行、claim 后 exact-child 强制退出与同 `runId` 恢复、三项任务幂等提交 | Luna/max：首轮指出 exact-child 断言可能误报与隐私结论过度依赖自报两项 P2；补齐 captured child/exit 同一性和父测试独立 SQLite/文件负扫描后，最终复核 P1 无、P2 无；保留 transport 层提交回复丢失后的 replacement 场景 P3 | D6 定向 2/2；D3–D6 相关组合 62/62；core 523/523；integration 62/62；evidence 227/227 | `6765ce8` | 实现完成·尚未验收 |
 | D7 | ADR 0011 的 DeepSeek main-only 配置表与启动环境凭据规则、ConfigStore v2 Agent 设置迁移合同、exact origin/凭据隔离、J24-B23 边界和 Agent 测试去重规则 | Luna/max：首轮指出凭据删除时序一项 P1，以及 ConfigStore 现状、旧 ADR、本项目术语和任意 HTTPS 地址四项 P2；改为早于所有窗口/子进程删除、main-only 配置表、直接改写旧 ADR、沿用 CONTEXT 术语并冻结 DeepSeek origin 后，二次复核 P1 无、P2 无；随后采纳“先无条件删除再校验”和 revision 原子更新两项 P3 | core 523/523；integration 62/62；evidence 226/226；删除 1 条只检查文档关键词的 Agent 设计正则测试 | `67d112c` | 已决定 |
 | D8 | `MemoryReader → StorageWorkerService/FormalAgentStore` UI-free 有界读取、受信任策略门控、active/current revision 投影、完整序列化字节预算与个人记忆休眠/恢复；正式 `StorageGateway`/preload/IPC/renderer 接线留在冲突区之后 | Luna/max 首轮指出正式 `StorageGateway` 尚无路由与第 257 条物化两项 P2；前者明确留作后续正式 J21 读取路径，D8 不作接线声明，后者改为最多读取 256 条且命中上限保守报告 `hasMore`。二次复核 P1 无、P2 无；采纳 P3，将测试名收窄为 D8 storage-worker 子边界，并把休眠前后计数比较加强为 item/revision/evidence 完整行快照 | D8 定向 28/28；core 523/523；integration 在并行窗口测试变更前 63/63，最终工作区重跑时 D8 通过而未提交的 J17 抖动夹具断言 1 项失败；evidence 226/226；I3 非音频报告安全重建且保持 `partial` | `d6c370c` | 实现完成·尚未验收 |
+| D9 | main-only `AgentProviderConfigCatalog`、启动环境凭据消费/净化、公开状态、Agent 处理资格事实、child environment 快照与有界凭据借用；不调用真实 DeepSeek | Luna/max 尚待独立复核 | 实现前登记；D9 定向组合与三条 lane 尚待执行 | 尚待提交 | 已决定 |

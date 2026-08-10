@@ -97,6 +97,8 @@ Hosted CI 不声称验证真实 WASAPI/回环、物理麦克风、DWM 窗口行�
 
 新增功能必须在本表增加或更新场景；只有单元测试、没有对应用户旅程时，状态最多写“实现完成·尚未验收”。
 
+> **D9 / J24-B23/B26/B30 登记**：用一条确定性联合旅程把 main-only `AgentProviderConfigCatalog`、启动环境消费、公开状态投影、真实 `StorageWorkerService`/`FormalAgentStore` 与 SQLite 串联。表驱动覆盖缺失、空白、4096/4097 UTF-8 字节边界、Windows 大小写等价键及重复歧义键、配置表 unknown field/exact origin 漂移、删除早于配置校验、运行中注入不生效、子进程环境快照净化、调用副本在成功/异常后清零、鉴权失效后不可恢复，以及合法启动只冻结 `deepseek/deepseek-v4-flash` 并创建三项任务。该子边界不创建 `BrowserWindow` 或 Agent utility，不调用真实 DeepSeek，不得冒充完整 J24；相同输入分类合并进这一条旅程，不再新增逐字段单测。
+
 J15a 的容量保险回归必须填入超过 `KEEP_SEGMENTS` 的已定稿段，再向已移除旧段注入高于当前 source watermark 与原 revision 的迟到 `final`；live reducer、主进程 canonical fold 和同会话 reload 都必须保持该段墓碑化且视图一致。只用低 sequence 让 SessionCoordinator 在入口拒绝事件，不算覆盖这个失败路径。
 
 J12 的证据隐私回归递归读取 `docs/validation/**/*.json` 的原始字节并严格解析：任何字幕正文键、可重建正文的 token 数组、音频文件名/扩展名、设备字段或本地位置字段都必须 fail closed。历史 Gate 0B 只保留数值和逐正文 SHA-256；被当前 Gate 0C schema-v2 取代的旧报告只保留退役哈希凭据。未来 Gate 0B 生成器另有 fail-closed 路径回归：正文中间件只允许进入固定且受忽略、拒绝 symlink/junction 的 `models/gate-0b/private/`，其他仓库位置全部拒绝；CLI 原始输出没有持久化选项；线程 sweep 普通输出及流式 benchmark 的文件/stdout 均只含 ID、指标与哈希。
