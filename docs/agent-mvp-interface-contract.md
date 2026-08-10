@@ -1,6 +1,6 @@
 # 正式 Agent 首版接口合同
 
-> 证据状态：已决定。D3 的正式 SQLite 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切、D6 的 production `StorageWorkerHost` storage utility transport 子边界，以及 D8 的 `MemoryReader → StorageWorkerService/FormalAgentStore` UI-free storage-worker 子边界均为实现完成·尚未验收。D6 已经过真实 Electron utility process，覆盖策略先行、claim 后 exact-child 强制退出与退出同一性、replacement 未重放策略前拒绝领取、租约到期后同 `runId` 恢复、重复对账和三项结果各自最多提交一次，并由父测试独立复算 SQLite 身份与隐私负扫描。D8 覆盖受信任策略门控、休眠/恢复、active/current revision 投影、固定排序、完整条目字节预算和 replacement 策略重放；它仍未进入正式 `StorageGateway`、Agent utility、preload/IPC、renderer 或 recipe，不能作为正式 J21 用户读取路径。ADR 0011 另冻结正式首版的 DeepSeek 非敏感配置表、启动环境凭据、provider/model/预算冻结和降级；本文不表示真实 DeepSeek 已接入，也不表示 J13/J20/J21/J22/J24 已有完整产品证据。
+> 证据状态：已决定。D3–D6 的正式 SQLite、三项 UI-free 后端纵切和 production `StorageWorkerHost` storage utility transport，D8 的 `MemoryReader → StorageWorkerService/FormalAgentStore` storage-worker 子边界，以及 D9–D13 的 provider bootstrap/registry、设置存储、字幕提交边界与正式任务存储网关接线子边界均为实现完成·尚未验收。D6 已经过真实 Electron utility process，覆盖策略先行、claim 后 exact-child 强制退出与退出同一性、replacement 未重放策略前拒绝领取、租约到期后同 `runId` 恢复、重复对账和三项结果各自最多提交一次，并由父测试独立复算 SQLite 身份与隐私负扫描；D13 又把真实 runner、两类 reader 与两类 writer 统一接入 main-owned `StorageGateway`。ADR 0011 冻结正式首版的 DeepSeek 非敏感配置表、启动环境凭据、provider/model/预算冻结和降级；本文不表示真实 DeepSeek 已接入，也不表示 J13/J20/J21/J22/J24 已有完整产品证据。
 
 ## 1. 边界与版本
 
@@ -205,11 +205,11 @@ D12 增加 UI-free 的 main-owned `FormalAgentRuntime` 与 `MeetingStoppedPersis
 
 `MeetingStoppedPersistenceSink` 完整代理现有字幕 persistence sink，且保持其 open/append/close/retry/flush 的返回与错误语义。只有底层 `closeSession` 或携带已冻结终态 close 的 `retry` 成功后，才以 exact `{ sessionId }` 调用 `FormalAgentRuntime.notifyMeetingStopped`；该调用只启动 detached reconciliation，不能被 `SessionCoordinator.stop()` 等待。runtime 对同一会话的 in-flight 通知只执行一次，收束后释放内存身份；失败只向 main observer 投影 stable `AGENT_RECONCILE_FAILED`，不保留原始 Error。`StorageGateway` 把 `agent.applyTaskPolicy` 确认绑定到当前 active host；replacement、关闭或强制终止都会清除该确认，未确认的新代次必须拒绝对账。应用退出不等待该尽力通知；下次启动或 storage worker replacement 用同一恢复入口补建，SQLite dedupe 仍是最终权威。D12 不把任务执行、Agent 模型 provider 调用或 Agent utility 接入字幕停止路径。
 
-当前 D12 UI-free 接线子边界为实现完成·尚未验收。正式 main/preload/renderer、Agent utility、Agent job runner 的完整 `StorageGateway` 路由和真实 DeepSeek HTTP 仍后置。
+当前 D12 UI-free 接线子边界为实现完成·尚未验收。D12 本身未覆盖的 Agent job runner 完整 `StorageGateway` 路由已由 D13 另行闭合；正式 main/preload/renderer、Agent utility 和真实 DeepSeek HTTP 仍后置。
 
-D13 把正式任务执行的 storage port 冻结为同一个 main-owned `StorageGateway`：`AgentJobRunner`、`TranscriptReader`、`MemoryReader`、`ArtifactWriter` 与 `MemoryCandidateSink` 不得接收当前 `StorageWorkerHost`。网关补齐 `readAgentInputSnapshot` 与 `readAgentMemoryContext` 路由，并把两者归入 Agent 业务拒绝隔离边界；unknown transport 仍沿用原请求身份重放。runner 领取前必须确认当前 storage worker 代次已经应用当前任务策略；replacement 后先恢复策略，才可继续领取。该登记不改变 Agent utility 的独立进程边界。
+D13 把正式任务执行的 storage port 冻结为同一个 main-owned `StorageGateway`：`AgentJobRunner`、`TranscriptReader`、`MemoryReader`、`ArtifactWriter` 与 `MemoryCandidateSink` 不得接收当前 `StorageWorkerHost`。网关补齐 `readAgentInputSnapshot` 与 `readAgentMemoryContext` 路由，并把两者归入 Agent 业务拒绝隔离边界；unknown transport 仍沿用原请求身份重放。runner 领取前必须确认当前 storage worker 代次已经应用当前任务策略；replacement 后先恢复策略，才可继续领取。该接线不改变 Agent utility 的独立进程边界。
 
-当前 D13 正式任务存储网关接线为已决定。
+当前 D13 正式任务存储网关接线子边界为实现完成·尚未验收；正式 main/preload/renderer、Agent utility、真实 DeepSeek HTTP 与完整 J21/J24 仍后置。
 
 固定 recipe 与模型操作闭集为：`meeting-minutes@1` 只允许 `meeting-minutes.chunk/merge`，`enhanced-transcript@1` 只允许 `enhanced-transcript.chunk/merge`，`memory-extraction@1` 只允许 `memory-extraction.chunk`。`memory-consolidation` 不创建第四项后台任务，也不再次调用模型；它在记忆任务的有界内存中按分块顺序校验并汇总候选，再由 `MemoryCandidateSink` 一次提交。`AgentPluginHost` 以 `PluginResult` 分流到唯一匹配的 writer，插件不得选择 SQLite 表或绕过宿主提交。
 
@@ -219,7 +219,7 @@ Agent 模型 provider registry 必须把上下文窗口、固定提示和输出�
 
 可读取候选必须同时满足 scope 为 `active`、item 为 `active`、当前 revision 属于该 item 且正文与当前投影一致。排序固定为明确内容优先、显著性高到低、置信高到低、来源证据数多到少、`updatedAt` 新到旧、`memoryId` 升序；每条最多返回最近 8 条无正文来源引用。单次查询最多读取排序后的 256 个候选；命中该上限时保守返回 `hasMore=true`，不得为精确探测第 257 条而读取其正文。条目按 canonical JSON 的完整 UTF-8 字节计入预算，只整条纳入而不截断 `content` 或来源，任一候选因条目数或字节数省略时也必须 `hasMore=true`。`serializedBytes` 是实际返回 item 对象 canonical JSON 字节数之和。首版 exact `semanticKeys` 为空表示不增加语义键过滤；不读取字幕 FTS，不创建向量或图索引。
 
-D8 只闭合 `MemoryReader → StorageWorkerService/FormalAgentStore` 的 UI-free storage-worker 子边界，并登记 `StorageWorkerHost` 的精确 operation 映射；它没有修改并行任务负责的正式 `StorageGateway`，也没有加入 preload/IPC、renderer、Agent utility 或正式 recipe。因此本批不得宣称形成 J21 的正式用户读取路径；后续接线必须让正式 `StorageGateway` 暴露同一窄方法并以真实 gateway/utility/renderer 旅程重新验收，不能用本批自建 service client 代替。
+D8 只闭合 `MemoryReader → StorageWorkerService/FormalAgentStore` 的 UI-free storage-worker 子边界，并登记 `StorageWorkerHost` 的精确 operation 映射；它没有修改当时并行任务负责的正式 `StorageGateway`，也没有加入 preload/IPC、renderer、Agent utility 或正式 recipe。D13 后续已让正式 `StorageGateway` 暴露同一窄方法，并以真实 gateway/utility 旅程覆盖 runner 与有界个人记忆读取；renderer 用户读取路径仍未闭合，因此仍不得宣称形成完整 J21。
 
 ## 4. Storage worker 协议
 
