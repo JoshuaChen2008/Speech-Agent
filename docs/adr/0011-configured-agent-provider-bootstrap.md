@@ -30,6 +30,12 @@ D9 先实现不接公网的 main-only bootstrap/catalog 子边界。默认保守
 
 本切片只向后续正式 main 提供闭合配置快照、公开状态、非敏感 Agent 处理资格事实、净化后的 child environment 和有界凭据借用生命周期；不修改当前冲突区内的 `src/main.js`/ConfigStore/preload/renderer，不创建 Agent utility，不实现 HTTP，也不把 bootstrap 自身称为正式 J24 产品链路。
 
+## D10 实现切片
+
+D10 在不接公网的前提下实现项目自有 `AgentModelProviderRegistry`，并让正式 `ModelGateway` 不再直接依赖测试替身。registry 只从一个 D9 `AgentProviderBootstrap` 冻结快照注册精确匹配的第一方适配器；解析结果同时冻结 provider/model、输入输出预算、超时和一个不暴露凭据的 `withModel` 调用边界。`withModel` 持有单次凭据借用，直到模型句柄打开、Pi Agent Loop 返回或抛错后才释放；稳定 `AGENT_PROVIDER_AUTH_FAILED` 同步失效主凭据，其它稳定结果不改变启动凭据状态。
+
+CI 的确定性适配器继续属于 Agent 模型 provider 外部边界，但必须经真实 registry、`ModelGateway` 与 Pi Agent Loop；它只接收本次调用的配置快照、请求副本和有界凭据副本，不得直接写 SQLite 或产物。D10 复用并升级既有正式纪要与三项任务联合旅程，只新增一条稳定鉴权失效场景；不实现 DeepSeek HTTP、正式 main、Agent utility、preload 或 renderer，也不证明公网可用性。
+
 ## 取舍
 
 - 相比把 API key 写入 ConfigStore，本方案避免明文持久化与 renderer 凭据 IPC；代价是每次启动都必须由外部环境重新供给。

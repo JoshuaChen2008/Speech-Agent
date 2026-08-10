@@ -197,6 +197,8 @@ D9 的默认受信任配置预算固定为 `maxChunkInputBytes=65536`、`maxResu
 
 `AgentInputPlanner` 是宿主内部端口，不属于插件权限。只有所有分块及归并步骤成功后才能调用 writer；中间结果只存在于本次有界执行内存中。
 
+D10 的 registry 描述符是闭合对象，只包含任务身份三元组、`maxChunkInputBytes/maxResultBytes/timeoutMs` 与 `withModel(request, consumeModel)`。`ModelGateway` 必须校验描述符与任务冻结身份完全一致，并要求 `withModel` 恰好一次调用 `consumeModel`、原样返回该次 Pi Agent Loop 的结果；适配器不得绕过 Loop 直接返回结构化产物。registry 在 `consumeModel` 完整收束前保持 D9 单次凭据借用，且不把凭据返回给 `ModelGateway`、插件、storage worker 或 renderer。稳定鉴权失败使 bootstrap 主凭据失效；其它错误只按既有稳定错误分类收束。确定性适配器与未来 DeepSeek 网络适配器共用这一接口，但 D10 只实现前者的联合测试接线。
+
 固定 recipe 与模型操作闭集为：`meeting-minutes@1` 只允许 `meeting-minutes.chunk/merge`，`enhanced-transcript@1` 只允许 `enhanced-transcript.chunk/merge`，`memory-extraction@1` 只允许 `memory-extraction.chunk`。`memory-consolidation` 不创建第四项后台任务，也不再次调用模型；它在记忆任务的有界内存中按分块顺序校验并汇总候选，再由 `MemoryCandidateSink` 一次提交。`AgentPluginHost` 以 `PluginResult` 分流到唯一匹配的 writer，插件不得选择 SQLite 表或绕过宿主提交。
 
 Agent 模型 provider registry 必须把上下文窗口、固定提示和输出预留折算成保守的 `maxChunkInputBytes`，`AgentInputPlanner` 再以 canonical JSON 的 UTF-8 字节数判定边界。该字节预算是避免超过上下文窗口的保守上限，不是对 token 数的产品展示值。规划优先保持完整字幕段；只有单段自身超过预算时才按 Unicode code point 的 `[fromCodePoint, throughCodePoint)` 分片。分片必须可按原顺序无损重建每段正文，且每个分块都保留原 `eventOrder` 作为证据身份。归并采用有界、确定性批次；如果预算不足以容纳至少两个受限中间结果，任务在调用 Agent 模型 provider 前 fail closed。宿主不得把输入分块或中间结果写入 SQLite、日志或报告。

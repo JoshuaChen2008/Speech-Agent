@@ -75,6 +75,7 @@
 
 > **SEM-F28 / SEM-T15 的 D9 启动凭据精确化**：正式 main 取得启动环境中大小写不敏感等价于 `DEEPSEEK_API_KEY` 的 raw 项后，必须先无条件删除全部等价键，再校验配置表与凭据；多个大小写等价键属于歧义输入并投影为 `credential_unavailable`。子进程环境只能从删除后的启动快照复制，运行中重新注入环境变量既不得改变凭据状态，也不得进入后来创建的 child、worker 或 utility。该规则取代表内“校验、复制并删除”的顺序简写；D9 只实现 main-only bootstrap/catalog 子边界，不表示正式 main 已接线、Agent utility 已取得凭据或真实 DeepSeek 已接入。
 > 当前 D9 子边界为实现完成·尚未验收：闭合配置表、公开状态、非敏感 Agent 处理资格事实、净化后的 child environment 和有界凭据借用已由一条真实 `StorageWorkerService`/`FormalAgentStore`/SQLite 联合旅程覆盖；正式 `process.env` 首行接线、真实 child/Agent utility、ConfigStore v2、preload/renderer、HTTP 与完整 J24 仍未形成产品证据。
+> **SEM-F25 / SEM-F28 / SEM-T15 的 D10 registry 子边界**：正式 `ModelGateway` 只能经项目自有 `AgentModelProviderRegistry` 解析任务已冻结的 provider/model/预算与超时，不得让业务插件或确定性测试替身直接充当 registry。registry 只接受与 D9 启动快照精确匹配的第一方适配器描述；一次 `withModel` 借用必须覆盖从打开模型句柄到 Pi Agent Loop 完整收束的同一调用，并在成功、异常、取消或超时后释放并尽力清零凭据副本。稳定鉴权失败还必须使 D9 主凭据失效；408/429/网络/5xx、取消和无效结构化输出不得误清除主凭据。D10 仍不实现真实 DeepSeek HTTP、正式 main 或 Agent utility，不得据此声称供应商公网或完整 J24 已验收。
 
 > SEM-T13 的 offline refine 证据组合与时序补充：I2 child 只有解析到受批准精修模型后，才可在会话配置冻结 `refinementEnabled=true` 并在运行时能力冻结 `refinementAvailable=true`；模型缺失必须 fail closed，报告中的模型 ID 不能单独证明真实精修链路已启用。启用精修的 child 在固定尾静音窗口结束、首次稳定转写已出现但精修稿尚未出现时，最多额外等待固定 15,000ms 的真实精修结果；该上限必须使用单调时钟。精修稿一到立即继续 Stop；一旦观察窗口超时，该事实必须冻结，随后 Stop 冲刷期间到达的迟到精修稿也不得把本轮改判为合格，仍以 `refined-caption-missing` fail closed。该观察窗口只服务真实精修证据，不得改变冻结字幕可见延迟的 `source t0 + 140ms` 起点、首个已接受 partial 终点或 `<1000ms` 门槛。双重冻结、模型缺失失败、有界早到/超时行为及 `refined-caption-missing` 枚举现为实现完成·尚未验收；仍须由绑定精确 revision 的新五轮实机 series 验收。
 >
