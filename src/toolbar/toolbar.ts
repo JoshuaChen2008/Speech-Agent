@@ -423,12 +423,13 @@ document.addEventListener('mouseleave', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 拖动：只有持续可见的握把可以开始。未锁定时主进程移动字幕窗并重停靠，
-// 已锁定时主进程只移动工具条自身。
+// 拖动：握把只属于锁定后脱离字幕背景的工具条；嵌入时由字幕卡移动组合。
+// renderer 与主进程各自拒绝未锁定的工具条意图，不能只依赖 CSS 隐藏。
 // ---------------------------------------------------------------------------
 const toolbarDrag = bindManualWindowDrag({
   handle: grip,
   classTarget: toolbar,
+  canStart: () => locked,
   onStart: () => bridge.dragStart('toolbar'),
   onEnd: () => bridge.dragEnd(),
   onActiveChange: (active: boolean) => {
@@ -508,10 +509,15 @@ let lockRevision = 0
 
 /** @param {boolean} on */
 function applyLockState (on: boolean): void {
+  const nextLocked = !!on
+  const contourChanged = locked !== nextLocked || wrap.dataset.locked !== (nextLocked ? 'on' : 'off')
   toolbarDrag.end()
-  locked = !!on
+  locked = nextLocked
   wrap.dataset.locked = locked ? 'on' : 'off'
   render()
+  /* data-locked 在 #toolbar 的祖先上，观察 #toolbar 的 MutationObserver 不会
+     收到这次属性变化；同步作废轮廓，才能在静止指针下立即收缩/扩张命中。 */
+  if (contourChanged) invalidateToolbarRect()
 }
 
 async function initLock () {

@@ -284,12 +284,14 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
   assert.deepEqual(geometrySettlements.at(-1), ['caption', 'toolbar'])
 
   cursor = { x: 500, y: 300 }
-  const beforeUnlockedGrip = caption.getBounds()
-  assert.equal(interaction.startDrag({ role: 'toolbar', win: toolbar, senderId: 2 }), true)
+  const beforeUnlockedCaptionDrag = caption.getBounds()
+  assert.equal(interaction.startDrag({ role: 'caption', win: caption, senderId: 1 }), true)
+  assert.equal(interaction.startDrag({ role: 'toolbar', win: toolbar, senderId: 2 }), false,
+    'an unlocked toolbar intent is rejected without cancelling the caption-card gesture')
   cursor = { x: 507, y: 305 }
   scheduler.runNext()
-  assert.equal(caption.getBounds().x, beforeUnlockedGrip.x + 7)
-  interaction.stopDrag(2)
+  assert.equal(caption.getBounds().x, beforeUnlockedCaptionDrag.x + 7)
+  interaction.stopDrag(1)
   assert.deepEqual(geometrySettlements.at(-1), ['caption', 'toolbar'])
 
   locked = true
@@ -659,14 +661,14 @@ test('SEM-F22/SEM-F24/SEM-T04/J17/J19: lifecycle, generation and manual bounds f
   ], 'caption resize settlement re-hits both changed overlay bounds')
 
   cursor = { x: 550, y: 280 }
-  assert.equal(manual.startDrag({ role: 'toolbar', win: toolbar, senderId: senderIds.toolbar }), true)
+  assert.equal(manual.startDrag({ role: 'caption', win: caption, senderId: senderIds.caption }), true)
   cursor = { x: 554, y: 283 }
   manualTimers.runNext()
   const beforeCombinedToolbarSettlementSyncs = syncs.length
-  manual.stopDrag(senderIds.toolbar)
+  manual.stopDrag(senderIds.caption)
   assert.deepEqual(syncs.slice(beforeCombinedToolbarSettlementSyncs).map(([role, payload]) => [role, payload.phase, payload.generation]), [
     ['caption', 'resume', 3], ['toolbar', 'resume', 3]
-  ], 'unlocked toolbar grip settlement re-hits the moved pair')
+  ], 'unlocked caption-card settlement re-hits the moved pair')
 
   locked = true
   cursor = { x: 600, y: 300 }

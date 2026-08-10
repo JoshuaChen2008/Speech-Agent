@@ -154,16 +154,17 @@ class ManualWindowInteractionController {
   }
 
   startDrag ({ role, win, senderId }) {
-    this.stopAll()
     if (!DRAG_ROLES.includes(role) || !isUsableWindow(win)) return false
+    /* 嵌入态由字幕卡负责移动组合。即使过期 renderer 绕过 CSS 发出工具条
+       意图，也必须在停止当前手势之前拒绝，不能让它取消正在进行的字幕拖动。 */
+    if (role === 'toolbar' && (!this.getLocked() || win !== this.getToolbarWindow())) return false
+    if (role === 'caption' && (this.getLocked() || win !== this.getCaptionWindow())) return false
+
+    this.stopAll()
 
     let target = win
     let redock = false
-    if (role === 'toolbar' && !this.getLocked()) {
-      target = this.getCaptionWindow()
-      redock = true
-    } else if (role === 'caption') {
-      if (this.getLocked() || win !== this.getCaptionWindow()) return false
+    if (role === 'caption') {
       redock = true
     }
     if (!isUsableWindow(target)) return false

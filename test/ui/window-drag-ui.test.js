@@ -207,7 +207,7 @@ test('SEM-F22/SEM-F24/J17/J19: lifecycle cancellation clears local drag state wi
   assert.deepEqual(handle.releasedPointers, [7])
 })
 
-test('SEM-F22/J17: toolbar binds manual drag only to its visible non-focusable grip', () => {
+test('SEM-F22/J17: toolbar grip is non-focusable and only participates while locked', () => {
   const html = source('src/toolbar/index.html')
   const entry = source('src/toolbar/entry.ts')
   const renderer = source('src/toolbar/toolbar.ts')
@@ -218,8 +218,8 @@ test('SEM-F22/J17: toolbar binds manual drag only to its visible non-focusable g
   assert.match(entry, /manual-window-drag\.js[\s\S]*toolbar\.ts/)
   assert.match(html, /<div class="grip" id="grip"[^>]+aria-hidden="true"><\/div>/)
   assert.doesNotMatch(html, /<div class="grip"[^>]+tabindex=/)
-  assert.match(renderer, /bindManualWindowDrag\(\{[\s\S]*handle: grip/)
-  assert.doesNotMatch(styles, /data-locked="off"[^}]*\.grip\s*\{\s*display:\s*none/)
+  assert.match(renderer, /bindManualWindowDrag\(\{[\s\S]*handle: grip[\s\S]*canStart:\s*\(\)\s*=>\s*locked/)
+  assert.match(styles, /data-locked="off"[^}]*\.grip\s*\{\s*display:\s*none/)
   assert.match(styles, /\.grip\s*\{[\s\S]*width:\s*24px;[\s\S]*height:\s*30px;/)
   assert.match(icons, /re_order_dots_vertical_20_regular\.svg\?raw/)
   assert.match(icons, /grip:\s*reorderDotsVertical/)

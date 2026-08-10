@@ -90,6 +90,7 @@ async function flush () {
 function createHarness ({ deferFrames = false, toolbarRect = null } = {}) {
   const ids = ['wrap', 'toolbar', 'grip', 'status', 'commands', 'windowControls']
   const elements = new Map(ids.map((id) => [id, new FakeElement('div')]))
+  elements.get('wrap').dataset.locked = 'off'
   elements.get('toolbar').classList.add('toolbar')
   if (toolbarRect) elements.get('toolbar').rect = toolbarRect
   const callbacks = {}
@@ -97,13 +98,16 @@ function createHarness ({ deferFrames = false, toolbarRect = null } = {}) {
   const layoutReports = []
   const observedLayoutTargets = []
   const throughCalls = []
+  const dragCalls = []
   let dragController = null
   let triggerToolbarResize = () => {}
   let triggerToolbarMutation = () => {}
   const frames = []
   const shell = {
     mouseThrough: (ignore) => throughCalls.push(ignore),
-    dragStart () {}, dragEnd () {}, lockToggle () {},
+    dragStart (role) { dragCalls.push(['start', role]) },
+    dragEnd () { dragCalls.push(['end']) },
+    lockToggle () {},
     action: (name) => actions.push(name),
     onInteractionSync: (callback) => { callbacks.interaction = callback },
     onLock: (callback) => { callbacks.lock = callback },
@@ -169,6 +173,7 @@ function createHarness ({ deferFrames = false, toolbarRect = null } = {}) {
           },
           isDragging: () => activePointerId !== null,
           start (event = { pointerId: 7 }) {
+            if (options.canStart?.(event) === false) return false
             if (options.onStart?.(event) === false) return false
             activePointerId = event.pointerId
             options.onActiveChange?.(true, event)
@@ -205,6 +210,7 @@ function createHarness ({ deferFrames = false, toolbarRect = null } = {}) {
     callbacks,
     document,
     dragController,
+    dragCalls,
     elements,
     layoutReports,
     observedLayoutTargets,
@@ -293,9 +299,30 @@ test('SEM-F22/J17: toolbar mouse-through enters and leaves on the same exact con
   assert.deepEqual(throughCalls, [true], '指针离开整个窗口时不能卡在实心态')
 })
 
-test('SEM-F22/SEM-T04/J17: the next toolbar press closes stale grip state before handling a button', async () => {
-  const { actions, dragController, elements, throughCalls } = createHarness()
+test('SEM-F22/SEM-T04/J17: unlocked grip is rejected and a lock transition settles its gesture', async () => {
+  const { callbacks, dragCalls, dragController, elements } = createHarness()
   await flush()
+
+  assert.equal(elements.get('wrap').dataset.locked, 'off')
+  assert.equal(dragController.start(), false)
+  assert.deepEqual(dragCalls, [], 'an embedded toolbar cannot emit a native drag intent')
+
+  callbacks.lock(true)
+  assert.equal(elements.get('wrap').dataset.locked, 'on')
+  assert.equal(dragController.start(), true)
+  assert.deepEqual(dragCalls, [['start', 'toolbar']])
+
+  callbacks.lock(false)
+  assert.equal(elements.get('wrap').dataset.locked, 'off')
+  assert.equal(dragController.isDragging(), false)
+  assert.deepEqual(dragCalls, [['start', 'toolbar'], ['end']])
+  assert.equal(dragController.start(), false)
+})
+
+test('SEM-F22/SEM-T04/J17: the next toolbar press closes stale grip state before handling a button', async () => {
+  const { actions, callbacks, dragController, elements, throughCalls } = createHarness()
+  await flush()
+  callbacks.lock(true)
   const toolbar = elements.get('toolbar')
   const settings = new FakeElement('button')
   settings.classList.add('act')
@@ -322,8 +349,10 @@ test('SEM-F22/SEM-T04/J17: the next toolbar press closes stale grip state before
 })
 
 test('SEM-F22/J17: a different primary pointer cannot cancel an active toolbar grip', async () => {
-  const { dragController, elements, throughCalls } = createHarness()
+  const { callbacks, dragController, elements, throughCalls } = createHarness()
   await flush()
+  callbacks.lock(true)
+  throughCalls.length = 0
   const toolbar = elements.get('toolbar')
 
   assert.equal(dragController.start({ pointerId: 91 }), true)
@@ -457,6 +486,7 @@ test('SEM-F22/J17: a contour change cannot reuse a pointer position invalidated 
 test('SEM-F22/J17: a stale same-generation toolbar rehit preserves a newer grip gesture', async () => {
   const { callbacks, dragController } = createHarness()
   await flush()
+  callbacks.lock(true)
   callbacks.interaction({
     schemaVersion: 1,
     generation: 2,
@@ -496,6 +526,7 @@ test('SEM-F22/SEM-F24/J17/J19: toolbar resume forces a same-generation stationar
 
 test('SEM-F22/SEM-F24/J17/J19: toolbar lifecycle cancellation cannot acknowledge with the pre-restore pointer', () => {
   const { callbacks, dragController, throughCalls } = createHarness()
+  callbacks.lock(true)
   callbacks.interaction({
     schemaVersion: 1,
     generation: 2,
