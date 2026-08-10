@@ -57,7 +57,14 @@ test('config updates reject unknown keys, invalid window bounds, and inconsisten
   const { store } = makeStore(t)
   store.load()
 
-  assert.throws(() => validateConfigPatch({ arbitrary: true }), /not allowed/)
+  for (const patch of [
+    { arbitrary: true },
+    { schemaVersion: CONFIG_SCHEMA_VERSION },
+    { agentEnabled: true },
+    { providerId: 'deepseek' }
+  ]) {
+    assert.throws(() => validateConfigPatch(patch), /not allowed/)
+  }
   assert.throws(() => store.update({ captionWidth: 'wide' }), /invalid value/)
   assert.throws(() => store.update({ captionHeight: Number.NaN }), /invalid value/)
   assert.throws(() => store.update({ onboardingCompleted: true }), /inconsistent/)
@@ -156,26 +163,80 @@ test('current-schema onboarding corruption also fails closed', () => {
   }
 })
 
-test('current-schema valid presets repair legacy independent source flags to XOR', () => {
-  const meeting = migrateConfig({
-    schemaVersion: CONFIG_SCHEMA_VERSION,
+test('SEM-F26/SEM-F28 / J24-B23 preserves v1 subtitle settings and isolates invalid v2 Agent settings', () => {
+  const migratedV1 = migrateConfig({
+    schemaVersion: 1,
     onboardingCompleted: true,
     onboardingPreset: 'meeting',
+    fontSize: 38,
+    refinementEnabled: true,
     mic: true,
-    loopback: true
+    loopback: false,
+    agentEnabled: true,
+    automaticProcessingSince: 10,
+    memoryEnabled: true,
+    memoryProcessingSince: 10,
+    cloudDisclosureAccepted: true,
+    agentSettingsRevision: 4
   })
-  assert.equal(meeting.mic, false)
-  assert.equal(meeting.loopback, true)
+  assert.equal(migratedV1.fontSize, 38)
+  assert.equal(migratedV1.refinementEnabled, true)
+  assert.equal(migratedV1.mic, false)
+  assert.equal(migratedV1.loopback, true)
+  assert.deepEqual({
+    agentEnabled: migratedV1.agentEnabled,
+    automaticProcessingSince: migratedV1.automaticProcessingSince,
+    memoryEnabled: migratedV1.memoryEnabled,
+    memoryProcessingSince: migratedV1.memoryProcessingSince,
+    cloudDisclosureAccepted: migratedV1.cloudDisclosureAccepted,
+    agentSettingsRevision: migratedV1.agentSettingsRevision
+  }, {
+    agentEnabled: false,
+    automaticProcessingSince: null,
+    memoryEnabled: true,
+    memoryProcessingSince: null,
+    cloudDisclosureAccepted: false,
+    agentSettingsRevision: 0
+  })
 
-  const dictation = migrateConfig({
+  const validV2 = migrateConfig({
     schemaVersion: CONFIG_SCHEMA_VERSION,
     onboardingCompleted: true,
     onboardingPreset: 'dictation',
     mic: false,
-    loopback: false
+    loopback: false,
+    agentEnabled: true,
+    automaticProcessingSince: 20,
+    memoryEnabled: false,
+    memoryProcessingSince: null,
+    cloudDisclosureAccepted: true,
+    agentSettingsRevision: 7
   })
-  assert.equal(dictation.mic, true)
-  assert.equal(dictation.loopback, false)
+  assert.equal(validV2.mic, true)
+  assert.equal(validV2.loopback, false)
+  assert.equal(validV2.agentEnabled, true)
+  assert.equal(validV2.automaticProcessingSince, 20)
+  assert.equal(validV2.memoryEnabled, false)
+  assert.equal(validV2.memoryProcessingSince, null)
+  assert.equal(validV2.cloudDisclosureAccepted, true)
+  assert.equal(validV2.agentSettingsRevision, 7)
+
+  const invalidV2 = migrateConfig({
+    ...validV2,
+    fontSize: 24,
+    memoryEnabled: true,
+    memoryProcessingSince: null
+  })
+  assert.equal(invalidV2.fontSize, 24)
+  assert.equal(invalidV2.onboardingPreset, 'dictation')
+  assert.equal(invalidV2.mic, true)
+  assert.equal(invalidV2.loopback, false)
+  assert.equal(invalidV2.agentEnabled, false)
+  assert.equal(invalidV2.automaticProcessingSince, null)
+  assert.equal(invalidV2.memoryEnabled, true)
+  assert.equal(invalidV2.memoryProcessingSince, null)
+  assert.equal(invalidV2.cloudDisclosureAccepted, false)
+  assert.equal(invalidV2.agentSettingsRevision, 0)
 })
 
 test('Gate 0B fails closed unless the exact development override is present', () => {

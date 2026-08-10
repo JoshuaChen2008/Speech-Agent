@@ -10,7 +10,24 @@ const {
   sourceFlagsForPreset
 } = require('../../contracts')
 
-const CONFIG_SCHEMA_VERSION = 1
+const CONFIG_SCHEMA_VERSION = 2
+const LEGACY_CONFIG_SCHEMA_VERSION = 1
+
+const AGENT_CONFIG_KEYS = Object.freeze([
+  'agentEnabled',
+  'automaticProcessingSince',
+  'memoryEnabled',
+  'memoryProcessingSince',
+  'cloudDisclosureAccepted',
+  'agentSettingsRevision'
+])
+
+const AGENT_SETTINGS_UPDATE_KEYS = Object.freeze([
+  'expectedRevision',
+  'agentEnabled',
+  'memoryEnabled',
+  'cloudDisclosureAccepted'
+])
 
 const DEFAULT_CONFIG = Object.freeze({
   schemaVersion: CONFIG_SCHEMA_VERSION,
@@ -30,6 +47,14 @@ const DEFAULT_CONFIG = Object.freeze({
   maxLines: 4,
   // Global, source-independent choice read once when a future session starts.
   refinementEnabled: false,
+  // Agent settings are product facts. Provider configuration and credentials
+  // deliberately do not belong to this persisted config.
+  agentEnabled: false,
+  automaticProcessingSince: null,
+  memoryEnabled: true,
+  memoryProcessingSince: null,
+  cloudDisclosureAccepted: false,
+  agentSettingsRevision: 0,
   // Gate 0D: fresh installs select neither source until the user chooses a preset.
   mic: false,
   loopback: false,
@@ -52,10 +77,22 @@ const FIELD_RULES = Object.freeze({
   bilingual: (value) => typeof value === 'boolean',
   maxLines: (value) => isIntegerRange(value, 1, 6),
   refinementEnabled: (value) => typeof value === 'boolean',
+  agentEnabled: (value) => typeof value === 'boolean',
+  automaticProcessingSince: isOptionalTimestamp,
+  memoryEnabled: (value) => typeof value === 'boolean',
+  memoryProcessingSince: isOptionalTimestamp,
+  cloudDisclosureAccepted: (value) => typeof value === 'boolean',
+  agentSettingsRevision: (value) => Number.isSafeInteger(value) && value >= 0,
   mic: (value) => typeof value === 'boolean',
   loopback: (value) => typeof value === 'boolean',
   latency: (value) => [160, 480, 960].includes(value)
 })
+
+const CONFIG_PATCH_KEYS = Object.freeze(
+  Object.keys(DEFAULT_CONFIG).filter((key) => key !== 'schemaVersion' && !AGENT_CONFIG_KEYS.includes(key))
+)
+
+const SUBTITLE_CONFIG_KEYS = CONFIG_PATCH_KEYS
 
 function isFiniteRange (value, min, max) {
   return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max
@@ -63,6 +100,10 @@ function isFiniteRange (value, min, max) {
 
 function isIntegerRange (value, min, max) {
   return Number.isInteger(value) && value >= min && value <= max
+}
+
+function isOptionalTimestamp (value) {
+  return value === null || (Number.isSafeInteger(value) && value >= 0)
 }
 
 function cloneConfig (value) {
@@ -75,6 +116,19 @@ function assertRecord (value, label) {
   }
 }
 
+function assertExactKeys (value, keys, label) {
+  assertRecord(value, label)
+  const actual = Reflect.ownKeys(value)
+  const expected = [...keys].sort()
+  if (actual.some((key) => typeof key !== 'string')) {
+    throw new TypeError(`${label} must contain exactly ${expected.join(', ')}`)
+  }
+  actual.sort()
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    throw new TypeError(`${label} must contain exactly ${expected.join(', ')}`)
+  }
+}
+
 function assertField (key, value, label = 'config') {
   const rule = FIELD_RULES[key]
   if (!rule) throw new TypeError(`${label}.${key} is not allowed`)
@@ -84,8 +138,22 @@ function assertField (key, value, label = 'config') {
 /** Validate a renderer/application patch without silently accepting unknown keys. */
 function validateConfigPatch (patch, label = 'config patch') {
   assertRecord(patch, label)
-  for (const [key, value] of Object.entries(patch)) assertField(key, value, label)
+  for (const key of Reflect.ownKeys(patch)) {
+    if (typeof key !== 'string') throw new TypeError(`${label} contains a non-string key`)
+    if (!CONFIG_PATCH_KEYS.includes(key)) throw new TypeError(`${label}.${key} is not allowed`)
+    assertField(key, patch[key], label)
+  }
   return patch
+}
+
+function hasValidAgentSettings (input) {
+  if (input.schemaVersion !== CONFIG_SCHEMA_VERSION ||
+      !AGENT_CONFIG_KEYS.every((key) => Object.hasOwn(input, key)) ||
+      !AGENT_CONFIG_KEYS.every((key) => FIELD_RULES[key](input[key]))) {
+    return false
+  }
+  return (input.automaticProcessingSince !== null) === input.agentEnabled &&
+    (input.memoryProcessingSince !== null) === (input.agentEnabled && input.memoryEnabled)
 }
 
 /**
@@ -98,17 +166,21 @@ function migrateConfig (input) {
   }
 
   const migrated = cloneConfig(DEFAULT_CONFIG)
-  for (const key of Object.keys(DEFAULT_CONFIG)) {
-    if (key === 'schemaVersion' || !Object.hasOwn(input, key)) continue
+  for (const key of SUBTITLE_CONFIG_KEYS) {
+    if (!Object.hasOwn(input, key)) continue
     const value = input[key]
     if (FIELD_RULES[key](value)) migrated[key] = value
   }
 
-  // Only a current-schema, internally consistent completed choice may retain
-  // capture sources. Legacy, incomplete, and partially corrupted configs all
-  // fail closed: the user must choose again before either source is enabled.
+  if (hasValidAgentSettings(input)) {
+    for (const key of AGENT_CONFIG_KEYS) migrated[key] = input[key]
+  }
+
+  // Only a supported versioned, internally consistent completed choice may
+  // retain capture sources. Unversioned, incomplete, and partially corrupted
+  // configs fail closed: the user must choose again before a source is enabled.
   const hasCompletedPreset =
-    input.schemaVersion === CONFIG_SCHEMA_VERSION &&
+    [LEGACY_CONFIG_SCHEMA_VERSION, CONFIG_SCHEMA_VERSION].includes(input.schemaVersion) &&
     migrated.onboardingCompleted === true &&
     ONBOARDING_PRESETS.includes(migrated.onboardingPreset)
   if (!hasCompletedPreset) {
@@ -125,6 +197,14 @@ function migrateConfig (input) {
   return migrated
 }
 
+class ConfigStoreError extends Error {
+  constructor (code) {
+    super(code)
+    this.name = 'ConfigStoreError'
+    this.code = code
+  }
+}
+
 class ConfigStore {
   constructor (filePath, options = {}) {
     if (typeof filePath !== 'string' || filePath.length === 0) {
@@ -132,15 +212,29 @@ class ConfigStore {
     }
     this.filePath = filePath
     this.fs = options.fs || fs
+    this.now = options.now || Date.now
+    if (typeof this.now !== 'function') throw new TypeError('options.now must be a function')
     this.state = cloneConfig(DEFAULT_CONFIG)
   }
 
   load () {
+    let parsed
     try {
-      const parsed = JSON.parse(this.fs.readFileSync(this.filePath, 'utf8'))
-      this.state = migrateConfig(parsed)
+      parsed = JSON.parse(this.fs.readFileSync(this.filePath, 'utf8'))
     } catch {
       this.state = cloneConfig(DEFAULT_CONFIG)
+      return this.get()
+    }
+    this.state = migrateConfig(parsed)
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) &&
+        parsed.schemaVersion === LEGACY_CONFIG_SCHEMA_VERSION) {
+      try {
+        this.persist(this.state)
+      } catch {
+        // A migration write failure must not prevent the independent subtitle
+        // system from using the validated in-memory configuration. The next
+        // explicit update retries the same atomic replacement path.
+      }
     }
     return this.get()
   }
@@ -153,6 +247,57 @@ class ConfigStore {
     validateConfigPatch(patch)
     const next = { ...this.state, ...patch, schemaVersion: CONFIG_SCHEMA_VERSION }
     assertListeningConfiguration(next, 'config patch')
+    this.persist(next)
+    this.state = next
+    return this.get()
+  }
+
+  updateAgentSettings (request) {
+    const label = 'agent settings update'
+    assertExactKeys(request, AGENT_SETTINGS_UPDATE_KEYS, label)
+    if (!Number.isSafeInteger(request.expectedRevision) || request.expectedRevision < 0) {
+      throw new TypeError(`${label}.expectedRevision has an invalid value`)
+    }
+    for (const key of ['agentEnabled', 'memoryEnabled', 'cloudDisclosureAccepted']) {
+      if (typeof request[key] !== 'boolean') throw new TypeError(`${label}.${key} has an invalid value`)
+    }
+    if (request.expectedRevision !== this.state.agentSettingsRevision) {
+      throw new ConfigStoreError('SETTINGS_REVISION_CONFLICT')
+    }
+
+    const nextRevision = this.state.agentSettingsRevision + 1
+    if (!Number.isSafeInteger(nextRevision)) {
+      throw new RangeError('agent settings revision cannot be incremented safely')
+    }
+    const wasAgentEffective = this.state.agentEnabled
+    const willAgentBeEffective = request.agentEnabled
+    const wasMemoryEffective = this.state.agentEnabled && this.state.memoryEnabled
+    const willMemoryBeEffective = request.agentEnabled && request.memoryEnabled
+    const needsBoundary = (!wasAgentEffective && willAgentBeEffective) ||
+      (!wasMemoryEffective && willMemoryBeEffective)
+    let boundary = null
+    if (needsBoundary) {
+      boundary = this.now()
+      if (!Number.isSafeInteger(boundary) || boundary < 0) {
+        throw new TypeError('options.now must return a non-negative safe integer')
+      }
+    }
+
+    const next = {
+      ...this.state,
+      schemaVersion: CONFIG_SCHEMA_VERSION,
+      agentEnabled: request.agentEnabled,
+      automaticProcessingSince: willAgentBeEffective
+        ? (wasAgentEffective ? this.state.automaticProcessingSince : boundary)
+        : null,
+      memoryEnabled: request.memoryEnabled,
+      memoryProcessingSince: willMemoryBeEffective
+        ? (wasMemoryEffective ? this.state.memoryProcessingSince : boundary)
+        : null,
+      cloudDisclosureAccepted: request.cloudDisclosureAccepted,
+      agentSettingsRevision: nextRevision
+    }
+    if (!hasValidAgentSettings(next)) throw new TypeError('normalized Agent settings are invalid')
     this.persist(next)
     this.state = next
     return this.get()
@@ -218,6 +363,7 @@ module.exports = {
   CONFIG_SCHEMA_VERSION,
   DEFAULT_CONFIG,
   ONBOARDING_PRESETS,
+  ConfigStoreError,
   ConfigStore,
   migrateConfig,
   validateConfigPatch

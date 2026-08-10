@@ -11,6 +11,7 @@ const {
   AgentProviderBootstrap,
   DEFAULT_AGENT_PROVIDER_CONFIG_CATALOG
 } = require('../../src/agent-provider/provider-bootstrap')
+const { CONFIG_SCHEMA_VERSION, ConfigStore } = require('../../src/main/services/config-store')
 const { FormalAgentStore, makeUserRequestDigest } = require('../../src/runtime/storage-worker/formal-agent-store')
 const { OPERATIONS, PROTOCOL_VERSION, makeCaptionEventId, makeCloseSessionKey, makeOpenSessionKey } = require('../../src/runtime/storage-worker/protocol')
 const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
@@ -119,6 +120,18 @@ function localContext (overrides = {}) {
     context.memoryProcessingSince = null
   }
   return context
+}
+
+function eligibilityContextFromAgentSettings (settings, bootstrap) {
+  return {
+    agentEnabled: settings.agentEnabled,
+    memoryEnabled: settings.memoryEnabled,
+    automaticProcessingSince: settings.automaticProcessingSince,
+    memoryProcessingSince: settings.memoryProcessingSince,
+    ...bootstrap.getEligibilityProviderFacts(),
+    cloudDisclosureAccepted: settings.cloudDisclosureAccepted,
+    localModelReady: false
+  }
 }
 
 function createSession (client, {
@@ -637,16 +650,121 @@ test('SEM-F28 / J24-B05/B09/B12 recovers one run across restart and closes cance
   }
 })
 
-test('SEM-F26/SEM-F28 / J24-B14 cancels only personal-memory work and never revives it implicitly', (t) => {
-  const clock = { value: 45000 }
+test('SEM-F26/SEM-F28/SEM-T15 / D11/J24-B14/B23/B26/B30 将 ConfigStore v2 设置边界应用到真实后台 Agent 任务', (t) => {
+  const clock = { value: 500 }
   const environment = journeyEnvironment(t)
+  const configPath = path.join(path.dirname(environment.databasePath), 'config.json')
+  fs.mkdirSync(path.dirname(configPath), { recursive: true })
+  fs.writeFileSync(configPath, JSON.stringify({
+    schemaVersion: 1,
+    onboardingCompleted: true,
+    onboardingPreset: 'meeting',
+    fontSize: 38,
+    opacity: 0.5,
+    refinementEnabled: true,
+    mic: true,
+    loopback: false
+  }), 'utf8')
+  const configStore = new ConfigStore(configPath, { now: () => clock.value })
+  const migrated = configStore.load()
+  assert.equal(migrated.schemaVersion, CONFIG_SCHEMA_VERSION)
+  assert.equal(migrated.onboardingPreset, 'meeting')
+  assert.equal(migrated.fontSize, 38)
+  assert.equal(migrated.opacity, 0.5)
+  assert.equal(migrated.refinementEnabled, true)
+  assert.equal(migrated.mic, false)
+  assert.equal(migrated.loopback, true)
+  assert.deepEqual({
+    agentEnabled: migrated.agentEnabled,
+    automaticProcessingSince: migrated.automaticProcessingSince,
+    memoryEnabled: migrated.memoryEnabled,
+    memoryProcessingSince: migrated.memoryProcessingSince,
+    cloudDisclosureAccepted: migrated.cloudDisclosureAccepted,
+    agentSettingsRevision: migrated.agentSettingsRevision
+  }, {
+    agentEnabled: false,
+    automaticProcessingSince: null,
+    memoryEnabled: true,
+    memoryProcessingSince: null,
+    cloudDisclosureAccepted: false,
+    agentSettingsRevision: 0
+  })
+  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).schemaVersion, CONFIG_SCHEMA_VERSION)
+  assert.deepEqual(
+    new ConfigStore(configPath, { now: () => clock.value }).load(),
+    migrated
+  )
+
+  const credentialCanary = 'd11-synthetic-startup-credential'
+  const bootstrap = new AgentProviderBootstrap({
+    environment: { DEEPSEEK_API_KEY: credentialCanary }
+  })
+  t.after(() => bootstrap.dispose())
   const client = environment.track(serviceFor(environment.databasePath, clock, { value: 0 }))
-  createSession(client, { sessionId: 'memory-policy-session', captions: ['synthetic memory policy transcript'] })
+
+  createSession(client, {
+    sessionId: 'settings-before-enable',
+    captions: ['synthetic settings boundary before enable'],
+    startedAt: 300,
+    endedAt: 400
+  })
+  assert.equal(client.call(OPERATIONS.AGENT_EVALUATE_ELIGIBILITY, {
+    sessionId: 'settings-before-enable',
+    requestedBy: 'automatic',
+    eligibilityContext: eligibilityContextFromAgentSettings(migrated, bootstrap)
+  }).eligibility, 'agent_disabled')
+
+  assert.throws(() => configStore.update({ agentEnabled: true }), /not allowed/)
+  assert.throws(() => configStore.update({ model: 'deepseek-v4-flash' }), /not allowed/)
+  assert.throws(() => configStore.updateAgentSettings({
+    expectedRevision: 0,
+    agentEnabled: true,
+    memoryEnabled: true,
+    cloudDisclosureAccepted: true,
+    apiKey: 'must-not-enter-config'
+  }), /must contain exactly/)
+
+  const enabled = configStore.updateAgentSettings({
+    expectedRevision: 0,
+    agentEnabled: true,
+    memoryEnabled: true,
+    cloudDisclosureAccepted: true
+  })
+  assert.equal(enabled.automaticProcessingSince, 500)
+  assert.equal(enabled.memoryProcessingSince, 500)
+  assert.equal(enabled.agentSettingsRevision, 1)
+  const enabledContext = eligibilityContextFromAgentSettings(enabled, bootstrap)
+  assert.equal(client.call(OPERATIONS.AGENT_EVALUATE_ELIGIBILITY, {
+    sessionId: 'settings-before-enable',
+    requestedBy: 'automatic',
+    eligibilityContext: enabledContext
+  }).eligibility, 'outside_automatic_window')
+
+  const beforeConflict = fs.readFileSync(configPath)
+  assert.throws(() => configStore.updateAgentSettings({
+    expectedRevision: 0,
+    agentEnabled: true,
+    memoryEnabled: false,
+    cloudDisclosureAccepted: true
+  }), (error) => error?.code === 'SETTINGS_REVISION_CONFLICT')
+  assert.deepEqual(fs.readFileSync(configPath), beforeConflict)
+
+  clock.value = 550
+  createSession(client, {
+    sessionId: 'memory-policy-session',
+    captions: ['synthetic memory policy transcript'],
+    startedAt: 501,
+    endedAt: 550
+  })
   const reconciled = client.call(OPERATIONS.AGENT_RECONCILE_TERMINAL_SESSION, {
-    sessionId: 'memory-policy-session', requestedBy: 'automatic', eligibilityContext: cloudContext()
+    sessionId: 'memory-policy-session', requestedBy: 'automatic', eligibilityContext: enabledContext
   })
   assert.equal(reconciled.jobs.length, 3)
-  client.call(OPERATIONS.AGENT_APPLY_TASK_POLICY, { eligibilityContext: cloudContext() })
+  assert.equal(reconciled.jobs.every(({ job }) =>
+    job.providerId === 'deepseek' && job.providerKind === 'cloud' && job.model === 'deepseek-v4-flash'
+  ), true)
+  assert.equal(new Set(reconciled.jobs.map(({ job }) => JSON.stringify(job.inputRef))).size, 1)
+  client.call(OPERATIONS.AGENT_APPLY_TASK_POLICY, { eligibilityContext: enabledContext })
 
   const minutes = client.call(OPERATIONS.AGENT_CLAIM_NEXT_JOB, {
     claimIdempotencyKey: 'policy-claim-minutes',
@@ -663,8 +781,19 @@ test('SEM-F26/SEM-F28 / J24-B14 cancels only personal-memory work and never revi
   })
   assert.equal(memory.taskKind, 'memory-extraction')
 
+  clock.value = 600
+  const memoryDisabled = configStore.updateAgentSettings({
+    expectedRevision: 1,
+    agentEnabled: true,
+    memoryEnabled: false,
+    cloudDisclosureAccepted: true
+  })
+  assert.equal(memoryDisabled.automaticProcessingSince, 500)
+  assert.equal(memoryDisabled.memoryProcessingSince, null)
+  assert.equal(memoryDisabled.agentSettingsRevision, 2)
+  const memoryDisabledContext = eligibilityContextFromAgentSettings(memoryDisabled, bootstrap)
   assert.deepEqual(client.call(OPERATIONS.AGENT_APPLY_TASK_POLICY, {
-    eligibilityContext: cloudContext({ memoryEnabled: false })
+    eligibilityContext: memoryDisabledContext
   }), { queuedCancelled: 0, runningCancellationRequested: 1 })
   assert.equal(client.raw(OPERATIONS.AGENT_MARK_JOB_FAILED, {
     runId: memory.runId,
@@ -676,32 +805,103 @@ test('SEM-F26/SEM-F28 / J24-B14 cancels only personal-memory work and never revi
     lease: memory.lease
   }).state, 'cancelled')
 
-  const replay = client.call(OPERATIONS.AGENT_RECONCILE_TERMINAL_SESSION, {
-    sessionId: 'memory-policy-session',
-    requestedBy: 'automatic',
-    eligibilityContext: cloudContext({ memoryEnabled: false })
+  clock.value = 650
+  createSession(client, {
+    sessionId: 'memory-disabled-period',
+    captions: ['synthetic disabled-period transcript'],
+    startedAt: 601,
+    endedAt: 650
   })
-  assert.deepEqual(replay.jobs.map((entry) => entry.job.taskKind), ['meeting-minutes', 'enhanced-transcript'])
+  const disabledPeriod = client.call(OPERATIONS.AGENT_RECONCILE_TERMINAL_SESSION, {
+    sessionId: 'memory-disabled-period',
+    requestedBy: 'automatic',
+    eligibilityContext: memoryDisabledContext
+  })
+  assert.deepEqual(disabledPeriod.jobs.map((entry) => entry.job.taskKind), [
+    'meeting-minutes', 'enhanced-transcript'
+  ])
+
+  clock.value = 700
+  const memoryReenabled = configStore.updateAgentSettings({
+    expectedRevision: 2,
+    agentEnabled: true,
+    memoryEnabled: true,
+    cloudDisclosureAccepted: true
+  })
+  assert.equal(memoryReenabled.automaticProcessingSince, 500)
+  assert.equal(memoryReenabled.memoryProcessingSince, 700)
+  assert.equal(memoryReenabled.agentSettingsRevision, 3)
+  const memoryReenabledContext = eligibilityContextFromAgentSettings(memoryReenabled, bootstrap)
   assert.equal(client.call(OPERATIONS.AGENT_APPLY_TASK_POLICY, {
-    eligibilityContext: cloudContext()
+    eligibilityContext: memoryReenabledContext
   }).queuedCancelled, 0)
+  const disabledPeriodReplay = client.call(OPERATIONS.AGENT_RECONCILE_TERMINAL_SESSION, {
+    sessionId: 'memory-disabled-period',
+    requestedBy: 'automatic',
+    eligibilityContext: memoryReenabledContext
+  })
+  assert.deepEqual(disabledPeriodReplay.jobs.map((entry) => entry.job.taskKind), [
+    'meeting-minutes', 'enhanced-transcript'
+  ])
   const memoryRow = client.service.store.database.prepare(
     "SELECT state FROM agent_jobs WHERE session_id = ? AND plugin_id = 'memory-extraction'"
   ).get('memory-policy-session')
   assert.equal(memoryRow.state, 'cancelled')
+
+  clock.value = 750
+  createSession(client, {
+    sessionId: 'memory-after-reenable',
+    captions: ['synthetic post-boundary transcript'],
+    startedAt: 701,
+    endedAt: 750
+  })
+  const afterReenable = client.call(OPERATIONS.AGENT_RECONCILE_TERMINAL_SESSION, {
+    sessionId: 'memory-after-reenable',
+    requestedBy: 'automatic',
+    eligibilityContext: memoryReenabledContext
+  })
+  assert.deepEqual(afterReenable.jobs.map((entry) => entry.job.taskKind), [
+    'meeting-minutes', 'memory-extraction', 'enhanced-transcript'
+  ])
 
   const enhanced = client.call(OPERATIONS.AGENT_CLAIM_NEXT_JOB, {
     claimIdempotencyKey: 'policy-claim-enhanced',
     owner: 'policy-worker', leaseMs: 1000, localWorkAllowed: false
   })
   assert.equal(enhanced.taskKind, 'enhanced-transcript')
-  assert.deepEqual(client.call(OPERATIONS.AGENT_APPLY_TASK_POLICY, {
-    eligibilityContext: cloudContext({ agentEnabled: false })
-  }), { queuedCancelled: 0, runningCancellationRequested: 1 })
+  clock.value = 800
+  const agentDisabled = configStore.updateAgentSettings({
+    expectedRevision: 3,
+    agentEnabled: false,
+    memoryEnabled: true,
+    cloudDisclosureAccepted: true
+  })
+  assert.equal(agentDisabled.automaticProcessingSince, null)
+  assert.equal(agentDisabled.memoryProcessingSince, null)
+  assert.equal(agentDisabled.agentSettingsRevision, 4)
+  const disabledResult = client.call(OPERATIONS.AGENT_APPLY_TASK_POLICY, {
+    eligibilityContext: eligibilityContextFromAgentSettings(agentDisabled, bootstrap)
+  })
+  assert.equal(disabledResult.runningCancellationRequested, 1)
+  assert.equal(disabledResult.queuedCancelled > 0, true)
   assert.equal(client.call(OPERATIONS.AGENT_MARK_JOB_CANCELLED, {
     runId: enhanced.runId,
     lease: enhanced.lease
   }).state, 'cancelled')
+
+  client.service.store.database.exec('PRAGMA wal_checkpoint(FULL)')
+  const credentialBytes = Buffer.from(credentialCanary, 'utf8')
+  const providerUrlBytes = Buffer.from('https://api.deepseek.com', 'utf8')
+  const configBytes = fs.readFileSync(configPath)
+  assert.equal(configBytes.includes(credentialBytes), false)
+  assert.equal(configBytes.includes(providerUrlBytes), false)
+  assert.equal(configBytes.includes(Buffer.from('deepseek-v4-flash', 'utf8')), false)
+  for (const databaseFile of [environment.databasePath, `${environment.databasePath}-wal`, `${environment.databasePath}-shm`]) {
+    if (!fs.existsSync(databaseFile)) continue
+    const databaseBytes = fs.readFileSync(databaseFile)
+    assert.equal(databaseBytes.includes(credentialBytes), false)
+    assert.equal(databaseBytes.includes(providerUrlBytes), false)
+  }
 })
 
 test('SEM-F28 / J24-B11/B18 keeps retry errors bounded and does not starve later sessions', (t) => {
@@ -820,38 +1020,6 @@ test('SEM-F28 / J24-B05 linearizes policy changes and claim reply replay without
     localWorkAllowed: false
   })
   assert.notEqual(next.runId, claimed.runId)
-})
-
-test('SEM-F26/SEM-F28 / J24-B14 applies the new personal-memory automatic processing boundary', (t) => {
-  const clock = { value: 70000 }
-  const environment = journeyEnvironment(t)
-  const client = environment.track(serviceFor(environment.databasePath, clock, { value: 0 }))
-  const disabled = cloudContext({ memoryEnabled: false })
-  client.call(OPERATIONS.AGENT_APPLY_TASK_POLICY, { eligibilityContext: disabled })
-  createSession(client, {
-    sessionId: 'memory-disabled-period', captions: ['synthetic disabled-period transcript'],
-    startedAt: 300, endedAt: 350
-  })
-
-  const reenabled = cloudContext({ memoryProcessingSince: 400 })
-  client.call(OPERATIONS.AGENT_APPLY_TASK_POLICY, { eligibilityContext: reenabled })
-  const oldSession = client.call(OPERATIONS.AGENT_RECONCILE_TERMINAL_SESSION, {
-    sessionId: 'memory-disabled-period', requestedBy: 'automatic', eligibilityContext: reenabled
-  })
-  assert.deepEqual(oldSession.jobs.map((entry) => entry.job.taskKind), [
-    'meeting-minutes', 'enhanced-transcript'
-  ])
-
-  createSession(client, {
-    sessionId: 'memory-after-reenable', captions: ['synthetic post-boundary transcript'],
-    startedAt: 401, endedAt: 450
-  })
-  const newSession = client.call(OPERATIONS.AGENT_RECONCILE_TERMINAL_SESSION, {
-    sessionId: 'memory-after-reenable', requestedBy: 'automatic', eligibilityContext: reenabled
-  })
-  assert.deepEqual(newSession.jobs.map((entry) => entry.job.taskKind), [
-    'meeting-minutes', 'memory-extraction', 'enhanced-transcript'
-  ])
 })
 
 test('SEM-F28 / J24-B21 rejects an incomplete refined mixed view as Agent input', (t) => {
