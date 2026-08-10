@@ -174,7 +174,9 @@ class WindowInteractionGenerationController {
     const win = this.getWindow(role)
     if (!isUsableWindow(win) || typeof win.getBounds !== 'function') return null
     try {
-      const bounds = win.getBounds()
+      const bounds = typeof win.getContentBounds === 'function'
+        ? win.getContentBounds()
+        : win.getBounds()
       if (!bounds || !Number.isFinite(bounds.x) || !Number.isFinite(bounds.y)) return null
       return { x: cursor.x - bounds.x, y: cursor.y - bounds.y }
     } catch { return null }
@@ -261,9 +263,12 @@ class WindowInteractionGenerationController {
     try { cursor = this.getCursorScreenPoint() } catch { /* fixed role-scoped fallback below */ }
     let refreshed = false
     for (const role of roles) {
+      /* Geometry re-hit is not a registered recovery boundary. Preserve
+         pass-through, missing-pointer and sync-timeout degradation until the
+         renderer reloads, a current late acknowledgement arrives, or a newer
+         application restore transaction begins. */
       if (this.suspendedRoles.has(role) ||
-          this.failurePriority(role) === FAILURE_PRIORITY['interaction-pass-through-failed']) continue
-      this.clearRetryableFailure(role)
+          this.failurePriority(role) <= FAILURE_PRIORITY['interaction-sync-timeout']) continue
       const pointer = isCursorPoint(cursor) ? this.pointerForRole(role, cursor) : null
       if (!pointer) {
         this.applyPointerFailure(role)

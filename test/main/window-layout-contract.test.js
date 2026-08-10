@@ -49,6 +49,25 @@ test('SEM-F22/J17: valid toolbar CSS geometry becomes an outward-rounded card-lo
   })
 })
 
+test('SEM-F22/J17: fallback hole contains the widest real docked toolbar contour', () => {
+  const {
+    FALLBACK_OVERLAP_RECT,
+    projectToolbarReport
+  } = require('../../src/main/window-layout-contract')
+  const widest = projectToolbarReport({
+    generation: 1,
+    rect: { x: 16, y: 16, width: 568, height: 40 }
+  }, 1).rect
+  const left = (rect) => -rect.right - rect.width
+  const right = (rect) => -rect.right
+
+  assert.ok(left(FALLBACK_OVERLAP_RECT) <= left(widest))
+  assert.ok(right(FALLBACK_OVERLAP_RECT) >= right(widest))
+  assert.ok(FALLBACK_OVERLAP_RECT.top <= widest.top)
+  assert.ok(FALLBACK_OVERLAP_RECT.top + FALLBACK_OVERLAP_RECT.height >= widest.top + widest.height)
+  assert.deepEqual(FALLBACK_OVERLAP_RECT, { top: 0, right: 0, width: 588, height: 64 })
+})
+
 test('SEM-F22/J17: the docked toolbar contour leaves an ordinary drag lane outside the 8px resize band', () => {
   const {
     WINDOW_LAYOUT,
@@ -72,7 +91,7 @@ test('SEM-F22/J17: the docked toolbar contour leaves an ordinary drag lane outsi
   )
 })
 
-test('SEM-F22/J17: overlay BrowserWindow behavior disables native resizing at creation', () => {
+test('SEM-F22/J17: overlay creation disables native resizing without frameless size constraints', () => {
   const { overlayWindowBehavior } = require('../../src/main/application-window-lifecycle-controller')
 
   assert.deepEqual(overlayWindowBehavior('caption', false), {
@@ -88,7 +107,19 @@ test('SEM-F22/J17: overlay BrowserWindow behavior disables native resizing at cr
     hasShadow: false,
     focusable: false
   })
-  assert.equal(overlayWindowBehavior('toolbar').resizable, false)
+  const toolbarBehavior = overlayWindowBehavior('toolbar')
+  assert.equal(toolbarBehavior.resizable, false)
+  assert.equal(toolbarBehavior.useContentSize, true,
+    'toolbar constructor width/height must describe the content viewport before first show')
+  assert.equal(Object.hasOwn(overlayWindowBehavior('caption', false), 'useContentSize'), false,
+    'caption dimensions remain outer bounds because the caption has its own manual resize contract')
+  for (const role of ['caption', 'toolbar']) {
+    const behavior = overlayWindowBehavior(role, role === 'toolbar')
+    for (const key of ['minWidth', 'maxWidth', 'minHeight', 'maxHeight']) {
+      assert.equal(Object.hasOwn(behavior, key), false,
+        `frameless ${role} cannot inherit an outer-frame ${key} constraint`)
+    }
+  }
   assert.equal(Object.isFrozen(overlayWindowBehavior('caption', false)), true)
 })
 

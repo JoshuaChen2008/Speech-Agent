@@ -26,6 +26,13 @@ const {
   WindowInteractionGenerationController
 } = require('../src/main/window-interaction-generation-controller')
 const {
+  ManualWindowInteractionController
+} = require('../src/main/manual-window-interaction-controller')
+const {
+  restoreBoundsEquivalent
+} = require('../src/main/application-window-lifecycle-controller')
+const { toolbarViewportStateEquivalent } = require('../src/main/toolbar-dock-invariant')
+const {
   OPERATIONS,
   PROTOCOL_VERSION,
   makeCaptionEventId,
@@ -87,7 +94,8 @@ const windowInteractionGenerationProbe = []
 let observedWindowInteractionGenerationController = null
 for (const method of [
   'beginTransaction', 'resume', 'acceptMouseThrough', 'acceptGesture',
-  'acceptResizeStart', 'suspendRoleForReload', 'replay', 'setNativeIgnore'
+  'acceptResizeStart', 'suspendRoleForReload', 'replay', 'setNativeIgnore',
+  'refreshPointerHits'
 ]) {
   const original = WindowInteractionGenerationController.prototype[method]
   WindowInteractionGenerationController.prototype[method] = function observedWindowInteractionGeneration (...args) {
@@ -101,6 +109,7 @@ for (const method of [
       windowInteractionGenerationProbe.push({
         method,
         role: typeof args[0] === 'string' ? args[0] : null,
+        roles: Array.isArray(args[0]) ? [...args[0]] : null,
         argumentGeneration: Number.isSafeInteger(args[0])
           ? args[0]
           : (Number.isSafeInteger(args[1]?.generation) ? args[1].generation : null),
@@ -112,6 +121,21 @@ for (const method of [
         accepted: result === true
       })
     }
+  }
+}
+
+let observedManualWindowInteractionController = null
+let beforeObservedStopAll = null
+for (const method of ['startDrag', 'stopDrag', 'startResize', 'stopResize', 'stopAll']) {
+  const original = ManualWindowInteractionController.prototype[method]
+  ManualWindowInteractionController.prototype[method] = function observedManualWindowInteraction (...args) {
+    observedManualWindowInteractionController = this
+    if (method === 'stopAll' && beforeObservedStopAll) {
+      const inject = beforeObservedStopAll
+      beforeObservedStopAll = null
+      inject()
+    }
+    return original.apply(this, args)
   }
 }
 
@@ -209,6 +233,10 @@ function sameWindowBounds (left, right) {
     left.width === right.width && left.height === right.height
 }
 
+function productWindowBounds (role, win) {
+  return role === 'toolbar' ? win.getContentBounds() : win.getBounds()
+}
+
 function visibleApplicationWindowRoles ({ caption, toolbar, settings, history }) {
   return [
     ['caption', caption],
@@ -221,12 +249,16 @@ function visibleApplicationWindowRoles ({ caption, toolbar, settings, history })
 
 function applicationBoundsPreserved (windows, expected) {
   return Object.entries(windows)
-    .every(([role, win]) => sameWindowBounds(win.getBounds(), expected[role]))
+    .every(([role, win]) => role === 'toolbar'
+      ? toolbarViewportStateEquivalent(win, expected[role])
+      : restoreBoundsEquivalent(role, productWindowBounds(role, win), expected[role]))
 }
 
 function applicationBoundsMismatchRoles (windows, expected) {
   return Object.entries(windows)
-    .filter(([role, win]) => !sameWindowBounds(win.getBounds(), expected[role]))
+    .filter(([role, win]) => role === 'toolbar'
+      ? !toolbarViewportStateEquivalent(win, expected[role])
+      : !restoreBoundsEquivalent(role, productWindowBounds(role, win), expected[role]))
     .map(([role]) => role)
 }
 
@@ -264,6 +296,11 @@ async function exerciseApplicationLifecycle ({ caption, toolbar, settings, rawSe
       visibleBefore.join(',') !== 'caption,toolbar,settings,history') {
     throw new Error('application lifecycle did not start from four visible windows and one listening session')
   }
+  const toolbarBoundsBeforeGesture = toolbar.getContentBounds()
+  if (toolbarBoundsBeforeGesture.width !== windowLayoutContract.WINDOW_LAYOUT.toolbarViewportWidth ||
+      toolbarBoundsBeforeGesture.height !== windowLayoutContract.WINDOW_LAYOUT.toolbarViewportHeight) {
+    throw new Error('pre-gesture toolbar viewport unsettled')
+  }
 
   const captionCard = "document.getElementById('captionCard')"
   const captionDragPoint = `target => { const r = target.getBoundingClientRect(); return { x: r.left + 80, y: r.top + r.height * 0.55 } }`
@@ -286,7 +323,15 @@ async function exerciseApplicationLifecycle ({ caption, toolbar, settings, rawSe
     const next = caption.getBounds()
     return sameWindowBounds(next, captionBoundsBeforeGesture) ? null : next
   }, 'pre-minimize active caption gesture')
-  const boundsBefore = Object.fromEntries(Object.entries(windows).map(([role, win]) => [role, win.getBounds()]))
+  const toolbarBoundsBeforeMinimize = await waitFor(() => {
+    const bounds = toolbar.getContentBounds()
+    return bounds.width === windowLayoutContract.WINDOW_LAYOUT.toolbarViewportWidth &&
+      bounds.height === windowLayoutContract.WINDOW_LAYOUT.toolbarViewportHeight
+      ? bounds
+      : null
+  }, 'active group drag fixed toolbar viewport before minimize', 1000)
+  const boundsBefore = Object.fromEntries(Object.entries(windows)
+    .map(([role, win]) => [role, productWindowBounds(role, win)]))
   const stationaryOrigin = screenPointForRenderer(caption, activePoint)
 
   await rendererValue(toolbar, `document.querySelector('button[data-act="minimize"]').click(); true`)
@@ -303,14 +348,74 @@ async function exerciseApplicationLifecycle ({ caption, toolbar, settings, rawSe
   const preMinimizeGestureResetObserved = sameWindowBounds(caption.getBounds(), captionBoundsBeforeMinimize)
 
   cursor.set(stationaryOrigin)
+  let lateBoundsListenerInstalled = false
+  let lateBoundsDriftInjected = false
+  let lateBoundsDriftInjectedDuringSuspend = false
+  let lateBoundsInjectionStarted = false
+  let lateMoveObserved = false
+  let lateResizeObserved = false
+  const injectedHistoryBounds = {
+    ...boundsBefore.history,
+    x: boundsBefore.history.x + 11,
+    width: boundsBefore.history.width + 7
+  }
+  const observeLateBoundsListener = (eventName) => {
+    if (eventName !== 'resize' || lateBoundsListenerInstalled) return
+    lateBoundsListenerInstalled = true
+    queueMicrotask(() => {
+      lateBoundsDriftInjectedDuringSuspend =
+        observedWindowInteractionGenerationController.getState().phase === 'suspend'
+      lateBoundsInjectionStarted = true
+      history.setBounds(injectedHistoryBounds)
+      lateBoundsDriftInjected = true
+    })
+  }
+  const observeLateMove = () => {
+    if (lateBoundsInjectionStarted) lateMoveObserved = true
+  }
+  const observeLateResize = () => {
+    if (lateBoundsInjectionStarted) lateResizeObserved = true
+  }
+  history.on('move', observeLateMove)
+  history.on('resize', observeLateResize)
+  history.on('newListener', observeLateBoundsListener)
   toolbar.restore()
-  await waitFor(() => visibleApplicationWindowRoles(windows).join(',') === visibleBefore.join(',') &&
-    !toolbar.isMinimized() && !settings.isMinimized() && !history.isMinimized() &&
-    applicationBoundsPreserved(windows, boundsBefore), 'native taskbar restore')
+  try {
+    await waitFor(() => visibleApplicationWindowRoles(windows).join(',') === visibleBefore.join(',') &&
+      !toolbar.isMinimized() && !settings.isMinimized() && !history.isMinimized() &&
+      observedWindowInteractionGenerationController.getState().phase === 'suspend' &&
+      lateBoundsListenerInstalled && lateBoundsDriftInjected && lateBoundsDriftInjectedDuringSuspend &&
+      lateMoveObserved && lateResizeObserved,
+    'native taskbar restore settlement')
+  } finally {
+    history.off('newListener', observeLateBoundsListener)
+  }
+  try {
+    await waitFor(() => restoreBoundsEquivalent('history', history.getBounds(), boundsBefore.history) &&
+      observedWindowInteractionGenerationController.getState().phase === 'suspend',
+    'late native bounds correction before interaction resume')
+    try {
+      await waitFor(() => visibleApplicationWindowRoles(windows).join(',') === visibleBefore.join(',') &&
+        !toolbar.isMinimized() && !settings.isMinimized() && !history.isMinimized() &&
+        observedWindowInteractionGenerationController.getState().phase === 'resume', 'native taskbar restore')
+    } catch {
+      const mismatchRoles = applicationBoundsMismatchRoles(windows, boundsBefore)
+      const phase = observedWindowInteractionGenerationController.getState().phase
+      throw new Error(`native taskbar restore unresolved bounds roles=${mismatchRoles.join(',') || 'none'} phase=${phase}`)
+    }
+  } finally {
+    history.off('move', observeLateMove)
+    history.off('resize', observeLateResize)
+  }
+  await new Promise((resolve) => setTimeout(resolve, 80))
   const nativeSnapshot = await rendererValue(toolbar, `window.shell.getSnapshot()`)
   const nativeRestorePreservedWindowSet =
     visibleApplicationWindowRoles(windows).join(',') === visibleBefore.join(',')
   const nativeRestorePreservedBounds = applicationBoundsPreserved(windows, boundsBefore)
+  if (!nativeRestorePreservedBounds) {
+    const mismatchRoles = applicationBoundsMismatchRoles(windows, boundsBefore)
+    throw new Error(`native taskbar restore changed bounds for roles=${mismatchRoles.join(',')}`)
+  }
   const nativeRestorePreservedRuntimeSnapshot =
     JSON.stringify(nativeSnapshot) === JSON.stringify(snapshotBefore)
 
@@ -336,7 +441,7 @@ async function exerciseApplicationLifecycle ({ caption, toolbar, settings, rawSe
     generation: nativeRestoreGeneration - 1
   }) === false
   const boundsBeforeSecondMinimize = Object.fromEntries(
-    Object.entries(windows).map(([role, win]) => [role, win.getBounds()])
+    Object.entries(windows).map(([role, win]) => [role, productWindowBounds(role, win)])
   )
 
   await rendererValue(toolbar, `document.querySelector('button[data-act="lock"]').click(); true`)
@@ -347,7 +452,9 @@ async function exerciseApplicationLifecycle ({ caption, toolbar, settings, rawSe
     settings.isMinimized() && history.isMinimized(), 'second application minimize')
   app.emit('second-instance')
   await waitFor(() => visibleApplicationWindowRoles(windows).join(',') === visibleBefore.join(',') &&
-    !toolbar.isMinimized(), 'second-instance restore visibility')
+    !toolbar.isMinimized() &&
+    observedWindowInteractionGenerationController.getState().phase === 'resume',
+  'second-instance restore visibility')
   const secondInstanceMismatchRoles = applicationBoundsMismatchRoles(windows, boundsBeforeSecondMinimize)
   if (secondInstanceMismatchRoles.length > 0) {
     throw new Error(`second-instance restore changed bounds for roles=${secondInstanceMismatchRoles.join(',')}`)
@@ -464,7 +571,7 @@ async function dispatchRendererPointer (win, targetExpression, point, type, poin
       pointerType: 'mouse',
       isPrimary: true,
       button: 0,
-      buttons: detail.type === 'pointerdown' ? 1 : 0,
+      buttons: detail.type === 'pointerdown' || detail.type === 'pointermove' ? 1 : 0,
       clientX: detail.x,
       clientY: detail.y
     }))
@@ -472,7 +579,7 @@ async function dispatchRendererPointer (win, targetExpression, point, type, poin
 }
 
 function screenPointForRenderer (win, point) {
-  const bounds = win.getBounds()
+  const bounds = win.getContentBounds()
   return { x: bounds.x + point.x, y: bounds.y + point.y }
 }
 
@@ -484,6 +591,7 @@ async function assertRendererGestureMoves ({
   pointerId,
   cursor,
   delta = { x: 13, y: 9 },
+  armDelta = null,
   endType = 'pointerup',
   afterStart = null
 }) {
@@ -492,6 +600,13 @@ async function assertRendererGestureMoves ({
   const before = targetWindow.getBounds()
   cursor.set(origin)
   await dispatchRendererPointer(sourceWindow, targetExpression, localPoint, 'pointerdown', pointerId)
+  if (armDelta) {
+    cursor.set({ x: origin.x + armDelta.x, y: origin.y + armDelta.y })
+    await dispatchRendererPointer(sourceWindow, 'window', {
+      x: localPoint.x + armDelta.x,
+      y: localPoint.y + armDelta.y
+    }, 'pointermove', pointerId)
+  }
   if (afterStart) await afterStart()
   cursor.set({ x: origin.x + delta.x, y: origin.y + delta.y })
   const moved = await waitFor(() => {
@@ -555,22 +670,107 @@ async function beginWindowInteractionLayoutProbe (toolbar, caption) {
   const firstFrameFallbackObserved = toolbarLayoutProbe.some((entry) =>
     entry.generation === 1 && entry.source === 'fallback')
   const beforeValid = toolbarLayoutProbe.length
+  const beforeValidRehit = windowInteractionGenerationProbe.length
   const attention = await reportCurrentToolbarContour(toolbar)
   await waitForLayoutProbe(beforeValid, (entry) => entry.method === 'acceptReport' && entry.source === 'toolbar',
     'initial valid toolbar contour')
+  const validContourRehitObserved = await waitFor(() => windowInteractionGenerationProbe
+    .slice(beforeValidRehit)
+    .some((entry) => entry.method === 'refreshPointerHits' && entry.accepted === true &&
+      entry.roles?.join(',') === 'caption,toolbar'), 'valid contour dual-renderer rehit')
   return {
     attention,
-    firstFrameFallbackObserved
+    firstFrameFallbackObserved,
+    validContourRehitObserved
   }
 }
 
-async function observeToolbarStateContourChange (toolbar, probe) {
+async function observeToolbarStateContourChange (toolbar, probe, cursor) {
+  await rendererValue(toolbar, `(() => {
+    const element = document.getElementById('toolbar')
+    const rect = element.getBoundingClientRect()
+    const width = Math.min(480, Math.max(280, Math.floor(rect.width) - 48))
+    element.style.width = width + 'px'
+    element.style.minWidth = width + 'px'
+    element.style.maxWidth = width + 'px'
+    element.style.flex = '0 0 ' + width + 'px'
+    element.style.overflow = 'hidden'
+    return true
+  })()`)
   const before = toolbarLayoutProbe.length
   const quiet = await reportCurrentToolbarContour(toolbar)
   await waitForLayoutProbe(before, (entry) => entry.method === 'acceptReport' && entry.source === 'toolbar',
     'quiet toolbar contour')
   probe.quiet = quiet
   probe.toolbarStateContourChangeObserved = quiet.width !== probe.attention.width || quiet.height !== probe.attention.height
+
+  /* Hold a real renderer-local pointer just outside the quiet contour, then
+     expand the real DOM contour without another mousemove. ResizeObserver must
+     make toolbar solid before the deferred layout report asks main to re-hit
+     both HWNDs; otherwise the first button in the new area can fall through. */
+  const expansion = await rendererValue(toolbar, `(() => {
+    const element = document.getElementById('toolbar')
+    const rect = element.getBoundingClientRect()
+    return {
+      point: { x: Math.max(1, Math.floor(rect.left) - 8), y: Math.floor(rect.top + rect.height / 2) },
+      width: Math.min(568, Math.ceil(rect.width) + 32)
+    }
+  })()`)
+  cursor.set(screenPointForRenderer(toolbar, expansion.point))
+  await rendererValue(toolbar, `document.dispatchEvent(new MouseEvent('mousemove', {
+    bubbles: true,
+    clientX: ${Number(expansion.point.x)},
+    clientY: ${Number(expansion.point.y)}
+  })); true`)
+  const expansionProbeStart = windowInteractionGenerationProbe.length
+  const expansionLayoutStart = toolbarLayoutProbe.length
+  await rendererValue(toolbar, `(() => {
+    const element = document.getElementById('toolbar')
+    element.style.width = '${Number(expansion.width)}px'
+    element.style.minWidth = '${Number(expansion.width)}px'
+    element.style.maxWidth = '${Number(expansion.width)}px'
+    element.style.flex = '0 0 ${Number(expansion.width)}px'
+    return true
+  })()`)
+  await waitFor(() => windowInteractionGenerationProbe.slice(expansionProbeStart)
+    .some((entry) => entry.method === 'acceptMouseThrough' &&
+      entry.role === 'toolbar' && entry.ignore === false && entry.accepted === true),
+  'stationary expanded contour becomes solid locally')
+  const expanded = await reportCurrentToolbarContour(toolbar)
+  if (expanded.width <= quiet.width) throw new Error('toolbar contour style did not expand')
+  await waitForLayoutProbe(expansionLayoutStart,
+    (entry) => entry.method === 'acceptReport' && entry.source === 'toolbar' && entry.width > quiet.width,
+    'expanded toolbar contour report')
+  await waitFor(() => {
+    const entries = windowInteractionGenerationProbe.slice(expansionProbeStart)
+    const solidIndex = entries.findIndex((entry) => entry.method === 'acceptMouseThrough' &&
+      entry.role === 'toolbar' && entry.ignore === false && entry.accepted === true)
+    const refreshIndex = entries.findIndex((entry) => entry.method === 'refreshPointerHits' &&
+      entry.roles?.join(',') === 'caption,toolbar')
+    return solidIndex >= 0 && refreshIndex >= 0 && solidIndex < refreshIndex
+  }, 'stationary expanded contour becomes solid before dual rehit')
+  const shrinkProbeStart = windowInteractionGenerationProbe.length
+  await rendererValue(toolbar, `(() => {
+    const element = document.getElementById('toolbar')
+    element.style.width = '${Number(quiet.width)}px'
+    element.style.minWidth = '${Number(quiet.width)}px'
+    element.style.maxWidth = '${Number(quiet.width)}px'
+    element.style.flex = '0 0 ${Number(quiet.width)}px'
+    return true
+  })()`)
+  await waitFor(() => windowInteractionGenerationProbe.slice(shrinkProbeStart)
+    .some((entry) => entry.method === 'acceptMouseThrough' && entry.role === 'toolbar' &&
+      entry.ignore === true && entry.accepted === true), 'stationary shrunken contour becomes pass-through')
+  await rendererValue(toolbar, `(() => {
+    const element = document.getElementById('toolbar')
+    element.style.width = ''
+    element.style.minWidth = ''
+    element.style.maxWidth = ''
+    element.style.flex = ''
+    element.style.overflow = ''
+    return true
+  })()`)
+  probe.stationaryContourExpansionSolidObserved = true
 }
 
 async function completeWindowInteractionLayoutProbe (toolbar, probe) {
@@ -622,8 +822,9 @@ async function completeWindowInteractionLayoutProbe (toolbar, probe) {
   const recoveries = toolbarLayoutProbe.filter((entry) => entry.source === 'toolbar')
   return {
     firstFrameFallbackObserved: probe.firstFrameFallbackObserved,
-    validContourObserved: recoveries.length > 0,
-    validContourShrinkObserved: recoveries.some((entry) => entry.width < 584 || entry.height < 64),
+    validContourObserved: recoveries.length > 0 && probe.validContourRehitObserved === true &&
+      probe.stationaryContourExpansionSolidObserved === true,
+    validContourShrinkObserved: recoveries.some((entry) => entry.width < 588 || entry.height < 64),
     toolbarStateContourChangeObserved: probe.toolbarStateContourChangeObserved,
     reloadGenerationFallbackObserved: true,
     reloadValidRecoveryObserved: true,
@@ -675,6 +876,162 @@ async function assertCancellationBeforeMove ({
   return true
 }
 
+async function assertResizeClickSlop ({ caption, toolbar, cursor, targetExpression, pointExpression, pointerId }) {
+  const point = await rendererPointerPoint(caption, targetExpression, pointExpression)
+  const origin = screenPointForRenderer(caption, point)
+  const captionBefore = caption.getBounds()
+  const toolbarBefore = toolbar.getBounds()
+  const resizeIntentStart = windowInteractionGenerationProbe.length
+  cursor.set(origin)
+  await dispatchRendererPointer(caption, targetExpression, point, 'pointerdown', pointerId)
+  cursor.set({ x: origin.x - 3, y: origin.y + 1 })
+  await dispatchRendererPointer(caption, 'window', { x: point.x - 3, y: point.y + 1 }, 'pointermove', pointerId)
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  await dispatchRendererPointer(caption, 'window', point, 'pointerup', pointerId)
+  if (!sameWindowBounds(caption.getBounds(), captionBefore) ||
+      !sameWindowBounds(toolbar.getBounds(), toolbarBefore)) {
+    throw new Error('sub-threshold resize click changed caption or toolbar bounds')
+  }
+  if (windowInteractionGenerationProbe.slice(resizeIntentStart)
+    .some((entry) => entry.method === 'acceptResizeStart') ||
+      observedManualWindowInteractionController?.isResizing() !== false) {
+    throw new Error('sub-threshold resize click started a resize intent or main timer')
+  }
+}
+
+async function assertPendingResizeCrossOverlayTerminal ({ caption, toolbar, cursor, targetExpression, pointExpression }) {
+  const point = await rendererPointerPoint(caption, targetExpression, pointExpression)
+  const origin = screenPointForRenderer(caption, point)
+  const generationBefore = observedWindowInteractionGenerationController.getState().generation
+  const resizeIntentStart = windowInteractionGenerationProbe.length
+  cursor.set(origin)
+  await dispatchRendererPointer(caption, targetExpression, point, 'pointerdown', 119)
+  caption.webContents.emit('before-mouse-event', {}, {
+    type: 'mouseDown', button: 'left', modifiers: ['leftbuttondown']
+  })
+  toolbar.webContents.emit('before-mouse-event', {}, {
+    type: 'mouseUp', button: 'left', modifiers: []
+  })
+  await waitFor(() => {
+    const state = observedWindowInteractionGenerationController.getState()
+    return state.generation > generationBefore && state.phase === 'resume'
+  }, 'pending resize cross-overlay generation reset')
+  if (windowInteractionGenerationProbe.slice(resizeIntentStart)
+    .some((entry) => entry.method === 'acceptResizeStart') ||
+      observedManualWindowInteractionController?.isResizing() !== false) {
+    throw new Error('pending resize cross-overlay release started a resize timer')
+  }
+  await assertRendererGestureMoves({
+    sourceWindow: caption,
+    targetWindow: caption,
+    targetExpression,
+    pointExpression: `target => { const r = target.getBoundingClientRect(); return {
+      x: r.left + 80, y: r.top + r.height * 0.55
+    } }`,
+    pointerId: 1119,
+    cursor,
+    delta: { x: 11, y: 7 },
+    endType: 'pointerup'
+  })
+  const lockBefore = await rendererValue(toolbar, 'window.shell.getLock()')
+  await rendererValue(toolbar, `document.querySelector('button[data-act="lock"]').click(); true`)
+  await waitFor(async () => (await rendererValue(toolbar, 'window.shell.getLock()')) !== lockBefore,
+    'first toolbar button after pending resize cross-overlay release')
+  await rendererValue(toolbar, `document.querySelector('button[data-act="lock"]').click(); true`)
+  await waitFor(async () => (await rendererValue(toolbar, 'window.shell.getLock()')) === lockBefore,
+    'toolbar lock state after pending resize recovery')
+}
+
+async function assertToolbarDockInvariant ({ caption, toolbar, cursor }) {
+  const expected = windowLayoutContract.toolbarDockBoundsFor(caption.getBounds())
+  const localPoint = await rendererPointerPoint(
+    toolbar,
+    "document.querySelector('button[data-act=\"lock\"]')",
+    'target => { const r = target.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } }'
+  )
+  cursor.set(screenPointForRenderer(toolbar, localPoint))
+  await rendererValue(toolbar, `document.dispatchEvent(new MouseEvent('mousemove', {
+    bubbles: true,
+    clientX: ${Number(localPoint.x)},
+    clientY: ${Number(localPoint.y)}
+  })); true`)
+  const rehitStart = windowInteractionGenerationProbe.length
+  toolbar.setContentBounds({
+    x: expected.x - 2,
+    y: expected.y - 3,
+    width: expected.width + 1,
+    height: expected.height + 2
+  })
+  await waitFor(() => sameWindowBounds(toolbar.getContentBounds(), expected),
+    'fixed toolbar viewport after native resize')
+  await waitFor(() => {
+    const entries = windowInteractionGenerationProbe.slice(rehitStart)
+    const refreshIndex = entries.findIndex((entry) => entry.method === 'refreshPointerHits' &&
+      entry.roles?.join(',') === 'toolbar' && entry.accepted === true)
+    if (refreshIndex < 0) return false
+    const refreshGeneration = entries[refreshIndex].generation
+    const ackIndex = entries.findIndex((entry, index) => index > refreshIndex &&
+      entry.method === 'acceptMouseThrough' && entry.role === 'toolbar' &&
+      entry.argumentGeneration === refreshGeneration && entry.ignore === false && entry.accepted === true)
+    return ackIndex > refreshIndex &&
+      observedWindowInteractionGenerationController.getState().generation === refreshGeneration
+  }, 'stationary toolbar hit after fixed viewport correction')
+
+  const lockBefore = await rendererValue(toolbar, 'window.shell.getLock()')
+  await rendererValue(toolbar, `document.querySelector('button[data-act="lock"]').click(); true`)
+  await waitFor(async () => (await rendererValue(toolbar, 'window.shell.getLock()')) !== lockBefore,
+    'first toolbar button after fixed viewport correction')
+  await rendererValue(toolbar, `document.querySelector('button[data-act="lock"]').click(); true`)
+  await waitFor(async () => (await rendererValue(toolbar, 'window.shell.getLock()')) === lockBefore,
+    'toolbar lock state after fixed viewport correction')
+}
+
+async function assertCrossOverlayTerminal ({
+  sourceWindow,
+  terminalWindow,
+  targetWindow,
+  cursor,
+  targetExpression,
+  pointExpression,
+  pointerId,
+  label
+}) {
+  const point = await rendererPointerPoint(sourceWindow, targetExpression, pointExpression)
+  const origin = screenPointForRenderer(sourceWindow, point)
+  const generationBefore = observedWindowInteractionGenerationController.getState().generation
+  cursor.set(origin)
+  await dispatchRendererPointer(sourceWindow, targetExpression, point, 'pointerdown', pointerId)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  terminalWindow.webContents.sendInputEvent({
+    type: 'mouseUp',
+    x: 300,
+    y: 30,
+    button: 'left',
+    clickCount: 1
+  })
+  await waitFor(() => {
+    const state = observedWindowInteractionGenerationController.getState()
+    return state.generation > generationBefore && state.phase === 'resume'
+  }, `${label} cross-overlay generation reset`)
+  const ended = targetWindow.getBounds()
+  cursor.set({ x: origin.x + 27, y: origin.y + 13 })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  if (!sameWindowBounds(targetWindow.getBounds(), ended)) {
+    throw new Error(`${label} cross-overlay mouseUp left a main-process gesture active`)
+  }
+  await assertRendererGestureMoves({
+    sourceWindow,
+    targetWindow,
+    targetExpression,
+    pointExpression,
+    pointerId: pointerId + 1000,
+    cursor,
+    delta: { x: 11, y: 7 },
+    endType: 'pointerup'
+  })
+}
+
 async function exerciseOverlayWindowInteractions ({ caption, toolbar, cursor }) {
   const card = "document.getElementById('captionCard')"
   const grip = "document.getElementById('grip')"
@@ -682,6 +1039,8 @@ async function exerciseOverlayWindowInteractions ({ caption, toolbar, cursor }) 
   const cardLeft = `target => { const r = target.getBoundingClientRect(); return { x: r.left + 80, y: r.top + r.height * 0.55 } }`
   const cardMiddle = `target => { const r = target.getBoundingClientRect(); return { x: r.left + r.width * 0.42, y: r.bottom - 28 } }`
   const cardResizeWest = `target => { const r = target.getBoundingClientRect(); return { x: r.left + 3, y: r.top + r.height * 0.55 } }`
+
+  await assertToolbarDockInvariant({ caption, toolbar, cursor })
 
   await assertRendererGestureStatic({
     sourceWindow: caption,
@@ -735,6 +1094,21 @@ async function exerciseOverlayWindowInteractions ({ caption, toolbar, cursor }) 
     pointerId: 106,
     cursor
   })
+  await assertResizeClickSlop({
+    caption,
+    toolbar,
+    cursor,
+    targetExpression: card,
+    pointExpression: cardResizeWest,
+    pointerId: 116
+  })
+  await assertPendingResizeCrossOverlayTerminal({
+    caption,
+    toolbar,
+    cursor,
+    targetExpression: card,
+    pointExpression: cardResizeWest
+  })
   await assertRendererGestureMoves({
     sourceWindow: caption,
     targetWindow: caption,
@@ -742,8 +1116,20 @@ async function exerciseOverlayWindowInteractions ({ caption, toolbar, cursor }) 
     pointExpression: cardResizeWest,
     pointerId: 107,
     cursor,
+    armDelta: { x: -4, y: 0 },
     delta: { x: -12, y: 0 },
     endType: 'pointerup'
+  })
+
+  await assertCrossOverlayTerminal({
+    sourceWindow: caption,
+    terminalWindow: toolbar,
+    targetWindow: caption,
+    cursor,
+    targetExpression: card,
+    pointExpression: cardLeft,
+    pointerId: 117,
+    label: 'caption-to-toolbar'
   })
 
   await assertCancellationBeforeMove({
@@ -772,6 +1158,16 @@ async function exerciseOverlayWindowInteractions ({ caption, toolbar, cursor }) 
     cursor,
     endType: 'pointerup'
   })
+  await assertCrossOverlayTerminal({
+    sourceWindow: toolbar,
+    terminalWindow: caption,
+    targetWindow: caption,
+    cursor,
+    targetExpression: grip,
+    pointExpression: center,
+    pointerId: 118,
+    label: 'toolbar-to-caption'
+  })
   await assertCancellationBeforeMove({
     sourceWindow: toolbar,
     targetWindow: caption,
@@ -783,6 +1179,8 @@ async function exerciseOverlayWindowInteractions ({ caption, toolbar, cursor }) 
   })
 
   const captionBeforeLock = caption.getBounds()
+  const expectedToolbarAtLock = windowLayoutContract.toolbarDockBoundsFor(captionBeforeLock)
+  let lockTransitionDriftInjected = false
   await assertCancellationBeforeMove({
     sourceWindow: caption,
     targetWindow: caption,
@@ -791,10 +1189,21 @@ async function exerciseOverlayWindowInteractions ({ caption, toolbar, cursor }) 
     pointerId: 112,
     cursor,
     cancel: async () => {
+      beforeObservedStopAll = () => {
+        lockTransitionDriftInjected = true
+        toolbar.setContentBounds({
+          ...expectedToolbarAtLock,
+          x: expectedToolbarAtLock.x - 7,
+          y: expectedToolbarAtLock.y + 5
+        })
+      }
       await rendererValue(toolbar, `document.querySelector('button[data-act="lock"]').click(); true`)
       await waitFor(() => rendererValue(toolbar, 'window.shell.getLock()'), 'toolbar lock state')
     }
   })
+  if (!lockTransitionDriftInjected) throw new Error('lock-transition native drift injection was not consumed')
+  await waitFor(() => sameWindowBounds(toolbar.getContentBounds(), expectedToolbarAtLock),
+    'lock transition preserves the old unlocked dock target')
   await assertRendererGestureStatic({
     sourceWindow: caption,
     targetWindow: caption,
@@ -816,6 +1225,21 @@ async function exerciseOverlayWindowInteractions ({ caption, toolbar, cursor }) 
   if (!sameWindowBounds(caption.getBounds(), captionBeforeLock) ||
       sameWindowBounds(toolbar.getBounds(), toolbarBeforeLockedGrip)) {
     throw new Error('locked grip did not isolate movement to the toolbar')
+  }
+  const lockedToolbarPosition = toolbar.getContentBounds()
+  toolbar.setContentBounds({
+    x: lockedToolbarPosition.x - 2,
+    y: lockedToolbarPosition.y - 3,
+    width: lockedToolbarPosition.width + 1,
+    height: lockedToolbarPosition.height + 2
+  })
+  await waitFor(() => sameWindowBounds(toolbar.getContentBounds(), {
+    ...lockedToolbarPosition,
+    width: windowLayoutContract.WINDOW_LAYOUT.toolbarViewportWidth,
+    height: windowLayoutContract.WINDOW_LAYOUT.toolbarViewportHeight
+  }), 'locked toolbar fixed viewport without redocking')
+  if (!sameWindowBounds(caption.getBounds(), captionBeforeLock)) {
+    throw new Error('locked toolbar viewport correction moved the caption')
   }
   await rendererValue(toolbar, `document.querySelector('button[data-act="lock"]').click(); true`)
   await waitFor(async () => (await rendererValue(toolbar, 'window.shell.getLock()')) === false, 'toolbar unlock state')
@@ -2080,7 +2504,7 @@ async function runJourney () {
 
   await waitFor(() => rendererValue(toolbar, `window.shell.getSnapshot().then(s => s.phase === 'idle' && s.capabilities.canStart)`), 'idle runtime')
   await waitFor(() => rendererValue(toolbar, `!!document.querySelector('button[data-act="start"]:not(:disabled)')`), 'start control')
-  await observeToolbarStateContourChange(toolbar, layoutProbe)
+  await observeToolbarStateContourChange(toolbar, layoutProbe, controlledCursorBoundary)
 
   const refinementResumeSeed = seedInterruptedModelDownload(
     userDataDir,

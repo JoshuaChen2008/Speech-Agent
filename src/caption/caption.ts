@@ -51,6 +51,7 @@ let ignoring: boolean | null = null
 let lastX = 0, lastY = 0
 let toolbarOverlapGeneration = 0
 let gesturePointerId: number | null = null
+let pendingResize: { pointerId: number, edge: string, originX: number, originY: number } | null = null
 let interactionGeneration = 0
 let interactionPhase = 'resume'
 
@@ -59,6 +60,7 @@ let interactionPhase = 'resume'
 // 卡片内侧 8px 是拉伸带，其余是拖动区。锁定后整窗恒穿透，两者都不生效。
 // --------------------------------------------------------------------------
 const EDGE = 8
+const RESIZE_ARM_DISTANCE = 4
 const RESIZE_CURSOR: Record<string, string> = {
   n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize',
   ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize'
@@ -97,7 +99,7 @@ function captionActionAt (x: number, y: number) {
 
 /** @param {number} x @param {number} y @param {boolean=} force */
 function applyHit (x: number, y: number, force = false): void {
-  if (interactionPhase !== 'resume' || dragging || resizing) return
+  if (interactionPhase !== 'resume' || dragging || resizing || pendingResize) return
   const action = captionActionAt(x, y)
   const solid = !locked && (action.kind === 'resize' || action.kind === 'drag')
   const next = !solid
@@ -133,7 +135,7 @@ function queueHit (force = false): void {
 
 function applyCurrentHit (force = false): void {
   applyHit(lastX, lastY, force)
-  if (!dragging && !resizing) {
+  if (!dragging && !resizing && !pendingResize) {
     const action = captionActionAt(lastX, lastY)
     card.style.cursor = action.kind === 'resize' ? RESIZE_CURSOR[action.edge] : ''
   }
@@ -171,35 +173,95 @@ if (typeof bridge.onToolbarOverlap === 'function') bridge.onToolbarOverlap(accep
 // 拖动（未锁定时可拖；role=caption）
 // --------------------------------------------------------------------------
 card.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || e.isPrimary === false || !Number.isInteger(e.pointerId) ||
-      locked || gesturePointerId !== null) return
+  if (e.button !== 0 || e.isPrimary === false || !Number.isInteger(e.pointerId)) return
+  if (gesturePointerId !== null) {
+    if (e.pointerId !== gesturePointerId) return
+    /* The mouse pointer id is reused across primary sequences. A new press with
+       that id proves the prior release escaped to the overlapping toolbar HWND. */
+    lastX = e.clientX
+    lastY = e.clientY
+    endGesture(undefined, true, false)
+    ignoring = false
+    bridge.mouseThrough(false)
+  }
+  if (locked) return
   const action = captionActionAt(e.clientX, e.clientY)
   if (action.kind !== 'resize' && action.kind !== 'drag') return
-  try {
-    const accepted = action.kind === 'resize'
-      ? bridge.resizeStart(action.edge)
-      : bridge.dragStart('caption')
-    if (accepted === false) return
-  } catch { return }
-
   gesturePointerId = e.pointerId
   if (action.kind === 'resize') {
-    resizing = true
+    pendingResize = {
+      pointerId: e.pointerId,
+      edge: action.edge,
+      originX: e.clientX,
+      originY: e.clientY
+    }
   } else {
+    try {
+      if (bridge.dragStart('caption') === false) {
+        gesturePointerId = null
+        return
+      }
+    } catch {
+      gesturePointerId = null
+      return
+    }
     dragging = true
     card.classList.add('dragging')
   }
-  try { card.setPointerCapture(e.pointerId) } catch { /* noop */ }
+  try {
+    card.setPointerCapture(e.pointerId)
+    if (e.isTrusted !== false && typeof card.hasPointerCapture === 'function' &&
+        !card.hasPointerCapture(e.pointerId)) {
+      endGesture(undefined, true)
+    }
+  } catch {
+    /* Without capture, pointerup can be delivered to the overlapping toolbar HWND.
+       Close a real user gesture immediately instead of relying on that path. The
+       product-shell qualification dispatches untrusted DOM events, which cannot
+       establish native pointer capture and is covered by the main terminal guard. */
+    if (e.isTrusted !== false) endGesture(undefined, true)
+  }
+})
+
+function resizeArmDistanceReached (pending: NonNullable<typeof pendingResize>, x: number, y: number): boolean {
+  const horizontal = pending.edge.includes('e') || pending.edge.includes('w')
+  const vertical = pending.edge.includes('n') || pending.edge.includes('s')
+  return (horizontal && Math.abs(x - pending.originX) >= RESIZE_ARM_DISTANCE) ||
+    (vertical && Math.abs(y - pending.originY) >= RESIZE_ARM_DISTANCE)
+}
+
+window.addEventListener('pointermove', (e) => {
+  if (!Number.isInteger(e.pointerId) || e.pointerId !== gesturePointerId) return
+  lastX = e.clientX
+  lastY = e.clientY
+  if ((e.buttons & 1) === 0) {
+    endGesture(e)
+    return
+  }
+  const pending = pendingResize
+  if (!pending || !resizeArmDistanceReached(pending, e.clientX, e.clientY)) return
+  try {
+    if (bridge.resizeStart(pending.edge) === false) {
+      endGesture(e, false)
+      return
+    }
+  } catch {
+    endGesture(e, false)
+    return
+  }
+  pendingResize = null
+  resizing = true
 })
 
 /* pointerup / pointercancel / lostpointercapture / blur 全都要收尾 ——
    主进程那边是一个持续跑的定时器，漏掉任何一条取消路径都会让窗口继续跟着光标跑。 */
 /** @param {PointerEvent=} event @param {boolean=} notifyMain @param {boolean=} recomputeHit */
 function endGesture (event?: Event & { pointerId?: number }, notifyMain = true, recomputeHit = true): void {
-  if (!dragging && !resizing) return
+  if (!dragging && !resizing && !pendingResize) return
   if (event && Number.isInteger(event.pointerId) && event.pointerId !== gesturePointerId) return
   const pointerId = gesturePointerId
   gesturePointerId = null
+  pendingResize = null
   if (pointerId !== null) {
     try { card.releasePointerCapture?.(pointerId) } catch { /* noop */ }
   }
@@ -231,8 +293,10 @@ function acceptInteractionSync (value: any): void {
       Object.keys(value.pointer).length !== 2 ||
       !Number.isFinite(value.pointer.x) || !Number.isFinite(value.pointer.y))) return
 
+  const sameGenerationRehit = value.phase === 'resume' && value.generation === interactionGeneration &&
+    interactionPhase === 'resume'
   cancelHitFrame()
-  endGesture(undefined, false, false)
+  if (!sameGenerationRehit) endGesture(undefined, false, false)
   interactionGeneration = value.generation
   interactionPhase = value.phase
   ignoring = null
@@ -242,6 +306,11 @@ function acceptInteractionSync (value: any): void {
   }
   lastX = value.pointer.x
   lastY = value.pointer.y
+  if (sameGenerationRehit && (dragging || resizing || pendingResize)) {
+    ignoring = false
+    bridge.mouseThrough(false)
+    return
+  }
   applyCurrentHit(true)
 }
 

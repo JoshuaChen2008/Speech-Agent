@@ -72,14 +72,32 @@
 
     function start (event) {
       if (!event || event.button !== 0 || event.isPrimary === false ||
-          !Number.isInteger(event.pointerId) || activePointerId !== null) return
+          !Number.isInteger(event.pointerId)) return
+      if (activePointerId !== null) {
+        if (event.pointerId !== activePointerId) return
+        /* Mouse pointer ids are normally reused. Seeing the same primary id in
+           a new pointerdown means the previous sequence ended outside this
+           renderer; close that local/main state before accepting this press. */
+        finish(undefined, true)
+      }
       if (!startSafely(canStart, event)) return
       if (!startSafely(onStart, event)) return
 
       activePointerId = event.pointerId
       classTarget?.classList?.add(className)
       callSafely(onActiveChange, true, event)
-      try { handle.setPointerCapture(event.pointerId) } catch { /* optional browser preview */ }
+      try {
+        handle.setPointerCapture(event.pointerId)
+        if (event.isTrusted !== false && typeof handle.hasPointerCapture === 'function' &&
+            !handle.hasPointerCapture(event.pointerId)) {
+          end(event)
+        }
+      } catch {
+        /* An active main-process timer without pointer capture can outlive mouseup
+           when the pointer crosses into another overlay HWND. Fail closed for real
+           input; qualification's untrusted DOM events cannot own native capture. */
+        if (event.isTrusted !== false) end(event)
+      }
     }
 
     handle.addEventListener('pointerdown', start)

@@ -11,6 +11,7 @@ class FakeWindow {
   constructor (role, bounds) {
     this.role = role
     this.bounds = { ...bounds }
+    this.contentBounds = null
     this.destroyed = false
     this.hidden = false
     this.minimized = false
@@ -19,6 +20,7 @@ class FakeWindow {
   }
 
   getBounds () { return { ...this.bounds } }
+  getContentBounds () { return { ...(this.contentBounds || this.bounds) } }
   isDestroyed () { return this.destroyed }
   isMinimized () { return this.minimized }
   hide () { this.hidden = true }
@@ -112,6 +114,23 @@ test('SEM-F22/SEM-F24/J17/J19: one restore generation suspends all windows then 
   }), true)
   assert.equal(harness.timers.size(), 0)
   assert.deepEqual(harness.faults, [])
+})
+
+test('SEM-F22/J17: toolbar pointer projection uses the content origin rather than the transparent outer origin', () => {
+  const harness = createHarness()
+  harness.windows.toolbar.bounds = { x: 100, y: 100, width: 600, height: 73 }
+  harness.windows.toolbar.contentBounds = { x: 101, y: 101, width: 600, height: 72 }
+  harness.setCursor({ x: 117, y: 117 })
+
+  const generation = harness.controller.beginTransaction()
+  assert.equal(harness.controller.resume(generation), true)
+  const toolbarResume = harness.sent.findLast(([role, payload]) =>
+    role === 'toolbar' && payload.phase === 'resume')
+
+  assert.deepEqual(toolbarResume, [
+    'toolbar',
+    { schemaVersion: 1, generation, phase: 'resume', pointer: { x: 16, y: 16 } }
+  ])
 })
 
 test('SEM-F22/SEM-F24/T04/J17/J19: stale and malformed renderer intents cannot change current native hit state', () => {
@@ -322,6 +341,52 @@ test('SEM-F22/J17: geometry settlement re-hits both overlays with the current po
     'same-generation refresh must not create a temporary solid or pass-through flip')
   assert.equal(harness.windows.toolbar.ignoreCalls.length, toolbarIgnoreCount)
   assert.equal(harness.timers.size(), 2, 'both renderer acknowledgements remain fail-closed')
+})
+
+test('SEM-F22/SEM-T04/J17: geometry refresh cannot clear pointer-unavailable degradation', () => {
+  const harness = createHarness()
+  harness.setCursor(null)
+  const generation = harness.controller.beginTransaction()
+  harness.controller.resume(generation)
+  harness.setCursor({ x: 450, y: 100 })
+  harness.sent.length = 0
+  const captionIgnore = harness.windows.caption.ignoreCalls.at(-1)
+  const toolbarIgnore = harness.windows.toolbar.ignoreCalls.at(-1)
+
+  assert.equal(harness.controller.refreshPointerHits(), false)
+  assert.deepEqual(harness.sent, [])
+  assert.equal(harness.timers.size(), 0)
+  assert.deepEqual(harness.windows.caption.ignoreCalls.at(-1), captionIgnore)
+  assert.deepEqual(harness.windows.toolbar.ignoreCalls.at(-1), toolbarIgnore)
+  assert.equal(harness.controller.acceptGesture('caption', { schemaVersion: 1, generation }), false)
+
+  assert.equal(harness.controller.replay('caption'), true)
+  assert.equal(harness.controller.replay('toolbar'), true)
+  assert.equal(harness.timers.size(), 2, 'renderer reload remains the registered retry boundary')
+})
+
+test('SEM-F22/SEM-T04/J17: geometry refresh cannot clear sync-timeout degradation', () => {
+  const harness = createHarness()
+  const generation = harness.controller.beginTransaction()
+  harness.controller.resume(generation)
+  harness.timers.runAll()
+  harness.sent.length = 0
+  const captionIgnore = harness.windows.caption.ignoreCalls.at(-1)
+  const toolbarIgnore = harness.windows.toolbar.ignoreCalls.at(-1)
+
+  assert.equal(harness.controller.refreshPointerHits(), false)
+  assert.deepEqual(harness.sent, [])
+  assert.deepEqual(harness.windows.caption.ignoreCalls.at(-1), captionIgnore)
+  assert.deepEqual(harness.windows.toolbar.ignoreCalls.at(-1), toolbarIgnore)
+  assert.equal(harness.controller.acceptGesture('toolbar', { schemaVersion: 1, generation }), false)
+
+  assert.equal(harness.controller.acceptMouseThrough('toolbar', {
+    schemaVersion: 1, generation, ignore: true
+  }), true)
+  harness.sent.length = 0
+  assert.equal(harness.controller.refreshPointerHits(['toolbar']), true,
+    'a registered current late acknowledgement reopens only its own role')
+  assert.deepEqual(harness.sent.map(([role]) => role), ['toolbar'])
 })
 
 test('SEM-F22/T04/J17: geometry settlement cannot replay while interaction is suspended', () => {

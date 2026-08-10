@@ -53,6 +53,7 @@ let locked = false
 let dragging = false
 let ignoring: boolean | null = null
 let lastX = 0, lastY = 0
+let localPointerValid = false
 let interactionGeneration = 0
 let interactionPhase = 'resume'
 let snapshot = window.FIXTURES.runtime.unavailable
@@ -62,6 +63,7 @@ let commandFailure: any | null = null
 let refinementNotice: any | null = null
 let toolbarLayoutGeneration = 0
 let toolbarLayoutObserver: ResizeObserver | null = null
+let toolbarLayoutMutationObserver: MutationObserver | null = null
 let toolbarLayoutQueued = false
 let lastToolbarLayoutKey = ''
 let toolbarLayoutRetryTimer: ReturnType<typeof setTimeout> | null = null
@@ -97,8 +99,7 @@ function queueToolbarLayoutReport (force = false) {
 
 async function initToolbarLayout () {
   if (typeof bridge.getToolbarLayoutContext !== 'function' ||
-      typeof bridge.reportToolbarLayout !== 'function' ||
-      typeof ResizeObserver !== 'function') return
+      typeof bridge.reportToolbarLayout !== 'function') return
   try {
     const context = await bridge.getToolbarLayoutContext()
     if (!context || !Number.isSafeInteger(context.generation) || context.generation <= 0) return
@@ -114,6 +115,7 @@ async function initToolbarLayout () {
 
 window.addEventListener('beforeunload', () => {
   if (toolbarLayoutObserver) toolbarLayoutObserver.disconnect()
+  if (toolbarLayoutMutationObserver) toolbarLayoutMutationObserver.disconnect()
   if (toolbarLayoutRetryTimer) clearTimeout(toolbarLayoutRetryTimer)
 })
 
@@ -343,21 +345,22 @@ function render () {
 //
 // 穿透状态一翻转，光标就换主人：穿透时由下面那个应用画（网页里就是 I 形），
 // 实心时才是本窗的箭头。所以判定每抖一次，用户就看见光标闪一次。
-// 两条措施把抖动摁死：
-//   1. 迟滞：进入用真实轮廓，离开要超出 6px。工具条上报的轮廓经主进程取整后
-//      变成字幕窗的洞，洞比条最多大 1px；那一圈里两个窗都会说「不是我的」，
-//      迟滞带必须盖过它。
-//   2. 同步判定：矩形比较几乎零成本，不再压进 rAF —— 那一帧延迟正好发生在
+// 轮廓必须和主进程投影完全一致：floor 左/上、ceil 右/下，进入与离开都用
+// 同一矩形，不能在轮廓外留下会吃掉字幕拖动的隐形迟滞带。
+// 同步判定：矩形比较几乎零成本，不再压进 rAF —— 那一帧延迟正好发生在
 //      光标扫过边缘的时候，判定用的永远是上一帧的答案。
 // ---------------------------------------------------------------------------
-const HIT_EXIT_MARGIN = 6
+let toolbarRect: { left: number, top: number, right: number, bottom: number } | null = null
 
-let toolbarRect: DOMRect | null = null
-
-/* 每帧读 getBoundingClientRect 会反复触发强制布局。条的几何只在重渲染和
-   ResizeObserver 回调后才可能变，所以标脏、下一次 mousemove 时才真正量。 */
+/* 每帧读 getBoundingClientRect 会反复触发强制布局。条的几何只在重渲染、
+   ResizeObserver 或 DOM MutationObserver 回调后才可能变；变化时立即重新量取
+   并按静止指针重命中。 */
 function invalidateToolbarRect (): void {
   toolbarRect = null
+  /* Either observer is local proof that the real contour may have changed.
+     Re-hit synchronously so an expanding toolbar cannot leave one event-loop
+     turn where both overlay HWNDs yield a newly covered button/CTA point. */
+  applyKnownPointerOrYield(true)
   queueToolbarLayoutReport()
 }
 
@@ -365,30 +368,55 @@ if (typeof ResizeObserver === 'function') {
   toolbarLayoutObserver = new ResizeObserver(() => invalidateToolbarRect())
   toolbarLayoutObserver.observe(toolbar)
 }
+if (typeof MutationObserver === 'function') {
+  toolbarLayoutMutationObserver = new MutationObserver(() => invalidateToolbarRect())
+  toolbarLayoutMutationObserver.observe(toolbar, {
+    attributes: true,
+    childList: true,
+    characterData: true,
+    subtree: true
+  })
+}
 
 /** @param {number} x @param {number} y @param {boolean=} force */
 function applyHit (x: number, y: number, force = false): void {
   if (interactionPhase !== 'resume' || dragging) return
-  if (!toolbarRect) toolbarRect = toolbar.getBoundingClientRect()
+  if (!toolbarRect) {
+    const measured = toolbar.getBoundingClientRect()
+    toolbarRect = {
+      left: Math.floor(measured.left),
+      top: Math.floor(measured.top),
+      right: Math.ceil(measured.right),
+      bottom: Math.ceil(measured.bottom)
+    }
+  }
   const rect = toolbarRect
-  /* 已经实心时才外扩：进入保持精确，离开才需要粘性 */
-  const margin = ignoring === false ? HIT_EXIT_MARGIN : 0
-  const solid = x >= rect.left - margin && x <= rect.right + margin &&
-                y >= rect.top - margin && y <= rect.bottom + margin
+  const solid = x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
   const next = !solid
   if (force || next !== ignoring) {
     ignoring = next
     bridge.mouseThrough(next)
   }
 }
+
+function applyKnownPointerOrYield (force = false): void {
+  if (localPointerValid) {
+    applyHit(lastX, lastY, force)
+    return
+  }
+  if (interactionPhase !== 'resume' || dragging || ignoring === true) return
+  ignoring = true
+  bridge.mouseThrough(true)
+}
 document.addEventListener('mousemove', (e) => {
   lastX = e.clientX; lastY = e.clientY
+  localPointerValid = true
   applyHit(lastX, lastY)
 })
-/* 光标一跳跃出整个窗口时不会再有 mousemove。窗口比条宽得多（左右各 16px、
-   上下各 16px 透明边距 > 6px 迟滞带），正常移动摸不到这条路径；留着是防止
-   任何情况下卡在实心态 —— 那会让 600×72 这块区域整个挡住下面的应用。 */
+/* 光标一跳跃出整个窗口时不会再有 mousemove。这里不扩大真实轮廓，只负责
+   防止离窗后卡在实心态——否则 600×72 的原生视口会挡住下面的应用。 */
 document.addEventListener('mouseleave', () => {
+  localPointerValid = false
   if (interactionPhase !== 'resume' || dragging || ignoring === true) return
   ignoring = true
   bridge.mouseThrough(true)
@@ -405,9 +433,23 @@ const toolbarDrag = bindManualWindowDrag({
   onEnd: () => bridge.dragEnd(),
   onActiveChange: (active: boolean) => {
     dragging = active
-    if (!active) applyHit(lastX, lastY)
+    if (!active) applyKnownPointerOrYield()
   }
 })
+
+toolbar.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0 || event.isPrimary === false || !Number.isInteger(event.pointerId) ||
+      !toolbarDrag.isDragging()) return
+  /* A reused mouse pointer id can only follow a sequence whose release escaped
+     to the caption HWND. A different primary pointer remains isolated. */
+  toolbarDrag.end(event)
+  if (toolbarDrag.isDragging()) return
+  if (Number.isFinite(event.clientX)) lastX = event.clientX
+  if (Number.isFinite(event.clientY)) lastY = event.clientY
+  localPointerValid = true
+  ignoring = false
+  bridge.mouseThrough(false)
+}, { capture: true })
 
 /** @param {any} value */
 function acceptInteractionSync (value: any): void {
@@ -419,14 +461,27 @@ function acceptInteractionSync (value: any): void {
       Object.keys(value.pointer).length !== 2 ||
       !Number.isFinite(value.pointer.x) || !Number.isFinite(value.pointer.y))) return
 
+  const sameGenerationRehit = value.phase === 'resume' && value.generation === interactionGeneration &&
+    interactionPhase === 'resume'
   interactionGeneration = value.generation
-  interactionPhase = 'suspend'
-  toolbarDrag.cancel()
+  if (!sameGenerationRehit) {
+    interactionPhase = 'suspend'
+    toolbarDrag.cancel()
+  }
   ignoring = null
   interactionPhase = value.phase
-  if (value.phase === 'suspend') return
+  if (value.phase === 'suspend') {
+    localPointerValid = false
+    return
+  }
   lastX = value.pointer.x
   lastY = value.pointer.y
+  localPointerValid = true
+  if (sameGenerationRehit && toolbarDrag.isDragging()) {
+    ignoring = false
+    bridge.mouseThrough(false)
+    return
+  }
   applyHit(lastX, lastY, true)
 }
 

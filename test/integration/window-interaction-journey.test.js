@@ -15,11 +15,13 @@ const {
 } = require('../../src/main/manual-window-interaction-controller')
 const { WindowLayerController } = require('../../src/main/window-layer-controller')
 const {
-  ApplicationWindowLifecycleController
+  ApplicationWindowLifecycleController,
+  POST_RESTORE_QUIET_MS
 } = require('../../src/main/application-window-lifecycle-controller')
 const {
   WindowInteractionGenerationController
 } = require('../../src/main/window-interaction-generation-controller')
+const { bindToolbarDockInvariant } = require('../../src/main/toolbar-dock-invariant')
 
 class FakeWindow extends EventEmitter {
   constructor (role, bounds) {
@@ -31,6 +33,8 @@ class FakeWindow extends EventEmitter {
     this.moves = 0
     this.setBoundsCalls = 0
     this.setPositionCalls = 0
+    this.positionSizeDrift = null
+    this.contentOffset = { x: 0, y: 0 }
     this.webContents = new EventEmitter()
     this.visible = true
     this.minimized = false
@@ -39,6 +43,13 @@ class FakeWindow extends EventEmitter {
   }
 
   getBounds () { return { ...this.bounds } }
+  getContentBounds () {
+    return {
+      ...this.bounds,
+      x: this.bounds.x + this.contentOffset.x,
+      y: this.bounds.y + this.contentOffset.y
+    }
+  }
   isDestroyed () { return this.destroyed }
   isVisible () { return this.visible }
   isMinimized () { return this.minimized }
@@ -57,9 +68,22 @@ class FakeWindow extends EventEmitter {
     this.setBoundsCalls += 1
   }
 
+  setContentBounds (bounds) {
+    this.setBounds({
+      ...bounds,
+      x: bounds.x - this.contentOffset.x,
+      y: bounds.y - this.contentOffset.y
+    })
+  }
+
   /* 拖动只移动位置，不走 resize 路径 */
   setPosition (x, y) {
-    this.bounds = { ...this.bounds, x, y }
+    this.bounds = {
+      ...this.bounds,
+      x,
+      y,
+      ...(this.positionSizeDrift || {})
+    }
     this.setPositionCalls += 1
   }
 }
@@ -89,6 +113,70 @@ function controlledScheduler () {
     size: () => callbacks.size
   }
 }
+
+function controlledDeadlineScheduler () {
+  let now = 0
+  let nextId = 0
+  const callbacks = new Map()
+  return {
+    cancel: (id) => callbacks.delete(id),
+    schedule (callback, delayMs = 0) {
+      const id = ++nextId
+      callbacks.set(id, { callback, due: now + delayMs, id })
+      return id
+    },
+    advance (durationMs) {
+      const target = now + durationMs
+      while (true) {
+        const next = [...callbacks.values()]
+          .filter((entry) => entry.due <= target)
+          .sort((left, right) => left.due - right.due || left.id - right.id)[0]
+        if (!next) break
+        callbacks.delete(next.id)
+        now = next.due
+        next.callback()
+      }
+      now = target
+    }
+  }
+}
+
+test('SEM-F22/J17: fixed toolbar correction re-hits the stationary pointer in the current generation', () => {
+  const toolbar = new FakeWindow('toolbar', { x: 731, y: 241, width: 600, height: 72 })
+  const expected = toolbar.getBounds()
+  const syncs = []
+  const timers = controlledScheduler()
+  const dockTimers = controlledScheduler()
+  const generation = new WindowInteractionGenerationController({
+    clearTimer: timers.clearTimer,
+    getCursorScreenPoint: () => ({ x: 800, y: 260 }),
+    getLocked: () => true,
+    getWindow: (role) => role === 'toolbar' ? toolbar : null,
+    sendSync: (win, payload) => { syncs.push([win.role, payload]); return true },
+    setTimer: timers.setTimer
+  })
+  bindToolbarDockInvariant({
+    toolbar,
+    getDockBounds: () => ({ ...expected }),
+    setDockBounds: (bounds) => toolbar.setBounds(bounds),
+    scheduleVerification: dockTimers.setTimer,
+    cancelVerification: dockTimers.clearTimer,
+    onCorrected: () => generation.refreshPointerHits(['toolbar'])
+  })
+
+  toolbar.bounds = { x: expected.x - 3, y: expected.y - 2, width: 604, height: 75 }
+  toolbar.emit('resize')
+  assert.deepEqual(toolbar.getBounds(), expected)
+  assert.deepEqual(syncs, [], 'a synchronous BrowserWindow read-back is not a native commit')
+  dockTimers.runAll()
+  assert.deepEqual(syncs, [[
+    'toolbar',
+    { schemaVersion: 1, generation: 1, phase: 'resume', pointer: { x: 69, y: 19 } }
+  ]])
+
+  toolbar.emit('resize')
+  assert.equal(syncs.length, 1, 'an unchanged viewport cannot manufacture a geometry re-hit')
+})
 
 test('SEM-F22/J17: one deterministic journey closes contour generations, manual bounds and foreground round-trips', () => {
   const layout = new ToolbarLayoutState()
@@ -124,6 +212,7 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
   let locked = false
   let resizePersistCount = 0
   const geometrySettlements = []
+  const interactionEnds = []
   const dockOptions = []
   const dock = (options) => {
     dockOptions.push(options || null)
@@ -141,6 +230,7 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
     getLocked: () => locked,
     onCaptionResizeEnd: () => { resizePersistCount += 1 },
     onGeometrySettled: (roles) => geometrySettlements.push([...roles]),
+    onInteractionEnded: (value) => interactionEnds.push({ ...value }),
     setTimer: scheduler.setTimer
   })
 
@@ -151,11 +241,17 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
   interaction.stopDrag(1)
   assert.deepEqual(caption.getBounds(), captionStart)
   assert.deepEqual(geometrySettlements, [], 'stationary press/release has no geometry to re-hit')
+  assert.deepEqual(interactionEnds.at(-1), {
+    kind: 'drag', role: 'caption', redock: true, moved: false
+  }, 'a stationary group drag still exposes a fixed-viewport re-arm boundary')
 
   /* 拖动每帧只平移两个窗口，不再重新求解停靠位置。结果必须与逐帧 dock()
      逐像素相同 —— 省掉的是每帧两次 getBounds 和一次求解，不是精度。 */
   cursor = { x: 300, y: 200 }
   const beforeContinuousDrag = caption.getBounds()
+  toolbar.positionSizeDrift = { height: toolbar.getBounds().height + 5 }
+  const toolbarSetBoundsBeforeContinuousDrag = toolbar.setBoundsCalls
+  const toolbarSetPositionBeforeContinuousDrag = toolbar.setPositionCalls
   assert.equal(interaction.startDrag({ role: 'caption', win: caption, senderId: 1 }), true)
   const dockCallsBeforeDrag = dockOptions.length
   cursor = { x: 314, y: 209 }
@@ -168,7 +264,11 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
     y: beforeContinuousDrag.y + 9
   })
   assert.deepEqual(toolbar.getBounds(), toolbarDockBoundsFor(caption.getBounds()),
-    'the companion lands exactly where dock() would have put it')
+    'a companion move must not inherit stale native toolbar dimensions')
+  assert.ok(toolbar.setBoundsCalls > toolbarSetBoundsBeforeContinuousDrag,
+    'toolbar companion movement submits the fixed viewport bounds explicitly')
+  assert.equal(toolbar.setPositionCalls, toolbarSetPositionBeforeContinuousDrag,
+    'toolbar companion movement cannot use the native position-only path')
   interaction.stopDrag(1)
 
   cursor = { x: 420, y: 260 }
@@ -195,14 +295,25 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
   locked = true
   cursor = { x: 600, y: 320 }
   const lockedCaption = caption.getBounds()
-  const lockedToolbar = toolbar.getBounds()
+  toolbar.contentOffset = { x: 1, y: 1 }
+  const lockedToolbar = toolbar.getContentBounds()
   assert.equal(interaction.startDrag({ role: 'caption', win: caption, senderId: 1 }), false)
   assert.equal(interaction.startResize({ win: caption, senderId: 1, edge: 'e' }), false)
+  assert.equal(interaction.startDrag({ role: 'toolbar', win: toolbar, senderId: 2 }), true)
+  interaction.stopDrag(2)
+  assert.deepEqual(interactionEnds.at(-1), {
+    kind: 'drag', role: 'toolbar', redock: false, moved: false
+  }, 'a stationary locked grip still exposes a fixed-viewport re-arm boundary')
   assert.equal(interaction.startDrag({ role: 'toolbar', win: toolbar, senderId: 2 }), true)
   cursor = { x: 611, y: 326 }
   scheduler.runNext()
   assert.deepEqual(caption.getBounds(), lockedCaption)
-  assert.equal(toolbar.getBounds().x, lockedToolbar.x + 11)
+  assert.equal(toolbar.getContentBounds().x, lockedToolbar.x + 11,
+    'a one-DIP transparent frame origin cannot make the first locked grip tick jump')
+  assert.equal(toolbar.getContentBounds().y, lockedToolbar.y + 6)
+  assert.equal(toolbar.getContentBounds().width, 600)
+  assert.equal(toolbar.getContentBounds().height, 72,
+    'a locked toolbar move must keep the fixed viewport dimensions explicit')
   interaction.stopDrag(2)
   assert.deepEqual(geometrySettlements.at(-1), ['toolbar'])
 
@@ -237,7 +348,7 @@ test('SEM-F22/SEM-F24/J17/J19: real caption hit intents stay stable near the too
   const windows = { caption, toolbar, settings, history }
   const manualTimers = controlledScheduler()
   const generationTimers = controlledScheduler()
-  const postRestore = []
+  const postRestore = controlledDeadlineScheduler()
   const syncs = []
   let cursor = { x: 800, y: 115 }
   let locked = false
@@ -321,6 +432,10 @@ test('SEM-F22/SEM-F24/J17/J19: real caption hit intents stay stable near the too
     { x: Math.round((toolbarHoleRect.left + toolbarHoleRect.right) / 2), y: toolbarHoleRect.top + 1 },
     { x: toolbarHoleRect.right - 1, y: Math.round((toolbarHoleRect.top + toolbarHoleRect.bottom) / 2) }
   ]
+  const toolbarNearResizeBandPoints = [
+    { x: Math.round((toolbarHoleRect.left + toolbarHoleRect.right) / 2), y: cardRect.top + 2 },
+    { x: cardRect.right - 2, y: Math.round((toolbarHoleRect.top + toolbarHoleRect.bottom) / 2) }
+  ]
   const exerciseDrag = (point, delta, label, { moveBeforeDown = true } = {}) => {
     const before = caption.getBounds()
     cursor = { x: before.x + point.x, y: before.y + point.y }
@@ -352,16 +467,49 @@ test('SEM-F22/SEM-F24/J17/J19: real caption hit intents stay stable near the too
     assert.deepEqual(toolbar.getBounds(), toolbarDockBoundsFor(before), `${label}: toolbar must stay docked`)
     toolbarContourYieldCount += 1
   }
+  const exerciseResizeBandClick = (point, jitter, label) => {
+    const beforeCaption = caption.getBounds()
+    const beforeToolbar = toolbar.getBounds()
+    const resizeCountBefore = resizeIntentCount
+    cursor = { x: beforeCaption.x + point.x, y: beforeCaption.y + point.y }
+    renderer.move(point.x, point.y)
+    renderer.pointerDown(point.x, point.y)
+    cursor = { x: cursor.x + jitter.x, y: cursor.y + jitter.y }
+    renderer.pointerMove(point.x + jitter.x, point.y + jitter.y)
+    assert.equal(manualTimers.size(), 0, `${label}: sub-threshold jitter must not arm the main resize timer`)
+    renderer.pointerUp()
+    assert.equal(resizeIntentCount, resizeCountBefore, `${label}: sub-threshold jitter must not emit resizeStart`)
+    assert.deepEqual(caption.getBounds(), beforeCaption, `${label}: all caption bounds must remain stable`)
+    assert.deepEqual(toolbar.getBounds(), beforeToolbar, `${label}: toolbar absolute bounds must remain stable`)
+  }
 
   for (let round = 0; round < 20; round += 1) {
     exerciseToolbarContourPress(toolbarContourPoints[0], { x: 1, y: 1 }, `toolbar top contour round ${round}`)
     exerciseToolbarContourPress(toolbarContourPoints[1], { x: -1, y: 1 }, `toolbar right contour round ${round}`)
     exerciseDrag(toolbarAdjacentPoints[0], { x: 0, y: 1 }, `toolbar top-adjacent drag round ${round}`)
     exerciseDrag(toolbarAdjacentPoints[1], { x: 1, y: 0 }, `toolbar right-adjacent drag round ${round}`)
+    exerciseResizeBandClick(toolbarNearResizeBandPoints[0], { x: 1, y: 3 }, `toolbar-near top resize band round ${round}`)
+    exerciseResizeBandClick(toolbarNearResizeBandPoints[1], { x: 3, y: 1 }, `toolbar-near right resize band round ${round}`)
   }
   assert.equal(toolbarContourYieldCount, 40)
   assert.equal(dragIntentCount, 40)
   assert.equal(resizeIntentCount, 0, 'toolbar contour and adjacent presses must never become resize intents')
+
+  const intentionalResizePoint = toolbarNearResizeBandPoints[1]
+  const beforeIntentionalResize = caption.getBounds()
+  cursor = {
+    x: beforeIntentionalResize.x + intentionalResizePoint.x,
+    y: beforeIntentionalResize.y + intentionalResizePoint.y
+  }
+  renderer.pointerDown(intentionalResizePoint.x, intentionalResizePoint.y)
+  cursor = { x: cursor.x + 4, y: cursor.y }
+  renderer.pointerMove(intentionalResizePoint.x + 4, intentionalResizePoint.y)
+  assert.equal(resizeIntentCount, 1, '4 DIP along the active edge must still arm intentional resize')
+  assert.equal(manualTimers.size(), 1)
+  renderer.pointerUp()
+  assert.equal(manualTimers.size(), 0)
+  assert.deepEqual(caption.getBounds(), beforeIntentionalResize,
+    'arming movement establishes the polling origin and must not jump bounds')
 
   const lifecycle = new ApplicationWindowLifecycleController({
     getCaptionWindow: () => caption,
@@ -373,7 +521,8 @@ test('SEM-F22/SEM-F24/J17/J19: real caption hit intents stay stable near the too
     resumeInteractions: (value) => generation.resume(value),
     degradeInteractions: (value) => generation.degradeForRestoreFailure(value),
     restoreWindowStack: () => {},
-    schedulePostRestore: (callback) => postRestore.push(callback)
+    schedulePostRestore: postRestore.schedule,
+    cancelPostRestore: postRestore.cancel
   })
   lifecycle.bindPrimaryWindow(toolbar)
   assert.equal(lifecycle.minimize(), true)
@@ -381,7 +530,7 @@ test('SEM-F22/SEM-F24/J17/J19: real caption hit intents stay stable near the too
   const restoredBounds = caption.getBounds()
   const restoredPoint = toolbarAdjacentPoints[1]
   cursor = { x: restoredBounds.x + restoredPoint.x, y: restoredBounds.y + restoredPoint.y }
-  postRestore.shift()()
+  postRestore.advance(POST_RESTORE_QUIET_MS)
   const restoredGeneration = generation.getState().generation
   assert.equal(syncs.some(([role, payload]) => role === 'caption' &&
     payload.generation === restoredGeneration && payload.phase === 'resume'), true)
@@ -392,7 +541,7 @@ test('SEM-F22/SEM-F24/J17/J19: real caption hit intents stay stable near the too
     moveBeforeDown: false
   })
   assert.equal(dragIntentCount, 41)
-  assert.equal(resizeIntentCount, 0)
+  assert.equal(resizeIntentCount, 1, 'only the explicit 4 DIP resize may emit an intent')
   assert.equal(caption.ignoreCalls.at(-1)[0], false)
 })
 
@@ -405,7 +554,7 @@ test('SEM-F22/SEM-F24/SEM-T04/J17/J19: lifecycle, generation and manual bounds f
   const senderIds = { caption: 1, toolbar: 2, settings: 3, history: 4 }
   const manualTimers = controlledScheduler()
   const generationTimers = controlledScheduler()
-  const postRestore = []
+  const postRestore = controlledDeadlineScheduler()
   const syncs = []
   const faults = []
   const ackRoles = new Set(['caption', 'toolbar'])
@@ -456,7 +605,8 @@ test('SEM-F22/SEM-F24/SEM-T04/J17/J19: lifecycle, generation and manual bounds f
     resumeInteractions: (value) => generation.resume(value),
     degradeInteractions: (value) => generation.degradeForRestoreFailure(value),
     restoreWindowStack: () => {},
-    schedulePostRestore: (callback) => postRestore.push(callback),
+    schedulePostRestore: postRestore.schedule,
+    cancelPostRestore: postRestore.cancel,
     onFault: (fault) => faults.push(fault)
   })
   lifecycle.bindPrimaryWindow(toolbar)
@@ -474,7 +624,7 @@ test('SEM-F22/SEM-F24/SEM-T04/J17/J19: lifecycle, generation and manual bounds f
 
   assert.equal(lifecycle.restore(), true)
   assert.equal(generation.getState().generation, 3)
-  postRestore.shift()()
+  postRestore.advance(POST_RESTORE_QUIET_MS)
   assert.deepEqual(generation.getState(), { generation: 3, phase: 'resume' })
   for (const role of Object.keys(windows)) {
     assert.equal(syncs.some(([candidate, payload]) => candidate === role &&
@@ -552,7 +702,7 @@ test('SEM-F22/SEM-F24/SEM-T04/J17/J19: lifecycle, generation and manual bounds f
   assert.equal(generation.getState().generation, generationBeforeMinimizedCrash,
     'a renderer crash does not start a restore generation')
   assert.equal(lifecycle.restore(), true)
-  postRestore.shift()()
+  postRestore.advance(POST_RESTORE_QUIET_MS)
   const generationAfterMinimizedCrashRestore = generation.getState().generation
 
   assert.equal(generation.failClosedAfterRendererGone('toolbar'), true)
@@ -567,7 +717,7 @@ test('SEM-F22/SEM-F24/SEM-T04/J17/J19: lifecycle, generation and manual bounds f
   ackRoles.delete('toolbar')
   assert.equal(lifecycle.minimize(), true)
   assert.equal(lifecycle.restore(), true)
-  postRestore.shift()()
+  postRestore.advance(POST_RESTORE_QUIET_MS)
   generationTimers.runAll()
   assert.deepEqual(faults.at(-1), { role: 'toolbar', code: 'interaction-sync-timeout' })
   assert.equal(toolbar.ignoreCalls.at(-1)[0], false)

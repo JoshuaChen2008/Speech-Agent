@@ -53,6 +53,7 @@ class FakeElement extends FakeEventTarget {
     return { x: 20, y: 20, left: 20, top: 20, right: 460, bottom: 160, width: 440, height: 140 }
   }
   setPointerCapture (pointerId) { this.capturedPointers.push(pointerId) }
+  hasPointerCapture (pointerId) { return this.capturedPointers.includes(pointerId) }
   releasePointerCapture (pointerId) { this.releasedPointers = [...(this.releasedPointers || []), pointerId] }
 }
 
@@ -63,7 +64,7 @@ function loadManualDrag () {
 }
 
 function pointer (overrides = {}) {
-  return { button: 0, isPrimary: true, pointerId: 7, ...overrides }
+  return { button: 0, buttons: 1, isPrimary: true, pointerId: 7, ...overrides }
 }
 
 test('SEM-F22/J17: manual drag starts on primary pointerdown and closes every cancellation path once', () => {
@@ -122,6 +123,69 @@ test('SEM-F22/J17: manual drag rejects non-primary starts and fails closed when 
   assert.equal(classTarget.classList.contains('dragging'), false)
 })
 
+test('SEM-F22/SEM-T04/J17: manual drag ends immediately when pointer capture cannot be established', () => {
+  const { api } = loadManualDrag()
+  const handle = new FakeElement('grip')
+  const classTarget = new FakeElement('toolbar')
+  const calls = []
+  handle.setPointerCapture = () => { throw new Error('capture unavailable') }
+  const controller = api.bindManualWindowDrag({
+    handle,
+    classTarget,
+    onStart: () => calls.push('start'),
+    onEnd: () => calls.push('end')
+  })
+
+  handle.dispatch('pointerdown', pointer())
+  assert.deepEqual(calls, ['start', 'end'])
+  assert.equal(controller.isDragging(), false)
+  assert.equal(classTarget.classList.contains('dragging'), false)
+})
+
+test('SEM-F22/SEM-T04/J17: manual drag verifies pointer capture even when setPointerCapture does not throw', () => {
+  const { api } = loadManualDrag()
+  const handle = new FakeElement('grip')
+  const classTarget = new FakeElement('toolbar')
+  const calls = []
+  handle.setPointerCapture = () => {}
+  handle.hasPointerCapture = () => false
+  const controller = api.bindManualWindowDrag({
+    handle,
+    classTarget,
+    onStart: () => calls.push('start'),
+    onEnd: () => calls.push('end')
+  })
+
+  handle.dispatch('pointerdown', pointer())
+  assert.deepEqual(calls, ['start', 'end'])
+  assert.equal(controller.isDragging(), false)
+  assert.equal(classTarget.classList.contains('dragging'), false)
+
+  handle.setPointerCapture = FakeElement.prototype.setPointerCapture
+  handle.hasPointerCapture = FakeElement.prototype.hasPointerCapture
+  handle.dispatch('pointerdown', pointer())
+  assert.deepEqual(calls, ['start', 'end', 'start'])
+  assert.equal(controller.isDragging(), true, 'the next same-id press succeeds immediately')
+})
+
+test('SEM-F22/SEM-T04/J17: a reused primary pointer id closes stale local drag before the new press', () => {
+  const { api } = loadManualDrag()
+  const handle = new FakeElement('grip')
+  const classTarget = new FakeElement('toolbar')
+  const calls = []
+  const controller = api.bindManualWindowDrag({
+    handle,
+    classTarget,
+    onStart: () => calls.push('start'),
+    onEnd: () => calls.push('end')
+  })
+
+  handle.dispatch('pointerdown', pointer())
+  handle.dispatch('pointerdown', pointer())
+  assert.deepEqual(calls, ['start', 'end', 'start'])
+  assert.equal(controller.isDragging(), true)
+})
+
 test('SEM-F22/SEM-F24/J17/J19: lifecycle cancellation clears local drag state without ending an obsolete generation', () => {
   const { api } = loadManualDrag()
   const handle = new FakeElement('grip')
@@ -155,7 +219,6 @@ test('SEM-F22/J17: toolbar binds manual drag only to its visible non-focusable g
   assert.match(html, /<div class="grip" id="grip"[^>]+aria-hidden="true"><\/div>/)
   assert.doesNotMatch(html, /<div class="grip"[^>]+tabindex=/)
   assert.match(renderer, /bindManualWindowDrag\(\{[\s\S]*handle: grip/)
-  assert.doesNotMatch(renderer, /toolbar\.addEventListener\('pointerdown'/)
   assert.doesNotMatch(styles, /data-locked="off"[^}]*\.grip\s*\{\s*display:\s*none/)
   assert.match(styles, /\.grip\s*\{[\s\S]*width:\s*24px;[\s\S]*height:\s*30px;/)
   assert.match(icons, /re_order_dots_vertical_20_regular\.svg\?raw/)
@@ -269,8 +332,21 @@ test('SEM-F22/J17: caption hit priority is margin then toolbar contour then 8px 
 
   calls.length = 0
   card.dispatch('pointerdown', pointer({ clientX: 22, clientY: 80 }))
-  assert.deepEqual(calls, [['resizeStart', 'w']])
-  window.dispatch('pointercancel', pointer())
+  window.dispatch('pointermove', pointer({ clientX: 25, clientY: 80 }))
+  assert.deepEqual(calls, [], 'a 3 DIP edge jitter remains a click candidate')
+  window.dispatch('pointerup', pointer({ buttons: 0, clientX: 25, clientY: 80 }))
+  assert.deepEqual(calls, [], 'an unarmed resize never starts or ends the main timer')
+
+  for (const buttons of [2, 4]) {
+    card.dispatch('pointerdown', pointer({ clientX: 22, clientY: 80 }))
+    window.dispatch('pointermove', pointer({ buttons, clientX: 26, clientY: 80 }))
+    assert.deepEqual(calls, [], `buttons=${buttons}: a non-primary button cannot arm resize`)
+  }
+
+  card.dispatch('pointerdown', pointer({ clientX: 22, clientY: 80 }))
+  window.dispatch('pointermove', pointer({ clientX: 26, clientY: 80 }))
+  assert.deepEqual(calls, [['resizeStart', 'w']], '4 DIP along the west edge arms resize')
+  window.dispatch('pointercancel', pointer({ buttons: 0, clientX: 26, clientY: 80 }))
   assert.deepEqual(calls.slice(0, 2), [['resizeStart', 'w'], ['resizeEnd']])
 })
 
@@ -342,6 +418,31 @@ test('SEM-F22/SEM-F24/J17/J19: resume acknowledges its first hit synchronously w
   assert.deepEqual(calls, [['through', false]])
 })
 
+test('SEM-F22/J17: a stale same-generation geometry rehit cannot silently cancel a newer gesture', () => {
+  const { callbacks, calls, card, window } = createCaptionHarness()
+  callbacks.interaction({
+    schemaVersion: 1,
+    generation: 2,
+    phase: 'resume',
+    pointer: { x: 100, y: 80 }
+  })
+  calls.length = 0
+
+  card.dispatch('pointerdown', pointer({ clientX: 100, clientY: 80 }))
+  callbacks.interaction({
+    schemaVersion: 1,
+    generation: 2,
+    phase: 'resume',
+    pointer: { x: 101, y: 80 }
+  })
+  assert.equal(card.classList.contains('dragging'), true)
+  assert.equal(calls.some(([name]) => name === 'dragEnd'), false)
+
+  window.dispatch('pointerup', pointer({ buttons: 0, clientX: 101, clientY: 80 }))
+  assert.equal(calls.filter(([name]) => name === 'dragEnd').length, 1,
+    'the newer renderer gesture must still close its main timer')
+})
+
 test('SEM-F22/SEM-F24/J17/J19: a queued pre-resume hit frame cannot overwrite the resumed pointer', () => {
   const { callbacks, calls, document, runFrames } = createCaptionHarness({ deferFrames: true })
   document.dispatch('mousemove', { clientX: 100, clientY: 80 })
@@ -370,8 +471,54 @@ test('SEM-F22/J17: caption drag and resize starts fail closed when the preload c
   calls.length = 0
   shell.resizeStart = () => { throw new Error('renderer is gone') }
   assert.doesNotThrow(() => card.dispatch('pointerdown', pointer({ clientX: 22, clientY: 80 })))
-  window.dispatch('pointerup', pointer())
-  assert.deepEqual(calls, [])
+  assert.doesNotThrow(() => window.dispatch('pointermove', pointer({ clientX: 26, clientY: 80 })))
+  window.dispatch('pointerup', pointer({ buttons: 0 }))
+  assert.deepEqual(calls, [['through', false]],
+    'failed resize arming keeps the visible caption card solid for the next input')
+})
+
+test('SEM-F22/SEM-T04/J17: a new primary press recovers a pending resize whose release crossed HWNDs', () => {
+  const { calls, card, window } = createCaptionHarness()
+  card.dispatch('pointerdown', pointer({ clientX: 22, clientY: 80 }))
+
+  card.dispatch('pointerdown', pointer({ clientX: 100, clientY: 80 }))
+  assert.deepEqual(calls.slice(-2), [['through', false], ['dragStart', 'caption']],
+    'recovery keeps the current press solid before starting its drag')
+  assert.equal(card.classList.contains('dragging'), true)
+  window.dispatch('pointerup', pointer({ buttons: 0, clientX: 100, clientY: 80 }))
+  assert.deepEqual(calls.slice(-2), [['dragStart', 'caption'], ['dragEnd']])
+})
+
+test('SEM-F22/SEM-T04/J17: pointer capture failure immediately closes the main gesture', () => {
+  const { calls, card } = createCaptionHarness()
+  card.setPointerCapture = () => { throw new Error('capture unavailable') }
+
+  card.dispatch('pointerdown', pointer({ clientX: 100, clientY: 80 }))
+  assert.deepEqual(calls.slice(0, 2), [['dragStart', 'caption'], ['dragEnd']],
+    'a main drag timer cannot survive failed pointer capture')
+
+  calls.length = 0
+  card.dispatch('pointerdown', pointer({ clientX: 22, clientY: 80 }))
+  assert.deepEqual(calls, [], 'an unarmed resize is discarded when capture fails')
+})
+
+test('SEM-F22/SEM-T04/J17: caption verifies pointer capture when Chromium silently declines it', () => {
+  const { calls, card, window } = createCaptionHarness()
+  card.setPointerCapture = () => {}
+  card.hasPointerCapture = () => false
+
+  card.dispatch('pointerdown', pointer({ clientX: 100, clientY: 80 }))
+  assert.deepEqual(calls.slice(0, 2), [['dragStart', 'caption'], ['dragEnd']])
+  assert.equal(card.classList.contains('dragging'), false)
+
+  calls.length = 0
+  card.setPointerCapture = FakeElement.prototype.setPointerCapture
+  card.hasPointerCapture = FakeElement.prototype.hasPointerCapture
+  card.dispatch('pointerdown', pointer({ clientX: 100, clientY: 80 }))
+  assert.deepEqual(calls, [['dragStart', 'caption']])
+  assert.equal(card.classList.contains('dragging'), true)
+  window.dispatch('pointerup', pointer({ buttons: 0, clientX: 100, clientY: 80 }))
+  assert.deepEqual(calls, [['dragStart', 'caption'], ['dragEnd']])
 })
 
 const INTERACTIVE_DRAG_SELECTOR = [

@@ -38,7 +38,7 @@ test('SEM-F22/J17: caption receives a bounded overlap and immediately refreshes 
   assert.match(renderer, /applyHit\(lastX, lastY\)/)
   assert.match(styles, /top: var\(--toolbar-overlap-top, 0px\)/)
   assert.match(styles, /right: var\(--toolbar-overlap-right, 0px\)/)
-  assert.match(styles, /width: var\(--toolbar-overlap-width, 584px\)/)
+  assert.match(styles, /width: var\(--toolbar-overlap-width, 588px\)/)
   assert.match(styles, /height: var\(--toolbar-overlap-height, 64px\)/)
   assert.match(styles, /max-width: max\(0px, calc\(100% - var\(--toolbar-overlap-right, 0px\)\)\)/)
   assert.doesNotMatch(styles, /max-width: 100%/)

@@ -56,6 +56,13 @@ const {
   ManualWindowInteractionController,
   sameBounds
 } = require('./main/manual-window-interaction-controller')
+const { createOverlayGestureTerminal } = require('./main/overlay-gesture-terminal')
+const {
+  bindToolbarDockInvariant,
+  toolbarDockInvariantBoundsFor,
+  toolbarViewportBoundsFor,
+  toolbarWindowViewportBounds
+} = require('./main/toolbar-dock-invariant')
 const {
   WindowInteractionGenerationController
 } = require('./main/window-interaction-generation-controller')
@@ -87,6 +94,7 @@ const refinementNoticeStore = new RefinementNoticeStore({
 
 const windowRoles = new Map()
 let locked = false
+let toolbarDockInvariantBinding = null
 const toolbarLayoutState = new ToolbarLayoutState()
 const windowLayerController = new WindowLayerController({
   getCaptionWindow: () => captionWin,
@@ -120,7 +128,15 @@ const windowInteractionController = new ManualWindowInteractionController({
   getCaptionLimits: captionLimits,
   dock,
   onCaptionResizeEnd: persistCaptionBounds,
-  onGeometrySettled: schedulePointerHitRefresh
+  onGeometrySettled: (roles) => {
+    if (roles.includes('toolbar')) toolbarDockInvariantBinding?.commitBounds()
+    schedulePointerHitRefresh(roles)
+  },
+  onInteractionEnded: ({ kind, role, redock }) => {
+    if (kind === 'drag' && (role === 'toolbar' || redock)) {
+      toolbarDockInvariantBinding?.commitBounds()
+    }
+  }
 })
 const windowInteractionGenerationController = new WindowInteractionGenerationController({
   getWindow: (role) => ({
@@ -138,6 +154,23 @@ const windowInteractionGenerationController = new WindowInteractionGenerationCon
   },
   onFault: ({ role, code }) => console.error(`[window.interaction] role=${role} code=${code}`)
 })
+const overlayGestureTerminal = createOverlayGestureTerminal({
+  getActiveSenderId: () => windowInteractionController.getActiveSenderId(),
+  stopInteractions: () => windowInteractionController.stopAll(),
+  resetInteractionGeneration: () => {
+    if (windowInteractionGenerationController.getState().phase !== 'resume') return true
+    try {
+      const generation = windowInteractionGenerationController.beginTransaction()
+      return windowInteractionGenerationController.resume(generation)
+    } catch {
+      return false
+    }
+  },
+  degradeInteractions: () => {
+    const { generation } = windowInteractionGenerationController.getState()
+    windowInteractionGenerationController.degradeForRestoreFailure(generation)
+  }
+})
 const applicationWindowLifecycleController = new ApplicationWindowLifecycleController({
   getCaptionWindow: () => captionWin,
   getToolbarWindow: () => toolbarWin,
@@ -145,9 +178,19 @@ const applicationWindowLifecycleController = new ApplicationWindowLifecycleContr
   getHistoryWindow: () => historyWin,
   stopInteractions: () => windowInteractionController.stopAll(),
   beginInteractionTransaction: () => windowInteractionGenerationController.beginTransaction(),
-  resumeInteractions: (generation) => windowInteractionGenerationController.resume(generation),
+  resumeInteractions: (generation, primaryBounds) => {
+    if (toolbarDockInvariantBinding &&
+        toolbarDockInvariantBinding.commitBounds(primaryBounds ||
+          toolbarDockInvariantBinding.getExpectedBounds()) !== true) return false
+    return windowInteractionGenerationController.resume(generation)
+  },
   degradeInteractions: (generation) => windowInteractionGenerationController.degradeForRestoreFailure(generation),
   restoreWindowStack: () => windowLayerController.restoreWindowStack(),
+  schedulePostRestore: (callback, delayMs) => setTimeout(callback, delayMs),
+  cancelPostRestore: (handle) => clearTimeout(handle),
+  suspendGeometryCorrections: () => toolbarDockInvariantBinding?.suspendCorrection(),
+  getPrimaryRestoreBounds: (primary) => toolbarDockInvariantBinding?.getExpectedBounds() ||
+    toolbarViewportBoundsFor(toolbarWindowViewportBounds(primary)),
   onFault: ({ role, code }) => console.error(`[window.lifecycle] role=${role} code=${code}`)
 })
 const CHILD_SERVICE_LABELS = Object.freeze([
@@ -243,6 +286,10 @@ function registerWindowRole (win, role) {
   let navigationEpoch = 0
   const unregisterExitEvidence = exitEvidence.registerWebContents(win.webContents, role)
   windowRoles.set(senderId, role)
+  overlayGestureTerminal.bind({
+    role,
+    webContents: win.webContents
+  })
   win.webContents.once('destroyed', () => {
     unregisterExitEvidence()
     windowRoles.delete(senderId)
@@ -366,6 +413,20 @@ function createWindows () {
   toolbarWin = makeOverlay('toolbar', TB_W, TB_H, cx, cy, true)
   windowInteractionGenerationController.prepareOverlay('toolbar')
   applicationWindowLifecycleController.bindPrimaryWindow(toolbarWin)
+  const createdCaption = captionWin
+  const createdToolbar = toolbarWin
+  toolbarDockInvariantBinding?.unbind()
+  toolbarDockInvariantBinding = bindToolbarDockInvariant({
+    toolbar: createdToolbar,
+    getDockBounds: (authoritativeBounds) => toolbarDockInvariantBoundsFor({
+      captionBounds: createdCaption.getBounds(),
+      toolbarBounds: authoritativeBounds,
+      locked
+    }),
+    setDockBounds: (bounds) => createdToolbar.setContentBounds(bounds),
+    onCorrected: () => schedulePointerHitRefresh(['toolbar']),
+    onFault: ({ role, code }) => console.error(`[window.dock] role=${role} code=${code}`)
+  })
 
   captionWin.webContents.on('console-message', (details) => console.log('[caption]', details.message))
   toolbarWin.webContents.on('console-message', (details) => console.log('[toolbar]', details.message))
@@ -395,7 +456,12 @@ function createWindows () {
     event.preventDefault()
     app.quit()
   })
-  toolbarWin.on('closed', () => { windowInteractionController.stopAll(); toolbarWin = null })
+  toolbarWin.on('closed', () => {
+    windowInteractionController.stopAll()
+    toolbarDockInvariantBinding?.unbind()
+    toolbarDockInvariantBinding = null
+    toolbarWin = null
+  })
   for (const [win, role] of [[captionWin, 'caption'], [toolbarWin, 'toolbar']]) {
     void loadRendererFailClosed(win, role, { isPackaged: app.isPackaged })
       .catch((error) => {
@@ -408,7 +474,10 @@ function createWindows () {
 function dock ({ restoreStack = true } = {}) {
   if (!captionWin || captionWin.isDestroyed() || !toolbarWin || toolbarWin.isDestroyed()) return
   const nextBounds = toolbarDockBoundsFor(captionWin.getBounds())
-  if (!sameBounds(toolbarWin.getBounds(), nextBounds)) toolbarWin.setBounds(nextBounds)
+  toolbarDockInvariantBinding?.commitBounds(nextBounds)
+  if (!sameBounds(toolbarWindowViewportBounds(toolbarWin), nextBounds)) {
+    toolbarWin.setContentBounds(nextBounds)
+  }
   if (restoreStack) windowLayerController.restoreWindowStack()
 }
 
@@ -498,8 +567,15 @@ function persistCaptionBounds (bounds) {
 }
 
 function applyLock (on) {
+  /* Finish the old lock state's gesture before reading its legal expected
+     toolbar position. Its settlement callback must not run after `locked`
+     flips and accidentally legitimize a late native read-back. */
+  windowInteractionController.stopAll()
+  const nextToolbarBounds = on
+    ? toolbarDockInvariantBinding?.getExpectedBounds()
+    : (captionWin && !captionWin.isDestroyed() ? toolbarDockBoundsFor(captionWin.getBounds()) : null)
   locked = on
-  if (on) windowInteractionController.stopAll()
+  toolbarDockInvariantBinding?.commitBounds(nextToolbarBounds || null)
   if (captionWin && !captionWin.isDestroyed()) {
     if (on) windowInteractionGenerationController.prepareOverlay('caption')
     send(captionWin, CHANNELS.LOCK_CHANGED, on)
@@ -709,7 +785,10 @@ ipcMain.on(CHANNELS.MOUSE_THROUGH, (event, intent) => {
 ipcMain.on(CHANNELS.DRAG_START, (event, intent) => {
   const sender = requireSender(event, CHANNELS.DRAG_START)
   if (!windowInteractionGenerationController.acceptGesture(sender.role, intent)) return
-  windowInteractionController.startDrag(sender)
+  const started = windowInteractionController.startDrag(sender)
+  if (started && sender.role === 'toolbar' && locked) {
+    toolbarDockInvariantBinding?.suspendCorrection()
+  }
 })
 ipcMain.on(CHANNELS.DRAG_END, (event, intent) => {
   const { role, senderId } = requireSender(event, CHANNELS.DRAG_END)
@@ -743,6 +822,7 @@ ipcMain.on(CHANNELS.TOOLBAR_LAYOUT_REPORT_RECT, (event, report) => {
   const { win } = requireSender(event, CHANNELS.TOOLBAR_LAYOUT_REPORT_RECT)
   if (win !== toolbarWin) throw new Error('IPC denied for stale toolbar layout report')
   publishToolbarOverlap(toolbarLayoutState.acceptReport(report))
+  schedulePointerHitRefresh(['caption', 'toolbar'])
 })
 ipcMain.on(CHANNELS.TOOLBAR_ACTION, (event, action) => {
   requireSender(event, CHANNELS.TOOLBAR_ACTION)

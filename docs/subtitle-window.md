@@ -78,7 +78,8 @@ Electron 壳层负责：
 - UI 拥有卡片内部尺寸、间距和视觉 token。
 - 若视觉模型改变工具条宽度、字幕高度或停靠位置，必须同时提交 layout contract 请求，不能只改 CSS。
 - `.tb-hole` 由工具条 renderer 上报当前 `#toolbar.toolbar` 的真实外接矩形，并经 preload、IPC access policy 和主进程校验后换算为字幕卡局部的右侧锚定矩形。该矩形只在有界内存中服务布局，不持久化、不写日志或证据报告。
-- 窗口首帧、renderer reload、布局尚未就绪、矩形非法或 generation 陈旧时，字幕窗临时使用 `584 × 64` 最坏尺寸洞；收到同代有效矩形后必须立即收缩到真实轮廓。
+- 工具条 DOM 的子节点、文字、class 或 style 改变时，`MutationObserver` 必须在微任务中与 `ResizeObserver` 共用同一个“立即本地重命中、延后轮廓上报”入口。隐藏或后台窗口中的 ResizeObserver 可能被延迟，不能因此等待下一次鼠标移动才让扩张后的真实轮廓接管首击。`mouseleave` 会使上一次本地指针坐标失效；离窗后的轮廓变化不得用旧坐标重新占有 HWND。
+- 窗口首帧、renderer reload、布局尚未就绪、矩形非法或 generation 陈旧时，字幕窗临时使用由 `20 DIP` 停靠内缩与 window-local `16..584 DIP` 最大真实轮廓推导的 `588 × 64` 最坏尺寸洞；它必须完整包含最大真实轮廓，收到同代有效矩形后立即收缩到真实轮廓。
 
 ## 4. BrowserWindow 不变量
 
@@ -103,9 +104,15 @@ Electron 壳层负责：
 
 字幕窗额外使用 `focusable: false`、`minimizable: false`、`skipTaskbar: true`。工具条使用稳定标题、`minimizable: true`、`skipTaskbar: false`，并在真实轮廓内提供带可访问名称的 Fluent 最小化按钮。两个窗口使用 `setAlwaysOnTop(true, 'screen-saver')` 和全屏 workspace 可见配置。
 
+工具条 BrowserWindow 以 `useContentSize: true` 创建，使构造参数的 `600 × 72 DIP` 在首个可见提交前就是内容视口；同时不声明 exact `minWidth/maxWidth/minHeight/maxHeight`：在 Win11 的 frameless/transparent 窗口上，这组原生约束会参与程序化平移的外框归一，可能把一次移动反向提交成新的宽高。`resizable: false` 只关闭用户原生拉伸入口；所有会移动工具条的手动拖动帧都必须显式提交 `600 × 72 DIP` 完整 content bounds，并与下文的主进程纠正器共同守住 exact 固定视口。字幕窗同样不得套用工具条固定尺寸，因为其宽高仍由产品自己的手动拉伸语义控制。
+
 字幕窗的 `resizable: false` 是原生命中不变量，不妨碍下文的主进程手动拉伸；创建后不得再调用 `setResizable(true)`。透明无边框字幕窗不能同时启用 Windows 原生拉伸边与产品自己的 `8px` 拉伸带。
 
-主任务栏窗口的原生 `minimize` / `restore` 事件与 renderer 最小化按钮进入同一 `ApplicationWindowLifecycleController`。控制器只在有界内存中保存窗口角色、可见性、bounds、焦点引用与窗口交互代次，不保存字幕正文、设备名、路径或指针坐标。每次最小化事务先推进一次窗口交互代次、停止主进程拖动/拉伸、把字幕窗和工具条切到原生鼠标穿透并通知全部 renderer 静默取消本地手势。每次任务栏恢复或第二实例 `restoreOrShow` 事务再推进一次，并在该次恢复事务内依次发送同一新代次的 `suspend` 与 `resume`；恢复时若 Windows 改写了主窗口几何则主动恢复已保存 bounds，待窗口集合、bounds 与层级收敛后，再把当前系统光标换算成各窗口局部 DIP 坐标并要求 renderer 按当前指针重新执行命中判定。指针静止时也必须恢复正确命中。`did-finish-load` 重放当前窗口交互代次，过期代次的穿透、拖动或拉伸意图一律拒绝。若辅助窗口最小化失败，必须回滚已隐藏窗口并保留可访问的主任务栏入口；若恢复中途失败，主窗口先恢复并记录固定 `role/code`，允许用户重试或退出。
+主任务栏窗口的原生 `minimize` / `restore` 事件与 renderer 最小化按钮进入同一 `ApplicationWindowLifecycleController`。控制器只在有界内存中保存窗口角色、可见性、bounds、焦点引用与窗口交互代次，不保存字幕正文、设备名、路径或指针坐标。每次最小化事务先停止主进程拖动/拉伸并结算几何，再取样窗口状态、推进一次窗口交互代次，把字幕窗和工具条切到原生鼠标穿透并通知全部 renderer 静默取消本地手势；不能在活动手势结算之前把中间 bounds 保存为恢复基线。每次任务栏恢复或第二实例 `restoreOrShow` 事务再推进一次，并在该次恢复事务内依次发送同一新代次的 `suspend` 与 `resume`；恢复时若 Windows 改写了主窗口几何则主动恢复已保存 bounds。Windows 可能在原生 `restore` 事件之后再次提交主任务栏窗口 bounds，因此产品主进程必须在有界恢复结算内监听窗口集合的 `move` / `resize` 并纠正晚到漂移：最后一次原生几何事件或最后一次实际 `setBounds` 纠正后连续 **250ms** 无新变化才可收口，连续抖动时最迟 **1000ms** 发起最终纠正；安静期回调自身若实际执行了 `setBounds`，必须重新等待完整安静期，不能在同一回调发送 `resume`。若 `1000ms` 上限的最终纠正确实写入 bounds，必须继续保持 `suspend` 并进入固定、不可被后续事件延长的最多 **250ms** 原生提交确认期；确认期终点只能只读复核，不得再次写 bounds。只有该次结算与层级恢复完成后才发送 `resume`，不能在瞬时命中旧 bounds 时提前宣告恢复。随后再把当前系统光标换算成各窗口局部 DIP 坐标并要求 renderer 按当前指针重新执行命中判定。指针静止时也必须恢复正确命中。`did-finish-load` 重放当前窗口交互代次，过期代次的穿透、拖动或拉伸意图一律拒绝。若辅助窗口最小化失败，必须回滚已隐藏窗口并保留可访问的主任务栏入口；若恢复中途失败，主窗口先恢复并记录固定 `role/code`，允许用户重试或退出。
+
+恢复等价只对辅助窗口开放：设置与字幕历史的 Win32 外框在非整数系统缩放下，`x/y/width/height` 每项与保存值相差不超过 `1 DIP` 可视为同一物理像素归一结果，不再反复 `setBounds` 或重置安静期；下一次最小化从该实际归一值重新取样，连续恢复不得累计漂移。字幕窗外框、工具条 `getContentBounds()`、`600 × 72 DIP` 固定内容视口和停靠位置仍逐项 exact；工具条透明无框外框因系统缩放多出的 `1 DIP` 只有在内容视口 exact 时才可忽略，并且不得保存为权威尺寸。`1000ms + 最多 250ms 原生提交确认` 只界定等待时间，不授权带错位恢复交互；确认期终点复读仍不等价时记录既有 `post-restore-bounds-failed`，保持窗口交互代次为 `suspend` 并走可达工具条降级。
+
+最终纠正写入后的固定原生提交确认期整体只观察、不再纠正：期间到达的 `move` / `resize` 不得让生命周期控制器或工具条固定停靠纠正器等任一几何写入者再次调用 `setBounds` / `setContentBounds`。确认终点只复读；若第 `249ms` 仍出现不等价几何，第 `250ms` 必须降级而不是利用一次新的同步写入短暂命中 exact 后发送 `resume`。任一失败坐标都不得写成下一次恢复基线；待重试状态必须保留失败前的窗口集合、字幕窗/仍存在辅助窗 bounds 与工具条合法预期，下一次 `restoreOrShow` 复用该状态重新结算，成功后才清除。结算期间或降级后被用户关闭的设置/字幕历史从集合移除，不能阻止主入口恢复；字幕窗/工具条仍严格要求可用且等价。
 
 生命周期同步使用仅由主进程发送的 `window:interaction-sync` 严格联合载荷：
 
@@ -155,13 +162,14 @@ Electron 壳层负责：
 
 字幕窗可由用户拖边改变大小；工具条窗宽度由内容决定，设置窗是普通窗，均不参与。
 
-- 透明无边框窗在 Windows 上没有可用的原生拉伸边，所以走和拖动完全一样的路子：渲染层判定指针落在卡片内侧 **8px** 拉伸带上，发 `resizeStart(edge)`，主进程轮询光标改 bounds。
+- 透明无边框窗在 Windows 上没有可用的原生拉伸边。渲染层判定指针落在卡片内侧 **8px** 拉伸带后先进入待定拉伸；只有主键仍按住且沿该边相关轴累计达到 **4 DIP**，才发 `resizeStart(edge)`，主进程从届时的光标位置开始轮询并修改 bounds。未达到阈值的 `pointerup` / `pointercancel` 只清理 renderer 待定状态，不启动或结束主进程拉伸。
 - 被拖的边跟着光标，对面那条边钉住；夹到上下限后要用**夹紧后的尺寸**反推原点，否则到限时窗口会漂移。
 - 尺寸上下限见上表，写在 `main.js` 的 `CAP_LIMITS`，宽高上限还会再被当前屏幕工作区封顶。
 - 拉伸过程中持续 `dock()`，工具条跟随。
 - 锁定时禁止拉伸，`applyLock(true)` 会立刻收尾进行中的拉伸。
 - 工具条实际轮廓先保持穿透；轮廓以外的卡片内侧 `8px` 拉伸带再优先于普通拖动。
-- 工具条实际轮廓与字幕卡内侧 `8px` 拉伸带之间至少保留 `8 DIP` 普通拖动区间。工具条上边、右边轮廓及其相邻普通拖动区的原地点击或轻微抖动不得发起拉伸；反复点击不得累计改变字幕窗宽高，也不得让工具条随错误 bounds 向外漂移。
+- 工具条实际轮廓与字幕卡内侧 `8px` 拉伸带之间至少保留 `8 DIP` 普通拖动区间。工具条上边、右边轮廓、相邻普通拖动区以及靠近工具条的拉伸带在原地点击或相关轴不超过 `3 DIP` 的轻微抖动时都不得发起拉伸；反复点击不得累计改变字幕窗宽高，也不得让工具条随错误 bounds 向外漂移。`4 DIP` 只用于拉伸意图消歧，不适用于普通字幕卡拖动或工具条握把拖动。
+- 工具条 BrowserWindow 的原生内容视口固定为 `600 × 72 DIP`，停靠与恢复使用 `getContentBounds()/setContentBounds()`；透明无框外框在非整数缩放下多出的 `1 DIP` 不能冒充内容扩张，也不能进入下一次权威基线。Windows 恢复或 DWM 重新组合若发出非用户 `resize`，主进程立即恢复固定内容宽高：未锁定时用字幕窗当前 bounds 重新求解停靠位置，已锁定时恢复最近一次合法握把/组合几何结算提交的权威 `x/y`，不能采用 resize 后的漂移坐标，也不能把用户单独移动后的工具条吸回字幕窗；原生尺寸舍入不得被下一次拖动或最小化事务继续保存、累计；最小化取样必须使用当前锁定状态重新求得的预期 content bounds；切换锁定则先结算旧状态下的活动手势、读取旧状态的预期 content bounds，再翻转并显式提交，不能采用瞬时原生读回。同步 `getContentBounds()` 暂时等于目标值后仍须保留可取消的 `250ms` 再确认，以拦截随后覆盖回来的旧 Win32 提交；新的合法握把/组合结算或锁定状态切换会替换旧确认目标。单个目标最多四次纠正写入、总确认窗口最长 `1000ms`；同一目标、同一 content/outer 观测几何的尾随原生双事件不额外消耗写入额度，只有再确认到期或观测几何确实改变才可发出下一次写入。仍不收敛就记录固定诊断，并锁存同一目标与当时观测到的 content/outer geometry。目标和观测几何都未变化的尾随原生 `move/resize` 不得重启写入；显式合法结算、锁定切换、恢复事务、预期停靠目标真正变化，或故障后原生事件确实带来不同观测几何时，才可开启一轮新的有界重试。纠正失败只记录 `{ role: 'toolbar', code: 'toolbar-dock-correction-failed' }`，保持主任务栏入口可达并在下一次带来不同观测几何的原生 `resize` 或恢复事务重试。
 - 结束时把尺寸写回 `config.captionWidth / captionHeight` 并广播。
 
 **字号不随窗口缩放。** 用户手动改变窗口后，新宽高决定一行能放下多少字和固定视口能容纳多少行；字幕内容本身绝不能自动 resize 窗口。可见行数由实际内容高度与字号计算，`config.maxLines` 不再作为 previous/current 各槽位的独立裁剪上限；满高后按 [固定高度字幕流设计](subtitle-flow-and-transcript-versions.md) 淘汰最旧视觉行。
@@ -189,6 +197,10 @@ renderer 在可拖区域发出 `dragStart(role)` 意图，主进程通过全局�
 - 应用最小化/恢复与第二实例恢复
 
 主进程在任何取消路径都要停止拖动 timer，不能只依赖 renderer 正常发出 dragEnd。
+字幕窗与工具条是同一交互域内的两个重叠原生窗口。主进程必须在两者当前 `webContents` 上统一观察主键 `mouseUp`，以及活动手势期间不再带 `leftbuttondown` 的 `mouseMove`，并幂等停止该域内的拖动或拉伸 timer；不能要求结束输入必须回到手势发起窗口。发起窗口原有的 `dragEnd` / `resizeEnd` 仍保留，用于本窗正常收尾。该原生输入观察直接绑定当前窗口实例，不另建可能跨代迟到的 renderer IPC。
+
+原生输入观察同时记录本次主键按下由哪个 overlay 接收。若 `mouseUp` 落到另一 overlay，即使字幕窗仍停留在尚未发出 `resizeStart` 的待定拉伸状态，主进程也必须停止 timer、推进窗口交互代次并立即完成 `suspend → resume`，由更高代次清理发起 renderer 的 pointer/capture/CSS 状态。renderer 收到同一鼠标主指针 ID 的下一次合法主键按下时，还要先收敛本窗可能遗留的旧手势再原子处理当前按下；不同 pointer ID 继续按多指针隔离拒绝，caption→toolbar 与 toolbar→caption 均不得让下一次鼠标拖动或按钮点击失效。真实主键输入调用 `setPointerCapture` 后，如果浏览器提供 `hasPointerCapture` 且立即确认未建立捕获，也必须按捕获抛错路径立即收敛；非可信 DOM 注入不作为原生捕获证明。
+跨 overlay 的代次重置若不能成立，必须复用既有 fail-closed 路径让字幕窗保持穿透、工具条保持实心，等待 reload 或下一次恢复事务；不得新增 SEM-T04 四码闭集之外的窗口交互同步诊断。
 最小化取消当前手势而不续接：renderer 必须清空活动 pointer ID、pointer capture、dragging/resizing、CSS 状态和待执行的命中 rAF，但不得在生命周期手势重置后补发旧窗口交互代次的 dragEnd/resizeEnd。恢复后只有下一次新的主键按下才能开始拖动。
 timer 间隔是实现细节（当前 16ms，对齐一帧）；取消语义不依赖具体数值。
 
@@ -196,13 +208,14 @@ timer 间隔是实现细节（当前 16ms，对齐一帧）；取消语义不依
 
 - 透明区域默认穿透。
 - 指针进入真实字幕卡或工具条时临时恢复交互。
-- 字幕卡在工具条当前真实 overlap rect 内保持穿透，让上层 toolbarWin 接管事件；该 rect 是工具条 `#toolbar.toolbar` 的外接矩形，包含状态文字与控件间隙，不按 alpha 像素挖出碎片。
-- 实际 rect 尚未到达、renderer reload 或报告非法/陈旧时只允许临时使用 `584 × 64` 最坏尺寸回落；同代有效 rect 到达后立即替换，不能继续保留固定大洞。
+- 字幕卡在工具条当前真实 overlap rect 内保持穿透，让上层 toolbarWin 接管事件；该 rect 是工具条 `#toolbar.toolbar` 的外接矩形，包含状态文字与控件间隙，不按 alpha 像素挖出碎片。工具条自身进入与离开都使用同一份按 `floor(left/top)`、`ceil(right/bottom)` 量化的真实矩形，不能在轮廓外保留额外迟滞或隐形实心命中带。
+- 实际 rect 尚未到达、renderer reload 或报告非法/陈旧时只允许临时使用由当前停靠几何推导的 `588 × 64` 最坏尺寸回落；同代有效 rect 到达后立即替换，不能继续保留固定大洞。
 - 拖动期间暂停 elementFromPoint 命中计算。
 - mousemove 使用 requestAnimationFrame 节流。
 - 锁定时 captionWin 恒穿透，renderer 不能把它重新变成实心。
 - 最小化/恢复以独立于工具条布局代次的窗口交互代次同步。恢复前 captionWin/toolbarWin 先保持原生鼠标穿透，恢复后 renderer 使用同代局部 DIP 光标位置主动执行现有命中判定，并只允许同代 `mouseThrough` 改变原生命中；锁定字幕窗始终穿透，字幕窗内的工具条轮廓由字幕窗穿透后交给工具条自身按真实轮廓接管。旧代次与旧 rAF 不能覆盖新状态。
-- `resume` 处理器必须在同一次回调内立即完成当前指针命中并发送同代确认，不能把首次确认排队到 rAF。主进程完成字幕窗拉伸、字幕与工具条组合拖动、锁定工具条单独移动或重新停靠后，必须以同一窗口交互代次向所有 bounds 发生变化的 caption/toolbar renderer 重新投递当前局部 DIP 指针位置，让它们在下一次主键按下前恢复当前几何下的命中；该刷新不得续接或取消已经结束的旧手势。
+- `resume` 处理器必须在同一次回调内立即完成当前指针命中并发送同代确认，不能把首次确认排队到 rAF。主进程完成字幕窗拉伸、字幕与工具条组合拖动、锁定工具条单独移动、重新停靠或固定工具条视口成功纠正后，必须以同一窗口交互代次向所有 bounds 发生变化的 caption/toolbar renderer 重新投递当前局部 DIP 指针位置，让它们在下一次主键按下前恢复当前几何下的命中；固定视口没有实际变化时不得伪造结算。该刷新不得续接或取消已经结束的旧手势。如果异步到达的同代刷新与下一次新手势重叠，renderer 只能更新待结算指针并保持当前窗口实心，不能静默取消新手势；新手势结束后再按最新几何重命中。只有 `suspend`、更高代次或 reload 生命周期重置可以无通知清理 renderer 手势。
+- 工具条 `ResizeObserver` 或 DOM 驱动变化的 `MutationObserver` 发现真实轮廓可能变化时，renderer 必须先用仍有效的最近本地指针同步更新原生命中，再把轮廓报告排到下一帧；主进程接受新的有效轮廓后再同时向 caption 与 toolbar 投递权威系统指针；工具条局部坐标必须减去 content 原点，不能使用透明外框原点。工具条从 quiet 轮廓扩张到 attention/通知轮廓并覆盖静止指针时，toolbar 必须先转为实心，随后 caption 才按报告让出该点；不能出现两窗都穿透、第一次按钮点击丢失的间隙，也不能因隐藏窗口延后 ResizeObserver 而丢失 DOM 扩张后的首击。若已经收到 `mouseleave`，旧局部坐标不可再用于该同步判定，工具条保持穿透直到新的本地移动或权威同代指针重命中。
 - 指针坐标只在有界内存 IPC 中存在；固定诊断和所有证据报告不得包含坐标、绝对路径、设备名、字幕正文或绝对单调时刻。
 
 ## 6. 字幕渲染不变量
@@ -277,7 +290,7 @@ timer 间隔是实现细节（当前 16ms，对齐一帧）；取消语义不依
 
 ## 10. 当前状态与后续项
 
-1. [SEM-F22](semantic-contract.md) 与 [J17](testing-strategy.md) 已以工具条实际 overlap rect 取代常态固定大洞；`584 × 64` 只保留为首帧、reload、非法或陈旧报告时的临时 fail-safe。
+1. [SEM-F22](semantic-contract.md) 与 [J17](testing-strategy.md) 已以工具条实际 overlap rect 取代常态固定大洞；由当前停靠几何推导的 `588 × 64` 只保留为首帧、reload、非法或陈旧报告时的临时 fail-safe。
 2. B1 已完成 pointercancel/lostpointercapture、blur/destroyed 与主进程拖动/缩放互斥清理。
 3. B1 已把字幕接到稳定节点 + CaptionEvent reducer，并移除 renderer 假流。
 4. B1 已把工具条升级为完整 RuntimeSnapshot + CommandResult。

@@ -109,7 +109,7 @@ function createCaptionRendererDriver ({
   document.getElementById = (id) => elements.get(id)
   document.createElement = () => new ElementStub()
   document.elementFromPoint = (x, y) => {
-    const inside = (rect) => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+    const inside = (rect) => x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
     if (!inside(cardRect)) return wrap
     if (inside(toolbarHoleRect)) return hole
     return content
@@ -129,9 +129,14 @@ function createCaptionRendererDriver ({
     lock: (value) => callbacks.lock(value),
     move: (x, y) => document.dispatch('mousemove', { clientX: x, clientY: y }),
     pointerDown: (x, y, pointerId = 7) => card.dispatch('pointerdown', {
-      button: 0, isPrimary: true, pointerId, clientX: x, clientY: y
+      button: 0, buttons: 1, isPrimary: true, pointerId, clientX: x, clientY: y
     }),
-    pointerUp: (pointerId = 7) => window.dispatch('pointerup', { pointerId }),
+    pointerMove: (x, y, pointerId = 7, buttons = 1) => window.dispatch('pointermove', {
+      button: 0, buttons, isPrimary: true, pointerId, clientX: x, clientY: y
+    }),
+    pointerUp: (pointerId = 7) => window.dispatch('pointerup', {
+      button: 0, buttons: 0, isPrimary: true, pointerId
+    }),
     sync: (value) => callbacks.interaction(value)
   })
 }

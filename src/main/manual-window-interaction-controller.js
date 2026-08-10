@@ -1,6 +1,11 @@
 'use strict'
 
-const { dragBoundsAt, toolbarDockBoundsFor } = require('./window-layout-contract')
+const {
+  WINDOW_LAYOUT,
+  dragBoundsAt,
+  toolbarDockBoundsFor
+} = require('./window-layout-contract')
+const { toolbarWindowViewportBounds } = require('./toolbar-dock-invariant')
 
 const DRAG_ROLES = Object.freeze(['caption', 'toolbar', 'settings', 'history'])
 const RESIZE_EDGES = Object.freeze(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'])
@@ -28,6 +33,7 @@ class ManualWindowInteractionController {
     dock,
     onCaptionResizeEnd = () => {},
     onGeometrySettled = () => {},
+    onInteractionEnded = () => {},
     onObservation = () => {},
     setTimer = setTimeout,
     clearTimer = clearTimeout,
@@ -42,6 +48,7 @@ class ManualWindowInteractionController {
         typeof getCaptionLimits !== 'function' ||
         typeof dock !== 'function' ||
         typeof onGeometrySettled !== 'function' ||
+        typeof onInteractionEnded !== 'function' ||
         typeof onObservation !== 'function' ||
         typeof setTimer !== 'function' ||
         typeof clearTimer !== 'function' ||
@@ -56,6 +63,7 @@ class ManualWindowInteractionController {
     this.dock = dock
     this.onCaptionResizeEnd = onCaptionResizeEnd
     this.onGeometrySettled = onGeometrySettled
+    this.onInteractionEnded = onInteractionEnded
     this.onObservation = onObservation
     this.setTimer = setTimer
     this.clearTimer = clearTimer
@@ -70,6 +78,28 @@ class ManualWindowInteractionController {
 
   settleGeometry (roles) {
     try { this.onGeometrySettled(Object.freeze([...roles])) } catch { /* hit refresh cannot break gesture cleanup */ }
+  }
+
+  finishInteraction (value) {
+    try { this.onInteractionEnded(Object.freeze({ ...value })) } catch { /* invariant re-arm cannot break cleanup */ }
+  }
+
+  moveWindow (win, bounds, isToolbar) {
+    if (isToolbar) {
+      /* BrowserWindow.setPosition() can replay a stale Win32 normal-placement
+         size while moving the fixed toolbar. Submit the viewport dimensions
+         with every toolbar translation so a move cannot become a resize. */
+      const viewportBounds = {
+        x: bounds.x,
+        y: bounds.y,
+        width: WINDOW_LAYOUT.toolbarViewportWidth,
+        height: WINDOW_LAYOUT.toolbarViewportHeight
+      }
+      if (typeof win.setContentBounds === 'function') win.setContentBounds(viewportBounds)
+      else win.setBounds(viewportBounds)
+      return
+    }
+    win.setPosition(bounds.x, bounds.y)
   }
 
   /**
@@ -103,17 +133,17 @@ class ManualWindowInteractionController {
       /* 拖动只改位置。setBounds 还要走一遍 resize 路径，而这两个都是
          transparent + alwaysOnTop 的分层窗，每次移动都要 DWM 重新合成整窗 ——
          每帧省下来的每一次系统调用都直接换成手感。 */
-      state.win.setPosition(nextBounds.x, nextBounds.y)
+      this.moveWindow(state.win, nextBounds, state.targetIsToolbar)
       state.lastBounds = nextBounds
       if (!state.moved) {
         state.moved = true
         this.observe({ kind: 'drag-move', role: state.role })
       }
       if (state.companion && isUsableWindow(state.companion)) {
-        state.companion.setPosition(
-          nextBounds.x + state.companionOffset.x,
-          nextBounds.y + state.companionOffset.y
-        )
+        this.moveWindow(state.companion, {
+          x: nextBounds.x + state.companionOffset.x,
+          y: nextBounds.y + state.companionOffset.y
+        }, true)
       } else if (state.redock) {
         this.dock({ restoreStack: false })
       }
@@ -139,13 +169,17 @@ class ManualWindowInteractionController {
     if (!isUsableWindow(target)) return false
 
     const origin = this.getCursorScreenPoint()
-    const start = target.getBounds()
+    const targetIsToolbar = target === this.getToolbarWindow()
+    const start = targetIsToolbar
+      ? toolbarWindowViewportBounds(target)
+      : target.getBounds()
     this.dragState = {
       senderId,
       win: target,
       origin,
       start,
       lastBounds: start,
+      targetIsToolbar,
       redock,
       role,
       moved: false,
@@ -163,6 +197,7 @@ class ManualWindowInteractionController {
     this.dragState = null
     if (state.timer !== null) this.clearTimer(state.timer)
     this.observe({ kind: 'drag-end', role: state.role, moved: state.moved })
+    this.finishInteraction({ kind: 'drag', role: state.role, redock: state.redock, moved: state.moved })
     if (state.moved) {
       if (state.redock) this.settleGeometry(['caption', 'toolbar'])
       else if (state.role === 'toolbar') this.settleGeometry(['toolbar'])
@@ -252,6 +287,9 @@ class ManualWindowInteractionController {
 
   isDragging () { return this.dragState !== null }
   isResizing () { return this.resizeState !== null }
+  getActiveSenderId () {
+    return this.dragState?.senderId ?? this.resizeState?.senderId ?? null
+  }
 }
 
 module.exports = {

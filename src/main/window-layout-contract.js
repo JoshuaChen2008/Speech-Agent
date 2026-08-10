@@ -11,7 +11,9 @@ const WINDOW_LAYOUT = Object.freeze({
 const FALLBACK_OVERLAP_RECT = Object.freeze({
   top: 0,
   right: 0,
-  width: 584,
+  /* The widest real contour spans window-local 16..584. With the 20 DIP
+     dock inset its card-local left edge is 588 DIP from card-right. */
+  width: 588,
   height: 64
 })
 
