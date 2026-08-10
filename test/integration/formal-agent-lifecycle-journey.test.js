@@ -7,6 +7,10 @@ const path = require('node:path')
 const test = require('node:test')
 const { DatabaseSync } = require('node:sqlite')
 
+const {
+  AgentProviderBootstrap,
+  DEFAULT_AGENT_PROVIDER_CONFIG_CATALOG
+} = require('../../src/agent-provider/provider-bootstrap')
 const { FormalAgentStore, makeUserRequestDigest } = require('../../src/runtime/storage-worker/formal-agent-store')
 const { OPERATIONS, PROTOCOL_VERSION, makeCaptionEventId, makeCloseSessionKey, makeOpenSessionKey } = require('../../src/runtime/storage-worker/protocol')
 const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
@@ -170,6 +174,257 @@ function createSession (client, {
     )
   }
 }
+
+test('SEM-F28/SEM-T15 / D9/J24-B23/B26/B30 在配置校验前消费启动环境凭据并为三项后台 Agent 任务冻结 DeepSeek 快照', async (t) => {
+  const credentialName = 'DEEPSEEK_API_KEY'
+  const credentialCanary = 'd9-synthetic-startup-credential'
+  const startupEnvironment = {
+    D9_NON_SECRET: 'preserved',
+    [credentialName]: credentialCanary
+  }
+  let catalogReadAfterCredentialDeletion = false
+  const observedCatalog = new Proxy(DEFAULT_AGENT_PROVIDER_CONFIG_CATALOG, {
+    ownKeys (target) {
+      catalogReadAfterCredentialDeletion = !Object.keys(startupEnvironment)
+        .some((key) => key.toUpperCase() === credentialName)
+      return Reflect.ownKeys(target)
+    }
+  })
+  const bootstrap = new AgentProviderBootstrap({
+    environment: startupEnvironment,
+    configCatalog: observedCatalog
+  })
+  t.after(() => bootstrap.dispose())
+
+  assert.equal(catalogReadAfterCredentialDeletion, true)
+  assert.equal(Object.keys(startupEnvironment).some((key) => key.toUpperCase() === credentialName), false)
+  assert.deepEqual(bootstrap.getPublicState(), {
+    provider: {
+      providerId: 'deepseek',
+      providerKind: 'cloud',
+      model: 'deepseek-v4-flash'
+    },
+    configurationSource: 'trusted_config_table',
+    credentialState: 'startup_environment'
+  })
+  assert.deepEqual(bootstrap.getEligibilityProviderFacts(), {
+    providerId: 'deepseek',
+    providerKind: 'cloud',
+    model: 'deepseek-v4-flash',
+    credentialAvailable: true
+  })
+  assert.deepEqual(bootstrap.getProviderConfig(), {
+    providerId: 'deepseek',
+    providerKind: 'cloud',
+    apiStyle: 'openai-chat-completions',
+    baseUrl: 'https://api.deepseek.com',
+    model: 'deepseek-v4-flash',
+    maxChunkInputBytes: 65536,
+    maxResultBytes: 16384,
+    timeoutMs: 60000
+  })
+  assert.equal(Object.isFrozen(bootstrap.getProviderConfig()), true)
+  const initialChildEnvironment = bootstrap.getChildEnvironment()
+  assert.equal(Object.isFrozen(initialChildEnvironment), true)
+  assert.deepEqual(initialChildEnvironment, { D9_NON_SECRET: 'preserved' })
+
+  startupEnvironment[credentialName] = 'd9-runtime-injection-must-not-win'
+  assert.deepEqual(bootstrap.getChildEnvironment(), { D9_NON_SECRET: 'preserved' })
+  let successfulCredentialCopy
+  assert.equal(await bootstrap.withCredential(async (credential) => {
+    successfulCredentialCopy = credential
+    assert.equal(Buffer.isBuffer(credential), true)
+    assert.equal(credential.toString('utf8'), credentialCanary)
+    return 'borrow-succeeded'
+  }), 'borrow-succeeded')
+  assert.equal(successfulCredentialCopy.every((byte) => byte === 0), true)
+
+  let failedCredentialCopy
+  await assert.rejects(bootstrap.withCredential(async (credential) => {
+    failedCredentialCopy = credential
+    throw new Error('synthetic-provider-failure')
+  }), /synthetic-provider-failure/)
+  assert.equal(failedCredentialCopy.every((byte) => byte === 0), true)
+
+  const credentialAt4096Bytes = `${'密'.repeat(1365)}a`
+  const credentialAt4097Bytes = `${credentialAt4096Bytes}a`
+  assert.equal(Buffer.byteLength(credentialAt4096Bytes, 'utf8'), 4096)
+  assert.equal(Buffer.byteLength(credentialAt4097Bytes, 'utf8'), 4097)
+  const credentialClassifications = [
+    { name: 'missing', environment: { D9_CASE: 'missing' }, state: 'missing', available: false },
+    { name: 'blank', environment: { [credentialName]: ' \t\r\n ' }, state: 'invalid', available: false },
+    { name: '4096-byte', environment: { [credentialName]: credentialAt4096Bytes }, state: 'startup_environment', available: true },
+    { name: '4097-byte', environment: { [credentialName]: credentialAt4097Bytes }, state: 'invalid', available: false },
+    { name: 'lowercase', environment: { deepseek_api_key: credentialCanary }, state: 'startup_environment', available: true },
+    {
+      name: 'case-duplicate',
+      environment: { [credentialName]: credentialCanary, deepseek_api_key: 'd9-conflicting-credential' },
+      state: 'invalid',
+      available: false
+    },
+    { name: 'non-string', environment: { [credentialName]: Buffer.from('synthetic') }, state: 'invalid', available: false }
+  ]
+  for (const scenario of credentialClassifications) {
+    const classified = new AgentProviderBootstrap({ environment: scenario.environment })
+    assert.equal(classified.getPublicState().credentialState, scenario.state, scenario.name)
+    assert.equal(classified.getEligibilityProviderFacts().credentialAvailable, scenario.available, scenario.name)
+    assert.equal(Object.keys(scenario.environment).some((key) => key.toUpperCase() === credentialName), false, scenario.name)
+    classified.dispose()
+  }
+
+  const defaultProvider = DEFAULT_AGENT_PROVIDER_CONFIG_CATALOG.providers[0]
+  const invalidCatalogs = [
+    {
+      name: 'top-level-unknown-field',
+      catalog: {
+        ...DEFAULT_AGENT_PROVIDER_CONFIG_CATALOG,
+        unexpected: true
+      }
+    },
+    {
+      name: 'unknown-field',
+      catalog: {
+        schemaVersion: 1,
+        providers: [{ ...defaultProvider, unexpected: true }]
+      }
+    },
+    {
+      name: 'exact-origin-drift',
+      catalog: {
+        schemaVersion: 1,
+        providers: [{ ...defaultProvider, baseUrl: 'https://api.deepseek.com.evil.example' }]
+      }
+    },
+    {
+      name: 'schema-version-drift',
+      catalog: {
+        schemaVersion: 2,
+        providers: [{ ...defaultProvider }]
+      }
+    },
+    {
+      name: 'provider-count-drift',
+      catalog: {
+        schemaVersion: 1,
+        providers: [{ ...defaultProvider }, { ...defaultProvider }]
+      }
+    },
+    {
+      name: 'provider-budget-drift',
+      catalog: {
+        schemaVersion: 1,
+        providers: [{ ...defaultProvider, maxChunkInputBytes: 255 }]
+      }
+    }
+  ]
+  for (const scenario of invalidCatalogs) {
+    const environment = { [credentialName]: credentialCanary }
+    const rejected = new AgentProviderBootstrap({
+      environment,
+      configCatalog: scenario.catalog
+    })
+    assert.equal(rejected.getPublicState().provider, null, scenario.name)
+    assert.equal(rejected.getProviderConfig(), null, scenario.name)
+    assert.deepEqual(rejected.getEligibilityProviderFacts(), {
+      providerId: null,
+      providerKind: null,
+      model: null,
+      credentialAvailable: false
+    }, scenario.name)
+    assert.equal(Object.keys(environment).some((key) => key.toUpperCase() === credentialName), false, scenario.name)
+    await assert.rejects(
+      rejected.withCredential(async () => 'must-not-run'),
+      (error) => error?.code === 'AGENT_PROVIDER_AUTH_FAILED'
+    )
+    rejected.dispose()
+  }
+
+  const concurrentEnvironment = { [credentialName]: credentialCanary }
+  const concurrentBootstrap = new AgentProviderBootstrap({ environment: concurrentEnvironment })
+  const concurrentCopies = []
+  let releaseConcurrentBorrows
+  const concurrentBorrowRelease = new Promise((resolve) => { releaseConcurrentBorrows = resolve })
+  let reportBothBorrowed
+  const bothBorrowed = new Promise((resolve) => { reportBothBorrowed = resolve })
+  const borrowConcurrently = (result) => concurrentBootstrap.withCredential(async (credential) => {
+    concurrentCopies.push(credential)
+    if (concurrentCopies.length === 2) reportBothBorrowed()
+    await concurrentBorrowRelease
+    return result
+  })
+  const concurrentBorrows = [borrowConcurrently('first'), borrowConcurrently('second')]
+  await bothBorrowed
+  assert.equal(concurrentCopies.length, 2)
+  assert.equal(concurrentCopies.every((credential) => credential.toString('utf8') === credentialCanary), true)
+  concurrentBootstrap.invalidateCredential()
+  assert.equal(concurrentCopies.every((credential) => credential.every((byte) => byte === 0)), true)
+  assert.equal(concurrentBootstrap.getPublicState().credentialState, 'invalid')
+  releaseConcurrentBorrows()
+  assert.deepEqual(await Promise.all(concurrentBorrows), ['first', 'second'])
+  assert.equal(concurrentCopies.every((credential) => credential.every((byte) => byte === 0)), true)
+  concurrentEnvironment[credentialName] = 'd9-concurrent-runtime-injection-must-not-win'
+  assert.equal(concurrentBootstrap.getEligibilityProviderFacts().credentialAvailable, false)
+  assert.equal(Object.hasOwn(concurrentBootstrap.getChildEnvironment(), credentialName), false)
+  concurrentBootstrap.dispose()
+
+  const clock = { value: 9500 }
+  const journey = journeyEnvironment(t)
+  const client = journey.track(serviceFor(journey.databasePath, clock, { value: 0 }))
+  const readyContext = cloudContext(bootstrap.getEligibilityProviderFacts())
+  createSession(client, {
+    sessionId: 'd9-provider-ready',
+    captions: ['synthetic D9 provider startup boundary']
+  })
+  assert.equal(client.call(OPERATIONS.AGENT_EVALUATE_ELIGIBILITY, {
+    sessionId: 'd9-provider-ready',
+    requestedBy: 'automatic',
+    eligibilityContext: readyContext
+  }).eligibility, 'ready')
+  const reconciled = client.call(OPERATIONS.AGENT_RECONCILE_TERMINAL_SESSION, {
+    sessionId: 'd9-provider-ready',
+    requestedBy: 'automatic',
+    eligibilityContext: readyContext
+  })
+  assert.equal(reconciled.jobs.length, 3)
+  assert.equal(reconciled.jobs.every(({ job }) =>
+    job.providerId === 'deepseek' &&
+    job.providerKind === 'cloud' &&
+    job.model === 'deepseek-v4-flash'
+  ), true)
+
+  client.service.store.database.exec('PRAGMA wal_checkpoint(FULL)')
+  const credentialBytes = Buffer.from(credentialCanary, 'utf8')
+  for (const databaseFile of [journey.databasePath, `${journey.databasePath}-wal`, `${journey.databasePath}-shm`]) {
+    if (fs.existsSync(databaseFile)) {
+      assert.equal(fs.readFileSync(databaseFile).includes(credentialBytes), false)
+    }
+  }
+
+  bootstrap.invalidateCredential()
+  assert.equal(bootstrap.getPublicState().credentialState, 'invalid')
+  assert.equal(bootstrap.getEligibilityProviderFacts().credentialAvailable, false)
+  startupEnvironment[credentialName] = 'd9-second-runtime-injection-must-not-win'
+  assert.deepEqual(bootstrap.getChildEnvironment(), { D9_NON_SECRET: 'preserved' })
+  await assert.rejects(
+    bootstrap.withCredential(async () => 'must-not-run'),
+    (error) => error?.code === 'AGENT_PROVIDER_AUTH_FAILED'
+  )
+
+  createSession(client, {
+    sessionId: 'd9-provider-invalidated',
+    captions: ['synthetic D9 invalidated credential boundary'],
+    startedAt: 300,
+    endedAt: 400
+  })
+  const unavailable = client.call(OPERATIONS.AGENT_RECONCILE_TERMINAL_SESSION, {
+    sessionId: 'd9-provider-invalidated',
+    requestedBy: 'automatic',
+    eligibilityContext: cloudContext(bootstrap.getEligibilityProviderFacts())
+  })
+  assert.equal(unavailable.eligibility, 'credential_unavailable')
+  assert.deepEqual(unavailable.jobs, [])
+  assert.equal(Number(client.service.store.database.prepare('SELECT COUNT(*) AS count FROM agent_jobs').get().count), 3)
+})
 
 test('SEM-F28 / J24-B01/B26 preserves eligibility priority and subtitle independence', (t) => {
   const clock = { value: 10000 }
