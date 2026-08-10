@@ -108,6 +108,53 @@ function toolbarDockBoundsFor (captionBounds) {
   }
 }
 
+function captionNativeHitAt ({ captionBounds, toolbarOverlapRect, pointer, locked }) {
+  const validCaptionBounds = isExactObject(captionBounds, ['x', 'y', 'width', 'height']) &&
+    [captionBounds.x, captionBounds.y, captionBounds.width, captionBounds.height].every(Number.isFinite) &&
+    captionBounds.width > WINDOW_LAYOUT.captionMargin * 2 &&
+    captionBounds.height > WINDOW_LAYOUT.captionMargin * 2
+  const validOverlap = isExactObject(toolbarOverlapRect, ['top', 'right', 'width', 'height']) &&
+    [toolbarOverlapRect.top, toolbarOverlapRect.right,
+      toolbarOverlapRect.width, toolbarOverlapRect.height].every(Number.isFinite) &&
+    toolbarOverlapRect.top >= 0 && toolbarOverlapRect.right >= 0 &&
+    toolbarOverlapRect.width > 0 && toolbarOverlapRect.height > 0
+  const validPointer = isExactObject(pointer, ['x', 'y']) &&
+    Number.isFinite(pointer.x) && Number.isFinite(pointer.y)
+  if (!validCaptionBounds || !validOverlap || !validPointer || typeof locked !== 'boolean') {
+    throw new TypeError('caption native hit geometry is invalid')
+  }
+  if (locked) return false
+
+  const card = {
+    left: captionBounds.x + WINDOW_LAYOUT.captionMargin,
+    top: captionBounds.y + WINDOW_LAYOUT.captionMargin,
+    right: captionBounds.x + captionBounds.width - WINDOW_LAYOUT.captionMargin,
+    bottom: captionBounds.y + captionBounds.height - WINDOW_LAYOUT.captionMargin
+  }
+  if (pointer.x < card.left || pointer.x >= card.right ||
+      pointer.y < card.top || pointer.y >= card.bottom) return false
+
+  /* Match .tb-hole exactly: right anchoring plus max-width clipping against
+     the caption card. This is the same overlap already sent to the renderer,
+     not a second toolbar geometry source. */
+  const cardWidth = card.right - card.left
+  const holeWidth = Math.min(
+    toolbarOverlapRect.width,
+    Math.max(0, cardWidth - toolbarOverlapRect.right)
+  )
+  if (holeWidth <= 0) return true
+  const holeRight = card.right - toolbarOverlapRect.right
+  const hole = {
+    left: holeRight - holeWidth,
+    top: card.top + toolbarOverlapRect.top,
+    right: holeRight,
+    bottom: card.top + toolbarOverlapRect.top + toolbarOverlapRect.height
+  }
+  const insideToolbarOverlap = pointer.x >= hole.left && pointer.x < hole.right &&
+    pointer.y >= hole.top && pointer.y < hole.bottom
+  return !insideToolbarOverlap
+}
+
 class ToolbarLayoutState {
   constructor () {
     this.generation = 1
@@ -138,6 +185,7 @@ module.exports = {
   FALLBACK_OVERLAP_RECT,
   ToolbarLayoutState,
   WINDOW_LAYOUT,
+  captionNativeHitAt,
   dragBoundsAt,
   projectToolbarReport,
   toolbarDockBoundsFor

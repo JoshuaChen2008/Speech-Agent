@@ -66,6 +66,7 @@ const {
 const {
   WindowInteractionGenerationController
 } = require('./main/window-interaction-generation-controller')
+const { CaptionNativeHitController } = require('./main/caption-native-hit-controller')
 const { isInteractionReadyIntent } = require('./contracts/window-interaction')
 const { loadRendererFailClosed } = require('./main/renderer-entry')
 
@@ -153,6 +154,15 @@ const windowInteractionGenerationController = new WindowInteractionGenerationCon
     return true
   },
   onFault: ({ role, code }) => console.error(`[window.interaction] role=${role} code=${code}`)
+})
+const captionNativeHitController = new CaptionNativeHitController({
+  applyNativeHit: (value) => windowInteractionGenerationController.applyCaptionNativeHit(value),
+  getCaptionWindow: () => captionWin,
+  getCursorScreenPoint: () => screen.getCursorScreenPoint(),
+  getInteractionState: () => windowInteractionGenerationController.getState(),
+  getLocked: () => locked,
+  getToolbarOverlap: () => toolbarLayoutState.getOverlap(),
+  isGestureActive: () => windowInteractionController.isDragging() || windowInteractionController.isResizing()
 })
 const overlayGestureTerminal = createOverlayGestureTerminal({
   getActiveSenderId: () => windowInteractionController.getActiveSenderId(),
@@ -443,6 +453,7 @@ function createWindows () {
     if (captionPassThroughPrepared) captionWin.show()
     toolbarWin.show()
     dock()
+    captionNativeHitController.start()
     schedulePointerHitRefresh()
     restoreWindowStack()
   }
@@ -450,7 +461,11 @@ function createWindows () {
   toolbarWin.once('ready-to-show', () => { toolbarReady = true; showOverlayPair() })
   setTimeout(restoreWindowStack, 300)
 
-  captionWin.on('closed', () => { windowInteractionController.stopAll(); captionWin = null })
+  captionWin.on('closed', () => {
+    captionNativeHitController.stop()
+    windowInteractionController.stopAll()
+    captionWin = null
+  })
   toolbarWin.on('close', (event) => {
     if (quitBarrierComplete) return
     event.preventDefault()

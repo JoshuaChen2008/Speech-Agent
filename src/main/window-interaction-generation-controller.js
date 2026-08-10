@@ -26,6 +26,12 @@ function isCursorPoint (value) {
     Number.isFinite(value.x) && Number.isFinite(value.y)
 }
 
+function isCaptionNativeHit (value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    Object.keys(value).length === 2 && Number.isSafeInteger(value.generation) &&
+    value.generation > 0 && typeof value.solid === 'boolean'
+}
+
 class WindowInteractionGenerationController {
   constructor ({
     getWindow,
@@ -330,6 +336,16 @@ class WindowInteractionGenerationController {
       this.failures.delete(role)
     }
     return true
+  }
+
+  applyCaptionNativeHit (value) {
+    const role = 'caption'
+    if (!isCaptionNativeHit(value) || value.generation !== this.generation ||
+        this.phase !== 'resume' || this.suspendedRoles.has(role) ||
+        this.ackTimers.has(role) ||
+        this.failurePriority(role) <= FAILURE_PRIORITY['interaction-sync-timeout']) return false
+    const ignore = this.getLocked() ? true : !value.solid
+    return this.setNativeIgnore(role, ignore)
   }
 
   acceptGesture (role, payload) {
