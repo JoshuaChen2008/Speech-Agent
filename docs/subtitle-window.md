@@ -297,4 +297,4 @@ timer 间隔是实现细节（当前 16ms，对齐一帧）；取消语义不依
 4. B1 已把工具条升级为完整 RuntimeSnapshot + CommandResult。
 5. B1 已让设置页识别 Capabilities；默认 Gate 0B profile 为空，开发 profile 只能由显式开关启用。
 6. 视觉/UI 的 V1–V2 方案和状态矩阵已交付；历史窗口和模型资源页均已接真实主进程契约并通过开发态及 packaged 四窗口 Electron 旅程，205 段详情已验证五页往返且 DOM≤50。I3 非音频预资格又在 3,600 段/72 页下保持 DOM≤50；MVP 不展示翻译开关。J15a 可见非音频 DWM runner、单次/矩阵严格校验与 fail-closed 契约测试为实现完成·尚未验收；尚无 36 例实机 matrix 报告。物理音频、DPI/人工视觉、真实两小时声源与 I4 继续按发布门禁验收。
-7. J17 的动态命中、握把、工具条边缘稳定性、几何变化后重命中、设置/字幕历史 `48px` 标题栏、共享主题 token 与焦点层级往返已达到联合验收完成；I2 `dwm-drag` schema-v6 单组合报告、操作者 completion 与只接受当前 schema-v6 observation 的 12 组合严格矩阵为实现完成·尚未验收，历史 schema-v3/schema-v4/schema-v5 只允许读取，且尚未执行当前候选的 12 组合人工 DWM/DPI/异缩放观察。
+7. J17 的动态命中、握把、工具条边缘稳定性、几何变化后重命中、设置/字幕历史 `48px` 标题栏、共享主题 token 与焦点层级往返已达到联合验收完成；解锁字幕卡的主进程原生命中兜底为实现完成·尚未验收，确定性命中/代次/失败矩阵、跨模块拖动旅程与 I2 真实 HWND 入口接线已覆盖；I2 `dwm-drag` schema-v6 单组合报告、操作者 completion 与只接受当前 schema-v6 observation 的 12 组合严格矩阵为实现完成·尚未验收，历史 schema-v3/schema-v4/schema-v5 只允许读取，且尚未执行当前候选的 12 组合人工 DWM/DPI/异缩放观察。

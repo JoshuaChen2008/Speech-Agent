@@ -75,7 +75,7 @@ Hosted CI 不声称验证真实 WASAPI/回环、物理麦克风、DWM 窗口行�
 
 ## 3. 用户旅程矩阵
 
-> **J17 解锁字幕卡逐像素命中增量（2026-08-10）**：确定性层必须覆盖 Electron 未向不可聚焦、已穿透字幕 renderer 转发进入移动的故障边界：没有 renderer `mouseThrough(false)` 意图时，主进程仍按当前窗口交互代次、字幕 bounds、`20 DIP` 透明外边距与工具条有效 overlap rect 把可见字幕卡预先变为原生实心命中，使后续字幕拖动意图可以移动字幕窗与停靠工具条；透明外边距、工具条轮廓、锁定态、活动手势、`suspend`、renderer reload、同步失败与过期代次必须继续 fail closed。局部矩阵还要证明 bounds、overlap、锁定状态或窗口交互代次改变会使缓存失效，同一命中状态不会重复写原生 API，停止控制器后不遗留 timer。确定性层只证明主进程命中计算、窗口交互代次约束、原生 API 调用意图和真实内部模块协作；不可聚焦透明 HWND 的真实主键、DWM、DPI 与异缩放仍由 I2 `dwm-drag` schema-v6 观察。当前状态为已决定；尚无代码与回归证据。
+> **J17 解锁字幕卡逐像素命中增量（2026-08-10）**：确定性层必须覆盖 Electron 未向不可聚焦、已穿透字幕 renderer 转发进入移动的故障边界：没有 renderer `mouseThrough(false)` 意图时，主进程仍按当前窗口交互代次、字幕 bounds、`20 DIP` 透明外边距与工具条有效 overlap rect 把可见字幕卡预先变为原生实心命中，使后续字幕拖动意图可以移动字幕窗与停靠工具条；透明外边距、工具条轮廓、锁定态、活动手势、`suspend`、renderer reload、同步失败与过期代次必须继续 fail closed。局部矩阵还要证明 bounds、overlap、锁定状态或窗口交互代次改变会使缓存失效，同一命中状态不会重复写原生 API，停止控制器后不遗留 timer。确定性层只证明主进程命中计算、窗口交互代次约束、原生 API 调用意图和真实内部模块协作；不可聚焦透明 HWND 的真实主键、DWM、DPI 与异缩放仍由 I2 `dwm-drag` schema-v6 观察。该增量为实现完成·尚未验收：core 局部矩阵、SEM-T04 负向边界、J17 联合旅程与 I2 runner 接线契约已覆盖；尚无绑定当前候选的 I2 `dwm-drag` schema-v6 实机报告。
 
 | ID | 用户场景与联合链路 | CI / 验收 | 当前状态 |
 |---|---|---|---|
