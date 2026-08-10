@@ -98,6 +98,7 @@ Hosted CI 不声称验证真实 WASAPI/回环、物理麦克风、DWM 窗口行�
 新增功能必须在本表增加或更新场景；只有单元测试、没有对应用户旅程时，状态最多写“实现完成·尚未验收”。
 
 > **D9 / J24-B23/B26/B30 登记**：用一条确定性联合旅程把 main-only `AgentProviderConfigCatalog`、启动环境消费、公开状态投影、真实 `StorageWorkerService`/`FormalAgentStore` 与 SQLite 串联。表驱动覆盖缺失、空白、4096/4097 UTF-8 字节边界、Windows 大小写等价键及重复歧义键、配置表 unknown field/exact origin 漂移、删除早于配置校验、运行中注入不生效、子进程环境快照净化、调用副本在成功/异常后清零、鉴权失效后不可恢复，以及合法启动只冻结 `deepseek/deepseek-v4-flash` 并创建三项任务。该子边界不创建 `BrowserWindow` 或 Agent utility，不调用真实 DeepSeek，不得冒充完整 J24；相同输入分类合并进这一条旅程，不再新增逐字段单测。
+> 当前 D9 子边界为实现完成·尚未验收：单条旅程进一步覆盖双并发凭据借用、借用中失效即时清零、配置表顶层/schema/provider 数量/预算漂移和 SQLite 凭据 canary 负扫描；定向 1/1（完整文件 13/13）、core 529/529、integration 65/65、evidence 226/226，I3 非音频报告保持 `partial`。这些计数不证明真实 child/Agent utility、stdout/stderr、正式 main/IPC 或 DeepSeek 公网。
 
 J15a 的容量保险回归必须填入超过 `KEEP_SEGMENTS` 的已定稿段，再向已移除旧段注入高于当前 source watermark 与原 revision 的迟到 `final`；live reducer、主进程 canonical fold 和同会话 reload 都必须保持该段墓碑化且视图一致。只用低 sequence 让 SessionCoordinator 在入口拒绝事件，不算覆盖这个失败路径。
 
