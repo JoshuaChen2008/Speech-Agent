@@ -13,9 +13,9 @@ const electronPath = require('electron')
 const root = path.resolve(__dirname, '..', '..')
 const mainPath = path.join(root, 'scripts', 'formal-agent-storage-utility-smoke.js')
 const REPORT_KEYS = Object.freeze([
-  'schemaVersion', 'kind', 'result', 'checks', 'metrics', 'identityHash', 'scope', 'privacy'
+  'schemaVersion', 'kind', 'phase', 'result', 'checks', 'metrics', 'identityHash', 'scope', 'privacy'
 ].sort())
-const CHECK_KEYS = Object.freeze([
+const INITIAL_CHECK_KEYS = Object.freeze([
   'threeJobsReconciled',
   'meetingStoppedDetached',
   'nextSessionStartedBeforeNotificationRecovery',
@@ -26,21 +26,36 @@ const CHECK_KEYS = Object.freeze([
   'notificationFailureChildReaped',
   'exactChildReaped',
   'replacementBlockedBeforePolicy',
+  'taskPolicyReplayedBeforeUtility',
+  'agentUtilityTaskClosureExact',
+  'agentUtilityProviderResultObserved',
+  'agentUtilityExitChildReaped',
+  'utilityExitRetriedSameRun',
+  'credentialInvalidated',
+  'sameProcessClaimBlocked',
+  'noPartialArtifact',
+  'taskIdentityStable',
+  'eligibilityContextExact',
+  'captionFactsPreserved',
+  'gracefulStorageExit'
+].sort())
+const RECOVERY_CHECK_KEYS = Object.freeze([
+  'freshStartupCredentialAvailable',
+  'taskPolicyReplayedBeforeRecovery',
   'runnerCommitReplacementChildReaped',
   'runnerCommitReplayedThroughGateway',
   'runnerReplacementBlockedBeforePolicy',
-  'taskPolicyReplayedBeforeRecovery',
-  'duplicateReconciliationIdempotent',
   'sameRunRecovered',
   'taskIdentityStable',
   'independentResultsCommitted',
   'memoryReadThroughGateway',
   'noDuplicateClaims',
   'artifactProjectionExact',
-  'pluginTaskClosureExact',
+  'agentUtilityTaskClosureExact',
   'eligibilityContextExact',
   'captionFactsPreserved',
-  'gracefulExactExit'
+  'gracefulAgentUtilityExit',
+  'gracefulStorageExit'
 ].sort())
 const TRANSCRIPT_FRAGMENTS = Object.freeze([
   'D12 synthetic committed transcript before Agent enable',
@@ -64,14 +79,16 @@ function assertPrivateProjection (value, dataRoot) {
   assert.doesNotMatch(projection, AUDIO_PATH)
 }
 
-function runJourney (dataRoot) {
+function runPhase (dataRoot, phase) {
   return new Promise((resolve, reject) => {
     const credentialCanary = crypto.randomBytes(24).toString('hex')
     const child = childProcess.spawn(electronPath, [
       '--disable-gpu',
       mainPath,
       '--data-root',
-      dataRoot
+      dataRoot,
+      '--phase',
+      phase
     ], {
       cwd: root,
       windowsHide: true,
@@ -89,7 +106,7 @@ function runJourney (dataRoot) {
       if (settled) return
       timedOut = true
       child.kill()
-    }, 30000)
+    }, 40000)
     child.stdout.on('data', (chunk) => { stdout += chunk.toString('utf8') })
     child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8') })
     child.once('error', (error) => {
@@ -102,14 +119,16 @@ function runJourney (dataRoot) {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      if (timedOut) return reject(new Error('formal Agent storage utility journey timed out after exact child exit'))
+      if (timedOut) return reject(new Error(`formal Agent utility ${phase} phase timed out`))
       const line = stdout.split(/\r?\n/).find((value) =>
         value.startsWith('{"schemaVersion":1,"kind":"formal-agent-storage-utility-journey"')
       )
-      if (!line) return reject(new Error('formal Agent storage utility report is missing'))
+      if (!line) return reject(new Error(`formal Agent utility ${phase} report is missing`))
       let report
       try { report = JSON.parse(line) } catch (error) { return reject(error) }
-      if (code !== 0) return reject(new Error(`formal Agent storage utility journey exited ${code} at ${report.failurePhase || 'unknown'}`))
+      if (code !== 0) {
+        return reject(new Error(`formal Agent utility ${phase} exited ${code} at ${report.failurePhase || 'unknown'}`))
+      }
       resolve({ report, stdout, stderr, credentialCanary })
     })
   })
@@ -123,6 +142,34 @@ function listFiles (directory) {
     else if (entry.isFile()) result.push(target)
   }
   return result
+}
+
+function assertReportEnvelope (report, phase, checkKeys) {
+  assert.deepEqual(Object.keys(report).sort(), REPORT_KEYS)
+  assert.equal(report.schemaVersion, 1)
+  assert.equal(report.kind, 'formal-agent-storage-utility-journey')
+  assert.equal(report.phase, phase)
+  assert.equal(report.result, 'pass')
+  assert.deepEqual(Object.keys(report.checks).sort(), checkKeys)
+  assert.equal(Object.values(report.checks).every((value) => value === true), true)
+  assert.match(report.identityHash, /^[a-f0-9]{64}$/)
+  assert.deepEqual(report.scope, {
+    storageUtilityProcess: true,
+    agentUtilityProcess: true,
+    meetingStoppedWiring: true,
+    meetingStoppedStorageGatewayWiring: true,
+    agentJobRunnerStorageGatewayWiring: true,
+    preloadIpcRenderer: false,
+    packagedRuntime: false
+  })
+  assert.deepEqual(report.privacy, {
+    noBrowserWindowCreated: true,
+    browserWindowCount: 0,
+    reportContainsTranscriptText: false,
+    reportContainsAbsolutePath: false,
+    persistedAudio: false,
+    audioFileCount: 0
+  })
 }
 
 test('SEM-F14 / J24-B30 D6 report privacy reader rejects transcript, path, raw error and audio classes', () => {
@@ -140,55 +187,55 @@ test('SEM-F14 / J24-B30 D6 report privacy reader rejects transcript, path, raw e
   ))
 })
 
-test('SEM-F00/F09/F12/F16/F28/SEM-T15 / D6/D10/D12/D13/J7/J24-B01/B04/B05/B06/B07/B14/B25/B26/B30/B33 routes formal tasks through storage utility generations once', { timeout: 40000 }, async (t) => {
+test('SEM-F00/F09/F12/F16/F25/F28/SEM-T15 / D6/D10/D12/D13/D14/J7/J24-B01/B04/B05/B06/B07/B14/B23/B25/B26/B30/B33 routes formal tasks through exact utility generations', { timeout: 90000 }, async (t) => {
   const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'formal-agent-storage-utility-'))
   t.after(() => fs.rmSync(dataRoot, { recursive: true, force: true }))
 
-  const { report, stdout, stderr, credentialCanary } = await runJourney(dataRoot)
-  assert.deepEqual(Object.keys(report).sort(), REPORT_KEYS)
-  assert.equal(report.schemaVersion, 1)
-  assert.equal(report.kind, 'formal-agent-storage-utility-journey')
-  assert.equal(report.result, 'pass')
-  assert.deepEqual(Object.keys(report.checks).sort(), CHECK_KEYS)
-  assert.equal(Object.values(report.checks).every((value) => value === true), true)
-  assert.deepEqual(report.metrics, {
-    storageGenerationCount: 4,
+  const initial = await runPhase(dataRoot, 'initial')
+  const recovery = await runPhase(dataRoot, 'recovery')
+  assertReportEnvelope(initial.report, 'initial', INITIAL_CHECK_KEYS)
+  assertReportEnvelope(recovery.report, 'recovery', RECOVERY_CHECK_KEYS)
+  assert.deepEqual(initial.report.metrics, {
+    storageGenerationCount: 3,
+    agentUtilityGenerationCount: 1,
+    jobCount: 3,
+    artifactCount: 0,
+    memoryCommitCount: 0,
+    providerResultCount: 1,
+    recoveredAttemptCount: 2
+  })
+  assert.deepEqual(recovery.report.metrics, {
+    storageGenerationCount: 2,
+    agentUtilityGenerationCount: 1,
     jobCount: 3,
     artifactCount: 2,
     memoryCommitCount: 1,
-    providerCallCount: 3,
-    recoveredAttemptCount: 2
+    providerResultCount: 3,
+    recoveredAttemptCount: 3
   })
-  assert.match(report.identityHash, /^[a-f0-9]{64}$/)
-  assert.deepEqual(report.scope, {
-    storageUtilityProcess: true,
-    agentUtilityProcess: false,
-    meetingStoppedWiring: true,
-    meetingStoppedStorageGatewayWiring: true,
-    agentJobRunnerStorageGatewayWiring: true,
-    preloadIpcRenderer: false,
-    packagedRuntime: false
-  })
-  assert.deepEqual(report.privacy, {
-    noBrowserWindowCreated: true,
-    browserWindowCount: 0,
-    reportContainsTranscriptText: false,
-    reportContainsAbsolutePath: false,
-    persistedAudio: false,
-    audioFileCount: 0
-  })
-  assertPrivateProjection(JSON.stringify(report), dataRoot)
-  assertPrivateProjection(stdout, dataRoot)
-  assertPrivateProjection(stderr, dataRoot)
-  assert.equal(JSON.stringify(report).includes(credentialCanary), false)
-  assert.equal(stdout.includes(credentialCanary), false)
-  assert.equal(stderr.includes(credentialCanary), false)
+  assert.equal(initial.report.identityHash, recovery.report.identityHash)
+  assert.equal(initial.report.metrics.storageGenerationCount + recovery.report.metrics.storageGenerationCount, 5)
+  assert.equal(initial.report.metrics.agentUtilityGenerationCount + recovery.report.metrics.agentUtilityGenerationCount, 2)
+  assert.equal(initial.report.metrics.providerResultCount + recovery.report.metrics.providerResultCount, 4)
+
+  for (const execution of [initial, recovery]) {
+    assertPrivateProjection(JSON.stringify(execution.report), dataRoot)
+    assertPrivateProjection(execution.stdout, dataRoot)
+    assertPrivateProjection(execution.stderr, dataRoot)
+    for (const canary of [initial.credentialCanary, recovery.credentialCanary]) {
+      assert.equal(JSON.stringify(execution.report).includes(canary), false)
+      assert.equal(execution.stdout.includes(canary), false)
+      assert.equal(execution.stderr.includes(canary), false)
+    }
+  }
 
   const files = listFiles(dataRoot)
   assert.equal(files.some((file) => AUDIO_PATH.test(path.basename(file))), false)
   for (const file of files) {
-    assert.equal(fs.readFileSync(file).includes(Buffer.from(credentialCanary)), false)
-    assert.equal(fs.readFileSync(file).includes(Buffer.from(PROVIDER_URL)), false)
+    const bytes = fs.readFileSync(file)
+    assert.equal(bytes.includes(Buffer.from(initial.credentialCanary)), false)
+    assert.equal(bytes.includes(Buffer.from(recovery.credentialCanary)), false)
+    assert.equal(bytes.includes(Buffer.from(PROVIDER_URL)), false)
   }
   const config = JSON.parse(fs.readFileSync(path.join(dataRoot, 'data', 'config.json'), 'utf8'))
   assert.equal(Object.hasOwn(config, 'providerId'), false)
@@ -212,7 +259,7 @@ test('SEM-F00/F09/F12/F16/F28/SEM-T15 / D6/D10/D12/D13/J7/J24-B01/B04/B05/B06/B0
       state: job.state,
       attemptCount: Number(job.attempt_count)
     })), [
-      { taskKind: 'meeting-minutes', state: 'succeeded', attemptCount: 2 },
+      { taskKind: 'meeting-minutes', state: 'succeeded', attemptCount: 3 },
       { taskKind: 'memory-extraction', state: 'succeeded', attemptCount: 1 },
       { taskKind: 'enhanced-transcript', state: 'succeeded', attemptCount: 1 }
     ])
@@ -240,7 +287,7 @@ test('SEM-F00/F09/F12/F16/F28/SEM-T15 / D6/D10/D12/D13/J7/J24-B01/B04/B05/B06/B0
       inputDigest: jobs[0].input_digest,
       runIds: jobs.map((job) => job.run_id).sort()
     })).digest('hex')
-    assert.equal(report.identityHash, independentIdentityHash)
+    assert.equal(recovery.report.identityHash, independentIdentityHash)
   } finally {
     database.close()
   }

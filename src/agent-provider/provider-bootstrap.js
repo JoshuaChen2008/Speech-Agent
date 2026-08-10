@@ -5,6 +5,7 @@ const { AgentCoreError } = require('../agent-core/errors')
 const CREDENTIAL_ENV_NAME = 'DEEPSEEK_API_KEY'
 const CONFIGURATION_SOURCE = 'trusted_config_table'
 const MAX_CREDENTIAL_BYTES = 4096
+const INVOCATION_BOOTSTRAP = Symbol('agent-provider-invocation-bootstrap')
 const PROVIDER_CONFIG_KEYS = Object.freeze([
   'providerId',
   'providerKind',
@@ -143,11 +144,25 @@ class AgentProviderBootstrap {
   #credential
   #credentialState
   #borrowedCredentials
+  #scope
 
-  constructor ({
-    environment = process.env,
-    configCatalog = DEFAULT_AGENT_PROVIDER_CONFIG_CATALOG
-  } = {}) {
+  constructor (options = {}) {
+    const invocation = options?.[INVOCATION_BOOTSTRAP]
+    if (invocation) {
+      this.#scope = 'invocation'
+      this.#providerConfig = invocation.providerConfig
+      this.#childEnvironment = null
+      this.#credential = invocation.credential
+      this.#credentialState = 'invocation'
+      this.#borrowedCredentials = new Set()
+      return
+    }
+
+    const {
+      environment = process.env,
+      configCatalog = DEFAULT_AGENT_PROVIDER_CONFIG_CATALOG
+    } = options
+    this.#scope = 'startup'
     const consumed = consumeStartupCredential(environment)
     this.#childEnvironment = sanitizedChildEnvironment(environment)
     const classifiedCredential = classifyCredential(consumed)
@@ -166,11 +181,42 @@ class AgentProviderBootstrap {
       : null
   }
 
+  static fromInvocation (input = {}) {
+    exactObject(input, ['providerConfig', 'credential'])
+    const { providerConfig, credential } = input
+    let validatedProvider
+    try {
+      validatedProvider = validateAgentProviderConfigCatalog({
+        schemaVersion: 1,
+        providers: [{ ...providerConfig }]
+      }).providers[0]
+    } catch {
+      throw invalidRequest()
+    }
+    if (!Buffer.isBuffer(credential) || credential.length < 1 ||
+        credential.length > MAX_CREDENTIAL_BYTES || !credential.some((byte) => byte !== 0)) {
+      throw invalidRequest()
+    }
+    const ownedCredential = Buffer.from(credential)
+    try {
+      return new AgentProviderBootstrap({
+        [INVOCATION_BOOTSTRAP]: {
+          providerConfig: validatedProvider,
+          credential: ownedCredential
+        }
+      })
+    } catch (error) {
+      ownedCredential.fill(0)
+      throw error
+    }
+  }
+
   getProviderConfig () {
     return frozenProviderConfig(this.#providerConfig)
   }
 
   getPublicState () {
+    if (this.#scope !== 'startup') throw invalidRequest()
     const provider = this.#providerConfig
       ? Object.freeze({
           providerId: this.#providerConfig.providerId,
@@ -186,6 +232,7 @@ class AgentProviderBootstrap {
   }
 
   getEligibilityProviderFacts () {
+    if (this.#scope !== 'startup') throw invalidRequest()
     if (!this.#providerConfig) {
       return Object.freeze({
         providerId: null,
@@ -203,12 +250,13 @@ class AgentProviderBootstrap {
   }
 
   getChildEnvironment () {
+    if (this.#scope !== 'startup') throw invalidRequest()
     return Object.freeze({ ...this.#childEnvironment })
   }
 
   async withCredential (callback) {
     if (typeof callback !== 'function') throw invalidRequest()
-    if (this.#credentialState !== 'startup_environment' || this.#credential === null) {
+    if (!['startup_environment', 'invocation'].includes(this.#credentialState) || this.#credential === null) {
       throw new AgentCoreError('AGENT_PROVIDER_AUTH_FAILED')
     }
     const borrowedCredential = Buffer.from(this.#credential)
@@ -227,7 +275,7 @@ class AgentProviderBootstrap {
       this.#credential = null
     }
     for (const borrowedCredential of this.#borrowedCredentials) borrowedCredential.fill(0)
-    if (this.#credentialState === 'startup_environment') this.#credentialState = 'invalid'
+    if (['startup_environment', 'invocation'].includes(this.#credentialState)) this.#credentialState = 'invalid'
   }
 
   dispose () {

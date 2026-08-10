@@ -1,23 +1,23 @@
 'use strict'
 
-/* D6/D12/D13 确定性组合：Electron main → SessionCoordinator →
-   MeetingStoppedPersistenceSink → SqliteSessionRecorder → StorageGateway →
-   production StorageWorkerHost/storage utility/SQLite，再由正式
-   AgentPluginHost / ModelGateway / Pi Agent Loop / job runner 消费。
-   只替代声卡输入与 Agent 模型 provider；不开 BrowserWindow，不写报告文件。 */
+/* D6/D12/D13/D14 确定性组合：两次 UI-free Electron main 启动共享同一
+   SQLite；字幕提交与任务存储经过正式 storage utility，模型执行经过正式
+   Agent utility。只替代声卡输入与 Agent 模型 provider，不写报告文件。 */
 
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { app, BrowserWindow } = require('electron')
 
-const { AgentInputPlanner } = require('../src/agent-core/formal/input-planner')
 const { AgentJobRunner } = require('../src/agent-core/formal/job-runner')
-const { ModelGateway } = require('../src/agent-core/formal/model-gateway')
-const { AgentPluginHost } = require('../src/agent-core/formal/plugin-host')
-const { MemoryReader, TranscriptReader } = require('../src/agent-core/formal/storage-ports')
-const { AgentModelProviderRegistry } = require('../src/agent-provider/model-provider-registry')
+const { MemoryReader } = require('../src/agent-core/formal/storage-ports')
 const { AgentProviderBootstrap } = require('../src/agent-provider/provider-bootstrap')
+const {
+  AgentUtilityPluginProxy
+} = require('../src/agent-runtime/agent-utility/plugin-proxy')
+const {
+  AgentUtilityWorkerHost
+} = require('../src/agent-runtime/agent-utility/worker-host')
 const {
   FormalAgentRuntime,
   MeetingStoppedPersistenceSink
@@ -44,14 +44,21 @@ const TASK_KINDS = Object.freeze([
   'enhanced-transcript'
 ])
 const REPORT_KIND = 'formal-agent-storage-utility-journey'
+const PROVIDER_RESULT_MARKER = 'D14_AGENT_PROVIDER_RESULT\n'
+const AGENT_UTILITY_FIXTURE = path.join(__dirname, 'fixtures', 'formal-agent-utility-worker.js')
 
 function parseArguments (argv) {
-  const indexes = argv.flatMap((value, index) => value === '--data-root' ? [index] : [])
-  const index = indexes[0]
-  if (indexes.length !== 1 || index + 1 >= argv.length || !path.isAbsolute(argv[index + 1])) {
+  const dataIndexes = argv.flatMap((value, index) => value === '--data-root' ? [index] : [])
+  const phaseIndexes = argv.flatMap((value, index) => value === '--phase' ? [index] : [])
+  const dataIndex = dataIndexes[0]
+  const phaseIndex = phaseIndexes[0]
+  if (dataIndexes.length !== 1 || phaseIndexes.length !== 1 ||
+      dataIndex + 1 >= argv.length || phaseIndex + 1 >= argv.length ||
+      !path.isAbsolute(argv[dataIndex + 1]) ||
+      !['initial', 'recovery'].includes(argv[phaseIndex + 1])) {
     throw new Error('invalid arguments')
   }
-  return { dataRoot: argv[index + 1] }
+  return { dataRoot: argv[dataIndex + 1], journeyPhase: argv[phaseIndex + 1] }
 }
 
 function captionEvent (sessionId, sequence, text) {
@@ -68,126 +75,6 @@ function captionEvent (sessionId, sequence, text) {
     text,
     translation: null
   }
-}
-
-function evidenceForSegments (segments) {
-  return [{
-    fromEventOrder: Math.min(...segments.map((segment) => segment.eventOrder)),
-    throughEventOrder: Math.max(...segments.map((segment) => segment.eventOrder))
-  }]
-}
-
-class D13DeterministicProvider {
-  constructor ({ afterFirstModelResult = null } = {}) {
-    if (afterFirstModelResult !== null && typeof afterFirstModelResult !== 'function') {
-      throw new TypeError('afterFirstModelResult must be a function')
-    }
-    this.calls = []
-    this.afterFirstModelResult = afterFirstModelResult
-  }
-
-  resultFor (request) {
-    const evidence = evidenceForSegments(request.input.segments)
-    if (request.operation === 'meeting-minutes.chunk') {
-      return {
-        type: 'meeting-minutes',
-        content: {
-          overview: 'synthetic utility transport overview',
-          conclusions: [],
-          actionItems: [],
-          risks: []
-        }
-      }
-    }
-    if (request.operation === 'memory-extraction.chunk') {
-      return {
-        type: 'memory-candidates',
-        candidates: [{
-          kind: 'decision',
-          semanticKey: 'decision:formal-agent-utility',
-          scope: {
-            kind: 'session',
-            canonicalKey: request.input.inputRef.sessionId,
-            label: 'synthetic utility session'
-          },
-          origin: 'explicit',
-          content: { statement: 'synthetic utility decision' },
-          evidence,
-          confidenceBand: 'high',
-          salienceBand: 'high'
-        }]
-      }
-    }
-    if (request.operation === 'enhanced-transcript.chunk') {
-      return {
-        type: 'enhanced-transcript',
-        content: {
-          paragraphs: [{ text: 'synthetic enhanced utility transcript', evidence }]
-        }
-      }
-    }
-    throw new Error('unexpected operation')
-  }
-
-  async openModel ({ request, credential }) {
-    if (!Buffer.isBuffer(credential) || !credential.some((byte) => byte !== 0)) {
-      throw new Error('credential unavailable')
-    }
-    const faux = await import('@earendil-works/pi-ai/providers/faux')
-    this.calls.push(structuredClone(request))
-    const core = faux.createFauxCore({
-      provider: 'deterministic-test',
-      api: 'formal-agent-storage-utility-test',
-      models: [{ id: 'deepseek-v4-flash' }]
-    })
-    core.setResponses([faux.fauxAssistantMessage(JSON.stringify(this.resultFor(request)))])
-    const streamFn = (...args) => {
-      const stream = core.streamSimple(...args)
-      const afterFirstModelResult = this.afterFirstModelResult
-      this.afterFirstModelResult = null
-      if (!afterFirstModelResult) return stream
-      let finalResult = null
-      return {
-        [Symbol.asyncIterator]: () => stream[Symbol.asyncIterator](),
-        result: () => {
-          if (!finalResult) {
-            finalResult = stream.result().then(async (message) => {
-              await afterFirstModelResult()
-              return message
-            })
-          }
-          return finalResult
-        }
-      }
-    }
-    return { model: core.getModel(), streamFn }
-  }
-}
-
-function createAgentJobRuntime (storage, provider, bootstrap) {
-  const providerRegistry = new AgentModelProviderRegistry({
-    bootstrap,
-    adapters: [{
-      providerId: 'deepseek',
-      providerKind: 'cloud',
-      apiStyle: 'openai-chat-completions',
-      openModel: (request) => provider.openModel(request)
-    }]
-  })
-  const modelGateway = new ModelGateway({ providerRegistry })
-  const pluginHost = new AgentPluginHost({
-    transcriptReader: new TranscriptReader(storage),
-    inputPlanner: new AgentInputPlanner(),
-    modelGateway
-  })
-  const runner = new AgentJobRunner({
-    storage,
-    pluginHost,
-    owner: 'formal-agent-utility-runner',
-    leaseMs: 5000,
-    retryDelaysMs: [0]
-  })
-  return { pluginHost, providerRegistry, runner }
 }
 
 function identityHash (inputRef, runIds) {
@@ -222,52 +109,143 @@ async function terminateQuietly (target) {
     await target.terminate().catch(() => {})
     return
   }
-  if (target.child !== null && typeof target.terminateAndWait === 'function') {
+  if (typeof target.terminateAndWait === 'function') {
     await target.terminateAndWait(5000).catch(() => {})
   }
 }
 
-async function main () {
-  let phase = 'arguments'
+function observeFixtureOutput (host) {
+  const child = host.child
+  if (!child?.stdout || !child?.stderr) throw new Error('fixture stdio unavailable')
+  let stdout = ''
+  let stderr = ''
+  let overflow = false
+  const append = (field, chunk) => {
+    const value = chunk.toString('utf8')
+    if (field === 'stdout') {
+      stdout += value
+      if (stdout.length > 4096) { stdout = stdout.slice(0, 4096); overflow = true }
+    } else {
+      stderr += value
+      if (stderr.length > 4096) { stderr = stderr.slice(0, 4096); overflow = true }
+    }
+  }
+  child.stdout.on('data', (chunk) => append('stdout', chunk))
+  child.stderr.on('data', (chunk) => append('stderr', chunk))
+  const closed = Promise.all([child.stdout, child.stderr].map((stream) => new Promise((resolve) => {
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+    stream.once('end', finish)
+    stream.once('close', finish)
+  })))
+  return {
+    async snapshot () {
+      await Promise.race([closed, sleep(1000)])
+      const markerCount = stdout.split(PROVIDER_RESULT_MARKER).length - 1
+      return {
+        markerCount,
+        exact: !overflow && stderr === '' && stdout === PROVIDER_RESULT_MARKER.repeat(markerCount)
+      }
+    }
+  }
+}
+
+function createStorageGateway (databasePath, storageGenerations) {
+  return new StorageGateway({
+    databasePath,
+    maxRestarts: 2,
+    requestTimeoutMs: 10000,
+    hostFactory: (options) => {
+      const host = new StorageWorkerHost(options)
+      storageGenerations.push(host)
+      return host
+    }
+  })
+}
+
+async function createAgentUtility ({ storage, providerBootstrap, scenario }) {
+  const workerHost = new AgentUtilityWorkerHost({
+    environment: providerBootstrap.getChildEnvironment(),
+    workerPath: AGENT_UTILITY_FIXTURE,
+    workerArgs: ['--scenario', scenario],
+    requestTimeoutMs: 10000,
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  const pluginProxy = new AgentUtilityPluginProxy({
+    storage,
+    workerHost,
+    providerBootstrap
+  })
+  await workerHost.start()
+  const output = observeFixtureOutput(workerHost)
+  return { workerHost, pluginProxy, output }
+}
+
+function createRunner (storage, pluginHost) {
+  return new AgentJobRunner({
+    storage,
+    pluginHost,
+    owner: 'formal-agent-utility-runner',
+    leaseMs: 5000,
+    retryDelaysMs: [250]
+  })
+}
+
+function exactEligibilityContext (context) {
+  return JSON.stringify(Object.keys(context).sort()) === JSON.stringify([
+    'agentEnabled',
+    'automaticProcessingSince',
+    'cloudDisclosureAccepted',
+    'credentialAvailable',
+    'localModelReady',
+    'memoryEnabled',
+    'memoryProcessingSince',
+    'model',
+    'providerId',
+    'providerKind'
+  ]) && !Object.hasOwn(context, 'apiKey') && !Object.hasOwn(context, 'baseUrl')
+}
+
+function privacyProjection (dataRoot) {
+  const browserWindowCount = BrowserWindow.getAllWindows().length
+  const audioFileCount = countAudioFiles(dataRoot)
+  if (browserWindowCount !== 0 || audioFileCount !== 0) throw new Error('privacy invariant')
+  return {
+    noBrowserWindowCreated: browserWindowCount === 0,
+    browserWindowCount,
+    reportContainsTranscriptText: false,
+    reportContainsAbsolutePath: false,
+    persistedAudio: audioFileCount !== 0,
+    audioFileCount
+  }
+}
+
+function assertChecks (checks, onFailure) {
+  const failed = Object.entries(checks).find(([, value]) => value !== true)
+  if (!failed) return
+  if (typeof onFailure === 'function') onFailure(failed[0])
+  throw new Error('journey assertion')
+}
+
+async function runInitialPhase ({ dataRoot, databasePath, configPath, providerBootstrap }) {
+  let phase = 'initial-storage-start'
   let storageGateway = null
   let agentRuntime = null
   let coordinator = null
-  let providerBootstrap = null
-  let providerRegistry = null
+  let utility = null
   try {
-    const { dataRoot } = parseArguments(process.argv)
-    const userData = path.join(dataRoot, 'electron-user-data')
-    const dataDirectory = path.join(dataRoot, 'data')
-    const databasePath = path.join(dataDirectory, 'speech-agent.sqlite3')
-    const configPath = path.join(dataDirectory, 'config.json')
-    fs.mkdirSync(userData, { recursive: true })
-    app.setPath('userData', userData)
-    app.on('window-all-closed', () => {})
-
-    phase = 'provider-bootstrap'
-    providerBootstrap = new AgentProviderBootstrap({ environment: process.env })
+    const storageGenerations = []
     const clock = { value: 10 }
     const configStore = new ConfigStore(configPath, { now: () => clock.value })
     configStore.load()
     configStore.applyPreset('meeting')
 
-    phase = 'app-ready'
-    await app.whenReady()
-
-    phase = 'formal-runtime-start'
-    const storageGenerations = []
-    storageGateway = new StorageGateway({
-      databasePath,
-      maxRestarts: 2,
-      requestTimeoutMs: 10000,
-      hostFactory: (options) => {
-        const host = new StorageWorkerHost(options)
-        storageGenerations.push(host)
-        return host
-      }
-    })
+    storageGateway = createStorageGateway(databasePath, storageGenerations)
     await storageGateway.start()
-
     const diagnostics = []
     let localModelReady = false
     agentRuntime = new FormalAgentRuntime({
@@ -279,7 +257,7 @@ async function main () {
     })
     const initialRecovery = await agentRuntime.recoverTerminalSessions({ sessionIds: [] })
 
-    phase = 'invalid-policy-context'
+    phase = 'initial-invalid-policy'
     localModelReady = null
     let invalidPolicyRejected = false
     try {
@@ -294,14 +272,8 @@ async function main () {
     localModelReady = false
     const restoredInitialPolicy = await agentRuntime.recoverTerminalSessions({ sessionIds: [] })
 
-    const recorder = new SqliteSessionRecorder({
-      gateway: storageGateway,
-      now: () => clock.value
-    })
-    const persistenceSink = new MeetingStoppedPersistenceSink({
-      subtitleSink: recorder,
-      agentRuntime
-    })
+    const recorder = new SqliteSessionRecorder({ gateway: storageGateway, now: () => clock.value })
+    const persistenceSink = new MeetingStoppedPersistenceSink({ subtitleSink: recorder, agentRuntime })
     const adapter = new FakeRuntimeAdapter({ autoEmit: false })
     let sessionIndex = 0
     coordinator = new SessionCoordinator({
@@ -312,7 +284,7 @@ async function main () {
       persistenceSink
     })
 
-    phase = 'agent-disabled-session'
+    phase = 'initial-disabled-session'
     clock.value = 100
     const disabledStart = await coordinator.command('start')
     if (!disabledStart.ok || coordinator.getSnapshot().sessionId !== DISABLED_SESSION_ID) {
@@ -327,7 +299,7 @@ async function main () {
     const disabledStop = await coordinator.command('stop')
     await waitForMeetingStopped(agentRuntime)
 
-    phase = 'agent-settings-enable'
+    phase = 'initial-agent-settings'
     clock.value = 200
     const enabled = await agentRuntime.updateAgentSettings({
       expectedRevision: 0,
@@ -336,56 +308,44 @@ async function main () {
       cloudDisclosureAccepted: true
     })
 
-    phase = 'meeting-stopped-detached-reconciliation'
+    phase = 'initial-meeting-stopped'
     clock.value = 210
     const readyStart = await coordinator.command('start')
     if (!readyStart.ok || coordinator.getSnapshot().sessionId !== READY_SESSION_ID) {
       throw new Error('ready session start invariant')
     }
-    adapter.emitCaption(captionEvent(
-      READY_SESSION_ID,
-      1,
-      'D12 synthetic committed transcript first'
-    ))
-    adapter.emitCaption(captionEvent(
-      READY_SESSION_ID,
-      2,
-      'D12 synthetic committed transcript second'
-    ))
+    adapter.emitCaption(captionEvent(READY_SESSION_ID, 1, 'D12 synthetic committed transcript first'))
+    adapter.emitCaption(captionEvent(READY_SESSION_ID, 2, 'D12 synthetic committed transcript second'))
     clock.value = 220
     const readyStop = await coordinator.command('stop')
     const stopReturnedBeforeNotification = readyStop.ok &&
       coordinator.getSnapshot().phase === 'idle' &&
       diagnostics.filter((diagnostic) => diagnostic?.code === 'AGENT_RECONCILE_FAILED').length === 0
 
-    phase = 'real-storage-notification-failure'
-    const notificationFailureHost = storageGateway.host
-    const notificationFailureChild = notificationFailureHost?.child
-    if (!notificationFailureHost || notificationFailureHost.state !== 'ready' || !notificationFailureChild) {
-      throw new Error('notification failure child unavailable')
+    phase = 'initial-notification-worker-exit'
+    const notificationHost = storageGateway.host
+    const notificationChild = notificationHost?.child
+    if (!notificationHost || notificationHost.state !== 'ready' || !notificationChild) {
+      throw new Error('notification child unavailable')
     }
-    const notificationFailureExitPromise = notificationFailureHost.waitForExactExit()
-    const notificationFailureTermination = notificationFailureHost.terminateAndWait(10000)
+    const notificationExitPromise = notificationHost.waitForExactExit()
+    const notificationTermination = notificationHost.terminateAndWait(10000)
     clock.value = 230
-    const emptyStartPromise = coordinator.command('start')
-    await new Promise((resolve) => setImmediate(resolve))
-    const emptyStart = await emptyStartPromise
-    const notificationFailureTerminationExitCode = await notificationFailureTermination
-    const notificationFailureJoinedExitCode = await notificationFailureExitPromise
+    const emptyStart = await coordinator.command('start')
+    const notificationExitCode = await notificationTermination
+    const notificationJoinedExitCode = await notificationExitPromise
     await agentRuntime.whenIdle()
-    const notificationFailureChildReaped = notificationFailureTerminationExitCode !== null &&
-      notificationFailureTerminationExitCode === notificationFailureJoinedExitCode &&
-      notificationFailureHost.terminationChild === notificationFailureChild &&
-      notificationFailureHost.child === null &&
-      notificationFailureHost.state === 'stopped'
+    const notificationFailureChildReaped = notificationExitCode !== null &&
+      notificationExitCode === notificationJoinedExitCode &&
+      notificationHost.terminationChild === notificationChild &&
+      notificationHost.child === null && notificationHost.state === 'stopped'
     const nextSessionStartedBeforeNotificationRecovery = emptyStart.ok &&
       coordinator.getSnapshot().sessionId === EMPTY_SESSION_ID
     const notificationFailureObserved =
       diagnostics.filter((diagnostic) => diagnostic?.code === 'AGENT_RECONCILE_FAILED').length === 1 &&
-      agentRuntime.isTaskPolicyReady() === false &&
-      agentRuntime.getTaskPolicyRevision() === null
+      agentRuntime.isTaskPolicyReady() === false && agentRuntime.getTaskPolicyRevision() === null
 
-    phase = 'first-replacement-before-policy'
+    phase = 'initial-first-replacement-policy-gate'
     const firstBlockedBeforePolicy = await storageGateway.claimNextAgentJob({
       claimIdempotencyKey: 'formal-agent-utility-first-claim-before-policy',
       owner: 'formal-agent-utility-first-replacement',
@@ -393,8 +353,6 @@ async function main () {
       localWorkAllowed: false,
       availableTaskKinds: TASK_KINDS
     })
-
-    phase = 'notification-failure-recovery'
     const notificationFailureRecovery = await agentRuntime.recoverTerminalSessions({
       sessionIds: [READY_SESSION_ID]
     })
@@ -406,7 +364,7 @@ async function main () {
     const emptyStop = await coordinator.command('stop')
     await waitForMeetingStopped(agentRuntime)
 
-    phase = 'claim-before-storage-replacement'
+    phase = 'initial-claim-before-storage-exit'
     const context = agentRuntime.getEligibilityContext()
     const reconciledDetail = await storageGateway.getAgentSessionDetail({
       sessionId: READY_SESSION_ID,
@@ -424,20 +382,20 @@ async function main () {
       throw new Error('claim invariant')
     }
 
-    phase = 'exact-child-exit'
+    phase = 'initial-second-storage-exit'
     const claimedJobHost = storageGateway.host
     const exactChild = claimedJobHost?.child
-    if (!claimedJobHost || claimedJobHost.state !== 'ready' || !exactChild) throw new Error('exact child unavailable')
+    if (!claimedJobHost || claimedJobHost.state !== 'ready' || !exactChild) {
+      throw new Error('exact child unavailable')
+    }
     const exactExitPromise = claimedJobHost.waitForExactExit()
     const terminationExitCode = await claimedJobHost.terminateAndWait(10000)
     const joinedExitCode = await exactExitPromise
-    const exactChildReaped = terminationExitCode !== null &&
-      terminationExitCode === joinedExitCode &&
-      claimedJobHost.terminationChild === exactChild &&
-      claimedJobHost.child === null &&
+    const exactChildReaped = terminationExitCode !== null && terminationExitCode === joinedExitCode &&
+      claimedJobHost.terminationChild === exactChild && claimedJobHost.child === null &&
       claimedJobHost.state === 'stopped'
 
-    phase = 'replacement-before-policy'
+    phase = 'initial-second-replacement-policy-gate'
     const blockedBeforePolicy = await storageGateway.claimNextAgentJob({
       claimIdempotencyKey: 'formal-agent-utility-claim-before-policy',
       owner: 'formal-agent-utility-replacement',
@@ -445,9 +403,6 @@ async function main () {
       localWorkAllowed: false,
       availableTaskKinds: TASK_KINDS
     })
-    const replacementHost = storageGateway.host
-
-    phase = 'replacement-policy-and-recovery'
     const recoveredSessions = await agentRuntime.recoverTerminalSessions({
       sessionIds: TERMINAL_SESSION_IDS
     })
@@ -455,97 +410,63 @@ async function main () {
       recoveredSessions.sessions.map((session) => [session.sessionId, session])
     )
 
-    phase = 'same-run-recovery'
-    let runnerCommitReplacement = null
-    const provider = new D13DeterministicProvider({
-      afterFirstModelResult: async () => {
-        const host = storageGateway.host
-        const child = host?.child
-        if (!host || host.state !== 'ready' || !child) {
-          throw new Error('runner commit replacement child unavailable')
-        }
-        const exactExitPromise = host.waitForExactExit()
-        const terminationExitCode = await host.terminateAndWait(10000)
-        const joinedExitCode = await exactExitPromise
-        runnerCommitReplacement = {
-          host,
-          child,
-          terminationExitCode,
-          joinedExitCode
-        }
-      }
+    phase = 'initial-agent-utility-start'
+    utility = await createAgentUtility({
+      storage: storageGateway,
+      providerBootstrap,
+      scenario: 'exit-after-provider-result'
     })
-    const runtime = createAgentJobRuntime(storageGateway, provider, providerBootstrap)
-    const { pluginHost, runner } = runtime
-    providerRegistry = runtime.providerRegistry
+    const availableBeforeExit = utility.pluginProxy.availableTaskKinds()
+    const utilityChild = utility.workerHost.child
+    const utilityExitPromise = utility.workerHost.waitForExactExit()
+    const runner = createRunner(storageGateway, utility.pluginProxy)
     const waitMs = Math.max(0, claimedBeforeExit.lease.expiresAt - Date.now() + 30)
     if (waitMs > 2000) throw new Error('lease wait invariant')
     await sleep(waitMs)
-    const recovered = await runner.runNext({
-      claimIdempotencyKey: 'formal-agent-utility-recovery-claim',
+    phase = 'initial-agent-utility-run'
+    let utilityExitResult
+    try {
+      utilityExitResult = await runner.runNext({
+        claimIdempotencyKey: 'formal-agent-utility-initial-recovery-claim',
+        localWorkAllowed: false
+      })
+    } catch (error) {
+      phase = 'initial-agent-utility-run-rejected'
+      throw error
+    }
+    phase = 'initial-agent-utility-exact-exit'
+    const utilityExitCode = await utilityExitPromise
+    const utilityOutput = await utility.output.snapshot()
+    phase = 'initial-agent-utility-same-process-gate'
+    const sameProcessClaim = await runner.runNext({
+      claimIdempotencyKey: 'formal-agent-utility-same-process-claim',
       localWorkAllowed: false
     })
 
-    phase = 'runner-replacement-before-policy'
-    const runnerReplacementHost = storageGateway.host
-    const runnerReplacementPolicyReadyBeforeRecovery = agentRuntime.isTaskPolicyReady()
-    const runnerReplacementBlocked = await runner.runNext({
-      claimIdempotencyKey: 'formal-agent-utility-runner-replacement-before-policy',
-      localWorkAllowed: false
-    })
-
-    phase = 'runner-replacement-policy-recovery'
-    const runnerReplacementRecovery = await agentRuntime.recoverTerminalSessions({
-      sessionIds: TERMINAL_SESSION_IDS
-    })
-    const memory = await runner.runNext({
-      claimIdempotencyKey: 'formal-agent-utility-memory-claim',
-      localWorkAllowed: false
-    })
-    const enhanced = await runner.runNext({
-      claimIdempotencyKey: 'formal-agent-utility-enhanced-claim',
-      localWorkAllowed: false
-    })
-    const empty = await runner.runNext({
-      claimIdempotencyKey: 'formal-agent-utility-empty-claim',
-      localWorkAllowed: false
-    })
-
-    phase = 'memory-read-through-storage-gateway'
-    const memoryProjection = await new MemoryReader(storageGateway).query({
-      scopeRefs: [{ kind: 'session', canonicalKey: READY_SESSION_ID }],
-      kinds: ['decision'],
-      semanticKeys: ['decision:formal-agent-utility'],
-      maxItems: 4,
-      maxSerializedBytes: 16384
-    })
-
-    phase = 'authority-readback'
+    phase = 'initial-authority-readback'
     const detail = await storageGateway.getAgentSessionDetail({
       sessionId: READY_SESSION_ID,
       eligibilityContext: agentRuntime.getEligibilityContext()
     })
     const stats = await storageGateway.getStats()
+    const meetingJob = detail.jobs.find((job) => job.taskKind === 'meeting-minutes')
     const currentRunIds = detail.jobs.map((job) => job.runId)
-    const recoveredJob = detail.jobs.find((job) => job.runId === claimedBeforeExit.runId)
-    const artifactTypes = detail.artifacts.map((artifact) => artifact.type).sort()
-    const readyRecovery = recoveryBySession[READY_SESSION_ID]
     const checks = {
       threeJobsReconciled: reconciledDetail.jobs.length === 3 &&
-        reconciledDetail.jobs.every((job) =>
-          job.sessionId === READY_SESSION_ID && job.providerId === 'deepseek' &&
-          job.providerKind === 'cloud' && job.model === 'deepseek-v4-flash') &&
+        reconciledDetail.jobs.every((job) => job.sessionId === READY_SESSION_ID &&
+          job.providerId === 'deepseek' && job.providerKind === 'cloud' &&
+          job.model === 'deepseek-v4-flash') &&
         new Set(reconciledDetail.jobs.map((job) => JSON.stringify(job.inputRef))).size === 1,
       meetingStoppedDetached: disabledStop.ok && emptyStop.ok && stopReturnedBeforeNotification,
       nextSessionStartedBeforeNotificationRecovery,
-      disabledAndEmptySessionsSkipped: recoveryBySession[DISABLED_SESSION_ID]?.eligibility === 'outside_automatic_window' &&
+      disabledAndEmptySessionsSkipped:
+        recoveryBySession[DISABLED_SESSION_ID]?.eligibility === 'outside_automatic_window' &&
         recoveryBySession[DISABLED_SESSION_ID]?.jobCount === 0 &&
         recoveryBySession[EMPTY_SESSION_ID]?.eligibility === 'no_committed_transcript' &&
         recoveryBySession[EMPTY_SESSION_ID]?.jobCount === 0,
       duplicateMeetingStoppedCoalesced: firstRepeatedMeetingStopped.accepted === true &&
         firstRepeatedMeetingStopped.coalesced === false &&
-        duplicateMeetingStopped.accepted === true &&
-        duplicateMeetingStopped.coalesced === true,
+        duplicateMeetingStopped.accepted === true && duplicateMeetingStopped.coalesced === true,
       invalidPolicyFailsClosed,
       notificationFailureDeferred: notificationFailureObserved &&
         diagnostics.filter((diagnostic) => diagnostic?.code === 'AGENT_TASK_POLICY_APPLY_FAILED').length === 1 &&
@@ -554,29 +475,244 @@ async function main () {
       notificationFailureChildReaped,
       exactChildReaped,
       replacementBlockedBeforePolicy: firstBlockedBeforePolicy === null && blockedBeforePolicy === null,
+      taskPolicyReplayedBeforeUtility: initialRecovery.sessions.length === 0 &&
+        restoredInitialPolicy.sessions.length === 0 && enabled.settings.agentSettingsRevision === 1 &&
+        agentRuntime.isTaskPolicyReady() && agentRuntime.getTaskPolicyRevision() === 1,
+      agentUtilityTaskClosureExact: JSON.stringify(availableBeforeExit) === JSON.stringify(TASK_KINDS),
+      agentUtilityProviderResultObserved: utilityOutput.markerCount === 1 && utilityOutput.exact,
+      agentUtilityExitChildReaped: utilityExitCode === 86 && utility.workerHost.child === null &&
+        utility.workerHost.state === 'failed' && utilityChild !== null,
+      utilityExitRetriedSameRun: utilityExitResult?.runId === claimedBeforeExit.runId &&
+        utilityExitResult?.jobState === 'retry_wait' && meetingJob?.runId === claimedBeforeExit.runId &&
+        meetingJob?.attemptCount === 2 && meetingJob?.errorCode === 'AGENT_WORKER_EXITED',
+      credentialInvalidated: providerBootstrap.getPublicState().credentialState === 'invalid' &&
+        providerBootstrap.getEligibilityProviderFacts().credentialAvailable === false,
+      sameProcessClaimBlocked: sameProcessClaim === null && utility.workerHost.generation === 1,
+      noPartialArtifact: detail.artifacts.length === 0 &&
+        detail.jobs.filter((job) => job.state === 'succeeded').length === 0,
+      taskIdentityStable: JSON.stringify([...originalRunIds].sort()) ===
+        JSON.stringify([...currentRunIds].sort()),
+      eligibilityContextExact: exactEligibilityContext(context),
+      captionFactsPreserved: stats.sessions === 3 && stats.activeSessions === 0 &&
+        stats.captionEvents === 3 && stats.segments === 3 && stats.integrity === 'ok'
+    }
+    assertChecks(checks, (name) => { phase = `initial-check-${name}` })
+
+    phase = 'initial-graceful-storage-shutdown'
+    utility.pluginProxy.dispose()
+    const finalStorageHost = storageGateway.host
+    await coordinator.dispose()
+    coordinator = null
+    agentRuntime.dispose()
+    agentRuntime = null
+    await storageGateway.shutdown()
+    const gracefulStorageExit = storageGateway.host === null &&
+      finalStorageHost?.child === null && finalStorageHost?.state === 'closed'
+    storageGateway = null
+    if (!gracefulStorageExit) throw new Error('storage shutdown invariant')
+    providerBootstrap.dispose()
+
+    return {
+      schemaVersion: 1,
+      kind: REPORT_KIND,
+      phase: 'initial',
+      result: 'pass',
+      checks: { ...checks, gracefulStorageExit },
+      metrics: {
+        storageGenerationCount: storageGenerations.length,
+        agentUtilityGenerationCount: utility.workerHost.generation,
+        jobCount: detail.jobs.length,
+        artifactCount: detail.artifacts.length,
+        memoryCommitCount: 0,
+        providerResultCount: utilityOutput.markerCount,
+        recoveredAttemptCount: meetingJob.attemptCount
+      },
+      identityHash: identityHash(reconciledDetail.jobs[0].inputRef, originalRunIds),
+      scope: {
+        storageUtilityProcess: true,
+        agentUtilityProcess: true,
+        meetingStoppedWiring: true,
+        meetingStoppedStorageGatewayWiring: true,
+        agentJobRunnerStorageGatewayWiring: true,
+        preloadIpcRenderer: false,
+        packagedRuntime: false
+      },
+      privacy: privacyProjection(dataRoot)
+    }
+  } catch (error) {
+    if (utility?.pluginProxy) utility.pluginProxy.dispose()
+    await terminateQuietly(utility?.workerHost)
+    if (agentRuntime) agentRuntime.dispose()
+    if (coordinator) await coordinator.dispose().catch(() => {})
+    await terminateQuietly(storageGateway)
+    providerBootstrap.dispose()
+    error.failurePhase = phase
+    throw error
+  }
+}
+
+async function runRecoveryPhase ({ dataRoot, databasePath, configPath, providerBootstrap }) {
+  let phase = 'recovery-storage-start'
+  let storageGateway = null
+  let agentRuntime = null
+  let utility = null
+  try {
+    const storageGenerations = []
+    const configStore = new ConfigStore(configPath)
+    const loadedConfig = configStore.load()
+    storageGateway = createStorageGateway(databasePath, storageGenerations)
+    await storageGateway.start()
+    agentRuntime = new FormalAgentRuntime({
+      storage: storageGateway,
+      configStore,
+      providerBootstrap,
+      getLocalModelReady: () => false
+    })
+
+    phase = 'recovery-task-policy'
+    const recoveredSessions = await agentRuntime.recoverTerminalSessions({
+      sessionIds: TERMINAL_SESSION_IDS
+    })
+    const initialPolicyReady = agentRuntime.isTaskPolicyReady()
+    const context = agentRuntime.getEligibilityContext()
+    const beforeDetail = await storageGateway.getAgentSessionDetail({
+      sessionId: READY_SESSION_ID,
+      eligibilityContext: context
+    })
+    const originalRunIds = beforeDetail.jobs.map((job) => job.runId)
+    const meetingBefore = beforeDetail.jobs.find((job) => job.taskKind === 'meeting-minutes')
+
+    phase = 'recovery-agent-utility-start'
+    utility = await createAgentUtility({
+      storage: storageGateway,
+      providerBootstrap,
+      scenario: 'happy'
+    })
+    let runnerCommitReplacement = null
+    let injectStorageExit = true
+    const failureInjectingProxy = {
+      availableTaskKinds: () => utility.pluginProxy.availableTaskKinds(),
+      assertJobAvailable: (job) => utility.pluginProxy.assertJobAvailable(job),
+      executeJob: async (job, options) => {
+        const result = await utility.pluginProxy.executeJob(job, options)
+        if (injectStorageExit && job.runId === meetingBefore.runId) {
+          injectStorageExit = false
+          const host = storageGateway.host
+          const child = host?.child
+          if (!host || host.state !== 'ready' || !child) {
+            throw new Error('runner commit replacement child unavailable')
+          }
+          const exactExitPromise = host.waitForExactExit()
+          const terminationExitCode = await host.terminateAndWait(10000)
+          const joinedExitCode = await exactExitPromise
+          runnerCommitReplacement = { host, child, terminationExitCode, joinedExitCode }
+        }
+        return result
+      }
+    }
+    const runner = createRunner(storageGateway, failureInjectingProxy)
+    const retryWaitMs = Math.max(0, meetingBefore.nextAttemptAt - Date.now() + 30)
+    if (retryWaitMs > 2000) throw new Error('recovery retry wait invariant')
+    await sleep(retryWaitMs)
+    const taskKindByRunId = new Map(beforeDetail.jobs.map((job) => [job.runId, job.taskKind]))
+    let recovered = null
+    let memory = null
+    let enhanced = null
+    const recordResult = (result) => {
+      const taskKind = taskKindByRunId.get(result?.runId)
+      if (taskKind === 'meeting-minutes') recovered = result
+      else if (taskKind === 'memory-extraction') memory = result
+      else if (taskKind === 'enhanced-transcript') enhanced = result
+      else throw new Error('recovered task identity invariant')
+    }
+    for (let index = 0; index < 3 && recovered === null; index += 1) {
+      const result = await runner.runNext({
+        claimIdempotencyKey: `formal-agent-utility-new-main-recovery-${index}`,
+        localWorkAllowed: false
+      })
+      if (!result) throw new Error('recovery claim invariant')
+      recordResult(result)
+    }
+
+    phase = 'recovery-storage-policy-gate'
+    const replacementHost = storageGateway.host
+    const replacementPolicyReadyBeforeRecovery = agentRuntime.isTaskPolicyReady()
+    const replacementBlocked = await runner.runNext({
+      claimIdempotencyKey: 'formal-agent-utility-new-main-before-policy',
+      localWorkAllowed: false
+    })
+    const replacementRecovery = await agentRuntime.recoverTerminalSessions({
+      sessionIds: TERMINAL_SESSION_IDS
+    })
+    for (let index = 0; index < 2 && (!memory || !enhanced); index += 1) {
+      const result = await runner.runNext({
+        claimIdempotencyKey: `formal-agent-utility-after-policy-${index}`,
+        localWorkAllowed: false
+      })
+      if (!result) throw new Error('remaining task claim invariant')
+      recordResult(result)
+    }
+    const empty = await runner.runNext({
+      claimIdempotencyKey: 'formal-agent-utility-empty-claim',
+      localWorkAllowed: false
+    })
+
+    phase = 'recovery-memory-read'
+    const memoryProjection = await new MemoryReader(storageGateway).query({
+      scopeRefs: [{ kind: 'session', canonicalKey: READY_SESSION_ID }],
+      kinds: ['decision'],
+      semanticKeys: ['decision:formal-agent-utility'],
+      maxItems: 4,
+      maxSerializedBytes: 16384
+    })
+
+    phase = 'recovery-session-detail-readback'
+    const detail = await storageGateway.getAgentSessionDetail({
+      sessionId: READY_SESSION_ID,
+      eligibilityContext: agentRuntime.getEligibilityContext()
+    })
+    phase = 'recovery-storage-stats-readback'
+    const stats = await storageGateway.getStats()
+    const currentRunIds = detail.jobs.map((job) => job.runId)
+    const meetingJob = detail.jobs.find((job) => job.taskKind === 'meeting-minutes')
+    const artifactTypes = detail.artifacts.map((artifact) => artifact.type).sort()
+    const utilityOutputBeforeShutdown = utility.output
+    phase = 'recovery-checks'
+    if (runnerCommitReplacement === null) throw new Error('missing storage replacement observation')
+    if (replacementHost === runnerCommitReplacement.host) {
+      phase = 'recovery-storage-host-not-replaced'
+      throw new Error('storage host replacement invariant')
+    }
+    if (recovered?.jobState !== 'succeeded') {
+      phase = 'recovery-first-job-not-succeeded'
+      throw new Error('first recovered job invariant')
+    }
+    if (recovered?.runId !== meetingBefore?.runId) {
+      phase = 'recovery-first-job-not-original-run'
+      throw new Error('first recovered identity invariant')
+    }
+    const checks = {
+      freshStartupCredentialAvailable: providerBootstrap.getPublicState().credentialState === 'startup_environment' &&
+        providerBootstrap.getEligibilityProviderFacts().credentialAvailable === true &&
+        loadedConfig.agentEnabled === true && loadedConfig.agentSettingsRevision === 1,
+      taskPolicyReplayedBeforeRecovery: recoveredSessions.sessions.length === 3 &&
+        initialPolicyReady === true,
       runnerCommitReplacementChildReaped: runnerCommitReplacement !== null &&
-        runnerCommitReplacement.host === replacementHost &&
         runnerCommitReplacement.terminationExitCode !== null &&
         runnerCommitReplacement.terminationExitCode === runnerCommitReplacement.joinedExitCode &&
         runnerCommitReplacement.host.terminationChild === runnerCommitReplacement.child &&
-        runnerCommitReplacement.host.child === null &&
-        runnerCommitReplacement.host.state === 'stopped',
+        runnerCommitReplacement.host.child === null && runnerCommitReplacement.host.state === 'stopped',
       runnerCommitReplayedThroughGateway: runnerCommitReplacement !== null &&
-        runnerReplacementHost !== null &&
-        runnerReplacementHost !== runnerCommitReplacement.host &&
-        recovered?.runId === claimedBeforeExit.runId && recovered?.jobState === 'succeeded',
-      runnerReplacementBlockedBeforePolicy: runnerReplacementPolicyReadyBeforeRecovery === false &&
-        runnerReplacementBlocked === null && runnerReplacementRecovery.sessions.length === 3,
-      taskPolicyReplayedBeforeRecovery: initialRecovery.sessions.length === 0 &&
-        restoredInitialPolicy.sessions.length === 0 &&
-        enabled.settings.agentSettingsRevision === 1 && agentRuntime.isTaskPolicyReady() &&
-        agentRuntime.getTaskPolicyRevision() === 1,
-      duplicateReconciliationIdempotent: readyRecovery?.createdJobCount === 0 &&
-        readyRecovery?.alreadyProcessedJobCount === 3 && detail.jobs.length === 3,
-      sameRunRecovered: recovered?.runId === claimedBeforeExit.runId && recovered?.jobState === 'succeeded' &&
-        recoveredJob?.attemptCount === 2,
-      taskIdentityStable: JSON.stringify([...originalRunIds].sort()) === JSON.stringify([...currentRunIds].sort()),
-      independentResultsCommitted: memory?.jobState === 'succeeded' && memory?.memory?.acceptedCandidateCount === 1 &&
+        replacementHost !== runnerCommitReplacement.host &&
+        recovered?.runId === meetingBefore?.runId && recovered?.jobState === 'succeeded',
+      runnerReplacementBlockedBeforePolicy: replacementPolicyReadyBeforeRecovery === false &&
+        replacementBlocked === null && replacementRecovery.sessions.length === 3,
+      sameRunRecovered: recovered?.runId === meetingBefore?.runId &&
+        meetingJob?.runId === meetingBefore?.runId && meetingJob?.attemptCount === 3,
+      taskIdentityStable: JSON.stringify([...originalRunIds].sort()) ===
+        JSON.stringify([...currentRunIds].sort()),
+      independentResultsCommitted: memory?.jobState === 'succeeded' &&
+        memory?.memory?.acceptedCandidateCount === 1 &&
         enhanced?.jobState === 'succeeded' && enhanced?.artifact?.type === 'enhanced-transcript',
       memoryReadThroughGateway: memoryProjection.availability === 'ready' &&
         memoryProjection.reason === null && memoryProjection.items.length === 1 &&
@@ -586,90 +722,107 @@ async function main () {
         detail.jobs.every((job) => job.state === 'succeeded'),
       artifactProjectionExact: detail.artifacts.length === 2 &&
         JSON.stringify(artifactTypes) === JSON.stringify(['enhanced-transcript', 'meeting-minutes']),
-      pluginTaskClosureExact: JSON.stringify(pluginHost.availableTaskKinds()) === JSON.stringify(TASK_KINDS),
-      eligibilityContextExact: JSON.stringify(Object.keys(context).sort()) === JSON.stringify([
-        'agentEnabled',
-        'automaticProcessingSince',
-        'cloudDisclosureAccepted',
-        'credentialAvailable',
-        'localModelReady',
-        'memoryEnabled',
-        'memoryProcessingSince',
-        'model',
-        'providerId',
-        'providerKind'
-      ]) && !Object.hasOwn(context, 'apiKey') && !Object.hasOwn(context, 'baseUrl'),
+      agentUtilityTaskClosureExact: JSON.stringify(utility.pluginProxy.availableTaskKinds()) ===
+        JSON.stringify(TASK_KINDS),
+      eligibilityContextExact: exactEligibilityContext(context),
       captionFactsPreserved: stats.sessions === 3 && stats.activeSessions === 0 &&
         stats.captionEvents === 3 && stats.segments === 3 && stats.integrity === 'ok'
     }
-    const failedChecks = Object.entries(checks)
-      .filter(([, value]) => value !== true)
-      .map(([name]) => name)
-    if (failedChecks.length !== 0) throw new Error('journey assertion')
+    assertChecks(checks, (name) => { phase = `recovery-check-${name}` })
 
-    phase = 'graceful-shutdown'
+    phase = 'recovery-graceful-shutdown'
+    await utility.workerHost.shutdown()
+    const utilityOutput = await utilityOutputBeforeShutdown.snapshot()
+    const gracefulAgentUtilityExit = utility.workerHost.child === null &&
+      utility.workerHost.state === 'closed' && utilityOutput.markerCount === 3 && utilityOutput.exact
+    utility.pluginProxy.dispose()
     const finalStorageHost = storageGateway.host
-    await coordinator.dispose()
-    coordinator = null
     agentRuntime.dispose()
     agentRuntime = null
     await storageGateway.shutdown()
-    const gracefulExactExit = storageGateway.host === null &&
+    const gracefulStorageExit = storageGateway.host === null &&
       finalStorageHost?.child === null && finalStorageHost?.state === 'closed'
-    if (!gracefulExactExit) throw new Error('shutdown invariant')
     storageGateway = null
-    providerRegistry.dispose()
-    providerRegistry = null
-    providerBootstrap = null
-    const browserWindowCount = BrowserWindow.getAllWindows().length
-    const audioFileCount = countAudioFiles(dataRoot)
-    if (browserWindowCount !== 0 || audioFileCount !== 0) throw new Error('privacy invariant')
+    if (!gracefulAgentUtilityExit || !gracefulStorageExit) throw new Error('shutdown invariant')
+    providerBootstrap.dispose()
 
-    const report = {
+    return {
       schemaVersion: 1,
       kind: REPORT_KIND,
+      phase: 'recovery',
       result: 'pass',
-      checks: { ...checks, gracefulExactExit },
+      checks: { ...checks, gracefulAgentUtilityExit, gracefulStorageExit },
       metrics: {
         storageGenerationCount: storageGenerations.length,
+        agentUtilityGenerationCount: utility.workerHost.generation,
         jobCount: detail.jobs.length,
         artifactCount: detail.artifacts.length,
         memoryCommitCount: memory.memory.acceptedCandidateCount === 1 ? 1 : 0,
-        providerCallCount: provider.calls.length,
-        recoveredAttemptCount: recoveredJob.attemptCount
+        providerResultCount: utilityOutput.markerCount,
+        recoveredAttemptCount: meetingJob.attemptCount
       },
-      identityHash: identityHash(reconciledDetail.jobs[0].inputRef, originalRunIds),
+      identityHash: identityHash(beforeDetail.jobs[0].inputRef, originalRunIds),
       scope: {
         storageUtilityProcess: true,
-        agentUtilityProcess: false,
+        agentUtilityProcess: true,
         meetingStoppedWiring: true,
         meetingStoppedStorageGatewayWiring: true,
         agentJobRunnerStorageGatewayWiring: true,
         preloadIpcRenderer: false,
         packagedRuntime: false
       },
-      privacy: {
-        noBrowserWindowCreated: browserWindowCount === 0,
-        browserWindowCount,
-        reportContainsTranscriptText: false,
-        reportContainsAbsolutePath: false,
-        persistedAudio: audioFileCount !== 0,
-        audioFileCount
-      }
+      privacy: privacyProjection(dataRoot)
     }
+  } catch (error) {
+    if (utility?.pluginProxy) utility.pluginProxy.dispose()
+    await terminateQuietly(utility?.workerHost)
+    if (agentRuntime) agentRuntime.dispose()
+    await terminateQuietly(storageGateway)
+    providerBootstrap.dispose()
+    error.failurePhase = phase
+    throw error
+  }
+}
+
+async function main () {
+  let journeyPhase = 'arguments'
+  let providerBootstrap = null
+  try {
+    const parsed = parseArguments(process.argv)
+    journeyPhase = parsed.journeyPhase
+    providerBootstrap = new AgentProviderBootstrap({ environment: process.env })
+    const userData = path.join(parsed.dataRoot, `electron-user-data-${journeyPhase}`)
+    const dataDirectory = path.join(parsed.dataRoot, 'data')
+    const databasePath = path.join(dataDirectory, 'speech-agent.sqlite3')
+    const configPath = path.join(dataDirectory, 'config.json')
+    fs.mkdirSync(userData, { recursive: true })
+    app.setPath('userData', userData)
+    app.on('window-all-closed', () => {})
+    await app.whenReady()
+
+    const report = journeyPhase === 'initial'
+      ? await runInitialPhase({
+          dataRoot: parsed.dataRoot,
+          databasePath,
+          configPath,
+          providerBootstrap
+        })
+      : await runRecoveryPhase({
+          dataRoot: parsed.dataRoot,
+          databasePath,
+          configPath,
+          providerBootstrap
+        })
     process.stdout.write(`${JSON.stringify(report)}\n`)
     app.exit(0)
-  } catch {
-    if (agentRuntime) agentRuntime.dispose()
-    if (coordinator) await coordinator.dispose().catch(() => {})
-    if (providerRegistry) providerRegistry.dispose()
-    else if (providerBootstrap) providerBootstrap.dispose()
-    await terminateQuietly(storageGateway)
+  } catch (error) {
+    if (providerBootstrap) providerBootstrap.dispose()
     process.stdout.write(`${JSON.stringify({
       schemaVersion: 1,
       kind: REPORT_KIND,
+      phase: journeyPhase,
       result: 'fail',
-      failurePhase: phase
+      failurePhase: error?.failurePhase || journeyPhase
     })}\n`)
     app.exit(1)
   }
