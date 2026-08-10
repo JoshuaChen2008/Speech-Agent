@@ -156,6 +156,10 @@ const PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS = Object.freeze([
   'sharedTitlebarThemeVariantsObserved',
   'forcedColorsTitlebarRuleObserved'
 ])
+const PRODUCT_SHELL_V8_WINDOW_INTERACTION_KEYS = Object.freeze(
+  PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS.map((key) =>
+    key === 'unlockedGripMovesCaptionGroup' ? 'unlockedGripHiddenAndRejected' : key)
+)
 const PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS = Object.freeze([
   'primaryWindowMinimizable',
   'primaryWindowTitleStable',
@@ -364,9 +368,12 @@ function assertNoWindowInteractionSensitiveFields (value, pathLabel = 'report') 
   }
 }
 
-function validateProductShellV5WindowInteraction (value) {
-  if (!hasExactKeys(value, PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS)) {
-    throw new Error('product-shell v5 window interaction has missing or unknown fields')
+function validateProductShellV5WindowInteraction (value, schemaVersion = 5) {
+  const keys = schemaVersion >= 8
+    ? PRODUCT_SHELL_V8_WINDOW_INTERACTION_KEYS
+    : PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS
+  if (!hasExactKeys(value, keys)) {
+    throw new Error(`product-shell v${schemaVersion} window interaction has missing or unknown fields`)
   }
   const countMinimums = {
     layoutFallbackObservationCount: 4,
@@ -378,13 +385,13 @@ function validateProductShellV5WindowInteraction (value) {
     normalBodyExclusionCount: 2,
     normalForegroundPromotionCount: 2
   }
-  for (const key of PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS) {
+  for (const key of keys) {
     if (Object.hasOwn(countMinimums, key)) {
       if (!Number.isSafeInteger(value[key]) || value[key] < countMinimums[key] || value[key] > 1000000) {
-        throw new Error(`product-shell v5 window interaction count is invalid: ${key}`)
+        throw new Error(`product-shell v${schemaVersion} window interaction count is invalid: ${key}`)
       }
     } else if (value[key] !== true) {
-      throw new Error(`product-shell v5 window interaction observation is incomplete: ${key}`)
+      throw new Error(`product-shell v${schemaVersion} window interaction observation is incomplete: ${key}`)
     }
   }
   assertNoWindowInteractionSensitiveFields(value, 'windowInteraction')
@@ -478,7 +485,7 @@ function validateProductShellV5Envelope (report, schemaVersion = 5) {
   if (!isExactArray(report.limitations, expectedLimitations)) {
     throw new Error(`product-shell v${schemaVersion} limitations are not the exact external boundary`)
   }
-  validateProductShellV5WindowInteraction(report.windowInteraction)
+  validateProductShellV5WindowInteraction(report.windowInteraction, schemaVersion)
   validateProductShellV5Identity(report.sourceIdentity)
   if (hasApplicationLifecycle) validateProductShellV6ApplicationLifecycle(report.applicationLifecycle)
   if (hasInteractionLifecycle) validateProductShellV7InteractionLifecycle(report.interactionLifecycle)
@@ -497,7 +504,7 @@ function validateProductShellV5Envelope (report, schemaVersion = 5) {
 }
 
 function validateProductShellReport (report) {
-  if (!report || ![1, 2, 3, 4, 5, 6, 7].includes(report.schemaVersion) || report.kind !== 'product-shell-smoke') {
+  if (!report || ![1, 2, 3, 4, 5, 6, 7, 8].includes(report.schemaVersion) || report.kind !== 'product-shell-smoke') {
     throw new Error('invalid product-shell report envelope')
   }
   if (report.result !== 'pass' || report.gateStatus !== 'partial') {
@@ -560,6 +567,10 @@ function validateProductShellReport (report) {
     validateProductShellV3Journey(journey, 3, 4, 7)
     validateProductShellV5Envelope(report, 7)
   }
+  if (report.schemaVersion === 8) {
+    validateProductShellV3Journey(journey, 3, 4, 8)
+    validateProductShellV5Envelope(report, 8)
+  }
   if (report.privacy?.physicalAudioSourceOpened !== false ||
       report.privacy?.audioPersisted !== false ||
       report.privacy?.transcriptTextPersistedInReport !== false ||
@@ -572,7 +583,7 @@ function validateProductShellReport (report) {
     'deterministic-205-segment-fixture-not-two-hour-i3',
     report.packaging?.appIsPackaged === true ? 'not-clean-machine-i4' : 'not-packaged-i4'
   ]
-  if (![5, 6, 7].includes(report.schemaVersion) && (!Array.isArray(report.limitations) ||
+  if (![5, 6, 7, 8].includes(report.schemaVersion) && (!Array.isArray(report.limitations) ||
       requiredLimitations.some((limitation) => !report.limitations.includes(limitation)) ||
       (report.packaging?.appIsPackaged === true && report.limitations.includes('not-packaged-i4')))) {
     throw new Error('product-shell report must preserve its external-boundary limitations')
@@ -614,6 +625,7 @@ module.exports = {
   PRODUCT_SHELL_V3_JOURNEY_KEYS,
   PRODUCT_SHELL_V5_LIMITATIONS,
   PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS,
+  PRODUCT_SHELL_V8_WINDOW_INTERACTION_KEYS,
   PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS,
   PRODUCT_SHELL_V7_INTERACTION_LIFECYCLE_KEYS,
   PRODUCT_SHELL_PACKAGING_KEYS,

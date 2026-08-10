@@ -11,6 +11,7 @@ const {
   PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS,
   PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS,
   PRODUCT_SHELL_V7_INTERACTION_LIFECYCLE_KEYS,
+  PRODUCT_SHELL_V8_WINDOW_INTERACTION_KEYS,
   validateProductShellReport
 } = require('../../scripts/verify-product-shell-report')
 
@@ -44,8 +45,8 @@ function v4Journey () {
   })
 }
 
-function completeWindowInteraction () {
-  const value = Object.fromEntries(PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS.map((key) => [key, true]))
+function completeWindowInteraction (keys = PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS) {
+  const value = Object.fromEntries(keys.map((key) => [key, true]))
   return Object.assign(value, {
     layoutFallbackObservationCount: 4,
     layoutRecoveryObservationCount: 4,
@@ -124,6 +125,14 @@ function reportV7 () {
   }
 }
 
+function reportV8 () {
+  return {
+    ...reportV7(),
+    schemaVersion: 8,
+    windowInteraction: completeWindowInteraction(PRODUCT_SHELL_V8_WINDOW_INTERACTION_KEYS)
+  }
+}
+
 function packagedReportV5 () {
   const report = reportV5()
   report.packaging = Object.fromEntries(PRODUCT_SHELL_PACKAGING_KEYS.map((key) => [key, false]))
@@ -153,6 +162,16 @@ test('SEM-F24/J19: product-shell schema v6 accepts exact application lifecycle e
 test('SEM-F22/SEM-F24/J17/J19: product-shell schema v7 accepts exact interaction-generation lifecycle evidence', () => {
   const report = reportV7()
   assert.equal(validateProductShellReport(report), report)
+})
+
+test('SEM-F22/J17: product-shell schema v8 requires the unlocked grip to be hidden and rejected', () => {
+  const report = reportV8()
+  assert.equal(validateProductShellReport(report), report)
+
+  const legacyClaim = structuredClone(report)
+  delete legacyClaim.windowInteraction.unlockedGripHiddenAndRejected
+  legacyClaim.windowInteraction.unlockedGripMovesCaptionGroup = true
+  assert.throws(() => validateProductShellReport(legacyClaim), /v8 window interaction/)
 })
 
 test('SEM-F14/F22/F24/J17/J19: schema v7 rejects incomplete, false, invalid and sensitive interaction lifecycle evidence', () => {

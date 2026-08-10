@@ -106,7 +106,7 @@
     "storageGatewaySha256": "bdaf7faa48c9cd725b2bb72ee5bb686da74a812755841e85d6994e00722cde2d",
     "storageWorkerServiceSha256": "66f05fd6ef95a4d6afafc064a0fa5b149d67667ac40208b1b28249d922d4f89c",
     "verifierSha256": "8014be2efdbd0d63a99a4de1a9f24ccb70eddcb158cc89b46d2d7bb731ed6ff1",
-    "productPayloadSha256": "958297d40901db6961c8ab38090a0f9c6f58c2c1c03e4b3da79fe6e5a69c9de6"
+    "productPayloadSha256": "412e37ad796e7b7d12231cefc837b418d35045bf49add9071b7c15672108056d"
   },
   "result": "pass",
   "schemaVersion": 1

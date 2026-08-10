@@ -1149,7 +1149,16 @@ async function exerciseOverlayWindowInteractions ({ caption, toolbar, cursor }) 
     pointerId: 109,
     cursor
   })
-  await assertRendererGestureMoves({
+  const unlockedGripState = await rendererValue(toolbar, `(() => {
+    const target = document.getElementById('grip')
+    const rect = target.getBoundingClientRect()
+    return { display: getComputedStyle(target).display, width: rect.width, height: rect.height }
+  })()`)
+  if (unlockedGripState.display !== 'none' || unlockedGripState.width !== 0 || unlockedGripState.height !== 0) {
+    throw new Error('unlocked toolbar grip still participates in layout')
+  }
+  const toolbarBeforeHiddenGrip = toolbar.getBounds()
+  await assertRendererGestureStatic({
     sourceWindow: toolbar,
     targetWindow: caption,
     targetExpression: grip,
@@ -1158,25 +1167,10 @@ async function exerciseOverlayWindowInteractions ({ caption, toolbar, cursor }) 
     cursor,
     endType: 'pointerup'
   })
-  await assertCrossOverlayTerminal({
-    sourceWindow: toolbar,
-    terminalWindow: caption,
-    targetWindow: caption,
-    cursor,
-    targetExpression: grip,
-    pointExpression: center,
-    pointerId: 118,
-    label: 'toolbar-to-caption'
-  })
-  await assertCancellationBeforeMove({
-    sourceWindow: toolbar,
-    targetWindow: caption,
-    targetExpression: grip,
-    pointExpression: center,
-    pointerId: 111,
-    cursor,
-    cancel: () => rendererValue(toolbar, `window.dispatchEvent(new Event('beforeunload')); true`)
-  })
+  if (!sameWindowBounds(toolbar.getBounds(), toolbarBeforeHiddenGrip) ||
+      observedManualWindowInteractionController?.isDragging() !== false) {
+    throw new Error('unlocked hidden grip started a toolbar drag')
+  }
 
   const captionBeforeLock = caption.getBounds()
   const expectedToolbarAtLock = windowLayoutContract.toolbarDockBoundsFor(captionBeforeLock)
@@ -1226,6 +1220,25 @@ async function exerciseOverlayWindowInteractions ({ caption, toolbar, cursor }) 
       sameWindowBounds(toolbar.getBounds(), toolbarBeforeLockedGrip)) {
     throw new Error('locked grip did not isolate movement to the toolbar')
   }
+  await assertCrossOverlayTerminal({
+    sourceWindow: toolbar,
+    terminalWindow: caption,
+    targetWindow: toolbar,
+    cursor,
+    targetExpression: grip,
+    pointExpression: center,
+    pointerId: 118,
+    label: 'toolbar-to-caption'
+  })
+  await assertCancellationBeforeMove({
+    sourceWindow: toolbar,
+    targetWindow: toolbar,
+    targetExpression: grip,
+    pointExpression: center,
+    pointerId: 111,
+    cursor,
+    cancel: () => rendererValue(toolbar, `window.dispatchEvent(new Event('beforeunload')); true`)
+  })
   const lockedToolbarPosition = toolbar.getContentBounds()
   toolbar.setContentBounds({
     x: lockedToolbarPosition.x - 2,
@@ -1253,7 +1266,7 @@ async function exerciseOverlayWindowInteractions ({ caption, toolbar, cursor }) 
     stationaryPressReleaseStable: true,
     gestureCancellationObservationCount: 6,
     nonGripToolbarDragRejected: true,
-    unlockedGripMovesCaptionGroup: true,
+    unlockedGripHiddenAndRejected: true,
     lockedGripMovesToolbarOnly: true
   }
 }
@@ -2763,7 +2776,7 @@ async function runJourney () {
   if (audioFilesUnder(options.workDir).length > 0) throw new Error('product shell smoke persisted audio')
 
   const report = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: 'product-shell-smoke',
     generatedAt: new Date().toISOString(),
     result: 'pass',

@@ -816,7 +816,7 @@ async function runDwmDrag ({ coordinator, getAdapter, play, sourceId, options, w
     const completion = completionRecord?.value || null
     const protocol = options.dwmProtocol
     const automaticObservation = await harness.automaticObservation(options)
-    const completionMatches = completion?.schemaVersion === 5 &&
+    const completionMatches = completion?.schemaVersion === 6 &&
       completion.runBindingSha256 === protocol.runBindingSha256 &&
       completion.productPayloadVersion === protocol.productPayloadVersion &&
       completion.productPayloadFileCount === protocol.productPayloadFileCount &&
@@ -840,7 +840,7 @@ async function runDwmDrag ({ coordinator, getAdapter, play, sourceId, options, w
       harness.counts.captionDragStartCount >= 5 &&
       harness.counts.captionMovedDragCount >= 4 &&
       harness.counts.captionStationaryPressReleaseCount >= 1 &&
-      harness.counts.toolbarGripDragStartCount >= 2 &&
+      harness.counts.toolbarGripDragStartCount >= 1 &&
       harness.counts.resizeStartCount >= 8 &&
       harness.counts.settingsTitlebarDragStartCount >= 1 &&
       harness.counts.historyTitlebarDragStartCount >= 1 &&

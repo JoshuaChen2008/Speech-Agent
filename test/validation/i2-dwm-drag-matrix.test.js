@@ -25,7 +25,8 @@ const {
   PRODUCT_SHELL_V3_JOURNEY_KEYS,
   PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS,
   PRODUCT_SHELL_V6_APPLICATION_LIFECYCLE_KEYS,
-  PRODUCT_SHELL_V7_INTERACTION_LIFECYCLE_KEYS
+  PRODUCT_SHELL_V7_INTERACTION_LIFECYCLE_KEYS,
+  PRODUCT_SHELL_V8_WINDOW_INTERACTION_KEYS
 } = require('../../scripts/verify-product-shell-report')
 const { computeProductPayloadIdentity } = require('../../src/main/services/product-payload-identity')
 
@@ -65,7 +66,7 @@ function controllerCounts () {
     captionDragStartCount: 5,
     captionMovedDragCount: 4,
     captionStationaryPressReleaseCount: 1,
-    toolbarGripDragStartCount: 2,
+    toolbarGripDragStartCount: 1,
     resizeStartCount: 8,
     settingsTitlebarDragStartCount: 1,
     historyTitlebarDragStartCount: 1,
@@ -157,7 +158,7 @@ function pairFor (combination, index) {
   }
 }
 
-function j17Bytes (schemaVersion = 7) {
+function j17Bytes (schemaVersion = 8) {
   const journey = Object.fromEntries(PRODUCT_SHELL_V3_JOURNEY_KEYS.map((key) => [key, true]))
   Object.assign(journey, {
     onboardingPreset: 'dictation',
@@ -186,7 +187,9 @@ function j17Bytes (schemaVersion = 7) {
     translationAdvertised: false
   })
   const windowInteraction = Object.fromEntries(
-    PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS.map((key) => [key, true])
+    (schemaVersion >= 8
+      ? PRODUCT_SHELL_V8_WINDOW_INTERACTION_KEYS
+      : PRODUCT_SHELL_V5_WINDOW_INTERACTION_KEYS).map((key) => [key, true])
   )
   Object.assign(windowInteraction, {
     layoutFallbackObservationCount: 4,
@@ -253,6 +256,7 @@ function matrixFixture () {
 
 test('SEM-F22/J17/I2: strict DWM matrix binds all twelve scale/theme combinations and one current J17 report', () => {
   const fixture = matrixFixture()
+  assert.equal(fixture.matrix.schemaVersion, 2)
   assert.equal(validateDwmMatrix(fixture.matrix), fixture.matrix)
   assert.equal(validateDwmMatrixCompanions(fixture.matrix, {
     j17Bytes: fixture.j17ReportBytes,
@@ -266,9 +270,9 @@ test('SEM-F22/J17/I2: strict DWM matrix binds all twelve scale/theme combination
   })
 })
 
-test('SEM-F22/SEM-F24/J17/J19/I2: DWM matrix requires schema-v7 product-shell recovery evidence', () => {
+test('SEM-F22/SEM-F24/J17/J19/I2: current DWM matrix requires schema-v8 product-shell grip evidence', () => {
   const pairs = DWM_COMBINATIONS.map(pairFor)
-  const j17ReportBytes = j17Bytes(7)
+  const j17ReportBytes = j17Bytes(8)
   const matrix = buildDwmMatrix({
     generatedAt: '2026-08-08T00:03:00.000Z',
     j17Bytes: j17ReportBytes,
@@ -277,9 +281,9 @@ test('SEM-F22/SEM-F24/J17/J19/I2: DWM matrix requires schema-v7 product-shell re
   assert.equal(validateDwmMatrixCompanions(matrix, { j17Bytes: j17ReportBytes, pairs }), matrix)
   assert.throws(() => buildDwmMatrix({
     generatedAt: '2026-08-08T00:03:01.000Z',
-    j17Bytes: j17Bytes(6),
+    j17Bytes: j17Bytes(7),
     pairs
-  }), /schema-v7/)
+  }), /schema-v8/)
 })
 
 test('SEM-F22/I2: DWM matrix rejects missing, duplicate, reordered and completion-only combinations', () => {

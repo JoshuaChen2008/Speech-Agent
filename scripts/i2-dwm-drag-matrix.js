@@ -81,7 +81,7 @@ function validateDwmMatrix (value) {
     'schemaVersion', 'kind', 'generatedAt', 'result', 'gateStatus', 'sourceIdentity',
     'j17', 'coverage', 'entries', 'privacy', 'limitations'
   ], 'DWM matrix')
-  assert.equal(value.schemaVersion, 1)
+  assert.ok([1, 2].includes(value.schemaVersion), 'DWM matrix schemaVersion must be 1 or 2')
   assert.equal(value.kind, 'i2-dwm-drag-matrix')
   assertCanonicalIsoTimestamp(value.generatedAt, 'DWM matrix.generatedAt')
   assert.equal(value.result, 'pass')
@@ -89,8 +89,9 @@ function validateDwmMatrix (value) {
   validateSourceIdentity(value.sourceIdentity)
 
   assertExactKeys(value.j17, ['schemaVersion', 'kind', 'result', 'reportSha256'], 'DWM matrix.j17')
-  assert.equal(value.j17.schemaVersion, 7,
-    'DWM matrix must bind a schema-v7 J17 product-shell report')
+  const expectedJ17SchemaVersion = value.schemaVersion >= 2 ? 8 : 7
+  assert.equal(value.j17.schemaVersion, expectedJ17SchemaVersion,
+    `DWM matrix must bind a schema-v${expectedJ17SchemaVersion} J17 product-shell report`)
   assert.equal(value.j17.kind, 'product-shell-smoke')
   assert.equal(value.j17.result, 'pass')
   assertSha256(value.j17.reportSha256, 'DWM matrix.j17.reportSha256')
@@ -143,13 +144,15 @@ function validateDwmMatrix (value) {
   return value
 }
 
-function buildDwmMatrix ({ generatedAt = new Date().toISOString(), j17Bytes, pairs }) {
+function buildDwmMatrix ({ generatedAt = new Date().toISOString(), j17Bytes, pairs, schemaVersion = 2 }) {
+  assert.ok([1, 2].includes(schemaVersion), 'DWM matrix build schemaVersion must be 1 or 2')
   assert.ok(Buffer.isBuffer(j17Bytes), 'J17 report bytes must be a Buffer')
   assert.ok(Array.isArray(pairs) && pairs.length === DWM_COMBINATIONS.length,
     'DWM matrix requires exactly twelve report/completion pairs')
   const j17 = validateProductShellReport(parseStrictEvidenceJson(j17Bytes, 'J17 product-shell report'))
-  assert.equal(j17.schemaVersion, 7,
-    'DWM matrix requires a schema-v7 J17 product-shell report')
+  const expectedJ17SchemaVersion = schemaVersion >= 2 ? 8 : 7
+  assert.equal(j17.schemaVersion, expectedJ17SchemaVersion,
+    `DWM matrix requires a schema-v${expectedJ17SchemaVersion} J17 product-shell report`)
 
   const byCombination = new Map()
   const reportHashes = new Set()
@@ -160,7 +163,9 @@ function buildDwmMatrix ({ generatedAt = new Date().toISOString(), j17Bytes, pai
     assert.ok(Buffer.isBuffer(pair.reportBytes), `DWM matrix pair[${index}].reportBytes must be a Buffer`)
     assert.ok(Buffer.isBuffer(pair.completionBytes), `DWM matrix pair[${index}].completionBytes must be a Buffer`)
     const report = validateInteractionEvidence(pair.reportBytes, 'dwm-drag')
-    assert.equal(report.schemaVersion, 5, 'DWM matrix requires schema-v5 DWM reports')
+    const expectedDwmSchemaVersion = schemaVersion >= 2 ? 6 : 5
+    assert.equal(report.schemaVersion, expectedDwmSchemaVersion,
+      `DWM matrix requires schema-v${expectedDwmSchemaVersion} DWM reports`)
     assert.equal(report.result, 'pass-manual-observed',
       'DWM matrix requires every DWM report to be manually observed')
     const completion = validateDwmCompanion(report, pair.completionBytes)
@@ -193,7 +198,7 @@ function buildDwmMatrix ({ generatedAt = new Date().toISOString(), j17Bytes, pai
   })
   const identity = computeProductPayloadIdentity()
   const matrix = {
-    schemaVersion: 1,
+    schemaVersion,
     kind: 'i2-dwm-drag-matrix',
     generatedAt,
     result: 'pass',
@@ -224,7 +229,12 @@ function buildDwmMatrix ({ generatedAt = new Date().toISOString(), j17Bytes, pai
 
 function validateDwmMatrixCompanions (matrix, { j17Bytes, pairs }) {
   validateDwmMatrix(matrix)
-  const rebuilt = buildDwmMatrix({ generatedAt: matrix.generatedAt, j17Bytes, pairs })
+  const rebuilt = buildDwmMatrix({
+    generatedAt: matrix.generatedAt,
+    j17Bytes,
+    pairs,
+    schemaVersion: matrix.schemaVersion
+  })
   assert.deepEqual(matrix, rebuilt,
     'DWM matrix does not match the supplied J17 report and raw report/completion pairs')
   return matrix

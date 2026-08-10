@@ -43,9 +43,9 @@ function parseArguments (argv) {
 
 function completionFromProgress ({ progress, confirmations, crossScaleObserved = false }) {
   validateDwmProgress(progress)
-  if (progress.schemaVersion !== 5 || progress.state !== 'awaiting-operator-completion' ||
+  if (progress.schemaVersion !== 6 || progress.state !== 'awaiting-operator-completion' ||
       progress.operatorCompletionObserved !== false) {
-    throw new Error('DWM completion requires schema-v5 awaiting-operator-completion progress')
+    throw new Error('DWM completion requires schema-v6 awaiting-operator-completion progress')
   }
   return dwmOperatorCompletion({
     confirmations,

@@ -158,7 +158,7 @@ test('product-shell CI keeps the settings-click controlled install rather than e
   assert.match(smoke, /\['missing', 'downloading', 'verifying', 'ready'\]/)
   assert.match(smoke, /coreRangeResumeObserved/)
   assert.match(smoke, /coreReadyMarkerCount:\s*CORE_RESOURCE_IDS\.length/)
-  assert.match(smoke, /schemaVersion:\s*7/)
+  assert.match(smoke, /schemaVersion:\s*8/)
   assert.match(smoke, /windowInteraction/)
   assert.match(smoke, /applicationLifecycle/)
   assert.match(smoke, /interactionLifecycle/)
