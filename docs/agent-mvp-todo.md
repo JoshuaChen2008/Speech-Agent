@@ -1,7 +1,7 @@
 # 正式 Agent 首版 TODO 与组合验收矩阵
 
 > 更新日期：2026-08-10
-> 证据状态：SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；D3 的正式 SQLite migration 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切、D6 的正式 storage utility transport 子边界、D9 的无公网 main-only Agent 模型 provider bootstrap/catalog 子边界、D10 的 `AgentModelProviderRegistry → ModelGateway → Pi Agent Loop` 无公网内部路径、D11 的 `ConfigStore` v2 Agent 设置存储、D12 的字幕提交边界接线，以及 D13 的正式任务存储网关接线子边界均为实现完成·尚未验收；ADR 0011 的正式 main、Agent utility、网络接线仍为已决定，其余正式产品项保持已决定。
+> 证据状态：SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；D3 的正式 SQLite migration 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切、D6 的正式 storage utility transport 子边界、D9 的无公网 main-only Agent 模型 provider bootstrap/catalog 子边界、D10 的 `AgentModelProviderRegistry → ModelGateway → Pi Agent Loop` 无公网内部路径、D11 的 `ConfigStore` v2 Agent 设置存储、D12 的字幕提交边界接线，以及 D13 的正式任务存储网关接线子边界均为实现完成·尚未验收；D14 正式 Agent utility 进程边界与 ADR 0011 的正式 main、网络接线仍为已决定，其余正式产品项保持已决定。
 
 ## 1. 使用方式与权威边界
 
@@ -25,7 +25,7 @@
 | Agent 模型 provider registry 内部路径 | 实现完成·尚未验收 | D10 已让正式纪要、三项后台 Agent 任务和 storage utility transport 统一经过真实 `AgentModelProviderRegistry → ModelGateway → Pi Agent Loop`；冻结 `deepseek/deepseek-v4-flash`、预算与超时，模型句柄拒绝凭据/额外字段，同一信号覆盖模型打开与 Loop，稳定鉴权失败失效启动凭据；不包含真实 DeepSeek HTTP、正式 main/Agent utility、preload/renderer 或完整 J21/J24 |
 | 正式 Agent 设置存储 | 实现完成·尚未验收 | D11 已实现平面 `ConfigStore` v1→v2 持久迁移、六个 Agent 设置事实、revision 原子更新及 Agent/个人记忆自动处理边界，并以真实 `ConfigStore → AgentProviderBootstrap → storage worker/SQLite` 联合旅程覆盖设置到任务对账；不包含 provider 参数、API key、正式 IPC/preload/renderer、Agent utility、真实 DeepSeek HTTP 或完整 J24 |
 | 正式字幕提交边界接线 | 实现完成·尚未验收 | D12 已形成 UI-free `ConfigStore → FormalAgentRuntime → SessionCoordinator → MeetingStoppedPersistenceSink → SqliteSessionRecorder → StorageGateway → storage utility/SQLite` 纵切，并以既有 D6 旅程覆盖持久 close 后尽力通知、下一会话先开始、exact-child replacement、当前代次策略先行和显式恢复；D13 已另行闭合 Agent job runner 的 `StorageGateway` 路由，仍不包含正式 main/preload/renderer、Agent utility 或真实 DeepSeek HTTP |
-| 正式三项后台 Agent 任务 | 已决定 | 三项任务共享同一冻结输入并独立执行、D13 将 runner、冻结字幕/个人记忆读取与两类提交统一接入正式 `StorageGateway` 的 UI-free 后端子边界均为实现完成·尚未验收；Agent utility、用户读取/操作链路与完整 J21/J24 仍无产品证据 |
+| 正式三项后台 Agent 任务 | 已决定 | 三项任务共享同一冻结输入并独立执行、D13 将 runner、冻结字幕/个人记忆读取与两类提交统一接入正式 `StorageGateway` 的 UI-free 后端子边界均为实现完成·尚未验收；D14 已登记把真实插件宿主/registry/Gateway/Pi 移入 Agent utility，用户读取/操作链路与完整 J21/J24 仍无产品证据 |
 | 识别 provider、Agent 模型 provider、确认关键词、资源仲裁 | 已决定 | 识别 registry、云端识别、确认关键词与资源仲裁尚无实现证据；D9 bootstrap/catalog 与 D10 registry/Gateway/Pi 内部路径子边界为实现完成·尚未验收，但正式 main/Agent utility/网络尚未接线，真实 DeepSeek 公网及本地 Agent 模型 provider 后置 |
 | 正式设置/历史/调试聊天 | 已决定 | UI/UX 由并行任务维护；正式 IPC、preload、storage 读取仍待接线 |
 | 正式打包与发布 | 已决定 | 正式包当前按设计排除隔离入口和 Pi 开发依赖 |
@@ -184,3 +184,4 @@ D6 的 A4 正式 storage utility transport 子边界现为实现完成·尚未�
 | D11 | `ConfigStore` v1→v2 Agent 设置事实、revision 冲突、Agent/个人记忆自动处理边界及真实 storage worker/SQLite 资格组合；provider 配置与凭据继续由 D9 main-only bootstrap 管理 | Luna/max 首轮 P1 无、无确定性 P2；按建议补齐 v1→v2 持久写回与重启证据、三项任务共享同一 `InputReference` 断言并收紧 own-key 校验后，最终复核 P1 无、P2 无；未增加逐字段重复单测 | ConfigStore 定向 9/9；正式生命周期文件 12/12；core 529/529；integration 65/65；evidence 227/227；I3 非音频报告安全重建且保持 `result=pass`、`gateStatus=partial` | `9f69f65` | 实现完成·尚未验收 |
 | D12 | main-owned `FormalAgentRuntime`、exact 资格上下文、设置/任务策略串行化，以及持久 close 后 detached `MeetingStopped` 对账；升级 D6 真实 `SessionCoordinator/SqliteSessionRecorder/StorageGateway/storage utility/SQLite` 旅程，不新增同义测试 | Luna/max 首轮指出 readiness 未先清理与非法就绪结果收束等 P1 1 项、P2 2 项；补齐 fail-closed readiness、detached rejection、恢复上限和当前 storage worker 代次策略确认后，末轮 P1 无、P2 无；保留 4 项 P3 后续并发/包装层风险，不新增重复测试 | D12 定向 2/2；`StorageGateway` 定向 14/14；core 529/529；integration 65/65；evidence 227/227；I3 非音频报告安全重建且保持 `result=pass`、`gateStatus=partial` | `de9ffc3` | 实现完成·尚未验收 |
 | D13 | `AgentJobRunner`、`TranscriptReader`、`MemoryReader` 与两类 writer 统一接入 main-owned `StorageGateway`；在模型结果返回后、提交前强制收殓 exact storage child，以同一身份恢复并有界读回个人记忆；升级 D6/D12 既有旅程，不新增同义测试 | Luna/max 首轮确认 P1 无、P2 无；按 P3 建议补齐 SEM-T15/J24-B05/B07 追踪，并把 replacement 策略先行断言提升到真实 runner 入口，末轮仍为 P1 无、P2 无；保留极慢 replacement 触发租约冲突后显式恢复的 P3 风险 | D13 定向 2/2；`StorageGateway` 定向 14/14；core 529/529；integration 65/65；evidence 227/227；I3 非音频报告安全重建且保持 `result=pass`、`gateStatus=partial` | `218f836` | 实现完成·尚未验收 |
+| D14 | main 保留 runner/readers/writers/`StorageGateway`，真实插件宿主、输入规划、provider registry、`ModelGateway` 与 Pi Agent Loop 进入独立 Agent utility；单次私有凭据消息、异常退出失效、第二次 UI-free Electron main 启动的 fresh bootstrap、策略重放与同 `runId` 恢复；B05 继承 D6，新增退出点覆盖 B06，升级既有旅程且不新增同义测试 | Luna/max 登记复核 P1=0、P2=0；按 4 项 P3 收紧 B05/B06 追踪、新 main 启动恢复、utility 调用级 bootstrap 权限和 ADR 关联 | 待实现后验证 | — | 已决定 |

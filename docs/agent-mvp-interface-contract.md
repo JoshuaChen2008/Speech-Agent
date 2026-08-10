@@ -211,6 +211,12 @@ D13 把正式任务执行的 storage port 冻结为同一个 main-owned `Storage
 
 当前 D13 正式任务存储网关接线子边界为实现完成·尚未验收；正式 main/preload/renderer、Agent utility、真实 DeepSeek HTTP 与完整 J21/J24 仍后置。
 
+D14 冻结 main 与正式 Agent utility 的窄协议。main-owned proxy 只暴露 `availableTaskKinds/assertJobAvailable/executeJob` 给 `AgentJobRunner`；`executeJob` 先经正式 `TranscriptReader` 取得与 claimed job `InputReference` 完全一致的快照，再发送 exact `{ job, snapshot, providerConfig, credentialBytes }`。`providerConfig` 必须是 D9 受信任配置表的当前冻结条目并与 job 的 provider/model 一致；`credentialBytes` 是只服务该次执行、1–4096 字节的私有副本，不得进入 child environment、argv、普通 lifecycle event 或响应。utility 只接受 `initialize/executeJob/cancel/shutdown` 闭集；内部以调用级 nominal `AgentProviderBootstrap` 建立真实 registry/Gateway/Pi 路径，返回值只允许任务匹配的 exact `{ kind, value }`，不得返回凭据、provider URL、冻结正文之外的文件/网络/SQLite 句柄或自由错误。main proxy 对响应再次执行任务类型、证据范围与结构校验，两个 writer 仍只在 main 通过 `StorageGateway` 提交。
+
+Agent utility host 一个 generation 同时至多执行一个 job。任何未知响应、传输超时或异常退出都使该 generation fail closed，并在创建 replacement 前等待同一 exact child 的退出；正式 Agent 模型 provider 已返回但结果尚未交付时退出，映射为可重试 `AGENT_WORKER_EXITED`。异常退出和稳定鉴权失败都必须失效 main bootstrap；`availableTaskKinds` 随即返回空闭集，防止当前 storage 策略尚未重放时继续领取。正式恢复必须由新的 Electron main 启动从新的启动环境取得凭据组合，随后重放当前任务策略并显式启动新 generation；运行中注入环境、同一 main 进程重建 bootstrap 或同一 bootstrap 自动复活旧凭据都不构成恢复。utility 内的调用级 nominal bootstrap 不读取环境、不发布 Agent 处理资格，也不重建配置表，只消费 main 冻结的 provider 条目和本次凭据副本。D14 不改变 D13 的 main-owned storage port，也不表示正式窗口已经接线。
+
+当前 D14 正式 Agent utility 进程边界为已决定。
+
 固定 recipe 与模型操作闭集为：`meeting-minutes@1` 只允许 `meeting-minutes.chunk/merge`，`enhanced-transcript@1` 只允许 `enhanced-transcript.chunk/merge`，`memory-extraction@1` 只允许 `memory-extraction.chunk`。`memory-consolidation` 不创建第四项后台任务，也不再次调用模型；它在记忆任务的有界内存中按分块顺序校验并汇总候选，再由 `MemoryCandidateSink` 一次提交。`AgentPluginHost` 以 `PluginResult` 分流到唯一匹配的 writer，插件不得选择 SQLite 表或绕过宿主提交。
 
 Agent 模型 provider registry 必须把上下文窗口、固定提示和输出预留折算成保守的 `maxChunkInputBytes`，`AgentInputPlanner` 再以 canonical JSON 的 UTF-8 字节数判定边界。该字节预算是避免超过上下文窗口的保守上限，不是对 token 数的产品展示值。规划优先保持完整字幕段；只有单段自身超过预算时才按 Unicode code point 的 `[fromCodePoint, throughCodePoint)` 分片。分片必须可按原顺序无损重建每段正文，且每个分块都保留原 `eventOrder` 作为证据身份。归并采用有界、确定性批次；如果预算不足以容纳至少两个受限中间结果，任务在调用 Agent 模型 provider 前 fail closed。宿主不得把输入分块或中间结果写入 SQLite、日志或报告。

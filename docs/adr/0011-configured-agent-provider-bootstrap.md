@@ -42,6 +42,12 @@ D11 实现 main-owned `ConfigStore` v2 的 Agent 设置事实，但仍不把 pro
 
 D11 的联合旅程把迁移后的设置与 D9 bootstrap 公共事实组合为受信任 `AgentEligibilityContext`，再交给真实 storage worker/SQLite 复算资格、对账三项后台 Agent 任务并应用个人记忆策略。它覆盖开启前后的 Agent 自动处理边界、个人记忆关闭/重新开启的新边界、陈旧 revision、损坏 v2 与配置/SQLite 凭据负扫描。D11 不修改 main/preload/renderer，不创建 Agent utility，不覆盖运行中部署新的 provider 配置表，也不调用真实 DeepSeek。
 
+## D14 实现切片
+
+D14 在不实现真实 DeepSeek HTTP 的前提下建立正式 Agent utility 进程边界。main-owned `AgentJobRunner`、`TranscriptReader`、writer 和 `StorageGateway` 不移动；main 侧窄 proxy 只把 exact claimed job、已验证冻结输入、D9 provider 配置和当前调用凭据副本发送给 utility。utility 内运行真实 `AgentPluginHost`、`AgentInputPlanner`、`AgentModelProviderRegistry`、`ModelGateway` 与 Pi Agent Loop，并只返回 exact `PluginResult`；它不取得 SQLite、`StorageGateway`、配置文件路径或 writer。
+
+Agent utility 使用 D9 净化后的显式 child environment，API key 不通过环境或 argv 继承。每次执行用收到的 1–4096 字节副本建立调用级 nominal `AgentProviderBootstrap`；该实例不得读取环境、发布 Agent 处理资格或重建配置表，只能消费 main 已冻结的一个 provider 条目与本次凭据副本，并在响应、异常或取消收束时尽力清零收到的字节与 bootstrap 内部副本；main 的借用副本在 RPC 收束后由原 bootstrap 清零。Agent utility 异常退出或稳定鉴权失败会失效 main 主凭据，并使当前 proxy 的可用任务闭集变为空；同一 bootstrap 不自动启动 replacement。只有新的 Electron main 启动从新的启动环境重新组合凭据、重放任务策略并创建新 utility generation 后，才恢复原 `runId`；运行中注入环境或在同一 main 进程重建 bootstrap 均不得恢复。D14 的确定性 fixture 只替代 Agent 模型 provider 外部边界，不通过 renderer/IPC 选择场景，不接公网；联合旅程使用同一数据库上的两次 UI-free Electron main 启动，但不把它称为带正式窗口的完整应用重启。
+
 ## 取舍
 
 - 相比把 API key 写入 ConfigStore，本方案避免明文持久化与 renderer 凭据 IPC；代价是每次启动都必须由外部环境重新供给。
@@ -59,5 +65,5 @@ D11 的联合旅程把迁移后的设置与 D9 bootstrap 公共事实组合为�
 ## 关联
 
 - 语义：SEM-F09、SEM-F15、SEM-F25、SEM-F28、SEM-T15
-- 旅程：J7、J13、J21、J22、J24-B12/B23/B26/B30；D10 不覆盖配置部署 B13
+- 旅程：J7、J13、J21、J22、J24-B05/B06/B12/B23/B25/B26/B30；D10 不覆盖配置部署 B13，D14 的 B05 继承 D6 已有 claim/退出恢复边界
 - 接口：[`../agent-mvp-interface-contract.md`](../agent-mvp-interface-contract.md)
