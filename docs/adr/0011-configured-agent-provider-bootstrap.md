@@ -36,6 +36,12 @@ D10 在不接公网的前提下实现项目自有 `AgentModelProviderRegistry`�
 
 CI 的确定性适配器继续属于 Agent 模型 provider 外部边界，但必须经真实 registry、`ModelGateway` 与 Pi Agent Loop；它只接收本次调用的配置快照、请求副本和有界凭据副本，不得直接写 SQLite 或产物。D10 复用并升级既有正式纪要与三项任务联合旅程，只新增一条稳定鉴权失效场景；不实现 DeepSeek HTTP、正式 main、Agent utility、preload 或 renderer，也不证明公网可用性。
 
+## D11 实现切片
+
+D11 实现 main-owned `ConfigStore` v2 的 Agent 设置事实，但仍不把 provider 参数或凭据写入该文件。schema v1 的合法字幕设置与已完成单路来源选择迁移后保持不变，六个新增 Agent 字段采用首次默认值；schema v2 只有六个字段逐项合法且两个边界与开关的有效性完全一致时才保留，否则六项整体回落，字幕设置继续按原有规则迁移。通用 `ConfigStore.update` 不接受 schema 或 Agent 字段；唯一写入口 `updateAgentSettings` exact 接受 `{ expectedRevision, agentEnabled, memoryEnabled, cloudDisclosureAccepted }`，由 main-owned 当前时刻计算两个边界，在 revision 匹配时一次原子替换并恰好递增 revision，冲突返回 `SETTINGS_REVISION_CONFLICT` 且不触碰原文件。
+
+D11 的联合旅程把迁移后的设置与 D9 bootstrap 公共事实组合为受信任 `AgentEligibilityContext`，再交给真实 storage worker/SQLite 复算资格、对账三项后台 Agent 任务并应用个人记忆策略。它覆盖开启前后的 Agent 自动处理边界、个人记忆关闭/重新开启的新边界、陈旧 revision、损坏 v2 与配置/SQLite 凭据负扫描。D11 不修改 main/preload/renderer，不创建 Agent utility，不覆盖运行中部署新的 provider 配置表，也不调用真实 DeepSeek。
+
 ## 取舍
 
 - 相比把 API key 写入 ConfigStore，本方案避免明文持久化与 renderer 凭据 IPC；代价是每次启动都必须由外部环境重新供给。
