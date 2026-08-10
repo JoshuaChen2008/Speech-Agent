@@ -56,7 +56,7 @@
     "virtualDurationMs": 7200000
   },
   "gateStatus": "partial",
-  "generatedAt": "2026-08-10T01:39:58.215Z",
+  "generatedAt": "2026-08-10T02:27:09.818Z",
   "kind": "i3-nonaudio-soak",
   "limits": {
     "maxCpuPercent": 800,
@@ -70,24 +70,24 @@
   "metrics": {
     "captionEventCount": 4000,
     "checkpointedWalFrames": 0,
-    "cpuPercent": 9.386,
-    "cpuSystemMs": 235,
-    "cpuUserMs": 578,
+    "cpuPercent": 11.04,
+    "cpuSystemMs": 282,
+    "cpuUserMs": 688,
     "exportCount": 3,
     "historyDomMaxNodes": 50,
     "historyPageCount": 72,
-    "maxHeapUsedBytes": 129722920,
+    "maxHeapUsedBytes": 73787944,
     "maxQueueDepth": 112,
-    "maxRssBytes": 286998528,
+    "maxRssBytes": 220385280,
     "pageCount": 668,
     "pageQueryCount": 72,
-    "pageQueryP95Ms": 8.833,
+    "pageQueryP95Ms": 9.258,
     "recoveredRefinedSegmentCount": 400,
     "segmentCount": 3600,
     "walBytes": 4173592,
     "walFrames": 879,
     "journalMode": "wal",
-    "wallDurationMs": 8661.905
+    "wallDurationMs": 8786.511
   },
   "privacy": {
     "persistedAudio": false,
@@ -103,10 +103,10 @@
     "sqliteSessionRecorderSha256": "4acadaafe49b2b72ddbd1d6599a95d215d85427f79ad6a6d134f16214864b743",
     "sqliteSubtitleStoreSha256": "f7baad9291001b628787a06666375cc26497b125c41bb9ba54515d65c48ffee6",
     "strictEvidenceParserSha256": "5155fc8df5449133a8d9710a581fbd03bedfb44729da3c5d910a81df74b5e63e",
-    "storageGatewaySha256": "aa13da433cf6896e05ea5537998997a7e0049854db2ed14d49b7d04a491d0e9d",
+    "storageGatewaySha256": "73739927fcd94c36238f4686c5640343e8a0c618cad5a7cc634371f30b3e0af1",
     "storageWorkerServiceSha256": "66f05fd6ef95a4d6afafc064a0fa5b149d67667ac40208b1b28249d922d4f89c",
     "verifierSha256": "8014be2efdbd0d63a99a4de1a9f24ccb70eddcb158cc89b46d2d7bb731ed6ff1",
-    "productPayloadSha256": "6b281e75ed0d653f548c3d8a3760c4f27b836fc06f74e9e76b6e300ce4b2f4ea"
+    "productPayloadSha256": "debe338d98f54abcecc1bfdf562cbd3040bd9d61a62a1655780a2c3fcee02698"
   },
   "result": "pass",
   "schemaVersion": 1
