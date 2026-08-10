@@ -79,6 +79,8 @@ function retainedFailure (error) {
 }
 
 class StorageGateway {
+  #agentTaskPolicyHost
+
   constructor (options = {}) {
     if (typeof options.databasePath !== 'string' || !path.isAbsolute(options.databasePath)) {
       throw new TypeError('databasePath must be absolute')
@@ -110,6 +112,7 @@ class StorageGateway {
     if (options.onFatalError) this.hostOptions.onFatalError = options.onFatalError
     this.hostFactory = options.hostFactory || ((hostOptions) => new StorageWorkerHost(hostOptions))
     this.host = null
+    this.#agentTaskPolicyHost = null
     this.hostInvalid = false
     this.startPromise = null
     this.queue = []
@@ -135,6 +138,7 @@ class StorageGateway {
       throw new TypeError('hostFactory must return a StorageWorkerHost-compatible object')
     }
     this.host = candidate
+    this.#agentTaskPolicyHost = null
     this.hostInvalid = false
     try {
       await candidate.start()
@@ -371,6 +375,13 @@ class StorageGateway {
     return this.enqueue('applyAgentTaskPolicy', input)
   }
 
+  isAgentTaskPolicyReady () {
+    return this.host !== null &&
+      this.host === this.#agentTaskPolicyHost &&
+      this.hostInvalid === false &&
+      this.host.state === 'ready'
+  }
+
   getAgentSessionDetail (input) {
     return this.enqueue('getAgentSessionDetail', input)
   }
@@ -448,8 +459,15 @@ class StorageGateway {
 
       try {
         await this.ensureHost()
-        const result = await this.invoke(this.host, item)
+        const activeHost = this.host
+        if (item.operation === 'reconcileTerminalAgentSession' && !this.isAgentTaskPolicyReady()) {
+          throw new StorageError('AGENT_REQUEST_INVALID')
+        }
+        const result = await this.invoke(activeHost, item)
         if (this.stopped || this.queue[0] !== item) return
+        if (item.operation === 'applyAgentTaskPolicy' && this.host === activeHost) {
+          this.#agentTaskPolicyHost = activeHost
+        }
         const clonedResult = cloneForQueue(result)
         this.queue.shift()
         if (!item.reported) item.resolve(clonedResult)
@@ -524,6 +542,7 @@ class StorageGateway {
         await host.shutdown()
         if (this.host === host) this.host = null
       }
+      this.#agentTaskPolicyHost = null
       this.stopped = true
     })()
     try {
@@ -560,6 +579,7 @@ class StorageGateway {
       if (!terminationError && this.host === host) this.host = null
     }
     this.hostInvalid = false
+    this.#agentTaskPolicyHost = null
     const pending = this.queue.splice(0)
     for (const item of pending) item.reject(error)
     this.rejectFlushWaiters(terminationError || error)

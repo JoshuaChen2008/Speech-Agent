@@ -17,8 +17,16 @@ const REPORT_KEYS = Object.freeze([
 ].sort())
 const CHECK_KEYS = Object.freeze([
   'threeJobsReconciled',
+  'meetingStoppedDetached',
+  'nextSessionStartedBeforeNotificationRecovery',
+  'disabledAndEmptySessionsSkipped',
+  'duplicateMeetingStoppedCoalesced',
+  'invalidPolicyFailsClosed',
+  'notificationFailureDeferred',
+  'notificationFailureChildReaped',
   'exactChildReaped',
   'replacementBlockedBeforePolicy',
+  'taskPolicyReplayedBeforeRecovery',
   'duplicateReconciliationIdempotent',
   'sameRunRecovered',
   'taskIdentityStable',
@@ -26,16 +34,19 @@ const CHECK_KEYS = Object.freeze([
   'noDuplicateClaims',
   'artifactProjectionExact',
   'pluginTaskClosureExact',
+  'eligibilityContextExact',
   'captionFactsPreserved',
   'gracefulExactExit'
 ].sort())
 const TRANSCRIPT_FRAGMENTS = Object.freeze([
-  'D6 synthetic committed transcript first',
-  'D6 synthetic committed transcript second',
+  'D12 synthetic committed transcript before Agent enable',
+  'D12 synthetic committed transcript first',
+  'D12 synthetic committed transcript second',
   'synthetic utility transport overview',
   'synthetic utility decision',
   'synthetic enhanced utility transcript'
 ])
+const PROVIDER_URL = 'https://api.deepseek.com'
 const LOCAL_ABSOLUTE_PATH = /(?:^|[^A-Za-z])(?:[A-Za-z]:[\\/]|file:\/\/\/|\\\\(?:\?\\)?[^\\/\s]+[\\/][^\s"']+)/i
 const RAW_ERROR_OR_STACK = /\b(?:Error|[A-Za-z]+Error):[^\r\n]*|(?:\r?\n|\\n)\s*at\s+(?:async\s+)?[^\r\n]+/im
 const AUDIO_PATH = /\.(?:wav|pcm|mp3|m4a|aac|flac|ogg|opus|webm)(?![A-Za-z0-9])/i
@@ -125,7 +136,7 @@ test('SEM-F14 / J24-B30 D6 report privacy reader rejects transcript, path, raw e
   ))
 })
 
-test('SEM-F09/F12/F16/F28 / D6/D10/J7/J24-B04/B05/B25 storage utility sub-boundary recovers registry-backed tasks once', { timeout: 40000 }, async (t) => {
+test('SEM-F00/F09/F12/F16/F28 / D6/D10/D12/J7/J24-B01/B04/B25/B26/B33 commits then reconciles registry-backed tasks once', { timeout: 40000 }, async (t) => {
   const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'formal-agent-storage-utility-'))
   t.after(() => fs.rmSync(dataRoot, { recursive: true, force: true }))
 
@@ -137,7 +148,7 @@ test('SEM-F09/F12/F16/F28 / D6/D10/J7/J24-B04/B05/B25 storage utility sub-bounda
   assert.deepEqual(Object.keys(report.checks).sort(), CHECK_KEYS)
   assert.equal(Object.values(report.checks).every((value) => value === true), true)
   assert.deepEqual(report.metrics, {
-    storageGenerationCount: 2,
+    storageGenerationCount: 3,
     jobCount: 3,
     artifactCount: 2,
     memoryCommitCount: 1,
@@ -148,8 +159,9 @@ test('SEM-F09/F12/F16/F28 / D6/D10/J7/J24-B04/B05/B25 storage utility sub-bounda
   assert.deepEqual(report.scope, {
     storageUtilityProcess: true,
     agentUtilityProcess: false,
-    meetingStoppedWiring: false,
-    storageGatewayWiring: false,
+    meetingStoppedWiring: true,
+    meetingStoppedStorageGatewayWiring: true,
+    agentJobRunnerStorageGatewayWiring: false,
     preloadIpcRenderer: false,
     packagedRuntime: false
   })
@@ -172,7 +184,13 @@ test('SEM-F09/F12/F16/F28 / D6/D10/J7/J24-B04/B05/B25 storage utility sub-bounda
   assert.equal(files.some((file) => AUDIO_PATH.test(path.basename(file))), false)
   for (const file of files) {
     assert.equal(fs.readFileSync(file).includes(Buffer.from(credentialCanary)), false)
+    assert.equal(fs.readFileSync(file).includes(Buffer.from(PROVIDER_URL)), false)
   }
+  const config = JSON.parse(fs.readFileSync(path.join(dataRoot, 'data', 'config.json'), 'utf8'))
+  assert.equal(Object.hasOwn(config, 'providerId'), false)
+  assert.equal(Object.hasOwn(config, 'model'), false)
+  assert.equal(Object.hasOwn(config, 'baseUrl'), false)
+  assert.equal(Object.hasOwn(config, 'apiKey'), false)
   const smokeSource = fs.readFileSync(mainPath, 'utf8')
   assert.doesNotMatch(smokeSource, /new\s+BrowserWindow\s*\(/)
   assert.match(smokeSource, /BrowserWindow\.getAllWindows\(\)/)
@@ -204,7 +222,7 @@ test('SEM-F09/F12/F16/F28 / D6/D10/J7/J24-B04/B05/B25 storage utility sub-bounda
     ])
     assert.equal(Number(database.prepare('SELECT COUNT(*) AS count FROM memory_items').get().count), 1)
     assert.equal(Number(database.prepare('SELECT COUNT(*) AS count FROM memory_evidence').get().count), 1)
-    assert.equal(Number(database.prepare('SELECT COUNT(*) AS count FROM caption_events').get().count), 2)
+    assert.equal(Number(database.prepare('SELECT COUNT(*) AS count FROM caption_events').get().count), 3)
     const storageColumns = database.prepare(`
       SELECT schema.name AS table_name, columns.name AS column_name
       FROM sqlite_schema AS schema
