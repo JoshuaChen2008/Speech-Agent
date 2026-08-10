@@ -207,6 +207,10 @@ D12 增加 UI-free 的 main-owned `FormalAgentRuntime` 与 `MeetingStoppedPersis
 
 当前 D12 UI-free 接线子边界为实现完成·尚未验收。正式 main/preload/renderer、Agent utility、Agent job runner 的完整 `StorageGateway` 路由和真实 DeepSeek HTTP 仍后置。
 
+D13 把正式任务执行的 storage port 冻结为同一个 main-owned `StorageGateway`：`AgentJobRunner`、`TranscriptReader`、`MemoryReader`、`ArtifactWriter` 与 `MemoryCandidateSink` 不得接收当前 `StorageWorkerHost`。网关补齐 `readAgentInputSnapshot` 与 `readAgentMemoryContext` 路由，并把两者归入 Agent 业务拒绝隔离边界；unknown transport 仍沿用原请求身份重放。runner 领取前必须确认当前 storage worker 代次已经应用当前任务策略；replacement 后先恢复策略，才可继续领取。该登记不改变 Agent utility 的独立进程边界。
+
+当前 D13 正式任务存储网关接线为已决定。
+
 固定 recipe 与模型操作闭集为：`meeting-minutes@1` 只允许 `meeting-minutes.chunk/merge`，`enhanced-transcript@1` 只允许 `enhanced-transcript.chunk/merge`，`memory-extraction@1` 只允许 `memory-extraction.chunk`。`memory-consolidation` 不创建第四项后台任务，也不再次调用模型；它在记忆任务的有界内存中按分块顺序校验并汇总候选，再由 `MemoryCandidateSink` 一次提交。`AgentPluginHost` 以 `PluginResult` 分流到唯一匹配的 writer，插件不得选择 SQLite 表或绕过宿主提交。
 
 Agent 模型 provider registry 必须把上下文窗口、固定提示和输出预留折算成保守的 `maxChunkInputBytes`，`AgentInputPlanner` 再以 canonical JSON 的 UTF-8 字节数判定边界。该字节预算是避免超过上下文窗口的保守上限，不是对 token 数的产品展示值。规划优先保持完整字幕段；只有单段自身超过预算时才按 Unicode code point 的 `[fromCodePoint, throughCodePoint)` 分片。分片必须可按原顺序无损重建每段正文，且每个分块都保留原 `eventOrder` 作为证据身份。归并采用有界、确定性批次；如果预算不足以容纳至少两个受限中间结果，任务在调用 Agent 模型 provider 前 fail closed。宿主不得把输入分块或中间结果写入 SQLite、日志或报告。
