@@ -96,21 +96,52 @@ class AgentJobRunner {
     this.memorySink = new MemoryCandidateSink(storage)
     this.runs = new Map()
     this.cancelRequested = new Set()
+    this.claimAttempts = new WeakMap()
   }
 
-  async runNext ({ claimIdempotencyKey, localWorkAllowed }) {
+  createClaimAttempt ({ claimIdempotencyKey, localWorkAllowed }) {
     const claimKey = boundedString(claimIdempotencyKey)
     if (typeof localWorkAllowed !== 'boolean') throw new AgentCoreError('AGENT_REQUEST_INVALID')
-    const availableTaskKinds = this.pluginHost.availableTaskKinds()
-    const job = await this.storage.claimNextAgentJob({
+    const availableTaskKinds = Object.freeze([...this.pluginHost.availableTaskKinds()])
+    const attempt = Object.freeze({
       claimIdempotencyKey: claimKey,
       owner: this.owner,
       leaseMs: this.leaseMs,
       localWorkAllowed,
       availableTaskKinds
     })
+    this.claimAttempts.set(attempt, { state: 'pending' })
+    return attempt
+  }
+
+  async runClaimAttempt (attempt) {
+    const record = this.claimAttempts.get(attempt)
+    if (!record || record.state !== 'pending') throw new AgentCoreError('AGENT_REQUEST_INVALID')
+    record.state = 'running'
+    try {
+      const result = await this.executeClaimAttempt(attempt)
+      record.state = 'settled'
+      return result
+    } catch (error) {
+      record.state = 'pending'
+      throw error
+    }
+  }
+
+  runNext (input) {
+    return this.runClaimAttempt(this.createClaimAttempt(input))
+  }
+
+  async executeClaimAttempt (attempt) {
+    const job = await this.storage.claimNextAgentJob({
+      claimIdempotencyKey: attempt.claimIdempotencyKey,
+      owner: attempt.owner,
+      leaseMs: attempt.leaseMs,
+      localWorkAllowed: attempt.localWorkAllowed,
+      availableTaskKinds: attempt.availableTaskKinds
+    })
     if (!job) return null
-    if (!availableTaskKinds.includes(job.taskKind)) throw new AgentCoreError('AGENT_PERMISSION_DENIED')
+    if (!attempt.availableTaskKinds.includes(job.taskKind)) throw new AgentCoreError('AGENT_PERMISSION_DENIED')
 
     const controller = new AbortController()
     const keeper = new LeaseKeeper({
@@ -156,7 +187,12 @@ class AgentJobRunner {
           errorCode: RETRYABLE_ERROR_CODES.includes(error.code) ? error.code : 'AGENT_PROVIDER_UNAVAILABLE',
           nextAttemptAt: this.now() + delay
         })
-        return { runId: job.runId, jobState: retried.state, artifact: null }
+        return {
+          runId: job.runId,
+          jobState: retried.state,
+          artifact: null,
+          ...(retried.state === 'retry_wait' ? { nextAttemptAt: retried.nextAttemptAt } : {})
+        }
       }
       const errorCode = error.code === 'AGENT_INPUT_CHANGED'
         ? 'AGENT_REQUEST_INVALID'
