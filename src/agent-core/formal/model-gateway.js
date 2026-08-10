@@ -3,6 +3,7 @@
 const { canonicalize } = require('../canonical-json')
 const { AgentCoreError } = require('../errors')
 const { PiAgentAdapter } = require('../pi-agent-adapter')
+const { AgentModelProviderRegistry } = require('../../agent-provider/model-provider-registry')
 const {
   canonicalBytes,
   exactObject,
@@ -16,7 +17,7 @@ const IDENTITY_KEYS = Object.freeze([
 ])
 const REQUEST_KEYS = Object.freeze([...IDENTITY_KEYS, 'operation', 'input'])
 const DESCRIPTOR_KEYS = Object.freeze([
-  'providerId', 'providerKind', 'model', 'maxChunkInputBytes', 'maxResultBytes', 'openModel'
+  'providerId', 'providerKind', 'model', 'maxChunkInputBytes', 'maxResultBytes', 'timeoutMs', 'withModel'
 ])
 
 const RECIPE_OPERATIONS = Object.freeze({
@@ -52,14 +53,15 @@ function sameIdentity (left, right) {
 function descriptor (value, expected) {
   exactObject(value, DESCRIPTOR_KEYS, 'AGENT_PROVIDER_UNAVAILABLE')
   if (value.providerId !== expected.providerId || value.providerKind !== expected.providerKind ||
-      value.model !== expected.model || typeof value.openModel !== 'function') {
+      value.model !== expected.model || typeof value.withModel !== 'function' ||
+      !Number.isSafeInteger(value.timeoutMs) || value.timeoutMs < 1 || value.timeoutMs > 120000) {
     throw new AgentCoreError('AGENT_PROVIDER_UNAVAILABLE', { retryable: true })
   }
   const limits = providerLimits({
     maxChunkInputBytes: value.maxChunkInputBytes,
     maxResultBytes: value.maxResultBytes
   })
-  return { ...value, ...limits }
+  return Object.freeze({ ...value, ...limits })
 }
 
 function structuredResult (text, maxResultBytes) {
@@ -74,28 +76,29 @@ function structuredResult (text, maxResultBytes) {
 }
 
 class ModelGateway {
-  constructor ({ providerAdapter, agentAdapter = new PiAgentAdapter(), timeoutMs = 30000 } = {}) {
-    if (!providerAdapter || typeof providerAdapter.resolve !== 'function' ||
-        !agentAdapter || typeof agentAdapter.run !== 'function' ||
-        !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120000) {
+  #providerRegistry
+  #agentAdapter
+  #bindings
+
+  constructor ({ providerRegistry } = {}) {
+    if (!(providerRegistry instanceof AgentModelProviderRegistry)) {
       throw new AgentCoreError('AGENT_REQUEST_INVALID')
     }
-    this.providerAdapter = providerAdapter
-    this.agentAdapter = agentAdapter
-    this.timeoutMs = timeoutMs
-    this.bindings = new Map()
+    this.#providerRegistry = providerRegistry
+    this.#agentAdapter = new PiAgentAdapter()
+    this.#bindings = new Map()
   }
 
   async getLimits (rawIdentity) {
     const requested = identity(rawIdentity)
-    const existing = this.bindings.get(requested.runId)
+    const existing = this.#bindings.get(requested.runId)
     if (existing) {
       if (!sameIdentity(existing.identity, requested)) throw new AgentCoreError('AGENT_REQUEST_INVALID')
       return { ...existing.limits }
     }
     let resolved
     try {
-      resolved = descriptor(await this.providerAdapter.resolve(requested), requested)
+      resolved = descriptor(await this.#providerRegistry.resolve(requested), requested)
     } catch (error) {
       throw runtimeError(error)
     }
@@ -103,7 +106,7 @@ class ModelGateway {
       maxChunkInputBytes: resolved.maxChunkInputBytes,
       maxResultBytes: resolved.maxResultBytes
     })
-    this.bindings.set(requested.runId, { identity: requested, descriptor: resolved, limits })
+    this.#bindings.set(requested.runId, { identity: requested, descriptor: resolved, limits })
     return { ...limits }
   }
 
@@ -112,7 +115,7 @@ class ModelGateway {
     const requestIdentity = identity(Object.fromEntries(
       IDENTITY_KEYS.map((key) => [key, rawRequest[key]])
     ))
-    const binding = this.bindings.get(requestIdentity.runId)
+    const binding = this.#bindings.get(requestIdentity.runId)
     if (!binding || !sameIdentity(binding.identity, requestIdentity) ||
         !RECIPE_OPERATIONS[requestIdentity.recipeVersion].includes(rawRequest.operation) ||
         !rawRequest.input || typeof rawRequest.input !== 'object' || Array.isArray(rawRequest.input) ||
@@ -121,33 +124,44 @@ class ModelGateway {
     }
     throwIfAborted(signal)
     try {
-      const resolvedModel = await binding.descriptor.openModel({
+      let consumeCount = 0
+      let loopResult
+      const returned = await binding.descriptor.withModel({
         operation: rawRequest.operation,
         input: structuredClone(rawRequest.input)
+      }, signal, async (resolvedModel, providerSignal) => {
+        consumeCount += 1
+        if (consumeCount !== 1 || !resolvedModel || typeof resolvedModel !== 'object' ||
+            Reflect.ownKeys(resolvedModel).length !== 2 ||
+            !Object.hasOwn(resolvedModel, 'model') || !Object.hasOwn(resolvedModel, 'streamFn') ||
+            !Object.isFrozen(resolvedModel) || !resolvedModel.model ||
+            typeof resolvedModel.streamFn !== 'function') {
+          throw new AgentCoreError('AGENT_PROVIDER_UNAVAILABLE', { retryable: true })
+        }
+        throwIfAborted(providerSignal)
+        loopResult = await this.#agentAdapter.run({
+          resolvedModel,
+          systemPrompt: SYSTEM_PROMPTS[rawRequest.operation],
+          prompt: canonicalize(rawRequest.input),
+          tools: [],
+          maxTurns: 1,
+          timeoutMs: binding.descriptor.timeoutMs,
+          signal: providerSignal
+        })
+        return loopResult
       })
-      if (!resolvedModel || typeof resolvedModel !== 'object' ||
-          !resolvedModel.model || typeof resolvedModel.streamFn !== 'function') {
+      if (consumeCount !== 1 || returned !== loopResult) {
         throw new AgentCoreError('AGENT_PROVIDER_UNAVAILABLE', { retryable: true })
       }
       throwIfAborted(signal)
-      const result = await this.agentAdapter.run({
-        resolvedModel,
-        systemPrompt: SYSTEM_PROMPTS[rawRequest.operation],
-        prompt: canonicalize(rawRequest.input),
-        tools: [],
-        maxTurns: 1,
-        timeoutMs: this.timeoutMs,
-        signal
-      })
-      throwIfAborted(signal)
-      return structuredResult(result.text, binding.limits.maxResultBytes)
+      return structuredResult(loopResult.text, binding.limits.maxResultBytes)
     } catch (error) {
       throw runtimeError(error)
     }
   }
 
   release (runId) {
-    if (typeof runId === 'string') this.bindings.delete(runId)
+    if (typeof runId === 'string') this.#bindings.delete(runId)
   }
 }
 

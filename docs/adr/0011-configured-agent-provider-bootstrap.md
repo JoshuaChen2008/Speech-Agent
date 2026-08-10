@@ -32,7 +32,7 @@ D9 先实现不接公网的 main-only bootstrap/catalog 子边界。默认保守
 
 ## D10 实现切片
 
-D10 在不接公网的前提下实现项目自有 `AgentModelProviderRegistry`，并让正式 `ModelGateway` 不再直接依赖测试替身。registry 只从一个 D9 `AgentProviderBootstrap` 冻结快照注册精确匹配的第一方适配器；解析结果同时冻结 provider/model、输入输出预算、超时和一个不暴露凭据的 `withModel` 调用边界。`withModel` 持有单次凭据借用，直到模型句柄打开、Pi Agent Loop 返回或抛错后才释放；稳定 `AGENT_PROVIDER_AUTH_FAILED` 同步失效主凭据，其它稳定结果不改变启动凭据状态。
+D10 在不接公网的前提下实现项目自有 `AgentModelProviderRegistry`，并让正式 `ModelGateway` 只接受该项目类型的实例，不再直接依赖或以 duck typing 接受测试替身。registry 只从一个 D9 `AgentProviderBootstrap` 冻结快照注册精确匹配的第一方适配器；解析结果同时冻结 provider/model、输入输出预算、超时和一个不暴露凭据的 `withModel` 调用边界。`withModel` 只输出冻结的 exact `{ model, streamFn }` 句柄，以同一受控取消信号约束模型打开和 Pi Agent Loop，并持有单次凭据借用直到逻辑调用顺利、异常、取消或超时收束；取消或超时后立即停止等待、清零借用副本并拒绝迟到结果进入 Loop。稳定 `AGENT_PROVIDER_AUTH_FAILED` 同步失效主凭据，其它稳定结果不改变启动凭据状态。
 
 CI 的确定性适配器继续属于 Agent 模型 provider 外部边界，但必须经真实 registry、`ModelGateway` 与 Pi Agent Loop；它只接收本次调用的配置快照、请求副本和有界凭据副本，不得直接写 SQLite 或产物。D10 复用并升级既有正式纪要与三项任务联合旅程，只新增一条稳定鉴权失效场景；不实现 DeepSeek HTTP、正式 main、Agent utility、preload 或 renderer，也不证明公网可用性。
 
@@ -53,5 +53,5 @@ CI 的确定性适配器继续属于 Agent 模型 provider 外部边界，但必
 ## 关联
 
 - 语义：SEM-F09、SEM-F15、SEM-F25、SEM-F28、SEM-T15
-- 旅程：J7、J13、J21、J22、J24-B12/B13/B23/B26/B30
+- 旅程：J7、J13、J21、J22、J24-B12/B23/B26/B30；D10 不覆盖配置部署 B13
 - 接口：[`../agent-mvp-interface-contract.md`](../agent-mvp-interface-contract.md)

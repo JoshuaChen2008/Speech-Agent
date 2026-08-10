@@ -11,6 +11,12 @@ const { AgentJobRunner } = require('../../src/agent-core/formal/job-runner')
 const { ModelGateway } = require('../../src/agent-core/formal/model-gateway')
 const { AgentPluginHost } = require('../../src/agent-core/formal/plugin-host')
 const { TranscriptReader } = require('../../src/agent-core/formal/storage-ports')
+const { AgentModelProviderRegistry } = require('../../src/agent-provider/model-provider-registry')
+const {
+  AgentProviderBootstrap,
+  CREDENTIAL_ENV_NAME,
+  DEFAULT_AGENT_PROVIDER_CONFIG_CATALOG
+} = require('../../src/agent-provider/provider-bootstrap')
 const { FormalAgentStore, makeUserRequestDigest } = require('../../src/runtime/storage-worker/formal-agent-store')
 const {
   OPERATIONS,
@@ -91,9 +97,9 @@ function cloudContext () {
     memoryEnabled: true,
     automaticProcessingSince: 0,
     memoryProcessingSince: 0,
-    providerId: 'cloud-primary',
+    providerId: 'deepseek',
     providerKind: 'cloud',
-    model: 'model-primary',
+    model: 'deepseek-v4-flash',
     cloudDisclosureAccepted: true,
     credentialAvailable: true,
     localModelReady: false
@@ -181,23 +187,19 @@ class DeterministicMinutesProvider {
     this.emptySections = options.emptySections === true
     this.invalidOwner = options.invalidOwner === true
     this.pending = options.pending === true
+    this.authFailure = options.authFailure === true
+    this.extraHandleFieldOnce = options.extraHandleFieldOnce === true
+    this.extraHandleFieldReturned = false
     this.limits = options.limits || { maxChunkInputBytes: 4096, maxResultBytes: 4096 }
+    this.configurationSnapshots = []
+    this.configurationWasFrozen = []
+    this.borrowedCredentials = []
+    this.credentialAvailableDuringCall = []
+    this.responseSettled = []
     this.started = new Promise((resolve) => { this.resolveStarted = resolve })
   }
 
-  async resolve (identity) {
-    return {
-      providerId: identity.providerId,
-      providerKind: identity.providerKind,
-      model: identity.model,
-      ...this.limits,
-      openModel: async (request) => this.openModel(request)
-    }
-  }
-
   output (request) {
-    this.calls.push(structuredClone(request))
-    this.resolveStarted()
     if (request.operation === 'meeting-minutes.merge') {
       const evidence = evidenceFromCandidates(request.input.candidates)
       return {
@@ -226,26 +228,47 @@ class DeterministicMinutesProvider {
     }
   }
 
-  async openModel (request) {
+  async openModel ({ configuration, request, credential, signal }) {
     const faux = await import('@earendil-works/pi-ai/providers/faux')
-    let response
+    this.configurationSnapshots.push(structuredClone(configuration))
+    this.configurationWasFrozen.push(Object.isFrozen(configuration))
+    this.borrowedCredentials.push(credential)
+    this.calls.push(structuredClone(request))
+    this.credentialAvailableDuringCall.push(
+      Buffer.isBuffer(credential) && credential.some((byte) => byte !== 0)
+    )
+    this.resolveStarted()
     if (this.pending) {
-      this.calls.push(structuredClone(request))
-      this.resolveStarted()
-      response = async () => {
-        await new Promise((resolve) => setTimeout(resolve, 100))
-        return faux.fauxAssistantMessage(JSON.stringify(this.output(request)))
-      }
-    } else if (request.operation === 'meeting-minutes.merge' && this.failMergeOnce && !this.failedMerge) {
-      this.calls.push(structuredClone(request))
-      this.resolveStarted()
-      this.failedMerge = true
-      response = faux.fauxAssistantMessage('', {
-        stopReason: 'error',
-        errorMessage: 'HTTP 408 request timeout'
+      await new Promise((resolve, reject) => {
+        const cancel = () => reject(signal.reason)
+        if (signal.aborted) cancel()
+        else signal.addEventListener('abort', cancel, { once: true })
       })
-    } else {
-      response = faux.fauxAssistantMessage(JSON.stringify(this.output(request)))
+    }
+    let reportResponseSettled
+    const shouldRejectHandle = this.extraHandleFieldOnce && !this.extraHandleFieldReturned
+    if (!shouldRejectHandle) {
+      this.responseSettled.push(new Promise((resolve) => { reportResponseSettled = resolve }))
+    }
+    const response = async () => {
+      try {
+        if (this.authFailure) {
+          return faux.fauxAssistantMessage('', {
+            stopReason: 'error',
+            errorMessage: 'HTTP 401 invalid api key'
+          })
+        }
+        if (request.operation === 'meeting-minutes.merge' && this.failMergeOnce && !this.failedMerge) {
+          this.failedMerge = true
+          return faux.fauxAssistantMessage('', {
+            stopReason: 'error',
+            errorMessage: 'HTTP 408 request timeout'
+          })
+        }
+        return faux.fauxAssistantMessage(JSON.stringify(this.output(request)))
+      } finally {
+        reportResponseSettled?.()
+      }
     }
     const core = faux.createFauxCore({
       provider: 'deterministic-test',
@@ -253,14 +276,67 @@ class DeterministicMinutesProvider {
       models: [{ id: 'fixture-model' }]
     })
     core.setResponses([response])
-    return { model: core.getModel(), apiKey: undefined, streamFn: core.streamSimple }
+    const handle = { model: core.getModel(), streamFn: core.streamSimple }
+    if (shouldRejectHandle) {
+      this.extraHandleFieldReturned = true
+      return { ...handle, apiKey: undefined }
+    }
+    return handle
   }
 }
 
-function runtime (client, provider, clock, options = {}) {
+async function assertProviderCallBoundary (provider, bootstrap, expectedCredentialState = 'startup_environment') {
+  await Promise.all(provider.responseSettled)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(provider.calls.length > 0, true)
+  assert.equal(provider.borrowedCredentials.length, provider.calls.length)
+  assert.equal(provider.configurationWasFrozen.every(Boolean), true)
+  assert.equal(provider.credentialAvailableDuringCall.every(Boolean), true)
+  assert.equal(provider.borrowedCredentials.every((credential) =>
+    credential.every((byte) => byte === 0)
+  ), true)
+  assert.equal(provider.configurationSnapshots.every((configuration) =>
+    configuration.providerId === 'deepseek' &&
+    configuration.providerKind === 'cloud' &&
+    configuration.apiStyle === 'openai-chat-completions' &&
+    configuration.baseUrl === 'https://api.deepseek.com' &&
+    configuration.model === 'deepseek-v4-flash' &&
+    configuration.maxChunkInputBytes === provider.limits.maxChunkInputBytes &&
+    configuration.maxResultBytes === provider.limits.maxResultBytes &&
+    configuration.timeoutMs === 5000
+  ), true)
+  assert.equal(bootstrap.getPublicState().credentialState, expectedCredentialState)
+}
+
+function runtime (t, client, provider, clock, options = {}) {
+  const defaultConfig = DEFAULT_AGENT_PROVIDER_CONFIG_CATALOG.providers[0]
+  const startupEnvironment = {
+    [CREDENTIAL_ENV_NAME]: 'synthetic-d10-minutes-credential'
+  }
+  const bootstrap = new AgentProviderBootstrap({
+    environment: startupEnvironment,
+    configCatalog: {
+      schemaVersion: 1,
+      providers: [{
+        ...defaultConfig,
+        ...provider.limits,
+        timeoutMs: options.modelTimeoutMs || 5000
+      }]
+    }
+  })
+  const providerRegistry = new AgentModelProviderRegistry({
+    bootstrap,
+    adapters: [{
+      providerId: 'deepseek',
+      providerKind: 'cloud',
+      apiStyle: 'openai-chat-completions',
+      openModel: (request) => provider.openModel(request)
+    }]
+  })
+  t.after(() => providerRegistry.dispose())
+  assert.equal(Object.hasOwn(startupEnvironment, CREDENTIAL_ENV_NAME), false)
   const modelGateway = new ModelGateway({
-    providerAdapter: provider,
-    timeoutMs: options.modelTimeoutMs || 5000
+    providerRegistry
   })
   const host = new AgentPluginHost({
     transcriptReader: new TranscriptReader(client.storage),
@@ -277,10 +353,10 @@ function runtime (client, provider, clock, options = {}) {
     retryDelaysMs: [0],
     now: () => clock.value
   })
-  return { host, runner }
+  return { bootstrap, host, providerRegistry, runner }
 }
 
-test('SEM-F15/F16/F28 / J24-B02/B19/B20/B29 runs real ModelGateway/Pi minutes and leaves unavailable tasks queued', async (t) => {
+test('SEM-F15/F16/F28 / D10/J24-B02/B19/B20/B29 runs registry-backed ModelGateway/Pi minutes and leaves unavailable tasks queued', async (t) => {
   const clock = { value: 10000 }
   const client = journeyClient(t, clock)
   createTerminalSession(client, { sessionId: 'short-session', captions: ['synthetic short input'] })
@@ -294,8 +370,12 @@ test('SEM-F15/F16/F28 / J24-B02/B19/B20/B29 runs real ModelGateway/Pi minutes an
     (error) => error.code === 'AGENT_INPUT_CHANGED'
   )
 
+  assert.throws(
+    () => new ModelGateway({ providerRegistry: { resolve: async () => undefined } }),
+    (error) => error.code === 'AGENT_REQUEST_INVALID'
+  )
   const provider = new DeterministicMinutesProvider({ emptySections: true })
-  const { runner } = runtime(client, provider, clock)
+  const { bootstrap, runner } = runtime(t, client, provider, clock)
   const result = await runner.runNext({ claimIdempotencyKey: 'short-claim', localWorkAllowed: false })
   assert.equal(result.jobState, 'succeeded')
   assert.deepEqual(result.artifact.content, {
@@ -317,6 +397,7 @@ test('SEM-F15/F16/F28 / J24-B02/B19/B20/B29 runs real ModelGateway/Pi minutes an
   assert.equal(detail.jobs.filter((job) => job.taskKind !== 'meeting-minutes').every((job) => job.state === 'queued'), true)
   assert.equal(detail.artifacts.length, 1)
   assert.equal(client.call(OPERATIONS.GET_SESSION, { sessionId: 'short-session' }).segments.length, 1)
+  await assertProviderCallBoundary(provider, bootstrap)
 })
 
 test('SEM-F15/F28 / J24-B21 runs one complete refined snapshot in selected event order', async (t) => {
@@ -347,7 +428,7 @@ test('SEM-F15/F28 / J24-B21 runs one complete refined snapshot in selected event
   client.call(OPERATIONS.AGENT_APPLY_TASK_POLICY, { eligibilityContext: context })
 
   const provider = new DeterministicMinutesProvider()
-  const { runner } = runtime(client, provider, clock)
+  const { bootstrap, runner } = runtime(t, client, provider, clock)
   const result = await runner.runNext({ claimIdempotencyKey: 'refined-claim', localWorkAllowed: false })
   assert.equal(result.jobState, 'succeeded')
   assert.deepEqual(
@@ -357,9 +438,10 @@ test('SEM-F15/F28 / J24-B21 runs one complete refined snapshot in selected event
   )
   assert.equal(result.artifact.inputRef.transcriptVersion, 'refined')
   assert.deepEqual(result.artifact.inputRef, refinedSnapshot.inputRef)
+  await assertProviderCallBoundary(provider, bootstrap)
 })
 
-test('SEM-F28 / J24-B03/B06/B27/B28 retries one long frozen input without partial artifacts', async (t) => {
+test('SEM-F28 / D10/J24-B03/B06/B27/B28 retries one registry-backed long frozen input without partial artifacts', async (t) => {
   const clock = { value: 20000 }
   const client = journeyClient(t, clock)
   const longText = '😀甲'.repeat(800)
@@ -370,7 +452,7 @@ test('SEM-F28 / J24-B03/B06/B27/B28 retries one long frozen input without partia
     failMergeOnce: true,
     limits: { maxChunkInputBytes: 1200, maxResultBytes: 400 }
   })
-  const { runner } = runtime(client, provider, clock)
+  const { bootstrap, runner } = runtime(t, client, provider, clock)
   const first = await runner.runNext({ claimIdempotencyKey: 'long-claim-1', localWorkAllowed: false })
   assert.equal(first.runId, runId)
   assert.equal(first.jobState, 'retry_wait')
@@ -390,16 +472,17 @@ test('SEM-F28 / J24-B03/B06/B27/B28 retries one long frozen input without partia
   const row = client.service.store.database.prepare('SELECT attempt_count, state FROM agent_jobs WHERE run_id = ?').get(runId)
   assert.equal(row.attempt_count, 2)
   assert.equal(row.state, 'succeeded')
+  await assertProviderCallBoundary(provider, bootstrap)
 })
 
-test('SEM-F09/F28 / J24-B10 cancels a running minutes job and rejects its late result', async (t) => {
+test('SEM-F09/F28 / D10/J24-B10 cancels while the registry opens a model and rejects its late result', async (t) => {
   const clock = { value: 30000 }
   const client = journeyClient(t, clock)
   createTerminalSession(client, { sessionId: 'cancel-session', captions: ['synthetic cancellation input'] })
   const reconciled = prepareJobs(client, 'cancel-session')
   const runId = reconciled.jobs.find((entry) => entry.job.taskKind === 'meeting-minutes').job.runId
   const provider = new DeterministicMinutesProvider({ pending: true })
-  const { runner } = runtime(client, provider, clock)
+  const { bootstrap, runner } = runtime(t, client, provider, clock)
   const running = runner.runNext({ claimIdempotencyKey: 'cancel-claim', localWorkAllowed: false })
   await provider.started
   const requested = await runner.cancel(runId)
@@ -408,16 +491,22 @@ test('SEM-F09/F28 / J24-B10 cancels a running minutes job and rejects its late r
   assert.equal(settled.jobState, 'cancelled')
   assert.equal(client.service.store.database.prepare('SELECT COUNT(*) AS count FROM agent_artifacts').get().count, 0)
   assert.equal(client.service.store.database.prepare('SELECT state FROM agent_jobs WHERE run_id = ?').get(runId).state, 'cancelled')
+  await assertProviderCallBoundary(provider, bootstrap)
 })
 
-test('SEM-F09/F15 / J24-B12 rejects an invalid structured result without changing subtitle facts', async (t) => {
+test('SEM-F09/F15/F28 / D10/J24-B12 rejects an extra model-handle field and then invalid output without changing subtitle facts', async (t) => {
   const clock = { value: 40000 }
   const client = journeyClient(t, clock)
   createTerminalSession(client, { sessionId: 'invalid-output-session', sourceId: 'mic', captions: ['synthetic ownerless input'] })
   const reconciled = prepareJobs(client, 'invalid-output-session')
   const runId = reconciled.jobs.find((entry) => entry.job.taskKind === 'meeting-minutes').job.runId
-  const provider = new DeterministicMinutesProvider({ invalidOwner: true })
-  const { runner } = runtime(client, provider, clock)
+  const provider = new DeterministicMinutesProvider({ invalidOwner: true, extraHandleFieldOnce: true })
+  const { bootstrap, runner } = runtime(t, client, provider, clock)
+  const first = await runner.runNext({ claimIdempotencyKey: 'invalid-handle-claim', localWorkAllowed: false })
+  assert.equal(first.jobState, 'retry_wait')
+  assert.equal(client.service.store.database.prepare(
+    'SELECT error_code FROM agent_jobs WHERE run_id = ?'
+  ).get(runId).error_code, 'AGENT_PROVIDER_UNAVAILABLE')
   const result = await runner.runNext({ claimIdempotencyKey: 'invalid-output-claim', localWorkAllowed: false })
   assert.equal(result.jobState, 'failed')
   const jobRow = client.service.store.database.prepare(
@@ -427,4 +516,38 @@ test('SEM-F09/F15 / J24-B12 rejects an invalid structured result without changin
   assert.equal(jobRow.error_code, 'AGENT_OUTPUT_INVALID')
   assert.equal(client.service.store.database.prepare('SELECT COUNT(*) AS count FROM agent_artifacts').get().count, 0)
   assert.equal(client.call(OPERATIONS.GET_SESSION, { sessionId: 'invalid-output-session' }).segments.length, 1)
+  await assertProviderCallBoundary(provider, bootstrap)
+})
+
+test('SEM-F25/F28 / D10/J24-B12/B23 invalidates the startup credential after stable provider authentication failure', async (t) => {
+  const clock = { value: 50000 }
+  const client = journeyClient(t, clock)
+  createTerminalSession(client, {
+    sessionId: 'provider-auth-failure-session',
+    captions: ['synthetic provider authentication boundary']
+  })
+  const reconciled = prepareJobs(client, 'provider-auth-failure-session')
+  const runId = reconciled.jobs.find((entry) => entry.job.taskKind === 'meeting-minutes').job.runId
+  const provider = new DeterministicMinutesProvider({ authFailure: true })
+  const { bootstrap, runner } = runtime(t, client, provider, clock)
+
+  const result = await runner.runNext({
+    claimIdempotencyKey: 'provider-auth-failure-claim',
+    localWorkAllowed: false
+  })
+
+  assert.equal(result.jobState, 'failed')
+  const jobRow = client.service.store.database.prepare(
+    'SELECT state, error_code AS errorCode FROM agent_jobs WHERE run_id = ?'
+  ).get(runId)
+  assert.equal(jobRow.state, 'failed')
+  assert.equal(jobRow.errorCode, 'AGENT_PROVIDER_AUTH_FAILED')
+  assert.equal(client.service.store.database.prepare(
+    'SELECT COUNT(*) AS count FROM agent_artifacts'
+  ).get().count, 0)
+  assert.equal(client.call(OPERATIONS.GET_SESSION, {
+    sessionId: 'provider-auth-failure-session'
+  }).segments.length, 1)
+  await assertProviderCallBoundary(provider, bootstrap, 'invalid')
+  assert.equal(bootstrap.getEligibilityProviderFacts().credentialAvailable, false)
 })

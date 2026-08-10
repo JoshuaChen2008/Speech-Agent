@@ -15,6 +15,8 @@ const { AgentJobRunner } = require('../src/agent-core/formal/job-runner')
 const { ModelGateway } = require('../src/agent-core/formal/model-gateway')
 const { AgentPluginHost } = require('../src/agent-core/formal/plugin-host')
 const { TranscriptReader } = require('../src/agent-core/formal/storage-ports')
+const { AgentModelProviderRegistry } = require('../src/agent-provider/model-provider-registry')
+const { AgentProviderBootstrap } = require('../src/agent-provider/provider-bootstrap')
 const { StorageWorkerHost } = require('../src/runtime/storage-worker/worker-host')
 
 const SESSION_ID = 'formal-agent-utility-session'
@@ -34,17 +36,14 @@ function parseArguments (argv) {
   return { dataRoot: argv[index + 1] }
 }
 
-function eligibilityContext () {
+function eligibilityContext (providerFacts) {
   return {
     agentEnabled: true,
     memoryEnabled: true,
     automaticProcessingSince: 0,
     memoryProcessingSince: 0,
-    providerId: 'd6-cloud-provider',
-    providerKind: 'cloud',
-    model: 'd6-model',
+    ...providerFacts,
     cloudDisclosureAccepted: true,
-    credentialAvailable: true,
     localModelReady: false
   }
 }
@@ -75,17 +74,6 @@ function evidenceForSegments (segments) {
 class D6DeterministicProvider {
   constructor () {
     this.calls = []
-  }
-
-  async resolve (identity) {
-    return {
-      providerId: identity.providerId,
-      providerKind: identity.providerKind,
-      model: identity.model,
-      maxChunkInputBytes: 16384,
-      maxResultBytes: 8192,
-      openModel: async (request) => this.openModel(request)
-    }
   }
 
   resultFor (request) {
@@ -131,21 +119,33 @@ class D6DeterministicProvider {
     throw new Error('unexpected operation')
   }
 
-  async openModel (request) {
+  async openModel ({ request, credential }) {
+    if (!Buffer.isBuffer(credential) || !credential.some((byte) => byte !== 0)) {
+      throw new Error('credential unavailable')
+    }
     const faux = await import('@earendil-works/pi-ai/providers/faux')
     this.calls.push(structuredClone(request))
     const core = faux.createFauxCore({
       provider: 'deterministic-test',
       api: 'formal-agent-storage-utility-test',
-      models: [{ id: 'd6-model' }]
+      models: [{ id: 'deepseek-v4-flash' }]
     })
     core.setResponses([faux.fauxAssistantMessage(JSON.stringify(this.resultFor(request)))])
-    return { model: core.getModel(), apiKey: undefined, streamFn: core.streamSimple }
+    return { model: core.getModel(), streamFn: core.streamSimple }
   }
 }
 
-function createRuntime (storage, provider) {
-  const modelGateway = new ModelGateway({ providerAdapter: provider, timeoutMs: 5000 })
+function createRuntime (storage, provider, bootstrap) {
+  const providerRegistry = new AgentModelProviderRegistry({
+    bootstrap,
+    adapters: [{
+      providerId: 'deepseek',
+      providerKind: 'cloud',
+      apiStyle: 'openai-chat-completions',
+      openModel: (request) => provider.openModel(request)
+    }]
+  })
+  const modelGateway = new ModelGateway({ providerRegistry })
   const pluginHost = new AgentPluginHost({
     transcriptReader: new TranscriptReader(storage),
     inputPlanner: new AgentInputPlanner(),
@@ -158,7 +158,7 @@ function createRuntime (storage, provider) {
     leaseMs: 5000,
     retryDelaysMs: [0]
   })
-  return { pluginHost, runner }
+  return { pluginHost, providerRegistry, runner }
 }
 
 function identityHash (inputRef, runIds) {
@@ -191,6 +191,8 @@ async function main () {
   let phase = 'arguments'
   let firstHost = null
   let replacementHost = null
+  let providerBootstrap = null
+  let providerRegistry = null
   try {
     const { dataRoot } = parseArguments(process.argv)
     const userData = path.join(dataRoot, 'electron-user-data')
@@ -198,6 +200,9 @@ async function main () {
     fs.mkdirSync(userData, { recursive: true })
     app.setPath('userData', userData)
     app.on('window-all-closed', () => {})
+
+    phase = 'provider-bootstrap'
+    providerBootstrap = new AgentProviderBootstrap({ environment: process.env })
 
     phase = 'app-ready'
     await app.whenReady()
@@ -221,7 +226,7 @@ async function main () {
     })
 
     phase = 'reconcile-and-claim'
-    const context = eligibilityContext()
+    const context = eligibilityContext(providerBootstrap.getEligibilityProviderFacts())
     const reconciled = await firstHost.reconcileTerminalAgentSession({
       sessionId: SESSION_ID,
       requestedBy: 'automatic',
@@ -270,7 +275,9 @@ async function main () {
     phase = 'replacement-policy'
     await replacementHost.applyAgentTaskPolicy({ eligibilityContext: context })
     const provider = new D6DeterministicProvider()
-    const { pluginHost, runner } = createRuntime(replacementHost, provider)
+    const runtime = createRuntime(replacementHost, provider, providerBootstrap)
+    const { pluginHost, runner } = runtime
+    providerRegistry = runtime.providerRegistry
     const waitMs = Math.max(0, claimedBeforeExit.lease.expiresAt - Date.now() + 30)
     if (waitMs > 2000) throw new Error('lease wait invariant')
     await sleep(waitMs)
@@ -332,6 +339,9 @@ async function main () {
     await replacementHost.shutdown()
     const gracefulExactExit = replacementHost.child === null && replacementHost.state === 'closed'
     if (!gracefulExactExit) throw new Error('shutdown invariant')
+    providerRegistry.dispose()
+    providerRegistry = null
+    providerBootstrap = null
     const browserWindowCount = BrowserWindow.getAllWindows().length
     const audioFileCount = countAudioFiles(dataRoot)
     if (browserWindowCount !== 0 || audioFileCount !== 0) throw new Error('privacy invariant')
@@ -370,6 +380,8 @@ async function main () {
     process.stdout.write(`${JSON.stringify(report)}\n`)
     app.exit(0)
   } catch {
+    if (providerRegistry) providerRegistry.dispose()
+    else if (providerBootstrap) providerBootstrap.dispose()
     await terminateQuietly(replacementHost)
     await terminateQuietly(firstHost)
     process.stdout.write(`${JSON.stringify({

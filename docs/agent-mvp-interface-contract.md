@@ -197,7 +197,7 @@ D9 的默认受信任配置预算固定为 `maxChunkInputBytes=65536`、`maxResu
 
 `AgentInputPlanner` 是宿主内部端口，不属于插件权限。只有所有分块及归并步骤成功后才能调用 writer；中间结果只存在于本次有界执行内存中。
 
-D10 的 registry 描述符是闭合对象，只包含任务身份三元组、`maxChunkInputBytes/maxResultBytes/timeoutMs` 与 `withModel(request, consumeModel)`。`ModelGateway` 必须校验描述符与任务冻结身份完全一致，并要求 `withModel` 恰好一次调用 `consumeModel`、原样返回该次 Pi Agent Loop 的结果；适配器不得绕过 Loop 直接返回结构化产物。registry 在 `consumeModel` 完整收束前保持 D9 单次凭据借用，且不把凭据返回给 `ModelGateway`、插件、storage worker 或 renderer。稳定鉴权失败使 bootstrap 主凭据失效；其它错误只按既有稳定错误分类收束。确定性适配器与未来 DeepSeek 网络适配器共用这一接口，但 D10 只实现前者的联合测试接线。
+D10 的 registry 描述符是闭合对象，只包含任务身份三元组、`maxChunkInputBytes/maxResultBytes/timeoutMs` 与 `withModel(request, signal, consumeModel)`。正式 `ModelGateway` 必须以 nominal instance 边界拒绝任意 duck-typed registry，再校验描述符与任务冻结身份完全一致。`withModel` 只向 `consumeModel` 提供冻结的 exact `{ model, streamFn }`，拒绝 `apiKey`、credential 与任意额外字段；它必须恰好一次调用 `consumeModel` 并原样返回该次 Pi Agent Loop 的结果，适配器不得绕过 Loop 直接返回结构化产物。registry 从配置超时和调用方取消派生同一受控信号，把它同时交给适配器的模型打开与 Pi Agent Loop；任一阶段取消或超时都立即停止等待并进入既有稳定错误分类。registry 在 `consumeModel` 完整收束前保持 D9 单次凭据借用，且不把凭据返回给 `ModelGateway`、插件、storage worker 或 renderer；迟到的适配器结果不得再进入 Loop。稳定鉴权失败使 bootstrap 主凭据失效；其它错误只按既有稳定错误分类收束。确定性适配器与未来 DeepSeek 网络适配器共用这一接口，但 D10 只实现前者的联合测试接线。
 
 固定 recipe 与模型操作闭集为：`meeting-minutes@1` 只允许 `meeting-minutes.chunk/merge`，`enhanced-transcript@1` 只允许 `enhanced-transcript.chunk/merge`，`memory-extraction@1` 只允许 `memory-extraction.chunk`。`memory-consolidation` 不创建第四项后台任务，也不再次调用模型；它在记忆任务的有界内存中按分块顺序校验并汇总候选，再由 `MemoryCandidateSink` 一次提交。`AgentPluginHost` 以 `PluginResult` 分流到唯一匹配的 writer，插件不得选择 SQLite 表或绕过宿主提交。
 

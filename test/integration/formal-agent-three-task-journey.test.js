@@ -12,6 +12,12 @@ const { AgentJobRunner } = require('../../src/agent-core/formal/job-runner')
 const { ModelGateway } = require('../../src/agent-core/formal/model-gateway')
 const { AgentPluginHost } = require('../../src/agent-core/formal/plugin-host')
 const { MemoryReader, TranscriptReader } = require('../../src/agent-core/formal/storage-ports')
+const { AgentModelProviderRegistry } = require('../../src/agent-provider/model-provider-registry')
+const {
+  AgentProviderBootstrap,
+  CREDENTIAL_ENV_NAME,
+  DEFAULT_AGENT_PROVIDER_CONFIG_CATALOG
+} = require('../../src/agent-provider/provider-bootstrap')
 const {
   FormalAgentStore,
   makeUserRequestDigest
@@ -33,9 +39,9 @@ function cloudContext (overrides = {}) {
     memoryEnabled: true,
     automaticProcessingSince: 0,
     memoryProcessingSince: 0,
-    providerId: 'cloud-primary',
+    providerId: 'deepseek',
     providerKind: 'cloud',
-    model: 'model-primary',
+    model: 'deepseek-v4-flash',
     cloudDisclosureAccepted: true,
     credentialAvailable: true,
     localModelReady: false,
@@ -214,22 +220,14 @@ function memoryCandidates (sessionId, segments) {
 class DeterministicThreeTaskProvider {
   constructor (options = {}) {
     this.calls = []
-    this.identities = []
     this.invalidMemory = options.invalidMemory === true
     this.failEnhancedMergeOnce = options.failEnhancedMergeOnce === true
     this.enhancedMergeFailed = false
     this.limits = options.limits || { maxChunkInputBytes: 4096, maxResultBytes: 4096 }
-  }
-
-  async resolve (identity) {
-    this.identities.push(structuredClone(identity))
-    return {
-      providerId: identity.providerId,
-      providerKind: identity.providerKind,
-      model: identity.model,
-      ...this.limits,
-      openModel: async (request) => this.openModel(request)
-    }
+    this.configurationSnapshots = []
+    this.configurationWasFrozen = []
+    this.borrowedCredentials = []
+    this.credentialAvailableDuringLoop = []
   }
 
   output (request) {
@@ -281,19 +279,25 @@ class DeterministicThreeTaskProvider {
     throw new Error('unexpected operation')
   }
 
-  async openModel (request) {
+  async openModel ({ configuration, request, credential }) {
     const faux = await import('@earendil-works/pi-ai/providers/faux')
-    this.calls.push(structuredClone(request))
-    let response
-    if (request.operation === 'enhanced-transcript.merge' &&
-        this.failEnhancedMergeOnce && !this.enhancedMergeFailed) {
-      this.enhancedMergeFailed = true
-      response = faux.fauxAssistantMessage('', {
-        stopReason: 'error',
-        errorMessage: 'HTTP 408 request timeout'
-      })
-    } else {
-      response = faux.fauxAssistantMessage(JSON.stringify(this.output(request)))
+    this.configurationSnapshots.push(structuredClone(configuration))
+    this.configurationWasFrozen.push(Object.isFrozen(configuration))
+    this.borrowedCredentials.push(credential)
+    const response = async () => {
+      this.calls.push(structuredClone(request))
+      this.credentialAvailableDuringLoop.push(
+        Buffer.isBuffer(credential) && credential.some((byte) => byte !== 0)
+      )
+      if (request.operation === 'enhanced-transcript.merge' &&
+          this.failEnhancedMergeOnce && !this.enhancedMergeFailed) {
+        this.enhancedMergeFailed = true
+        return faux.fauxAssistantMessage('', {
+          stopReason: 'error',
+          errorMessage: 'HTTP 408 request timeout'
+        })
+      }
+      return faux.fauxAssistantMessage(JSON.stringify(this.output(request)))
     }
     const core = faux.createFauxCore({
       provider: 'deterministic-test',
@@ -301,12 +305,55 @@ class DeterministicThreeTaskProvider {
       models: [{ id: 'fixture-model' }]
     })
     core.setResponses([response])
-    return { model: core.getModel(), apiKey: undefined, streamFn: core.streamSimple }
+    return { model: core.getModel(), streamFn: core.streamSimple }
   }
 }
 
-function runtime (client, provider, clock, disabledPluginIds = []) {
-  const modelGateway = new ModelGateway({ providerAdapter: provider, timeoutMs: 5000 })
+function assertProviderCallBoundary (provider, bootstrap) {
+  assert.equal(provider.calls.length > 0, true)
+  assert.equal(provider.borrowedCredentials.length, provider.calls.length)
+  assert.equal(provider.configurationWasFrozen.every(Boolean), true)
+  assert.equal(provider.credentialAvailableDuringLoop.every(Boolean), true)
+  assert.equal(provider.borrowedCredentials.every((credential) =>
+    credential.every((byte) => byte === 0)
+  ), true)
+  assert.equal(provider.configurationSnapshots.every((configuration) =>
+    configuration.providerId === 'deepseek' &&
+    configuration.providerKind === 'cloud' &&
+    configuration.apiStyle === 'openai-chat-completions' &&
+    configuration.baseUrl === 'https://api.deepseek.com' &&
+    configuration.model === 'deepseek-v4-flash' &&
+    configuration.maxChunkInputBytes === provider.limits.maxChunkInputBytes &&
+    configuration.maxResultBytes === provider.limits.maxResultBytes &&
+    configuration.timeoutMs === 5000
+  ), true)
+  assert.equal(bootstrap.getPublicState().credentialState, 'startup_environment')
+}
+
+function runtime (t, client, provider, clock, disabledPluginIds = []) {
+  const defaultConfig = DEFAULT_AGENT_PROVIDER_CONFIG_CATALOG.providers[0]
+  const startupEnvironment = {
+    [CREDENTIAL_ENV_NAME]: 'synthetic-d10-three-task-credential'
+  }
+  const bootstrap = new AgentProviderBootstrap({
+    environment: startupEnvironment,
+    configCatalog: {
+      schemaVersion: 1,
+      providers: [{ ...defaultConfig, ...provider.limits, timeoutMs: 5000 }]
+    }
+  })
+  const providerRegistry = new AgentModelProviderRegistry({
+    bootstrap,
+    adapters: [{
+      providerId: 'deepseek',
+      providerKind: 'cloud',
+      apiStyle: 'openai-chat-completions',
+      openModel: (request) => provider.openModel(request)
+    }]
+  })
+  t.after(() => providerRegistry.dispose())
+  assert.equal(Object.hasOwn(startupEnvironment, CREDENTIAL_ENV_NAME), false)
+  const modelGateway = new ModelGateway({ providerRegistry })
   const host = new AgentPluginHost({
     transcriptReader: new TranscriptReader(client.storage),
     inputPlanner: new AgentInputPlanner(),
@@ -321,10 +368,10 @@ function runtime (client, provider, clock, disabledPluginIds = []) {
     retryDelaysMs: [0],
     now: () => clock.value
   })
-  return { host, runner }
+  return { bootstrap, host, providerRegistry, runner }
 }
 
-test('SEM-F13/F16/F26/F28 / J13/J21/J24-B22/B25/B31 runs three independent tasks from one frozen transcript', async (t) => {
+test('SEM-F13/F16/F26/F28 / D10/J13/J24-B22/B25/B31 runs three registry-backed tasks from one frozen transcript', async (t) => {
   const clock = { value: 10000 }
   const client = journeyClient(t, clock)
   const reconciled = createTerminalSession(client, 'three-task-session', [
@@ -332,7 +379,7 @@ test('SEM-F13/F16/F26/F28 / J13/J21/J24-B22/B25/B31 runs three independent tasks
     'synthetic project phase input'
   ])
   const provider = new DeterministicThreeTaskProvider()
-  const { runner } = runtime(client, provider, clock)
+  const { bootstrap, runner } = runtime(t, client, provider, clock)
 
   const minutes = await runner.runNext({ claimIdempotencyKey: 'three-task-claim-1', localWorkAllowed: false })
   const memory = await runner.runNext({ claimIdempotencyKey: 'three-task-claim-2', localWorkAllowed: false })
@@ -352,9 +399,15 @@ test('SEM-F13/F16/F26/F28 / J13/J21/J24-B22/B25/B31 runs three independent tasks
   assert.equal(enhanced.artifact.type, 'enhanced-transcript')
   assert.equal(await runner.runNext({ claimIdempotencyKey: 'three-task-claim-empty', localWorkAllowed: false }), null)
 
-  assert.deepEqual(provider.identities.map((identity) => identity.recipeVersion), [
+  const database = client.service.store.database
+  assert.deepEqual(database.prepare(
+    'SELECT recipe_version AS recipeVersion FROM agent_jobs ORDER BY job_order'
+  ).all().map((row) => row.recipeVersion), [
     'meeting-minutes@1', 'memory-extraction@1', 'enhanced-transcript@1'
   ])
+  assert.equal(database.prepare(
+    "SELECT COUNT(*) AS count FROM agent_jobs WHERE provider = 'deepseek' AND model = 'deepseek-v4-flash'"
+  ).get().count, 3)
   assert.equal(provider.calls.every((call) =>
     JSON.stringify(call.input.inputRef) === JSON.stringify(reconciled.inputRef)
   ), true)
@@ -364,7 +417,6 @@ test('SEM-F13/F16/F26/F28 / J13/J21/J24-B22/B25/B31 runs three independent tasks
   assert.equal(Object.hasOwn(memoryCall.input.segments[0], 'sourceId'), false)
   assert.equal(Object.hasOwn(memoryCall.input.segments[0], 'segmentId'), false)
 
-  const database = client.service.store.database
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM agent_artifacts').get().count, 2)
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM memory_items').get().count, 3)
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM memory_evidence').get().count, 5)
@@ -378,9 +430,10 @@ test('SEM-F13/F16/F26/F28 / J13/J21/J24-B22/B25/B31 runs three independent tasks
   assert.equal(database.prepare(
     'SELECT COUNT(DISTINCT input_digest) AS count FROM agent_jobs'
   ).get().count, 1)
+  assertProviderCallBoundary(provider, bootstrap)
 })
 
-test('SEM-F09/F28 / J24-B12/B25 keeps minutes and enhanced transcript independent from invalid memory output', async (t) => {
+test('SEM-F09/F28 / D10/J24-B12/B25 keeps registry-backed tasks independent from invalid memory output', async (t) => {
   const clock = { value: 20000 }
   const client = journeyClient(t, clock)
   createTerminalSession(client, 'independent-failure-session', [
@@ -388,7 +441,7 @@ test('SEM-F09/F28 / J24-B12/B25 keeps minutes and enhanced transcript independen
     'synthetic second input'
   ])
   const provider = new DeterministicThreeTaskProvider({ invalidMemory: true })
-  const { runner } = runtime(client, provider, clock)
+  const { bootstrap, runner } = runtime(t, client, provider, clock)
 
   assert.equal((await runner.runNext({ claimIdempotencyKey: 'independent-claim-1', localWorkAllowed: false })).jobState, 'succeeded')
   const failedMemory = await runner.runNext({ claimIdempotencyKey: 'independent-claim-2', localWorkAllowed: false })
@@ -407,9 +460,10 @@ test('SEM-F09/F28 / J24-B12/B25 keeps minutes and enhanced transcript independen
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM memory_items').get().count, 0)
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM agent_artifacts').get().count, 2)
   assert.equal(client.call(OPERATIONS.GET_SESSION, { sessionId: 'independent-failure-session' }).segments.length, 2)
+  assertProviderCallBoundary(provider, bootstrap)
 })
 
-test('SEM-F13/F28 / J24-B03/B28 retries enhanced merge without a partial artifact', async (t) => {
+test('SEM-F13/F28 / D10/J24-B03/B28 retries registry-backed enhanced merge without a partial artifact', async (t) => {
   const clock = { value: 30000 }
   const client = journeyClient(t, clock)
   const longText = '😀增强'.repeat(800)
@@ -418,7 +472,7 @@ test('SEM-F13/F28 / J24-B03/B28 retries enhanced merge without a partial artifac
     failEnhancedMergeOnce: true,
     limits: { maxChunkInputBytes: 1200, maxResultBytes: 400 }
   })
-  const { runner } = runtime(client, provider, clock, [
+  const { bootstrap, runner } = runtime(t, client, provider, clock, [
     'meeting-minutes', 'memory-consolidation', 'memory-extraction'
   ])
   const enhancedRunId = reconciled.jobs.find((entry) =>
@@ -444,6 +498,7 @@ test('SEM-F13/F28 / J24-B03/B28 retries enhanced merge without a partial artifac
   assert.equal(client.service.store.database.prepare(
     "SELECT COUNT(*) AS count FROM agent_jobs WHERE state = 'queued'"
   ).get().count, 2)
+  assertProviderCallBoundary(provider, bootstrap)
 })
 
 test('SEM-F26 / D8/J24-B14/B22 storage-worker sub-boundary reads bounded current memory and preserves its dormant projection', async (t) => {
@@ -455,7 +510,7 @@ test('SEM-F26 / D8/J24-B14/B22 storage-worker sub-boundary reads bounded current
     'synthetic project phase input'
   ])
   const provider = new DeterministicThreeTaskProvider()
-  const { runner } = runtime(client, provider, clock, ['meeting-minutes', 'enhanced-transcript'])
+  const { bootstrap, runner } = runtime(t, client, provider, clock, ['meeting-minutes', 'enhanced-transcript'])
   assert.equal((await runner.runNext({
     claimIdempotencyKey: 'bounded-memory-claim',
     localWorkAllowed: false
@@ -576,6 +631,7 @@ test('SEM-F26 / D8/J24-B14/B22 storage-worker sub-boundary reads bounded current
   } finally {
     database.exec('ROLLBACK')
   }
+  assertProviderCallBoundary(provider, bootstrap)
 })
 
 test('SEM-F26 / J21/J24-B22 deletes one memory with multi-source suppression and idempotent replay', async (t) => {
@@ -587,7 +643,7 @@ test('SEM-F26 / J21/J24-B22 deletes one memory with multi-source suppression and
     'synthetic project phase input'
   ])
   const provider = new DeterministicThreeTaskProvider()
-  const { runner } = runtime(client, provider, clock, ['meeting-minutes', 'enhanced-transcript'])
+  const { bootstrap, runner } = runtime(t, client, provider, clock, ['meeting-minutes', 'enhanced-transcript'])
   assert.equal((await runner.runNext({
     claimIdempotencyKey: 'suppressed-memory-claim-a',
     localWorkAllowed: false
@@ -661,4 +717,5 @@ test('SEM-F26 / J21/J24-B22 deletes one memory with multi-source suppression and
     "SELECT COUNT(*) AS count FROM memory_items WHERE semantic_key = 'project:phase'"
   ).get().count, 0)
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM memory_suppressions').get().count, 2)
+  assertProviderCallBoundary(provider, bootstrap)
 })

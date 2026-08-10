@@ -62,7 +62,7 @@ function runJourney (dataRoot) {
       windowsHide: true,
       env: {
         ...process.env,
-        D6_CREDENTIAL_CANARY: credentialCanary,
+        DEEPSEEK_API_KEY: credentialCanary,
         ELECTRON_DISABLE_LOGGING: 'true'
       }
     })
@@ -125,7 +125,7 @@ test('SEM-F14 / J24-B30 D6 report privacy reader rejects transcript, path, raw e
   ))
 })
 
-test('SEM-F09/F12/F16/F28 / J7/J21/J24-B04/B05/B25 real storage utility recovers one run and commits three tasks once', { timeout: 40000 }, async (t) => {
+test('SEM-F09/F12/F16/F28 / D6/D10/J7/J24-B04/B05/B25 storage utility sub-boundary recovers registry-backed tasks once', { timeout: 40000 }, async (t) => {
   const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'formal-agent-storage-utility-'))
   t.after(() => fs.rmSync(dataRoot, { recursive: true, force: true }))
 
