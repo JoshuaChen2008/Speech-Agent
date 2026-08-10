@@ -40,6 +40,7 @@ const READ_ONLY_OPERATIONS = new Set([
 const ISOLATED_AGENT_OPERATIONS = new Set([
   'evaluateAgentEligibility',
   'reconcileTerminalAgentSession',
+  'readAgentInputSnapshot',
   'requestAgentJob',
   'claimNextAgentJob',
   'renewAgentJobLease',
@@ -49,6 +50,7 @@ const ISOLATED_AGENT_OPERATIONS = new Set([
   'markAgentJobCancelled',
   'commitAgentArtifact',
   'commitAgentMemoryCandidates',
+  'readAgentMemoryContext',
   'applyAgentTaskPolicy',
   'getAgentSessionDetail',
   'deleteAgentSessionData'
@@ -335,6 +337,10 @@ class StorageGateway {
     return this.enqueue('reconcileTerminalAgentSession', input)
   }
 
+  readAgentInputSnapshot (input) {
+    return this.enqueue('readAgentInputSnapshot', input)
+  }
+
   requestAgentJob (input) {
     return this.enqueue('requestAgentJob', input)
   }
@@ -371,6 +377,10 @@ class StorageGateway {
     return this.enqueue('commitAgentMemoryCandidates', input)
   }
 
+  readAgentMemoryContext (input) {
+    return this.enqueue('readAgentMemoryContext', input)
+  }
+
   applyAgentTaskPolicy (input) {
     return this.enqueue('applyAgentTaskPolicy', input)
   }
@@ -404,6 +414,7 @@ class StorageGateway {
       case 'getStats': return host.getStats()
       case 'evaluateAgentEligibility': return host.evaluateAgentEligibility(item.payload)
       case 'reconcileTerminalAgentSession': return host.reconcileTerminalAgentSession(item.payload)
+      case 'readAgentInputSnapshot': return host.readAgentInputSnapshot(item.payload)
       case 'requestAgentJob': return host.requestAgentJob(item.payload)
       case 'claimNextAgentJob': return host.claimNextAgentJob(item.payload)
       case 'renewAgentJobLease': return host.renewAgentJobLease(item.payload)
@@ -413,6 +424,7 @@ class StorageGateway {
       case 'markAgentJobCancelled': return host.markAgentJobCancelled(item.payload)
       case 'commitAgentArtifact': return host.commitAgentArtifact(item.payload)
       case 'commitAgentMemoryCandidates': return host.commitAgentMemoryCandidates(item.payload)
+      case 'readAgentMemoryContext': return host.readAgentMemoryContext(item.payload)
       case 'applyAgentTaskPolicy': return host.applyAgentTaskPolicy(item.payload)
       case 'getAgentSessionDetail': return host.getAgentSessionDetail(item.payload)
       case 'deleteAgentSessionData': return host.deleteAgentSessionData(item.payload)

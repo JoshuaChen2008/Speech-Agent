@@ -26,11 +26,15 @@ const CHECK_KEYS = Object.freeze([
   'notificationFailureChildReaped',
   'exactChildReaped',
   'replacementBlockedBeforePolicy',
+  'runnerCommitReplacementChildReaped',
+  'runnerCommitReplayedThroughGateway',
+  'runnerReplacementBlockedBeforePolicy',
   'taskPolicyReplayedBeforeRecovery',
   'duplicateReconciliationIdempotent',
   'sameRunRecovered',
   'taskIdentityStable',
   'independentResultsCommitted',
+  'memoryReadThroughGateway',
   'noDuplicateClaims',
   'artifactProjectionExact',
   'pluginTaskClosureExact',
@@ -136,7 +140,7 @@ test('SEM-F14 / J24-B30 D6 report privacy reader rejects transcript, path, raw e
   ))
 })
 
-test('SEM-F00/F09/F12/F16/F28 / D6/D10/D12/J7/J24-B01/B04/B25/B26/B33 commits then reconciles registry-backed tasks once', { timeout: 40000 }, async (t) => {
+test('SEM-F00/F09/F12/F16/F28/SEM-T15 / D6/D10/D12/D13/J7/J24-B01/B04/B05/B06/B07/B14/B25/B26/B30/B33 routes formal tasks through storage utility generations once', { timeout: 40000 }, async (t) => {
   const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'formal-agent-storage-utility-'))
   t.after(() => fs.rmSync(dataRoot, { recursive: true, force: true }))
 
@@ -148,7 +152,7 @@ test('SEM-F00/F09/F12/F16/F28 / D6/D10/D12/J7/J24-B01/B04/B25/B26/B33 commits th
   assert.deepEqual(Object.keys(report.checks).sort(), CHECK_KEYS)
   assert.equal(Object.values(report.checks).every((value) => value === true), true)
   assert.deepEqual(report.metrics, {
-    storageGenerationCount: 3,
+    storageGenerationCount: 4,
     jobCount: 3,
     artifactCount: 2,
     memoryCommitCount: 1,
@@ -161,7 +165,7 @@ test('SEM-F00/F09/F12/F16/F28 / D6/D10/D12/J7/J24-B01/B04/B25/B26/B33 commits th
     agentUtilityProcess: false,
     meetingStoppedWiring: true,
     meetingStoppedStorageGatewayWiring: true,
-    agentJobRunnerStorageGatewayWiring: false,
+    agentJobRunnerStorageGatewayWiring: true,
     preloadIpcRenderer: false,
     packagedRuntime: false
   })

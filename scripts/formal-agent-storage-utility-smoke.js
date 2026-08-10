@@ -1,6 +1,6 @@
 'use strict'
 
-/* D6/D12 确定性组合：Electron main → SessionCoordinator →
+/* D6/D12/D13 确定性组合：Electron main → SessionCoordinator →
    MeetingStoppedPersistenceSink → SqliteSessionRecorder → StorageGateway →
    production StorageWorkerHost/storage utility/SQLite，再由正式
    AgentPluginHost / ModelGateway / Pi Agent Loop / job runner 消费。
@@ -15,7 +15,7 @@ const { AgentInputPlanner } = require('../src/agent-core/formal/input-planner')
 const { AgentJobRunner } = require('../src/agent-core/formal/job-runner')
 const { ModelGateway } = require('../src/agent-core/formal/model-gateway')
 const { AgentPluginHost } = require('../src/agent-core/formal/plugin-host')
-const { TranscriptReader } = require('../src/agent-core/formal/storage-ports')
+const { MemoryReader, TranscriptReader } = require('../src/agent-core/formal/storage-ports')
 const { AgentModelProviderRegistry } = require('../src/agent-provider/model-provider-registry')
 const { AgentProviderBootstrap } = require('../src/agent-provider/provider-bootstrap')
 const {
@@ -77,9 +77,13 @@ function evidenceForSegments (segments) {
   }]
 }
 
-class D12DeterministicProvider {
-  constructor () {
+class D13DeterministicProvider {
+  constructor ({ afterFirstModelResult = null } = {}) {
+    if (afterFirstModelResult !== null && typeof afterFirstModelResult !== 'function') {
+      throw new TypeError('afterFirstModelResult must be a function')
+    }
     this.calls = []
+    this.afterFirstModelResult = afterFirstModelResult
   }
 
   resultFor (request) {
@@ -137,7 +141,26 @@ class D12DeterministicProvider {
       models: [{ id: 'deepseek-v4-flash' }]
     })
     core.setResponses([faux.fauxAssistantMessage(JSON.stringify(this.resultFor(request)))])
-    return { model: core.getModel(), streamFn: core.streamSimple }
+    const streamFn = (...args) => {
+      const stream = core.streamSimple(...args)
+      const afterFirstModelResult = this.afterFirstModelResult
+      this.afterFirstModelResult = null
+      if (!afterFirstModelResult) return stream
+      let finalResult = null
+      return {
+        [Symbol.asyncIterator]: () => stream[Symbol.asyncIterator](),
+        result: () => {
+          if (!finalResult) {
+            finalResult = stream.result().then(async (message) => {
+              await afterFirstModelResult()
+              return message
+            })
+          }
+          return finalResult
+        }
+      }
+    }
+    return { model: core.getModel(), streamFn }
   }
 }
 
@@ -433,11 +456,26 @@ async function main () {
     )
 
     phase = 'same-run-recovery'
-    const provider = new D12DeterministicProvider()
-    /* D12 closes StorageGateway for subtitle commit/reconciliation. The formal
-       Agent runner still uses the already-proven D6 replacement host because
-       its input/commit routes are intentionally outside this conflict-free cut. */
-    const runtime = createAgentJobRuntime(replacementHost, provider, providerBootstrap)
+    let runnerCommitReplacement = null
+    const provider = new D13DeterministicProvider({
+      afterFirstModelResult: async () => {
+        const host = storageGateway.host
+        const child = host?.child
+        if (!host || host.state !== 'ready' || !child) {
+          throw new Error('runner commit replacement child unavailable')
+        }
+        const exactExitPromise = host.waitForExactExit()
+        const terminationExitCode = await host.terminateAndWait(10000)
+        const joinedExitCode = await exactExitPromise
+        runnerCommitReplacement = {
+          host,
+          child,
+          terminationExitCode,
+          joinedExitCode
+        }
+      }
+    })
+    const runtime = createAgentJobRuntime(storageGateway, provider, providerBootstrap)
     const { pluginHost, runner } = runtime
     providerRegistry = runtime.providerRegistry
     const waitMs = Math.max(0, claimedBeforeExit.lease.expiresAt - Date.now() + 30)
@@ -446,6 +484,19 @@ async function main () {
     const recovered = await runner.runNext({
       claimIdempotencyKey: 'formal-agent-utility-recovery-claim',
       localWorkAllowed: false
+    })
+
+    phase = 'runner-replacement-before-policy'
+    const runnerReplacementHost = storageGateway.host
+    const runnerReplacementPolicyReadyBeforeRecovery = agentRuntime.isTaskPolicyReady()
+    const runnerReplacementBlocked = await runner.runNext({
+      claimIdempotencyKey: 'formal-agent-utility-runner-replacement-before-policy',
+      localWorkAllowed: false
+    })
+
+    phase = 'runner-replacement-policy-recovery'
+    const runnerReplacementRecovery = await agentRuntime.recoverTerminalSessions({
+      sessionIds: TERMINAL_SESSION_IDS
     })
     const memory = await runner.runNext({
       claimIdempotencyKey: 'formal-agent-utility-memory-claim',
@@ -458,6 +509,15 @@ async function main () {
     const empty = await runner.runNext({
       claimIdempotencyKey: 'formal-agent-utility-empty-claim',
       localWorkAllowed: false
+    })
+
+    phase = 'memory-read-through-storage-gateway'
+    const memoryProjection = await new MemoryReader(storageGateway).query({
+      scopeRefs: [{ kind: 'session', canonicalKey: READY_SESSION_ID }],
+      kinds: ['decision'],
+      semanticKeys: ['decision:formal-agent-utility'],
+      maxItems: 4,
+      maxSerializedBytes: 16384
     })
 
     phase = 'authority-readback'
@@ -494,6 +554,19 @@ async function main () {
       notificationFailureChildReaped,
       exactChildReaped,
       replacementBlockedBeforePolicy: firstBlockedBeforePolicy === null && blockedBeforePolicy === null,
+      runnerCommitReplacementChildReaped: runnerCommitReplacement !== null &&
+        runnerCommitReplacement.host === replacementHost &&
+        runnerCommitReplacement.terminationExitCode !== null &&
+        runnerCommitReplacement.terminationExitCode === runnerCommitReplacement.joinedExitCode &&
+        runnerCommitReplacement.host.terminationChild === runnerCommitReplacement.child &&
+        runnerCommitReplacement.host.child === null &&
+        runnerCommitReplacement.host.state === 'stopped',
+      runnerCommitReplayedThroughGateway: runnerCommitReplacement !== null &&
+        runnerReplacementHost !== null &&
+        runnerReplacementHost !== runnerCommitReplacement.host &&
+        recovered?.runId === claimedBeforeExit.runId && recovered?.jobState === 'succeeded',
+      runnerReplacementBlockedBeforePolicy: runnerReplacementPolicyReadyBeforeRecovery === false &&
+        runnerReplacementBlocked === null && runnerReplacementRecovery.sessions.length === 3,
       taskPolicyReplayedBeforeRecovery: initialRecovery.sessions.length === 0 &&
         restoredInitialPolicy.sessions.length === 0 &&
         enabled.settings.agentSettingsRevision === 1 && agentRuntime.isTaskPolicyReady() &&
@@ -505,6 +578,10 @@ async function main () {
       taskIdentityStable: JSON.stringify([...originalRunIds].sort()) === JSON.stringify([...currentRunIds].sort()),
       independentResultsCommitted: memory?.jobState === 'succeeded' && memory?.memory?.acceptedCandidateCount === 1 &&
         enhanced?.jobState === 'succeeded' && enhanced?.artifact?.type === 'enhanced-transcript',
+      memoryReadThroughGateway: memoryProjection.availability === 'ready' &&
+        memoryProjection.reason === null && memoryProjection.items.length === 1 &&
+        memoryProjection.items[0].semanticKey === 'decision:formal-agent-utility' &&
+        memoryProjection.itemCount === 1 && memoryProjection.hasMore === false,
       noDuplicateClaims: empty === null && detail.jobs.length === 3 &&
         detail.jobs.every((job) => job.state === 'succeeded'),
       artifactProjectionExact: detail.artifacts.length === 2 &&
@@ -531,13 +608,14 @@ async function main () {
     if (failedChecks.length !== 0) throw new Error('journey assertion')
 
     phase = 'graceful-shutdown'
+    const finalStorageHost = storageGateway.host
     await coordinator.dispose()
     coordinator = null
     agentRuntime.dispose()
     agentRuntime = null
     await storageGateway.shutdown()
     const gracefulExactExit = storageGateway.host === null &&
-      replacementHost?.child === null && replacementHost?.state === 'closed'
+      finalStorageHost?.child === null && finalStorageHost?.state === 'closed'
     if (!gracefulExactExit) throw new Error('shutdown invariant')
     storageGateway = null
     providerRegistry.dispose()
@@ -566,7 +644,7 @@ async function main () {
         agentUtilityProcess: false,
         meetingStoppedWiring: true,
         meetingStoppedStorageGatewayWiring: true,
-        agentJobRunnerStorageGatewayWiring: false,
+        agentJobRunnerStorageGatewayWiring: true,
         preloadIpcRenderer: false,
         packagedRuntime: false
       },
