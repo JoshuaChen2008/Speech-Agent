@@ -6,8 +6,10 @@ const path = require('node:path')
 const test = require('node:test')
 
 const {
+  DWM_OBSERVATION_CHECKLIST,
   DWM_OBSERVATION_IDS,
   DWM_V3_LIMITATIONS,
+  DWM_V4_LIMITATIONS,
   RECOVERY_FAULT_CODES,
   RECOVERY_SCENARIOS,
   TRANSPORT_FIELDS,
@@ -16,6 +18,7 @@ const {
   buildRecoveryProgress,
   completeDwmChecks,
   completeDwmLifecycleChecks,
+  completeDwmStabilityChecks,
   dwmOperatorCompletion,
   parseArguments,
   parseOperatorCompletion,
@@ -35,6 +38,7 @@ const {
 } = require('../../scripts/verify-i2-interaction-report')
 const {
   completionPath,
+  operatorPromptForObservation,
   parseArguments: parseDwmCompletionArguments,
   writeCompletion: writeDwmCompletion
 } = require('../../scripts/complete-i2-dwm-drag')
@@ -57,12 +61,15 @@ function completeDwmScenarioEvidence () {
     combination: { scalePercent: 100, theme: 'dark' },
     checks: completeDwmChecks(),
     lifecycle: completeDwmLifecycleChecks(),
+    stability: completeDwmStabilityChecks(),
     crossScale: { observed: false, criticalHitMatrixRepeated: false },
     productPayloadVersion: PRODUCT_IDENTITY.version,
     productPayloadFileCount: PRODUCT_IDENTITY.fileCount,
     productPayloadSha256: PRODUCT_IDENTITY.sha256,
     productionReuse: {
       interactionController: true,
+      interactionGenerationController: true,
+      applicationWindowLifecycleController: true,
       windowLayerController: true,
       ipcAccessPolicy: true,
       windowRoles: ['caption', 'toolbar', 'settings', 'history'],
@@ -192,6 +199,27 @@ test('interaction argument parser requires explicit source, scenario, mic prefli
   ]), /Unknown argument/)
 })
 
+test('SEM-F22/SEM-F24/J17/J19/I2: every DWM observation prompt carries its exact human action checklist', () => {
+  assert.deepEqual(Object.keys(DWM_OBSERVATION_CHECKLIST), DWM_OBSERVATION_IDS)
+  for (const id of DWM_OBSERVATION_IDS) {
+    const prompt = operatorPromptForObservation(id)
+    assert.match(prompt, new RegExp(`^Confirm ${id}: `))
+    assert.ok(prompt.length > id.length + 40, `${id} must not use an opaque confirmation prompt`)
+  }
+
+  const repeatedEdges = operatorPromptForObservation('toolbar-edge-repeat-stability')
+  assert.match(repeatedEdges, /top contour.*right contour.*top-adjacent.*right-adjacent/i)
+  assert.match(repeatedEdges, /In each of the four named zones.*at least 20.*80 total.*non-zero 1-2 DIP.*zero resize.*width and height.*docking.*buttons/i)
+
+  const geometryRehit = operatorPromptForObservation('post-geometry-pointer-rehit')
+  assert.match(geometryRehit, /caption resize.*combined caption-and-toolbar drag.*locked toolbar-only.*unlock\/redock/i)
+  assert.match(geometryRehit, /pointer stationary.*next press uses the new geometry/i)
+
+  const restoredNearToolbar = operatorPromptForObservation('post-restore-toolbar-near-drag-stability')
+  assert.match(restoredNearToolbar, /taskbar.*Without moving the pointer first.*width and height.*docking.*buttons/i)
+  assert.throws(() => operatorPromptForObservation('unknown-observation'), /unknown DWM observation ID/)
+})
+
 test('interaction runner rejects colliding output hand-off paths before Electron is started', () => {
   assert.doesNotThrow(() => assertDistinctOutputPaths([
     'D:/A1Project/Speech-Agent2.0/.artifacts/i2/report.json',
@@ -238,7 +266,7 @@ test('transport snapshots expose only counters and same-generation deltas retain
 test('strict verifier accepts automated and manual interaction reports but rejects evidence that overclaims device actions', () => {
   for (const scenario of ['pause-refine', 'worker-crash-retry', 'dwm-drag']) {
     const report = reportFor(scenario)
-    assert.equal(report.schemaVersion, scenario === 'dwm-drag' ? 4 : 1)
+    assert.equal(report.schemaVersion, scenario === 'dwm-drag' ? 5 : 1)
     assert.equal(validateInteractionReport(report, scenario), report)
     assert.equal(validateInteractionEvidence(Buffer.from(JSON.stringify(report)), scenario).scenario, scenario)
   }
@@ -263,14 +291,18 @@ test('strict verifier accepts automated and manual interaction reports but rejec
   assert.throws(() => validateInteractionReport(crossGenerationDelta), /cross-generation/)
 })
 
-test('SEM-F22/SEM-F24/J17/J19/I2: schema-v4 DWM evidence requires lifecycle observations and the current product hash', () => {
+test('SEM-F22/SEM-F24/J17/J19/I2: schema-v5 DWM evidence requires lifecycle, stability and the current product hash', () => {
   const report = reportFor('dwm-drag')
-  assert.equal(report.schemaVersion, 4)
+  assert.equal(report.schemaVersion, 5)
   assert.deepEqual(validateInteractionEvidence(Buffer.from(JSON.stringify(report)), 'dwm-drag'), report)
 
   const completionOnly = structuredClone(report)
   completionOnly.scenarioEvidence.productionReuse.interactionController = false
   assert.throws(() => validateInteractionReport(completionOnly), /interactionController|true/)
+
+  const lifecycleBypass = structuredClone(report)
+  lifecycleBypass.scenarioEvidence.productionReuse.applicationWindowLifecycleController = false
+  assert.throws(() => validateInteractionReport(lifecycleBypass), /applicationWindowLifecycleController|true/)
 
   const missing = structuredClone(report)
   delete missing.scenarioEvidence.checks.caption.leftImmediateContinuousDrag
@@ -279,6 +311,10 @@ test('SEM-F22/SEM-F24/J17/J19/I2: schema-v4 DWM evidence requires lifecycle obse
   const missingLifecycle = structuredClone(report)
   delete missingLifecycle.scenarioEvidence.lifecycle.stationaryPointerHitObserved
   assert.throws(() => validateInteractionReport(missingLifecycle), /lifecycle|missing|unknown fields/)
+
+  const missingStability = structuredClone(report)
+  delete missingStability.scenarioEvidence.stability.postGeometryPointerRehitObserved
+  assert.throws(() => validateInteractionReport(missingStability), /stability|missing|unknown fields/)
 
   const duplicate = structuredClone(report)
   duplicate.scenarioEvidence.checks.toolbarStates[1].state = 'quiet'
@@ -297,10 +333,21 @@ test('SEM-F22/SEM-F24/J17/J19/I2: schema-v4 DWM evidence requires lifecycle obse
   assert.throws(() => validateInteractionEvidence(Buffer.from(JSON.stringify(staleCandidate)), 'dwm-drag'), /product payload identity/)
 })
 
-test('SEM-F22/J17/I2: historical schema-v3 DWM reports and completions remain readable but do not become current v4 evidence', () => {
+test('SEM-F22/J17/I2: historical schema-v3/schema-v4 DWM evidence remains readable but cannot become current v5 evidence', () => {
   const report = reportFor('dwm-drag')
+  const v3Identity = {
+    version: PRODUCT_IDENTITY.version,
+    fileCount: PRODUCT_IDENTITY.fileCount + 7,
+    sha256: 'd'.repeat(64)
+  }
   report.schemaVersion = 3
   delete report.scenarioEvidence.lifecycle
+  delete report.scenarioEvidence.stability
+  delete report.scenarioEvidence.productionReuse.interactionGenerationController
+  delete report.scenarioEvidence.productionReuse.applicationWindowLifecycleController
+  report.scenarioEvidence.productPayloadVersion = v3Identity.version
+  report.scenarioEvidence.productPayloadFileCount = v3Identity.fileCount
+  report.scenarioEvidence.productPayloadSha256 = v3Identity.sha256
   report.limitations = [...DWM_V3_LIMITATIONS]
   assert.equal(validateInteractionReport(report, 'dwm-drag'), report)
   assert.deepEqual(validateInteractionEvidence(Buffer.from(JSON.stringify(report)), 'dwm-drag'), report)
@@ -308,14 +355,51 @@ test('SEM-F22/J17/I2: historical schema-v3 DWM reports and completions remain re
   const current = dwmOperatorCompletion({
     confirmations: DWM_OBSERVATION_IDS,
     runBindingSha256: 'b'.repeat(64),
-    productPayloadVersion: PRODUCT_IDENTITY.version,
-    productPayloadFileCount: PRODUCT_IDENTITY.fileCount,
-    productPayloadSha256: PRODUCT_IDENTITY.sha256,
+    productPayloadVersion: v3Identity.version,
+    productPayloadFileCount: v3Identity.fileCount,
+    productPayloadSha256: v3Identity.sha256,
     combination: { scalePercent: 100, theme: 'dark' }
   })
   const legacy = { ...current, schemaVersion: 3 }
   delete legacy.lifecycle
-  assert.deepEqual(parseOperatorCompletion(Buffer.from(JSON.stringify(legacy))), legacy)
+  delete legacy.stability
+  const legacyBytes = Buffer.from(JSON.stringify(legacy))
+  assert.deepEqual(parseOperatorCompletion(legacyBytes), legacy)
+  report.scenarioEvidence.operatorCompletionSha256 = crypto.createHash('sha256').update(legacyBytes).digest('hex')
+  assert.deepEqual(validateDwmCompanion(report, legacyBytes), legacy)
+
+  const v4Report = reportFor('dwm-drag')
+  const v4Identity = {
+    version: PRODUCT_IDENTITY.version,
+    fileCount: PRODUCT_IDENTITY.fileCount + 11,
+    sha256: 'e'.repeat(64)
+  }
+  v4Report.schemaVersion = 4
+  delete v4Report.scenarioEvidence.stability
+  delete v4Report.scenarioEvidence.productionReuse.interactionGenerationController
+  delete v4Report.scenarioEvidence.productionReuse.applicationWindowLifecycleController
+  v4Report.scenarioEvidence.productPayloadVersion = v4Identity.version
+  v4Report.scenarioEvidence.productPayloadFileCount = v4Identity.fileCount
+  v4Report.scenarioEvidence.productPayloadSha256 = v4Identity.sha256
+  v4Report.limitations = [...DWM_V4_LIMITATIONS]
+  assert.equal(validateInteractionReport(v4Report, 'dwm-drag'), v4Report)
+  assert.deepEqual(validateInteractionEvidence(Buffer.from(JSON.stringify(v4Report)), 'dwm-drag'), v4Report)
+  const v4Completion = {
+    ...dwmOperatorCompletion({
+      confirmations: DWM_OBSERVATION_IDS,
+      runBindingSha256: 'b'.repeat(64),
+      productPayloadVersion: v4Identity.version,
+      productPayloadFileCount: v4Identity.fileCount,
+      productPayloadSha256: v4Identity.sha256,
+      combination: { scalePercent: 100, theme: 'dark' }
+    }),
+    schemaVersion: 4
+  }
+  delete v4Completion.stability
+  const v4Bytes = Buffer.from(JSON.stringify(v4Completion))
+  assert.deepEqual(parseOperatorCompletion(v4Bytes), v4Completion)
+  v4Report.scenarioEvidence.operatorCompletionSha256 = crypto.createHash('sha256').update(v4Bytes).digest('hex')
+  assert.deepEqual(validateDwmCompanion(v4Report, v4Bytes), v4Completion)
 })
 
 test('recovery pass requires product-observed fault, release, no auto reacquire, Retry and persisted caption continuity', () => {
@@ -377,13 +461,18 @@ test('DWM progress and completion files are bounded, text-free hand-off evidence
     combination: { scalePercent: 100, theme: 'dark' }
   })
   assert.deepEqual(parseOperatorCompletion(Buffer.from(JSON.stringify(completion))), completion)
-  assert.equal(completion.schemaVersion, 4)
+  assert.equal(completion.schemaVersion, 5)
   assert.equal(completion.checks.resizeTargets.length, 8)
   assert.deepEqual(completion.lifecycle, {
     taskbarRestoreObserved: true,
     stationaryPointerHitObserved: true,
     postRestoreCaptionDragObserved: true,
     lockedCaptionPassedThroughAfterRestore: true
+  })
+  assert.deepEqual(completion.stability, {
+    toolbarEdgeRepeatStableObserved: true,
+    postGeometryPointerRehitObserved: true,
+    postRestoreToolbarNearDragStableObserved: true
   })
 
   assert.deepEqual(parseOperatorCompletion(Buffer.from(JSON.stringify({

@@ -250,6 +250,31 @@ class WindowInteractionGenerationController {
     return this.resumeRole(role, cursor)
   }
 
+  refreshPointerHits (roles = POINTER_ROLES) {
+    if (!Array.isArray(roles) || roles.length === 0 ||
+        roles.some((role) => !POINTER_ROLES.includes(role)) ||
+        new Set(roles).size !== roles.length) {
+      throw new TypeError('window interaction refresh roles are invalid')
+    }
+    if (this.phase !== 'resume') return false
+    let cursor = null
+    try { cursor = this.getCursorScreenPoint() } catch { /* fixed role-scoped fallback below */ }
+    let refreshed = false
+    for (const role of roles) {
+      if (this.suspendedRoles.has(role) ||
+          this.failurePriority(role) === FAILURE_PRIORITY['interaction-pass-through-failed']) continue
+      this.clearRetryableFailure(role)
+      const pointer = isCursorPoint(cursor) ? this.pointerForRole(role, cursor) : null
+      if (!pointer) {
+        this.applyPointerFailure(role)
+        continue
+      }
+      this.startAck(role, this.generation)
+      if (this.sendToRole(role, resumeSync(this.generation, pointer))) refreshed = true
+    }
+    return refreshed
+  }
+
   releaseRole (role) {
     if (!INTERACTION_ROLES.includes(role)) return
     this.clearAck(role)

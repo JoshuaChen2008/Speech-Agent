@@ -63,7 +63,7 @@ Electron 壳层负责：
 | 工具条窗口外边距 | 16 DIP |
 | 工具条窗口总宽 | 600 DIP |
 | 工具条窗口总高 | 72 DIP |
-| 工具条停靠内缩 | 12 DIP |
+| 工具条停靠内缩 | 20 DIP |
 
 工具条宽度的由来：窗口按**最坏情况**固定，条自适应收窄，窗内**右对齐**。
 
@@ -102,6 +102,8 @@ Electron 壳层负责：
 ```
 
 字幕窗额外使用 `focusable: false`、`minimizable: false`、`skipTaskbar: true`。工具条使用稳定标题、`minimizable: true`、`skipTaskbar: false`，并在真实轮廓内提供带可访问名称的 Fluent 最小化按钮。两个窗口使用 `setAlwaysOnTop(true, 'screen-saver')` 和全屏 workspace 可见配置。
+
+字幕窗的 `resizable: false` 是原生命中不变量，不妨碍下文的主进程手动拉伸；创建后不得再调用 `setResizable(true)`。透明无边框字幕窗不能同时启用 Windows 原生拉伸边与产品自己的 `8px` 拉伸带。
 
 主任务栏窗口的原生 `minimize` / `restore` 事件与 renderer 最小化按钮进入同一 `ApplicationWindowLifecycleController`。控制器只在有界内存中保存窗口角色、可见性、bounds、焦点引用与窗口交互代次，不保存字幕正文、设备名、路径或指针坐标。每次最小化事务先推进一次窗口交互代次、停止主进程拖动/拉伸、把字幕窗和工具条切到原生鼠标穿透并通知全部 renderer 静默取消本地手势。每次任务栏恢复或第二实例 `restoreOrShow` 事务再推进一次，并在该次恢复事务内依次发送同一新代次的 `suspend` 与 `resume`；恢复时若 Windows 改写了主窗口几何则主动恢复已保存 bounds，待窗口集合、bounds 与层级收敛后，再把当前系统光标换算成各窗口局部 DIP 坐标并要求 renderer 按当前指针重新执行命中判定。指针静止时也必须恢复正确命中。`did-finish-load` 重放当前窗口交互代次，过期代次的穿透、拖动或拉伸意图一律拒绝。若辅助窗口最小化失败，必须回滚已隐藏窗口并保留可访问的主任务栏入口；若恢复中途失败，主窗口先恢复并记录固定 `role/code`，允许用户重试或退出。
 
@@ -159,6 +161,7 @@ Electron 壳层负责：
 - 拉伸过程中持续 `dock()`，工具条跟随。
 - 锁定时禁止拉伸，`applyLock(true)` 会立刻收尾进行中的拉伸。
 - 工具条实际轮廓先保持穿透；轮廓以外的卡片内侧 `8px` 拉伸带再优先于普通拖动。
+- 工具条实际轮廓与字幕卡内侧 `8px` 拉伸带之间至少保留 `8 DIP` 普通拖动区间。工具条上边、右边轮廓及其相邻普通拖动区的原地点击或轻微抖动不得发起拉伸；反复点击不得累计改变字幕窗宽高，也不得让工具条随错误 bounds 向外漂移。
 - 结束时把尺寸写回 `config.captionWidth / captionHeight` 并广播。
 
 **字号不随窗口缩放。** 用户手动改变窗口后，新宽高决定一行能放下多少字和固定视口能容纳多少行；字幕内容本身绝不能自动 resize 窗口。可见行数由实际内容高度与字号计算，`config.maxLines` 不再作为 previous/current 各槽位的独立裁剪上限；满高后按 [固定高度字幕流设计](subtitle-flow-and-transcript-versions.md) 淘汰最旧视觉行。
@@ -199,6 +202,7 @@ timer 间隔是实现细节（当前 16ms，对齐一帧）；取消语义不依
 - mousemove 使用 requestAnimationFrame 节流。
 - 锁定时 captionWin 恒穿透，renderer 不能把它重新变成实心。
 - 最小化/恢复以独立于工具条布局代次的窗口交互代次同步。恢复前 captionWin/toolbarWin 先保持原生鼠标穿透，恢复后 renderer 使用同代局部 DIP 光标位置主动执行现有命中判定，并只允许同代 `mouseThrough` 改变原生命中；锁定字幕窗始终穿透，字幕窗内的工具条轮廓由字幕窗穿透后交给工具条自身按真实轮廓接管。旧代次与旧 rAF 不能覆盖新状态。
+- `resume` 处理器必须在同一次回调内立即完成当前指针命中并发送同代确认，不能把首次确认排队到 rAF。主进程完成字幕窗拉伸、字幕与工具条组合拖动、锁定工具条单独移动或重新停靠后，必须以同一窗口交互代次向所有 bounds 发生变化的 caption/toolbar renderer 重新投递当前局部 DIP 指针位置，让它们在下一次主键按下前恢复当前几何下的命中；该刷新不得续接或取消已经结束的旧手势。
 - 指针坐标只在有界内存 IPC 中存在；固定诊断和所有证据报告不得包含坐标、绝对路径、设备名、字幕正文或绝对单调时刻。
 
 ## 6. 字幕渲染不变量
@@ -279,4 +283,4 @@ timer 间隔是实现细节（当前 16ms，对齐一帧）；取消语义不依
 4. B1 已把工具条升级为完整 RuntimeSnapshot + CommandResult。
 5. B1 已让设置页识别 Capabilities；默认 Gate 0B profile 为空，开发 profile 只能由显式开关启用。
 6. 视觉/UI 的 V1–V2 方案和状态矩阵已交付；历史窗口和模型资源页均已接真实主进程契约并通过开发态及 packaged 四窗口 Electron 旅程，205 段详情已验证五页往返且 DOM≤50。I3 非音频预资格又在 3,600 段/72 页下保持 DOM≤50；MVP 不展示翻译开关。J15a 可见非音频 DWM runner、单次/矩阵严格校验与 fail-closed 契约测试为实现完成·尚未验收；尚无 36 例实机 matrix 报告。物理音频、DPI/人工视觉、真实两小时声源与 I4 继续按发布门禁验收。
-7. J17 的动态命中、握把、设置/字幕历史 `48px` 标题栏、共享主题 token 与焦点层级往返已达到联合验收完成；I2 `dwm-drag` v3 单组合报告、操作者 completion 与 12 组合严格矩阵为实现完成·尚未验收，尚未执行当前候选的 12 组合人工 DWM/DPI/异缩放观察。
+7. J17 的动态命中、握把、工具条边缘稳定性、几何变化后重命中、设置/字幕历史 `48px` 标题栏、共享主题 token 与焦点层级往返已达到联合验收完成；I2 `dwm-drag` schema-v5 单组合报告、操作者 completion 与只接受当前 schema-v5 observation 的 12 组合严格矩阵为实现完成·尚未验收，历史 schema-v3/schema-v4 只允许读取，且尚未执行当前候选的 12 组合人工 DWM/DPI/异缩放观察。

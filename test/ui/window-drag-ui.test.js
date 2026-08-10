@@ -330,18 +330,24 @@ test('SEM-F22/SEM-F24/J17/J19: caption lifecycle reset silently cancels gestures
   assert.equal(calls.length, before)
 })
 
-test('SEM-F22/SEM-F24/J17/J19: a queued same-generation hit frame cannot overwrite the resumed pointer', () => {
-  const { callbacks, calls, runFrames } = createCaptionHarness({ deferFrames: true })
+test('SEM-F22/SEM-F24/J17/J19: resume acknowledges its first hit synchronously without waiting for rAF', () => {
+  const { callbacks, calls } = createCaptionHarness({ deferFrames: true })
   callbacks.interaction({
     schemaVersion: 1,
     generation: 2,
     phase: 'resume',
     pointer: { x: 100, y: 80 }
   })
-  callbacks.interaction({ schemaVersion: 1, generation: 3, phase: 'suspend' })
+
+  assert.deepEqual(calls, [['through', false]])
+})
+
+test('SEM-F22/SEM-F24/J17/J19: a queued pre-resume hit frame cannot overwrite the resumed pointer', () => {
+  const { callbacks, calls, document, runFrames } = createCaptionHarness({ deferFrames: true })
+  document.dispatch('mousemove', { clientX: 100, clientY: 80 })
   callbacks.interaction({
     schemaVersion: 1,
-    generation: 3,
+    generation: 2,
     phase: 'resume',
     pointer: { x: 10, y: 10 }
   })

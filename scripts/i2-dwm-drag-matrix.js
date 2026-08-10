@@ -160,7 +160,7 @@ function buildDwmMatrix ({ generatedAt = new Date().toISOString(), j17Bytes, pai
     assert.ok(Buffer.isBuffer(pair.reportBytes), `DWM matrix pair[${index}].reportBytes must be a Buffer`)
     assert.ok(Buffer.isBuffer(pair.completionBytes), `DWM matrix pair[${index}].completionBytes must be a Buffer`)
     const report = validateInteractionEvidence(pair.reportBytes, 'dwm-drag')
-    assert.equal(report.schemaVersion, 4, 'DWM matrix requires schema-v4 DWM reports')
+    assert.equal(report.schemaVersion, 5, 'DWM matrix requires schema-v5 DWM reports')
     assert.equal(report.result, 'pass-manual-observed',
       'DWM matrix requires every DWM report to be manually observed')
     const completion = validateDwmCompanion(report, pair.completionBytes)

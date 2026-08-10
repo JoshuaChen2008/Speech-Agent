@@ -22,7 +22,7 @@ function parseVerifierArguments (argv) {
 function validateInteractionEvidence (bytes, expectedScenario = null) {
   const report = parseStrictEvidenceJson(bytes, 'I2 interaction report evidence')
   validateInteractionReport(report, expectedScenario)
-  if ([3, 4].includes(report.schemaVersion) && report.scenario === 'dwm-drag') {
+  if (report.schemaVersion === 5 && report.scenario === 'dwm-drag') {
     const identity = computeProductPayloadIdentity()
     if (report.scenarioEvidence.productPayloadVersion !== identity.version ||
         report.scenarioEvidence.productPayloadFileCount !== identity.fileCount ||
@@ -34,7 +34,7 @@ function validateInteractionEvidence (bytes, expectedScenario = null) {
 }
 
 function validateDwmCompanion (report, completionBytes) {
-  if (![3, 4].includes(report.schemaVersion) || report.scenario !== 'dwm-drag') return null
+  if (![3, 4, 5].includes(report.schemaVersion) || report.scenario !== 'dwm-drag') return null
   const completion = parseOperatorCompletion(completionBytes)
   assert.equal(completion.schemaVersion, report.schemaVersion,
     `DWM report requires a schema-v${report.schemaVersion} completion`)
@@ -45,7 +45,8 @@ function validateDwmCompanion (report, completionBytes) {
   assert.equal(completion.productPayloadSha256, evidence.productPayloadSha256)
   assert.deepEqual(completion.combination, evidence.combination)
   assert.deepEqual(completion.checks, evidence.checks)
-  if (report.schemaVersion === 4) assert.deepEqual(completion.lifecycle, evidence.lifecycle)
+  if ([4, 5].includes(report.schemaVersion)) assert.deepEqual(completion.lifecycle, evidence.lifecycle)
+  if (report.schemaVersion === 5) assert.deepEqual(completion.stability, evidence.stability)
   assert.deepEqual(completion.crossScale, evidence.crossScale)
   const digest = crypto.createHash('sha256').update(completionBytes).digest('hex')
   assert.equal(digest, evidence.operatorCompletionSha256, 'DWM completion SHA-256 does not match the report')
@@ -55,11 +56,11 @@ function validateDwmCompanion (report, completionBytes) {
 if (require.main === module) {
   const { reportPath, expectedScenario, completionPath } = parseVerifierArguments(process.argv.slice(2))
   const report = validateInteractionEvidence(fs.readFileSync(path.resolve(reportPath)), expectedScenario)
-  if ([3, 4].includes(report.schemaVersion) && report.scenario === 'dwm-drag') {
+  if ([3, 4, 5].includes(report.schemaVersion) && report.scenario === 'dwm-drag') {
     if (!completionPath) throw new Error(`schema-v${report.schemaVersion} dwm-drag verification requires --completion`)
     validateDwmCompanion(report, fs.readFileSync(path.resolve(completionPath)))
   } else if (completionPath) {
-    throw new Error('--completion is only valid for schema-v3/schema-v4 dwm-drag reports')
+    throw new Error('--completion is only valid for schema-v3/schema-v4/schema-v5 dwm-drag reports')
   }
   process.stdout.write(`I2 ${report.scenario} interaction report validated (${report.result}).\n`)
 }

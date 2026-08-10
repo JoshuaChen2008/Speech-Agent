@@ -39,14 +39,57 @@ test('SEM-F22/J17: valid toolbar CSS geometry becomes an outward-rounded card-lo
   }), {
     generation: 1,
     source: 'toolbar',
-    rect: { top: 11, right: 12, width: 400, height: 41 }
+    rect: { top: 19, right: 20, width: 400, height: 41 }
   })
 
   assert.deepEqual(state.getOverlap(), {
     generation: 1,
     source: 'toolbar',
-    rect: { top: 11, right: 12, width: 400, height: 41 }
+    rect: { top: 19, right: 20, width: 400, height: 41 }
   })
+})
+
+test('SEM-F22/J17: the docked toolbar contour leaves an ordinary drag lane outside the 8px resize band', () => {
+  const {
+    WINDOW_LAYOUT,
+    projectToolbarReport,
+    toolbarDockBoundsFor
+  } = require('../../src/main/window-layout-contract')
+  const caption = { x: 100, y: 80, width: 920, height: 190 }
+  const toolbar = toolbarDockBoundsFor(caption)
+  const overlap = projectToolbarReport({
+    generation: 1,
+    rect: { x: 184, y: 16, width: 400, height: 40 }
+  }, 1)
+
+  assert.ok(overlap)
+  assert.ok(overlap.rect.top - 8 >= 8, 'toolbar top contour needs at least 8 DIP of ordinary drag lane')
+  assert.ok(overlap.rect.right - 8 >= 8, 'toolbar right contour needs at least 8 DIP of ordinary drag lane')
+  assert.equal(toolbar.y + 16 - (caption.y + WINDOW_LAYOUT.captionMargin), WINDOW_LAYOUT.toolbarDockInset)
+  assert.equal(
+    caption.x + caption.width - WINDOW_LAYOUT.captionMargin - (toolbar.x + 584),
+    WINDOW_LAYOUT.toolbarDockInset
+  )
+})
+
+test('SEM-F22/J17: overlay BrowserWindow behavior disables native resizing at creation', () => {
+  const { overlayWindowBehavior } = require('../../src/main/application-window-lifecycle-controller')
+
+  assert.deepEqual(overlayWindowBehavior('caption', false), {
+    title: 'Live Subtitle',
+    minimizable: false,
+    skipTaskbar: true,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    resizable: false,
+    maximizable: false,
+    alwaysOnTop: true,
+    hasShadow: false,
+    focusable: false
+  })
+  assert.equal(overlayWindowBehavior('toolbar').resizable, false)
+  assert.equal(Object.isFrozen(overlayWindowBehavior('caption', false)), true)
 })
 
 test('SEM-F22/J17: malformed, out-of-bounds and stale toolbar reports fail closed', () => {

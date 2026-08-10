@@ -3,7 +3,7 @@
 const WINDOW_LAYOUT = Object.freeze({
   captionMargin: 20,
   toolbarMargin: 16,
-  toolbarDockInset: 12,
+  toolbarDockInset: 20,
   toolbarViewportWidth: 600,
   toolbarViewportHeight: 72
 })

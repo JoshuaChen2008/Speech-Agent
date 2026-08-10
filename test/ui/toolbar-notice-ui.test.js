@@ -86,7 +86,7 @@ async function flush () {
   await new Promise((resolve) => setImmediate(resolve))
 }
 
-function createHarness () {
+function createHarness ({ deferFrames = false } = {}) {
   const ids = ['wrap', 'toolbar', 'grip', 'status', 'commands', 'windowControls']
   const elements = new Map(ids.map((id) => [id, new FakeElement('div')]))
   elements.get('toolbar').classList.add('toolbar')
@@ -96,6 +96,7 @@ function createHarness () {
   const observedLayoutTargets = []
   const throughCalls = []
   let dragController = null
+  const frames = []
   const shell = {
     mouseThrough: (ignore) => throughCalls.push(ignore),
     dragStart () {}, dragEnd () {}, lockToggle () {},
@@ -172,7 +173,11 @@ function createHarness () {
   vm.runInNewContext(transpileRenderer(path.join(root, 'src', 'toolbar', 'toolbar.ts')), {
     console,
     document,
-    requestAnimationFrame: (callback) => callback(),
+    requestAnimationFrame: (callback) => {
+      if (!deferFrames) return callback()
+      frames.push(callback)
+      return frames.length
+    },
     ResizeObserver: class {
       constructor (callback) { this.callback = callback }
       observe (target) { observedLayoutTargets.push(target) }
@@ -180,7 +185,17 @@ function createHarness () {
     },
     window
   })
-  return { actions, callbacks, document, dragController, elements, layoutReports, observedLayoutTargets, throughCalls }
+  return {
+    actions,
+    callbacks,
+    document,
+    dragController,
+    elements,
+    layoutReports,
+    observedLayoutTargets,
+    runFrames: () => { while (frames.length > 0) frames.shift()() },
+    throughCalls
+  }
 }
 
 test('toolbar renderer shows and dismisses a post-session status without creating another row', async () => {
@@ -263,7 +278,7 @@ test('SEM-F22/J17: toolbar mouse-through enters on the exact contour and leaves 
 })
 
 test('SEM-F22/SEM-F24/J17/J19: toolbar resume forces a same-generation stationary-pointer acknowledgement', () => {
-  const { callbacks, throughCalls } = createHarness()
+  const { callbacks, runFrames, throughCalls } = createHarness({ deferFrames: true })
   const resume = {
     schemaVersion: 1,
     generation: 4,
@@ -273,6 +288,8 @@ test('SEM-F22/SEM-F24/J17/J19: toolbar resume forces a same-generation stationar
   callbacks.interaction(resume)
   callbacks.interaction(resume)
   assert.deepEqual(throughCalls, [false, false])
+  runFrames()
+  assert.deepEqual(throughCalls, [false, false], 'deferred visual/layout frames cannot delay hit acknowledgement')
 
   callbacks.interaction({ schemaVersion: 1, generation: 5, phase: 'suspend' })
   callbacks.interaction({ ...resume, generation: 4, pointer: { x: 0, y: 0 } })

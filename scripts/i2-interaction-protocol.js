@@ -52,10 +52,51 @@ const DWM_LIFECYCLE_OBSERVATION_IDS = Object.freeze([
   'caption-post-restore-drag',
   'locked-caption-post-restore-through'
 ])
+const DWM_STABILITY_OBSERVATION_IDS = Object.freeze([
+  'toolbar-edge-repeat-stability',
+  'post-geometry-pointer-rehit',
+  'post-restore-toolbar-near-drag-stability'
+])
 const DWM_OBSERVATION_IDS = Object.freeze([
   ...DWM_V3_OBSERVATION_IDS,
-  ...DWM_LIFECYCLE_OBSERVATION_IDS
+  ...DWM_LIFECYCLE_OBSERVATION_IDS,
+  ...DWM_STABILITY_OBSERVATION_IDS
 ])
+const DWM_OBSERVATION_CHECKLIST = Object.freeze({
+  'caption-left-drag': 'Press the left ordinary drag region of the visible caption card, move the pointer, and verify the caption and docked toolbar follow continuously without resizing.',
+  'caption-center-drag': 'Press the center ordinary drag region of the visible caption card, move the pointer, and verify the caption and docked toolbar follow continuously without resizing.',
+  'caption-right-drag': 'Press the right ordinary drag region of the visible caption card, move the pointer, and verify the caption and docked toolbar follow continuously without resizing.',
+  'caption-multiline-blank-drag': 'With multiline captions visible, press a blank ordinary drag region inside the card, move the pointer, and verify continuous caption and toolbar movement.',
+  'caption-stationary-press-release': 'Press and release an ordinary caption drag region without moving the pointer and verify neither window bounds nor toolbar docking changes.',
+  'transparent-margin-through': 'Press through the transparent 20 DIP caption margin and verify the desktop target receives the interaction while caption bounds stay unchanged.',
+  'toolbar-quiet': 'In the quiet toolbar state, verify the entire visible toolbar contour owns pointer interaction and every visible control remains responsive.',
+  'toolbar-attention': 'In the attention toolbar state, verify the entire visible toolbar contour owns pointer interaction and every visible control remains responsive.',
+  'toolbar-session-status-notice': 'With the session-status notice visible, verify the entire expanded toolbar contour owns pointer interaction and every visible control remains responsive.',
+  'resize-north-edge': 'Drag only the caption card north 8px resize band and verify a north-edge resize without moving the opposite edge or toolbar docking unexpectedly.',
+  'resize-east-edge': 'Drag only the caption card east 8px resize band and verify an east-edge resize without moving the opposite edge or toolbar docking unexpectedly.',
+  'resize-south-edge': 'Drag only the caption card south 8px resize band and verify a south-edge resize without moving the opposite edge or toolbar docking unexpectedly.',
+  'resize-west-edge': 'Drag only the caption card west 8px resize band and verify a west-edge resize without moving the opposite edge or toolbar docking unexpectedly.',
+  'resize-north-east-corner': 'Drag only the caption card north-east 8px corner and verify the expected two-axis resize without unexpected toolbar drift.',
+  'resize-south-east-corner': 'Drag only the caption card south-east 8px corner and verify the expected two-axis resize without unexpected toolbar drift.',
+  'resize-south-west-corner': 'Drag only the caption card south-west 8px corner and verify the expected two-axis resize without unexpected toolbar drift.',
+  'resize-north-west-corner': 'Drag only the caption card north-west 8px corner and verify the expected two-axis resize without unexpected toolbar drift.',
+  'grip-unlocked': 'With captions unlocked, press the visible six-dot toolbar grip, move the pointer, and verify the caption and toolbar move together without resizing.',
+  'grip-locked': 'With captions locked, press the visible six-dot toolbar grip, move the pointer, and verify only the toolbar moves while the caption remains stationary and mouse-through.',
+  'locked-caption-through': 'With captions locked, press through the visible caption card and verify the underlying desktop target receives the interaction.',
+  'settings-foreground-titlebar': 'Drag Settings from a non-interactive point in its 48px titlebar and verify it is promoted above the overlays while focused.',
+  'settings-body-controls-static': 'Interact with Settings titlebar controls and body controls and verify none starts a window drag.',
+  'history-foreground-titlebar': 'Drag Caption History from a non-interactive point in its 48px titlebar and verify it is promoted above the overlays while focused.',
+  'history-body-controls-static': 'Interact with Caption History titlebar controls and body controls and verify none starts a window drag.',
+  'foreground-demotion': 'Move focus away from Settings and Caption History and verify each returns from the temporary overlay layer.',
+  'titlebar-neutral-structure': 'In the selected theme, verify Settings and Caption History share the neutral titlebar surface and divider without using a status color.',
+  'application-taskbar-restore': 'Minimize the toolbar through the Windows taskbar, restore it from the taskbar, and verify the previous visible window set, bounds, and foreground ordering return.',
+  'caption-stationary-restore-hit': 'Before minimizing, leave the pointer over an ordinary caption drag region; after taskbar restore do not move it, then verify the next primary press is received by the caption.',
+  'caption-post-restore-drag': 'Immediately after taskbar restore, start a fresh caption drag and verify continuous caption and docked-toolbar movement without resuming the pre-minimize gesture.',
+  'locked-caption-post-restore-through': 'Lock captions, minimize and restore through the taskbar, then verify the caption remains mouse-through and the toolbar contour remains interactive.',
+  'toolbar-edge-repeat-stability': 'Exercise the toolbar top contour, right contour, top-adjacent ordinary caption drag lane, and right-adjacent ordinary caption drag lane. In each of the four named zones perform at least 20 press/move/release repetitions (80 total), include non-zero 1-2 DIP pointer jitter in every zone, and verify zero resize, unchanged caption width and height, stable toolbar docking, and responsive toolbar buttons.',
+  'post-geometry-pointer-rehit': 'After each of these four geometry settlements—caption resize, unlocked combined caption-and-toolbar drag, locked toolbar-only grip drag, and unlock/redock—leave the pointer stationary and verify the next press uses the new geometry, with toolbar controls still responsive.',
+  'post-restore-toolbar-near-drag-stability': 'Minimize and restore through the Windows taskbar with the pointer left in a toolbar-adjacent ordinary caption drag lane. Without moving the pointer first, press and drag there; verify caption width and height stay unchanged, toolbar docking does not drift, and toolbar buttons remain responsive.'
+})
 const TRANSPORT_FIELDS = Object.freeze([
   'capturedFrames', 'sentFrames', 'ingestedFrames', 'droppedFrames',
   'creditStalls', 'maxQueuedMsObserved', 'acknowledgedFrames',
@@ -96,6 +137,11 @@ const DWM_V3_LIMITATIONS = Object.freeze([
 const DWM_V4_LIMITATIONS = Object.freeze([
   'Operator completion records one visible scale and theme combination only and cannot independently produce pass.',
   'Current I2 acceptance requires the strict twelve-combination schema-v4 matrix and a bound schema-v7 J17 product-shell report.',
+  'No captured audio, transcript text, device name, model path, local audio path, geometry, coordinate, or absolute monotonic time is persisted in this evidence.'
+])
+const DWM_V5_LIMITATIONS = Object.freeze([
+  'Operator completion records one visible scale and theme combination only and cannot independently produce pass.',
+  'Current I2 acceptance requires the strict twelve-combination schema-v5 matrix and a bound schema-v7 J17 product-shell report.',
   'No captured audio, transcript text, device name, model path, local audio path, geometry, coordinate, or absolute monotonic time is persisted in this evidence.'
 ])
 
@@ -318,6 +364,26 @@ function validateDwmLifecycleChecks (value, label = 'DWM lifecycle') {
   return value
 }
 
+function completeDwmStabilityChecks () {
+  return {
+    toolbarEdgeRepeatStableObserved: true,
+    postGeometryPointerRehitObserved: true,
+    postRestoreToolbarNearDragStableObserved: true
+  }
+}
+
+function validateDwmStabilityChecks (value, label = 'DWM stability') {
+  assertExactKeys(value, [
+    'toolbarEdgeRepeatStableObserved',
+    'postGeometryPointerRehitObserved',
+    'postRestoreToolbarNearDragStableObserved'
+  ], label)
+  for (const [key, observed] of Object.entries(value)) {
+    assert.equal(observed, true, `${label}.${key} must be true`)
+  }
+  return value
+}
+
 function completeDwmChecks () {
   return {
     caption: {
@@ -438,7 +504,7 @@ function dwmOperatorCompletion ({
 }) {
   validateDwmConfirmations(confirmations)
   const completion = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: 'i2-dwm-drag-operator-completion',
     scenario: 'dwm-drag',
     runBindingSha256,
@@ -449,6 +515,7 @@ function dwmOperatorCompletion ({
     observed: true,
     checks: completeDwmChecks(),
     lifecycle: completeDwmLifecycleChecks(),
+    stability: completeDwmStabilityChecks(),
     crossScale: {
       observed: crossScaleObserved === true,
       criticalHitMatrixRepeated: crossScaleObserved === true
@@ -475,7 +542,7 @@ function buildDwmProgress ({
   validateTransportSnapshot(transport.after, 'progress transport.after')
   if (transport.delta !== null) validateTransportDelta(transport.delta, 'progress transport.delta')
   const progress = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: 'i2-dwm-drag-progress',
     scenario: 'dwm-drag',
     sourceId,
@@ -524,7 +591,7 @@ function validateDwmProgress (value) {
     'productPayloadVersion', 'productPayloadFileCount', 'productPayloadSha256',
     'combination', 'operatorCompletionObserved', 'transport'
   ], 'DWM progress')
-  assert.ok([3, 4].includes(value.schemaVersion), 'DWM progress schemaVersion must be 3 or 4')
+  assert.ok([3, 4, 5].includes(value.schemaVersion), 'DWM progress schemaVersion must be 3, 4 or 5')
   assert.equal(value.kind, 'i2-dwm-drag-progress')
   assert.equal(value.scenario, 'dwm-drag')
   assert.ok(SOURCES.includes(value.sourceId))
@@ -561,10 +628,11 @@ function validateDwmOperatorCompletion (value) {
     'schemaVersion', 'kind', 'scenario', 'runBindingSha256',
     'productPayloadVersion', 'productPayloadFileCount', 'productPayloadSha256',
     'combination', 'observed', 'checks',
-    ...(schemaVersion === 4 ? ['lifecycle'] : []),
+    ...([4, 5].includes(schemaVersion) ? ['lifecycle'] : []),
+    ...(schemaVersion === 5 ? ['stability'] : []),
     'crossScale'
   ], 'DWM operator completion')
-  assert.ok([3, 4].includes(schemaVersion), 'DWM operator completion schemaVersion must be 3 or 4')
+  assert.ok([3, 4, 5].includes(schemaVersion), 'DWM operator completion schemaVersion must be 3, 4 or 5')
   assert.equal(value.kind, 'i2-dwm-drag-operator-completion')
   assert.equal(value.scenario, 'dwm-drag')
   assertSha256(value.runBindingSha256, 'DWM operator completion.runBindingSha256')
@@ -572,7 +640,8 @@ function validateDwmOperatorCompletion (value) {
   validateDwmCombination(value.combination, 'DWM operator completion.combination')
   assert.equal(value.observed, true, 'operator completion must explicitly record observed=true')
   validateDwmChecks(value.checks, 'DWM operator completion.checks')
-  if (schemaVersion === 4) validateDwmLifecycleChecks(value.lifecycle, 'DWM operator completion.lifecycle')
+  if ([4, 5].includes(schemaVersion)) validateDwmLifecycleChecks(value.lifecycle, 'DWM operator completion.lifecycle')
+  if (schemaVersion === 5) validateDwmStabilityChecks(value.stability, 'DWM operator completion.stability')
   validateDwmCrossScale(value.crossScale, 'DWM operator completion.crossScale')
   return value
 }
@@ -665,7 +734,7 @@ function buildInteractionReport ({
   const recoveryReport = RECOVERY_SCENARIOS.includes(scenario)
   const dwmReport = scenario === 'dwm-drag'
   return {
-    schemaVersion: dwmReport ? 4 : (recoveryReport ? 2 : 1),
+    schemaVersion: dwmReport ? 5 : (recoveryReport ? 2 : 1),
     kind: 'i2-live-interaction',
     executedAt,
     scenario,
@@ -683,7 +752,7 @@ function buildInteractionReport ({
       reportContainsDeviceName: false
     },
     limitations: dwmReport
-      ? [...DWM_V4_LIMITATIONS]
+      ? [...DWM_V5_LIMITATIONS]
       : recoveryReport
       ? [
           'Operator completion records the external action only and cannot independently produce pass.',
@@ -763,7 +832,8 @@ function validateDwmScenarioEvidence (value, result, schemaVersion) {
   assertExactKeys(value, [
     'mode', 'rendererAssets', 'manualSetBounds', 'runBindingSha256',
     'operatorCompletionObserved', 'operatorCompletionSha256', 'combination', 'checks', 'crossScale',
-    ...(schemaVersion === 4 ? ['lifecycle'] : []),
+    ...([4, 5].includes(schemaVersion) ? ['lifecycle'] : []),
+    ...(schemaVersion === 5 ? ['stability'] : []),
     'productPayloadVersion', 'productPayloadFileCount', 'productPayloadSha256',
     'productionReuse', 'automaticObservation', 'controllerCounts'
   ], 'scenarioEvidence')
@@ -776,21 +846,34 @@ function validateDwmScenarioEvidence (value, result, schemaVersion) {
   validateDwmCombination(value.combination, 'scenarioEvidence.combination')
   if (value.operatorCompletionObserved) {
     validateDwmChecks(value.checks, 'scenarioEvidence.checks')
-    if (schemaVersion === 4) validateDwmLifecycleChecks(value.lifecycle, 'scenarioEvidence.lifecycle')
+    if ([4, 5].includes(schemaVersion)) validateDwmLifecycleChecks(value.lifecycle, 'scenarioEvidence.lifecycle')
+    if (schemaVersion === 5) validateDwmStabilityChecks(value.stability, 'scenarioEvidence.stability')
     validateDwmCrossScale(value.crossScale, 'scenarioEvidence.crossScale')
   } else {
     assert.equal(value.operatorCompletionSha256, null)
     assert.equal(value.checks, null)
-    if (schemaVersion === 4) assert.equal(value.lifecycle, null)
+    if ([4, 5].includes(schemaVersion)) assert.equal(value.lifecycle, null)
+    if (schemaVersion === 5) assert.equal(value.stability, null)
     assert.equal(value.crossScale, null)
   }
   validateProductPayloadBinding(value, 'scenarioEvidence product payload')
 
   assertExactKeys(value.productionReuse, [
     'interactionController', 'windowLayerController', 'ipcAccessPolicy',
-    'windowRoles', 'preloadRoles', 'pageRoles', 'mainProcessManualBoundsUpdates'
+    'windowRoles', 'preloadRoles', 'pageRoles', 'mainProcessManualBoundsUpdates',
+    ...(schemaVersion === 5
+      ? ['interactionGenerationController', 'applicationWindowLifecycleController']
+      : [])
   ], 'scenarioEvidence.productionReuse')
-  for (const key of ['interactionController', 'windowLayerController', 'ipcAccessPolicy', 'mainProcessManualBoundsUpdates']) {
+  for (const key of [
+    'interactionController',
+    'windowLayerController',
+    'ipcAccessPolicy',
+    'mainProcessManualBoundsUpdates',
+    ...(schemaVersion === 5
+      ? ['interactionGenerationController', 'applicationWindowLifecycleController']
+      : [])
+  ]) {
     assert.equal(value.productionReuse[key], true, `scenarioEvidence.productionReuse.${key} must be true`)
   }
   for (const key of ['windowRoles', 'preloadRoles', 'pageRoles']) {
@@ -839,7 +922,8 @@ function validateDwmScenarioEvidence (value, result, schemaVersion) {
   if (result === 'pass-manual-observed') {
     assert.equal(value.operatorCompletionObserved, true)
     assert.notEqual(value.checks, null)
-    if (schemaVersion === 4) assert.notEqual(value.lifecycle, null)
+    if ([4, 5].includes(schemaVersion)) assert.notEqual(value.lifecycle, null)
+    if (schemaVersion === 5) assert.notEqual(value.stability, null)
     assert.notEqual(value.crossScale, null)
     assertSha256(value.operatorCompletionSha256, 'scenarioEvidence.operatorCompletionSha256')
     assert.equal(value.automaticObservation.actualScaleMatched, true)
@@ -969,7 +1053,7 @@ function validateScenarioEvidence (scenario, value, result, schemaVersion) {
     }
     return
   }
-  if (scenario === 'dwm-drag' && [3, 4].includes(schemaVersion)) {
+  if (scenario === 'dwm-drag' && [3, 4, 5].includes(schemaVersion)) {
     validateDwmScenarioEvidence(value, result, schemaVersion)
     return
   }
@@ -989,7 +1073,7 @@ function validateInteractionReport (report, expectedScenario = null) {
     'schemaVersion', 'kind', 'executedAt', 'scenario', 'sourceId', 'result', 'runtime', 'counts',
     'scenarioEvidence', 'transport', 'deviceRecovery', 'privacy', 'limitations'
   ], 'interaction report')
-  assert.ok([1, 2, 3, 4].includes(report.schemaVersion), 'schemaVersion must be 1, 2, 3 or 4')
+  assert.ok([1, 2, 3, 4, 5].includes(report.schemaVersion), 'schemaVersion must be 1, 2, 3, 4 or 5')
   assert.equal(report.kind, 'i2-live-interaction')
   assertIsoTimestamp(report.executedAt, 'executedAt')
   assert.ok(SCENARIOS.includes(report.scenario), 'scenario is invalid')
@@ -997,6 +1081,7 @@ function validateInteractionReport (report, expectedScenario = null) {
   if (report.schemaVersion === 2) assert.ok(RECOVERY_SCENARIOS.includes(report.scenario), 'schema v2 scenario is invalid')
   if (report.schemaVersion === 3) assert.equal(report.scenario, 'dwm-drag', 'schema v3 scenario is invalid')
   if (report.schemaVersion === 4) assert.equal(report.scenario, 'dwm-drag', 'schema v4 scenario is invalid')
+  if (report.schemaVersion === 5) assert.equal(report.scenario, 'dwm-drag', 'schema v5 scenario is invalid')
   if (expectedScenario !== null) assert.equal(report.scenario, expectedScenario)
   assert.ok(SOURCES.includes(report.sourceId), 'sourceId is invalid')
   const allowedResults = report.scenario === 'dwm-drag'
@@ -1014,7 +1099,9 @@ function validateInteractionReport (report, expectedScenario = null) {
     reportContainsAudioPath: false,
     reportContainsDeviceName: false
   })
-  assert.deepEqual(report.limitations, report.schemaVersion === 4
+  assert.deepEqual(report.limitations, report.schemaVersion === 5
+    ? [...DWM_V5_LIMITATIONS]
+    : report.schemaVersion === 4
     ? [...DWM_V4_LIMITATIONS]
     : report.schemaVersion === 3
     ? [...DWM_V3_LIMITATIONS]
@@ -1031,7 +1118,9 @@ module.exports = {
   DWM_COMBINATIONS,
   DWM_LIFECYCLE_OBSERVATION_IDS,
   DWM_NORMAL_WINDOW_ROLES,
+  DWM_OBSERVATION_CHECKLIST,
   DWM_OBSERVATION_IDS,
+  DWM_STABILITY_OBSERVATION_IDS,
   DWM_V3_OBSERVATION_IDS,
   DWM_RESIZE_TARGETS,
   DWM_SCALE_PERCENTS,
@@ -1039,6 +1128,7 @@ module.exports = {
   DWM_TOOLBAR_STATES,
   DWM_V3_LIMITATIONS,
   DWM_V4_LIMITATIONS,
+  DWM_V5_LIMITATIONS,
   LOSS_FIELDS,
   RECOVERY_FAULT_CODES,
   RECOVERY_OPERATOR_ACTIONS,
@@ -1054,6 +1144,7 @@ module.exports = {
   buildRecoveryProgress,
   completeDwmChecks,
   completeDwmLifecycleChecks,
+  completeDwmStabilityChecks,
   dwmOperatorCompletion,
   parseArguments,
   parseOperatorCompletion,
@@ -1064,6 +1155,7 @@ module.exports = {
   validateDwmProgress,
   validateDwmChecks,
   validateDwmLifecycleChecks,
+  validateDwmStabilityChecks,
   validateDwmCombination,
   validateDwmOperatorCompletion,
   validateInteractionReport,

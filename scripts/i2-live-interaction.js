@@ -22,6 +22,14 @@ const { app, BrowserWindow, ipcMain, nativeTheme, powerMonitor, screen } = requi
 const CHANNELS = require('../src/main/ipc/channels')
 const { isRoleAllowed } = require('../src/main/ipc/access-policy')
 const { ManualWindowInteractionController } = require('../src/main/manual-window-interaction-controller')
+const {
+  ApplicationWindowLifecycleController,
+  overlayWindowBehavior
+} = require('../src/main/application-window-lifecycle-controller')
+const {
+  WindowInteractionGenerationController
+} = require('../src/main/window-interaction-generation-controller')
+const { isInteractionReadyIntent } = require('../src/contracts/window-interaction')
 const { WindowLayerController } = require('../src/main/window-layer-controller')
 const {
   ToolbarLayoutState,
@@ -231,13 +239,17 @@ class DwmDragHarness {
     this.toolbarWindow = null
     this.settingsWindow = null
     this.historyWindow = null
+    this.windows = new Map()
     this.locked = false
+    this.disposed = false
     this.disposers = []
     this.unsubscribeSnapshot = null
     this.unsubscribeCaption = null
     this.scalePoll = null
     this.visitedScalePercents = new Set()
     this.layoutState = new ToolbarLayoutState()
+    this.pendingPointerHitRefreshRoles = new Set()
+    this.pointerHitRefreshScheduled = false
     this.counts = {
       windowLoadCount: 0,
       toolbarLayoutReportCount: 0,
@@ -256,13 +268,51 @@ class DwmDragHarness {
       getCaptionWindow: () => this.captionWindow,
       getToolbarWindow: () => this.toolbarWindow
     })
+    this.interactionGenerationController = new WindowInteractionGenerationController({
+      getWindow: (role) => this.windows.get(role) || null,
+      getCursorScreenPoint: () => screen.getCursorScreenPoint(),
+      getLocked: () => this.locked,
+      sendSync: (win, value) => this.send(win, CHANNELS.WINDOW_INTERACTION_SYNC, value),
+      onFault: ({ role, code }) => console.error(`[i2.window.interaction] role=${role} code=${code}`)
+    })
     this.interactionController = new ManualWindowInteractionController({
       getCursorScreenPoint: () => screen.getCursorScreenPoint(),
       getCaptionWindow: () => this.captionWindow,
+      getToolbarWindow: () => this.toolbarWindow,
       getLocked: () => this.locked,
       getCaptionLimits: () => ({ minW: 480, maxW: 1600, minH: 140, maxH: 420 }),
       dock: () => this.dock(),
+      onGeometrySettled: (roles) => this.schedulePointerHitRefresh(roles),
       onObservation: (event) => this.observeInteraction(event)
+    })
+    this.lifecycleController = new ApplicationWindowLifecycleController({
+      getCaptionWindow: () => this.captionWindow,
+      getToolbarWindow: () => this.toolbarWindow,
+      getSettingsWindow: () => this.settingsWindow,
+      getHistoryWindow: () => this.historyWindow,
+      stopInteractions: () => this.interactionController.stopAll(),
+      beginInteractionTransaction: () => this.interactionGenerationController.beginTransaction(),
+      resumeInteractions: (generation) => this.interactionGenerationController.resume(generation),
+      degradeInteractions: (generation) => this.interactionGenerationController.degradeForRestoreFailure(generation),
+      restoreWindowStack: () => this.layerController.restoreWindowStack(),
+      onFault: ({ role, code }) => console.error(`[i2.window.lifecycle] role=${role} code=${code}`)
+    })
+  }
+
+  schedulePointerHitRefresh (roles = ['caption', 'toolbar']) {
+    if (this.disposed) return
+    for (const role of roles) this.pendingPointerHitRefreshRoles.add(role)
+    if (this.pointerHitRefreshScheduled) return
+    this.pointerHitRefreshScheduled = true
+    setImmediate(() => {
+      this.pointerHitRefreshScheduled = false
+      if (this.disposed) {
+        this.pendingPointerHitRefreshRoles.clear()
+        return
+      }
+      const pendingRoles = [...this.pendingPointerHitRefreshRoles]
+      this.pendingPointerHitRefreshRoles.clear()
+      if (pendingRoles.length > 0) this.interactionGenerationController.refreshPointerHits(pendingRoles)
     })
   }
 
@@ -287,7 +337,9 @@ class DwmDragHarness {
   }
 
   send (win, channel, value) {
-    if (win && !win.isDestroyed()) win.webContents.send(channel, value)
+    if (!win || win.isDestroyed()) return false
+    win.webContents.send(channel, value)
+    return true
   }
 
   publishToolbarOverlap (overlap = this.layoutState.getOverlap()) {
@@ -298,7 +350,7 @@ class DwmDragHarness {
     const win = new BrowserWindow({
       ...options,
       ...(overlay
-        ? { frame: false, transparent: true, backgroundColor: '#00000000', alwaysOnTop: true }
+        ? overlayWindowBehavior(role, options.focusable !== false)
         : { titleBarStyle: 'hidden', backgroundColor: '#00000000' }),
       show: false,
       webPreferences: {
@@ -309,22 +361,44 @@ class DwmDragHarness {
         backgroundThrottling: false
       }
     })
+    this.windows.set(role, win)
     this.roles.set(win.webContents.id, role)
     const senderId = win.webContents.id
+    let navigationEpoch = 0
     win.webContents.once('destroyed', () => {
       this.roles.delete(senderId)
+      if (this.windows.get(role) === win) this.windows.delete(role)
       this.interactionController.stopForSender(senderId)
+      this.interactionGenerationController.releaseRole(role)
       if (role === 'toolbar') this.publishToolbarOverlap(this.layoutState.invalidate())
     })
     win.on('blur', () => this.interactionController.stopForSender(senderId))
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     win.webContents.on('will-navigate', (event) => event.preventDefault())
-    if (role === 'toolbar') {
-      win.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
-        if (isMainFrame && !isInPlace) this.publishToolbarOverlap(this.layoutState.invalidate())
+    win.webContents.on('render-process-gone', () => {
+      navigationEpoch += 1
+      this.interactionController.stopForSender(senderId)
+      this.interactionGenerationController.failClosedAfterRendererGone(role)
+      if (role === 'toolbar') this.publishToolbarOverlap(this.layoutState.invalidate())
+    })
+    win.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+      if (!isMainFrame || isInPlace) return
+      navigationEpoch += 1
+      this.interactionController.stopForSender(senderId)
+      this.interactionGenerationController.suspendRoleForReload(role)
+      if (role === 'toolbar') this.publishToolbarOverlap(this.layoutState.invalidate())
+    })
+    win.webContents.on('did-finish-load', () => {
+      const replayEpoch = navigationEpoch
+      this.interactionController.stopForSender(senderId)
+      if (role === 'caption') this.publishToolbarOverlap()
+      setImmediate(() => {
+        if (!this.disposed && replayEpoch === navigationEpoch &&
+            this.roles.get(senderId) === role && !win.isDestroyed()) {
+          this.interactionGenerationController.replay(role)
+        }
       })
-    }
-    if (role === 'caption') win.webContents.on('did-finish-load', () => this.publishToolbarOverlap())
+    })
     if (overlay) {
       win.setAlwaysOnTop(true, 'screen-saver')
       win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
@@ -364,12 +438,14 @@ class DwmDragHarness {
   applyLock (value) {
     this.locked = value === true
     this.counts.lockTransitionCount += 1
-    this.interactionController.stopAll()
-    if (this.captionWindow && !this.captionWindow.isDestroyed() && this.locked) {
-      this.captionWindow.setIgnoreMouseEvents(true, { forward: true })
-    }
+    if (this.locked) this.interactionController.stopAll()
+    if (this.locked) this.interactionGenerationController.prepareOverlay('caption')
     this.send(this.captionWindow, CHANNELS.LOCK_CHANGED, this.locked)
     this.send(this.toolbarWindow, CHANNELS.LOCK_CHANGED, this.locked)
+    if (!this.locked) {
+      this.dock()
+      this.schedulePointerHitRefresh()
+    }
   }
 
   registerIpc () {
@@ -381,24 +457,34 @@ class DwmDragHarness {
       loopback: true,
       systemDark: nativeTheme.shouldUseDarkColors
     }
-    this.registerOn(CHANNELS.MOUSE_THROUGH, (event, ignore) => {
-      const { win } = this.windowFor(event, CHANNELS.MOUSE_THROUGH)
-      if (win === this.captionWindow && this.locked && !ignore) return
-      win.setIgnoreMouseEvents(!!ignore, { forward: true })
+    this.registerOn(CHANNELS.WINDOW_INTERACTION_READY, (event, intent) => {
+      const { role, senderId } = this.windowFor(event, CHANNELS.WINDOW_INTERACTION_READY)
+      if (!isInteractionReadyIntent(intent)) return
+      this.interactionController.stopForSender(senderId)
+      this.interactionGenerationController.replay(role)
     })
-    this.registerOn(CHANNELS.DRAG_START, (event) => {
-      this.interactionController.startDrag(this.windowFor(event, CHANNELS.DRAG_START))
+    this.registerOn(CHANNELS.MOUSE_THROUGH, (event, intent) => {
+      const { role } = this.windowFor(event, CHANNELS.MOUSE_THROUGH)
+      this.interactionGenerationController.acceptMouseThrough(role, intent)
     })
-    this.registerOn(CHANNELS.DRAG_END, (event) => {
-      const { senderId } = this.windowFor(event, CHANNELS.DRAG_END)
+    this.registerOn(CHANNELS.DRAG_START, (event, intent) => {
+      const sender = this.windowFor(event, CHANNELS.DRAG_START)
+      if (!this.interactionGenerationController.acceptGesture(sender.role, intent)) return
+      this.interactionController.startDrag(sender)
+    })
+    this.registerOn(CHANNELS.DRAG_END, (event, intent) => {
+      const { role, senderId } = this.windowFor(event, CHANNELS.DRAG_END)
+      if (!this.interactionGenerationController.acceptGesture(role, intent)) return
       this.interactionController.stopDrag(senderId)
     })
-    this.registerOn(CHANNELS.RESIZE_START, (event, edge) => {
-      const { win, senderId } = this.windowFor(event, CHANNELS.RESIZE_START)
-      this.interactionController.startResize({ win, senderId, edge })
+    this.registerOn(CHANNELS.RESIZE_START, (event, intent) => {
+      const { role, win, senderId } = this.windowFor(event, CHANNELS.RESIZE_START)
+      if (!this.interactionGenerationController.acceptResizeStart(role, intent)) return
+      this.interactionController.startResize({ win, senderId, edge: intent.edge })
     })
-    this.registerOn(CHANNELS.RESIZE_END, (event) => {
-      const { senderId } = this.windowFor(event, CHANNELS.RESIZE_END)
+    this.registerOn(CHANNELS.RESIZE_END, (event, intent) => {
+      const { role, senderId } = this.windowFor(event, CHANNELS.RESIZE_END)
+      if (!this.interactionGenerationController.acceptGesture(role, intent)) return
       this.interactionController.stopResize(senderId)
     })
     this.registerOn(CHANNELS.LOCK_TOGGLE, (event) => {
@@ -450,8 +536,15 @@ class DwmDragHarness {
     })
     this.registerOn(CHANNELS.TOOLBAR_ACTION, (event, action) => {
       this.windowFor(event, CHANNELS.TOOLBAR_ACTION)
-      const target = action === 'history' ? this.historyWindow : this.settingsWindow
-      if (target && !target.isDestroyed()) { target.show(); target.focus() }
+      if (action === 'settings' || action === 'open-model-manager') {
+        this.lifecycleController.showAuxiliaryWindow(this.settingsWindow, 'settings')
+      } else if (action === 'history') {
+        this.lifecycleController.showAuxiliaryWindow(this.historyWindow, 'history')
+      } else if (action === 'minimize') {
+        this.lifecycleController.minimize()
+      } else if (action === 'close') {
+        app.quit()
+      }
     })
     this.registerOn(CHANNELS.SETTINGS_CLOSE, (event) => {
       const { win } = this.windowFor(event, CHANNELS.SETTINGS_CLOSE)
@@ -467,12 +560,13 @@ class DwmDragHarness {
     this.registerIpc()
     const display = screen.getPrimaryDisplay().workAreaSize
     const captionX = Math.round((display.width - 920) / 2)
+    const captionBounds = { width: 920, height: 190, x: captionX, y: 72 }
+    const toolbarBounds = toolbarDockBoundsFor(captionBounds)
     this.captionWindow = await this.createWindow('caption', {
-      width: 920, height: 190, x: captionX, y: 72, resizable: false, focusable: false, skipTaskbar: true
+      ...captionBounds, resizable: false, focusable: false, skipTaskbar: true
     }, path.join(PROJECT_ROOT, 'src', 'caption', 'index.html'), true)
-    this.captionWindow.setResizable(true)
     this.toolbarWindow = await this.createWindow('toolbar', {
-      width: 600, height: 72, x: captionX + 304, y: 88, resizable: false, focusable: true, skipTaskbar: true
+      ...toolbarBounds, resizable: false, focusable: true, skipTaskbar: true
     }, path.join(PROJECT_ROOT, 'src', 'toolbar', 'index.html'), true)
     this.settingsWindow = await this.createWindow('settings', {
       width: 880, height: 620, resizable: false, maximizable: false, skipTaskbar: false
@@ -480,6 +574,14 @@ class DwmDragHarness {
     this.historyWindow = await this.createWindow('history', {
       width: 1060, height: 720, minWidth: 780, minHeight: 520, resizable: true, skipTaskbar: false
     }, path.join(PROJECT_ROOT, 'src', 'history', 'index.html'), false)
+    this.lifecycleController.bindPrimaryWindow(this.toolbarWindow)
+    this.lifecycleController.bindAuxiliaryWindow(this.settingsWindow, 'settings')
+    this.lifecycleController.bindAuxiliaryWindow(this.historyWindow, 'history')
+    this.interactionGenerationController.prepareOverlay('caption')
+    this.interactionGenerationController.prepareOverlay('toolbar')
+    for (const role of ['caption', 'toolbar', 'settings', 'history']) {
+      this.interactionGenerationController.replay(role)
+    }
     this.counts.windowLoadCount = 4
     this.unsubscribeSnapshot = this.coordinator.onSnapshot((snapshot) => {
       if (this.toolbarWindow && !this.toolbarWindow.isDestroyed()) this.toolbarWindow.webContents.send(CHANNELS.RUNTIME_CHANGED, snapshot)
@@ -492,6 +594,8 @@ class DwmDragHarness {
     this.settingsWindow.show()
     this.historyWindow.show()
     this.dock()
+    this.schedulePointerHitRefresh()
+    this.layerController.restoreWindowStack()
     const observeScale = () => {
       if (!this.captionWindow || this.captionWindow.isDestroyed()) return
       const scalePercent = Math.round(screen.getDisplayMatching(this.captionWindow.getBounds()).scaleFactor * 100)
@@ -526,6 +630,8 @@ class DwmDragHarness {
   }
 
   dispose () {
+    this.disposed = true
+    this.pendingPointerHitRefreshRoles.clear()
     this.interactionController.stopAll()
     this.layerController.dispose()
     if (this.scalePoll) clearInterval(this.scalePoll)
@@ -544,6 +650,7 @@ class DwmDragHarness {
     this.toolbarWindow = null
     this.settingsWindow = null
     this.historyWindow = null
+    this.windows.clear()
   }
 }
 
@@ -709,7 +816,7 @@ async function runDwmDrag ({ coordinator, getAdapter, play, sourceId, options, w
     const completion = completionRecord?.value || null
     const protocol = options.dwmProtocol
     const automaticObservation = await harness.automaticObservation(options)
-    const completionMatches = completion?.schemaVersion === 4 &&
+    const completionMatches = completion?.schemaVersion === 5 &&
       completion.runBindingSha256 === protocol.runBindingSha256 &&
       completion.productPayloadVersion === protocol.productPayloadVersion &&
       completion.productPayloadFileCount === protocol.productPayloadFileCount &&
@@ -756,12 +863,15 @@ async function runDwmDrag ({ coordinator, getAdapter, play, sourceId, options, w
         combination: { ...protocol.combination },
         checks: operatorCompletionObserved ? completion.checks : null,
         lifecycle: operatorCompletionObserved ? completion.lifecycle : null,
+        stability: operatorCompletionObserved ? completion.stability : null,
         crossScale: operatorCompletionObserved ? completion.crossScale : null,
         productPayloadVersion: protocol.productPayloadVersion,
         productPayloadFileCount: protocol.productPayloadFileCount,
         productPayloadSha256: protocol.productPayloadSha256,
         productionReuse: {
           interactionController: true,
+          interactionGenerationController: true,
+          applicationWindowLifecycleController: true,
           windowLayerController: true,
           ipcAccessPolicy: true,
           windowRoles: ['caption', 'toolbar', 'settings', 'history'],
@@ -1032,12 +1142,15 @@ function failureEvidence (scenario, options = null, dwmProtocol = null) {
     combination: { ...dwmProtocol.combination },
     checks: null,
     lifecycle: null,
+    stability: null,
     crossScale: null,
     productPayloadVersion: dwmProtocol.productPayloadVersion,
     productPayloadFileCount: dwmProtocol.productPayloadFileCount,
     productPayloadSha256: dwmProtocol.productPayloadSha256,
     productionReuse: {
       interactionController: true,
+      interactionGenerationController: true,
+      applicationWindowLifecycleController: true,
       windowLayerController: true,
       ipcAccessPolicy: true,
       windowRoles: ['caption', 'toolbar', 'settings', 'history'],

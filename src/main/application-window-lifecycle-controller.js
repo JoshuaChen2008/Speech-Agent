@@ -19,6 +19,21 @@ function overlayApplicationOptions (role) {
   })
 }
 
+function overlayWindowBehavior (role, focusable = true) {
+  if (typeof focusable !== 'boolean') throw new TypeError('overlay focusable flag is invalid')
+  return Object.freeze({
+    ...overlayApplicationOptions(role),
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    resizable: false,
+    maximizable: false,
+    alwaysOnTop: true,
+    hasShadow: false,
+    focusable
+  })
+}
+
 function showWindow (win, inactive = false) {
   if (!isUsableWindow(win)) return
   if (inactive && typeof win.showInactive === 'function') win.showInactive()
@@ -356,5 +371,6 @@ module.exports = {
   ApplicationWindowLifecycleController,
   PRIMARY_WINDOW_TITLE,
   WINDOWS_APP_USER_MODEL_ID,
-  overlayApplicationOptions
+  overlayApplicationOptions,
+  overlayWindowBehavior
 }

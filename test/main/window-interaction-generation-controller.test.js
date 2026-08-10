@@ -297,3 +297,52 @@ test('SEM-F22/SEM-F24/T04/J17/J19: renderer crash makes caption pass-through and
   assert.equal(failedSetter.windows.toolbar.minimized, true,
     'the native setter failure fallback also preserves the application minimize')
 })
+
+test('SEM-F22/J17: geometry settlement re-hits both overlays with the current pointer in the same generation', () => {
+  const harness = createHarness()
+  const generation = harness.controller.beginTransaction()
+  harness.controller.resume(generation)
+  harness.controller.acceptMouseThrough('caption', { schemaVersion: 1, generation, ignore: false })
+  harness.controller.acceptMouseThrough('toolbar', { schemaVersion: 1, generation, ignore: true })
+
+  harness.windows.caption.bounds = { x: 120, y: 60, width: 940, height: 200 }
+  harness.windows.toolbar.bounds = { x: 440, y: 80, width: 600, height: 72 }
+  harness.setCursor({ x: 620, y: 180 })
+  harness.sent.length = 0
+  const captionIgnoreCount = harness.windows.caption.ignoreCalls.length
+  const toolbarIgnoreCount = harness.windows.toolbar.ignoreCalls.length
+
+  assert.equal(harness.controller.refreshPointerHits(), true)
+  assert.deepEqual(harness.controller.getState(), { generation, phase: 'resume' })
+  assert.deepEqual(harness.sent, [
+    ['caption', { schemaVersion: 1, generation, phase: 'resume', pointer: { x: 500, y: 120 } }],
+    ['toolbar', { schemaVersion: 1, generation, phase: 'resume', pointer: { x: 180, y: 100 } }]
+  ])
+  assert.equal(harness.windows.caption.ignoreCalls.length, captionIgnoreCount,
+    'same-generation refresh must not create a temporary solid or pass-through flip')
+  assert.equal(harness.windows.toolbar.ignoreCalls.length, toolbarIgnoreCount)
+  assert.equal(harness.timers.size(), 2, 'both renderer acknowledgements remain fail-closed')
+})
+
+test('SEM-F22/T04/J17: geometry settlement cannot replay while interaction is suspended', () => {
+  const harness = createHarness()
+  harness.controller.beginTransaction()
+  const sentBefore = harness.sent.length
+  assert.equal(harness.controller.refreshPointerHits(), false)
+  assert.equal(harness.sent.length, sentBefore)
+})
+
+test('SEM-F22/T04/J17: geometry settlement refreshes only distinct pointer roles', () => {
+  const harness = createHarness()
+  const generation = harness.controller.beginTransaction()
+  harness.controller.resume(generation)
+  harness.controller.acceptMouseThrough('caption', { schemaVersion: 1, generation, ignore: false })
+  harness.controller.acceptMouseThrough('toolbar', { schemaVersion: 1, generation, ignore: true })
+  harness.sent.length = 0
+
+  assert.equal(harness.controller.refreshPointerHits(['toolbar']), true)
+  assert.deepEqual(harness.sent.map(([role]) => role), ['toolbar'])
+  assert.throws(() => harness.controller.refreshPointerHits([]), /refresh roles/)
+  assert.throws(() => harness.controller.refreshPointerHits(['toolbar', 'toolbar']), /refresh roles/)
+  assert.throws(() => harness.controller.refreshPointerHits(['settings']), /refresh roles/)
+})

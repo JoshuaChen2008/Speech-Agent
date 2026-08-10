@@ -126,13 +126,17 @@ function queueHit (force = false): void {
   const frame = requestAnimationFrame(() => {
     if (generation !== interactionGeneration || revision !== hitRevision || interactionPhase !== 'resume') return
     hitFrame = null
-    applyHit(lastX, lastY, force)
-    if (!dragging && !resizing) {
-      const action = captionActionAt(lastX, lastY)
-      card.style.cursor = action.kind === 'resize' ? RESIZE_CURSOR[action.edge] : ''
-    }
+    applyCurrentHit(force)
   })
   if (hitFrame !== null && revision === hitRevision) hitFrame = frame
+}
+
+function applyCurrentHit (force = false): void {
+  applyHit(lastX, lastY, force)
+  if (!dragging && !resizing) {
+    const action = captionActionAt(lastX, lastY)
+    card.style.cursor = action.kind === 'resize' ? RESIZE_CURSOR[action.edge] : ''
+  }
 }
 
 document.addEventListener('mousemove', (e) => {
@@ -238,7 +242,7 @@ function acceptInteractionSync (value: any): void {
   }
   lastX = value.pointer.x
   lastY = value.pointer.y
-  queueHit(true)
+  applyCurrentHit(true)
 }
 
 if (typeof bridge.onInteractionSync === 'function') bridge.onInteractionSync(acceptInteractionSync)

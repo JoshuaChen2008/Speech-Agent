@@ -50,7 +50,7 @@ const { WindowLayerController } = require('./main/window-layer-controller')
 const {
   ApplicationWindowLifecycleController,
   WINDOWS_APP_USER_MODEL_ID,
-  overlayApplicationOptions
+  overlayWindowBehavior
 } = require('./main/application-window-lifecycle-controller')
 const {
   ManualWindowInteractionController,
@@ -99,6 +99,19 @@ const CAP_H = 190
 const CAP_LIMITS = Object.freeze({ minW: 480, maxW: 1600, minH: 140, maxH: 420 })
 const TB_W = WINDOW_LAYOUT.toolbarViewportWidth
 const TB_H = WINDOW_LAYOUT.toolbarViewportHeight
+const pendingPointerHitRefreshRoles = new Set()
+let pointerHitRefreshScheduled = false
+function schedulePointerHitRefresh (roles = ['caption', 'toolbar']) {
+  for (const role of roles) pendingPointerHitRefreshRoles.add(role)
+  if (pointerHitRefreshScheduled) return
+  pointerHitRefreshScheduled = true
+  setImmediate(() => {
+    pointerHitRefreshScheduled = false
+    const pendingRoles = [...pendingPointerHitRefreshRoles]
+    pendingPointerHitRefreshRoles.clear()
+    if (pendingRoles.length > 0) windowInteractionGenerationController.refreshPointerHits(pendingRoles)
+  })
+}
 const windowInteractionController = new ManualWindowInteractionController({
   getCursorScreenPoint: () => screen.getCursorScreenPoint(),
   getCaptionWindow: () => captionWin,
@@ -106,7 +119,8 @@ const windowInteractionController = new ManualWindowInteractionController({
   getLocked: () => locked,
   getCaptionLimits: captionLimits,
   dock,
-  onCaptionResizeEnd: persistCaptionBounds
+  onCaptionResizeEnd: persistCaptionBounds,
+  onGeometrySettled: schedulePointerHitRefresh
 })
 const windowInteractionGenerationController = new WindowInteractionGenerationController({
   getWindow: (role) => ({
@@ -294,15 +308,7 @@ function makeOverlay (role, width, height, x, y, focusable = true) {
     height,
     x,
     y,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    resizable: false,
-    maximizable: false,
-    ...overlayApplicationOptions(role),
-    alwaysOnTop: true,
-    hasShadow: false,
-    focusable,
+    ...overlayWindowBehavior(role, focusable),
     show: false,
     webPreferences: {
       preload: preloadPath(role),
@@ -357,7 +363,6 @@ function createWindows () {
 
   captionWin = makeOverlay('caption', capW, capH, cx, cy, false)
   const captionPassThroughPrepared = windowInteractionGenerationController.prepareOverlay('caption')
-  captionWin.setResizable(true)
   toolbarWin = makeOverlay('toolbar', TB_W, TB_H, cx, cy, true)
   windowInteractionGenerationController.prepareOverlay('toolbar')
   applicationWindowLifecycleController.bindPrimaryWindow(toolbarWin)
@@ -377,6 +382,7 @@ function createWindows () {
     if (captionPassThroughPrepared) captionWin.show()
     toolbarWin.show()
     dock()
+    schedulePointerHitRefresh()
     restoreWindowStack()
   }
   captionWin.once('ready-to-show', () => { captionReady = true; showOverlayPair() })
@@ -499,7 +505,10 @@ function applyLock (on) {
     send(captionWin, CHANNELS.LOCK_CHANGED, on)
   }
   send(toolbarWin, CHANNELS.LOCK_CHANGED, on)
-  if (!on) dock()
+  if (!on) {
+    dock()
+    schedulePointerHitRefresh()
+  }
 }
 
 function createCoordinator (persistenceSink) {

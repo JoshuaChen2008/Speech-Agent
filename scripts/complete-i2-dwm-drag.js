@@ -9,6 +9,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const readline = require('node:readline/promises')
 const {
+  DWM_OBSERVATION_CHECKLIST,
   DWM_OBSERVATION_IDS,
   dwmOperatorCompletion,
   parseOperatorCompletion,
@@ -42,9 +43,9 @@ function parseArguments (argv) {
 
 function completionFromProgress ({ progress, confirmations, crossScaleObserved = false }) {
   validateDwmProgress(progress)
-  if (progress.schemaVersion !== 4 || progress.state !== 'awaiting-operator-completion' ||
+  if (progress.schemaVersion !== 5 || progress.state !== 'awaiting-operator-completion' ||
       progress.operatorCompletionObserved !== false) {
-    throw new Error('DWM completion requires schema-v4 awaiting-operator-completion progress')
+    throw new Error('DWM completion requires schema-v5 awaiting-operator-completion progress')
   }
   return dwmOperatorCompletion({
     confirmations,
@@ -55,6 +56,15 @@ function completionFromProgress ({ progress, confirmations, crossScaleObserved =
     combination: progress.combination,
     crossScaleObserved
   })
+}
+
+function operatorPromptForObservation (id) {
+  if (!DWM_OBSERVATION_IDS.includes(id)) throw new Error(`unknown DWM observation ID: ${id}`)
+  const instruction = DWM_OBSERVATION_CHECKLIST[id]
+  if (typeof instruction !== 'string' || instruction.length === 0) {
+    throw new Error(`missing operator checklist for DWM observation: ${id}`)
+  }
+  return `Confirm ${id}: ${instruction} [type yes]: `
 }
 
 function writeCompletion ({ completion, progress, confirmations, crossScaleObserved = false }) {
@@ -75,7 +85,7 @@ async function runInteractive (options) {
   const confirmations = []
   try {
     for (const id of DWM_OBSERVATION_IDS) {
-      const answer = (await prompt.question(`Confirm ${id} was visibly observed [type yes]: `)).trim().toLowerCase()
+      const answer = (await prompt.question(operatorPromptForObservation(id))).trim().toLowerCase()
       if (answer !== 'yes') throw new Error(`observation was not confirmed: ${id}`)
       confirmations.push(id)
     }
@@ -103,6 +113,7 @@ if (require.main === module) {
 module.exports = {
   completionFromProgress,
   completionPath,
+  operatorPromptForObservation,
   parseArguments,
   runInteractive,
   writeCompletion

@@ -12,6 +12,7 @@ const {
   buildInteractionReport,
   completeDwmChecks,
   completeDwmLifecycleChecks,
+  completeDwmStabilityChecks,
   dwmOperatorCompletion,
   transportDelta
 } = require('../../scripts/i2-interaction-protocol')
@@ -46,6 +47,8 @@ function transport (capturedFrames) {
 function productionReuse () {
   return {
     interactionController: true,
+    interactionGenerationController: true,
+    applicationWindowLifecycleController: true,
     windowLayerController: true,
     ipcAccessPolicy: true,
     windowRoles: ['caption', 'toolbar', 'settings', 'history'],
@@ -100,6 +103,7 @@ function pairFor (combination, index) {
     combination: { ...combination },
     checks: completeDwmChecks(),
     lifecycle: completeDwmLifecycleChecks(),
+    stability: completeDwmStabilityChecks(),
     crossScale: {
       observed: crossScaleObserved,
       criticalHitMatrixRepeated: crossScaleObserved
@@ -300,6 +304,7 @@ test('SEM-F22/I2: DWM matrix rejects missing, duplicate, reordered and completio
   completionOnlyReport.scenarioEvidence.operatorCompletionSha256 = null
   completionOnlyReport.scenarioEvidence.checks = null
   completionOnlyReport.scenarioEvidence.lifecycle = null
+  completionOnlyReport.scenarioEvidence.stability = null
   completionOnlyReport.scenarioEvidence.crossScale = null
   const completionOnlyPairs = [...fixture.pairs]
   completionOnlyPairs[0] = {

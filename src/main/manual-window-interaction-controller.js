@@ -27,6 +27,7 @@ class ManualWindowInteractionController {
     getCaptionLimits,
     dock,
     onCaptionResizeEnd = () => {},
+    onGeometrySettled = () => {},
     onObservation = () => {},
     setTimer = setTimeout,
     clearTimer = clearTimeout,
@@ -40,6 +41,7 @@ class ManualWindowInteractionController {
         typeof getLocked !== 'function' ||
         typeof getCaptionLimits !== 'function' ||
         typeof dock !== 'function' ||
+        typeof onGeometrySettled !== 'function' ||
         typeof onObservation !== 'function' ||
         typeof setTimer !== 'function' ||
         typeof clearTimer !== 'function' ||
@@ -53,6 +55,7 @@ class ManualWindowInteractionController {
     this.getCaptionLimits = getCaptionLimits
     this.dock = dock
     this.onCaptionResizeEnd = onCaptionResizeEnd
+    this.onGeometrySettled = onGeometrySettled
     this.onObservation = onObservation
     this.setTimer = setTimer
     this.clearTimer = clearTimer
@@ -63,6 +66,10 @@ class ManualWindowInteractionController {
 
   observe (value) {
     try { this.onObservation(Object.freeze({ ...value })) } catch { /* evidence must not alter interaction */ }
+  }
+
+  settleGeometry (roles) {
+    try { this.onGeometrySettled(Object.freeze([...roles])) } catch { /* hit refresh cannot break gesture cleanup */ }
   }
 
   /**
@@ -156,6 +163,10 @@ class ManualWindowInteractionController {
     this.dragState = null
     if (state.timer !== null) this.clearTimer(state.timer)
     this.observe({ kind: 'drag-end', role: state.role, moved: state.moved })
+    if (state.moved) {
+      if (state.redock) this.settleGeometry(['caption', 'toolbar'])
+      else if (state.role === 'toolbar') this.settleGeometry(['toolbar'])
+    }
     return true
   }
 
@@ -225,6 +236,7 @@ class ManualWindowInteractionController {
     if (state.timer !== null) this.clearTimer(state.timer)
     if (isUsableWindow(state.win)) this.onCaptionResizeEnd(state.win.getBounds())
     this.observe({ kind: 'resize-end', role: 'caption', moved: state.moved })
+    if (state.moved) this.settleGeometry(['caption', 'toolbar'])
     return true
   }
 
