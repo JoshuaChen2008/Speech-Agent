@@ -215,7 +215,7 @@ D14 冻结 main 与正式 Agent utility 的窄协议。main-owned proxy 只暴�
 
 Agent utility host 一个 generation 同时至多执行一个 job。任何未知响应、传输超时或异常退出都使该 generation fail closed，并在创建 replacement 前等待同一 exact child 的退出；正式 Agent 模型 provider 已返回但结果尚未交付时退出，映射为可重试 `AGENT_WORKER_EXITED`。异常退出和稳定鉴权失败都必须失效 main bootstrap；`availableTaskKinds` 随即返回空闭集，防止当前 storage 策略尚未重放时继续领取。正式恢复必须由新的 Electron main 启动从新的启动环境取得凭据组合，随后重放当前任务策略并显式启动新 generation；运行中注入环境、同一 main 进程重建 bootstrap 或同一 bootstrap 自动复活旧凭据都不构成恢复。utility 内的调用级 nominal bootstrap 不读取环境、不发布 Agent 处理资格，也不重建配置表，只消费 main 冻结的 provider 条目和本次凭据副本。D14 不改变 D13 的 main-owned storage port，也不表示正式窗口已经接线。
 
-当前 D14 正式 Agent utility 进程边界为已决定。
+当前 D14 正式 Agent utility 进程边界为实现完成·尚未验收。既有 D6/D12/D13 旅程已升级为 main-owned proxy 与真实 Agent utility 的双启动恢复纵切；provider 结果后异常退出不会产生部分产物，同一 main 进程不自动 replacement，只有新的 Electron main 启动取得 fresh 凭据、重放策略并创建新 generation 后才恢复原 `runId`。未知响应或 timeout 会先同步失效 generation、拒绝 pending 并忽略 exact child 退出前的迟到成功；utility 环境一旦出现 provider 凭据则先清零本次调用副本再异常退出。该状态不包含正式窗口/main/preload/renderer、真实 DeepSeek HTTP 或完整 J21/J24。
 
 固定 recipe 与模型操作闭集为：`meeting-minutes@1` 只允许 `meeting-minutes.chunk/merge`，`enhanced-transcript@1` 只允许 `enhanced-transcript.chunk/merge`，`memory-extraction@1` 只允许 `memory-extraction.chunk`。`memory-consolidation` 不创建第四项后台任务，也不再次调用模型；它在记忆任务的有界内存中按分块顺序校验并汇总候选，再由 `MemoryCandidateSink` 一次提交。`AgentPluginHost` 以 `PluginResult` 分流到唯一匹配的 writer，插件不得选择 SQLite 表或绕过宿主提交。
 

@@ -48,6 +48,8 @@ D14 在不实现真实 DeepSeek HTTP 的前提下建立正式 Agent utility 进�
 
 Agent utility 使用 D9 净化后的显式 child environment，API key 不通过环境或 argv 继承。每次执行用收到的 1–4096 字节副本建立调用级 nominal `AgentProviderBootstrap`；该实例不得读取环境、发布 Agent 处理资格或重建配置表，只能消费 main 已冻结的一个 provider 条目与本次凭据副本，并在响应、异常或取消收束时尽力清零收到的字节与 bootstrap 内部副本；main 的借用副本在 RPC 收束后由原 bootstrap 清零。Agent utility 异常退出或稳定鉴权失败会失效 main 主凭据，并使当前 proxy 的可用任务闭集变为空；同一 bootstrap 不自动启动 replacement。只有新的 Electron main 启动从新的启动环境重新组合凭据、重放任务策略并创建新 utility generation 后，才恢复原 `runId`；运行中注入环境或在同一 main 进程重建 bootstrap 均不得恢复。D14 的确定性 fixture 只替代 Agent 模型 provider 外部边界，不通过 renderer/IPC 选择场景，不接公网；联合旅程使用同一数据库上的两次 UI-free Electron main 启动，但不把它称为带正式窗口的完整应用重启。
 
+当前 D14 子边界为实现完成·尚未验收。main proxy、四操作 exact 协议、正式 Agent utility service/host、调用级 bootstrap 与双启动恢复旅程均已形成；独立复核发现的迟到成功竞态和环境污染清零缺口已用 generation 同步失效、pending 同步拒绝、迟到消息忽略及 utility 异常退出闭合。该状态仍不表示正式 main/preload/renderer、真实 DeepSeek HTTP、完整 J21/J24 或实机验收已经闭合。
+
 ## 取舍
 
 - 相比把 API key 写入 ConfigStore，本方案避免明文持久化与 renderer 凭据 IPC；代价是每次启动都必须由外部环境重新供给。
