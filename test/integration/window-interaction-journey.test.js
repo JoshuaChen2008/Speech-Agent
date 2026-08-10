@@ -22,6 +22,9 @@ const {
   WindowInteractionGenerationController
 } = require('../../src/main/window-interaction-generation-controller')
 const { bindToolbarDockInvariant } = require('../../src/main/toolbar-dock-invariant')
+const {
+  CaptionNativeHitController
+} = require('../../src/main/caption-native-hit-controller')
 
 class FakeWindow extends EventEmitter {
   constructor (role, bounds) {
@@ -340,6 +343,73 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
   interaction.stopForSender(3)
   cursor = { x: 740, y: 440 }
   assert.equal(scheduler.size(), 0, 'blur cancellation must remove the pending drag tick')
+})
+
+test('SEM-F22/J17: main hit polling restores caption drag when the pass-through renderer receives no entering move', () => {
+  const caption = new FakeWindow('caption', { x: 100, y: 80, width: 920, height: 190 })
+  const toolbar = new FakeWindow('toolbar', toolbarDockBoundsFor(caption.getBounds()))
+  const windows = { caption, toolbar }
+  const hitTimers = controlledScheduler()
+  const gestureTimers = controlledScheduler()
+  const generationTimers = controlledScheduler()
+  const layout = new ToolbarLayoutState()
+  layout.acceptReport({
+    generation: 1,
+    rect: { x: 184, y: 16, width: 400, height: 40 }
+  })
+  let cursor = { x: 110, y: 150 }
+  let locked = false
+  const manual = new ManualWindowInteractionController({
+    clearTimer: gestureTimers.clearTimer,
+    dock: () => toolbar.setBounds(toolbarDockBoundsFor(caption.getBounds())),
+    getCaptionLimits: () => ({ minW: 480, maxW: 1600, minH: 140, maxH: 420 }),
+    getCaptionWindow: () => caption,
+    getToolbarWindow: () => toolbar,
+    getCursorScreenPoint: () => ({ ...cursor }),
+    getLocked: () => locked,
+    setTimer: gestureTimers.setTimer
+  })
+  const generation = new WindowInteractionGenerationController({
+    clearTimer: generationTimers.clearTimer,
+    getCursorScreenPoint: () => ({ ...cursor }),
+    getLocked: () => locked,
+    getWindow: (role) => windows[role] || null,
+    sendSync: () => true,
+    setTimer: generationTimers.setTimer
+  })
+  generation.prepareOverlay('caption')
+  const hitController = new CaptionNativeHitController({
+    applyNativeHit: (value) => generation.applyCaptionNativeHit(value),
+    clearTimer: hitTimers.clearTimer,
+    getCaptionWindow: () => caption,
+    getCursorScreenPoint: () => ({ ...cursor }),
+    getInteractionState: () => generation.getState(),
+    getLocked: () => locked,
+    getToolbarOverlap: () => layout.getOverlap(),
+    isGestureActive: () => manual.isDragging() || manual.isResizing(),
+    setTimer: hitTimers.setTimer
+  })
+  hitController.start()
+  assert.equal(caption.ignoreCalls.at(-1)[0], true)
+
+  cursor = { x: 300, y: 200 }
+  hitTimers.runNext()
+  assert.deepEqual(caption.ignoreCalls.at(-1), [false, { forward: true }],
+    'main re-arms the visible card without a renderer mouseThrough(false) intent')
+
+  const currentGeneration = generation.getState().generation
+  assert.equal(generation.acceptGesture('caption', {
+    schemaVersion: 1,
+    generation: currentGeneration
+  }), true)
+  const before = caption.getBounds()
+  assert.equal(manual.startDrag({ role: 'caption', win: caption, senderId: 1 }), true)
+  cursor = { x: cursor.x + 17, y: cursor.y + 9 }
+  gestureTimers.runNext()
+  manual.stopDrag(1)
+  assert.deepEqual(caption.getBounds(), { ...before, x: before.x + 17, y: before.y + 9 })
+  assert.deepEqual(toolbar.getBounds(), toolbarDockBoundsFor(caption.getBounds()))
+  hitController.stop()
 })
 
 test('SEM-F22/SEM-F24/J17/J19: real caption hit intents stay stable near the toolbar before and after restore', () => {

@@ -648,3 +648,11 @@ test('recovery runner listens to real fault and resume boundaries and issues exp
   assert.doesNotMatch(runner, /powerMonitor\.emit\(|simulatedTrackEnded\s*:\s*true/)
   assert.match(powershell, /complete-i2-recovery-action\.js/)
 })
+
+test('SEM-F22/J17: DWM runner uses the production caption native hit fallback for its real HWND', () => {
+  const runner = fs.readFileSync(path.resolve(__dirname, '../../scripts/i2-live-interaction.js'), 'utf8')
+  assert.match(runner, /require\('\.\.\/src\/main\/caption-native-hit-controller'\)/)
+  assert.match(runner, /this\.captionNativeHitController\s*=\s*new CaptionNativeHitController\(/)
+  assert.match(runner, /this\.captionNativeHitController\.start\(\)/)
+  assert.match(runner, /this\.captionNativeHitController\.stop\(\)/)
+})

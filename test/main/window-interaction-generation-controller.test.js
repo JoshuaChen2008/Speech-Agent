@@ -389,6 +389,33 @@ test('SEM-F22/SEM-T04/J17: geometry refresh cannot clear sync-timeout degradatio
   assert.deepEqual(harness.sent.map(([role]) => role), ['toolbar'])
 })
 
+test('SEM-F22/SEM-T04/J17: main-owned caption hit fallback obeys generation, lock and degradation boundaries', () => {
+  const harness = createHarness()
+  const { generation } = harness.controller.getState()
+  assert.equal(harness.controller.applyCaptionNativeHit({ generation, solid: true }), true)
+  assert.deepEqual(harness.windows.caption.ignoreCalls.at(-1), [false, { forward: true }])
+
+  harness.setLocked(true)
+  assert.equal(harness.controller.applyCaptionNativeHit({ generation, solid: true }), true)
+  assert.deepEqual(harness.windows.caption.ignoreCalls.at(-1), [true, { forward: true }],
+    'locked captions remain pass-through even if the sampled point is inside the card')
+  harness.setLocked(false)
+
+  const nextGeneration = harness.controller.beginTransaction()
+  const beforeSuspend = harness.windows.caption.ignoreCalls.length
+  assert.equal(harness.controller.applyCaptionNativeHit({ generation, solid: true }), false)
+  assert.equal(harness.controller.applyCaptionNativeHit({ generation: nextGeneration, solid: true }), false)
+  assert.equal(harness.windows.caption.ignoreCalls.length, beforeSuspend)
+
+  harness.controller.resume(nextGeneration)
+  harness.timers.runAll()
+  const timeoutIgnore = harness.windows.caption.ignoreCalls.length
+  assert.equal(harness.controller.applyCaptionNativeHit({ generation: nextGeneration, solid: true }), false)
+  assert.equal(harness.windows.caption.ignoreCalls.length, timeoutIgnore,
+    'polling cannot clear a renderer acknowledgement timeout')
+  assert.equal(harness.controller.applyCaptionNativeHit({ generation: nextGeneration, solid: 'yes' }), false)
+})
+
 test('SEM-F22/T04/J17: geometry settlement cannot replay while interaction is suspended', () => {
   const harness = createHarness()
   harness.controller.beginTransaction()

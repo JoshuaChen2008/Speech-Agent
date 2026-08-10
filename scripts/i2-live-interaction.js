@@ -22,6 +22,7 @@ const { app, BrowserWindow, ipcMain, nativeTheme, powerMonitor, screen } = requi
 const CHANNELS = require('../src/main/ipc/channels')
 const { isRoleAllowed } = require('../src/main/ipc/access-policy')
 const { ManualWindowInteractionController } = require('../src/main/manual-window-interaction-controller')
+const { CaptionNativeHitController } = require('../src/main/caption-native-hit-controller')
 const {
   ApplicationWindowLifecycleController,
   overlayWindowBehavior
@@ -285,6 +286,15 @@ class DwmDragHarness {
       onGeometrySettled: (roles) => this.schedulePointerHitRefresh(roles),
       onObservation: (event) => this.observeInteraction(event)
     })
+    this.captionNativeHitController = new CaptionNativeHitController({
+      applyNativeHit: (value) => this.interactionGenerationController.applyCaptionNativeHit(value),
+      getCaptionWindow: () => this.captionWindow,
+      getCursorScreenPoint: () => screen.getCursorScreenPoint(),
+      getInteractionState: () => this.interactionGenerationController.getState(),
+      getLocked: () => this.locked,
+      getToolbarOverlap: () => this.layoutState.getOverlap(),
+      isGestureActive: () => this.interactionController.isDragging() || this.interactionController.isResizing()
+    })
     this.lifecycleController = new ApplicationWindowLifecycleController({
       getCaptionWindow: () => this.captionWindow,
       getToolbarWindow: () => this.toolbarWindow,
@@ -368,6 +378,7 @@ class DwmDragHarness {
     win.webContents.once('destroyed', () => {
       this.roles.delete(senderId)
       if (this.windows.get(role) === win) this.windows.delete(role)
+      if (role === 'caption') this.captionNativeHitController.stop()
       this.interactionController.stopForSender(senderId)
       this.interactionGenerationController.releaseRole(role)
       if (role === 'toolbar') this.publishToolbarOverlap(this.layoutState.invalidate())
@@ -594,6 +605,7 @@ class DwmDragHarness {
     this.settingsWindow.show()
     this.historyWindow.show()
     this.dock()
+    this.captionNativeHitController.start()
     this.schedulePointerHitRefresh()
     this.layerController.restoreWindowStack()
     const observeScale = () => {
@@ -632,6 +644,7 @@ class DwmDragHarness {
   dispose () {
     this.disposed = true
     this.pendingPointerHitRefreshRoles.clear()
+    this.captionNativeHitController.stop()
     this.interactionController.stopAll()
     this.layerController.dispose()
     if (this.scalePoll) clearInterval(this.scalePoll)

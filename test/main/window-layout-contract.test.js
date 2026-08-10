@@ -91,6 +91,51 @@ test('SEM-F22/J17: the docked toolbar contour leaves an ordinary drag lane outsi
   )
 })
 
+test('SEM-F22/J17: main-process caption hit geometry matches margin, toolbar contour and visible card priority', () => {
+  const {
+    captionNativeHitAt,
+    projectToolbarReport
+  } = require('../../src/main/window-layout-contract')
+  const captionBounds = { x: 100, y: 80, width: 920, height: 190 }
+  const overlap = projectToolbarReport({
+    generation: 1,
+    rect: { x: 184, y: 16, width: 400, height: 40 }
+  }, 1)
+  assert.ok(overlap)
+
+  const cases = [
+    ['outside window', { x: 99, y: 120 }, false],
+    ['left transparent margin', { x: 119, y: 130 }, false],
+    ['top transparent margin', { x: 300, y: 99 }, false],
+    ['west resize band', { x: 122, y: 150 }, true],
+    ['ordinary caption body', { x: 300, y: 200 }, true],
+    ['toolbar contour', { x: 700, y: 125 }, false],
+    ['adjacent ordinary lane', { x: 700, y: 115 }, true],
+    ['locked caption body', { x: 300, y: 200 }, false, true]
+  ]
+  for (const [label, pointer, expected, locked = false] of cases) {
+    assert.equal(captionNativeHitAt({
+      captionBounds,
+      toolbarOverlapRect: overlap.rect,
+      pointer,
+      locked
+    }), expected, label)
+  }
+
+  assert.equal(captionNativeHitAt({
+    captionBounds: { x: 0, y: 0, width: 480, height: 140 },
+    toolbarOverlapRect: { top: 0, right: 0, width: 588, height: 64 },
+    pointer: { x: 30, y: 30 },
+    locked: false
+  }), false, 'the fallback toolbar contour is clipped to the narrow card like CSS max-width')
+  assert.throws(() => captionNativeHitAt({
+    captionBounds,
+    toolbarOverlapRect: { top: 0, right: 0, width: 0, height: 1 },
+    pointer: { x: 300, y: 200 },
+    locked: false
+  }), /caption native hit/)
+})
+
 test('SEM-F22/J17: overlay creation disables native resizing without frameless size constraints', () => {
   const { overlayWindowBehavior } = require('../../src/main/application-window-lifecycle-controller')
 
