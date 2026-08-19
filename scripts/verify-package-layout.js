@@ -59,6 +59,7 @@ const SMOKE_SCRIPTS = Object.freeze([
   '/scripts/model-ui-fixture-support.js',
   '/scripts/packaged-native-load-probe.js'
 ])
+const SUPPORTED_ELECTRON_VERSIONS = new Set(['43.2.0', '43.3.0'])
 
 function parseArguments (argv) {
   const values = {
@@ -327,7 +328,8 @@ function validatePackageLayoutReport (report, expectedVariant) {
   if (!report || report.schemaVersion !== 2 || report.kind !== 'packaged-layout-qualification' ||
       report.result !== 'pass' || report.gateStatus !== 'packaged-ci-qualified' ||
       report.artifact?.variant !== expectedVariant || report.artifact?.arch !== 'x64' ||
-      report.artifact?.appVersion !== '0.1.0' || report.artifact?.electronVersion !== '43.2.0' ||
+      report.artifact?.appVersion !== '0.1.0' ||
+      !SUPPORTED_ELECTRON_VERSIONS.has(report.artifact?.electronVersion) ||
       report.artifact?.builderVersion !== '26.15.3' ||
       report.artifact?.sherpaWrapperVersion !== '1.13.4' ||
       report.artifact?.sherpaPlatformVersion !== '1.13.4' ||

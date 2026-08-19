@@ -40,7 +40,7 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "6.0.5",
-    "electron": "43.2.0",
+    "electron": "43.3.0",
     "electron-builder": "26.15.3",
     "jsdom": "30.0.1",
     "typescript": "7.0.2",

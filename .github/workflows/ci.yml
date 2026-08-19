@@ -172,24 +172,29 @@ jobs:
       - name: Run four-window product-shell user journey
         shell: powershell
         run: |
-          node scripts/run-supervised-electron.js `
-            --entry scripts/product-shell-smoke.js `
-            --entry-arg --work-dir `
-            --entry-arg .artifacts/product-shell-ci/work `
-            --entry-arg --report `
-            --entry-arg .artifacts/product-shell-ci/report.json `
-            --report .artifacts/product-shell-ci/exit-evidence.json `
-            --strict-report
-          if ($LASTEXITCODE -ne 0) {
-            throw "Supervised product-shell journey failed with exit code $LASTEXITCODE"
-          }
-          node scripts/verify-product-shell-report.js .artifacts/product-shell-ci/report.json
-          if ($LASTEXITCODE -ne 0) {
-            throw "Product-shell report verification failed with exit code $LASTEXITCODE"
-          }
-          node scripts/verify-electron-exit-evidence.js .artifacts/product-shell-ci/exit-evidence.json
-          if ($LASTEXITCODE -ne 0) {
-            throw "Electron exit evidence verification failed with exit code $LASTEXITCODE"
+          foreach ($profile in @('default', 'legacy-risk', 'current-risk')) {
+            $profileRoot = ".artifacts/product-shell-ci-$profile"
+            node scripts/run-supervised-electron.js `
+              --entry scripts/product-shell-smoke.js `
+              --entry-arg --work-dir `
+              --entry-arg "$profileRoot/work" `
+              --entry-arg --report `
+              --entry-arg "$profileRoot/report.json" `
+              --entry-arg --window-geometry-profile `
+              --entry-arg $profile `
+              --report "$profileRoot/exit-evidence.json" `
+              --strict-report
+            if ($LASTEXITCODE -ne 0) {
+              throw "Supervised product-shell journey ($profile) failed with exit code $LASTEXITCODE"
+            }
+            node scripts/verify-product-shell-report.js "$profileRoot/report.json"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Product-shell report verification ($profile) failed with exit code $LASTEXITCODE"
+            }
+            node scripts/verify-electron-exit-evidence.js "$profileRoot/exit-evidence.json"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Electron exit evidence verification ($profile) failed with exit code $LASTEXITCODE"
+            }
           }
 
       - name: Build and inspect the packaged test runtime
@@ -211,13 +216,17 @@ jobs:
         shell: powershell
         run: |
           $packagedExecutable = (Resolve-Path '.artifacts/packaged-smoke-build/win-unpacked/LiveSubtitlePackagedSmoke.exe').Path
-          $packagedArtifacts = Join-Path $PWD '.artifacts/packaged-product-ci'
-          node scripts/run-packaged-product-shell.js `
-            --executable $packagedExecutable `
-            --artifacts-root $packagedArtifacts `
-            --electron-major 43
-          if ($LASTEXITCODE -ne 0) {
-            throw "Packaged product journey failed with exit code $LASTEXITCODE"
+          foreach ($profile in @('default', 'legacy-risk', 'current-risk')) {
+            $suffix = if ($profile -eq 'default') { '' } else { "-$profile" }
+            $packagedArtifacts = Join-Path $PWD ".artifacts/packaged-product-ci$suffix"
+            node scripts/run-packaged-product-shell.js `
+              --executable $packagedExecutable `
+              --artifacts-root $packagedArtifacts `
+              --electron-major 43 `
+              --window-geometry-profile $profile
+            if ($LASTEXITCODE -ne 0) {
+              throw "Packaged product journey ($profile) failed with exit code $LASTEXITCODE"
+            }
           }
 
       - name: Build and inspect the exact NSIS candidate

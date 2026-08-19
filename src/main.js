@@ -53,13 +53,13 @@ const {
   overlayWindowBehavior
 } = require('./main/application-window-lifecycle-controller')
 const {
-  ManualWindowInteractionController,
-  sameBounds
+  ManualWindowInteractionController
 } = require('./main/manual-window-interaction-controller')
 const { createOverlayGestureTerminal } = require('./main/overlay-gesture-terminal')
 const {
   bindToolbarDockInvariant,
   toolbarDockInvariantBoundsFor,
+  toolbarViewportStateEquivalent,
   toolbarViewportBoundsFor,
   toolbarWindowViewportBounds
 } = require('./main/toolbar-dock-invariant')
@@ -68,7 +68,11 @@ const {
 } = require('./main/window-interaction-generation-controller')
 const { CaptionNativeHitController } = require('./main/caption-native-hit-controller')
 const { isInteractionReadyIntent } = require('./contracts/window-interaction')
-const { loadRendererFailClosed } = require('./main/renderer-entry')
+const { loadRenderer, loadRendererFailClosed } = require('./main/renderer-entry')
+const {
+  OverlayStartupController,
+  promptOverlayStartupRecovery
+} = require('./main/overlay-startup-controller')
 
 const exitEvidence = createMainEvidenceBridge()
 exitEvidence.markLifecycle('main-started')
@@ -83,6 +87,7 @@ exitEvidence.markLifecycle('main-started')
 /** @type {SessionCoordinator | null} */ let coordinator = null
 /** @type {HistoryService | null} */ let historyService = null
 /** @type {PowerSessionGuard | null} */ let powerSessionGuard = null
+/** @type {OverlayStartupController | null} */ let overlayStartupController = null
 /** @type {RefinementFaultLog | null} */ let refinementFaultLog = null
 
 let quitBarrierComplete = false
@@ -128,6 +133,7 @@ const windowInteractionController = new ManualWindowInteractionController({
   getLocked: () => locked,
   getCaptionLimits: captionLimits,
   dock,
+  setToolbarBounds: (bounds) => toolbarDockInvariantBinding?.writeBounds(bounds) === true,
   onCaptionResizeEnd: persistCaptionBounds,
   onGeometrySettled: (roles) => {
     if (roles.includes('toolbar')) toolbarDockInvariantBinding?.commitBounds()
@@ -199,6 +205,7 @@ const applicationWindowLifecycleController = new ApplicationWindowLifecycleContr
   schedulePostRestore: (callback, delayMs) => setTimeout(callback, delayMs),
   cancelPostRestore: (handle) => clearTimeout(handle),
   suspendGeometryCorrections: () => toolbarDockInvariantBinding?.suspendCorrection(),
+  setToolbarBounds: (bounds) => toolbarDockInvariantBinding?.writeBounds(bounds) === true,
   getPrimaryRestoreBounds: (primary) => toolbarDockInvariantBinding?.getExpectedBounds() ||
     toolbarViewportBoundsFor(toolbarWindowViewportBounds(primary)),
   onFault: ({ role, code }) => console.error(`[window.lifecycle] role=${role} code=${code}`)
@@ -443,23 +450,61 @@ function createWindows () {
   captionWin.webContents.on('did-finish-load', () => publishToolbarOverlap())
 
   const restoreWindowStack = () => windowLayerController.restoreWindowStack()
-  let captionReady = false
-  let toolbarReady = false
-  let overlayPairShown = false
-  const showOverlayPair = () => {
-    if (overlayPairShown || !captionReady || !toolbarReady ||
-        !captionWin || captionWin.isDestroyed() || !toolbarWin || toolbarWin.isDestroyed()) return
-    overlayPairShown = true
-    if (captionPassThroughPrepared) captionWin.show()
-    toolbarWin.show()
-    dock()
-    captionNativeHitController.start()
-    schedulePointerHitRefresh()
-    restoreWindowStack()
-  }
-  captionWin.once('ready-to-show', () => { captionReady = true; showOverlayPair() })
-  toolbarWin.once('ready-to-show', () => { toolbarReady = true; showOverlayPair() })
-  setTimeout(restoreWindowStack, 300)
+  const settleInitialToolbarGeometry = () => new Promise((resolve) => {
+    const startedAt = Date.now()
+    const inspect = () => {
+      if (createdCaption.isDestroyed() || createdToolbar.isDestroyed() ||
+          toolbarDockInvariantBinding === null) {
+        resolve(false)
+        return
+      }
+      dock({ restoreStack: false })
+      const expected = toolbarDockInvariantBinding.getExpectedBounds()
+      if (toolbarViewportStateEquivalent(createdToolbar, expected)) {
+        resolve(true)
+        return
+      }
+      if (Date.now() - startedAt >= 1000) {
+        resolve(false)
+        return
+      }
+      setTimeout(inspect, 25)
+    }
+    inspect()
+  })
+  overlayStartupController?.stop()
+  overlayStartupController = new OverlayStartupController({
+    loadRole: (role) => loadRenderer(
+      role === 'caption' ? createdCaption : createdToolbar,
+      role,
+      { isPackaged: app.isPackaged }
+    ),
+    prepareAttempt: () => {
+      captionNativeHitController.stop()
+      if (!createdCaption.isDestroyed()) createdCaption.hide()
+      if (!createdToolbar.isDestroyed()) {
+        createdToolbar.setBackgroundColor('#202020')
+        createdToolbar.setIgnoreMouseEvents(false)
+      }
+    },
+    showReachableToolbar: () => {
+      if (!createdToolbar.isDestroyed()) createdToolbar.show()
+      restoreWindowStack()
+    },
+    settleGeometry: settleInitialToolbarGeometry,
+    activateOverlays: () => {
+      if (createdCaption.isDestroyed() || createdToolbar.isDestroyed()) return
+      createdToolbar.setBackgroundColor('#00000000')
+      if (captionPassThroughPrepared) createdCaption.show()
+      createdToolbar.show()
+      captionNativeHitController.start()
+      schedulePointerHitRefresh()
+      restoreWindowStack()
+    },
+    promptRecovery: (code) => promptOverlayStartupRecovery(dialog, createdToolbar, code),
+    exitApplication: () => app.quit()
+  })
+  overlayStartupController.start()
 
   captionWin.on('closed', () => {
     captionNativeHitController.stop()
@@ -472,27 +517,19 @@ function createWindows () {
     app.quit()
   })
   toolbarWin.on('closed', () => {
+    overlayStartupController?.stop()
+    overlayStartupController = null
     windowInteractionController.stopAll()
     toolbarDockInvariantBinding?.unbind()
     toolbarDockInvariantBinding = null
     toolbarWin = null
   })
-  for (const [win, role] of [[captionWin, 'caption'], [toolbarWin, 'toolbar']]) {
-    void loadRendererFailClosed(win, role, { isPackaged: app.isPackaged })
-      .catch((error) => {
-        logError(`renderer.${role}.load`, error)
-        app.quit()
-      })
-  }
 }
 
 function dock ({ restoreStack = true } = {}) {
   if (!captionWin || captionWin.isDestroyed() || !toolbarWin || toolbarWin.isDestroyed()) return
   const nextBounds = toolbarDockBoundsFor(captionWin.getBounds())
-  toolbarDockInvariantBinding?.commitBounds(nextBounds)
-  if (!sameBounds(toolbarWindowViewportBounds(toolbarWin), nextBounds)) {
-    toolbarWin.setContentBounds(nextBounds)
-  }
+  toolbarDockInvariantBinding?.writeBounds(nextBounds)
   if (restoreStack) windowLayerController.restoreWindowStack()
 }
 

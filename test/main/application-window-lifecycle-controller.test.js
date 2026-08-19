@@ -150,6 +150,11 @@ function createHarness ({
   schedulePostRestore = setImmediate,
   cancelPostRestore = clearImmediate,
   suspendGeometryCorrections = () => {},
+  setToolbarBounds = (toolbar, bounds) => {
+    if (typeof toolbar.setContentBounds === 'function') toolbar.setContentBounds(bounds)
+    else toolbar.setBounds(bounds)
+    return true
+  },
   getPrimaryRestoreBounds = (primary) => toolbarViewportBoundsFor(toolbarWindowViewportBounds(primary)),
   onResumeInteractions = () => true
 } = {}) {
@@ -194,6 +199,7 @@ function createHarness ({
     schedulePostRestore,
     cancelPostRestore,
     suspendGeometryCorrections,
+    setToolbarBounds: (bounds) => setToolbarBounds(toolbar, bounds),
     getPrimaryRestoreBounds,
     onFault: (fault) => faults.push(fault)
   })
@@ -1054,5 +1060,7 @@ test('SEM-F24/J19: main routes primary close, renderer minimize and second insta
   assert.match(source, /render-process-gone[\s\S]{0,180}stopForSender\(senderId\)[\s\S]{0,180}failClosedAfterRendererGone\(role\)/)
   assert.match(source, /did-finish-load[\s\S]{0,140}stopForSender\(senderId\)[\s\S]{0,260}replay\(role\)/)
   assert.match(source, /const replayEpoch = navigationEpoch[\s\S]{0,260}replayEpoch === navigationEpoch/)
-  assert.match(source, /if \(captionPassThroughPrepared\) captionWin\.show\(\)/)
+  assert.match(source, /new OverlayStartupController\(/)
+  assert.match(source, /if \(captionPassThroughPrepared\) createdCaption\.show\(\)/)
+  assert.doesNotMatch(source, /(?:captionWin|toolbarWin)\.once\('ready-to-show'/)
 })

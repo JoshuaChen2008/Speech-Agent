@@ -32,6 +32,7 @@ const {
   restoreBoundsEquivalent
 } = require('../src/main/application-window-lifecycle-controller')
 const { toolbarViewportStateEquivalent } = require('../src/main/toolbar-dock-invariant')
+const { DEFAULT_CONFIG } = require('../src/main/services/config-store')
 const {
   OPERATIONS,
   PROTOCOL_VERSION,
@@ -150,15 +151,19 @@ function parseArguments (argv) {
     workDir: null,
     report: null,
     mode: 'fresh',
+    windowGeometryProfile: 'default',
     qualificationRunId: null,
     freshProductReportSha256: null
   }
   for (let index = 0; index < argv.length; index += 1) {
     const next = argv[index + 1]
-    if (argv[index] === '--artifacts-root') { values.artifactsRoot = next; index += 1 } else if (argv[index] === '--work-dir') { values.workDir = next; index += 1 } else if (argv[index] === '--report') { values.report = next; index += 1 } else if (argv[index] === '--mode') { values.mode = next; index += 1 } else if (argv[index] === '--qualification-run-id') { values.qualificationRunId = next; index += 1 } else if (argv[index] === '--fresh-product-report-sha256') { values.freshProductReportSha256 = next; index += 1 } else throw new Error(`unknown argument: ${argv[index]}`)
+    if (argv[index] === '--artifacts-root') { values.artifactsRoot = next; index += 1 } else if (argv[index] === '--work-dir') { values.workDir = next; index += 1 } else if (argv[index] === '--report') { values.report = next; index += 1 } else if (argv[index] === '--mode') { values.mode = next; index += 1 } else if (argv[index] === '--window-geometry-profile') { values.windowGeometryProfile = next; index += 1 } else if (argv[index] === '--qualification-run-id') { values.qualificationRunId = next; index += 1 } else if (argv[index] === '--fresh-product-report-sha256') { values.freshProductReportSha256 = next; index += 1 } else throw new Error(`unknown argument: ${argv[index]}`)
   }
   if (!values.workDir || !values.report) throw new Error('--work-dir and --report are required')
   if (!['fresh', 'restart'].includes(values.mode)) throw new Error('--mode must be fresh or restart')
+  if (!['default', 'legacy-risk', 'current-risk'].includes(values.windowGeometryProfile)) {
+    throw new Error('--window-geometry-profile is invalid')
+  }
   if (values.artifactsRoot !== null && (!path.isAbsolute(values.artifactsRoot) ||
       path.resolve(values.artifactsRoot) === path.parse(path.resolve(values.artifactsRoot)).root)) {
     throw new Error('--artifacts-root must be an absolute non-root directory')
@@ -193,6 +198,7 @@ function parseArguments (argv) {
     workDir,
     report,
     mode: values.mode,
+    windowGeometryProfile: values.windowGeometryProfile,
     qualificationRunId: values.qualificationRunId,
     freshProductReportSha256: values.freshProductReportSha256
   }
@@ -1714,6 +1720,16 @@ const exportDirectory = path.join(options.workDir, 'exports')
 if (options.mode === 'fresh') {
   fs.mkdirSync(options.workDir, { recursive: false })
   fs.mkdirSync(userDataDir, { recursive: false })
+  if (options.windowGeometryProfile !== 'default') {
+    fs.writeFileSync(path.join(userDataDir, 'config.json'), JSON.stringify({
+      ...DEFAULT_CONFIG,
+      captionWidth: 1373,
+      captionHeight: 168,
+      ...(options.windowGeometryProfile === 'current-risk'
+        ? { windowGeometryRevision: 1 }
+        : {})
+    }, null, 2))
+  }
 } else if (!fs.statSync(userDataDir, { throwIfNoEntry: false })?.isDirectory()) {
   throw new Error('restart userData directory is missing')
 }
@@ -2452,6 +2468,15 @@ async function runJourney () {
   let settings = await waitFor(() => windowFor('/settings/settings.html'), 'settings renderer')
   const toolbar = await waitFor(() => windowFor('/toolbar/index.html'), 'toolbar renderer')
   const caption = await waitFor(() => windowFor('/caption/index.html'), 'caption renderer')
+  if (options.windowGeometryProfile !== 'default') {
+    const persistedConfig = JSON.parse(fs.readFileSync(path.join(userDataDir, 'config.json'), 'utf8'))
+    const expectedRiskPreserved = options.windowGeometryProfile === 'current-risk'
+    if (persistedConfig.windowGeometryRevision !== 1 ||
+        persistedConfig.captionWidth !== (expectedRiskPreserved ? 1373 : DEFAULT_CONFIG.captionWidth) ||
+        persistedConfig.captionHeight !== (expectedRiskPreserved ? 168 : DEFAULT_CONFIG.captionHeight)) {
+      throw new Error('window geometry profile did not reach its registered migration state')
+    }
+  }
   await Promise.all([settings, toolbar, caption].map((win) => waitFor(() => !win.webContents.isLoading(), 'renderer load')))
   controlledCursorBoundary = installControlledCursorBoundary()
   const layoutProbe = await beginWindowInteractionLayoutProbe(toolbar, caption)

@@ -307,6 +307,18 @@ function bindToolbarDockInvariant ({
     cancelPending()
     correctionSuspended = true
   }
+  const writeBounds = (bounds) => {
+    if (toolbar.isDestroyed()) return false
+    const expected = toolbarViewportBoundsFor(bounds)
+    if (!correctionSuspended) return commitBounds(expected)
+    try {
+      if (!toolbarViewportStateEquivalent(toolbar, expected)) setDockBounds(expected)
+      return true
+    } catch {
+      failPending(expected)
+      return false
+    }
+  }
   const observeMove = () => correct()
 
   toolbar.on('resize', correct)
@@ -316,6 +328,7 @@ function bindToolbarDockInvariant ({
     getAuthoritativeBounds,
     getExpectedBounds,
     suspendCorrection,
+    writeBounds,
     unbind () {
       cancelPending()
       if (typeof toolbar.off === 'function') toolbar.off('resize', correct)

@@ -25,11 +25,16 @@ const {
 } = require('./verify-packaged-run-binding')
 
 function parseArguments (argv) {
-  const values = { executable: null, artifactsRoot: null, electronMajor: null }
+  const values = {
+    executable: null,
+    artifactsRoot: null,
+    electronMajor: null,
+    windowGeometryProfile: 'default'
+  }
   const seen = new Set()
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index]
-    if (!['--executable', '--artifacts-root', '--electron-major'].includes(flag) ||
+    if (!['--executable', '--artifacts-root', '--electron-major', '--window-geometry-profile'].includes(flag) ||
         seen.has(flag) || index + 1 >= argv.length) {
       throw new Error('invalid packaged product-shell arguments')
     }
@@ -38,11 +43,13 @@ function parseArguments (argv) {
     if (flag === '--executable') values.executable = value
     if (flag === '--artifacts-root') values.artifactsRoot = value
     if (flag === '--electron-major') values.electronMajor = Number(value)
+    if (flag === '--window-geometry-profile') values.windowGeometryProfile = value
   }
   if (!values.executable || !path.isAbsolute(values.executable) ||
       !values.artifactsRoot || !path.isAbsolute(values.artifactsRoot) ||
       path.resolve(values.artifactsRoot) === path.parse(path.resolve(values.artifactsRoot)).root ||
-      !Number.isSafeInteger(values.electronMajor) || values.electronMajor < 1) {
+      !Number.isSafeInteger(values.electronMajor) || values.electronMajor < 1 ||
+      !['default', 'legacy-risk', 'current-risk'].includes(values.windowGeometryProfile)) {
     throw new Error('absolute executable/artifacts root and positive Electron major are required')
   }
   return values
@@ -73,6 +80,7 @@ async function main () {
       '--artifacts-root', artifactsRoot,
       '--work-dir', 'work',
       '--report', 'product-shell.json',
+      '--window-geometry-profile', options.windowGeometryProfile,
       '--qualification-run-id', qualificationRunId
     ],
     reportPath: evidencePath,
@@ -102,6 +110,7 @@ async function main () {
       '--work-dir', 'work',
       '--report', 'offline-restart.json',
       '--mode', 'restart',
+      '--window-geometry-profile', options.windowGeometryProfile,
       '--qualification-run-id', qualificationRunId,
       '--fresh-product-report-sha256', freshProductReportSha256
     ],

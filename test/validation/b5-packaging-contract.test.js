@@ -339,8 +339,20 @@ test('packaged runner strips Node and every subtitle development environment sea
   assert.deepEqual(parsePackagedArguments([
     '--executable', executable,
     '--artifacts-root', artifactsRoot,
-    '--electron-major', '43'
-  ]), { executable, artifactsRoot, electronMajor: 43 })
+    '--electron-major', '43',
+    '--window-geometry-profile', 'current-risk'
+  ]), {
+    executable,
+    artifactsRoot,
+    electronMajor: 43,
+    windowGeometryProfile: 'current-risk'
+  })
+  assert.throws(() => parsePackagedArguments([
+    '--executable', executable,
+    '--artifacts-root', artifactsRoot,
+    '--electron-major', '43',
+    '--window-geometry-profile', 'unknown'
+  ]), /required|invalid packaged product-shell arguments/)
 })
 
 test('layout report validator separates the release installer from the test package', () => {
@@ -354,7 +366,7 @@ test('layout report validator separates the release installer from the test pack
       variant: 'smoke',
       arch: 'x64',
       appVersion: '0.1.0',
-      electronVersion: '43.2.0',
+      electronVersion: '43.3.0',
       builderVersion: '26.15.3',
       sherpaWrapperVersion: '1.13.4',
       sherpaPlatformVersion: '1.13.4',
@@ -710,11 +722,14 @@ test('Windows CI keeps packaged layout product and NSIS lifecycle gates in order
   }
   assert.match(workflow, /timeout-minutes:\s*30/)
   assert.match(workflow, /--electron-major 43/)
+  assert.match(workflow, /foreach \(\$profile in @\('default', 'legacy-risk', 'current-risk'\)\)/)
+  assert.match(workflow, /--window-geometry-profile \$profile/)
 
   const runner = fs.readFileSync(path.join(ROOT, 'scripts', 'run-packaged-product-shell.js'), 'utf8')
   assert.match(runner, /readAndValidatePackagedProductShellReport\(reportPath\)/)
   assert.match(runner, /readAndValidateElectronExitEvidence\(evidencePath\)/)
   assert.match(runner, /scope\.packagedRuntime !== true/)
+  assert.equal((runner.match(/'--window-geometry-profile', options\.windowGeometryProfile/g) || []).length, 2)
 })
 
 test('semantic table freezes package release and uninstall boundaries', () => {

@@ -608,6 +608,31 @@ test('SEM-F22/SEM-T04/J17: destroyed toolbar and invalid dependencies fail close
   assert.throws(() => bindToolbarDockInvariant({}), /dependencies/)
 })
 
+test('SEM-F22 / J17-J19 routes managed restore writes through the suspended dock coordinator', () => {
+  const toolbar = new EventEmitter()
+  const expected = { x: 20, y: 30, width: 600, height: 72 }
+  toolbar.bounds = { ...expected, width: 602 }
+  toolbar.isDestroyed = () => false
+  toolbar.getBounds = () => ({ ...toolbar.bounds })
+  const writes = []
+  const binding = bindToolbarDockInvariant({
+    toolbar,
+    getDockBounds: () => ({ ...expected }),
+    setDockBounds: (bounds) => {
+      writes.push({ ...bounds })
+      toolbar.bounds = { ...bounds }
+    }
+  })
+
+  binding.suspendCorrection()
+  assert.equal(binding.writeBounds(expected), true)
+  assert.deepEqual(writes, [expected])
+  assert.deepEqual(binding.getAuthoritativeBounds(), expected,
+    'managed restore does not adopt a new baseline before lifecycle confirmation')
+  toolbar.emit('resize')
+  assert.equal(writes.length, 1, 'autonomous correction remains paused during managed settlement')
+})
+
 test('SEM-F22/SEM-T04/J17: failed fixed-viewport correction emits only its registered degradation', () => {
   const toolbar = new EventEmitter()
   toolbar.isDestroyed = () => false

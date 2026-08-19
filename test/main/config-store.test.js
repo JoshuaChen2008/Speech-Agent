@@ -89,6 +89,60 @@ test('persisted config is atomically replaceable and reloadable', (t) => {
   assert.deepEqual(fs.readdirSync(path.dirname(file)).sort(), ['config.json'])
 })
 
+test('SEM-F22 / J19 normalizes the unmarked mixed-DPI risk geometry exactly once', (t) => {
+  const { file, store } = makeStore(t)
+  fs.writeFileSync(file, JSON.stringify({
+    ...DEFAULT_CONFIG,
+    captionWidth: 1373,
+    captionHeight: 168
+  }))
+
+  const loaded = store.load()
+  assert.equal(loaded.captionWidth, DEFAULT_CONFIG.captionWidth)
+  assert.equal(loaded.captionHeight, DEFAULT_CONFIG.captionHeight)
+  assert.equal(Object.hasOwn(loaded, 'windowGeometryRevision'), false)
+
+  const persisted = JSON.parse(fs.readFileSync(file, 'utf8'))
+  assert.equal(persisted.captionWidth, DEFAULT_CONFIG.captionWidth)
+  assert.equal(persisted.captionHeight, DEFAULT_CONFIG.captionHeight)
+  assert.equal(persisted.windowGeometryRevision, 1)
+})
+
+test('SEM-F22 / J19 preserves non-risk legacy geometry while recording its revision', (t) => {
+  const { file, store } = makeStore(t)
+  fs.writeFileSync(file, JSON.stringify({
+    ...DEFAULT_CONFIG,
+    captionWidth: 1373,
+    captionHeight: 190
+  }))
+
+  assert.equal(store.load().captionWidth, 1373)
+  assert.equal(store.get().captionHeight, 190)
+  const persisted = JSON.parse(fs.readFileSync(file, 'utf8'))
+  assert.equal(persisted.captionWidth, 1373)
+  assert.equal(persisted.captionHeight, 190)
+  assert.equal(persisted.windowGeometryRevision, 1)
+})
+
+test('SEM-F22 / J19 preserves explicitly revised risk geometry without exposing the internal marker', (t) => {
+  const { file, store } = makeStore(t)
+  fs.writeFileSync(file, JSON.stringify({
+    ...DEFAULT_CONFIG,
+    captionWidth: 1373,
+    captionHeight: 168,
+    windowGeometryRevision: 1
+  }))
+
+  const loaded = store.load()
+  assert.equal(loaded.captionWidth, 1373)
+  assert.equal(loaded.captionHeight, 168)
+  assert.equal(Object.hasOwn(loaded, 'windowGeometryRevision'), false)
+  assert.throws(
+    () => store.update({ windowGeometryRevision: 2 }),
+    /windowGeometryRevision is not allowed/
+  )
+})
+
 test('global refinement preference is default-off, requires a ready model to enable, and startup reconciliation closes stale enabled state', (t) => {
   const { file, store } = makeStore(t)
   store.load()

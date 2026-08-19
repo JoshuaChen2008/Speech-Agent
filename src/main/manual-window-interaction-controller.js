@@ -31,6 +31,7 @@ class ManualWindowInteractionController {
     getLocked,
     getCaptionLimits,
     dock,
+    setToolbarBounds,
     onCaptionResizeEnd = () => {},
     onGeometrySettled = () => {},
     onInteractionEnded = () => {},
@@ -47,6 +48,7 @@ class ManualWindowInteractionController {
         typeof getLocked !== 'function' ||
         typeof getCaptionLimits !== 'function' ||
         typeof dock !== 'function' ||
+        typeof setToolbarBounds !== 'function' ||
         typeof onGeometrySettled !== 'function' ||
         typeof onInteractionEnded !== 'function' ||
         typeof onObservation !== 'function' ||
@@ -61,6 +63,7 @@ class ManualWindowInteractionController {
     this.getLocked = getLocked
     this.getCaptionLimits = getCaptionLimits
     this.dock = dock
+    this.setToolbarBounds = setToolbarBounds
     this.onCaptionResizeEnd = onCaptionResizeEnd
     this.onGeometrySettled = onGeometrySettled
     this.onInteractionEnded = onInteractionEnded
@@ -86,20 +89,28 @@ class ManualWindowInteractionController {
 
   moveWindow (win, bounds, isToolbar) {
     if (isToolbar) {
-      /* BrowserWindow.setPosition() can replay a stale Win32 normal-placement
-         size while moving the fixed toolbar. Submit the viewport dimensions
-         with every toolbar translation so a move cannot become a resize. */
+      /* Submit the fixed content viewport with every toolbar translation. */
       const viewportBounds = {
         x: bounds.x,
         y: bounds.y,
         width: WINDOW_LAYOUT.toolbarViewportWidth,
         height: WINDOW_LAYOUT.toolbarViewportHeight
       }
-      if (typeof win.setContentBounds === 'function') win.setContentBounds(viewportBounds)
-      else win.setBounds(viewportBounds)
+      if (this.setToolbarBounds(viewportBounds) !== true) {
+        throw new Error('toolbar geometry writer rejected bounds')
+      }
       return
     }
-    win.setPosition(bounds.x, bounds.y)
+    /* BrowserWindow.setPosition() can replay a stale Win32 normal-placement
+       size while moving any frameless or manually dragged window. Keep the
+       gesture-start dimensions explicit so a translation cannot become a
+       native resize. This is still one geometry write per frame. */
+    win.setBounds({
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height
+    })
   }
 
   /**
@@ -130,9 +141,8 @@ class ManualWindowInteractionController {
     const point = this.getCursorScreenPoint()
     const nextBounds = dragBoundsAt(state.start, state.origin, point)
     if (!sameBounds(nextBounds, state.lastBounds)) {
-      /* 拖动只改位置。setBounds 还要走一遍 resize 路径，而这两个都是
-         transparent + alwaysOnTop 的分层窗，每次移动都要 DWM 重新合成整窗 ——
-         每帧省下来的每一次系统调用都直接换成手感。 */
+      /* dragBoundsAt keeps the gesture-start dimensions frozen; moveWindow
+         preserves them in the native write while changing only x/y. */
       this.moveWindow(state.win, nextBounds, state.targetIsToolbar)
       state.lastBounds = nextBounds
       if (!state.moved) {

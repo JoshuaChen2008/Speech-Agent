@@ -64,14 +64,12 @@ function restoreBoundsEquivalent (role, left, right) {
       Math.abs(left[key] - right[key]) <= AUXILIARY_BOUNDS_TOLERANCE_DIP)
 }
 
-function restoreBounds (entry) {
+function restoreBounds (entry, setToolbarBounds) {
   if (!entry?.bounds || !isUsableWindow(entry.win)) return false
   if (entry.role === 'toolbar') {
     if (toolbarViewportStateEquivalent(entry.win, entry.bounds)) return false
-    if (typeof entry.win.setContentBounds === 'function') {
-      entry.win.setContentBounds(entry.bounds)
-    } else {
-      entry.win.setBounds(entry.bounds)
+    if (typeof setToolbarBounds !== 'function' || setToolbarBounds(entry.bounds) !== true) {
+      throw new Error('toolbar geometry writer rejected bounds')
     }
     return true
   }
@@ -97,6 +95,7 @@ class ApplicationWindowLifecycleController {
     schedulePostRestore = (callback, delayMs) => setTimeout(callback, delayMs),
     cancelPostRestore = (handle) => clearTimeout(handle),
     suspendGeometryCorrections = () => {},
+    setToolbarBounds,
     getPrimaryRestoreBounds = (primary) => toolbarViewportBoundsFor(toolbarWindowViewportBounds(primary)),
     onFault = () => {}
   }) {
@@ -113,6 +112,7 @@ class ApplicationWindowLifecycleController {
       schedulePostRestore,
       cancelPostRestore,
       suspendGeometryCorrections,
+      setToolbarBounds,
       getPrimaryRestoreBounds,
       onFault
     ]) {
@@ -133,6 +133,7 @@ class ApplicationWindowLifecycleController {
     this.schedulePostRestore = schedulePostRestore
     this.cancelPostRestore = cancelPostRestore
     this.suspendGeometryCorrections = suspendGeometryCorrections
+    this.setToolbarBounds = setToolbarBounds
     this.getPrimaryRestoreBounds = getPrimaryRestoreBounds
     this.onFault = onFault
     this.minimizedState = null
@@ -271,6 +272,7 @@ class ApplicationWindowLifecycleController {
 
   scheduleBoundsCorrection (state, interactionGeneration, restoreCommitToken) {
     this.pendingRecoveryState = state
+    this.suspendGeometryCorrections()
     const entries = [
       { role: 'toolbar', win: state.primary, bounds: state.primaryBounds },
       ...(state.caption.visible ? [state.caption] : []),
@@ -312,7 +314,7 @@ class ApplicationWindowLifecycleController {
       correcting = true
       let changed = false
       try {
-        for (const entry of entries) changed = restoreBounds(entry) || changed
+        for (const entry of entries) changed = restoreBounds(entry, this.setToolbarBounds) || changed
       } finally {
         correcting = false
       }
@@ -507,21 +509,22 @@ class ApplicationWindowLifecycleController {
 
   rollbackMinimize (state) {
     try {
+      this.suspendGeometryCorrections()
       const primary = state.primary
       if (isUsableWindow(primary)) {
         if (primary.isMinimized()) primary.restore()
         showWindow(primary)
-        restoreBounds({ role: 'toolbar', win: primary, bounds: state.primaryBounds })
+        restoreBounds({ role: 'toolbar', win: primary, bounds: state.primaryBounds }, this.setToolbarBounds)
       }
       if (state.caption.visible) {
         showWindow(state.caption.win, true)
-        restoreBounds(state.caption)
+        restoreBounds(state.caption, this.setToolbarBounds)
       }
       for (const entry of state.auxiliaries) {
         if (!entry.visible || !isUsableWindow(entry.win)) continue
         if (entry.win.isMinimized()) entry.win.restore()
         showWindow(entry.win)
-        restoreBounds(entry)
+        restoreBounds(entry, this.setToolbarBounds)
       }
       this.restoreWindowStack()
       if (state.focused && isUsableWindow(state.focused.win)) state.focused.win.focus()
@@ -544,18 +547,19 @@ class ApplicationWindowLifecycleController {
     this.stopActiveInteractions()
     const interactionGeneration = this.beginInteractionTransaction()
     try {
+      this.suspendGeometryCorrections()
       if (primary.isMinimized()) primary.restore()
       showWindow(primary)
-      restoreBounds({ role: 'toolbar', win: primary, bounds: state.primaryBounds })
+      restoreBounds({ role: 'toolbar', win: primary, bounds: state.primaryBounds }, this.setToolbarBounds)
       if (state.caption.visible) {
         showWindow(state.caption.win, true)
-        restoreBounds(state.caption)
+        restoreBounds(state.caption, this.setToolbarBounds)
       }
       for (const entry of state.auxiliaries) {
         if (!entry.visible || !isUsableWindow(entry.win)) continue
         if (entry.win.isMinimized()) entry.win.restore()
         showWindow(entry.win)
-        restoreBounds(entry)
+        restoreBounds(entry, this.setToolbarBounds)
       }
       this.restoreWindowStack()
       if (state.focused && isUsableWindow(state.focused.win)) state.focused.win.focus()
@@ -589,6 +593,7 @@ class ApplicationWindowLifecycleController {
     this.stopActiveInteractions()
     const interactionGeneration = this.beginInteractionTransaction()
     try {
+      this.suspendGeometryCorrections()
       if (primary.isMinimized()) primary.restore()
       let state
       if (this.pendingRecoveryState) {
@@ -597,13 +602,13 @@ class ApplicationWindowLifecycleController {
         showWindow(primary)
         if (state.caption.visible && isUsableWindow(state.caption.win)) {
           showWindow(state.caption.win, true)
-          restoreBounds(state.caption)
+          restoreBounds(state.caption, this.setToolbarBounds)
         }
         for (const entry of state.auxiliaries) {
           if (!entry.visible || !isUsableWindow(entry.win)) continue
           if (entry.win.isMinimized()) entry.win.restore()
           showWindow(entry.win)
-          restoreBounds(entry)
+          restoreBounds(entry, this.setToolbarBounds)
         }
         this.restoreWindowStack()
         if (state.focused && isUsableWindow(state.focused.win)) state.focused.win.focus()
@@ -616,7 +621,7 @@ class ApplicationWindowLifecycleController {
         primary.focus()
         state = this.captureState(primary)
       }
-      restoreBounds({ role: 'toolbar', win: primary, bounds: state.primaryBounds })
+      restoreBounds({ role: 'toolbar', win: primary, bounds: state.primaryBounds }, this.setToolbarBounds)
       this.scheduleBoundsCorrection(state, interactionGeneration, restoreCommitToken)
       return true
     } catch {

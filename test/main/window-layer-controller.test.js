@@ -134,7 +134,7 @@ test('SEM-F22/J17 and SEM-F24/J19: main routes z-order and app visibility throug
   assert.match(main, /new WindowLayerController\(\{/)
   assert.match(main, /windowLayerController\.bindForegroundWindow\(settingsWin, 'settings'\)/)
   assert.match(main, /windowLayerController\.bindForegroundWindow\(historyWin, 'history'\)/)
-  assert.match(main, /function dock \(\{ restoreStack = true \} = \{\}\)[\s\S]*if \(!sameBounds\([\s\S]*if \(restoreStack\) windowLayerController\.restoreWindowStack\(\)/)
+  assert.match(main, /function dock \(\{ restoreStack = true \} = \{\}\)[\s\S]*toolbarDockInvariantBinding\?\.writeBounds\(nextBounds\)[\s\S]*if \(restoreStack\) windowLayerController\.restoreWindowStack\(\)/)
   assert.match(main, /applicationWindowLifecycleController\.showAuxiliaryWindow\(settingsWin, 'settings'\)/)
   assert.match(main, /applicationWindowLifecycleController\.showAuxiliaryWindow\(historyWin, 'history'\)/)
 })

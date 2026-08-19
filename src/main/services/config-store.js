@@ -12,6 +12,7 @@ const {
 
 const CONFIG_SCHEMA_VERSION = 2
 const LEGACY_CONFIG_SCHEMA_VERSION = 1
+const WINDOW_GEOMETRY_REVISION = 1
 
 const AGENT_CONFIG_KEYS = Object.freeze([
   'agentEnabled',
@@ -172,6 +173,16 @@ function migrateConfig (input) {
     if (FIELD_RULES[key](value)) migrated[key] = value
   }
 
+  // The unmarked 1373 x 168 pair is the one persisted shape known to trigger
+  // a mixed-DPI Win32/Electron content-size feedback loop. Normalize it once;
+  // the private revision marker makes the same dimensions a valid explicit
+  // user choice after migration.
+  if (input.windowGeometryRevision !== WINDOW_GEOMETRY_REVISION &&
+      migrated.captionWidth === 1373 && migrated.captionHeight === 168) {
+    migrated.captionWidth = DEFAULT_CONFIG.captionWidth
+    migrated.captionHeight = DEFAULT_CONFIG.captionHeight
+  }
+
   if (hasValidAgentSettings(input)) {
     for (const key of AGENT_CONFIG_KEYS) migrated[key] = input[key]
   }
@@ -215,6 +226,7 @@ class ConfigStore {
     this.now = options.now || Date.now
     if (typeof this.now !== 'function') throw new TypeError('options.now must be a function')
     this.state = cloneConfig(DEFAULT_CONFIG)
+    this.windowGeometryRevision = WINDOW_GEOMETRY_REVISION
   }
 
   load () {
@@ -227,7 +239,8 @@ class ConfigStore {
     }
     this.state = migrateConfig(parsed)
     if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) &&
-        parsed.schemaVersion === LEGACY_CONFIG_SCHEMA_VERSION) {
+        (parsed.schemaVersion === LEGACY_CONFIG_SCHEMA_VERSION ||
+         parsed.windowGeometryRevision !== WINDOW_GEOMETRY_REVISION)) {
       try {
         this.persist(this.state)
       } catch {
@@ -350,7 +363,10 @@ class ConfigStore {
     const temporary = `${this.filePath}.${process.pid}.${Date.now()}.tmp`
     this.fs.mkdirSync(directory, { recursive: true })
     try {
-      this.fs.writeFileSync(temporary, JSON.stringify(value, null, 2), 'utf8')
+      this.fs.writeFileSync(temporary, JSON.stringify({
+        ...value,
+        windowGeometryRevision: this.windowGeometryRevision
+      }, null, 2), 'utf8')
       this.fs.renameSync(temporary, this.filePath)
     } catch (error) {
       try { this.fs.rmSync(temporary, { force: true }) } catch { /* best effort */ }

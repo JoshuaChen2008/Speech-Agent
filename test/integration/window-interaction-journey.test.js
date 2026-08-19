@@ -226,6 +226,7 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
   const interaction = new ManualWindowInteractionController({
     clearTimer: scheduler.clearTimer,
     dock,
+    setToolbarBounds: (bounds) => { toolbar.setContentBounds(bounds); return true },
     getCaptionLimits: () => ({ minW: 480, maxW: 1600, minH: 140, maxH: 420 }),
     getCaptionWindow: () => caption,
     getToolbarWindow: () => toolbar,
@@ -252,6 +253,7 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
      逐像素相同 —— 省掉的是每帧两次 getBounds 和一次求解，不是精度。 */
   cursor = { x: 300, y: 200 }
   const beforeContinuousDrag = caption.getBounds()
+  const captionSetPositionBeforeContinuousDrag = caption.setPositionCalls
   toolbar.positionSizeDrift = { height: toolbar.getBounds().height + 5 }
   const toolbarSetBoundsBeforeContinuousDrag = toolbar.setBoundsCalls
   const toolbarSetPositionBeforeContinuousDrag = toolbar.setPositionCalls
@@ -260,7 +262,8 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
   cursor = { x: 314, y: 209 }
   scheduler.runNext()
   assert.equal(dockOptions.length, dockCallsBeforeDrag, 'drag ticks must not re-solve the dock position')
-  assert.equal(caption.setBoundsCalls, 0, 'drag must not take the resize path')
+  assert.equal(caption.setPositionCalls, captionSetPositionBeforeContinuousDrag,
+    'caption movement cannot trust the native position-only path to preserve dimensions')
   assert.deepEqual(caption.getBounds(), {
     ...beforeContinuousDrag,
     x: beforeContinuousDrag.x + 14,
@@ -345,6 +348,61 @@ test('SEM-F22/J17: one deterministic journey closes contour generations, manual 
   assert.equal(scheduler.size(), 0, 'blur cancellation must remove the pending drag tick')
 })
 
+test('SEM-F20/SEM-F22/J17: every manually dragged window freezes dimensions across native position-size replay', () => {
+  const cases = [
+    ['caption', false, { x: 100, y: 80, width: 920, height: 190 }],
+    ['toolbar', true, { x: 420, y: 92, width: 600, height: 72 }],
+    ['settings', false, { x: 180, y: 120, width: 880, height: 620 }],
+    ['history', false, { x: 220, y: 140, width: 1060, height: 720 }]
+  ]
+
+  for (const [role, locked, initialBounds] of cases) {
+    const target = new FakeWindow(role, initialBounds)
+    const caption = role === 'caption'
+      ? target
+      : new FakeWindow('caption', { x: 100, y: 80, width: 920, height: 190 })
+    const toolbar = role === 'toolbar'
+      ? target
+      : new FakeWindow('toolbar', { x: 420, y: 92, width: 600, height: 72 })
+    const scheduler = controlledScheduler()
+    let cursor = { x: 300, y: 200 }
+    const interaction = new ManualWindowInteractionController({
+      getCursorScreenPoint: () => ({ ...cursor }),
+      getCaptionWindow: () => caption,
+      getToolbarWindow: () => toolbar,
+      getLocked: () => locked,
+      getCaptionLimits: () => ({ minW: 480, maxW: 1600, minH: 140, maxH: 420 }),
+      setToolbarBounds: (bounds) => { toolbar.setContentBounds(bounds); return true },
+      dock: () => {},
+      setTimer: scheduler.setTimer,
+      clearTimer: scheduler.clearTimer
+    })
+    const before = target.getBounds()
+    target.positionSizeDrift = {
+      width: before.width + 37,
+      height: before.height + 19
+    }
+    const setBoundsBefore = target.setBoundsCalls
+    const setPositionBefore = target.setPositionCalls
+
+    assert.equal(interaction.startDrag({ role, win: target, senderId: 11 }), true, role)
+    cursor = { x: 317, y: 209 }
+    scheduler.runNext()
+    interaction.stopDrag(11)
+
+    assert.deepEqual(target.getBounds(), {
+      ...before,
+      x: before.x + 17,
+      y: before.y + 9
+    }, `${role} drag must change only x/y`)
+    assert.equal(target.setPositionCalls, setPositionBefore,
+      `${role} drag cannot use a position-only native write`)
+    assert.ok(target.setBoundsCalls > setBoundsBefore,
+      `${role} drag must explicitly submit its frozen dimensions`)
+    assert.equal(scheduler.size(), 0, `${role} drag must leave no timer`)
+  }
+})
+
 test('SEM-F22/J17: main hit polling restores caption drag when the pass-through renderer receives no entering move', () => {
   const caption = new FakeWindow('caption', { x: 100, y: 80, width: 920, height: 190 })
   const toolbar = new FakeWindow('toolbar', toolbarDockBoundsFor(caption.getBounds()))
@@ -362,6 +420,7 @@ test('SEM-F22/J17: main hit polling restores caption drag when the pass-through 
   const manual = new ManualWindowInteractionController({
     clearTimer: gestureTimers.clearTimer,
     dock: () => toolbar.setBounds(toolbarDockBoundsFor(caption.getBounds())),
+    setToolbarBounds: (bounds) => { toolbar.setContentBounds(bounds); return true },
     getCaptionLimits: () => ({ minW: 480, maxW: 1600, minH: 140, maxH: 420 }),
     getCaptionWindow: () => caption,
     getToolbarWindow: () => toolbar,
@@ -433,6 +492,7 @@ test('SEM-F22/SEM-F24/J17/J19: real caption hit intents stay stable near the too
   const manual = new ManualWindowInteractionController({
     clearTimer: manualTimers.clearTimer,
     dock: () => toolbar.setBounds(toolbarDockBoundsFor(caption.getBounds())),
+    setToolbarBounds: (bounds) => { toolbar.setContentBounds(bounds); return true },
     getCaptionLimits: () => ({ minW: 480, maxW: 1600, minH: 140, maxH: 420 }),
     getCaptionWindow: () => caption,
     getToolbarWindow: () => toolbar,
@@ -594,7 +654,8 @@ test('SEM-F22/SEM-F24/J17/J19: real caption hit intents stay stable near the too
     degradeInteractions: (value) => generation.degradeForRestoreFailure(value),
     restoreWindowStack: () => {},
     schedulePostRestore: postRestore.schedule,
-    cancelPostRestore: postRestore.cancel
+    cancelPostRestore: postRestore.cancel,
+    setToolbarBounds: (bounds) => { toolbar.setContentBounds(bounds); return true }
   })
   lifecycle.bindPrimaryWindow(toolbar)
   assert.equal(lifecycle.minimize(), true)
@@ -636,6 +697,7 @@ test('SEM-F22/SEM-F24/SEM-T04/J17/J19: lifecycle, generation and manual bounds f
   const manual = new ManualWindowInteractionController({
     clearTimer: manualTimers.clearTimer,
     dock: () => toolbar.setBounds(toolbarDockBoundsFor(caption.getBounds(), toolbar.getBounds())),
+    setToolbarBounds: (bounds) => { toolbar.setContentBounds(bounds); return true },
     getCaptionLimits: () => ({ minW: 480, maxW: 1600, minH: 140, maxH: 420 }),
     getCaptionWindow: () => caption,
     getToolbarWindow: () => toolbar,
@@ -679,6 +741,7 @@ test('SEM-F22/SEM-F24/SEM-T04/J17/J19: lifecycle, generation and manual bounds f
     restoreWindowStack: () => {},
     schedulePostRestore: postRestore.schedule,
     cancelPostRestore: postRestore.cancel,
+    setToolbarBounds: (bounds) => { toolbar.setContentBounds(bounds); return true },
     onFault: (fault) => faults.push(fault)
   })
   lifecycle.bindPrimaryWindow(toolbar)
