@@ -1,9 +1,10 @@
 # ADR 0003：Pi 核心外置于项目自有 Agent 插件宿主
 
-- 状态：已决定
+- 状态：已被 [ADR 0013](0013-agent-deep-modules-and-execution-host.md) 取代（2026-08-29）
 - 日期：2026-07-30
 - 决策者：项目负责人
 - 依赖：ADR 0002 字幕系统与 Agent 系统分离
+- 取代说明：ADR 0013 整体取代本 ADR 的 manifest/插件/端口机制与「`MeetingStopped` 后三项并列自动任务」触发语义。下文保留原文以记录当时的决策理由与旧实现的可追溯依据；`AgentPluginHost`、`MemoryReader` 与八端口能力集合不属于新正式 Agent。仍继续有效的两条边界（跨字幕边界的端口与适配器、基于能力的权限设计）已由 ADR 0013 第 7 项重新登记。旧源码的处置见 [ADR 0015](0015-retire-old-agent-implementation.md)。
 
 ## 背景
 
