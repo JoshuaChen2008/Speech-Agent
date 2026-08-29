@@ -6,7 +6,7 @@
 >
 > 日期：2026-08-29
 >
-> 用途：交接文档待做事项 2（冻结固定 recipe 的输入/输出 Schema）与 3（冻结首版工具闭集）。本文件不重建另一套要求；第 9 节列出的语义应回填 `docs/semantic-contract.md` 与 `docs/testing-strategy.md`，schema 只能通过新的追加 migration 落地。
+> 用途：Agent 重设计的第一轮冻结——固定 recipe 的输入/输出 Schema 与首版工具闭集。本文件不重建另一套要求；第 9 节列出的语义应回填 `docs/semantic-contract.md` 与 `docs/testing-strategy.md`，schema 只能通过新的追加 migration 落地。
 
 ## 1. 已确认的决定（负责人 2026-08-29）
 
@@ -350,4 +350,4 @@ shell 与进程启动；任意文件读写与任意路径解析；任意 HTTP �
 | `docs/data-architecture.md` | 第 4.3 节补一句"别名等值匹配不属于自由文本查询"（D4，原有"不接受自由文本"表述不改）；`formal_agent_tool_calls` 增列 `attempt` 与唯一约束（D7）；`formal_agent_interactions` 一次补齐第 7 节第 1 条列清单（D9/D10/D13）；登记 `analysis-report`、`planning-proposal` 产物类型；第 4.2 节错误闭集追加 `AGENT_BUDGET_EXCEEDED`（D6）。全部通过新的追加 migration 落地，既有 migration/checksum 逐字节不变 |
 | `docs/research/personal-context-agent-design-draft.md` | §9 补一句澄清：不复制第二份正文指不建第二份可检索知识库，不禁止第 5.2.1 节的有界审计证据（D5） |
 
-回填已完成，下一步进入交接文档待做事项 4（冻结模型接入接口）与 5（形成实现 SPEC）。旧 Agent（`AgentPluginHost`、`MemoryReader`、三项自动任务、固定 DeepSeek catalog、环境凭据、隔离调试入口）在负责人评审通过前不动一行。
+回填已完成。第二轮冻结见 `docs/research/model-access-interface-freeze-draft.md`（模型接入接口），第三轮是 supersede ADR 与实现 SPEC（`docs/agent-redesign-execution-plan.md`）。旧 Agent（`AgentPluginHost`、`MemoryReader`、三项自动任务、固定 DeepSeek catalog、环境凭据、隔离调试入口）整体为废案但暂时保留：源码留在仓库，从启动路径摘除单独作为一片实现并单独取证。

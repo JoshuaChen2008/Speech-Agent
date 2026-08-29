@@ -1,12 +1,12 @@
 # Agent 模型接入接口冻结提案
 
-> 性质：设计对齐草案（冻结提案）。**尚未回填权威文档，因此尚未登记为“已决定”，尚未进入正式实现。** 第 2 节的 M1–M12 需要负责人逐项确认或修订；其中 M2、M7、M8、M10 是本文件发现的既有文档冲突或既有调研结论收窄，已在该项内单独标注。
+> 性质：设计对齐草案（冻结提案）。**第 2 节的 M1–M12 已于 2026-08-29 由负责人逐项确认，并已回填权威文档；本文件此后只作为决定理由的留档，不再是权威来源。** 其中 M2、M7、M8、M10 是本文件发现的既有文档冲突或既有调研结论收窄，已在该项内单独标注。权威口径一律以 `docs/semantic-contract.md`、`docs/adr/`、`docs/data-architecture.md`、`docs/testing-strategy.md` 为准。
 >
 > 依据：`docs/semantic-contract.md`（`SEM-F25/F28/F33`、`SEM-T15`、D9/D10/D11/D14 子边界）、`docs/data-architecture.md`（`agent_model_profiles`、`agent_model_purpose_assignments`、`agent_model_run_bindings`、`formal_agent_interactions`、第 4.2 节错误闭集）、`docs/testing-strategy.md`（`J25` 与第 4 节不变量）、`docs/research/fixed-recipe-and-tool-freeze-draft.md`（§4 用途映射、§5.3 十轴预算、§5.6 升级阈值、§7 前瞻）、`docs/research/agent-harness-reference-notes.md`（Pi 一手结论）、现有实现 `src/agent-provider/provider-bootstrap.js`、`src/agent-provider/model-provider-registry.js`、`src/agent-core/formal/model-gateway.js`。
 >
 > 日期：2026-08-29
 >
-> 前置：`docs/research/fixed-recipe-and-tool-freeze-draft.md` 的 13 项决定已确认并已回填权威文档。本文件是交接文档待做事项 4。
+> 前置：`docs/research/fixed-recipe-and-tool-freeze-draft.md` 的 13 项决定已确认并已回填权威文档。本文件是 Agent 重设计的第二轮冻结（模型接入接口），承接第一轮（固定 recipe 与工具）；第三轮是 supersede ADR 与实现 SPEC。
 
 ---
 
@@ -14,7 +14,7 @@
 
 本轮冻结 Agent 模型接入层的**对外接口、身份模型、能力闭集、凭据生命周期、价格与用量事实、Pi 依赖边界**。
 
-不在本轮冻结：具体 HTTP 请求体拼装、Pi 版本锁定、设置界面视觉布局、实现文件划分、SQL migration 语句。这些属于待做事项 5 的实现 SPEC。
+不在本轮冻结：具体 HTTP 请求体拼装、Pi 版本锁定、设置界面视觉布局、实现文件划分、SQL migration 语句。这些属于第三轮的实现 SPEC（`docs/agent-redesign-execution-plan.md`）。
 
 本轮也不动旧 Agent 一行代码。第 12 节只登记迁移关系，不执行迁移。
 
@@ -30,7 +30,7 @@
 | **M4** | 能力（capability）闭集包含哪些字段，以及能力不匹配如何收束 | 六字段闭集；只有 `supportsToolCalling` 是硬性绑定条件（仅 Agent Loop 需要），其余只记录或推导预算。见第 5 节 | 补齐 |
 | **M5** | 凭据槽与档案的对应关系、`safeStorage` 不可用时的行为 | 一档案一槽，不跨档案共享；不可用时只允许本次应用会话，公开状态必须同时暴露布尔存在性与作用域枚举。见第 7 节 | 补齐 |
 | **M6** | 模型运行绑定要冻结哪些字段 | 见第 6 节列清单；`budget_json` 必须承载十轴预算，`capability_json` 承载六字段能力，另增 `credential_slot_id` 以保证运行中档案被改动后借用仍可复现 | 补齐 |
-| **M7** | 是否实现远端模型目录刷新（Pi `fetchModels`） | **收窄**：首版不做自动刷新。理由：自动刷新会在用户无任何动作时改变 `catalog_revision`，并要求在设置阶段就动网络与凭据。只提供用户明确触发、失败零写入的一次性“拉取候选模型”动作，结果仅作为**建议列表**呈现，用户勾选后才写入档案并推进 `catalog_revision`。注意：权威文档目前**没有**任何目录刷新相关的验收项，因此这条需要在 `J25` 新增覆盖（见第 13 节），不是既有覆盖的延续 | 收窄 |
+| **M7** | 是否实现远端模型目录刷新（Pi `fetchModels`） | **收窄**：首版不做自动刷新。理由：自动刷新会在用户无任何动作时改变 `catalog_revision`，并要求在设置阶段就动网络与凭据。只提供用户明确触发、失败零写入的一次性“拉取候选模型”动作，结果仅作为**建议列表**呈现，用户勾选后才写入档案并推进 `catalog_revision`。`J25` 的覆盖列已含“目录刷新失败”，本项只是把它收窄为“用户触发且零写入”，仍需补写零写入与建议列表语义 | 收窄 |
 | **M8** | 是否使用 Pi 的 `envApiKeyAuth()` | **收窄既有调研结论**：`agent-harness-reference-notes.md` 把 `envApiKeyAuth()` 列为可复用，但它从 `process.env` 发现凭据，与 `SEM-F33`（凭据只经 `safeStorage`、Agent utility 只取有界调用副本）直接冲突。建议**明确禁用**，改用只读取本次调用副本的自有 auth resolver。见第 9 节 | 收窄 |
 | **M9** | 用途未配置时的回落与全空时的收束 | 专用用途为空回落到“默认”；“默认”也为空时投影为 `provider_not_configured`，不创建任务、不进入 `agent_jobs` | 补齐 |
 | **M10** | 费用估算在哪个进程计算 | **在 main 计算，不在 Agent utility 计算。** Agent utility 只回传原始用量与用量来源；价格目录、`pricing_revision` 与 `cost_estimate_json` 只存在于 main。理由：utility 没有 SQLite、没有价格目录、且被设计为不拥有任何 durable 事实 | 补齐 |
@@ -316,8 +316,8 @@ pricing_revision, pricing_source, credential_slot_id, created_at
 |---|---|
 | `CONTEXT.md` | 「Agent 模型配置档案」定义按 M2 改为“一个受信任连接 + 一份凭据 + 一组 model”；「模型运行绑定」补入 `api_style`/`base_path`/`credential_slot_id` 与十轴预算 |
 | `docs/semantic-contract.md` | `SEM-F33` 补入三接口职责与调用方（M1）、档案↔模型基数（M2）、origin/basePath 拆分（M3）、六字段能力闭集与不匹配收束（M4）、一档案一槽与 `session_only`（M5）、费用只在 main 计算（M10）、`envApiKeyAuth()` 禁用（M8）；`SEM-F25` 补一句 `providerKind` 由 origin 推导 |
-| `docs/testing-strategy.md` | `J25` 补入九条 `configure` 命令的冲突零写入、能力不匹配收束为 `provider_not_configured`/`AGENT_REQUEST_INVALID`、用户触发目录刷新失败零写入（M7）、`session_only` 重启后回落、槽删除后既有绑定收束、替身在生产构建不可达（M11） |
+| `docs/testing-strategy.md` | `J25` 的覆盖列已含 capability 不匹配、目录刷新失败、用途回落、配置 revision 冲突、应用重启、`session-only`、凭据不读回、重复 profile/model ID，**这些不重复登记**。需要补的增量只有：九条 `configure` 命令失败时零写入、能力不匹配的收束方式（`provider_not_configured` / `AGENT_REQUEST_INVALID`）、目录刷新为用户触发且只产生建议列表（M7）、一档案一槽不跨档案共享、凭据槽删除后既有绑定收束为 `AGENT_PROVIDER_AUTH_FAILED`、费用只在主进程计算（M10）、确定性替身在生产构建不可达（M11）、`MODEL_CONFIG_*` 配置错误码闭集 |
 | `docs/data-architecture.md` | `agent_model_profiles` 去掉 `model` 列并新增 `base_path`；新增 `agent_model_profile_models`（`profile_id, model_id, capability_json, pricing_override_json`，`(profile_id, model_id)` 唯一）；`agent_model_run_bindings` 增列 `api_style, base_path, pricing_source, credential_slot_id` 并把 `model` 更名 `model_id`；登记 `MODEL_CONFIG_INVALID`/`MODEL_CONFIG_REVISION_CONFLICT` 为独立于任务错误码的配置错误码。全部通过新的追加 migration，既有 migration/checksum 逐字节不变 |
 | `docs/research/agent-harness-reference-notes.md` | 在 Pi 复用清单里把 `envApiKeyAuth()` 从“可直接复用”移到“明确禁用”，并注明理由（M8） |
 
-回填完成后进入交接文档待做事项 5（形成实现 SPEC）。
+M1–M12 已于 2026-08-29 由负责人确认，回填已于同日完成。下一步：新增 supersede ADR，再形成实现 SPEC 与切片 todo list。
