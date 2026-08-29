@@ -1,10 +1,11 @@
 # ADR 0007：Agent 内核先通过隔离开发入口验证
 
-- 状态：已决定
+- 状态：已被 [ADR 0015](0015-retire-old-agent-implementation.md) 取代（2026-08-29）
 - 日期：2026-08-09
 - 决策者：项目负责人
 - 依赖：ADR 0002、ADR 0003、ADR 0005
-- 补充：ADR 0011 已取代下文第 4 项对正式 Agent 首版本地 Agent 模型 provider 的要求；本 ADR 的隔离入口、OpenAI-compatible 参考实现和 `safeStorage` 证据保持不变，不要求把隔离入口直接迁入正式产品。
+- 补充：ADR 0011 已取代下文第 4 项对正式 Agent 首版本地 Agent 模型 provider 的要求；该项此后又由 [ADR 0014](0014-multi-profile-model-access-layer.md) 取代 ADR 0011。
+- 取代说明：ADR 0015 作为前瞻决策整体取代本 ADR——第 1 项「首个实现切片是隔离 Agent 内核开发入口」与第 6 项「J23 只验收 Agent 内核、J21/J22 后置」已由新的切片顺序取代，隔离入口从门禁降级为历史资格证据（SEM-F29、J23）。下文第 2、3、5 项继续有效，但性质从「对将要建设的入口的要求」变为「对被保留代码的现状描述」；源码留在仓库但从启动路径摘除。
 
 ## 背景
 

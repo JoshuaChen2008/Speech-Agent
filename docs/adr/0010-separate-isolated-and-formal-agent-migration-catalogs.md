@@ -4,6 +4,7 @@
 - 日期：2026-08-10
 - 决策者：项目负责人
 - 关联：[ADR 0001](0001-sqlite-authoritative-event-store.md)、[ADR 0007](0007-isolated-agent-core-mvp.md)、[ADR 0008](0008-terminal-session-agent-job-reconciliation.md)
+- 补充：[ADR 0015](0015-retire-old-agent-implementation.md) 第 9 项确认本 ADR **完整保留**。隔离入口降级为历史证据并从启动路径摘除**不构成**修改候选 catalog 的理由：候选 v3 的 SQL、checksum 与受限映射保持逐字节不变，既有候选数据库必须保持可复现，交叉打开仍必须 fail closed。Agent 重设计的所有 schema 变化只在正式 catalog 上追加 v4、v5……
 
 ## 背景
 
