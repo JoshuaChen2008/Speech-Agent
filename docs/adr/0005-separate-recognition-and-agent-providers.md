@@ -4,7 +4,7 @@
 - 日期：2026-08-09
 - 决策者：项目负责人
 - 依赖：ADR 0002、ADR 0004
-- 补充：ADR 0011 已取代下文第 8 项对正式 Agent 首版本地 Agent 模型 provider 的要求；识别 provider、两类 provider 分离及其它决策保持不变。
+- 补充：ADR 0011 已取代下文第 8 项对正式 Agent 首版本地 Agent 模型 provider 的要求；[ADR 0014](0014-multi-profile-model-access-layer.md) 又取代 ADR 0011，把该项收束为「Agent 模型 provider 只经多档案 OpenAI-compatible 接入层接入，首版内部只有一个生产 adapter，本地 Agent 模型 provider 仍后置」。识别 provider、两类 provider 分离及其它决策保持不变。
 
 ## 背景
 
