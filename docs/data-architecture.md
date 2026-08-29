@@ -97,6 +97,7 @@ SQLite 驱动放在 storage worker 内的适配器后。当前选择 Electron/No
 | `memory_revisions`（J21） | 个人记忆追加变更 | `revision_id, memory_id, operation, content_json, previous_revision_id, run_id, created_at` | 创建、合并、替代、失效和用户修正都追加记录；当前投影只指向一个 revision。删除正文后只允许留下不含正文的审计或抑制事实。 |
 | `memory_evidence`（J21） | 个人记忆来源关系 | `evidence_id, run_id, memory_id, session_id, transcript_version, input_watermark, from_event_order, through_event_order, input_digest, plugin_id, recipe_version, provider, model, created_at` | 自动记忆必须至少有一个可回到权威原始转写事件范围的来源；只保存引用和 digest，不复制正文。`run_id/session/input/provider` 复合外键必须完整匹配同一 `memory-extraction` job，`input_watermark` 记录该 job 的完整输入水位，证据范围仍可指向其中的子区间；重复事实增加来源证据，不重复创建当前条目。 |
 | `memory_suppressions`（J21） | 删除抑制事实 | `identity_hash, scope_id, source_digest, created_at` | 用户明确删除记忆后阻止同一旧来源重新生成相同条目；不保存被删除正文。新的会话证据可以重新提出候选。 |
+| `session_episodes`（目标） | 会话经历记录 | `episode_id, source_kind, session_id, interaction_id, scope_id, transcript_version, input_watermark, from_event_order, through_event_order, input_digest, summary_json, occurred_from_offset_ms, occurred_through_offset_ms, ingest_run_id, lifecycle, created_at, updated_at` | SEM-F26 的三层分流里「发生了什么」这一层的物理事实，与 `memory_items` 并列而**不等同**：经历记录按来源范围回答时间线，个人记忆只保留可跨任务复用的原子事实。`source_kind` 只允许 `session` 与 `interaction`，二者恰好其一持有对应非空外键（`session_id` 或 `interaction_id`），另一列必须为空。`UNIQUE(source_kind, session_id, interaction_id, input_digest)` 使同一来源身份的重复摄取幂等：`context.ingest.*` 重放只更新计数，不产生第二条经历。`summary_json` 只保存有界结构化轨迹与来源引用，不复制整场正文或完整交互历史；单条 canonical JSON UTF-8 不超过 8 KiB。删除会话或删除交互级联删除其经历记录；删除经历记录不影响由同一来源独立产生的 `memory_items`，删除个人记忆也不删除经历记录。`lifecycle` 与 `memory_items` 同义（退出检索不改写来源历史）。经历记录只经个人上下文模块的 `resolve`/`manage` 读写，`search_context` 对它使用同一等值匹配机制。 |
 | `agent_debug_threads` / `agent_debug_messages`（J22） | 本地调试聊天 | `thread_id, selected_session_id, selected_input_watermark, selected_transcript_version, selected_input_digest, created_at`; `message_id, thread_id, role, content_json, provider, model, created_at` | 调试聊天独立于字幕会话、Agent 产物和个人记忆；选择上下文时冻结完整输入身份，只保存在本地，可清空，永不自动进入记忆或确认关键词。内部思维过程不得写入。 |
 | `segments_fts`（可选） | **可重建索引** | `rowid -> segments.id, text` | 只有历史关键字搜索进入范围时才创建；不阻断 SQLite 历史。 |
 | `segment_embedding_state`（Deferred） | 派生版本元数据 | `segment_id, text_revision, model_id, dimensions, content_hash, indexed_at` | X1 前不创建。启用后只有 revision、模型和内容哈希都匹配当前正文时才可检索。 |
@@ -141,8 +142,8 @@ Agent digest 统一使用 RFC 8785 JSON Canonicalization Scheme 的 UTF-8 字节
 - 可靠唤醒采用终态会话 durable reconciliation，而不是让 Agent outbox 参与字幕事件事务：停止后尽力评估资格并建任务，启动、worker replacement 和 Agent 模型 provider 恢复时只对资格为 `ready` 且处于 Agent 自动处理时间边界内的终态会话补齐缺失 dedupe key；记忆任务还必须处于当前个人记忆自动处理边界内，重新开启不得补跑关闭期间会话。
 - pause/resume、renderer reload 或 worker replacement 不创建新摘要会话；`session_id` 变化才创建新边界。
 - Agent 模型 provider 超时、限流、断网或凭据失效只改变 Agent 能力状态与后台 Agent 任务状态，本地字幕、持久化和历史继续。
-- 首版会后纪要由 `MeetingStopped` 在完整提交水位确定后触发；插件不能自行监听原始音频，也不能由 LLM 自主执行外部待办。
-- 插件只通过 `TranscriptReader`、`MemoryReader`、`ModelGateway`、受控 writer、`Clock` 和 `Logger` 等显式端口工作。对 Agent 模型 provider 的网络访问由 `ModelGateway` 统一代理；插件和专用子 Agent 没有任意数据库、网络、文件、shell 或进程能力。
+- 终态会话在完整提交水位确定后只触发**一个** `context.ingest.session` 摄取工作（ADR 0013 第 5 项）；报告只由用户经 Agent Bar 明确请求，或在用户开启报告自动呈现偏好后由该偏好请求。执行宿主不监听原始音频，也不由 LLM 自主执行外部待办。
+- 执行宿主只通过个人上下文模块（`ingest`/`resolve`/`manage`）、模型接入层（`catalog`/`configure`/`bind`）、受控只读工具、受控 writer、`Clock` 和 `Logger` 工作；`MemoryReader` 与插件端口机制已由 ADR 0013 取消。对 Agent 模型 provider 的网络访问由绑定后的模型运行时统一代理；recipe 与专用子 Agent 没有任意数据库、网络、文件、shell 或进程能力。
 - 网络请求和模型推理永远在 SQLite 事务外执行；结果回写时必须再次校验 job、输入水位、digest、recipe 和当前取消状态。
 
 ### 4.3 个人记忆事实与投影（A1/A2）
@@ -152,7 +153,7 @@ Agent digest 统一使用 RFC 8785 JSON Canonicalization Scheme 的 UTF-8 字节
 - 相同 `scope + kind + semantic_key` 的重复事实增加 `memory_evidence` 和出现证据，不创建重复当前条目。冲突事实追加 revision；明确内容继续生效，自动冲突只保留为候选。
 - 冻结字幕快照没有说话人身份，因此 `memory-extraction` 模型只能生成会话/项目中的倾向候选；其全局个人偏好候选无论自报 `explicit` 还是 `automatic` 都由 storage worker 丢弃。只有独立的用户明确确认动作以后才能建立全局偏好；只有用户明确确认的词汇型条目可以进入 `recognition_terms`。
 - Agent 内部检索必须使用 exact `scopeRefs/kinds/semanticKeys`，不接受自由文本、SQL、任意排序或 cursor。查询先按最近一次受信任任务策略、scope/item 生命周期和当前 revision 完整性过滤，再固定按明确内容、显著性、置信、证据数、更新时间与稳定 ID 排序；单次最多读取 256 个候选、返回 20 条和 65536 canonical JSON UTF-8 字节，每条来源引用最多 8 条；命中读取上限时保守返回 `hasMore=true`，不得为探测第 257 条而读取其正文。条目必须整条纳入，不能截断正文或来源；省略任何候选时显式返回 `hasMore`。首版 exact `semanticKeys` 只做结构化语义键匹配，不读取 `segments_fts`，也不创建 embedding 或图关系。受控只读工具 `search_context` 的 `aliasKeys` 是同一机制的别名等值匹配，不是自由文本查询：模型只能从冻结个人上下文包已携带的 `semanticKey` 与别名出发，未命中的键必须以 `unmatchedAliasKeys` 显式回报，不得退化为模糊搜索或扩大范围。
-- 全局关闭个人记忆时，查询层必须同时拒绝新提取、Agent 记忆注入和未来会话中由个人记忆产生的确认关键词；`MemoryReader` 返回带稳定原因的零条目休眠投影，不把 active 行批量改成 dormant。既有表保持不变且不可被后台任务继续更新。重新开启写入新的 `memoryProcessingSince`，自动对账不得补处理关闭期间或更早会话，但既有 active 记忆可重新进入有界读取；用户明确重新提取仍须通过当前资格。活动会话继续使用开始时冻结的确认关键词集合。
+- 全局关闭个人记忆时，查询层必须同时拒绝新提取、Agent 记忆注入和未来会话中由个人记忆产生的确认关键词；个人上下文模块的 `resolve` 返回带稳定原因的零条目休眠上下文包，不把 active 行批量改成 dormant。既有表保持不变且不可被后台任务继续更新。重新开启写入新的 `memoryProcessingSince`，自动对账不得补处理关闭期间或更早会话，但既有 active 记忆可重新进入有界读取；用户明确重新提取仍须通过当前资格。活动会话继续使用开始时冻结的确认关键词集合。
 - 删除会话时删除该会话的 Agent 产物、任务、调试关联和记忆来源；仅由该会话支持的当前记忆退出检索，有其他来源的记忆继续。删除单条个人记忆是 storage worker 的幂等事务：先为该条目的每个既有来源 digest 写入不含原条目内容的 suppression，再物理移除当前条目、revision 与 evidence；回复丢失后使用同一 deletion idempotency key 只重放计数，不再次删除或影响其它条目。同一旧输入随后扫描不得重建，新的不同输入仍按正常筛选处理。
 - 首版不按时间自动物理删除个人记忆；低价值、冲突、失效或被替代条目只退出当前检索。物理删除必须来自用户明确动作。
 
