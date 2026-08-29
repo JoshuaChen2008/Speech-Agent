@@ -17,6 +17,8 @@
 
 > 2026-08-07 当前执行基线：同源两阶段实时识别、固定四资源 manifest、三项核心 ready marker、设置页三角色与 schema-v4 packaged 首启/复启已经实现并达到联合验收完成。远端 run `31191838016` 精确绑定 revision `bbfd7041e5963e51942392323735298a7b81cb30`，core 422 tests=415 pass+7 expected skips、integration 29/29、evidence 204/204；总计 655 tests=648 pass+7 expected skips+0 fail。artifact ID `8999273285`、ZIP digest `5ce4070c…55af`、installer SHA `d77d16c0…060c`、产品载荷 SHA `e95fd87f…a35a`。本轮按项目负责人要求取消声音测试；I2、I3 音频实机范围与完整 I4 不提升，DWM 36 组合和专用干净机仍属于外部实机门禁。
 
+> 2026-08-29 Agent 重设计排期：Agent 系统的排期与状态改由 [`docs/agent-redesign-execution-plan.md`](docs/agent-redesign-execution-plan.md) 承载，本文件中的 A1/A2、I5、V5 与 §5.4/§6.5 只描述插件时代的旧切分，已由 ADR 0013/0014/0015 取代，不再是排期依据。新切片顺序为 S1 个人上下文模块骨架（J21）→ S2 模型接入层（J25）→ S3 执行宿主单轮 recipe（J22/J24）→ S4 受控只读工具与 Agent Loop（J22/J24）→ S5 Agent Bar 与单交互导出（J26）→ S6 旧 Agent 锁定在启动路径之外（J27）。六片全部为**已决定**，无任何实现证据；本次只完成设计、文档与 SPEC，未改动任何产品代码。SQLite 变化按追加 migration 落地为 v5（S1）、v6（S2）、v7（S3），S4/S5/S6 不带 schema 变化，v1–v4 逐字节不变。字幕系统状态不因本轮变化：SEM-F00 要求 Agent 任何失败都不改变字幕显示、SQLite 历史与导出，每片必须附字幕系统零回归证明。旧 Agent 实现留在仓库但不在产品启动路径上——这一状态在 2026-08-29 逐文件核查中确认**已经成立**，S6 的工作是给它加守卫并补全打包排除，不是关掉正在运行的东西。
+
 ---
 
 ## 0. 现状盘点
