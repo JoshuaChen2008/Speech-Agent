@@ -1,5 +1,7 @@
 # 正式 Agent 首版接口合同
 
+> **2026-08-29 取代声明：本文已整体失效，只作为旧 Agent 接口的历史留档。** 依据 ADR 0003 / 0007 / 0011 已分别被 [ADR 0013](adr/0013-agent-deep-modules-and-execution-host.md) / [ADR 0015](adr/0015-retire-old-agent-implementation.md) / [ADR 0014](adr/0014-multi-profile-model-access-layer.md) 取代。下文的 `AgentPluginHost` 端口、`MemoryReader`、单条目 provider 配置表与启动环境凭据协议**不得**再作为现行接口引用。新的三接口（个人上下文模块 `ingest`/`resolve`/`manage`、模型接入层 `catalog`/`configure`/`bind`、执行宿主 recipe 闭集）的精确 IPC 通道与载荷键见 [`agent-redesign-execution-plan.md`](agent-redesign-execution-plan.md)。
+
 > 证据状态：已决定。D3–D6 的正式 SQLite、三项 UI-free 后端纵切和 production `StorageWorkerHost` storage utility transport，D8 的 `MemoryReader → StorageWorkerService/FormalAgentStore` storage-worker 子边界，以及 D9–D13 的 provider bootstrap/registry、设置存储、字幕提交边界与正式任务存储网关接线子边界均为实现完成·尚未验收。D6 已经过真实 Electron utility process，覆盖策略先行、claim 后 exact-child 强制退出与退出同一性、replacement 未重放策略前拒绝领取、租约到期后同 `runId` 恢复、重复对账和三项结果各自最多提交一次，并由父测试独立复算 SQLite 身份与隐私负扫描；D13 又把真实 runner、两类 reader 与两类 writer 统一接入 main-owned `StorageGateway`。ADR 0011 冻结正式首版的 DeepSeek 非敏感配置表、启动环境凭据、provider/model/预算冻结和降级；本文不表示真实 DeepSeek 已接入，也不表示 J13/J20/J21/J22/J24 已有完整产品证据。
 
 ## 1. 边界与版本

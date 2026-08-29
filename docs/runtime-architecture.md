@@ -119,6 +119,8 @@ stack、dump 或任意 Error 文本，也不配置 WER/Crashpad 或外部上传�
 
 `AgentProviderBootstrap / AgentRuntime / AgentPluginHost`（A1 后置）：
 
+> **2026-08-29 取代声明：本小节四条要点已失效。** `AgentPluginHost` 与第一方插件机制由 [ADR 0013](adr/0013-agent-deep-modules-and-execution-host.md) 取代为两个深模块（个人上下文模块、Agent 模型接入层）加一个 Agent 执行宿主；单一 DeepSeek 配置表与启动环境 `DEEPSEEK_API_KEY` 凭据由 [ADR 0014](adr/0014-multi-profile-model-access-layer.md) 取代为多档案加按档案 `safeStorage` 槽（环境净化规则保留，环境读取删除）。仍然有效的只有最后一条的边界含义：Agent 的有界执行、取消、超时、重试与错误分类不得改变本地 ASR、SQLite 字幕事实或历史状态。字幕上下文适配器仍只读、仍按水位读取。
+
 - 正式首版把 DeepSeek 非敏感参数放在 main-only `AgentProviderConfigCatalog` 配置表；API key 只从启动环境 `DEEPSEEK_API_KEY` 读取一次，并在任何 `BrowserWindow`、preload、renderer、worker、child 或 utility 创建前从 `process.env` 删除。所有子进程使用显式排除该变量的环境，只有 Agent utility 当前调用取得私有有界副本；凭据永不进入 config、snapshot、其它进程环境、SQLite、日志或报告。隔离 Agent 内核开发入口仍单独使用 ADR 0007 的 `safeStorage`。
 - 用本项目接口包住 Pi Agent Core 或替代实现；项目宿主管理第一方插件、权限、生命周期和故障隔离，不嵌入完整 coding-agent。
 - 只读字幕上下文插件从提交边界按水位读取；增强文本和会后结构化纪要由独立内容插件生成并保存，不得启用 shell/进程/任意文件写或外部写操作。
@@ -335,6 +337,10 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 - 普通响应变慢、瞬时抖动或单次心跳延后只能形成指标，不能触发降级。连接存活阈值必须宽松、可测试，并与冻结字幕可见延迟指标分开。
 
 ### 11.2 Agent 模型 provider、处理资格与资源仲裁
+
+> **2026-08-29 部分取代声明。** 本小节中与旧 provider 形状绑定的要点已由 [ADR 0014](adr/0014-multi-profile-model-access-layer.md) 取代：`AgentModelProviderRegistry` 的单一配置解析、写死 exact origin `https://api.deepseek.com`、启动期 `DEEPSEEK_API_KEY` 读取与「要求以新的启动环境重启应用」的恢复方式、以及 D9 的 `65536/16384/60000ms` 保守预算，全部替换为——多档案 OpenAI-compatible 接入层、按档案 exact HTTPS origin 加独立 `base_path`、按档案主进程 `safeStorage` 槽（凭据失效范围收窄为单个档案，恢复方式为用户重新输入）、以及由六字段能力推导的十轴运行预算。环境净化规则作为纯加固不变量保留，但不再有任何代码把环境读成凭据来源。`ModelGateway` 的运行冻结职责由模型运行绑定承担，见 [`data-architecture.md`](data-architecture.md)。
+>
+> 本小节**继续有效**的部分：Agent 总开关与两个自动处理边界的语义；`AgentEligibilityEvaluator` 的九值资格闭集与固定判定顺序（`outside_automatic_window` 只适用于自动请求）；识别 provider 不经该网关也不与其共享配置；本地 Agent 推理对字幕会话让行、云端请求可在新会话期间继续；以及 Agent 侧任何不可用都不改变字幕会话、SQLite 字幕事实、历史与导出。`providerKind` 现在由档案 origin 是否为本地环回推导并随绑定冻结，让行语义不变。
 
 - Agent 总开关首次默认关闭。用户开启时，主进程持久化新的 `automaticProcessingSince`；自动对账不得静默处理该时间边界之前结束的会话，更早会话只能由用户从历史明确请求。Agent 总开关与个人记忆每次从不生效转为同时生效时另存新的 `memoryProcessingSince`；自动记忆任务不得补处理该边界之前、尤其是个人记忆关闭期间的会话。
 - `AgentEligibilityEvaluator` 只返回 `ready/no_committed_transcript/outside_automatic_window/agent_disabled/provider_not_configured/cloud_disclosure_required/credential_unavailable/local_model_not_ready/session_not_terminal`。判定固定遵循正式接口合同的顺序；`outside_automatic_window` 只适用于自动请求，用户请求忽略时间边界但不绕过其它条件。只有 `ready` 能创建或领取后台 Agent 任务；其余结果不调用 Agent 模型 provider，并向设置或历史提供稳定的下一动作。

@@ -1,5 +1,7 @@
 # 正式 Agent 首版 TODO 与组合验收矩阵
 
+> **2026-08-29 取代声明：本文的 D 序列排期已整体失效，只作为旧 Agent 实现进度的历史留档。** 其权威依据 ADR 0003 / 0007 / 0011 已分别被 [ADR 0013](adr/0013-agent-deep-modules-and-execution-host.md) / [ADR 0015](adr/0015-retire-old-agent-implementation.md) / [ADR 0014](adr/0014-multi-profile-model-access-layer.md) 取代。已记录为完成的 D 项证据仍然真实，但不再计入新实现的验收——按 ADR 0015 第 7 项，旧门禁通过状态不得作为新能力的验收替代。新的切片顺序、旅程编号与证据要求见 [`agent-redesign-execution-plan.md`](agent-redesign-execution-plan.md)。
+
 > 更新日期：2026-08-10
 > 证据状态：SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；D3 的正式 SQLite migration 与存储/生命周期子边界、D4 的会后结构化纪要后端纵切、D5 的增强文本与个人记忆 UI-free 后端纵切、D6 的正式 storage utility transport 子边界、D9 的无公网 main-only Agent 模型 provider bootstrap/catalog 子边界、D10 的 `AgentModelProviderRegistry → ModelGateway → Pi Agent Loop` 无公网内部路径、D11 的 `ConfigStore` v2 Agent 设置存储、D12 的字幕提交边界接线、D13 的正式任务存储网关接线，以及 D14 的正式 Agent utility 进程子边界均为实现完成·尚未验收；ADR 0011 的正式 main、网络接线与其余正式产品项保持已决定。
 

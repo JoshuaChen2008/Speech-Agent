@@ -1,5 +1,7 @@
 # Agent 插件、个人记忆与 Provider 架构
 
+> **2026-08-29 取代声明：本文已整体失效，只作为旧 Agent 设计的历史留档。** 它的三个依据 ADR 已被取代——[ADR 0003](adr/0003-project-owned-agent-plugin-host.md) → [ADR 0013](adr/0013-agent-deep-modules-and-execution-host.md)（插件与端口机制改为两个深模块加一个执行宿主，`AgentPluginHost` 与 `MemoryReader` 取消），[ADR 0011](adr/0011-configured-agent-provider-bootstrap.md) → [ADR 0014](adr/0014-multi-profile-model-access-layer.md)（单一 DeepSeek 配置表与环境凭据改为多档案加按档案 `safeStorage`），[ADR 0007](adr/0007-isolated-agent-core-mvp.md) → [ADR 0015](adr/0015-retire-old-agent-implementation.md)（隔离入口从门禁降级为历史证据）。下文关于插件清单、八端口、三项自动任务与单一 provider 的内容**不得**再作为现行设计引用。现行口径见 `docs/semantic-contract.md` 的 SEM-F30/F33、上述三份新 ADR 与 [`agent-redesign-execution-plan.md`](agent-redesign-execution-plan.md)。
+
 > 状态：已决定；由 [ADR 0003](adr/0003-project-owned-agent-plugin-host.md)、[ADR 0005](adr/0005-separate-recognition-and-agent-providers.md)、[ADR 0006](adr/0006-local-structured-personal-memory.md)、[ADR 0007](adr/0007-isolated-agent-core-mvp.md)、[ADR 0008](adr/0008-terminal-session-agent-job-reconciliation.md) 与 [ADR 0009](adr/0009-deterministic-agent-input-planning.md) 共同约束。SEM-F29/J23 隔离 Agent 内核开发入口为联合验收完成；D3 正式存储/生命周期、D4 会后结构化纪要与 D5 增强文本/个人记忆 UI-free 后端纵切为实现完成·尚未验收；正式产品接线、记忆检索、确认关键词与完整 J21/J22/J24 保持已决定
 >
 > 日期：2026-08-09
