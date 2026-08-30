@@ -1,0 +1,37 @@
+{
+  "caller_role": "caption",
+  "contract_id": "speech-agent.personal-context.ui",
+  "contract_version": "1.0.0",
+  "event": null,
+  "fixture_id": "manage.permission-failure.001",
+  "j21_evidence": false,
+  "pending": null,
+  "preview_only": true,
+  "request": {
+    "command": {
+      "cursor": null,
+      "limit": 20,
+      "resource": "personal_memories",
+      "type": "view"
+    },
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.0.0",
+    "request_id": "request.permission.001"
+  },
+  "response": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.0.0",
+    "error": {
+      "category": "permission",
+      "code": "AGENT_CONTEXT_PERMISSION_DENIED",
+      "current_revision": null,
+      "next_action": null,
+      "retry_policy": "none"
+    },
+    "ok": false,
+    "result": null,
+    "revision": null
+  },
+  "scenario": "permission_failure",
+  "seam": "agent-context:manage"
+}

@@ -1,0 +1,60 @@
+{
+  "caller_role": "history",
+  "contract_id": "speech-agent.personal-context.ui",
+  "contract_version": "1.0.0",
+  "event": null,
+  "fixture_id": "manage.view-episodes-ready.001",
+  "j21_evidence": false,
+  "pending": null,
+  "preview_only": true,
+  "request": {
+    "command": {
+      "cursor": null,
+      "limit": 20,
+      "resource": "session_episodes",
+      "type": "view"
+    },
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.0.0",
+    "request_id": "request.view-episodes.001"
+  },
+  "response": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.0.0",
+    "error": null,
+    "ok": true,
+    "result": {
+      "has_more": false,
+      "items": [
+        {
+          "episode_id": "episode.synthetic.001",
+          "lifecycle": "active",
+          "occurred_from_offset_ms": 0,
+          "occurred_through_offset_ms": 60000,
+          "omissions": [
+            "not_committed_tail"
+          ],
+          "scope": {
+            "kind": "session",
+            "label": "示例会话",
+            "reference": "session.synthetic.001"
+          },
+          "source_kind": "session",
+          "source_reference_count": 1,
+          "summary": {
+            "bullets": [
+              "形成一项合成示例结论。"
+            ],
+            "title": "合成会话摘要"
+          },
+          "updated_at": "2000-01-01T00:00:00.000Z"
+        }
+      ],
+      "kind": "episode_page",
+      "next_cursor": null
+    },
+    "revision": 7
+  },
+  "scenario": "ready",
+  "seam": "agent-context:manage"
+}

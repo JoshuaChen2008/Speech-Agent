@@ -1,0 +1,29 @@
+{
+  "caller_role": "history",
+  "contract_id": "speech-agent.personal-context.ui",
+  "contract_version": "1.0.0",
+  "event": null,
+  "fixture_id": "overview.unavailable.001",
+  "j21_evidence": false,
+  "pending": null,
+  "preview_only": true,
+  "request": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.0.0"
+  },
+  "response": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.0.0",
+    "error": {
+      "category": "unavailable",
+      "code": "AGENT_CONTEXT_UNAVAILABLE",
+      "current_revision": null,
+      "next_action": "retry",
+      "retry_policy": "retry_same_request"
+    },
+    "ok": false,
+    "snapshot": null
+  },
+  "scenario": "unavailable",
+  "seam": "agent-context:get-overview"
+}

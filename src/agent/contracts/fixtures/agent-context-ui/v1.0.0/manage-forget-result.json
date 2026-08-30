@@ -1,0 +1,49 @@
+{
+  "caller_role": "settings",
+  "contract_id": "speech-agent.personal-context.ui",
+  "contract_version": "1.0.0",
+  "event": null,
+  "fixture_id": "manage.forget-result.001",
+  "j21_evidence": false,
+  "pending": null,
+  "preview_only": true,
+  "request": {
+    "command": {
+      "expected_revision": 7,
+      "item_id": "memory.synthetic.001",
+      "item_revision": 3,
+      "type": "forget"
+    },
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.0.0",
+    "request_id": "request.forget.001"
+  },
+  "response": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.0.0",
+    "error": null,
+    "ok": true,
+    "result": {
+      "item": {
+        "display_text": "项目沟通偏好先给结论。",
+        "kind": "preference",
+        "lifecycle": "forgotten",
+        "memory_id": "memory.synthetic.001",
+        "origin": "explicit",
+        "revision": 4,
+        "scope": {
+          "kind": "global",
+          "label": "全局",
+          "reference": null
+        },
+        "source_reference_count": 2,
+        "updated_at": "2000-01-01T00:01:00.000Z"
+      },
+      "kind": "memory_item",
+      "operation": "forget"
+    },
+    "revision": 8
+  },
+  "scenario": "forget_result",
+  "seam": "agent-context:manage"
+}

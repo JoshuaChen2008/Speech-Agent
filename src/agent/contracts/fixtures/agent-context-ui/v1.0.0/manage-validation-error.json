@@ -1,0 +1,44 @@
+{
+  "caller_role": "settings",
+  "contract_id": "speech-agent.personal-context.ui",
+  "contract_version": "1.0.0",
+  "event": null,
+  "fixture_id": "manage.validation-error.001",
+  "j21_evidence": false,
+  "pending": null,
+  "preview_only": true,
+  "request": {
+    "command": {
+      "entry": {
+        "display_text": "项目沟通偏好先给结论。",
+        "kind": "preference",
+        "scope": {
+          "kind": "global",
+          "reference": null
+        },
+        "semantic_key": "communication:lead_with_conclusion"
+      },
+      "expected_revision": 7,
+      "type": "remember"
+    },
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.0.0",
+    "request_id": "request.invalid.001"
+  },
+  "response": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.0.0",
+    "error": {
+      "category": "validation",
+      "code": "AGENT_CONTEXT_REQUEST_INVALID",
+      "current_revision": null,
+      "next_action": null,
+      "retry_policy": "none"
+    },
+    "ok": false,
+    "result": null,
+    "revision": null
+  },
+  "scenario": "validation_error",
+  "seam": "agent-context:manage"
+}

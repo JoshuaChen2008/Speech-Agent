@@ -1,0 +1,41 @@
+{
+  "caller_role": "settings",
+  "contract_id": "speech-agent.personal-context.ui",
+  "contract_version": "1.0.0",
+  "event": null,
+  "fixture_id": "manage.delete-result.001",
+  "j21_evidence": false,
+  "pending": null,
+  "preview_only": true,
+  "request": {
+    "command": {
+      "deletion_idempotency_key": "delete.synthetic.001",
+      "expected_revision": 8,
+      "item_id": "memory.synthetic.001",
+      "item_revision": 4,
+      "type": "delete"
+    },
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.0.0",
+    "request_id": "request.delete.001"
+  },
+  "response": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.0.0",
+    "error": null,
+    "ok": true,
+    "result": {
+      "deleted": {
+        "evidence": 2,
+        "items": 1,
+        "revisions": 3
+      },
+      "kind": "deletion",
+      "operation": "delete",
+      "replayed": false
+    },
+    "revision": 9
+  },
+  "scenario": "delete_result",
+  "seam": "agent-context:manage"
+}

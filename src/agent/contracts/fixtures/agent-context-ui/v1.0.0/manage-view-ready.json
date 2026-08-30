@@ -1,0 +1,52 @@
+{
+  "caller_role": "settings",
+  "contract_id": "speech-agent.personal-context.ui",
+  "contract_version": "1.0.0",
+  "event": null,
+  "fixture_id": "manage.view-ready.001",
+  "j21_evidence": false,
+  "pending": null,
+  "preview_only": true,
+  "request": {
+    "command": {
+      "cursor": null,
+      "limit": 20,
+      "resource": "personal_memories",
+      "type": "view"
+    },
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.0.0",
+    "request_id": "request.view.001"
+  },
+  "response": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.0.0",
+    "error": null,
+    "ok": true,
+    "result": {
+      "has_more": false,
+      "items": [
+        {
+          "display_text": "项目沟通偏好先给结论。",
+          "kind": "preference",
+          "lifecycle": "active",
+          "memory_id": "memory.synthetic.001",
+          "origin": "explicit",
+          "revision": 3,
+          "scope": {
+            "kind": "global",
+            "label": "全局",
+            "reference": null
+          },
+          "source_reference_count": 2,
+          "updated_at": "2000-01-01T00:00:00.000Z"
+        }
+      ],
+      "kind": "memory_page",
+      "next_cursor": null
+    },
+    "revision": 7
+  },
+  "scenario": "ready",
+  "seam": "agent-context:manage"
+}
