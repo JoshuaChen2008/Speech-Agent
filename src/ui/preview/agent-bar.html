@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;">
+  <link rel="stylesheet" href="../shared/tokens.css">
+  <link rel="stylesheet" href="../shared/phases.css">
+  <!-- 设置窗真实样式表。Agent Bar 的控件外观必须与设置页逐像素同源，
+       所以这里直接引用它，而不是在预览页里再抄一份。 -->
+  <link rel="stylesheet" href="../../settings/settings.css">
+  <link rel="stylesheet" href="agent-bar.css">
+  <title>Agent Bar · 视觉设计基准</title>
+</head>
+<body>
+  <header class="preview-head">
+    <div>
+      <h1>Agent Bar 视觉设计基准</h1>
+      <p class="sub">
+        状态、文案与信息架构逐条取自 <code>docs/agent-ui-ux-handoff.md</code> §13.3 / §13.4。
+        控件外观直接引用 <code>src/settings/settings.css</code>，与设置页 · Agent 模型配置档案同源。
+      </p>
+      <p class="preview-warning" role="note">
+        这是<strong>设计基准</strong>，不是产品实现：页面不进入生产 bundle，不经过任何 exact validator，
+        <strong>不构成 J22/J24 证据</strong>，也不表示正式 <code>agent</code> renderer 的前置 contract 已冻结
+        （<code>AUI-CR-010</code>–<code>019</code> 仍为 open）。这里的数据是手写设计取值，不是后端事实。
+      </p>
+    </div>
+    <div class="preview-controls">
+      <label class="ctl">主题
+        <select id="ctl-theme">
+          <option value="dark">深色</option>
+          <option value="light">浅色</option>
+        </select>
+      </label>
+      <label class="ctl ctl-check">
+        <input type="checkbox" id="ctl-desaturate"> 去掉颜色
+      </label>
+    </div>
+  </header>
+
+  <p class="note preview-note">
+    「去掉颜色」用来核对同一条规则：颜色只是冗余通道。勾选后每个状态仍必须靠文字与形状区分。
+    页面本身是预览外壳，只有卡片里的 Agent Bar 才是设计基准。
+  </p>
+
+  <main id="matrix" class="matrix"></main>
+
+  <script src="agent-bar.js"></script>
+</body>
+</html>

@@ -1,0 +1,112 @@
+/* Agent Bar 视觉设计基准页 · 预览外壳样式。
+   ---------------------------------------------------------------------------
+   规则：Agent Bar 本体的控件外观全部来自 ../../settings/settings.css
+   —— .group / .row / .label / .hint / .seg / .primary-btn / .secondary-btn /
+   .link-btn / .resource-list / .resource-row / .resource-status / .note / .sub。
+   本文件**不得重新定义**这些类，否则设计基准就会和设置页各走各的。
+   这里只写两种东西：预览外壳（页头、控件、卡片网格），以及设置页确实没有对应
+   物的少数 Agent Bar 结构（结果正文、事实行的分隔符）。
+
+   页面自身的排版变量一律 --ab- 前缀，避免与共享语义 token 重名。
+   本页不进入生产 bundle，也不是正式 agent renderer 的实现。 */
+
+:root {
+  --ab-gap: 20px;
+  --ab-bar-width: 420px;
+}
+
+/* settings.css 把 html/body 设成满高的应用外壳；预览页是长文档，要放开。 */
+html, body { height: auto; }
+
+body {
+  min-height: 100%;
+  margin: 0;
+  padding: 26px 30px 60px;
+  user-select: text;
+}
+
+/* ---------------------------------------------------------------------------
+   预览外壳
+   --------------------------------------------------------------------------- */
+.preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border-window-titlebar);
+}
+.preview-head h1 { margin-top: 0; }
+.preview-head .sub { max-width: 78ch; margin-bottom: 0; }
+
+.preview-warning {
+  margin: 10px 0 0;
+  max-width: 78ch;
+  padding: 9px 12px;
+  border: 1px solid var(--accent-border-selected);
+  border-radius: var(--radius-control);
+  background: var(--accent-wash);
+  font-size: var(--fs-hint);
+  line-height: 1.55;
+}
+
+.preview-note { max-width: 78ch; }
+
+code { font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace; font-size: var(--fs-micro); }
+
+.preview-controls { display: flex; flex-wrap: wrap; gap: 12px; }
+.ctl { display: flex; align-items: center; gap: 6px; font-size: var(--fs-label); }
+.ctl-check { gap: 5px; }
+
+/* 「去掉颜色」核对：状态区分必须在没有颜色时仍然成立。 */
+.matrix.is-desaturated { filter: grayscale(1); }
+
+.matrix { margin-top: 8px; }
+
+.case-group { margin-bottom: 34px; }
+.case-group > h2 { margin: 0 0 4px; font-size: var(--fs-body); font-weight: var(--fw-medium); }
+.case-group > p { margin: 0 0 14px; }
+
+.cases {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--ab-bar-width), 1fr));
+  gap: var(--ab-gap);
+  align-items: start;
+}
+
+.case { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.case > figcaption { display: flex; align-items: baseline; gap: 8px; font-size: var(--fs-label); }
+.case .case-name { font-weight: var(--fw-medium); }
+.case .case-note { font-size: var(--fs-micro); opacity: 0.5; }
+
+/* ---------------------------------------------------------------------------
+   Agent Bar 本体：只做布局组合，控件外观仍由 settings.css 决定
+   --------------------------------------------------------------------------- */
+.agent-bar { display: flex; flex-direction: column; gap: 10px; }
+.agent-bar[data-readonly="true"] { opacity: 0.72; }
+
+.agent-bar .row { align-items: flex-start; }
+.agent-bar .compose-row { align-items: center; }
+.agent-bar .compose-row input[type="text"] { flex: 1; }
+.agent-bar .seg { flex: none; }
+
+/* 结果正文：设置页只有 .label / .hint / .note 三档，没有「可读长正文」这一档。
+   它必须比 .hint 清楚、比 .label 松，所以在这里补一条，不去改设置页。 */
+.agent-result-body {
+  margin: 0;
+  padding: 12px 0 4px;
+  font-size: var(--fs-body);
+  line-height: 1.65;
+}
+.agent-result-body[data-empty="true"] { opacity: 0.62; }
+
+/* 结果头部事实行：沿用 .hint 的字号与灰度，只补一个分隔符。 */
+.agent-facts > span:not(:last-child)::after { content: '·'; margin: 0 6px; opacity: 0.5; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+@media (forced-colors: active) {
+  .preview-warning { border-color: CanvasText; }
+}
