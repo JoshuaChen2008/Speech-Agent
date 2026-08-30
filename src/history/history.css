@@ -80,7 +80,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 }
 .session-card:hover { background: rgba(var(--fg), 0.055); }
 .session-card[aria-current="true"] {
-  border-color: rgba(var(--c-accent), 0.3);
+  border-color: var(--accent-border-selected);
   background: var(--accent-wash);
 }
 .session-card strong, .session-card span { display: block; }
@@ -125,7 +125,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   font-size: var(--fs-hint);
   cursor: pointer;
 }
-.export-actions button:hover { border-color: rgba(var(--c-accent), 0.55); background: var(--accent-wash); }
+.export-actions button:hover { border-color: var(--accent-border-hover); background: var(--accent-wash); }
 .export-status { min-height: 28px; padding-top: 9px; color: rgb(var(--text-accent)); font-size: var(--fs-hint); }
 
 .timeline-navigation {
@@ -146,7 +146,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   cursor: pointer;
 }
 .timeline-navigation button:hover:not(:disabled) {
-  border-color: rgba(var(--c-accent), 0.55);
+  border-color: var(--accent-border-hover);
   background: var(--accent-wash);
 }
 .range-status {
@@ -160,7 +160,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .timeline { margin: 14px 0 0; padding: 0; list-style: none; outline: none; }
 .timeline:focus-visible {
   border-radius: var(--radius-control);
-  box-shadow: 0 0 0 2px rgba(var(--c-accent), 0.48);
+  box-shadow: 0 0 0 var(--focus-width) var(--focus-ring-soft);
 }
 .timeline[aria-busy="true"] { opacity: 0.55; }
 .timeline-item {
@@ -201,7 +201,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   top: 4px;
   width: 7px;
   height: 7px;
-  border: 2px solid rgb(var(--c-accent));
+  border: 2px solid var(--accent-solid);
   border-radius: 50%;
   background: rgb(var(--fg));
 }

@@ -204,6 +204,11 @@
   --accent-wash: rgba(var(--c-accent), 0.16);
   --on-accent: rgb(var(--c-white));
 
+  /* 强调描边两档：选中态比 hover 更淡，避免当前项比指针项更抢眼。
+     组件不得再直接写 rgba(var(--c-accent), …)——调色板原始值只属于 §1。 */
+  --accent-border-selected: rgba(var(--c-accent), 0.3);
+  --accent-border-hover: rgba(var(--c-accent), 0.55);
+
   /* --------------------------------------------------------------------
      phase 色调轴。runtime-view.js 为每个 phase / source state / model state
      产出一个 tone，DOM 层落成 [data-tone]。五档覆盖全部 8 个 phase：
@@ -319,6 +324,10 @@
   --focus-color: rgb(var(--c-accent));
   --focus-width: 2px;
   --focus-offset: 2px;
+
+  /* 容器级焦点环：用于本身不是控件、但可接收键盘焦点的滚动/列表容器。
+     比 --focus-color 淡，避免整块列表被实心描边包住。 */
+  --focus-ring-soft: rgba(var(--c-accent), 0.48);
 }
 
 :where(button, a[href], input, select, textarea, [tabindex]):focus-visible {
