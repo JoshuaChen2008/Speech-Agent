@@ -145,7 +145,7 @@ Agent Bar 是紧凑的正式入口，不是通用聊天首页或任务面板。�
 2. 查看 Core 返回的 Agent 处理资格；非 `ready` 时呈现对应原因与下一动作。
 3. 输入一次自然语言意图并提交。
 4. 运行中可请求取消；取消进入终态收束，不立即伪造“已取消”。
-5. 呈现最终结果、范围和模型身份；需要时展示 input/output token、用量来源、缓存命中率与相对时长，不展示金额。
+5. 呈现最终结果、范围和模型身份；需要时展示 input/output token、缓存命中率与相对时长，不展示金额；provider 未返回用量或 model 的 `usageReporting` 为 false 时显示「用量未知」，不显示任何估算数字。
 6. 用户可明确编辑、接受、拒绝、记住或忘记；这些动作等待回执。
 
 普通单轮请求与 Agent Loop 使用同一产品语言。UI 可以展示“分析了多个来源”“使用了只读工具”与升级理由的产品投影，但不展示内部 recipe ID、轮次调试台、中间 assistant 文本、隐藏提示、reasoning 或内部思维过程。
@@ -197,7 +197,7 @@ Agent Bar 是紧凑的正式入口，不是通用聊天首页或任务面板。�
 - single-shot pending、终态成功、终态失败、取消请求中、取消终态。
 - Agent Loop、多 attempt、工具成功、工具失败、预算耗尽。
 - provider 超时/限流/断网、鉴权失败、worker 退出和输出 Schema 失败。
-- 结果为空、用量来源为 provider 或 estimated、缓存命中已知或未知，且不存在金额字段。
+- 结果为空、用量已知（来源恒为 provider）或用量未知、缓存命中已知或未知，且不存在金额字段与任何估算 token。
 - reload、重复通知和迟到结果。
 
 ### 6.4 历史与导出
@@ -221,7 +221,7 @@ Core contract 是 renderer 的唯一事实源：
 - renderer 不从等待时长、异常字符串、ID 格式、DOM 顺序或缺少字段推断状态。
 - fixture 与生产 snapshot 使用同一个 exact validator；设计 fixture 只能填合成内容。
 
-S2 Core 已签发 `agent-model-ui@1.0.0`，状态为「实现完成·尚未验收」。生产 contract 位于 `src/agent/contracts/agent-model-ui/v1.0.0.js`，preview-only 场景清单位于 `src/agent/contracts/fixtures/agent-model-ui/v1.0.0/scenarios.json`，覆盖空 model 模板、模板删除不重建、用户确认能力、三种 credential scope、direct/fallback/unconfigured、两个配置错误、changed/reload、六值 remote pull，以及 provider/estimated token 与缓存已知/未知。renderer 开始门槛是只消费该 exact contract、先订阅再读取、拒绝未知版本/值并保留用户输入；fixture 不构成 J25 证据。正式设置 renderer 与用户往返继续延后 S5-Integration。
+S2 Core 已签发 `agent-model-ui@1.0.0`，状态为「实现完成·尚未验收」。生产 contract 位于 `src/agent/contracts/agent-model-ui/v1.0.0.js`，preview-only 场景清单位于 `src/agent/contracts/fixtures/agent-model-ui/v1.0.0/scenarios.json`，覆盖空 model 模板、模板删除不重建、用户确认能力、三种 credential scope、direct/fallback/unconfigured、两个配置错误、changed/reload、六值 remote pull，以及用量已知/未知与缓存已知/未知。renderer 开始门槛是只消费该 exact contract、先订阅再读取、拒绝未知版本/值并保留用户输入；fixture 不构成 J25 证据。正式设置 renderer 与用户往返继续延后 S5-Integration。
 
 需要新事实或动作时，按 [`agent-ui-contract-requests.md`](agent-ui-contract-requests.md) 登记。若请求改变用户能力、默认值、状态闭集、数据保留或失败语义，先更新语义合同与旅程矩阵；UI/UX 模型不在 renderer 中试行新语义。
 
