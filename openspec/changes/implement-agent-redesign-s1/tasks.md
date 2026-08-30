@@ -77,5 +77,5 @@
 - [x] 9.4 依次运行 `npm run test:core`、`npm run test:integration`、`npm run test:evidence`；任一失败先定位并保留可复现证据，不把受限环境 EPERM 误记为产品结论。
 - [x] 9.5 用 `code-review` 复核新旧表隔离、三个入口深度、旧四树不可达、无第二套 digest/错误码字面量、失败零写入和字幕零回归。
 - [x] 9.6 按实际证据更新 `docs/agent-redesign-execution-plan.md`、`docs/testing-strategy.md` 与 `PLAN.md`；只有 S1 子边界证据时状态写“实现完成·尚未验收”，不得写无修饰的“完成”或晋级完整 J21。
-- [ ] 9.7 逐路径显式暂存并按功能提交合同/migration、个人上下文模块、scheduler/IPC/联合证据；每个提交 subject-only 且引用 SEM 与 J21，禁止 `git add .`。
-- [ ] 9.8 提交后再次核对八个 `docs/current-framework*` 文件仍未被暂存、删除或覆盖，并确认旧 Agent 源码与 `npm run start:agent-mvp` 保持原样。
+- [x] 9.7 逐路径显式暂存并按功能提交合同/migration、个人上下文模块、scheduler/IPC/联合证据；每个提交 subject-only 且引用 SEM 与 J21，禁止 `git add .`。
+- [x] 9.8 提交后再次核对八个 `docs/current-framework*` 文件仍未被暂存、删除或覆盖，并确认旧 Agent 源码与 `npm run start:agent-mvp` 保持原样。
