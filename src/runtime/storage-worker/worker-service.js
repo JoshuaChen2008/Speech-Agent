@@ -26,17 +26,32 @@ class StorageWorkerService {
     this.storeFactory = options.storeFactory || ((storeOptions) => {
       try {
         return new SqliteSubtitleStore({ ...storeOptions, migrations: FORMAL_AGENT_MIGRATIONS })
-      } catch (modelAccessMigrationError) {
-        /* v6 is an optional Agent capability boundary. Reopen against the
-           byte-stable v1-v5 catalog; checksum drift or an earlier failure will
-           fail again, while an isolated v6 failure leaves subtitles usable. */
-        const fallback = new SqliteSubtitleStore({
-          ...storeOptions,
-          migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 5)
-        })
-        fallback.modelAccessUnavailable = true
-        return fallback
+      } catch (agentExecutionMigrationError) {
+        /* v7 is an optional formal-Agent execution boundary.  Keep a valid v6
+           database usable for subtitles and model access when only the newest
+           migration fails; if v6 also fails, fall back one more rung to the
+           byte-stable v1-v5 catalog.  Earlier checksum failures remain fatal. */
+        try {
+          const fallbackV6 = new SqliteSubtitleStore({
+            ...storeOptions,
+            migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 6)
+          })
+          fallbackV6.agentExecutionUnavailable = true
+          return fallbackV6
+        } catch (modelAccessMigrationError) {
+          const fallbackV5 = new SqliteSubtitleStore({
+            ...storeOptions,
+            migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 5)
+          })
+          fallbackV5.modelAccessUnavailable = true
+          fallbackV5.agentExecutionUnavailable = true
+          return fallbackV5
+        }
       }
+    })
+    this.agentExecutionStoreFactory = options.agentExecutionStoreFactory || ((subtitleStore) => {
+      const { AgentExecutionStore } = require('./agent-execution-store')
+      return new AgentExecutionStore({ subtitleStore })
     })
     this.agentStoreFactory = options.agentStoreFactory || ((subtitleStore) => {
       /* 保持字幕系统对 Agent 运行时代码的物理惰性：只有正式 Agent 操作到达时
@@ -54,6 +69,7 @@ class StorageWorkerService {
     })
     this.store = null
     this.agentStore = null
+    this.agentExecutionStore = null
     this.personalContextStore = null
     this.modelAccessStore = null
     this.shuttingDown = false
@@ -74,6 +90,13 @@ class StorageWorkerService {
     const store = this.requireStore()
     if (!this.personalContextStore) this.personalContextStore = this.personalContextStoreFactory(store)
     return this.personalContextStore
+  }
+
+  requireAgentExecutionStore () {
+    const store = this.requireStore()
+    if (store.agentExecutionUnavailable === true) throw new StorageError('AGENT_EXECUTION_UNAVAILABLE')
+    if (!this.agentExecutionStore) this.agentExecutionStore = this.agentExecutionStoreFactory(store)
+    return this.agentExecutionStore
   }
 
   requireModelAccessStore () {
@@ -254,6 +277,38 @@ class StorageWorkerService {
       assertExactKeys(payload, ['request', 'availableSlotIds'])
       return this.requireModelAccessStore().bind(payload.request, payload.availableSlotIds)
     }
+    if (operation === OPERATIONS.AGENT_CREATE_INTERACTION) {
+      assertExactKeys(payload, ['request'])
+      return this.requireAgentExecutionStore().createInteraction(payload.request)
+    }
+    if (operation === OPERATIONS.AGENT_TERMINALIZE_INTERACTION) {
+      assertExactKeys(payload, ['request'])
+      return this.requireAgentExecutionStore().terminalizeInteraction(payload.request)
+    }
+    if (operation === OPERATIONS.AGENT_START_TOOL_CALL) {
+      assertExactKeys(payload, ['request'])
+      return this.requireAgentExecutionStore().startToolCall(payload.request)
+    }
+    if (operation === OPERATIONS.AGENT_FINISH_TOOL_CALL) {
+      assertExactKeys(payload, ['request'])
+      return this.requireAgentExecutionStore().finishToolCall(payload.request)
+    }
+    if (operation === OPERATIONS.AGENT_CREATE_PRESENTATION) {
+      assertExactKeys(payload, ['request'])
+      return this.requireAgentExecutionStore().createPresentation(payload.request)
+    }
+    if (operation === OPERATIONS.AGENT_MARK_PRESENTATION) {
+      assertExactKeys(payload, ['request'])
+      return this.requireAgentExecutionStore().markPresentation(payload.request)
+    }
+    if (operation === OPERATIONS.AGENT_LIST_INTERACTIONS) {
+      assertExactKeys(payload, ['request'])
+      return this.requireAgentExecutionStore().listInteractions(payload.request)
+    }
+    if (operation === OPERATIONS.AGENT_GET_INTERACTION) {
+      assertExactKeys(payload, ['request'])
+      return this.requireAgentExecutionStore().getInteraction(payload.request)
+    }
     if (operation === OPERATIONS.SHUTDOWN) {
       assertExactKeys(payload, [])
       if (this.store) {
@@ -261,6 +316,7 @@ class StorageWorkerService {
         this.store = null
       }
       this.agentStore = null
+      this.agentExecutionStore = null
       this.personalContextStore = null
       this.modelAccessStore = null
       this.shuttingDown = true

@@ -62,6 +62,14 @@ const ISOLATED_AGENT_OPERATIONS = new Set([
   'nextFormalAgentRunAt',
   'completeFormalAgentRun',
   'failFormalAgentRun',
+  'createAgentInteraction',
+  'terminalizeAgentInteraction',
+  'startAgentToolCall',
+  'finishAgentToolCall',
+  'createAgentReportPresentation',
+  'markAgentReportPresentation',
+  'listAgentInteractions',
+  'getAgentInteraction',
   'modelAccessCatalog',
   'modelAccessConfigure',
   'modelAccessBind'
@@ -443,6 +451,38 @@ class StorageGateway {
     return this.enqueue('failFormalAgentRun', request)
   }
 
+  createAgentInteraction (request) {
+    return this.enqueue('createAgentInteraction', request)
+  }
+
+  terminalizeAgentInteraction (request) {
+    return this.enqueue('terminalizeAgentInteraction', request)
+  }
+
+  startAgentToolCall (request) {
+    return this.enqueue('startAgentToolCall', request)
+  }
+
+  finishAgentToolCall (request) {
+    return this.enqueue('finishAgentToolCall', request)
+  }
+
+  createAgentReportPresentation (request) {
+    return this.enqueue('createAgentReportPresentation', request)
+  }
+
+  markAgentReportPresentation (request) {
+    return this.enqueue('markAgentReportPresentation', request)
+  }
+
+  listAgentInteractions (request) {
+    return this.enqueue('listAgentInteractions', request)
+  }
+
+  getAgentInteraction (request) {
+    return this.enqueue('getAgentInteraction', request)
+  }
+
   modelAccessCatalog () {
     return this.enqueue('modelAccessCatalog', {})
   }
@@ -491,6 +531,14 @@ class StorageGateway {
       case 'nextFormalAgentRunAt': return host.nextFormalAgentRunAt()
       case 'completeFormalAgentRun': return host.completeFormalAgentRun(item.payload)
       case 'failFormalAgentRun': return host.failFormalAgentRun(item.payload)
+      case 'createAgentInteraction': return host.createAgentInteraction(item.payload)
+      case 'terminalizeAgentInteraction': return host.terminalizeAgentInteraction(item.payload)
+      case 'startAgentToolCall': return host.startAgentToolCall(item.payload)
+      case 'finishAgentToolCall': return host.finishAgentToolCall(item.payload)
+      case 'createAgentReportPresentation': return host.createAgentReportPresentation(item.payload)
+      case 'markAgentReportPresentation': return host.markAgentReportPresentation(item.payload)
+      case 'listAgentInteractions': return host.listAgentInteractions(item.payload)
+      case 'getAgentInteraction': return host.getAgentInteraction(item.payload)
       case 'modelAccessCatalog': return host.modelAccessCatalog()
       case 'modelAccessConfigure': return host.modelAccessConfigure(item.payload)
       case 'modelAccessBind': return host.modelAccessBind(item.payload.request, item.payload.availableSlotIds)

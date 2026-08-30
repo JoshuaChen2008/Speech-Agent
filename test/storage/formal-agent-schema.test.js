@@ -79,8 +79,11 @@ test('DB7 / ADR 0010 / J21/J25 upgrades subtitle v2 through formal Agent v6 with
       'agent_model_purpose_assignments',
       'agent_model_run_bindings',
       'caption_events',
+      'formal_agent_interactions',
+      'formal_agent_report_presentations',
       'formal_agent_run_claim_receipts',
       'formal_agent_runs',
+      'formal_agent_tool_calls',
       'legacy_imports',
       'memory_deletion_receipts',
       'memory_evidence',
@@ -205,6 +208,123 @@ test('DB7 formal Agent constraints reject candidate task semantics and sensitive
         'provider', 'cloud', 'model', 'queued', 0, 3, 1, 'automatic', 1, 1
       )
     `).run('a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)), /constraint/i)
+  } finally {
+    store.close()
+  }
+})
+
+test('SEM-F28/SEM-F34/DB7/J22/J24: v7 adds exact interaction, tool-call and presentation facts with four registered indexes', (t) => {
+  const databasePath = path.join(tempRoot(t), 'formal-v7.sqlite3')
+  const v6 = new SqliteSubtitleStore({
+    databasePath,
+    now: () => 1000,
+    migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 6)
+  })
+  appendFinal(v6, 'formal-v7-session', 'v6 facts remain immutable')
+  const before = v6.database.prepare('SELECT COUNT(*) AS count FROM caption_events').get().count
+  const v6Checksums = v6.database.prepare('SELECT version, checksum FROM schema_migrations ORDER BY version').all()
+  v6.close()
+
+  const store = new SqliteSubtitleStore({ databasePath, now: () => 2000, migrations: FORMAL_AGENT_MIGRATIONS })
+  try {
+    assert.equal(FORMAL_AGENT_SCHEMA_VERSION, 7)
+    assert.equal(Number(store.database.prepare('PRAGMA user_version').get().user_version), 7)
+    assert.equal(store.database.prepare('SELECT COUNT(*) AS count FROM caption_events').get().count, before)
+    assert.deepEqual(
+      store.database.prepare('SELECT version, checksum FROM schema_migrations WHERE version <= 6 ORDER BY version').all(),
+      v6Checksums
+    )
+    assert.deepEqual(store.database.prepare('PRAGMA table_info(formal_agent_interactions)').all().map((row) => row.name), [
+      'interaction_id', 'run_id', 'recipe_id', 'recipe_version', 'max_turns', 'tool_grants_json',
+      'routing_mode', 'requested_by', 'scope_json', 'scope_digest', 'input_digest', 'prompt_digest',
+      'terminal_reason', 'error_code', 'usage_json', 'duration_ms', 'attempt_count',
+      'comparison_group_id', 'result_json', 'result_digest', 'created_at', 'terminal_at'
+    ])
+    assert.deepEqual(store.database.prepare('PRAGMA table_info(formal_agent_tool_calls)').all().map((row) => row.name), [
+      'call_id', 'interaction_id', 'attempt', 'call_order', 'tool_name', 'schema_version',
+      'started_offset_ms', 'ended_offset_ms', 'status', 'error_code', 'args_json', 'args_digest',
+      'result_json', 'result_digest', 'source_refs_json', 'counts_json'
+    ])
+    assert.deepEqual(store.database.prepare('PRAGMA table_info(formal_agent_report_presentations)').all().map((row) => row.name), [
+      'session_id', 'run_id', 'presented_at', 'created_at'
+    ])
+    assert.equal(store.database.prepare('PRAGMA table_info(session_deletion_tombstones)').all().some((row) => row.name === 'deleted_report_presentation_count'), true)
+    for (const table of ['formal_agent_interactions', 'formal_agent_tool_calls', 'formal_agent_report_presentations']) {
+      const tableInfo = store.database.prepare('PRAGMA table_list').all().find((row) => row.name === table)
+      assert.equal(Number(tableInfo.strict), 1, `${table} must be STRICT`)
+    }
+    const forbidden = /model_binding_id|execution_form|escalation_reason|provider|model|amount|price|cost|currency|credential|audio|pcm|wav|recording|path|reasoning/i
+    for (const table of ['formal_agent_interactions', 'formal_agent_tool_calls', 'formal_agent_report_presentations']) {
+      assert.equal(store.database.prepare(`PRAGMA table_info(${table})`).all().some((row) => forbidden.test(row.name)), false, table)
+    }
+    const indexes = store.database.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name IN ('formal_agent_interactions_page', 'formal_agent_tool_calls_order', 'personal_context_items_page', 'personal_context_episodes_page') ORDER BY name").all().map((row) => row.name)
+    assert.deepEqual(indexes, [
+      'formal_agent_interactions_page', 'formal_agent_tool_calls_order',
+      'personal_context_episodes_page', 'personal_context_items_page'
+    ])
+  } finally {
+    store.close()
+  }
+})
+
+test('SEM-F28/SEM-F34/DB7/J22/J24: v7 terminal and tool byte checks enforce cancellation, nullable usage and exact tool errors', (t) => {
+  const store = new SqliteSubtitleStore({ databasePath: path.join(tempRoot(t), 'v7-checks.sqlite3'), now: () => 1000, migrations: FORMAL_AGENT_MIGRATIONS })
+  const database = store.database
+  try {
+    const insertRun = (runId, clientKey) => database.prepare(`
+      INSERT INTO formal_agent_runs(
+        run_id, dedupe_key, client_idempotency_key, request_digest, recipe_id, recipe_version,
+        scope_json, scope_digest, transcript_version, input_watermark_json, input_digest,
+        requested_by, state, attempt_count, max_attempts, next_attempt_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'qa.answer', '1', '{}', ?, 'raw', '{}', ?, 'user', 'queued', 0, 3, 0, 1, 1)
+    `).run(runId, `dedupe-${runId}`.padEnd(64, 'x'), clientKey, `request-${runId}`.padEnd(64, 'x'), 'c'.repeat(64), 'd'.repeat(64))
+    insertRun('v7-run', 'v7-client')
+    insertRun('v7-run-success', 'v7-client-success')
+    insertRun('v7-run-failed', 'v7-client-failed')
+    insertRun('v7-run-no-prompt', 'v7-client-no-prompt')
+    const insertInteraction = database.prepare(`
+      INSERT INTO formal_agent_interactions(
+        interaction_id, run_id, recipe_id, recipe_version, max_turns, tool_grants_json,
+        routing_mode, requested_by, scope_json, scope_digest, input_digest, prompt_digest,
+        terminal_reason, error_code, usage_json, duration_ms, attempt_count, comparison_group_id,
+        result_json, result_digest, created_at, terminal_at
+      ) VALUES (?, ?, 'qa.answer', '1', ?, ?, ?, 'user', '{}', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    const validResult = '{"schemaVersion":1,"answer":"ok","sourceRefs":[],"memoryRefs":[],"unresolved":[]}'
+    insertInteraction.run('v7-cancel', 'v7-run', 3, '["search_context"]', 'model', 'c'.repeat(64), 'd'.repeat(64), 'e'.repeat(64), 'cancelled', null, null, 30, 1, 'f'.repeat(64), null, null, 1, 2)
+    assert.equal(database.prepare("SELECT terminal_reason, error_code, result_json, usage_json FROM formal_agent_interactions WHERE interaction_id='v7-cancel'").get().terminal_reason, 'cancelled')
+    insertInteraction.run('v7-success', 'v7-run-success', 3, '["search_context"]', 'preset', 'c'.repeat(64), 'd'.repeat(64), 'e'.repeat(64), 'succeeded', null, '{"usageSource":"provider","inputTokens":1,"outputTokens":1,"cacheHitInputTokens":null,"cacheMissInputTokens":null}', 30, 1, 'f'.repeat(64), validResult, '1'.repeat(64), 1, 2)
+    assert.throws(() => insertInteraction.run('v7-failed-without-error', 'v7-run-failed', 3, '["search_context"]', 'model', 'c'.repeat(64), 'd'.repeat(64), 'e'.repeat(64), 'failed', null, null, 30, 1, 'f'.repeat(64), null, null, 1, 2), /constraint/i)
+    assert.throws(() => insertInteraction.run('v7-user-without-prompt', 'v7-run-no-prompt', 3, '["search_context"]', 'model', 'c'.repeat(64), 'd'.repeat(64), null, 'cancelled', null, null, 30, 1, 'f'.repeat(64), null, null, 1, 2), /constraint/i)
+
+    database.prepare(`
+      INSERT INTO formal_agent_tool_calls(
+        call_id, interaction_id, attempt, call_order, tool_name, schema_version,
+        started_offset_ms, ended_offset_ms, status, error_code, args_json, args_digest,
+        result_json, result_digest, source_refs_json, counts_json
+      ) VALUES ('v7-call', 'v7-success', 1, 1, 'search_context', 1, 0, 10, 'succeeded', NULL, '{}', ?, '{}', ?, '[]', '{}')
+    `).run('1'.repeat(64), '2'.repeat(64))
+    assert.throws(() => database.prepare(`
+      INSERT INTO formal_agent_tool_calls(
+        call_id, interaction_id, attempt, call_order, tool_name, schema_version,
+        started_offset_ms, ended_offset_ms, status, error_code, args_json, args_digest,
+        result_json, result_digest, source_refs_json, counts_json
+      ) VALUES ('v7-call-too-large', 'v7-success', 1, 2, 'search_context', 1, 0, 10, 'succeeded', NULL, ?, ?, '{}', ?, '[]', '{}')
+    `).run('x'.repeat(8193), '3'.repeat(64), '4'.repeat(64)), /constraint/i)
+    assert.throws(() => database.prepare(`
+      INSERT INTO formal_agent_tool_calls(
+        call_id, interaction_id, attempt, call_order, tool_name, schema_version,
+        started_offset_ms, ended_offset_ms, status, error_code, args_json, args_digest,
+        result_json, result_digest, source_refs_json, counts_json
+      ) VALUES ('v7-result-too-large', 'v7-success', 1, 3, 'search_context', 1, 0, 10, 'succeeded', NULL, '{}', ?, ?, ?, '[]', '{}')
+    `).run('5'.repeat(64), 'x'.repeat(65537), '6'.repeat(64)), /constraint/i)
+    assert.throws(() => database.prepare(`
+      INSERT INTO formal_agent_tool_calls(
+        call_id, interaction_id, attempt, call_order, tool_name, schema_version,
+        started_offset_ms, ended_offset_ms, status, error_code, args_json, args_digest,
+        result_json, result_digest, source_refs_json, counts_json
+      ) VALUES ('v7-bad-tool', 'v7-success', 1, 4, 'shell', 1, 0, 10, 'failed', 'AGENT_INTERNAL_FAILURE', '{}', ?, NULL, NULL, '[]', '{}')
+    `).run('7'.repeat(64)), /constraint/i)
   } finally {
     store.close()
   }

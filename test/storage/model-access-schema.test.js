@@ -18,13 +18,13 @@ function databasePath (t) {
   return path.join(directory, 'speech-agent.sqlite3')
 }
 
-test('SEM-F33/DB7/J25: formal v5 upgrades by appending byte-stable migration v6', (t) => {
+test('SEM-F33/DB7/J25: formal v5 upgrades by appending byte-stable migrations v6 and v7', (t) => {
   const file = databasePath(t)
   const frozen = FORMAL_AGENT_MIGRATIONS.slice(0, 5).map(({ version, checksum, sql }) => ({ version, checksum, sql }))
   const v5 = new SqliteSubtitleStore({ databasePath: file, migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 5) })
   v5.close()
   const v6 = new SqliteSubtitleStore({ databasePath: file, migrations: FORMAL_AGENT_MIGRATIONS })
-  assert.equal(v6.database.prepare('PRAGMA user_version').get().user_version, 6)
+  assert.equal(v6.database.prepare('PRAGMA user_version').get().user_version, 7)
   assert.deepEqual(FORMAL_AGENT_MIGRATIONS.slice(0, 5).map(({ version, checksum, sql }) => ({ version, checksum, sql })), frozen)
   const tables = v6.database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'agent_model_%' ORDER BY name").all().map(({ name }) => name)
   assert.deepEqual(tables, [

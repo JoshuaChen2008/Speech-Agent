@@ -477,6 +477,38 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.FORMAL_AGENT_FAIL_RUN, { request })
   }
 
+  createAgentInteraction (request) {
+    return this.enqueue(OPERATIONS.AGENT_CREATE_INTERACTION, { request })
+  }
+
+  terminalizeAgentInteraction (request) {
+    return this.enqueue(OPERATIONS.AGENT_TERMINALIZE_INTERACTION, { request })
+  }
+
+  startAgentToolCall (request) {
+    return this.enqueue(OPERATIONS.AGENT_START_TOOL_CALL, { request })
+  }
+
+  finishAgentToolCall (request) {
+    return this.enqueue(OPERATIONS.AGENT_FINISH_TOOL_CALL, { request })
+  }
+
+  createAgentReportPresentation (request) {
+    return this.enqueue(OPERATIONS.AGENT_CREATE_PRESENTATION, { request })
+  }
+
+  markAgentReportPresentation (request) {
+    return this.enqueue(OPERATIONS.AGENT_MARK_PRESENTATION, { request })
+  }
+
+  listAgentInteractions (request) {
+    return this.enqueue(OPERATIONS.AGENT_LIST_INTERACTIONS, { request })
+  }
+
+  getAgentInteraction (request) {
+    return this.enqueue(OPERATIONS.AGENT_GET_INTERACTION, { request })
+  }
+
   modelAccessCatalog () {
     return this.perform(OPERATIONS.MODEL_ACCESS_CATALOG, {})
   }

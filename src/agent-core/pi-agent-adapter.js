@@ -27,7 +27,7 @@ function providerFailure (value) {
 }
 
 class PiAgentAdapter {
-  async run ({ resolvedModel, systemPrompt, prompt, tools = [], maxTurns = 2, timeoutMs = 30000, signal, onEvent = () => {} }) {
+  async run ({ resolvedModel, systemPrompt, prompt, tools = [], maxTurns = 2, timeoutMs = 30000, signal, onEvent = () => {}, shouldStopAfterTurn = null }) {
     const { Agent } = await import('@earendil-works/pi-agent-core')
     let turns = 0
     const agent = new Agent({
@@ -35,7 +35,12 @@ class PiAgentAdapter {
       getApiKey: () => resolvedModel.apiKey,
       initialState: { model: resolvedModel.model, systemPrompt, thinkingLevel: 'off', tools, messages: [] },
       toolExecution: 'sequential',
-      shouldStopAfterTurn: () => ++turns >= maxTurns
+      shouldStopAfterTurn: (state) => {
+        turns += 1
+        return typeof shouldStopAfterTurn === 'function'
+          ? shouldStopAfterTurn({ ...(state || {}), turn: turns })
+          : turns >= maxTurns
+      }
     })
     const unsubscribe = agent.subscribe((event) => {
       const projected = publicEvent(event)

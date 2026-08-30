@@ -992,6 +992,196 @@ CREATE INDEX agent_model_bindings_profile
   ON agent_model_run_bindings(profile_id, model_id, created_at);
 `
 
+/* SEM-F28 / SEM-F34 / J22/J24: formal Agent interaction facts are appended as
+   v7.  This migration is deliberately the only place that creates the three
+   interaction/presentation tables, adds the presentation tombstone counter,
+   and creates the four registered keyset indexes.  It must not touch the
+   recognition_* tables or rewrite any prior migration. */
+const AGENT_EXECUTION_SCHEMA_SQL = `
+ALTER TABLE session_deletion_tombstones
+  ADD COLUMN deleted_report_presentation_count INTEGER NOT NULL DEFAULT 0 CHECK (deleted_report_presentation_count >= 0);
+
+CREATE TABLE formal_agent_interactions (
+  interaction_id TEXT PRIMARY KEY NOT NULL CHECK (length(interaction_id) BETWEEN 1 AND 160),
+  run_id TEXT NOT NULL UNIQUE CHECK (length(run_id) BETWEEN 1 AND 160),
+  recipe_id TEXT NOT NULL CHECK (length(recipe_id) BETWEEN 1 AND 80),
+  recipe_version TEXT NOT NULL CHECK (length(recipe_version) BETWEEN 1 AND 80),
+  max_turns INTEGER NOT NULL CHECK (max_turns IN (1, 3, 6)),
+  tool_grants_json TEXT NOT NULL CHECK (json_valid(tool_grants_json)),
+  routing_mode TEXT NOT NULL CHECK (routing_mode IN ('model', 'rules', 'preset')),
+  requested_by TEXT NOT NULL CHECK (requested_by IN ('automatic', 'user')),
+  scope_json TEXT NOT NULL CHECK (json_valid(scope_json)),
+  scope_digest TEXT NOT NULL CHECK (length(scope_digest) = 64),
+  input_digest TEXT NOT NULL CHECK (length(input_digest) = 64),
+  prompt_digest TEXT CHECK (prompt_digest IS NULL OR length(prompt_digest) = 64),
+  terminal_reason TEXT CHECK (terminal_reason IS NULL OR terminal_reason IN ('succeeded', 'failed', 'cancelled')),
+  error_code TEXT CHECK (error_code IS NULL OR error_code IN (
+    'AGENT_PROVIDER_AUTH_FAILED',
+    'AGENT_PROVIDER_RATE_LIMITED',
+    'AGENT_PROVIDER_UNAVAILABLE',
+    'AGENT_PROVIDER_TIMEOUT',
+    'AGENT_OUTPUT_INVALID',
+    'AGENT_PERMISSION_DENIED',
+    'AGENT_REQUEST_INVALID',
+    'AGENT_WORKER_EXITED',
+    'AGENT_INTERNAL_FAILURE',
+    'AGENT_BUDGET_EXCEEDED'
+  )),
+  usage_json TEXT CHECK (usage_json IS NULL OR json_valid(usage_json)),
+  duration_ms INTEGER NOT NULL CHECK (duration_ms >= 0),
+  attempt_count INTEGER NOT NULL CHECK (attempt_count BETWEEN 1 AND 100),
+  comparison_group_id TEXT NOT NULL CHECK (length(comparison_group_id) = 64),
+  result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
+  result_digest TEXT CHECK (result_digest IS NULL OR length(result_digest) = 64),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  terminal_at INTEGER CHECK (terminal_at IS NULL OR terminal_at >= created_at),
+  FOREIGN KEY (run_id) REFERENCES formal_agent_runs(run_id) ON DELETE CASCADE,
+  CHECK (terminal_reason IS NULL OR (terminal_reason = 'failed') = (error_code IS NOT NULL)),
+  CHECK (terminal_reason IS NULL OR terminal_reason <> 'succeeded' OR (result_json IS NOT NULL AND result_digest IS NOT NULL)),
+  CHECK ((terminal_reason IS NULL) = (terminal_at IS NULL)),
+  CHECK (terminal_reason IS NOT NULL OR (error_code IS NULL AND result_json IS NULL AND result_digest IS NULL)),
+  CHECK ((requested_by = 'user') = (prompt_digest IS NOT NULL)),
+  CHECK (terminal_reason IS NULL OR terminal_reason <> 'succeeded' OR result_digest IS NOT NULL),
+  CHECK (terminal_reason IS NULL OR terminal_reason <> 'succeeded' OR result_json IS NOT NULL)
+) STRICT;
+
+CREATE TRIGGER formal_agent_interactions_tool_grants_exact_insert
+BEFORE INSERT ON formal_agent_interactions
+WHEN NOT json_valid(NEW.tool_grants_json) OR json_type(NEW.tool_grants_json) <> 'array' OR
+  (SELECT COUNT(*) FROM json_each(NEW.tool_grants_json)) > 2 OR
+  EXISTS (SELECT 1 FROM json_each(NEW.tool_grants_json)
+    WHERE value NOT IN ('search_context', 'read_sources')) OR
+  (SELECT COUNT(DISTINCT value) FROM json_each(NEW.tool_grants_json)) <
+    (SELECT COUNT(*) FROM json_each(NEW.tool_grants_json))
+BEGIN
+  SELECT RAISE(ABORT, 'invalid recipe tool grants');
+END;
+
+CREATE TRIGGER formal_agent_interactions_tool_grants_exact_update
+BEFORE UPDATE OF tool_grants_json ON formal_agent_interactions
+WHEN NOT json_valid(NEW.tool_grants_json) OR json_type(NEW.tool_grants_json) <> 'array' OR
+  (SELECT COUNT(*) FROM json_each(NEW.tool_grants_json)) > 2 OR
+  EXISTS (SELECT 1 FROM json_each(NEW.tool_grants_json)
+    WHERE value NOT IN ('search_context', 'read_sources')) OR
+  (SELECT COUNT(DISTINCT value) FROM json_each(NEW.tool_grants_json)) <
+    (SELECT COUNT(*) FROM json_each(NEW.tool_grants_json))
+BEGIN
+  SELECT RAISE(ABORT, 'invalid recipe tool grants');
+END;
+
+CREATE TRIGGER formal_agent_interactions_usage_exact_insert
+BEFORE INSERT ON formal_agent_interactions
+WHEN NEW.usage_json IS NOT NULL AND (
+  NOT json_valid(NEW.usage_json) OR json_type(NEW.usage_json) <> 'object' OR
+  (SELECT COUNT(*) FROM json_each(NEW.usage_json)) <> 5 OR
+  EXISTS (SELECT 1 FROM json_each(NEW.usage_json) WHERE key NOT IN (
+    'inputTokens', 'outputTokens', 'usageSource', 'cacheHitInputTokens', 'cacheMissInputTokens'
+  )) OR
+  json_type(NEW.usage_json, '$.inputTokens') <> 'integer' OR
+  json_extract(NEW.usage_json, '$.inputTokens') < 0 OR
+  json_type(NEW.usage_json, '$.outputTokens') <> 'integer' OR
+  json_extract(NEW.usage_json, '$.outputTokens') < 0 OR
+  json_extract(NEW.usage_json, '$.usageSource') <> 'provider' OR
+  NOT (
+    (json_type(NEW.usage_json, '$.cacheHitInputTokens') = 'null' AND
+      json_type(NEW.usage_json, '$.cacheMissInputTokens') = 'null') OR
+    (json_type(NEW.usage_json, '$.cacheHitInputTokens') = 'integer' AND
+      json_type(NEW.usage_json, '$.cacheMissInputTokens') = 'integer' AND
+      json_extract(NEW.usage_json, '$.cacheHitInputTokens') >= 0 AND
+      json_extract(NEW.usage_json, '$.cacheMissInputTokens') >= 0 AND
+      json_extract(NEW.usage_json, '$.cacheHitInputTokens') +
+        json_extract(NEW.usage_json, '$.cacheMissInputTokens') > 0 AND
+      json_extract(NEW.usage_json, '$.cacheHitInputTokens') +
+        json_extract(NEW.usage_json, '$.cacheMissInputTokens') =
+        json_extract(NEW.usage_json, '$.inputTokens'))
+  )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'invalid ModelUsageV1');
+END;
+
+CREATE TRIGGER formal_agent_interactions_usage_exact_update
+BEFORE UPDATE OF usage_json ON formal_agent_interactions
+WHEN NEW.usage_json IS NOT NULL AND (
+  NOT json_valid(NEW.usage_json) OR json_type(NEW.usage_json) <> 'object' OR
+  (SELECT COUNT(*) FROM json_each(NEW.usage_json)) <> 5 OR
+  EXISTS (SELECT 1 FROM json_each(NEW.usage_json) WHERE key NOT IN (
+    'inputTokens', 'outputTokens', 'usageSource', 'cacheHitInputTokens', 'cacheMissInputTokens'
+  )) OR
+  json_type(NEW.usage_json, '$.inputTokens') <> 'integer' OR
+  json_extract(NEW.usage_json, '$.inputTokens') < 0 OR
+  json_type(NEW.usage_json, '$.outputTokens') <> 'integer' OR
+  json_extract(NEW.usage_json, '$.outputTokens') < 0 OR
+  json_extract(NEW.usage_json, '$.usageSource') <> 'provider' OR
+  NOT (
+    (json_type(NEW.usage_json, '$.cacheHitInputTokens') = 'null' AND
+      json_type(NEW.usage_json, '$.cacheMissInputTokens') = 'null') OR
+    (json_type(NEW.usage_json, '$.cacheHitInputTokens') = 'integer' AND
+      json_type(NEW.usage_json, '$.cacheMissInputTokens') = 'integer' AND
+      json_extract(NEW.usage_json, '$.cacheHitInputTokens') >= 0 AND
+      json_extract(NEW.usage_json, '$.cacheMissInputTokens') >= 0 AND
+      json_extract(NEW.usage_json, '$.cacheHitInputTokens') +
+        json_extract(NEW.usage_json, '$.cacheMissInputTokens') > 0 AND
+      json_extract(NEW.usage_json, '$.cacheHitInputTokens') +
+        json_extract(NEW.usage_json, '$.cacheMissInputTokens') =
+        json_extract(NEW.usage_json, '$.inputTokens'))
+  )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'invalid ModelUsageV1');
+END;
+
+CREATE TABLE formal_agent_tool_calls (
+  call_id TEXT PRIMARY KEY NOT NULL CHECK (length(call_id) BETWEEN 1 AND 160),
+  interaction_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL CHECK (attempt BETWEEN 1 AND 100),
+  call_order INTEGER NOT NULL CHECK (call_order BETWEEN 1 AND 12),
+  tool_name TEXT NOT NULL CHECK (tool_name IN ('search_context', 'read_sources')),
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  started_offset_ms INTEGER NOT NULL CHECK (started_offset_ms >= 0),
+  ended_offset_ms INTEGER CHECK (ended_offset_ms IS NULL OR ended_offset_ms >= started_offset_ms),
+  status TEXT NOT NULL CHECK (status IN ('started', 'succeeded', 'failed', 'cancelled')),
+  error_code TEXT CHECK (error_code IS NULL OR error_code IN (
+    'TOOL_ARGS_INVALID', 'TOOL_SCOPE_DENIED', 'TOOL_NOT_AVAILABLE_FOR_RECIPE',
+    'TOOL_BUDGET_EXCEEDED', 'TOOL_TIMEOUT', 'TOOL_CANCELLED', 'TOOL_INTERNAL_FAILURE'
+  )),
+  args_json TEXT NOT NULL CHECK (
+    json_valid(args_json) AND length(CAST(args_json AS BLOB)) <= 8192
+  ),
+  args_digest TEXT NOT NULL CHECK (length(args_digest) = 64),
+  result_json TEXT CHECK (
+    result_json IS NULL OR (json_valid(result_json) AND length(CAST(result_json AS BLOB)) <= 65536)
+  ),
+  result_digest TEXT CHECK (result_digest IS NULL OR length(result_digest) = 64),
+  source_refs_json TEXT NOT NULL CHECK (json_valid(source_refs_json)),
+  counts_json TEXT NOT NULL CHECK (json_valid(counts_json)),
+  FOREIGN KEY (interaction_id) REFERENCES formal_agent_interactions(interaction_id) ON DELETE CASCADE,
+  UNIQUE (interaction_id, attempt, call_order),
+  CHECK ((status IN ('failed', 'cancelled')) = (error_code IS NOT NULL)),
+  CHECK ((status = 'cancelled') = (error_code = 'TOOL_CANCELLED')),
+  CHECK ((status = 'succeeded') = (result_json IS NOT NULL)),
+  CHECK (status = 'started' OR ended_offset_ms IS NOT NULL),
+  CHECK (status = 'started' OR result_digest IS NOT NULL OR status IN ('failed', 'cancelled'))
+) STRICT;
+
+CREATE TABLE formal_agent_report_presentations (
+  session_id TEXT PRIMARY KEY NOT NULL CHECK (length(session_id) BETWEEN 1 AND 160),
+  run_id TEXT NOT NULL UNIQUE CHECK (length(run_id) BETWEEN 1 AND 160),
+  presented_at INTEGER CHECK (presented_at IS NULL OR presented_at >= 0),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  FOREIGN KEY (run_id) REFERENCES formal_agent_runs(run_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE INDEX formal_agent_interactions_page
+  ON formal_agent_interactions(terminal_at DESC, interaction_id);
+CREATE INDEX formal_agent_tool_calls_order
+  ON formal_agent_tool_calls(interaction_id, attempt, call_order);
+CREATE INDEX personal_context_items_page
+  ON personal_context_items(lifecycle, updated_at DESC, memory_id);
+CREATE INDEX personal_context_episodes_page
+  ON personal_context_episodes(lifecycle, updated_at DESC, episode_id);
+`
+
 function checksum (sql) {
   return crypto.createHash('sha256').update(sql, 'utf8').digest('hex')
 }
@@ -1035,6 +1225,11 @@ const FORMAL_AGENT_MIGRATIONS = Object.freeze([
     version: SUBTITLE_BASE_MIGRATIONS.length + 4,
     checksum: checksum(MODEL_ACCESS_SCHEMA_SQL),
     sql: MODEL_ACCESS_SCHEMA_SQL
+  }),
+  Object.freeze({
+    version: SUBTITLE_BASE_MIGRATIONS.length + 5,
+    checksum: checksum(AGENT_EXECUTION_SCHEMA_SQL),
+    sql: AGENT_EXECUTION_SCHEMA_SQL
   })
 ])
 
@@ -1047,6 +1242,7 @@ module.exports = {
   FORMAL_AGENT_MEMORY_DELETION_SCHEMA_SQL,
   PERSONAL_CONTEXT_SCHEMA_SQL,
   MODEL_ACCESS_SCHEMA_SQL,
+  AGENT_EXECUTION_SCHEMA_SQL,
   SUBTITLE_BASE_MIGRATIONS,
   FORMAL_AGENT_MIGRATIONS,
   MIGRATIONS,
