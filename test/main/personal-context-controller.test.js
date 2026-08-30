@@ -34,6 +34,7 @@ function setup (t, options = {}) {
   const changes = []
   const controller = new PersonalContextController({
     module,
+    readScopeDirectory: async (command) => store.manage(command),
     getConfig: () => config.get(),
     updateAgentSettings: (request) => config.updateAgentSettings(request),
     onChanged: options.throwObserver
@@ -51,12 +52,11 @@ function request (requestId, command) {
   return { contract_id: CONTRACT_ID, contract_version: CONTRACT_VERSION, request_id: requestId, command }
 }
 
-function entry (semanticKey, displayText = 'Explicit memory') {
+function entry (displayText = 'Explicit memory') {
   return {
     display_text: displayText,
     kind: 'term',
-    scope: { kind: 'global', reference: null },
-    semantic_key: semanticKey
+    scope: { kind: 'global', reference: null }
   }
 }
 
@@ -67,12 +67,13 @@ test('SEM-F30/J21: controller projects empty overview and composite revision thr
   assert.deepEqual(response.snapshot.counts, { personal_memories: 0, session_episodes: 0 })
   assert.equal(response.snapshot.revision, 0)
   assert.equal(response.snapshot.eligibility, 'provider_not_configured')
+  assert.deepEqual(response.snapshot.scope_directory, { has_more: false, items: [] })
 })
 
 test('SEM-F30/J21: remember, update and forget expose exact projections and one changed event per revision', async (t) => {
   const { changes, controller } = setup(t)
   const remembered = await controller.manage(request('remember.1', {
-    type: 'remember', expected_revision: 0, entry: entry('project:codename', 'Use North Star')
+    type: 'remember', expected_revision: 0, entry: entry('Use North Star')
   }))
   assert.equal(remembered.ok, true)
   assert.equal(remembered.revision, 1)
@@ -82,8 +83,9 @@ test('SEM-F30/J21: remember, update and forget expose exact projections and one 
   const updated = await controller.manage(request('update.1', {
     type: 'update', expected_revision: 1,
     item_id: remembered.result.item.memory_id, item_revision: 1,
-    entry: entry('project:codename', 'Use Polaris')
+    entry: entry('Use Polaris')
   }))
+  assert.equal(updated.result.item.memory_id, remembered.result.item.memory_id)
   const forgotten = await controller.manage(request('forget.1', {
     type: 'forget', expected_revision: 2,
     item_id: remembered.result.item.memory_id, item_revision: updated.result.item.revision
@@ -101,7 +103,7 @@ test('SEM-F30/J21: remember, update and forget expose exact projections and one 
 test('SEM-F30/J21: composite revision conflict performs zero SQLite and ConfigStore writes', async (t) => {
   const { config, controller, store } = setup(t)
   const response = await controller.manage(request('conflict.1', {
-    type: 'remember', expected_revision: 9, entry: entry('conflict:key')
+    type: 'remember', expected_revision: 9, entry: entry('Conflict key')
   }))
   assert.equal(response.ok, false)
   assert.equal(response.error.code, 'AGENT_CONTEXT_REVISION_CONFLICT')
@@ -138,7 +140,7 @@ test('SEM-F30/J21: processing preserves other settings, no-op stays silent, and 
 test('SEM-F30/J21: delete replay returns original counts at current composite revision without rebroadcast', async (t) => {
   const { changes, controller } = setup(t)
   const remembered = await controller.manage(request('remember.delete', {
-    type: 'remember', expected_revision: 0, entry: entry('delete:key')
+    type: 'remember', expected_revision: 0, entry: entry('Delete key')
   }))
   const command = {
     type: 'delete', expected_revision: 1,
@@ -154,6 +156,27 @@ test('SEM-F30/J21: delete replay returns original counts at current composite re
   assert.deepEqual(replayed.result.deleted, deleted.result.deleted)
   assert.equal(replayed.revision, 2)
   assert.deepEqual(changes.map((event) => event.revision), [1, 2])
+})
+
+test('SEM-F30/J21: controller consumes opaque keyset cursor and caller limit for distinct pages', async (t) => {
+  const { controller } = setup(t)
+  for (const [index, displayText] of ['Alpha memory', 'Beta memory', 'Gamma memory'].entries()) {
+    const response = await controller.manage(request(`remember.page.${index}`, {
+      type: 'remember', expected_revision: index, entry: entry(displayText)
+    }))
+    assert.equal(response.ok, true)
+  }
+
+  const first = await controller.manage(request('view.page.1', {
+    type: 'view', resource: 'personal_memories', limit: 1, cursor: null
+  }))
+  const second = await controller.manage(request('view.page.2', {
+    type: 'view', resource: 'personal_memories', limit: 1, cursor: first.result.next_cursor
+  }))
+  assert.equal(first.result.items.length, 1)
+  assert.equal(second.result.items.length, 1)
+  assert.notEqual(first.result.items[0].memory_id, second.result.items[0].memory_id)
+  assert.doesNotMatch(first.result.next_cursor, /^offset_/)
 })
 
 test('SEM-F30/J21: malformed and unsupported operations fail closed without raw exception details', async (t) => {

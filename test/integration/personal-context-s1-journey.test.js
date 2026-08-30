@@ -201,7 +201,7 @@ test('SEM-F00/SEM-F26/SEM-F28/SEM-F30/J21: S1 real subtitle commit reaches perso
       type: 'remember', expected_revision: localRevision,
       entry: {
         display_text: 'Project codename is Polaris.', kind: 'term',
-        scope: { kind: 'global', reference: null }, semantic_key: 'project:codename'
+        scope: { kind: 'global', reference: null }
       }
     }
   })

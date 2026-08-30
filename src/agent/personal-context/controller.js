@@ -5,6 +5,7 @@ const {
   CONTRACT_VERSION,
   ERROR_CODES,
   ERROR_RULES,
+  MAX_SCOPE_DIRECTORY_ITEMS,
   assertChangedEvent,
   assertGetOverviewRequest,
   assertGetOverviewResponse,
@@ -40,7 +41,7 @@ function header () {
 function scopeProjection (scope) {
   return {
     kind: scope.kind,
-    label: scope.kind === 'global' ? '全局' : String(scope.reference),
+    label: scope.kind === 'global' ? '全局' : String(scope.label),
     reference: scope.reference
   }
 }
@@ -78,6 +79,17 @@ function episodeProjection (episode) {
   }
 }
 
+function scopeDirectoryProjection (page) {
+  return {
+    has_more: page.hasMore,
+    items: page.rows.map((scope) => ({
+      display_name: scope.displayName,
+      kind: scope.kind,
+      scope_id: scope.scopeId
+    }))
+  }
+}
+
 function processingProjection (config) {
   const enabled = config.memoryEnabled === true
   return {
@@ -98,10 +110,12 @@ function storageErrorCode (error) {
 class PersonalContextController {
   constructor (options = {}) {
     if (!options.module || typeof options.module.manage !== 'function') throw new TypeError('module is required')
+    if (typeof options.readScopeDirectory !== 'function') throw new TypeError('scope directory reader is required')
     if (typeof options.getConfig !== 'function' || typeof options.updateAgentSettings !== 'function') {
       throw new TypeError('config accessors are required')
     }
     this.module = options.module
+    this.readScopeDirectory = options.readScopeDirectory
     this.getConfig = options.getConfig
     this.updateAgentSettings = options.updateAgentSettings
     this.onChanged = typeof options.onChanged === 'function' ? options.onChanged : () => {}
@@ -118,14 +132,20 @@ class PersonalContextController {
   async state () {
     const memories = await this.storageManage({ type: 'view', resource: 'personal_memories', limit: 20, cursor: null })
     const episodes = await this.storageManage({ type: 'view', resource: 'session_episodes', limit: 20, cursor: null })
-    if (memories.revision !== episodes.revision) throw new Error('personal context view revision changed during read')
+    const scopes = await this.readScopeDirectory({
+      type: 'view', resource: 'scope_directory', limit: MAX_SCOPE_DIRECTORY_ITEMS, cursor: null
+    })
+    if (memories.revision !== episodes.revision || memories.revision !== scopes.revision) {
+      throw new Error('personal context view revision changed during read')
+    }
     const config = this.getConfig()
     return {
       config,
       contentRevision: checkedRevision(memories.revision),
       publicRevision: sumRevisions(memories.revision, config.agentSettingsRevision),
       memories,
-      episodes
+      episodes,
+      scopes
     }
   }
 
@@ -152,7 +172,8 @@ class PersonalContextController {
             },
             eligibility: 'provider_not_configured',
             memory_processing: processingProjection(state.config),
-            revision: state.publicRevision
+            revision: state.publicRevision,
+            scope_directory: scopeDirectoryProjection(state.scopes)
           }
         }
         return assertGetOverviewResponse(response)
@@ -171,9 +192,9 @@ class PersonalContextController {
         return assertManageResponse({ ...header(), ok: false, error: publicError(ERROR_CODES.requestInvalid), result: null, revision: null })
       }
       try {
-        const state = await this.state()
         const command = request.command
-        if (command.type === 'view') return this.view(command, state)
+        if (command.type === 'view') return await this.view(command)
+        const state = await this.state()
 
         if (command.expected_revision !== state.publicRevision) {
           if (command.type === 'delete') {
@@ -200,16 +221,18 @@ class PersonalContextController {
     })
   }
 
-  view (command, state) {
-    const page = command.resource === 'personal_memories' ? state.memories : state.episodes
+  async view (command) {
+    const page = await this.storageManage(command)
+    const config = this.getConfig()
     const items = page.rows.map(command.resource === 'personal_memories' ? memoryProjection : episodeProjection)
     return assertManageResponse({
-      ...header(), ok: true, error: null, revision: state.publicRevision,
+      ...header(), ok: true, error: null,
+      revision: sumRevisions(page.revision, config.agentSettingsRevision),
       result: {
         kind: command.resource === 'personal_memories' ? 'memory_page' : 'episode_page',
         items,
-        has_more: page.totalCount > items.length,
-        next_cursor: page.totalCount > items.length ? `offset_${items.length}` : null
+        has_more: page.hasMore,
+        next_cursor: page.nextCursor
       }
     })
   }
@@ -264,5 +287,6 @@ class PersonalContextController {
 module.exports = {
   PersonalContextController,
   processingProjection,
+  scopeDirectoryProjection,
   sumRevisions
 }

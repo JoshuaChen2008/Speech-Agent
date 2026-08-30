@@ -151,9 +151,25 @@ S2 的 fixture 只服务 UI/UX 设计预览和 renderer 局部回归，不进入
 
 2026-08-30 追加 S5-UX renderer 局部实现记录（不提升本行状态、不构成完整 J25）：`src/settings/agent-model-pane.tsx` 与 `src/settings/agent-model-view-model.ts` 把已冻结的 `agent-model-ui@1.0.0` exact contract 与既有 `src/preload/settings.js` facade（`getAgentModelCatalog`/`configureAgentModel`/`pullAgentModelCatalog`/`onAgentModelChanged`，均为既有 channel，未新增）接入正式 `src/settings/` renderer 的新增「Agent 模型配置档案」类别，覆盖先订阅再读取、`MODEL_ACCESS_UNAVAILABLE` 只读降级、空 model 模板建议与两个 token 上限未知、模板删除不重建、四用途 `direct/fallback_default/unconfigured` 与三值 readiness、三种凭据 scope 且提交后立即清空明文、`MODEL_CONFIG_INVALID`/`MODEL_CONFIG_REVISION_CONFLICT` 两个配置错误的输入保留与收敛、六值 remote pull 状态、删除档案/删除 model 的作用对象确认、隐私负扫描。新增 `test/ui/agent-model-settings-ui.test.js`（13 项）与 `test/ui/settings-react-ui.test.js` 的导航断言（1 项），载荷全部取自既有 `scenarios.json` 并先经真实 exact validator。`npm run typecheck:renderer`、`npm run build:renderer` 通过；`npm run test:core` 返回 0（708/708，含本轮新增 14 项）；`npm run test:evidence` 返回 0（233/233，同步重跑并提交 `docs/validation/i3-nonaudio-results.json` 因 `src/` 变化而漂移的 `productPayloadSha256`，其余 fixture/exports 字节不变）；`npm run test:integration` 为 76/77，唯一失败 `formal-agent-storage-utility-journey.test.js` 需要真实 Electron 子进程，与本轮改动无关，属既有沙箱执行环境问题。真实 `safeStorage`/SQLite 往返、Agent Bar、主动换模型后的历史比较仍留给 S5-Integration；S2 状态不因本记录变化。
 
+### J22/J24 的 S3 Core 子边界（不是新旅程）
+
+S3 只登记 J22/J24 在 Agent Bar renderer 汇合前的执行宿主 Core 实现子边界，J22/J24 编号、用户意图和完整验收口径保持上表不变。该子边界使用真实 migration v7、storage worker/SQLite、S1 的个人上下文模块与运行/租约/幂等机制、S2 的 Agent 模型接入层与不可变模型运行绑定、十一个 recipe 的静态登记表、Agent 执行宿主、main-owned 资格组合器及 exact IPC；只在 Agent 模型 provider 外部边界使用确定性协议替身。S3 先闭合统一执行路径、0 工具与 `search_context` 档，`read_sources` 和完整十轴工具预算执法留给 S4。
+
+| 观察面 | S3 Core 正证据 | S3 Core 负证据与延后边界 |
+|---|---|---|
+| v7 与审计事实 | v1–v6 SQL/checksum 逐字节不变；v7 恰好新增三张 `STRICT` 表、一列删除计数和已登记分页/全序索引；当前 data architecture 只列四条具名索引而执行计划写五条，总数按 S3 spec 保持「待裁定」，实现不得发明第五条；交互冻结 recipe 版本、`max_turns`、`tool_grants_json`、`routing_mode`、可空 `usage_json` 与 canonical `comparison_group_id` | 不新增 `model_binding_id`、`execution_form`、`escalation_reason`、金额或正文副本；args/result 字节上限由 schema 直接拒绝，取消允许空结果且不补造 |
+| recipe 与统一执行路径 | `src/agent/contracts/recipes.js` 唯一定义十一个 recipe；1/3/6 轮与工具授权逐项固定；全部运行经同一个有界 Agent Loop，`bind()` 只接收 `executionForm='agent_loop'`；`context.ingest.*` 的零模型确定性前段后进入同一循环 | 未登记 recipe、登记漂移、工具授权越界和第二轮越界 fail closed；不引入运行期形态判定、升级理由、动态插件、递归委派或第二条执行路径 |
+| 意图收敛与取消 | `intent.route` 模型判定成功记 `model`；五类闭集条件分别触发规则兜底并记 `rules`；预置路径记 `preset`；规则全不匹配收敛到 `qa.answer`；改选按取消当前运行并新建 `runId` | 用户取消不触发兜底；取消后不再开始新 turn/模型请求/工具调用，迟到结果被拒且不改写已收束交互、运行、绑定或工具快照 |
+| IPC、资格与恢复 | `agent`/`history` 角色经六个 exact 频道观察资格、提交、取消、历史、交互详情与单调 changed；main 按九值固定顺序计算资格；同 `runId` 自动重试保留绑定、旧 attempt 工具记录和冻结输入 | renderer 不推断资格、不接触 SQLite/凭据/文件系统/网络；worker replacement、回复丢失或重复触发不复制交互、报告呈现回执、会话经历记录或个人记忆 |
+| 用量、隐私与字幕独立 | provider 返回用量时保存 exact `ModelUsageV1`；provider 未返回或 `usageReporting=false` 时整体为 `null` 并投影「用量未知」；中间 assistant 文本零持久化，提示在交互记忆信号提取后只留 digest | 不估算 token，不保存或展示金额；fixture/证据负扫描凭据、现场音频、音频路径、本地绝对路径、提示正文、reasoning/provider 事件；任一 Agent 故障不阻塞字幕停止、退出、下一会话或历史 |
+
+S3 fixture 只服务 UI/UX 设计预览和 renderer 局部回归，不进入 `.artifacts/`、`docs/validation/` 或 J22/J24 证据。S5-Integration 尚未闭合真实 Agent Bar renderer、preload、交互历史与单交互导出前，S3 状态最多为「实现完成·尚未验收」；不得因 Core 局部回归晋级完整 J22/J24，也不得新增 `J22-S3`、`J24-core` 等同义旅程 ID。
+
+2026-08-31 本轮 S3 可实施规格、`speech-agent.personal-context.ui@1.1.0` supporting contract 与 provider-only `ModelUsageV1` 收窄为「实现完成·尚未验收」：`implement-agent-redesign-s3` 五项 OpenSpec artifact 为 38 个 Requirement / 127 个 Scenario / 188 个未勾选实施 task，`openspec validate` 返回 0；个人上下文定向矩阵覆盖 storage 派生语义键、automatic 范围目录、两类资源 keyset 续读、伪造/过期/跨资源/offset cursor 拒绝与 AUI-CR-007/008/009 `contract-ready`；用量合同拒绝 `estimated` 并把未知用量整体收束为 `null`。最终独立运行 `npm run test:core` 返回 0（714/714），`npm run test:evidence` 返回 0（233/233），直接相关 `personal-context-s1-journey` 与 `model-access-s2-core-journey` 返回 0（8/8）。完整 `npm run test:integration` 为 69/77；8 项失败均在既有 Electron/utility 子进程旅程，包含 GPU `exit_code=-1073741515`、utility 报告缺失、development start 与 supervised exit，和本轮直接相关产品断言分开记录。该记录不证明 S3 Agent 执行宿主、v7、十一 recipe runtime、Agent Bar 或完整 J22/J24；这些仍为已决定、无实现证据。
+
 ### J21/J22/J24/J25/J26 的 S5 汇合边界
 
-S3 的单轮 Core 子边界、S4 的 Agent Loop Core 子边界、S5-Core 的窗口/IPC/导出与 S5-UX 的 renderer 必须在 S5-Integration 组合回既有旅程；不新增 `J22-ui`、`J24-agent-bar`、`J25-settings` 等同义旅程 ID。
+S3 的统一执行宿主 Core 子边界、S4 的 `read_sources` 与完整工具预算 Core 子边界、S5-Core 的窗口/IPC/导出与 S5-UX 的 renderer 必须在 S5-Integration 组合回既有旅程；不新增 `J22-ui`、`J24-agent-bar`、`J25-settings` 等同义旅程 ID。
 
 | 交付来源 | 汇合前可证明 | 汇合时必须补齐 |
 |---|---|---|

@@ -4,6 +4,7 @@ const assert = require('node:assert/strict')
 const test = require('node:test')
 
 const { createPersonalContextModule } = require('../../src/agent/personal-context')
+const { CONTRACT_ID, CONTRACT_VERSION } = require('../../src/agent/contracts/agent-context-ui')
 const { OPERATIONS, PROTOCOL_VERSION } = require('../../src/runtime/storage-worker/protocol')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
 
@@ -66,8 +67,8 @@ test('SEM-F30/J21: the formal module exposes exactly ingest, resolve and manage'
   await module.ingest({ sourceKind: 'session' })
   await module.resolve({ scope: { kind: 'project' } })
   await module.manage({
-    contract_id: 'speech-agent.personal-context.ui',
-    contract_version: '1.0.0',
+    contract_id: CONTRACT_ID,
+    contract_version: CONTRACT_VERSION,
     request_id: 'view-1',
     command: { type: 'view', resource: 'personal_memories', limit: 20, cursor: null }
   })

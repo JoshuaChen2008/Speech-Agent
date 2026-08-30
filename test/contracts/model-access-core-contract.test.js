@@ -48,7 +48,7 @@ test('SEM-F33/J25: model-access core freezes the exact closed sets', () => {
   assert.deepEqual(ASSIGNMENT_MODES, ['direct', 'fallback_default', 'unconfigured'])
   assert.deepEqual(MODEL_READINESS, ['ready', 'provider_not_configured', 'credential_unavailable'])
   assert.deepEqual(EXECUTION_FORMS, ['single_shot', 'agent_loop'])
-  assert.deepEqual(MODEL_USAGE_SOURCES, ['provider', 'estimated'])
+  assert.deepEqual(MODEL_USAGE_SOURCES, ['provider'])
   assert.deepEqual(REMOTE_CATALOG_STATUSES, [
     'success', 'revision_conflict', 'invalid_request', 'credential_unavailable',
     'redirect_rejected', 'remote_unavailable'
@@ -104,5 +104,13 @@ test('SEM-F33/J25: ModelUsageV1 preserves consistent provider cache facts and un
     prompt_cache_miss_tokens: 700
   }), { ...provider, cacheHitInputTokens: null, cacheMissInputTokens: null })
   assert.equal(deriveCacheHitRate({ ...provider, usageSource: 'estimated', cacheHitInputTokens: null, cacheMissInputTokens: null }), null)
+  assert.throws(() => assertModelUsage({
+    ...provider,
+    usageSource: 'estimated',
+    cacheHitInputTokens: null,
+    cacheMissInputTokens: null
+  }), /usageSource/)
+  assert.equal(normalizeDeepSeekUsage(null), null)
+  assert.equal(normalizeDeepSeekUsage({ prompt_tokens: 1, completion_tokens: 1 }, false), null)
   assert.throws(() => assertModelUsage({ ...provider, cost: 1 }), /not allowed|exact/i)
 })

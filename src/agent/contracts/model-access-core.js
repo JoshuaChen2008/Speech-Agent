@@ -15,7 +15,7 @@ const CREDENTIAL_SCOPES = Object.freeze(['absent', 'persistent', 'session_only']
 const ASSIGNMENT_MODES = Object.freeze(['direct', 'fallback_default', 'unconfigured'])
 const MODEL_READINESS = Object.freeze(['ready', 'provider_not_configured', 'credential_unavailable'])
 const EXECUTION_FORMS = Object.freeze(['single_shot', 'agent_loop'])
-const MODEL_USAGE_SOURCES = Object.freeze(['provider', 'estimated'])
+const MODEL_USAGE_SOURCES = Object.freeze(['provider'])
 const REMOTE_CATALOG_STATUSES = Object.freeze([
   'success', 'revision_conflict', 'invalid_request', 'credential_unavailable',
   'redirect_rejected', 'remote_unavailable'

@@ -110,6 +110,6 @@
   { "previewOnly": true, "scenario": "remote-unavailable", "kind": "pullResponse", "payload": { "contractId": "agent-model-ui", "contractVersion": "1.0.0", "status": "remote_unavailable", "suggestions": [] } },
   { "previewOnly": true, "scenario": "provider-cache-hit", "kind": "modelUsage", "payload": { "inputTokens": 1000, "outputTokens": 200, "usageSource": "provider", "cacheHitInputTokens": 250, "cacheMissInputTokens": 750 } },
   { "previewOnly": true, "scenario": "provider-cache-unknown", "kind": "modelUsage", "payload": { "inputTokens": 1000, "outputTokens": 200, "usageSource": "provider", "cacheHitInputTokens": null, "cacheMissInputTokens": null } },
-  { "previewOnly": true, "scenario": "estimated-cache-unknown", "kind": "modelUsage", "payload": { "inputTokens": 1000, "outputTokens": 200, "usageSource": "estimated", "cacheHitInputTokens": null, "cacheMissInputTokens": null } },
+  { "previewOnly": true, "scenario": "usage-unknown", "kind": "modelUsage", "payload": null },
   { "previewOnly": true, "scenario": "inconsistent-cache-unknown", "kind": "modelUsage", "payload": { "inputTokens": 1000, "outputTokens": 200, "usageSource": "provider", "cacheHitInputTokens": null, "cacheMissInputTokens": null } }
 ]

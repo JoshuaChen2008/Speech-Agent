@@ -1,0 +1,44 @@
+{
+  "caller_role": "settings",
+  "contract_id": "speech-agent.personal-context.ui",
+  "contract_version": "1.1.0",
+  "event": null,
+  "fixture_id": "overview.suspended.001",
+  "j21_evidence": false,
+  "pending": null,
+  "preview_only": true,
+  "request": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.1.0"
+  },
+  "response": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.1.0",
+    "error": null,
+    "ok": true,
+    "snapshot": {
+      "counts": {
+        "personal_memories": 2,
+        "session_episodes": 1
+      },
+      "eligibility": "agent_disabled",
+      "memory_processing": {
+        "automatic_processing_boundary": "not_established",
+        "state": "suspended"
+      },
+      "scope_directory": {
+        "has_more": false,
+        "items": [
+          {
+            "display_name": "合成项目范围",
+            "kind": "project",
+            "scope_id": "scope.synthetic.project.001"
+          }
+        ]
+      },
+      "revision": 10
+    }
+  },
+  "scenario": "ready",
+  "seam": "agent-context:get-overview"
+}

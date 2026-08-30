@@ -24,7 +24,9 @@ test('SEM-F14/SEM-F33/J25: model-access fixtures stay preview-only, private, and
     else if (value.kind === 'configureResponse') assertConfigureResponse(value.payload)
     else if (value.kind === 'pullResponse') assertPullResponse(value.payload)
     else if (value.kind === 'changedEvent') assertChangedEvent(value.payload)
-    else if (value.kind === 'modelUsage') assertModelUsage(value.payload)
+    else if (value.kind === 'modelUsage') {
+      if (value.payload !== null) assertModelUsage(value.payload)
+    }
     else assert.fail(`unknown fixture kind: ${value.kind}`)
     const serialized = JSON.stringify(value)
     assert.doesNotMatch(serialized, /authorization|apiKey|credentialSlot|rawError|stack|[A-Z]:\\|\.wav|captionText|transcriptText/i)
@@ -38,7 +40,7 @@ test('SEM-F14/SEM-F33/J25: model-access fixtures stay preview-only, private, and
     'configure-success', 'configure-invalid', 'configure-revision-conflict', 'changed-reload',
     'remote-success', 'remote-revision-conflict', 'remote-invalid-request',
     'remote-credential-unavailable', 'remote-redirect-rejected', 'remote-unavailable',
-    'provider-cache-hit', 'provider-cache-unknown', 'estimated-cache-unknown', 'inconsistent-cache-unknown'
+    'provider-cache-hit', 'provider-cache-unknown', 'usage-unknown', 'inconsistent-cache-unknown'
   ]) assert.equal(scenarios.has(scenario), true, `missing preview fixture: ${scenario}`)
 })
 

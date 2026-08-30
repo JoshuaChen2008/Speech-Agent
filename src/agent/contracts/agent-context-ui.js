@@ -3,7 +3,8 @@
 // @ts-check
 
 const CONTRACT_ID = 'speech-agent.personal-context.ui'
-const CONTRACT_VERSION = '1.0.0'
+const CONTRACT_VERSION = '1.1.0'
+const MAX_SCOPE_DIRECTORY_ITEMS = 50
 
 const ALLOWED_ROLES = Object.freeze(['history', 'settings'])
 const IPC_CHANNELS = Object.freeze({
@@ -76,11 +77,14 @@ const FIXTURE_SCENARIOS = Object.freeze([
   'failure',
   'forget_result',
   'loading',
+  'pagination',
   'permission_failure',
   'processing',
   'ready',
   'reload_result',
   'revision_conflict',
+  'scope_directory',
+  'scope_empty',
   'unavailable',
   'validation_error'
 ])
@@ -177,14 +181,26 @@ function assertScopeProjection (value, path) {
 }
 
 function assertStructuredEntry (value, path) {
-  assertExactObject(value, ['display_text', 'kind', 'scope', 'semantic_key'], [], path)
+  assertExactObject(value, ['display_text', 'kind', 'scope'], [], path)
   assertString(value.display_text, `${path}.display_text`, { nonEmpty: true, maxBytes: 2048 })
   assertEnum(value.kind, MEMORY_KINDS, `${path}.kind`)
   assertScopeInput(value.scope, `${path}.scope`)
-  assertString(value.semantic_key, `${path}.semantic_key`, { nonEmpty: true, maxBytes: 256 })
-  if (value.semantic_key !== value.semantic_key.normalize('NFKC').toLowerCase()) {
-    fail(`${path}.semantic_key`, 'must already be NFKC-normalized and casefolded')
-  }
+}
+
+function assertScopeDirectory (value, path) {
+  assertExactObject(value, ['has_more', 'items'], [], path)
+  assertBoolean(value.has_more, `${path}.has_more`)
+  assertArray(value.items, `${path}.items`, { max: MAX_SCOPE_DIRECTORY_ITEMS })
+  const scopeIds = new Set()
+  value.items.forEach((item, index) => {
+    const itemPath = `${path}.items[${index}]`
+    assertExactObject(item, ['display_name', 'kind', 'scope_id'], [], itemPath)
+    assertString(item.display_name, `${itemPath}.display_name`, { nonEmpty: true, maxBytes: 256 })
+    assertEnum(item.kind, ['session', 'topic', 'project'], `${itemPath}.kind`)
+    assertId(item.scope_id, `${itemPath}.scope_id`)
+    if (scopeIds.has(item.scope_id)) fail(`${itemPath}.scope_id`, 'must be unique')
+    scopeIds.add(item.scope_id)
+  })
 }
 
 function assertMemoryItem (value, path) {
@@ -259,13 +275,14 @@ function assertMemoryProcessing (value, path) {
 }
 
 function assertOverviewSnapshot (value, path) {
-  assertExactObject(value, ['counts', 'eligibility', 'memory_processing', 'revision'], [], path)
+  assertExactObject(value, ['counts', 'eligibility', 'memory_processing', 'revision', 'scope_directory'], [], path)
   assertExactObject(value.counts, ['personal_memories', 'session_episodes'], [], `${path}.counts`)
   assertInteger(value.counts.personal_memories, `${path}.counts.personal_memories`, { min: 0 })
   assertInteger(value.counts.session_episodes, `${path}.counts.session_episodes`, { min: 0 })
   assertEnum(value.eligibility, ELIGIBILITY_STATES, `${path}.eligibility`)
   assertMemoryProcessing(value.memory_processing, `${path}.memory_processing`)
   assertInteger(value.revision, `${path}.revision`, { min: 0 })
+  assertScopeDirectory(value.scope_directory, `${path}.scope_directory`)
 }
 
 function assertPublicError (value, path) {
@@ -536,6 +553,7 @@ module.exports = {
   ERROR_RULES,
   IPC_CHANNELS,
   MANAGE_COMMANDS,
+  MAX_SCOPE_DIRECTORY_ITEMS,
   MEMORY_KINDS,
   PRELOAD_GLOBALS,
   PRELOAD_METHODS,

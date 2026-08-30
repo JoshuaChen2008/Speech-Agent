@@ -7,6 +7,7 @@ const { FORMAL_AGENT_TASK_ERROR_CODES } = require('../../agent/contracts/persona
 
 const MAX_CANDIDATES = 256
 const MAX_ITEMS = 20
+const MAX_SCOPE_DIRECTORY_ITEMS = 50
 const MAX_SOURCES_PER_ITEM = 8
 const MAX_CANONICAL_BYTES = 65536
 const ID_PATTERN = /^[a-z0-9][a-z0-9._:-]*$/
@@ -36,12 +37,27 @@ function identifier (value, code = 'AGENT_REQUEST_INVALID') {
 }
 
 function normalizeSemanticKey (value) {
-  boundedString(value, 1, 256)
-  return value.normalize('NFKC').toLocaleLowerCase('und').replace(/\u00df/g, 'ss')
+  boundedString(value, 1, 2048)
+  const folded = value.normalize('NFKC')
+    .toLocaleLowerCase('und')
+    .replace(/\u00df/g, 'ss')
+    .replace(/\u03c2/g, '\u03c3')
+    .replace(/\s+/gu, ' ')
+    .trim()
+  let result = ''
+  let bytes = 0
+  for (const codePoint of folded) {
+    const codePointBytes = Buffer.byteLength(codePoint, 'utf8')
+    if (bytes + codePointBytes > 256) break
+    result += codePoint
+    bytes += codePointBytes
+  }
+  if (result.length === 0) fail('AGENT_REQUEST_INVALID')
+  return result
 }
 
 function exactEntry (value) {
-  assertExactKeys(value, ['display_text', 'kind', 'scope', 'semantic_key'], 'AGENT_REQUEST_INVALID')
+  assertExactKeys(value, ['display_text', 'kind', 'scope'], 'AGENT_REQUEST_INVALID')
   boundedString(value.display_text, 1, 2048)
   if (Buffer.byteLength(value.display_text, 'utf8') > 2048 || !MEMORY_KINDS.has(value.kind)) fail('AGENT_REQUEST_INVALID')
   assertExactKeys(value.scope, ['kind', 'reference'], 'AGENT_REQUEST_INVALID')
@@ -52,14 +68,33 @@ function exactEntry (value) {
   } else {
     identifier(reference)
   }
-  const semanticKey = normalizeSemanticKey(value.semantic_key)
-  if (semanticKey !== value.semantic_key) fail('AGENT_REQUEST_INVALID')
   return {
     displayText: value.display_text,
     kind: value.kind,
     scopeKind: value.scope.kind,
     scopeReference: reference,
-    semanticKey
+    semanticKey: normalizeSemanticKey(value.display_text)
+  }
+}
+
+function encodePageCursor (resource, updatedAt, id) {
+  return Buffer.from(canonicalize({ id, resource, updatedAt }), 'utf8').toString('base64url')
+}
+
+function decodePageCursor (value, resource) {
+  if (value === null) return null
+  boundedString(value, 1, 256)
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
+    assertExactKeys(parsed, ['id', 'resource', 'updatedAt'], 'AGENT_REQUEST_INVALID')
+    if (parsed.resource !== resource) fail('AGENT_REQUEST_INVALID')
+    identifier(parsed.id)
+    safeInteger(parsed.updatedAt)
+    if (encodePageCursor(parsed.resource, parsed.updatedAt, parsed.id) !== value) fail('AGENT_REQUEST_INVALID')
+    return parsed
+  } catch (error) {
+    if (error instanceof StorageError) throw error
+    fail('AGENT_REQUEST_INVALID')
   }
 }
 
@@ -72,7 +107,11 @@ function publicItem (row) {
     kind: row.kind,
     origin: row.origin,
     lifecycle: row.lifecycle,
-    scope: { kind: row.scope_kind, reference: row.scope_reference },
+    scope: {
+      kind: row.scope_kind,
+      label: row.scope_label,
+      reference: row.scope_kind === 'global' ? null : row.scope_id
+    },
     semanticKey: row.semantic_key,
     updatedAt: Number(row.updated_at),
     sourceReferenceCount: Number(row.source_reference_count || 0)
@@ -251,17 +290,21 @@ class PersonalContextStore {
   }
 
   scopeIdentity (entry, now) {
-    const canonicalKey = entry.scopeKind === 'global'
-      ? 'global'
-      : `${entry.scopeKind}:${entry.scopeReference}`
-    const scopeId = `scope.${sha256Canonical({ kind: entry.scopeKind, reference: entry.scopeReference }).slice(0, 48)}`
-    const sessionId = entry.scopeKind === 'session' ? entry.scopeReference : null
-    this.database.prepare(`
-      INSERT OR IGNORE INTO personal_context_scopes(
-        scope_id, kind, canonical_key, label, session_id, origin, lifecycle, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 'user', 'active', ?, ?)
-    `).run(scopeId, entry.scopeKind, canonicalKey, entry.scopeReference || 'Global', sessionId, now, now)
-    return scopeId
+    if (entry.scopeKind === 'global') {
+      const scopeId = `scope.${sha256Canonical({ kind: 'global', reference: null }).slice(0, 48)}`
+      this.database.prepare(`
+        INSERT OR IGNORE INTO personal_context_scopes(
+          scope_id, kind, canonical_key, label, session_id, origin, lifecycle, created_at, updated_at
+        ) VALUES (?, 'global', 'global', 'Global', NULL, 'automatic', 'active', ?, ?)
+      `).run(scopeId, now, now)
+      return scopeId
+    }
+    const scope = this.database.prepare(`
+      SELECT scope_id FROM personal_context_scopes
+      WHERE scope_id = ? AND kind = ? AND origin = 'automatic' AND lifecycle = 'active'
+    `).get(entry.scopeReference, entry.scopeKind)
+    if (!scope) fail('AGENT_REQUEST_INVALID')
+    return scope.scope_id
   }
 
   assertRevision (expected) {
@@ -273,7 +316,7 @@ class PersonalContextStore {
 
   memoryRow (memoryId) {
     return this.database.prepare(`
-      SELECT item.*, scope.kind AS scope_kind,
+      SELECT item.*, scope.kind AS scope_kind, scope.label AS scope_label,
         CASE WHEN scope.kind = 'global' THEN NULL ELSE substr(scope.canonical_key, instr(scope.canonical_key, ':') + 1) END AS scope_reference,
         (SELECT COUNT(*) FROM personal_context_evidence AS evidence WHERE evidence.memory_id = item.memory_id) AS source_reference_count
       FROM personal_context_items AS item
@@ -295,30 +338,71 @@ class PersonalContextStore {
 
   manageView (command) {
     assertExactKeys(command, ['type', 'resource', 'limit', 'cursor'], 'AGENT_REQUEST_INVALID')
-    if (!['personal_memories', 'session_episodes'].includes(command.resource)) fail('AGENT_REQUEST_INVALID')
+    if (!['personal_memories', 'session_episodes', 'scope_directory'].includes(command.resource)) fail('AGENT_REQUEST_INVALID')
     safeInteger(command.limit, 1)
-    if (command.limit > 20 || command.cursor !== null) fail('AGENT_REQUEST_INVALID')
+    const maximum = command.resource === 'scope_directory' ? MAX_SCOPE_DIRECTORY_ITEMS : MAX_ITEMS
+    if (command.limit > maximum) fail('AGENT_REQUEST_INVALID')
+    const cursor = decodePageCursor(command.cursor, command.resource)
     if (command.resource === 'personal_memories') {
+      if (cursor && !this.database.prepare(`
+        SELECT 1 FROM personal_context_items WHERE memory_id = ? AND updated_at = ?
+      `).get(cursor.id, cursor.updatedAt)) fail('AGENT_REQUEST_INVALID')
       const totalCount = Number(this.database.prepare('SELECT COUNT(*) AS count FROM personal_context_items').get().count)
       const rows = this.database.prepare(`
-        SELECT item.*, scope.kind AS scope_kind,
+        SELECT item.*, scope.kind AS scope_kind, scope.label AS scope_label,
           CASE WHEN scope.kind = 'global' THEN NULL ELSE substr(scope.canonical_key, instr(scope.canonical_key, ':') + 1) END AS scope_reference,
           (SELECT COUNT(*) FROM personal_context_evidence AS evidence WHERE evidence.memory_id = item.memory_id) AS source_reference_count
         FROM personal_context_items AS item
         JOIN personal_context_scopes AS scope ON scope.scope_id = item.scope_id
-        ORDER BY item.updated_at DESC, item.memory_id ASC LIMIT ?
-      `).all(command.limit)
-      return { revision: this.contentRevision(), totalCount, rows: rows.map(publicItem) }
+        WHERE (? IS NULL OR item.updated_at < ? OR (item.updated_at = ? AND item.memory_id < ?))
+        ORDER BY item.updated_at DESC, item.memory_id DESC LIMIT ?
+      `).all(cursor?.id ?? null, cursor?.updatedAt ?? null, cursor?.updatedAt ?? null, cursor?.id ?? null, command.limit + 1)
+      const hasMore = rows.length > command.limit
+      const pageRows = rows.slice(0, command.limit)
+      const last = pageRows.at(-1)
+      return {
+        revision: this.contentRevision(), totalCount, hasMore,
+        nextCursor: hasMore ? encodePageCursor(command.resource, Number(last.updated_at), last.memory_id) : null,
+        rows: pageRows.map(publicItem)
+      }
     }
+    if (command.resource === 'scope_directory') {
+      if (cursor !== null) fail('AGENT_REQUEST_INVALID')
+      const totalCount = Number(this.database.prepare(`
+        SELECT COUNT(*) AS count FROM personal_context_scopes
+        WHERE origin = 'automatic' AND lifecycle = 'active' AND kind <> 'global'
+      `).get().count)
+      const rows = this.database.prepare(`
+        SELECT scope_id, kind, label, updated_at FROM personal_context_scopes
+        WHERE origin = 'automatic' AND lifecycle = 'active' AND kind <> 'global'
+        ORDER BY updated_at DESC, scope_id ASC LIMIT ?
+      `).all(command.limit + 1)
+      return {
+        revision: this.contentRevision(), totalCount,
+        hasMore: rows.length > command.limit, nextCursor: null,
+        rows: rows.slice(0, command.limit).map((row) => ({
+          displayName: row.label,
+          kind: row.kind,
+          scopeId: row.scope_id
+        }))
+      }
+    }
+    if (cursor && !this.database.prepare(`
+      SELECT 1 FROM personal_context_episodes
+      WHERE episode_id = ? AND updated_at = ? AND lifecycle = 'active'
+    `).get(cursor.id, cursor.updatedAt)) fail('AGENT_REQUEST_INVALID')
     const totalCount = Number(this.database.prepare('SELECT COUNT(*) AS count FROM personal_context_episodes WHERE lifecycle = \'active\'').get().count)
     const rows = this.database.prepare(`
-      SELECT episode.*, scope.kind AS scope_kind,
+      SELECT episode.*, scope.kind AS scope_kind, scope.label AS scope_label,
         CASE WHEN scope.kind = 'global' THEN NULL ELSE substr(scope.canonical_key, instr(scope.canonical_key, ':') + 1) END AS scope_reference
       FROM personal_context_episodes AS episode
       JOIN personal_context_scopes AS scope ON scope.scope_id = episode.scope_id
       WHERE episode.lifecycle = 'active'
-      ORDER BY episode.updated_at DESC, episode.episode_id ASC LIMIT ?
-    `).all(command.limit).map((row) => {
+        AND (? IS NULL OR episode.updated_at < ? OR (episode.updated_at = ? AND episode.episode_id < ?))
+      ORDER BY episode.updated_at DESC, episode.episode_id DESC LIMIT ?
+    `).all(cursor?.id ?? null, cursor?.updatedAt ?? null, cursor?.updatedAt ?? null, cursor?.id ?? null, command.limit + 1)
+    const hasMore = rows.length > command.limit
+    const pageRows = rows.slice(0, command.limit).map((row) => {
       const stored = JSON.parse(row.summary_json)
       return {
         episode_id: row.episode_id,
@@ -326,14 +410,23 @@ class PersonalContextStore {
         occurredFromOffsetMs: Number(row.occurred_from_offset_ms),
         occurredThroughOffsetMs: Number(row.occurred_through_offset_ms),
         omissions: Array.isArray(stored.omissions) ? stored.omissions : [],
-        scope: { kind: row.scope_kind, reference: row.scope_reference },
+        scope: {
+          kind: row.scope_kind,
+          label: row.scope_label,
+          reference: row.scope_kind === 'global' ? null : row.scope_id
+        },
         sourceKind: row.source_kind,
         sourceReferenceCount: 1,
         summary: { title: stored.title, bullets: stored.bullets },
         updatedAt: Number(row.updated_at)
       }
     })
-    return { revision: this.contentRevision(), totalCount, rows }
+    const last = rows.slice(0, command.limit).at(-1)
+    return {
+      revision: this.contentRevision(), totalCount, hasMore,
+      nextCursor: hasMore ? encodePageCursor(command.resource, Number(last.updated_at), last.episode_id) : null,
+      rows: pageRows
+    }
   }
 
   manageRemember (command) {
@@ -409,6 +502,11 @@ class PersonalContextStore {
     this.database.exec('BEGIN IMMEDIATE')
     try {
       const scopeId = this.scopeIdentity(entry, now)
+      const collision = this.database.prepare(`
+        SELECT memory_id FROM personal_context_items
+        WHERE scope_id = ? AND kind = ? AND semantic_key = ? AND memory_id <> ?
+      `).get(scopeId, entry.kind, entry.semanticKey, command.item_id)
+      if (collision) fail('AGENT_CONTEXT_REVISION_CONFLICT')
       this.database.prepare(`
         INSERT INTO personal_context_revisions(
           revision_id, memory_id, operation, content_json, previous_revision_id, run_id, created_at
@@ -952,7 +1050,10 @@ module.exports = {
   MAX_CANDIDATES,
   MAX_CANONICAL_BYTES,
   MAX_ITEMS,
+  MAX_SCOPE_DIRECTORY_ITEMS,
   MAX_SOURCES_PER_ITEM,
   PersonalContextStore,
+  decodePageCursor,
+  encodePageCursor,
   normalizeSemanticKey
 }

@@ -1,0 +1,55 @@
+{
+  "caller_role": "settings",
+  "contract_id": "speech-agent.personal-context.ui",
+  "contract_version": "1.1.0",
+  "event": null,
+  "fixture_id": "manage.remember-result.001",
+  "j21_evidence": false,
+  "pending": null,
+  "preview_only": true,
+  "request": {
+    "command": {
+      "entry": {
+        "display_text": "项目代号使用“北辰”。",
+        "kind": "term",
+        "scope": {
+          "kind": "global",
+          "reference": null
+        }
+      },
+      "expected_revision": 7,
+      "type": "remember"
+    },
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.1.0",
+    "request_id": "request.remember-result.001"
+  },
+  "response": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.1.0",
+    "error": null,
+    "ok": true,
+    "result": {
+      "item": {
+        "display_text": "项目代号使用“北辰”。",
+        "kind": "term",
+        "lifecycle": "active",
+        "memory_id": "memory.synthetic.002",
+        "origin": "explicit",
+        "revision": 1,
+        "scope": {
+          "kind": "global",
+          "label": "全局",
+          "reference": null
+        },
+        "source_reference_count": 0,
+        "updated_at": "2000-01-01T00:02:00.000Z"
+      },
+      "kind": "memory_item",
+      "operation": "remember"
+    },
+    "revision": 8
+  },
+  "scenario": "ready",
+  "seam": "agent-context:manage"
+}

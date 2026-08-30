@@ -66,7 +66,7 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 
 ## 4. 当前请求
 
-下列请求由 2026-08-29 的 UX-1 交付（[`agent-ui-ux-handoff.md`](agent-ui-ux-handoff.md) §11，设置 · 个人上下文管理）提出。Core 已于 2026-08-30 以 `speech-agent.personal-context.ui@1.0.0` 签发 exact contract 与 preview-only fixture；请求进入 `contract-ready`，但仍未构成正式 renderer 消费或 J21 联合证据。
+下列请求由 2026-08-29 的 UX-1 交付（[`agent-ui-ux-handoff.md`](agent-ui-ux-handoff.md) §11，设置 · 个人上下文管理）提出。Core 已先以 `speech-agent.personal-context.ui@1.0.0` 签发基础 exact contract，并于 2026-08-31 由 `1.1.0` 取代当前 allowlist；请求保持 `contract-ready`，但仍未构成正式 renderer 消费或 J21 联合证据。
 
 ### AUI-CR-001 · 个人记忆条目的有界浏览投影
 
@@ -148,15 +148,15 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 - 受影响语义/旅程：SEM-F30 / SEM-F32 / J21
 - 建议的成功 fixture：一条经受控字段构造的合成条目被接受。
 - 建议的失败 fixture：自由文本命令类型被拒零写入；载荷含额外键被拒；同一结构化键与已有条目冲突。
-- Core 判断：设置与字幕历史均可提供结构化 `记住`。本条已按 SEM-T06 登记；输入恰含可展示内容、七值条目类型、四值范围与 NFKC + casefold 规范化语义键。它不接受自由文本命令或数据库行，也不影响识别 provider——按 ADR 0017，产品不存在把个人记忆转换成识别关键词的入口。
-- exact contract：[`agent-context-ui-contract.md`](agent-context-ui-contract.md) §5.1；`manage-remember-processing.json` / `manage-remember-result.json` / `manage-validation-error.json`。
+- Core 判断：设置与字幕历史均可提供结构化 `记住`。当前输入恰含可展示内容、七值条目类型与四值范围；storage worker 按 AUI-CR-007 从正文派生规范化语义键，renderer 不提交该键。它不接受自由文本命令或数据库行，也不影响识别 provider——按 ADR 0017，产品不存在把个人记忆转换成识别关键词的入口。
+- exact contract：[`agent-context-ui-contract.md`](agent-context-ui-contract.md) §5.1；`src/agent/contracts/agent-context-ui.js`；`v1.1.0/manage-remember-processing.json` / `manage-remember-result.json` / `manage-validation-error.json`。
 - S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；fixture 不构成 J21 证据。
 
-下列三条由 2026-08-30 的正式 renderer 消费（设置 · 个人上下文）提出。Core 已于同日全部裁定并进入 `accepted`：AUI-CR-009 只需补齐 1.0.0 已声明但未实现的行为，字段形状不变；AUI-CR-007 与 AUI-CR-008 需要 `speech-agent.personal-context.ui@1.1.0`（移除 renderer 提交的 `semantic_key`、新增有界范围目录投影），随 S3 的 v7 一并签发。在新合同签发前，renderer 保持各条已登记的 fail-closed 表现。
+下列三条由 2026-08-30 的正式 renderer 消费（设置 · 个人上下文）提出。Core 已于 2026-08-31 签发 `speech-agent.personal-context.ui@1.1.0` 并全部推进到 `contract-ready`：AUI-CR-007 移除 renderer 提交的 `semantic_key`，AUI-CR-008 新增有界 automatic scope 目录，AUI-CR-009 补齐既有分页字段的 keyset 续读行为。fixture 仍是 preview-only，不构成 J21 联合证据。
 
 ### AUI-CR-007 · 结构化「记住」语义键的来源规则
 
-- 处理值：accepted
+- 处理值：contract-ready
 - 提出面：settings
 - 用户意图：我在设置里记住一条内容时，只想写下内容本身，不想再手填一个用来匹配条目的键。
 - 需要的事实或动作：`StructuredEntry.semantic_key` 是必填字段，合同只约束它「非空、≤ 256 UTF-8 bytes、提交前已完成 NFKC + casefold」，没有规定它由谁产生。renderer 当前从可展示正文派生（NFKC + casefold + 首尾去空白 + 按码点边界截到 256 bytes 内），这会让匹配键随正文改写而改变，也让「已登记别名」无从表达。需要 Core 裁定三者之一：(a) 确认由 renderer 按上述规则派生，并冻结该规则；(b) 由 Core 在写入侧派生，renderer 提交的值仅作提示；(c) 语义键属于受控输入，需要单独的用户可见字段与其枚举/长度边界。
@@ -165,12 +165,12 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 - 建议的成功 fixture：正文改写后语义键的期望取值（按裁定结果给出）；全角与合字正文各一条。
 - 建议的失败 fixture：载荷携带 `semantic_key` 被拒零写入；与既有条目语义键全等时的收束形状。
 - Core 判断：**采纳方案 (b)，由 Core 在写入侧派生。** 理由是 SEM-F30 已把「去重、冲突 revision、生命周期」划归个人上下文模块内部策略，匹配键属于该策略而不属于 renderer；方案 (a) 会让匹配键随正文改写而漂移，同一事实分裂成两条；方案 (c) 会把内部匹配机制暴露给普通用户。派生规则冻结在 storage worker：可展示正文 → NFKC → casefold → 折叠连续空白为单个 U+0020 → 首尾去空白 → 按 code point 边界截到 ≤256 UTF-8 字节且不切断 surrogate pair。`semantic_key` **从 renderer 提交载荷中移除**，界面不回显该键，也不提供别名管理入口（别名登记是模块内部事实）。正文改写走 `manage` 的修改命令并在同一事务内重算键，键改变时按既有冲突 revision 规则收束。
-- exact contract：需 `speech-agent.personal-context.ui@1.1.0`——移除 `StructuredEntry.semantic_key` 是对 1.0.0 的破坏性变更；规则文本见 [`data-architecture.md`](data-architecture.md) §5。待 S3 随 v7 一并签发。
+- exact contract：[`agent-context-ui-contract.md`](agent-context-ui-contract.md) §5.1；`src/agent/contracts/agent-context-ui.js` 的 `assertStructuredEntry()`；`src/runtime/storage-worker/personal-context-store.js` 的 `normalizeSemanticKey()` / `exactEntry()` / `manageUpdate()`；`v1.1.0/negative-semantic-key-request.json`；`test/{contracts,storage}/` 对应回归。`v1.0.0/` 保持只读历史 fixture。
 - S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；须含「正文改写后同一条目不分裂」的正证据。
 
 ### AUI-CR-008 · 非全局范围在设置里没有可选的范围标识
 
-- 处理值：accepted
+- 处理值：contract-ready
 - 提出面：settings
 - 用户意图：我想记住「只在这个项目里生效」的偏好，而不是所有场合都生效。
 - 需要的事实或动作：`scope.kind` 是四值闭集（`global` / `session` / `topic` / `project`），非 `global` 时需要 `scope.reference`。但 overview snapshot 与 `view` 投影都不提供一份可选的范围标识清单：条目上的 `scope.reference` 只能读，无法据此为一条新条目挑选范围。需要 Core 提供「当前可作为范围标识的有界闭集投影」（稳定 opaque 标识 + 可展示名称），或裁定设置界面只承载 `global`。
@@ -179,12 +179,12 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 - 建议的成功 fixture：一页可选范围标识（会话/主题/项目各一），含稳定标识与可展示名称；清单为空。
 - 建议的失败 fixture：`scope.reference` 指向不存在的标识被拒零写入；`global` 携带非 `null` reference 被拒。
 - Core 判断：**提供有界范围目录投影，且保留全部四个范围入口。** overview snapshot 增加一份有界范围目录（稳定 opaque 标识 + 可展示名称 + `kind`），`view` 与「记住」据此挑选范围。范围**只由摄取自动形成**（`personal_context_scopes.origin='automatic'`），首版不新增「创建范围」命令——SEM-F26 已规定「模型可提出主题/项目范围；名称不稳定时保留会话范围，范围合并必须由用户确认」，即范围本就是自动形成加用户确认的对象，不是用户从零创建的对象。`topic` / `project` 入口保留：清单为空时显示明确的空状态说明（例如「还没有可选的项目范围」），**不隐藏入口、不放置无法选出结果的下拉框**。同一份投影同时服务 Agent Bar 的范围选择，使「项目」这一范围在 Agent Bar 与设置页取得同一事实来源。
-- exact contract：需 `speech-agent.personal-context.ui@1.1.0` 增加范围目录投影；与 AUI-CR-007 同批签发。
+- exact contract：[`agent-context-ui-contract.md`](agent-context-ui-contract.md) §4.2/§5.1；overview `scope_directory={items,has_more}`，items ≤50 且每项 exact `{scope_id,display_name,kind}`；只投影 automatic active 的 session/topic/project，global 为固定入口；`v1.1.0/overview-scope-directory.json` / `overview-scope-empty.json`。
 - S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；须含空清单与非空清单两条正证据。
 
 ### AUI-CR-009 · `view` 的分页续读当前无法推进
 
-- 处理值：accepted
+- 处理值：contract-ready
 - 提出面：settings
 - 用户意图：我的记录超过一页时，我想接着往下看，而不是只被告知「还有更多」。
 - 需要的事实或动作：`view` 请求含 `cursor` 与 `limit`，响应含 `next_cursor` 与 `has_more`；但把 `next_cursor` 回传并不会推进 —— S1 控制器在 `src/agent/personal-context/controller.js` 里按固定上界取一页快照，`view` 不消费 `cursor` 也不消费 `limit`，因此续读请求返回同一页。需要 Core 让 `view` 真正消费 opaque cursor 与 limit，或裁定 1.0.0 的分页字段在 S1 只作前向兼容占位。
@@ -193,7 +193,7 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 - 建议的成功 fixture：第一页 `has_more=true` + 携带其 `next_cursor` 的第二页返回不同条目；末页 `has_more=false`。
 - 建议的失败 fixture：伪造或过期 cursor 被拒；`limit` 越界被拒。
 - Core 判断：**采纳方案 (a)，`view` 必须真正消费 cursor 与 limit。** 方案 (b) 会让个人记忆超过 20 条后其余条目永久不可见，与 SEM-F30 对 `manage` 「查看」的承诺直接冲突。这是一处 Core 缺陷而非 renderer 缺陷：`src/agent/personal-context/controller.js` 的 `view()` 既不消费 `command.cursor` 也不消费 `command.limit`，快照固定以 `limit: 20, cursor: null` 取一页，`next_cursor` 恒为 `offset_${n}`。修复范围是 storage worker 的排序键 + 控制器 + renderer「载入更多」三处。**游标改为 keyset 而非 offset**：按 `(updated_at DESC, 稳定 ID)` 复合排序，游标是对最后一行该复合键的不透明编码，续读条件为严格小于该键；v7 追加对应索引（见 [`data-architecture.md`](data-architecture.md) §5）。offset 游标在并发写入下会跳行或重复，明确禁用。
-- exact contract：`speech-agent.personal-context.ui@1.0.0` 的字段形状不变（`cursor` / `limit` / `next_cursor` / `has_more` 与 `has_more ⇔ next_cursor !== null` 的不变量已正确），只是行为必须补齐；游标编码格式改变但字段仍为不透明字符串。
+- exact contract：[`agent-context-ui-contract.md`](agent-context-ui-contract.md) §5/§6.3；`speech-agent.personal-context.ui@1.1.0` 继续使用 `cursor/limit/next_cursor/has_more` 字段，Core 按 `(updated_at DESC, stable ID DESC)` 严格小于 cursor 复合键续读，拒绝 offset/伪造/跨 resource cursor；`v1.1.0/manage-view-page-1.json` / `manage-view-page-2.json`；`test/{main,storage}/personal-context-*.test.js`。
 - S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；须含「第二页返回不同条目」与「并发插入不跳行不重复」两条正证据。
 
 ## 5. 关闭检查

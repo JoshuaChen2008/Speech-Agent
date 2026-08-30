@@ -1,20 +1,20 @@
-# S1 个人上下文 UI Contract
+# 个人上下文 UI Contract
 
-> 状态：已决定 · 2026-08-30  
-> Contract ID：`speech-agent.personal-context.ui`  
-> Contract version：`1.0.0`
+> 状态：已决定 · 2026-08-31
+> Contract ID：`speech-agent.personal-context.ui`
+> Contract version：`1.1.0`
 
-本文是 S1 `settings` / `history` renderer-facing contract 的权威说明。可执行 exact validator 位于 `src/agent/contracts/agent-context-ui.js`；脱敏 preview fixture 位于 `src/agent/contracts/fixtures/agent-context-ui/v1.0.0/`。若本文与可执行 validator 不一致，发布前必须停止签发并修正二者；不得由 UI 选择性兼容。
+本文是 `settings` / `history` renderer-facing contract 的权威说明。可执行 exact validator 位于 `src/agent/contracts/agent-context-ui.js`；脱敏 preview fixture 位于 `src/agent/contracts/fixtures/agent-context-ui/v1.1.0/`。若本文与可执行 validator 不一致，发布前必须停止签发并修正二者；不得由 UI 选择性兼容。`v1.0.0/` 保留为已签发历史 fixture，不再由当前生产 validator 接受。
 
 语义仍以 `semantic-contract.md`、ADR 0013–0015、S1 OpenSpec 与 `testing-strategy.md` J21 为上位权威。本文只冻结已有 S1 语义的 UI projection、IPC 边界和版本规则，不定义 S2–S6。
 
 ## 1. 版本规则
 
-`contract_id` 标识一条独立于项目版本、SQLite migration 和发布版本的 UI 合同线；`contract_version` 使用 `MAJOR.MINOR.PATCH` 十进制形式。`1.0.0` 与项目 v5/v6/v7 没有换算关系。
+`contract_id` 标识一条独立于项目版本、SQLite migration 和发布版本的 UI 合同线；`contract_version` 使用 `MAJOR.MINOR.PATCH` 十进制形式。`1.1.0` 与项目 v5/v6/v7 没有换算关系。
 
 | 变更类别 | 版本动作 | 例子 |
 |---|---|---|
-| breaking | 升 MAJOR | 删除/改名字段；改变必需性或类型；收窄允许值；改变角色、频道、状态转换、错误、重试或隐私语义 |
+| breaking | 发布新版本并要求 exact consumer 显式升级 | 删除/改名字段；改变必需性或类型；收窄允许值；改变角色、频道、状态转换、错误、重试或隐私语义。本轮负责人明确裁定删除 `semantic_key` 由 `1.0.0` 升为 `1.1.0` |
 | additive | 升 MINOR | 新增可选字段、命令、结果 variant、枚举值或 fixture 场景；exact consumer 仍须显式升级后才能接受 |
 | metadata-only | 升 PATCH | 不改变机器载荷与用户可观察语义的注释、来源说明或等价勘误 |
 
@@ -24,7 +24,7 @@
 2. 新版本必须新建 validator 导出与 `vMAJOR.MINOR.PATCH/` fixture 目录，更新支持版本 allowlist、本文、OpenSpec design 和 AUI-CR 台账，并先通过同一负矩阵。
 3. 每个 request、response、event 和 fixture envelope 都必须同时携带完全匹配的 `contract_id` 与 `contract_version`。不做版本猜测、向下兼容解析或最接近版本回落。
 4. 旧版本只在 Core 支持 allowlist 中继续兼容。新版本签发不自动移除旧版本；所有 renderer 消费者迁移并有对应联合证据后，才可用 breaking 版本移除。
-5. 当前 allowlist 恰好只有 `speech-agent.personal-context.ui@1.0.0`。
+5. 当前 allowlist 恰好只有 `speech-agent.personal-context.ui@1.1.0`；`1.0.0` fixture 只作历史审计，不做运行期兼容解析。
 
 ## 2. 所有权与边界
 
@@ -61,7 +61,7 @@
 | 字段 | JSON 类型 | 必需 | 约束 |
 |---|---|---|---|
 | `contract_id` | string | 是 | 恰好 `speech-agent.personal-context.ui` |
-| `contract_version` | string | 是 | 恰好 `1.0.0` |
+| `contract_version` | string | 是 | 恰好 `1.1.0` |
 
 所有对象均为 exact object：缺少必需字段、出现未知字段、类型错误或未登记枚举都拒绝，不忽略、不补默认值。
 
@@ -89,7 +89,19 @@
 | `eligibility` | enum | 是 | `ready`, `no_committed_transcript`, `outside_automatic_window`, `agent_disabled`, `provider_not_configured`, `cloud_disclosure_required`, `credential_unavailable`, `local_model_not_ready`, `session_not_terminal` |
 | `memory_processing.state` | enum | 是 | `enabled` 或 `suspended` |
 | `memory_processing.automatic_processing_boundary` | enum | 是 | `current_effective_cycle` 或 `not_established`；`suspended` 时必须为 `not_established` |
+| `scope_directory.has_more` | boolean | 是 | 当前 automatic active 范围超过 50 条时为 `true` |
+| `scope_directory.items` | `ScopeDirectoryItem[]` | 是 | 最多 50 条，按 `updated_at DESC, scope_id ASC` 稳定投影；可为空 |
 | `revision` | integer | 是 | ≥ 0，整个个人上下文公开 projection 的权威 revision |
+
+`ScopeDirectoryItem` 恰含：
+
+| 字段 | 类型 | 必需 | 约束 |
+|---|---|---|---|
+| `scope_id` | string | 是 | stable opaque ID；同一 snapshot 内唯一 |
+| `display_name` | string | 是 | 非空，≤ 256 UTF-8 bytes |
+| `kind` | enum | 是 | `session`, `topic`, `project` |
+
+范围目录只投影 `personal_context_scopes.origin='automatic'`、`lifecycle='active'` 的非全局范围。`global` 是 `scope.reference=null` 的固定入口，不占目录项。设置页与 Agent Bar 必须消费同一 snapshot；`topic` / `project` 清单为空时保留入口并显示明确空状态，不隐藏入口，也不显示无法选出结果的下拉框。首版没有“创建范围”命令，renderer 不能把已有条目 reference、自由文本或临时 ID 当作新范围。
 
 `eligibility` 是用户可观察的处理资格，不是 scheduler 运行状态。`claim`、lease、`wakeEpoch`、timer、generation、attempt 和 `AGENT_SCHEDULER_FAILED` 不得映射到此对象。后台技术故障由诊断与幂等恢复处理；它本身不切换产品页面状态。
 
@@ -118,6 +130,7 @@
 
 - `expected_revision` 为 ≥ 0 integer；所有写命令必需。`item_revision` 为 ≥ 1 integer。
 - `view.resource` 只允许 `personal_memories` / `session_episodes`；`limit` 为 1..20；`cursor` 为 `null` 或 1..256 字符的 opaque token。renderer 不解释或构造 cursor。
+- `view` 按 `(updated_at DESC, stable ID DESC)` 复合键做 keyset 分页。`next_cursor` 是 Core 对最后一行复合键的 opaque 编码；续读条件严格小于该键，不使用 offset。把 `next_cursor` 原样回传必须返回不同的下一页；新写入的更高 `updated_at` 行不得使续读重复已读行。伪造、跨 resource、过长、非 canonical 或 `offset_N` cursor 以 `AGENT_CONTEXT_REQUEST_INVALID` 拒绝。
 - `set_processing.state` 只允许 `enabled` / `suspended`。
 - `deletion_idempotency_key` 与 ID 使用同一受限字符集。删除结果未知时必须以同一 key 重放，不生成新 key。
 
@@ -128,10 +141,9 @@
 | `display_text` | string | 是 | 非空，≤ 2048 UTF-8 bytes；可展示的个人记忆内容 |
 | `kind` | enum | 是 | `decision`, `conclusion`, `todo`, `term`, `preference`, `project_fact`, `experience` |
 | `scope.kind` | enum | 是 | `global`, `session`, `topic`, `project` |
-| `scope.reference` | string \| null | 是 | `global` 必须为 `null`；其它范围为稳定 opaque ID |
-| `semantic_key` | string | 是 | 非空，≤ 256 UTF-8 bytes；提交前已完成 NFKC + casefold |
+| `scope.reference` | string \| null | 是 | `global` 必须为 `null`；其它范围必须是当前 automatic active 范围目录中的 `scope_id` |
 
-这是受控个人记忆输入，不是自由文本命令，也不是数据库行。`kind=term` 仍只是一条个人记忆，不进入 J20 确认关键词集合，不改变识别 provider。
+这是受控个人记忆输入，不是自由文本命令，也不是数据库行。renderer MUST NOT 提交、回显或提供 `semantic_key` / 别名管理入口。storage worker 从 `display_text` 派生：NFKC → casefold → 连续空白折叠成单个 U+0020 → 去首尾 → 按 Unicode code point 边界截到 ≤256 UTF-8 bytes，不切断 surrogate pair。`update` 在同一事务内重算；若与另一条现存 identity 冲突，按 revision conflict fail closed，不分裂为第二条。`kind=term` 仍只是一条个人记忆，不进入识别 provider。
 
 ## 6. Manage response projection
 
@@ -181,7 +193,7 @@ summary 是有界结构化轨迹，不得复制整场字幕正文或完整交互
 
 ### 6.3 result union
 
-- `memory_page` / `episode_page`：exact 字段为 `kind`, `items`, `has_more`, `next_cursor`；items ≤ 20；`has_more=true` 当且仅当 `next_cursor` 非空。排序由 Core 按既有稳定规则完成，renderer 不重排来改变事实优先级。
+- `memory_page` / `episode_page`：exact 字段为 `kind`, `items`, `has_more`, `next_cursor`；items ≤ 调用方 `limit` 且 ≤ 20；`has_more=true` 当且仅当 `next_cursor` 非空。排序与 keyset 规则见 §5，renderer 不重排来改变事实优先级。
 - `memory_item`：exact 字段为 `kind`, `operation`, `item`；operation 只允许 `remember`, `update`, `forget`。
 - `deletion`：exact 字段为 `kind`, `operation=delete`, `replayed`, `deleted`；`deleted` 恰含非负整数 `items`, `revisions`, `evidence`，不回显被删正文。同一 idempotency key 重放返回首次计数且 `replayed=true`。
 - `processing`：exact 字段为 `kind`, `operation=set_processing`, `memory_processing`。
@@ -236,7 +248,7 @@ fixture 的隐私扫描对敏感字段名和值 fail closed。任何 privacy 失
 
 ## 10. Fixture 矩阵
 
-唯一位置：`src/agent/contracts/fixtures/agent-context-ui/v1.0.0/`。
+当前唯一位置：`src/agent/contracts/fixtures/agent-context-ui/v1.1.0/`。`v1.0.0/` 保留只读历史副本。
 
 | 场景 | fixture |
 |---|---|
@@ -258,6 +270,10 @@ fixture 的隐私扫描对敏感字段名和值 fail closed。任何 privacy 失
 | delete result | `manage-delete-result.json` |
 | changed/reload trigger | `changed-reload.json` |
 | reload result | `overview-reload-result.json` |
+| automatic scope directory | `overview-scope-directory.json` |
+| empty scope directory | `overview-scope-empty.json` |
+| keyset page 1 / page 2 | `manage-view-page-1.json` / `manage-view-page-2.json` |
+| renderer semantic key rejected | `negative-semantic-key-request.json`（负例，必须被 request validator 拒绝） |
 
 每个 envelope 都带 header，并固定 `preview_only=true`、`j21_evidence=false`。envelope 只为 UI 预览补充 `scenario`、`caller_role` 和 pending 描述；其中嵌入的 request/response/event 使用生产 validator 校验。版本变化时创建新目录和新文件，不修改本目录既有 fixture。
 
@@ -274,5 +290,6 @@ fixture 预览不构成 J21 的正式验收证据。J21 仍需在 S5-Integration
 
 - S1 没有真实 S2 模型接入层时，自动路径稳定为 `provider_not_configured`；fixture 中的 `ready` 仅覆盖 UI shape，不能伪造产品自动路径资格或 J21 证据。
 - 本合同没有筛选、任意排序、自由查询、搜索、批量写、undo 或 cancel seam；UI 不得自行补出。
+- overview 范围目录上限为 50 并以 `has_more` 显式暴露截断；首版不增加范围目录分页或创建范围命令。
 - scheduler 技术故障没有 UI 状态、错误码或提示文案；如果未来要求用户可观察的降级状态，属于新的用户可观察语义，必须先按 SEM-T06 登记并发布新 contract 版本。
 - 真实 handler、preload、access policy、observer 隔离和 renderer 消费属于后续 S1 8.1–8.4 与 S5-Integration，不由这些 fixture 证明。

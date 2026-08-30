@@ -18,6 +18,7 @@ class PersonalContextRuntime {
     this.module = createPersonalContextModule({ storage: this.gateway })
     this.controller = new PersonalContextController({
       module: this.module,
+      readScopeDirectory: (command) => this.gateway.personalContextManage(command),
       getConfig: () => this.config.get(),
       updateAgentSettings: (request) => this.config.updateAgentSettings(request),
       onChanged: this.onChanged

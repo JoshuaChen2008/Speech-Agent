@@ -1,0 +1,45 @@
+{
+  "caller_role": "settings",
+  "contract_id": "speech-agent.personal-context.ui",
+  "contract_version": "1.1.0",
+  "event": null,
+  "fixture_id": "manage.operation-failure.001",
+  "j21_evidence": false,
+  "pending": null,
+  "preview_only": true,
+  "request": {
+    "command": {
+      "entry": {
+        "display_text": "项目沟通偏好使用简洁结构。",
+        "kind": "preference",
+        "scope": {
+          "kind": "global",
+          "reference": null
+        }
+      },
+      "expected_revision": 8,
+      "item_id": "memory.synthetic.001",
+      "item_revision": 4,
+      "type": "update"
+    },
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.1.0",
+    "request_id": "request.failure.001"
+  },
+  "response": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.1.0",
+    "error": {
+      "category": "failure",
+      "code": "AGENT_CONTEXT_OPERATION_FAILED",
+      "current_revision": null,
+      "next_action": "reload",
+      "retry_policy": "reload"
+    },
+    "ok": false,
+    "result": null,
+    "revision": null
+  },
+  "scenario": "failure",
+  "seam": "agent-context:manage"
+}

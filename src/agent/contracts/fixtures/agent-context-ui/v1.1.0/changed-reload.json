@@ -1,0 +1,18 @@
+{
+  "caller_role": "settings",
+  "contract_id": "speech-agent.personal-context.ui",
+  "contract_version": "1.1.0",
+  "event": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.1.0",
+    "revision": 8
+  },
+  "fixture_id": "changed.reload.001",
+  "j21_evidence": false,
+  "pending": null,
+  "preview_only": true,
+  "request": null,
+  "response": null,
+  "scenario": "reload_result",
+  "seam": "agent-context:changed"
+}

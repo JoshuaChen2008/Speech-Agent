@@ -18,7 +18,9 @@ test('SEM-F00/SEM-F28/SEM-F30/J21: runtime keeps S1 terminal notifications ineli
   const gateway = {
     personalContextIngest: async () => ({}),
     personalContextResolve: async () => ({}),
-    personalContextManage: async () => ({ revision: 0, totalCount: 0, rows: [] }),
+    personalContextManage: async () => ({
+      revision: 0, totalCount: 0, hasMore: false, nextCursor: null, rows: []
+    }),
     claimNextFormalAgentRun: async () => { claims += 1; return null },
     nextFormalAgentRunAt: async () => null,
     completeFormalAgentRun: async () => ({}),

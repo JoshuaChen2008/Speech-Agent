@@ -1,0 +1,33 @@
+{
+  "caller_role": "settings",
+  "contract_id": "speech-agent.personal-context.ui",
+  "contract_version": "1.1.0",
+  "event": null,
+  "fixture_id": "manage.remember-processing.001",
+  "j21_evidence": false,
+  "pending": {
+    "command_type": "remember",
+    "operation": "manage"
+  },
+  "preview_only": true,
+  "request": {
+    "command": {
+      "entry": {
+        "display_text": "项目代号使用“北辰”。",
+        "kind": "term",
+        "scope": {
+          "kind": "global",
+          "reference": null
+        }
+      },
+      "expected_revision": 7,
+      "type": "remember"
+    },
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.1.0",
+    "request_id": "request.remember.001"
+  },
+  "response": null,
+  "scenario": "processing",
+  "seam": "agent-context:manage"
+}

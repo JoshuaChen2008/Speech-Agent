@@ -22,12 +22,13 @@ const {
   isSupportedContract
 } = require('../../src/agent/contracts')
 const fixtures = require('../../src/agent/contracts/fixtures/agent-context-ui')
+const rejectedSemanticKey = require('../../src/agent/contracts/fixtures/agent-context-ui/v1.1.0/negative-semantic-key-request.json')
 
 const allFixtures = Object.values(fixtures)
 
 test('SEM-F30/J21: S1 UI contract identity, roles, seams and commands are frozen independently', () => {
   assert.equal(CONTRACT_ID, 'speech-agent.personal-context.ui')
-  assert.equal(CONTRACT_VERSION, '1.0.0')
+  assert.equal(CONTRACT_VERSION, '1.1.0')
   assert.deepEqual(ALLOWED_ROLES, ['history', 'settings'])
   assert.deepEqual(IPC_CHANNELS, {
     changed: 'agent-context:changed',
@@ -52,7 +53,7 @@ test('SEM-F30/J21: S1 UI contract identity, roles, seams and commands are frozen
     onChanged: 'onAgentContextChanged'
   })
   assert.equal(isSupportedContract(CONTRACT_ID, CONTRACT_VERSION), true)
-  assert.equal(isSupportedContract(CONTRACT_ID, '1.1.0'), false)
+  assert.equal(isSupportedContract(CONTRACT_ID, '1.0.0'), false)
   assert.equal(isSupportedContract('project-v5', CONTRACT_VERSION), false)
 })
 
@@ -106,15 +107,16 @@ test('SEM-F30/J21: exact validators reject missing fields, unknown fields and wr
   assert.throws(() => assertChangedEvent(changedEvent), /revision/)
 })
 
-test('SEM-F30/J21: remember is structured personal memory and cannot masquerade as a confirmed recognition term', () => {
+test('SEM-F30/J21: remember omits the storage-owned semantic key and cannot masquerade as a confirmed recognition term', () => {
   const request = structuredClone(fixtures.manageRememberProcessing.request)
   assert.equal(assertManageRequest(request), request)
   assert.deepEqual(Object.keys(request.command.entry).sort(), [
     'display_text',
     'kind',
-    'scope',
-    'semantic_key'
+    'scope'
   ])
+
+  assert.throws(() => assertManageRequest(rejectedSemanticKey.request), /semantic_key/)
 
   const freeRow = structuredClone(request)
   freeRow.command.entry = { text: 'please remember anything' }
@@ -123,6 +125,32 @@ test('SEM-F30/J21: remember is structured personal memory and cannot masquerade 
   const recognitionLeak = structuredClone(request)
   recognitionLeak.command.entry.confirmed_recognition_term = true
   assert.throws(() => assertManageRequest(recognitionLeak), /confirmed_recognition_term/)
+})
+
+test('SEM-F30/J21: overview exposes one bounded automatic scope directory for settings and Agent Bar selection', () => {
+  const directory = fixtures.overviewScopeDirectory.response.snapshot.scope_directory
+  assert.equal(directory.has_more, false)
+  assert.deepEqual(directory.items.map((item) => item.kind), ['session', 'topic', 'project'])
+  assert.equal(new Set(directory.items.map((item) => item.scope_id)).size, directory.items.length)
+  assert.deepEqual(fixtures.overviewScopeEmpty.response.snapshot.scope_directory, {
+    has_more: false,
+    items: []
+  })
+
+  const rendererCreatedScope = structuredClone(fixtures.manageRememberProcessing.request)
+  rendererCreatedScope.command.type = 'create_scope'
+  assert.throws(() => assertManageRequest(rendererCreatedScope), /command.type/)
+})
+
+test('SEM-F30/J21: opaque pagination fixtures advance to a distinct second page without offset cursors', () => {
+  const first = fixtures.manageViewPageOne
+  const second = fixtures.manageViewPageTwo
+  assert.equal(first.response.result.has_more, true)
+  assert.equal(first.response.result.next_cursor, second.request.command.cursor)
+  assert.notEqual(first.response.result.items[0].memory_id, second.response.result.items[0].memory_id)
+  assert.equal(second.response.result.has_more, false)
+  assert.equal(second.response.result.next_cursor, null)
+  assert.doesNotMatch(first.response.result.next_cursor, /^offset_/)
 })
 
 test('SEM-F30/J21: conflict and public failure shapes are fixed and carry no scheduler diagnostics', () => {

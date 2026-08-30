@@ -129,7 +129,7 @@ test('SEM-F00/SEM-F33/J25: S2 Core configures two profiles, resolves fallback, b
   assert.equal(/price|cost|currency|pricing/i.test(JSON.stringify(binding)), false)
 })
 
-test('SEM-F33/J25: faux provider freezes provider, estimated, cache and bounded credential protocol without inference', async (t) => {
+test('SEM-F33/J25: faux provider freezes provider usage, unknown usage, cache and bounded credential protocol without inference', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'model-access-usage-'))
   const vault = new CredentialVault({ directory: path.join(root, 'vault'), safeStorage: {
     isEncryptionAvailable: () => true,
@@ -159,10 +159,10 @@ test('SEM-F33/J25: faux provider freezes provider, estimated, cache and bounded 
     cacheHitInputTokens: null, cacheMissInputTokens: null
   })
   assert.equal((await complete('usage-absent')).usage, null)
-  assert.deepEqual(assertModelUsage({
+  assert.throws(() => assertModelUsage({
     inputTokens: 900, outputTokens: 180, usageSource: 'estimated',
     cacheHitInputTokens: null, cacheMissInputTokens: null
-  }).usageSource, 'estimated')
+  }), /usageSource/)
 
   const barrierProvider = fauxProvider('barrier')
   const pending = vault.borrow(slot, 'persistent', state.generation, (credential) => barrierProvider.complete({ credential }))

@@ -1,0 +1,21 @@
+{
+  "expected_error": "AGENT_CONTEXT_REQUEST_INVALID",
+  "request": {
+    "command": {
+      "entry": {
+        "display_text": "合成负例。",
+        "kind": "term",
+        "scope": {
+          "kind": "global",
+          "reference": null
+        },
+        "semantic_key": "renderer-owned-key"
+      },
+      "expected_revision": 0,
+      "type": "remember"
+    },
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.1.0",
+    "request_id": "request.negative-semantic-key.001"
+  }
+}

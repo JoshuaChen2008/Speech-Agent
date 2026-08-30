@@ -38,6 +38,7 @@ const overview = {
     counts: { personal_memories: 0, session_episodes: 0 },
     eligibility: 'provider_not_configured',
     memory_processing: { state: 'enabled', automatic_processing_boundary: 'not_established' },
+    scope_directory: { has_more: false, items: [] },
     revision: 0
   }
 }

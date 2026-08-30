@@ -1,0 +1,38 @@
+{
+  "caller_role": "settings",
+  "contract_id": "speech-agent.personal-context.ui",
+  "contract_version": "1.1.0",
+  "event": null,
+  "fixture_id": "overview.empty.001",
+  "j21_evidence": false,
+  "pending": null,
+  "preview_only": true,
+  "request": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.1.0"
+  },
+  "response": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.1.0",
+    "error": null,
+    "ok": true,
+    "snapshot": {
+      "counts": {
+        "personal_memories": 0,
+        "session_episodes": 0
+      },
+      "eligibility": "no_committed_transcript",
+      "memory_processing": {
+        "automatic_processing_boundary": "current_effective_cycle",
+        "state": "enabled"
+      },
+      "scope_directory": {
+        "has_more": false,
+        "items": []
+      },
+      "revision": 0
+    }
+  },
+  "scenario": "empty",
+  "seam": "agent-context:get-overview"
+}

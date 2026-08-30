@@ -1,0 +1,45 @@
+{
+  "caller_role": "settings",
+  "contract_id": "speech-agent.personal-context.ui",
+  "contract_version": "1.1.0",
+  "event": null,
+  "fixture_id": "manage.revision-conflict.001",
+  "j21_evidence": false,
+  "pending": null,
+  "preview_only": true,
+  "request": {
+    "command": {
+      "entry": {
+        "display_text": "项目沟通偏好使用简洁结构。",
+        "kind": "preference",
+        "scope": {
+          "kind": "global",
+          "reference": null
+        }
+      },
+      "expected_revision": 7,
+      "item_id": "memory.synthetic.001",
+      "item_revision": 3,
+      "type": "update"
+    },
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.1.0",
+    "request_id": "request.conflict.001"
+  },
+  "response": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.1.0",
+    "error": {
+      "category": "conflict",
+      "code": "AGENT_CONTEXT_REVISION_CONFLICT",
+      "current_revision": 8,
+      "next_action": "reload",
+      "retry_policy": "reload"
+    },
+    "ok": false,
+    "result": null,
+    "revision": 8
+  },
+  "scenario": "revision_conflict",
+  "seam": "agent-context:manage"
+}

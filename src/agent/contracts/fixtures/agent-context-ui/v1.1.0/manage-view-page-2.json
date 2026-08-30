@@ -1,0 +1,52 @@
+{
+  "caller_role": "settings",
+  "contract_id": "speech-agent.personal-context.ui",
+  "contract_version": "1.1.0",
+  "event": null,
+  "fixture_id": "manage.view-page-2.001",
+  "j21_evidence": false,
+  "pending": null,
+  "preview_only": true,
+  "request": {
+    "command": {
+      "cursor": "eyJwYWdlIjoxfQ",
+      "limit": 1,
+      "resource": "personal_memories",
+      "type": "view"
+    },
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.1.0",
+    "request_id": "request.view-page-2.001"
+  },
+  "response": {
+    "contract_id": "speech-agent.personal-context.ui",
+    "contract_version": "1.1.0",
+    "error": null,
+    "ok": true,
+    "result": {
+      "has_more": false,
+      "items": [
+        {
+          "display_text": "合成分页条目二。",
+          "kind": "project_fact",
+          "lifecycle": "active",
+          "memory_id": "memory.synthetic.page.002",
+          "origin": "explicit",
+          "revision": 1,
+          "scope": {
+            "kind": "global",
+            "label": "全局",
+            "reference": null
+          },
+          "source_reference_count": 0,
+          "updated_at": "2000-01-01T00:00:00.000Z"
+        }
+      ],
+      "kind": "memory_page",
+      "next_cursor": null
+    },
+    "revision": 9
+  },
+  "scenario": "pagination",
+  "seam": "agent-context:manage"
+}

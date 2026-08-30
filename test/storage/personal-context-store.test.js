@@ -9,23 +9,27 @@ const test = require('node:test')
 const { canonicalize, sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
 const { createPersonalContextModule } = require('../../src/agent/personal-context')
 const { ContextIngestSessionRunner } = require('../../src/agent/execution-host')
-const { PersonalContextStore } = require('../../src/runtime/storage-worker/personal-context-store')
+const {
+  PersonalContextStore,
+  normalizeSemanticKey
+} = require('../../src/runtime/storage-worker/personal-context-store')
 const { FormalAgentStore } = require('../../src/runtime/storage-worker/formal-agent-store')
 const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
 
-function fixture (t) {
+function fixture (t, options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'personal-context-store-'))
+  const now = typeof options.now === 'function' ? options.now : () => 1000
   const subtitleStore = new SqliteSubtitleStore({
     databasePath: path.join(root, 'context.sqlite3'),
     migrations: FORMAL_AGENT_MIGRATIONS,
-    now: () => 1000
+    now
   })
   t.after(() => {
     subtitleStore.close()
     fs.rmSync(root, { recursive: true, force: true })
   })
-  return { subtitleStore, store: new PersonalContextStore({ subtitleStore, now: () => 1000 }) }
+  return { subtitleStore, store: new PersonalContextStore({ subtitleStore, now }) }
 }
 
 function terminalSession (subtitleStore, sessionId = 'session-1') {
@@ -79,12 +83,11 @@ function frozenSource (database, sessionId = 'session-1', transcriptVersion = 'r
   }
 }
 
-function entry (semanticKey, displayText = semanticKey) {
+function entry (displayText) {
   return {
     display_text: displayText,
     kind: 'project_fact',
-    scope: { kind: 'global', reference: null },
-    semantic_key: semanticKey
+    scope: { kind: 'global', reference: null }
   }
 }
 
@@ -114,20 +117,20 @@ test('SEM-F26/SEM-F30/J21: ingest rereads a terminal source and replays one boun
 
 test('SEM-F30/J21: manage revisions guard remember/update/forget/delete and exact replay', (t) => {
   const { store } = fixture(t)
-  const remembered = store.manage({ type: 'remember', expected_revision: 0, entry: entry('alpha', 'Alpha') })
+  const remembered = store.manage({ type: 'remember', expected_revision: 0, entry: entry('Alpha') })
   assert.equal(remembered.revision, 1)
   assert.equal(remembered.item.lifecycle, 'active')
   assert.throws(
-    () => store.manage({ type: 'remember', expected_revision: 1, entry: entry('alpha', 'Replacement') }),
+    () => store.manage({ type: 'remember', expected_revision: 1, entry: entry('Ａlpha') }),
     (error) => error?.code === 'AGENT_CONTEXT_OPERATION_FAILED'
   )
   assert.throws(
-    () => store.manage({ type: 'update', expected_revision: 0, item_id: remembered.item.memory_id, item_revision: 1, entry: entry('alpha', 'Updated') }),
+    () => store.manage({ type: 'update', expected_revision: 0, item_id: remembered.item.memory_id, item_revision: 1, entry: entry('Updated') }),
     (error) => error?.code === 'AGENT_CONTEXT_REVISION_CONFLICT'
   )
   const updated = store.manage({
     type: 'update', expected_revision: 1, item_id: remembered.item.memory_id,
-    item_revision: 1, entry: entry('alpha', 'Updated')
+    item_revision: 1, entry: entry('Updated')
   })
   const forgotten = store.manage({
     type: 'forget', expected_revision: 2, item_id: remembered.item.memory_id, item_revision: updated.item.item_revision
@@ -146,13 +149,158 @@ test('SEM-F30/J21: manage revisions guard remember/update/forget/delete and exac
   assert.deepEqual(replay.deleted, deletion.deleted)
 })
 
+test('SEM-F30/J21: storage derives semantic keys from display text at Unicode code-point boundaries', (t) => {
+  const { store } = fixture(t)
+  assert.equal(normalizeSemanticKey('  Ａ\tB  ß  ﬃ  '), 'a b ss ffi')
+  const truncated = normalizeSemanticKey('😀'.repeat(100))
+  assert.ok(Buffer.byteLength(truncated, 'utf8') <= 256)
+  assert.doesNotMatch(truncated, /[\uD800-\uDBFF]$/)
+  assert.throws(() => normalizeSemanticKey(' \t\n '), (error) => error?.code === 'AGENT_REQUEST_INVALID')
+
+  const remembered = store.manage({
+    type: 'remember', expected_revision: 0,
+    entry: { display_text: '  Ａ\tB  ß  ', kind: 'term', scope: { kind: 'global', reference: null } }
+  })
+  assert.equal(remembered.item.semanticKey, 'a b ss')
+  assert.throws(() => store.manage({
+    type: 'remember', expected_revision: 1,
+    entry: {
+      display_text: 'Renderer key', kind: 'term', scope: { kind: 'global', reference: null },
+      semantic_key: 'renderer-key'
+    }
+  }), (error) => error?.code === 'AGENT_REQUEST_INVALID')
+
+  const other = store.manage({ type: 'remember', expected_revision: 1, entry: entry('Other identity') })
+  assert.throws(() => store.manage({
+    type: 'update', expected_revision: 2,
+    item_id: remembered.item.memory_id, item_revision: remembered.item.item_revision,
+    entry: entry('Other identity')
+  }), (error) => error?.code === 'AGENT_CONTEXT_REVISION_CONFLICT')
+  assert.equal(store.contentRevision(), other.revision)
+})
+
+test('SEM-F30/J21: memory and episode views use opaque keyset cursors without offset drift', (t) => {
+  let current = 1000
+  const { subtitleStore, store } = fixture(t, { now: () => ++current })
+  const originalIds = []
+  for (const [index, text] of ['Alpha page', 'Beta page', 'Gamma page'].entries()) {
+    originalIds.push(store.manage({
+      type: 'remember', expected_revision: index, entry: entry(text)
+    }).item.memory_id)
+  }
+  const first = store.manage({ type: 'view', resource: 'personal_memories', limit: 2, cursor: null })
+  assert.equal(first.rows.length, 2)
+  assert.equal(first.hasMore, true)
+  assert.doesNotMatch(first.nextCursor, /^offset_/)
+  store.manage({ type: 'remember', expected_revision: 3, entry: entry('Inserted after first page') })
+  const second = store.manage({
+    type: 'view', resource: 'personal_memories', limit: 2, cursor: first.nextCursor
+  })
+  assert.equal(second.hasMore, false)
+  assert.deepEqual(
+    [...first.rows, ...second.rows].map((item) => item.memory_id).sort(),
+    originalIds.sort()
+  )
+  assert.throws(() => store.manage({
+    type: 'view', resource: 'personal_memories', limit: 2, cursor: 'offset_2'
+  }), (error) => error?.code === 'AGENT_REQUEST_INVALID')
+
+  for (const sessionId of ['page-session-a', 'page-session-b']) {
+    terminalSession(subtitleStore, sessionId)
+    store.ingest(frozenSource(subtitleStore.database, sessionId))
+  }
+  const episodeFirst = store.manage({ type: 'view', resource: 'session_episodes', limit: 1, cursor: null })
+  const episodeSecond = store.manage({
+    type: 'view', resource: 'session_episodes', limit: 1, cursor: episodeFirst.nextCursor
+  })
+  assert.notEqual(episodeFirst.rows[0].episode_id, episodeSecond.rows[0].episode_id)
+  assert.equal(episodeSecond.nextCursor, null)
+  assert.throws(() => store.manage({
+    type: 'view', resource: 'session_episodes', limit: 1, cursor: first.nextCursor
+  }), (error) => error?.code === 'AGENT_REQUEST_INVALID')
+
+  const { store: tiedStore } = fixture(t)
+  for (const [index, text] of ['Tie one', 'Tie two', 'Tie three'].entries()) {
+    tiedStore.manage({ type: 'remember', expected_revision: index, entry: entry(text) })
+  }
+  const expectedTieOrder = tiedStore.database.prepare(`
+    SELECT memory_id FROM personal_context_items ORDER BY updated_at DESC, memory_id DESC
+  `).all().map((row) => row.memory_id)
+  const tiedFirst = tiedStore.manage({ type: 'view', resource: 'personal_memories', limit: 2, cursor: null })
+  const tiedSecond = tiedStore.manage({
+    type: 'view', resource: 'personal_memories', limit: 2, cursor: tiedFirst.nextCursor
+  })
+  assert.deepEqual(
+    [...tiedFirst.rows, ...tiedSecond.rows].map((item) => item.memory_id),
+    expectedTieOrder
+  )
+
+  const { store: expiredStore } = fixture(t)
+  const expiredItems = ['Expired cursor one', 'Expired cursor two'].map((text, index) =>
+    expiredStore.manage({ type: 'remember', expected_revision: index, entry: entry(text) }).item)
+  const expiredPage = expiredStore.manage({
+    type: 'view', resource: 'personal_memories', limit: 1, cursor: null
+  })
+  const cursorItem = expiredItems.find((item) => item.memory_id === expiredPage.rows[0].memory_id)
+  expiredStore.manage({
+    type: 'delete', expected_revision: 2, item_id: cursorItem.memory_id,
+    item_revision: cursorItem.item_revision, deletion_idempotency_key: 'delete-expired-cursor'
+  })
+  assert.throws(() => expiredStore.manage({
+    type: 'view', resource: 'personal_memories', limit: 1, cursor: expiredPage.nextCursor
+  }), (error) => error?.code === 'AGENT_REQUEST_INVALID')
+})
+
+test('SEM-F30/J21: scope directory exposes only bounded automatic scopes and remember cannot create one', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  terminalSession(subtitleStore, 'scope-directory-session')
+  store.ingest(frozenSource(subtitleStore.database, 'scope-directory-session'))
+  subtitleStore.database.prepare(`
+    INSERT INTO personal_context_scopes(
+      scope_id, kind, canonical_key, label, session_id, origin, lifecycle, created_at, updated_at
+    ) VALUES
+      ('scope.topic.automatic', 'topic', 'topic:automatic', 'Automatic topic', NULL, 'automatic', 'active', 1000, 1000),
+      ('scope.project.automatic', 'project', 'project:automatic', 'Automatic project', NULL, 'automatic', 'active', 1000, 1000),
+      ('scope.project.user', 'project', 'project:user', 'User-created project', NULL, 'user', 'active', 1000, 1000)
+  `).run()
+  const directory = store.manage({ type: 'view', resource: 'scope_directory', limit: 50, cursor: null })
+  assert.deepEqual(directory.rows.map((scope) => scope.kind).sort(), ['project', 'session', 'topic'])
+  assert.equal(directory.rows.some((scope) => scope.scopeId === 'scope.project.user'), false)
+  const insertScope = subtitleStore.database.prepare(`
+    INSERT INTO personal_context_scopes(
+      scope_id, kind, canonical_key, label, session_id, origin, lifecycle, created_at, updated_at
+    ) VALUES (?, 'project', ?, ?, NULL, 'automatic', 'active', 1000, 1000)
+  `)
+  for (let index = 0; index < 48; index += 1) {
+    insertScope.run(`scope.project.extra.${index}`, `project:extra:${index}`, `Automatic project ${index}`)
+  }
+  const boundedDirectory = store.manage({ type: 'view', resource: 'scope_directory', limit: 50, cursor: null })
+  assert.equal(boundedDirectory.rows.length, 50)
+  assert.equal(boundedDirectory.hasMore, true)
+  const project = store.manage({
+    type: 'remember', expected_revision: 1,
+    entry: {
+      display_text: 'Project-only preference', kind: 'preference',
+      scope: { kind: 'project', reference: 'scope.project.automatic' }
+    }
+  })
+  assert.equal(project.item.scope.reference, 'scope.project.automatic')
+  assert.throws(() => store.manage({
+    type: 'remember', expected_revision: 2,
+    entry: {
+      display_text: 'Unknown project', kind: 'project_fact',
+      scope: { kind: 'project', reference: 'scope.project.unknown' }
+    }
+  }), (error) => error?.code === 'AGENT_REQUEST_INVALID')
+})
+
 test('SEM-F26/SEM-F30/J21: resolve uses normalized exact equality and whole-item budgets', (t) => {
   const { store } = fixture(t)
   let revision = 0
   for (let index = 0; index < 22; index += 1) {
     const result = store.manage({
       type: 'remember', expected_revision: revision,
-      entry: entry(index === 0 ? 'alpha' : `key-${index}`, `Item ${index}`)
+      entry: entry(index === 0 ? 'Ａlpha' : `Item ${index}`)
     })
     revision = result.revision
   }
@@ -213,25 +361,33 @@ test('SEM-F30/J21: resolve restricts memories to the requested scope and omits a
   const { subtitleStore, store } = fixture(t)
   terminalSession(subtitleStore, 'scope-session-a')
   const ingested = store.ingest(frozenSource(subtitleStore.database, 'scope-session-a'))
-  const global = store.manage({ type: 'remember', expected_revision: 1, entry: entry('global-key') })
-  store.manage({
-    type: 'remember', expected_revision: 2,
-    entry: {
-      display_text: 'Session A', kind: 'project_fact',
-      scope: { kind: 'session', reference: 'scope-session-a' }, semantic_key: 'session-a-key'
-    }
-  })
+  terminalSession(subtitleStore, 'scope-session-b')
+  store.ingest(frozenSource(subtitleStore.database, 'scope-session-b'))
+  const scopeA = subtitleStore.database.prepare(
+    "SELECT scope_id FROM personal_context_scopes WHERE canonical_key = 'session:scope-session-a'"
+  ).get().scope_id
+  const scopeB = subtitleStore.database.prepare(
+    "SELECT scope_id FROM personal_context_scopes WHERE canonical_key = 'session:scope-session-b'"
+  ).get().scope_id
+  const global = store.manage({ type: 'remember', expected_revision: 2, entry: entry('global-key') })
   store.manage({
     type: 'remember', expected_revision: 3,
     entry: {
+      display_text: 'Session A', kind: 'project_fact',
+      scope: { kind: 'session', reference: scopeA }
+    }
+  })
+  store.manage({
+    type: 'remember', expected_revision: 4,
+    entry: {
       display_text: 'Session B', kind: 'project_fact',
-      scope: { kind: 'session', reference: 'scope-session-b' }, semantic_key: 'session-b-key'
+      scope: { kind: 'session', reference: scopeB }
     }
   })
   const scoped = store.resolve({
     scope: { kind: 'session', reference: 'scope-session-a' }, semantic_keys: [], aliases: []
   })
-  assert.deepEqual(scoped.personalMemories.map((item) => item.semanticKey).sort(), ['global-key', 'session-a-key'])
+  assert.deepEqual(scoped.personalMemories.map((item) => item.semanticKey).sort(), ['global-key', 'session a'])
 
   const insertEvidence = subtitleStore.database.prepare(`
     INSERT INTO personal_context_evidence(
@@ -253,11 +409,11 @@ test('SEM-F30/J21: resolve restricts memories to the requested scope and omits a
 
 test('SEM-F30/J21: explicit remember restores forgotten identity while delete key digest mismatches fail closed', (t) => {
   const { store } = fixture(t)
-  const remembered = store.manage({ type: 'remember', expected_revision: 0, entry: entry('restore') })
+  const remembered = store.manage({ type: 'remember', expected_revision: 0, entry: entry('Restore') })
   const forgotten = store.manage({
     type: 'forget', expected_revision: 1, item_id: remembered.item.memory_id, item_revision: 1
   })
-  const restored = store.manage({ type: 'remember', expected_revision: 2, entry: entry('restore', 'Restored') })
+  const restored = store.manage({ type: 'remember', expected_revision: 2, entry: entry('Restore') })
   assert.equal(restored.item.memory_id, remembered.item.memory_id)
   assert.equal(restored.item.lifecycle, 'active')
   const deleted = store.manage({
@@ -299,13 +455,15 @@ test('SEM-F26/SEM-F30/J21: session deletion removes episodes and evidence while 
   const { subtitleStore, store } = fixture(t)
   terminalSession(subtitleStore, 'session-delete-context')
   const targetRun = store.ingest(frozenSource(subtitleStore.database, 'session-delete-context'))
+  const targetScopeId = subtitleStore.database.prepare(
+    "SELECT scope_id FROM personal_context_scopes WHERE canonical_key = 'session:session-delete-context'"
+  ).get().scope_id
   store.manage({
     type: 'remember', expected_revision: 1,
     entry: {
       display_text: 'Session-local explicit fact',
       kind: 'project_fact',
-      scope: { kind: 'session', reference: 'session-delete-context' },
-      semantic_key: 'session:local_fact'
+      scope: { kind: 'session', reference: targetScopeId }
     }
   })
   terminalSession(subtitleStore, 'session-delete-other')
@@ -344,7 +502,7 @@ test('SEM-F26/SEM-F30/J21: session deletion removes episodes and evidence while 
   assert.deepEqual(subtitleStore.database.prepare(`
     SELECT semantic_key, lifecycle FROM personal_context_items ORDER BY semantic_key
   `).all().map((row) => ({ ...row })), [
-    { semantic_key: 'session:local_fact', lifecycle: 'inactive' },
+    { semantic_key: 'session-local explicit fact', lifecycle: 'inactive' },
     { semantic_key: 'shared-fact', lifecycle: 'active' }
   ])
   assert.equal(store.contentRevision(), 5)
