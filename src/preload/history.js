@@ -4,6 +4,22 @@ const { contextBridge } = require('electron')
 const CHANNELS = require('../main/ipc/channels')
 const { createWindowInteractionBridge, ipcRenderer, subscribe } = require('./shared')
 const interaction = createWindowInteractionBridge('history')
+const {
+  assertChangedEvent,
+  assertGetOverviewRequest,
+  assertGetOverviewResponse,
+  assertManageRequest,
+  assertManageResponse
+} = require('../agent/contracts/agent-context-ui')
+
+function onAgentContextChanged (callback) {
+  if (typeof callback !== 'function') throw new TypeError('callback must be a function')
+  const handler = (_event, value) => {
+    try { callback(assertChangedEvent(value)) } catch { /* invalid events are dropped whole */ }
+  }
+  ipcRenderer.on(CHANNELS.AGENT_CONTEXT_CHANGED, handler)
+  return () => ipcRenderer.removeListener(CHANNELS.AGENT_CONTEXT_CHANGED, handler)
+}
 
 contextBridge.exposeInMainWorld('historyApi', {
   dragStart: interaction.dragStart,
@@ -33,5 +49,14 @@ contextBridge.exposeInMainWorld('historyApi', {
     sessionId: String(sessionId || ''),
     format: String(format || ''),
     ...(version === undefined ? {} : { version: String(version) })
-  })
+  }),
+  getAgentContextOverview: (request) => {
+    assertGetOverviewRequest(request)
+    return ipcRenderer.invoke(CHANNELS.AGENT_CONTEXT_GET_OVERVIEW, request).then((response) => assertGetOverviewResponse(response))
+  },
+  manageAgentContext: (request) => {
+    assertManageRequest(request)
+    return ipcRenderer.invoke(CHANNELS.AGENT_CONTEXT_MANAGE, request).then((response) => assertManageResponse(response))
+  },
+  onAgentContextChanged
 })

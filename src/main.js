@@ -39,6 +39,11 @@ const {
 const { HistoryService } = require('./main/services/history-service')
 const { RefinementFaultLog } = require('./main/services/refinement-fault-log')
 const { RefinementNoticeStore } = require('./main/services/refinement-notice')
+const { PersonalContextRuntime } = require('./agent/personal-context/runtime')
+const {
+  broadcastPersonalContextChanged,
+  registerPersonalContextIpc
+} = require('./main/ipc/personal-context-ipc')
 const { createMainEvidenceBridge } = require('./main/services/electron-exit-evidence')
 const { PowerSessionGuard } = require('./main/services/power-session-guard')
 const {
@@ -89,6 +94,7 @@ exitEvidence.markLifecycle('main-started')
 /** @type {PowerSessionGuard | null} */ let powerSessionGuard = null
 /** @type {OverlayStartupController | null} */ let overlayStartupController = null
 /** @type {RefinementFaultLog | null} */ let refinementFaultLog = null
+/** @type {PersonalContextRuntime | null} */ let personalContextRuntime = null
 
 let quitBarrierComplete = false
 let quitBarrierPromise = null
@@ -296,7 +302,17 @@ function broadcastRefinementNotice (notice) {
   send(toolbarWin, CHANNELS.REFINEMENT_NOTICE_CHANGED, notice)
 }
 
+function broadcastAgentContextChanged (event) {
+  broadcastPersonalContextChanged({ settings: settingsWin, history: historyWin }, event)
+}
+
 refinementNoticeStore.onChanged(broadcastRefinementNotice)
+
+registerPersonalContextIpc({
+  ipcMain,
+  authorize: requireSender,
+  getRuntime: () => personalContextRuntime
+})
 
 function registerWindowRole (win, role) {
   const senderId = win.webContents.id
@@ -1049,6 +1065,18 @@ async function bootstrapApplication () {
   const started = await applicationRuntime.start()
   if (quitRequested) return false
   coordinator = started.coordinator
+  try {
+    personalContextRuntime = new PersonalContextRuntime({
+      gateway: applicationRuntime.gateway,
+      config,
+      onChanged: broadcastAgentContextChanged,
+      onDiagnostic: () => console.error('[agent.scheduler] AGENT_SCHEDULER_FAILED')
+    })
+    personalContextRuntime.start(applicationRuntime.recorder)
+  } catch {
+    personalContextRuntime = null
+    console.error('[agent.runtime] AGENT_CONTEXT_UNAVAILABLE')
+  }
   powerSessionGuard = new PowerSessionGuard({
     powerMonitor,
     getCoordinator: () => coordinator,
@@ -1091,6 +1119,10 @@ function beginQuitBarrier (event) {
   exitEvidence.markLifecycle('quit-requested')
   cleanupUiRuntime()
   quitBarrierPromise = (async () => {
+    if (personalContextRuntime) {
+      try { await personalContextRuntime.stop() } catch { console.error('[agent.scheduler] AGENT_SCHEDULER_FAILED') }
+      personalContextRuntime = null
+    }
     const shutdownTasks = []
     if (modelManager) {
       shutdownTasks.push(modelManager.shutdownWithin(DEFAULT_MODEL_SHUTDOWN_TIMEOUT_MS).then((modelOutcome) => {

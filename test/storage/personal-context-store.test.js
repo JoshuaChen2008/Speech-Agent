@@ -329,3 +329,33 @@ test('SEM-F28/SEM-F30/J21: a controlled v5 run replays one claim attempt and set
     claimIdempotencyKey: 'claim.scheduled.2', owner: 'owner.replacement', leaseMs: 5000
   }), null)
 })
+
+test('SEM-F30/J21: resolve keeps ready terminal scope while reporting selection tails and excluded sessions', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  terminalSession(subtitleStore, 'session-ready-range')
+  store.ingest(frozenSource(subtitleStore.database, 'session-ready-range'))
+  subtitleStore.openSession({ sessionId: 'session-empty-range', sourceId: 'mic', startedAt: 50, refinementEnabled: false })
+  subtitleStore.closeSession({ sessionId: 'session-empty-range', sourceId: 'mic', endedAt: 60, state: 'closed' })
+  subtitleStore.openSession({ sessionId: 'session-active-range', sourceId: 'mic', startedAt: 70, refinementEnabled: false })
+  subtitleStore.appendCaption({
+    schemaVersion: 1, sessionId: 'session-active-range', sourceId: 'mic', segmentId: 'segment-active',
+    sequence: 1, revision: 1, kind: 'final', t0: 0, t1: 1, text: 'active synthetic', translation: null
+  })
+
+  const ranged = store.resolve({
+    scope: { kind: 'date_range', reference: { from: 0, through: 100 } },
+    semantic_keys: [], aliases: []
+  })
+  assert.equal(ranged.eligibility, 'ready')
+  assert.equal(ranged.episodes.length, 1)
+  assert.deepEqual(ranged.excludedScopes.map((item) => item.reason).sort(), [
+    'no_committed_transcript', 'session_not_terminal'
+  ])
+
+  const selection = store.resolve({
+    scope: { kind: 'selection', reference: { session_id: 'session-ready-range', through_event_order: 1 } },
+    semantic_keys: [], aliases: []
+  })
+  assert.equal(selection.eligibility, 'ready')
+  assert.deepEqual(selection.omissions, ['not_committed_tail'])
+})

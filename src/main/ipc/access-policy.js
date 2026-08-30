@@ -32,7 +32,9 @@ const ROLE_ACCESS = Object.freeze({
   [CHANNELS.RUNTIME_COMMAND]: Object.freeze(['toolbar']),
   [CHANNELS.CAPTION_STATE_GET]: Object.freeze(['caption']),
   [CHANNELS.CAPTION_VIEWPORT_EVICT]: Object.freeze(['caption']),
-  [CHANNELS.REFINEMENT_NOTICE_GET]: Object.freeze(['toolbar'])
+  [CHANNELS.REFINEMENT_NOTICE_GET]: Object.freeze(['toolbar']),
+  [CHANNELS.AGENT_CONTEXT_GET_OVERVIEW]: Object.freeze(['settings', 'history']),
+  [CHANNELS.AGENT_CONTEXT_MANAGE]: Object.freeze(['settings', 'history'])
 })
 
 const RENDERER_CONFIG_KEYS = Object.freeze([

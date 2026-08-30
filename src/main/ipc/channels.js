@@ -39,5 +39,8 @@ module.exports = Object.freeze({
   CAPTION_STATE_CHANGED: 'runtime:caption-state',
   CAPTION_VIEWPORT_EVICT: 'runtime:caption-viewport-evict',
   REFINEMENT_NOTICE_GET: 'refinement-notice:get',
-  REFINEMENT_NOTICE_CHANGED: 'refinement-notice:changed'
+  REFINEMENT_NOTICE_CHANGED: 'refinement-notice:changed',
+  AGENT_CONTEXT_GET_OVERVIEW: 'agent-context:get-overview',
+  AGENT_CONTEXT_MANAGE: 'agent-context:manage',
+  AGENT_CONTEXT_CHANGED: 'agent-context:changed'
 })
