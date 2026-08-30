@@ -215,6 +215,8 @@ UX 设计稿、截图、fixture preview 或局部 renderer 回归都不晋级任
 7. 报告自动呈现偏好：默认关闭，只影响以后终态会话，开启后每个满足资格的终态会话至多自动请求并非模态呈现一次会后结构化纪要。无已读/未读、无标记、无角标、无计数；关闭偏好不删除旧报告。renderer reload、重复停止或重复通知不得重复呈现同一 run。
 8. 交互历史：时间戳、范围与模型身份、最终结果、默认折叠的完整工具调用记录；终态详情在导出动作旁提示文件含完整工具输入与结果。不展示提示历史、中间 assistant 文本或内部思维过程。
 
+> 2026-08-30 追加记录（不提升本阶段状态）：设置 renderer 的「Agent 模型配置档案」类别已按第 5 条接入 `agent-model-ui@1.0.0` exact contract 与既有 `src/preload/settings.js` facade，覆盖配置档案增删改、model 增删改、凭据设置/清除、四用途分配、远端目录建议预填及其失败/冲突/隐私负路径；未新增 IPC channel，未改动 main/preload/SQLite。详见 `agent-ui-ux-handoff.md` §12 与 `testing-strategy.md` 的 J25 S2 Core 子边界追记。Agent Bar（第 6–7 条）与交互历史/导出（第 8 条）仍未实现；本记录不构成 S5-Integration，也不提升 S2 或完整 J25。
+
 #### S5-Integration：真实产品汇合
 
 9. 由 Core owner 用真实 preload/exact IPC/个人上下文模块/Agent 模型接入层/执行宿主/storage worker/SQLite 替换 UI 预览 adapter；UI fixture 继续只服务视觉预览，不进入联合证据。

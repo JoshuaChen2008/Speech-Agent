@@ -446,3 +446,50 @@ S2 Core 已签发 `agent-model-ui@1.0.0`，状态为「实现完成·尚未验�
 - 构成可供 UI/UX 消费的 fixture preview：唯一位置为 `src/agent/contracts/fixtures/agent-context-ui/v1.0.0/`；它不是产品数据或验收报告。
 - 不构成 J21 证据，不提升任何用户旅程状态。
 - `Renderer implementation` 的 contract 前置条件已经满足：`AUI-CR-001`–`AUI-CR-006` 均为 `contract-ready`，overview/manage/changed exact contract 与 fixture 已冻结；真实 preload/IPC/SQLite 汇合仍留给 S5-Integration。
+
+## 12. UX-2 交付 · 设置：Agent 模型配置档案（S2 / J25 S2 Core 子边界）
+
+> 交付类型：`Renderer implementation` · 2026-08-30 · 覆盖表面只有 §5.1「设置：Agent 模型配置档案」。
+>
+> 本节是 renderer 局部实现与局部回归记录，**不构成** J25 完整证据、S2 状态提升，也不构成真实设置 renderer 与用户往返的联合验收；S2 Core 仍为「实现完成·尚未验收」（见 `testing-strategy.md` 的 J25 S2 Core 子边界），本轮只把这一子边界签发的 exact contract/facade 接到正式 `src/settings/` renderer 上。
+>
+> 不覆盖：个人上下文管理（S1，见 §11）、Agent Bar（S3/S4）、交互历史与导出（S5）。真实公网模型能力、主动换模型后的历史比较、Agent Bar 内联入口均延后。
+
+### 12.1 消费的 exact contract 与 facade
+
+- `src/agent/contracts/agent-model-ui/v1.0.0.js`：`assertCatalogResponse`/`assertConfigureResponse`/`assertPullResponse`/`assertChangedEvent`，全部由 preload 与本轮新增的 renderer 代码在读写路径上强制校验，未新增字段、枚举或命令。
+- `src/preload/settings.js` 已暴露的 `getAgentModelCatalog` / `configureAgentModel` / `pullAgentModelCatalog` / `onAgentModelChanged`：renderer 只调用这四个既有 facade 方法，未新增 IPC channel。
+- `src/agent/contracts/fixtures/agent-model-ui/v1.0.0/scenarios.json` 的 18 条 `previewOnly` 场景：只用于本轮新增局部回归的输入数据，未写入 `.artifacts/`、`docs/validation/` 或任何 J25 证据路径。
+
+### 12.2 新增/修改文件
+
+- `src/settings/agent-model-view-model.ts`（新增）：纯逻辑 view-model——四用途/凭据 scope/三值 readiness/六值 remote 状态的产品文案表、`profileId` 推导与校验、能力表单到 `capabilities` 的转换、revision 接受规则。不含 DOM、不含 IPC。
+- `src/settings/agent-model-pane.tsx`（新增）：正式设置 renderer 的「Agent 模型配置档案」类别组件，实现档案列表、新建/修改档案、model 增删改、凭据设置/清除、四用途分配、远端目录建议预填。
+- `src/settings/settings-view.tsx`（修改）：`PANES` 新增 `agentModel` 类别，插在「模型资源」与「关于」之间；既有五个类别的文案、顺序与行为不变。
+- `src/settings/settings.css`（修改）：为新类别追加文本输入框/下拉框基础样式与列表布局，复用既有 token 与 `.group`/`.row`/`.seg` 组件类，未新建 Agent 专属视觉语言。
+- `test/ui/agent-model-settings-ui.test.js`（新增）、`test/ui/settings-react-ui.test.js`（追加导航断言）、`test/ui/load-renderer-module.js`（新增，测试用递归 renderer 模块装载器）、`test/ui/dom-bootstrap.js`（新增，修正 `react-dom` 特性探测的模块加载顺序问题，`history-ui.test.js` 同步引入）。
+
+### 12.3 覆盖的状态与失败路径
+
+- 加载与恢复：先订阅 `agent-model:changed`、再读 `getCatalog`；`changed` 携带更高 revision 触发重读，携带更旧 revision 被丢弃；`MODEL_ACCESS_UNAVAILABLE` 进入只读不可用 + 重试，不伪装成空配置。
+- 空 model 模板：展示 `deepseek-openai-template@1` 的官方建议与两个 token 上限「未知」，「用这条建议填写」只预填表单，零 `configure` 调用；模板删除后不自动重建。
+- 四个模型用途的 `direct`/`fallback_default`/`unconfigured` 与普通请求/Agent Loop 两条独立 readiness（`ready`/`provider_not_configured`/`credential_unavailable`）。
+- 凭据：只能设置新值或清除，`{present, scope}` 三种 scope 文案；提交后立即清空组件内草稿，凭据明文不进入 DOM、日志或组件持久状态。
+- 写入失败路径：`MODEL_CONFIG_INVALID` 保留用户输入、零写入、行内 `role="alert"`；`MODEL_CONFIG_REVISION_CONFLICT` 保留用户输入并自动重读收敛到权威 catalog。
+- remote pull 六值状态（`success`/`revision_conflict`/`invalid_request`/`credential_unavailable`/`redirect_rejected`/`remote_unavailable`）各自的文案，`success` 建议不自动落库、不自动刷新、不自动选择。
+- 删除档案与删除 model 的确认层分别写出作用对象（连接/凭据/model 清单 vs 单个 model），不使用「清除」类含糊说法。
+- 隐私负扫描：pane 不展示 recipe ID、adapter、factory、凭据槽 ID、IPC channel、本地路径，也不出现价格/费用/成本/货币字段。
+
+### 12.4 运行过的测试及结果
+
+- `npm run typecheck:renderer`：通过。
+- `npm run build:renderer`：通过。
+- `npm run test:core`：708/708 通过（含本轮新增的 14 条 renderer 局部回归）。
+- `npm run test:evidence`：233/233 通过；本轮同步重跑并提交了 `docs/validation/i3-nonaudio-results.json` 的 `productPayloadSha256`（随 `src/` 变化必然漂移的既有确定性证据字段，其余 fixture/exports 字节保持不变）。
+- `npm run test:integration`：76/77 通过；唯一失败 `formal-agent-storage-utility-journey.test.js` 需要真实 Electron 子进程，与本轮改动无关，属于 AGENTS.md 已登记的沙箱执行环境问题，不计作产品断言失败。
+
+### 12.5 本轮不构成
+
+- 不构成完整 J25：真实 `safeStorage`/SQLite 往返、真实公网模型能力、主动换模型后的历史比较、Agent Bar 内联入口均未接入，S2 状态维持「实现完成·尚未验收」。
+- 不构成 S5-Integration：本轮消费的仍是既有 preload facade 与既有 main-owned IPC，未新增或修改 `src/main/**`、`src/preload/**`、`src/agent/model-access/**` 或 SQLite schema。
+- fixture `previewOnly` 场景只服务本轮新增局部回归，未进入 `.artifacts/`、`docs/validation/` 或任何 J25 证据文件。
