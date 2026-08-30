@@ -1,11 +1,11 @@
-## 1. 权威登记、待裁定项与实施基线
+## 1. 权威登记与实施基线
 
 - [ ] 1.1 完整重读 `AGENTS.md` 与 `CONTEXT.md`，逐字核对 SEM-F16/F28/F30-F35/T10/T15、2026-08-30 修订说明、ADR 0013-0018、J22/J24 S3 Core 子边界和本 change；记录术语缺口但不沿用冲突现状。
 - [ ] 1.2 记录实施前 branch/HEAD、`git status --short`、用户已有未提交/未跟踪文件、S1/S2 状态、当前 core/integration/evidence 返回码；后续只显式暂存 S3 路径。
 - [ ] 1.3 冻结并测试 v1-v6 migration SQL/checksum 基线，确认 S3 只能追加 v7，不能以格式化或重排改动旧字节。
 - [ ] 1.4 核对 `docs/testing-strategy.md` 已包含 “J22/J24 的 S3 Core 子边界（不是新旅程）”，且 S5 汇合说明不再使用 S3 单轮/S4 Agent Loop 旧二分。
 - [ ] 1.5 把 `analysis-report`、`planning-proposal`、可空 `usage_json`、十一 recipe、统一执行路径与两层意图收敛的所有实施引用对齐到 `agent-execution` spec；不得在代码或测试暗定新语义。
-- [ ] 1.6 在写 v7 migration 前裁定“五条索引”与 data architecture 四条具名 `CREATE INDEX` 的计数差异；把裁定同步到 `docs/data-architecture.md` §5、执行计划、本 spec 和 schema test，未裁定前不得发明第五条。
+- [ ] 1.6 在写 v7 migration 前核对四条具名 `CREATE INDEX` 与 `docs/data-architecture.md` §5、执行计划、本 spec 和 schema test 完全一致；不得夹带未登记索引。
 - [ ] 1.7 运行实施前 `npm run test:core` 并保存返回码/计数；失败时区分产品断言与依赖/沙箱前置，不把环境失败写成产品结论。
 - [ ] 1.8 列出旧 `src/agent-provider/**`、`src/agent-runtime/**`、`src/agent-core/**`、`src/agent-mvp/**` 可迁移的可靠性不变量，明确它们不成为新 S3 import、注册表、配置或凭据入口。
 - [ ] 1.9 为每个后续 seam 建立 red → green → 定向回归顺序；当前 seam 未恢复相关 lane 前不得铺开下一批长期红测。
@@ -53,8 +53,8 @@
 - [ ] 3.15 实现 presentation STRICT 表并使 3.14 转绿；自动请求 reply-loss 只能恢复同一行。
 - [ ] 3.16 先写会红的 tombstone migration 测试，只新增 `deleted_report_presentation_count`，v5 interaction/tool/episode/evidence/orphan 列不得重复。
 - [ ] 3.17 实现 tombstone ALTER 并使 3.16 转绿；默认/非负约束必须成立。
-- [ ] 3.18 先写会红的四条已登记具名索引与 keyset query plan 测试，并在 1.6 裁定后加入第五条精确测试或同步总数为四。
-- [ ] 3.19 实现裁定后的完整索引清单并使 3.18 转绿；不触及四张废案 `recognition_*` 表。
+- [ ] 3.18 先写会红的四条已登记具名索引与 keyset query plan 测试。
+- [ ] 3.19 实现四条具名索引并使 3.18 转绿；不触及四张废案 `recognition_*` 表。
 - [ ] 3.20 定向回归 v7 schema 隐私负扫描，确认无凭据、提示正文、音频、路径、reasoning、绝对单调时刻或金额字段。
 
 ## 4. interaction/tool/presentation store 与协议 tracer bullets

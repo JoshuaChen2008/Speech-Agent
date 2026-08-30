@@ -157,7 +157,7 @@ S3 只登记 J22/J24 在 Agent Bar renderer 汇合前的执行宿主 Core 实现
 
 | 观察面 | S3 Core 正证据 | S3 Core 负证据与延后边界 |
 |---|---|---|
-| v7 与审计事实 | v1–v6 SQL/checksum 逐字节不变；v7 恰好新增三张 `STRICT` 表、一列删除计数和已登记分页/全序索引；当前 data architecture 只列四条具名索引而执行计划写五条，总数按 S3 spec 保持「待裁定」，实现不得发明第五条；交互冻结 recipe 版本、`max_turns`、`tool_grants_json`、`routing_mode`、可空 `usage_json` 与 canonical `comparison_group_id` | 不新增 `model_binding_id`、`execution_form`、`escalation_reason`、金额或正文副本；args/result 字节上限由 schema 直接拒绝，取消允许空结果且不补造 |
+| v7 与审计事实 | v1–v6 SQL/checksum 逐字节不变；v7 恰好新增三张 `STRICT` 表、一列删除计数和四条已登记分页/全序索引；交互冻结 recipe 版本、`max_turns`、`tool_grants_json`、`routing_mode`、可空 `usage_json` 与 canonical `comparison_group_id` | 不新增 `model_binding_id`、`execution_form`、`escalation_reason`、金额或正文副本；args/result 字节上限由 schema 直接拒绝，取消允许空结果且不补造 |
 | recipe 与统一执行路径 | `src/agent/contracts/recipes.js` 唯一定义十一个 recipe；1/3/6 轮与工具授权逐项固定；全部运行经同一个有界 Agent Loop，`bind()` 只接收 `executionForm='agent_loop'`；`context.ingest.*` 的零模型确定性前段后进入同一循环 | 未登记 recipe、登记漂移、工具授权越界和第二轮越界 fail closed；不引入运行期形态判定、升级理由、动态插件、递归委派或第二条执行路径 |
 | 意图收敛与取消 | `intent.route` 模型判定成功记 `model`；五类闭集条件分别触发规则兜底并记 `rules`；预置路径记 `preset`；规则全不匹配收敛到 `qa.answer`；改选按取消当前运行并新建 `runId` | 用户取消不触发兜底；取消后不再开始新 turn/模型请求/工具调用，迟到结果被拒且不改写已收束交互、运行、绑定或工具快照 |
 | IPC、资格与恢复 | `agent`/`history` 角色经六个 exact 频道观察资格、提交、取消、历史、交互详情与单调 changed；main 按九值固定顺序计算资格；同 `runId` 自动重试保留绑定、旧 attempt 工具记录和冻结输入 | renderer 不推断资格、不接触 SQLite/凭据/文件系统/网络；worker replacement、回复丢失或重复触发不复制交互、报告呈现回执、会话经历记录或个人记忆 |

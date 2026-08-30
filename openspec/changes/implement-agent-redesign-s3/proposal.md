@@ -4,7 +4,7 @@ S1/S2 已建立个人上下文与 Agent 模型接入事实，但正式 Agent 仍
 
 ## What Changes
 
-- 追加 migration v7，且只包含三张 `STRICT` 表、一列会话删除 tombstone 计数与五条分页/全序索引；v1-v6 SQL/checksum 逐字节不变。
+- 追加 migration v7，且只包含三张 `STRICT` 表、一列会话删除 tombstone 计数与四条分页/全序索引；v1-v6 SQL/checksum 逐字节不变。
 - 在 `src/agent/contracts/recipes.js` 建立十一个 recipe 的唯一静态登记点，固定输入范围、模型用途、1/3/6 轮上限、工具授权、输出 Schema、持久化、产物类型与失败策略。
 - 让所有固定 recipe 只走同一个有界 Agent Loop；删除运行期执行形态判定与升级理由，`bind()` 的 `executionForm` 只接受 `'agent_loop'`。
 - 实现 `intent.route` 模型优先、确定性规则兜底的两层意图收敛，持久化 `routing_mode=model/rules/preset`，并把用户改选处理为取消当前运行后新建运行。

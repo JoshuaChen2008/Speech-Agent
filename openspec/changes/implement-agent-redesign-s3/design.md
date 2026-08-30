@@ -207,8 +207,4 @@ S3 必须先证明 0 工具与 `search_context` 两档，且 1 轮 recipe 不进
 
 ## Open Questions
 
-### 待裁定：v7 “五条索引”与四条具名 `CREATE INDEX` 的计数不一致
-
-`docs/data-architecture.md` §5 作为数据规则权威，只逐字列出四条具名语句：`formal_agent_interactions_page`、`formal_agent_tool_calls_order`、`personal_context_items_page`、`personal_context_episodes_page`。`docs/agent-redesign-execution-plan.md` S3 与本轮交付要求写“五条分页/全序索引”，但括号内仍只列出上述四类，没有给出第五条的表、列、排序或名称。
-
-在裁定前，本 spec 不发明第五条具名索引；v7 的三表 `UNIQUE`/主键约束仍按各自结构创建 SQLite 自动索引，但不把某个自动索引擅自命名为“第五条”。裁定后只需要同步 `docs/data-architecture.md` §5、S3 migration/schema test 与本 change 的 v7 Requirement；不影响 SEM-F16/F28/F30-F35、ADR 0016/0018、recipe contract、runtime、IPC 或 UI fixture。其余 S3 规格无阻断待裁定项。
+当前无阻断待裁定项。v7 的四条具名 `CREATE INDEX` 与 `docs/data-architecture.md` §5、执行计划和本 spec 一致；三张表的 `UNIQUE`/主键仍由 SQLite 自动建立约束索引，但不计入显式 v7 `CREATE INDEX` 清单。

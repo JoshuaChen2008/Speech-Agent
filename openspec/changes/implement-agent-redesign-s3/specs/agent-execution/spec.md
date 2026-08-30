@@ -25,7 +25,7 @@
 
 正式 catalog SHALL 在 v1-v6 之后只追加 migration v7。v1-v6 的 SQL 与 checksum MUST 逐字节不变，checksum 漂移 MUST fail closed。v7 SHALL 且只 SHALL：新建 `formal_agent_interactions`、`formal_agent_tool_calls`、`formal_agent_report_presentations` 三张 `STRICT` 表；给 `session_deletion_tombstones` 增加 `deleted_report_presentation_count`；建立交互分页与工具全序索引；建立 `personal_context_items` 与 `personal_context_episodes` 的 keyset 分页索引。v7 MUST NOT 新建、修改、读取或写入任何 `recognition_*` 表，也 MUST NOT 删除旧 Agent 表。
 
-当前权威数据规则逐字冻结四条具名 `CREATE INDEX`：`formal_agent_interactions_page(terminal_at DESC, interaction_id)`、`formal_agent_tool_calls_order(interaction_id, attempt, call_order)`、`personal_context_items_page(lifecycle, updated_at DESC, memory_id)`、`personal_context_episodes_page(lifecycle, updated_at DESC, episode_id)`。执行计划中的“五条索引”计数与该清单不一致；第五条索引在裁定并同步 `docs/data-architecture.md` 前 MUST NOT 由实现自行发明。
+v7 MUST 只建立四条具名 `CREATE INDEX`：`formal_agent_interactions_page(terminal_at DESC, interaction_id)`、`formal_agent_tool_calls_order(interaction_id, attempt, call_order)`、`personal_context_items_page(lifecycle, updated_at DESC, memory_id)`、`personal_context_episodes_page(lifecycle, updated_at DESC, episode_id)`。
 
 #### Scenario: v6 升级到 v7
 
@@ -41,11 +41,6 @@
 
 - **WHEN** v7 候选包含已登记三表和一列以外的表/列，或触及任一 `recognition_*` 表
 - **THEN** schema contract 失败，候选不得进入 S3 实施
-
-#### Scenario: 未裁定第五条具名索引
-
-- **WHEN** 实现者准备增加 data architecture 未登记的第五条具名索引
-- **THEN** 该项保持「待裁定」，不得隐藏在 migration task 中；其余四条具名索引与 S3 非 schema 工作可继续
 
 ### Requirement: formal_agent_interactions 必须保存最小终态审计事实
 
