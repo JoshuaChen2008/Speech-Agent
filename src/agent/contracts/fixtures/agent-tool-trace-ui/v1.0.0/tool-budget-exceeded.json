@@ -1,0 +1,37 @@
+{
+  "contract_id": "speech-agent.agent-tool-trace.ui",
+  "contract_version": "1.0.0",
+  "fixture_id": "tool-trace.budget-exceeded",
+  "preview_only": true,
+  "synthetic": true,
+  "j22_evidence": false,
+  "j24_evidence": false,
+  "scenario": "tool_budget_exceeded",
+  "snapshot": {
+    "status": "failed",
+    "budgetState": "exhausted",
+    "attemptCount": 1,
+    "toolCalls": [
+      {
+        "attempt": 1,
+        "callOrder": 1,
+        "toolName": "search_context",
+        "startedOffsetMs": 6,
+        "endedOffsetMs": 7,
+        "status": "failed",
+        "errorCode": "TOOL_BUDGET_EXCEEDED",
+        "args": {
+          "schemaVersion": 1,
+          "aliasKeys": ["synthetic-topic"]
+        },
+        "result": null,
+        "sourceRefs": [],
+        "counts": {
+          "resultBytes": 0,
+          "sourceTextBytes": 0,
+          "sourceReferenceCount": 0
+        }
+      }
+    ]
+  }
+}

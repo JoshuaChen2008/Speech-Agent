@@ -1,0 +1,64 @@
+{
+  "contract_id": "speech-agent.agent-tool-trace.ui",
+  "contract_version": "1.0.0",
+  "fixture_id": "tool-trace.read-sources-succeeded",
+  "preview_only": true,
+  "synthetic": true,
+  "j22_evidence": false,
+  "j24_evidence": false,
+  "scenario": "read_sources_succeeded",
+  "snapshot": {
+    "status": "succeeded",
+    "budgetState": "within_budget",
+    "attemptCount": 1,
+    "toolCalls": [
+      {
+        "attempt": 1,
+        "callOrder": 1,
+        "toolName": "read_sources",
+        "startedOffsetMs": 20,
+        "endedOffsetMs": 24,
+        "status": "succeeded",
+        "errorCode": null,
+        "args": {
+          "schemaVersion": 1,
+          "sourceRefs": [
+            {
+              "sessionId": "session.synthetic.1",
+              "transcriptVersion": "raw",
+              "fromEventOrder": 1,
+              "throughEventOrder": 1
+            }
+          ]
+        },
+        "result": {
+          "schemaVersion": 1,
+          "sources": [
+            {
+              "sourceRef": {
+                "sessionId": "session.synthetic.1",
+                "transcriptVersion": "raw",
+                "fromEventOrder": 1,
+                "throughEventOrder": 1
+              },
+              "text": "Synthetic source excerpt."
+            }
+          ]
+        },
+        "sourceRefs": [
+          {
+            "sessionId": "session.synthetic.1",
+            "transcriptVersion": "raw",
+            "fromEventOrder": 1,
+            "throughEventOrder": 1
+          }
+        ],
+        "counts": {
+          "resultBytes": 183,
+          "sourceTextBytes": 25,
+          "sourceReferenceCount": 1
+        }
+      }
+    ]
+  }
+}

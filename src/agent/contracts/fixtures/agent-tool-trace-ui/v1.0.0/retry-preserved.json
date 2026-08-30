@@ -1,0 +1,84 @@
+{
+  "contract_id": "speech-agent.agent-tool-trace.ui",
+  "contract_version": "1.0.0",
+  "fixture_id": "tool-trace.retry-preserved",
+  "preview_only": true,
+  "synthetic": true,
+  "j22_evidence": false,
+  "j24_evidence": false,
+  "scenario": "retry_preserved",
+  "snapshot": {
+    "status": "succeeded",
+    "budgetState": "within_budget",
+    "attemptCount": 2,
+    "toolCalls": [
+      {
+        "attempt": 1,
+        "callOrder": 1,
+        "toolName": "search_context",
+        "startedOffsetMs": 10,
+        "endedOffsetMs": 11,
+        "status": "failed",
+        "errorCode": "TOOL_INTERNAL_FAILURE",
+        "args": {
+          "schemaVersion": 1,
+          "aliasKeys": ["synthetic-topic"]
+        },
+        "result": null,
+        "sourceRefs": [],
+        "counts": {
+          "resultBytes": 0,
+          "sourceTextBytes": 0,
+          "sourceReferenceCount": 0
+        }
+      },
+      {
+        "attempt": 2,
+        "callOrder": 1,
+        "toolName": "read_sources",
+        "startedOffsetMs": 15,
+        "endedOffsetMs": 19,
+        "status": "succeeded",
+        "errorCode": null,
+        "args": {
+          "schemaVersion": 1,
+          "sourceRefs": [
+            {
+              "sessionId": "session.synthetic.1",
+              "transcriptVersion": "raw",
+              "fromEventOrder": 1,
+              "throughEventOrder": 1
+            }
+          ]
+        },
+        "result": {
+          "schemaVersion": 1,
+          "sources": [
+            {
+              "sourceRef": {
+                "sessionId": "session.synthetic.1",
+                "transcriptVersion": "raw",
+                "fromEventOrder": 1,
+                "throughEventOrder": 1
+              },
+              "text": "Synthetic source excerpt."
+            }
+          ]
+        },
+        "sourceRefs": [
+          {
+            "sessionId": "session.synthetic.1",
+            "transcriptVersion": "raw",
+            "fromEventOrder": 1,
+            "throughEventOrder": 1
+          }
+        ],
+        "counts": {
+          "resultBytes": 183,
+          "sourceTextBytes": 25,
+          "sourceReferenceCount": 1
+        }
+      }
+    ]
+  }
+}

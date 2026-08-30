@@ -1,0 +1,37 @@
+{
+  "contract_id": "speech-agent.agent-tool-trace.ui",
+  "contract_version": "1.0.0",
+  "fixture_id": "tool-trace.negative-unknown-tool",
+  "preview_only": true,
+  "synthetic": true,
+  "j22_evidence": false,
+  "j24_evidence": false,
+  "scenario": "tool_timeout",
+  "snapshot": {
+    "status": "failed",
+    "budgetState": "within_budget",
+    "attemptCount": 1,
+    "toolCalls": [
+      {
+        "attempt": 1,
+        "callOrder": 1,
+        "toolName": "write_file",
+        "startedOffsetMs": 1,
+        "endedOffsetMs": 1,
+        "status": "failed",
+        "errorCode": "TOOL_INTERNAL_FAILURE",
+        "args": {
+          "schemaVersion": 1,
+          "aliasKeys": ["synthetic-topic"]
+        },
+        "result": null,
+        "sourceRefs": [],
+        "counts": {
+          "resultBytes": 0,
+          "sourceTextBytes": 0,
+          "sourceReferenceCount": 0
+        }
+      }
+    ]
+  }
+}

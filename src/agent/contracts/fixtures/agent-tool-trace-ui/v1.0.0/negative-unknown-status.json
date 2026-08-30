@@ -1,0 +1,16 @@
+{
+  "contract_id": "speech-agent.agent-tool-trace.ui",
+  "contract_version": "1.0.0",
+  "fixture_id": "tool-trace.negative-unknown-status",
+  "preview_only": true,
+  "synthetic": true,
+  "j22_evidence": false,
+  "j24_evidence": false,
+  "scenario": "tool_timeout",
+  "snapshot": {
+    "status": "paused",
+    "budgetState": "within_budget",
+    "attemptCount": 0,
+    "toolCalls": []
+  }
+}

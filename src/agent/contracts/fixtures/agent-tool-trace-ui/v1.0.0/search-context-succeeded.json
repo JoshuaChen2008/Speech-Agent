@@ -1,0 +1,70 @@
+{
+  "contract_id": "speech-agent.agent-tool-trace.ui",
+  "contract_version": "1.0.0",
+  "fixture_id": "tool-trace.search-context-succeeded",
+  "preview_only": true,
+  "synthetic": true,
+  "j22_evidence": false,
+  "j24_evidence": false,
+  "scenario": "search_context_succeeded",
+  "snapshot": {
+    "status": "succeeded",
+    "budgetState": "within_budget",
+    "attemptCount": 1,
+    "toolCalls": [
+      {
+        "attempt": 1,
+        "callOrder": 1,
+        "toolName": "search_context",
+        "startedOffsetMs": 12,
+        "endedOffsetMs": 16,
+        "status": "succeeded",
+        "errorCode": null,
+        "args": {
+          "schemaVersion": 1,
+          "aliasKeys": ["synthetic-topic"]
+        },
+        "result": {
+          "schemaVersion": 1,
+          "matches": [
+            {
+              "aliasKey": "synthetic-topic",
+              "entries": [
+                {
+                  "memoryRef": {
+                    "memoryId": "memory.synthetic.1",
+                    "revisionId": "revision.synthetic.1"
+                  },
+                  "kind": "decision",
+                  "displayText": "Synthetic reference note.",
+                  "sourceRefs": [
+                    {
+                      "sessionId": "session.synthetic.1",
+                      "transcriptVersion": "raw",
+                      "fromEventOrder": 1,
+                      "throughEventOrder": 1
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "unmatchedAliasKeys": []
+        },
+        "sourceRefs": [
+          {
+            "sessionId": "session.synthetic.1",
+            "transcriptVersion": "raw",
+            "fromEventOrder": 1,
+            "throughEventOrder": 1
+          }
+        ],
+        "counts": {
+          "resultBytes": 360,
+          "sourceTextBytes": 0,
+          "sourceReferenceCount": 1
+        }
+      }
+    ]
+  }
+}

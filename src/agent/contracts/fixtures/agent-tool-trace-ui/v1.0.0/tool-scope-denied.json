@@ -1,0 +1,44 @@
+{
+  "contract_id": "speech-agent.agent-tool-trace.ui",
+  "contract_version": "1.0.0",
+  "fixture_id": "tool-trace.scope-denied",
+  "preview_only": true,
+  "synthetic": true,
+  "j22_evidence": false,
+  "j24_evidence": false,
+  "scenario": "tool_scope_denied",
+  "snapshot": {
+    "status": "failed",
+    "budgetState": "within_budget",
+    "attemptCount": 1,
+    "toolCalls": [
+      {
+        "attempt": 1,
+        "callOrder": 1,
+        "toolName": "read_sources",
+        "startedOffsetMs": 4,
+        "endedOffsetMs": 4,
+        "status": "failed",
+        "errorCode": "TOOL_SCOPE_DENIED",
+        "args": {
+          "schemaVersion": 1,
+          "sourceRefs": [
+            {
+              "sessionId": "session.synthetic.outside",
+              "transcriptVersion": "raw",
+              "fromEventOrder": 1,
+              "throughEventOrder": 1
+            }
+          ]
+        },
+        "result": null,
+        "sourceRefs": [],
+        "counts": {
+          "resultBytes": 0,
+          "sourceTextBytes": 0,
+          "sourceReferenceCount": 0
+        }
+      }
+    ]
+  }
+}

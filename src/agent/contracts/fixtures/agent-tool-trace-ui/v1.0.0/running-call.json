@@ -1,0 +1,37 @@
+{
+  "contract_id": "speech-agent.agent-tool-trace.ui",
+  "contract_version": "1.0.0",
+  "fixture_id": "tool-trace.running-call",
+  "preview_only": true,
+  "synthetic": true,
+  "j22_evidence": false,
+  "j24_evidence": false,
+  "scenario": "running_call",
+  "snapshot": {
+    "status": "running",
+    "budgetState": "within_budget",
+    "attemptCount": 1,
+    "toolCalls": [
+      {
+        "attempt": 1,
+        "callOrder": 1,
+        "toolName": "search_context",
+        "startedOffsetMs": 3,
+        "endedOffsetMs": null,
+        "status": "started",
+        "errorCode": null,
+        "args": {
+          "schemaVersion": 1,
+          "aliasKeys": ["synthetic-topic"]
+        },
+        "result": null,
+        "sourceRefs": [],
+        "counts": {
+          "resultBytes": 0,
+          "sourceTextBytes": 0,
+          "sourceReferenceCount": 0
+        }
+      }
+    ]
+  }
+}
