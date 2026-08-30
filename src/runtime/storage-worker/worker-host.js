@@ -483,8 +483,8 @@ class StorageWorkerHost {
     return this.perform(OPERATIONS.MODEL_ACCESS_CONFIGURE, { input })
   }
 
-  modelAccessBind (request, sessionSlotIds = []) {
-    return this.perform(OPERATIONS.MODEL_ACCESS_BIND, { request, sessionSlotIds })
+  modelAccessBind (request, availableSlotIds = []) {
+    return this.perform(OPERATIONS.MODEL_ACCESS_BIND, { request, availableSlotIds })
   }
 
   shutdown () {

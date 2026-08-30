@@ -90,8 +90,27 @@ test('SEM-F33/J25: remote pull is transient, rejects redirect, and clears creden
     adapter: { listModels: async () => { const error = new Error(); error.code = 'REDIRECT_REJECTED'; throw error } }
   })
   assert.deepEqual(await redirect.pull({ profileId: 'deepseek', expectedRevision: 4 }), { status: 'redirect_rejected', suggestions: [] })
+  let invalidated = null
+  const auth = new RemoteModelCatalogPullController({
+    runtime: { internal: async () => internal, invalidateCredential: async (profileId) => { invalidated = profileId } },
+    vault: instance,
+    adapter: { listModels: async () => { const error = new Error(); error.code = 'AUTH_REJECTED'; throw error } }
+  })
+  assert.equal((await auth.pull({ profileId: 'deepseek', expectedRevision: 4 })).status, 'credential_unavailable')
+  assert.equal(invalidated, 'deepseek')
 })
 
 test('SEM-F33/J25: startup environment removes every legacy credential spelling', () => {
   assert.deepEqual(sanitizedEnvironment({ Path: 'ok', DEEPSEEK_API_KEY: 'one', deepseek_api_key: 'two', Other: 3 }), { Path: 'ok' })
+})
+
+test('SEM-F33/J25: credential quarantine rolls back before a failed SQLite command', async (t) => {
+  const { instance } = vault(t, true)
+  const slot = 'slot.0123456789abcdef0123456789abcdef'
+  const state = instance.set(slot, 'rollback-secret')
+  const token = instance.prepareClear(slot, 'persistent', state.generation)
+  assert.deepEqual(instance.state(slot, 'persistent', state.generation), { present: false, scope: 'absent' })
+  instance.rollbackClear(token)
+  assert.deepEqual(instance.state(slot, 'persistent', state.generation), { present: true, scope: 'persistent' })
+  await instance.borrow(slot, 'persistent', state.generation, async (copy) => assert.equal(copy.toString(), 'rollback-secret'))
 })

@@ -146,7 +146,7 @@ class ModelAccessStore {
     return { assignmentMode: direct.profile_id ? 'direct' : 'fallback_default', purpose, profile, model }
   }
 
-  bind (request, sessionSlotIds = []) {
+  bind (request, availableSlotIds = []) {
     assertRunRequest(request)
     this.database.exec('BEGIN IMMEDIATE')
     try {
@@ -163,7 +163,7 @@ class ModelAccessStore {
       if (!resolved.profile || !resolved.model) fail('AGENT_REQUEST_INVALID')
       const capabilities = JSON.parse(resolved.model.capability_json)
       if (request.executionForm === 'agent_loop' && capabilities.supportsToolCalling !== true) fail('AGENT_REQUEST_INVALID')
-      const credentialPresent = resolved.profile.credential_persistence === 'persistent' || sessionSlotIds.includes(resolved.profile.credential_slot_id)
+      const credentialPresent = availableSlotIds.includes(resolved.profile.credential_slot_id)
       if (!credentialPresent) fail('AGENT_REQUEST_INVALID')
       const budget = deriveBudget(capabilities, request.executionForm, run.requested_by)
       const now = this.now()

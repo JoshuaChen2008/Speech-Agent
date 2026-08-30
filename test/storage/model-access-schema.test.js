@@ -52,3 +52,18 @@ test('SEM-F14/SEM-F33/DB7/J25: v6 schema contains no sensitive, transcript, audi
   assert.doesNotMatch(MODEL_ACCESS_SCHEMA_SQL, /\b(api_key|authorization|header|audio|pcm|wav|device_name|local_path|absolute_path|transcript_text|caption_text|raw_error|stack)\b/i)
   assert.doesNotMatch(MODEL_ACCESS_SCHEMA_SQL, /\b(price|cost|currency|pricing)\w*\b/i)
 })
+
+test('SEM-F33/DB7/J25: capability insert and update both fail closed on non-exact JSON', (t) => {
+  const store = new SqliteSubtitleStore({ databasePath: databasePath(t), migrations: FORMAL_AGENT_MIGRATIONS })
+  store.database.prepare(`INSERT INTO agent_model_profile_models(
+    profile_id,model_id,capability_json,created_at,updated_at
+  ) VALUES('deepseek','exact-model',?,1,1)`).run(JSON.stringify({
+    maxInputTokens: 10, maxOutputTokens: 5, supportsToolCalling: true,
+    supportsStructuredOutput: true, supportsStreaming: true, usageReporting: true
+  }))
+  assert.throws(() => store.database.prepare("UPDATE agent_model_profile_models SET capability_json=? WHERE profile_id='deepseek' AND model_id='exact-model'").run(JSON.stringify({
+    maxInputTokens: 10, maxOutputTokens: 5, supportsToolCalling: 1,
+    supportsStructuredOutput: true, supportsStreaming: true, usageReporting: true
+  })), /invalid model capability/)
+  store.close()
+})

@@ -56,7 +56,7 @@
     "virtualDurationMs": 7200000
   },
   "gateStatus": "partial",
-  "generatedAt": "2026-08-30T06:18:17.994Z",
+  "generatedAt": "2026-08-30T09:48:02.666Z",
   "kind": "i3-nonaudio-soak",
   "limits": {
     "maxCpuPercent": 800,
@@ -70,24 +70,24 @@
   "metrics": {
     "captionEventCount": 4000,
     "checkpointedWalFrames": 0,
-    "cpuPercent": 7.128,
-    "cpuSystemMs": 296,
-    "cpuUserMs": 406,
+    "cpuPercent": 9.457,
+    "cpuSystemMs": 140,
+    "cpuUserMs": 750,
     "exportCount": 3,
     "historyDomMaxNodes": 50,
     "historyPageCount": 72,
-    "maxHeapUsedBytes": 90355112,
+    "maxHeapUsedBytes": 90505120,
     "maxQueueDepth": 112,
-    "maxRssBytes": 294739968,
+    "maxRssBytes": 293154816,
     "pageCount": 668,
     "pageQueryCount": 72,
-    "pageQueryP95Ms": 9.916,
+    "pageQueryP95Ms": 9.873,
     "recoveredRefinedSegmentCount": 400,
     "segmentCount": 3600,
     "walBytes": 4173592,
     "walFrames": 879,
     "journalMode": "wal",
-    "wallDurationMs": 9848.632
+    "wallDurationMs": 9411.346
   },
   "privacy": {
     "persistedAudio": false,
@@ -103,10 +103,10 @@
     "sqliteSessionRecorderSha256": "d9e467076b3893e88a18d99b100d5f550e4541947b6fd36195f3f130382484d2",
     "sqliteSubtitleStoreSha256": "f7baad9291001b628787a06666375cc26497b125c41bb9ba54515d65c48ffee6",
     "strictEvidenceParserSha256": "5155fc8df5449133a8d9710a581fbd03bedfb44729da3c5d910a81df74b5e63e",
-    "storageGatewaySha256": "ec9ca3f1f5b172ad128982a15a1e1e4851f0ebf1e91d761b228c7a7cda427153",
-    "storageWorkerServiceSha256": "ff71d25c9043b0e05abebaf96067720ba1e282084c0d662a60dba51fb9703ffb",
+    "storageGatewaySha256": "f965986528d6d4a4cea3b9f11f0a4012fa34a0de016d99a55026bc0969ed9959",
+    "storageWorkerServiceSha256": "25945f5f7e863aad0169f292625a202bb224a3607df3c44f681957a19e4087b1",
     "verifierSha256": "8014be2efdbd0d63a99a4de1a9f24ccb70eddcb158cc89b46d2d7bb731ed6ff1",
-    "productPayloadSha256": "e66655305a8940a17390692d201a4cbddd933fda74bd5f589b85edae330afa37"
+    "productPayloadSha256": "c1af15ea501c77f9ff98c6200983acc0d51d8c3af2f0e1bb2c63b1cd4aa7c748"
   },
   "result": "pass",
   "schemaVersion": 1

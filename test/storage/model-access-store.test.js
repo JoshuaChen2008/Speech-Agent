@@ -75,11 +75,11 @@ test('SEM-F33/J25: nine commands use one revision and failures are zero-write', 
 
 test('SEM-F33/J25: bind validates an existing v5 run and replays one immutable snapshot', (t) => {
   const { subtitleStore, store } = fixture(t)
-  addProfileModel(store)
+  const slot = addProfileModel(store)
   command(store, { type: 'assignPurpose', purpose: 'information_extraction', target: { profileId: 'profile.one', modelId: 'model-one' } })
   insertRun(subtitleStore.database)
   const request = { runId: 'run.bind.one', recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'single_shot' }
-  const first = store.bind(request)
+  const first = store.bind(request, [slot])
   command(store, { type: 'updateModel', profileId: 'profile.one', modelId: 'model-one', capabilities: { ...capabilities, maxOutputTokens: 2048 } })
   assert.deepEqual(store.bind(request), first)
   assert.equal(first.capabilities.maxOutputTokens, 4096)
@@ -89,10 +89,10 @@ test('SEM-F33/J25: bind validates an existing v5 run and replays one immutable s
 
 test('SEM-F33/J25: deleting a profile preserves binding identity and never reseeds the template', (t) => {
   const { subtitleStore, store } = fixture(t)
-  addProfileModel(store)
+  const slot = addProfileModel(store)
   command(store, { type: 'assignPurpose', purpose: 'information_extraction', target: { profileId: 'profile.one', modelId: 'model-one' } })
   insertRun(subtitleStore.database)
-  const binding = store.bind({ runId: 'run.bind.one', recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'single_shot' })
+  const binding = store.bind({ runId: 'run.bind.one', recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'single_shot' }, [slot])
   command(store, { type: 'deleteProfile', profileId: 'profile.one' })
   assert.equal(subtitleStore.database.prepare("SELECT model_id FROM agent_model_run_bindings WHERE run_id='run.bind.one'").get().model_id, binding.modelId)
   command(store, { type: 'deleteProfile', profileId: 'deepseek' })

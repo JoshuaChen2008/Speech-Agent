@@ -8,6 +8,7 @@ const {
   ipcMain,
   nativeTheme,
   powerMonitor,
+  safeStorage,
   screen
 } = require('electron')
 const path = require('node:path')
@@ -43,6 +44,11 @@ const {
   broadcastPersonalContextChanged,
   registerPersonalContextIpc
 } = require('./main/ipc/personal-context-ipc')
+const {
+  broadcastModelAccessChanged,
+  registerModelAccessIpc
+} = require('./main/ipc/model-access-ipc')
+const { sanitizedEnvironment } = require('./agent/model-access/environment')
 const { createMainEvidenceBridge } = require('./main/services/electron-exit-evidence')
 const { PowerSessionGuard } = require('./main/services/power-session-guard')
 const {
@@ -81,6 +87,11 @@ const {
 const exitEvidence = createMainEvidenceBridge()
 exitEvidence.markLifecycle('main-started')
 
+const modelAccessChildEnvironment = sanitizedEnvironment(process.env)
+for (const key of Object.keys(process.env)) {
+  if (key.toUpperCase() === 'DEEPSEEK_API_KEY') delete process.env[key]
+}
+
 /** @type {SubtitleApplicationRuntime | null} */ let applicationRuntime = null
 /** @type {ModelManager | null} */ let modelManager = null
 
@@ -94,6 +105,8 @@ exitEvidence.markLifecycle('main-started')
 /** @type {OverlayStartupController | null} */ let overlayStartupController = null
 /** @type {RefinementFaultLog | null} */ let refinementFaultLog = null
 /** @type {null | { start: Function, stop: Function, getOverview: Function, manage: Function }} */ let personalContextRuntime = null
+/** @type {null | import('./agent/model-access/runtime').ModelAccessRuntime} */ let modelAccessRuntime = null
+/** @type {null | import('./agent/model-access/remote-catalog-controller').RemoteModelCatalogPullController} */ let remoteModelCatalogController = null
 
 let quitBarrierComplete = false
 let quitBarrierPromise = null
@@ -305,12 +318,23 @@ function broadcastAgentContextChanged (event) {
   broadcastPersonalContextChanged({ settings: settingsWin, history: historyWin }, event)
 }
 
+function broadcastAgentModelChanged (event) {
+  broadcastModelAccessChanged(settingsWin, event.revision)
+}
+
 refinementNoticeStore.onChanged(broadcastRefinementNotice)
 
 registerPersonalContextIpc({
   ipcMain,
   authorize: requireSender,
   getRuntime: () => personalContextRuntime
+})
+
+registerModelAccessIpc({
+  ipcMain,
+  authorize: requireSender,
+  getRuntime: () => modelAccessRuntime,
+  getPullController: () => remoteModelCatalogController
 })
 
 function registerWindowRole (win, role) {
@@ -949,6 +973,30 @@ async function refreshPostSessionRefinementNotice (sessionId) {
        a command failure. Detailed facts remain available through history. */
     console.error('[refinement.notice] result unavailable')
   }
+  try {
+    const { CredentialVault } = require('./agent/model-access/credential-vault')
+    const { ModelAccessRuntime } = require('./agent/model-access/runtime')
+    const { OpenAiCompatibleAdapter } = require('./agent/model-access/openai-compatible-adapter')
+    const { RemoteModelCatalogPullController } = require('./agent/model-access/remote-catalog-controller')
+    const vault = new CredentialVault({
+      directory: path.join(userDataDir, 'agent-model-credentials'),
+      safeStorage
+    })
+    modelAccessRuntime = new ModelAccessRuntime({
+      gateway: applicationRuntime.gateway,
+      vault,
+      onChanged: broadcastAgentModelChanged
+    })
+    remoteModelCatalogController = new RemoteModelCatalogPullController({
+      runtime: modelAccessRuntime,
+      vault,
+      adapter: new OpenAiCompatibleAdapter()
+    })
+  } catch {
+    modelAccessRuntime = null
+    remoteModelCatalogController = null
+    console.error('[agent.model-access] MODEL_ACCESS_UNAVAILABLE')
+  }
 }
 
 async function runRuntimeCommand (name) {
@@ -1122,6 +1170,11 @@ function beginQuitBarrier (event) {
     if (personalContextRuntime) {
       try { await personalContextRuntime.stop() } catch { console.error('[agent.scheduler] AGENT_SCHEDULER_FAILED') }
       personalContextRuntime = null
+    }
+    if (modelAccessRuntime) {
+      try { modelAccessRuntime.close() } catch {}
+      modelAccessRuntime = null
+      remoteModelCatalogController = null
     }
     const shutdownTasks = []
     if (modelManager) {

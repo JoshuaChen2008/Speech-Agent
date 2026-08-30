@@ -23,7 +23,8 @@ test('every inbound channel has an explicit least-privilege role allowlist', () 
     CHANNELS.CAPTION_EVENT,
     CHANNELS.CAPTION_STATE_CHANGED,
     CHANNELS.REFINEMENT_NOTICE_CHANGED,
-    CHANNELS.AGENT_CONTEXT_CHANGED
+    CHANNELS.AGENT_CONTEXT_CHANGED,
+    CHANNELS.AGENT_MODEL_CHANGED
   ].includes(channel))
   assert.deepEqual(Object.keys(ROLE_ACCESS).sort(), inbound.sort())
 })
@@ -78,6 +79,10 @@ test('window roles cannot invoke one another privileged APIs', () => {
     assert.equal(isRoleAllowed(channel, 'caption'), false)
     assert.equal(isRoleAllowed(channel, 'toolbar'), false)
     assert.equal(isRoleAllowed(channel, 'unknown'), false)
+  }
+  for (const channel of [CHANNELS.AGENT_MODEL_GET_CATALOG, CHANNELS.AGENT_MODEL_CONFIGURE, CHANNELS.AGENT_MODEL_PULL_REMOTE_CATALOG]) {
+    assert.equal(isRoleAllowed(channel, 'settings'), true)
+    for (const role of ['history', 'caption', 'toolbar', 'unknown']) assert.equal(isRoleAllowed(channel, role), false)
   }
 })
 

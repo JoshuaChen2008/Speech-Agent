@@ -1,0 +1,18 @@
+{
+  "previewOnly": true,
+  "contractId": "agent-model-ui",
+  "contractVersion": "1.0.0",
+  "scenario": "deepseek-template-empty-models",
+  "snapshot": {
+    "revision": 0,
+    "profiles": [{
+      "profileId": "deepseek",
+      "label": "DeepSeek",
+      "httpsOrigin": "https://api.deepseek.com",
+      "basePath": "/",
+      "models": [],
+      "credential": { "present": false, "scope": "absent" }
+    }],
+    "readiness": "provider_not_configured"
+  }
+}

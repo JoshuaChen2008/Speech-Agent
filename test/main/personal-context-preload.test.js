@@ -29,6 +29,7 @@ function loadPreload (role) {
     }
     if (specifier === '../main/ipc/channels') return CHANNELS
     if (specifier === '../agent/contracts/agent-context-ui') return require('../../src/agent/contracts/agent-context-ui')
+    if (specifier === '../agent/contracts/agent-model-ui') return require('../../src/agent/contracts/agent-model-ui')
     throw new Error(`unexpected preload dependency: ${specifier}`)
   }
   vm.runInNewContext(`(function (require, module, exports) { ${source}\n})`, {})

@@ -1,0 +1,20 @@
+{
+  "previewOnly": true,
+  "contractId": "agent-model-ui",
+  "contractVersion": "1.0.0",
+  "scenario": "deepseek-current-alias-suggestion",
+  "result": {
+    "status": "success",
+    "suggestions": [{
+      "modelId": "deepseek-v4-flash",
+      "capabilitySuggestion": {
+        "maxInputTokens": null,
+        "maxOutputTokens": null,
+        "supportsToolCalling": true,
+        "supportsStructuredOutput": true,
+        "supportsStreaming": true,
+        "usageReporting": true
+      }
+    }]
+  }
+}

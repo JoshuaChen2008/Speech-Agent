@@ -451,8 +451,8 @@ class StorageGateway {
     return this.enqueue('modelAccessConfigure', input)
   }
 
-  modelAccessBind (request, sessionSlotIds = []) {
-    return this.enqueue('modelAccessBind', { request, sessionSlotIds })
+  modelAccessBind (request, availableSlotIds = []) {
+    return this.enqueue('modelAccessBind', { request, availableSlotIds })
   }
 
   invoke (host, item) {
@@ -493,7 +493,7 @@ class StorageGateway {
       case 'failFormalAgentRun': return host.failFormalAgentRun(item.payload)
       case 'modelAccessCatalog': return host.modelAccessCatalog()
       case 'modelAccessConfigure': return host.modelAccessConfigure(item.payload)
-      case 'modelAccessBind': return host.modelAccessBind(item.payload.request, item.payload.sessionSlotIds)
+      case 'modelAccessBind': return host.modelAccessBind(item.payload.request, item.payload.availableSlotIds)
       default: throw new TypeError(`unsupported gateway operation: ${item.operation}`)
     }
   }

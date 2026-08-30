@@ -51,9 +51,17 @@ class ModelAccessRuntime {
         } else {
           const internal = ['clearCredential', 'deleteProfile'].includes(command.type) ? await this.internal() : null
           const profile = internal?.profiles.find((item) => item.profile_id === command.profileId)
-          result = await this.gateway.modelAccessConfigure({ command })
-          if (result.retiredSlotId) this.vault.clear(result.retiredSlotId)
-          else if (profile && command.type === 'deleteProfile') this.vault.clear(profile.credential_slot_id)
+          let clearToken = null
+          if (profile) clearToken = this.vault.prepareClear(
+            profile.credential_slot_id, profile.credential_persistence, profile.credential_generation
+          )
+          try {
+            result = await this.gateway.modelAccessConfigure({ command })
+            this.vault.commitClear(clearToken)
+          } catch (error) {
+            this.vault.rollbackClear(clearToken)
+            throw error
+          }
         }
         try { this.onChanged({ revision: result.revision }) } catch {}
         return { ok: true, revision: result.revision, error: null }
@@ -66,12 +74,41 @@ class ModelAccessRuntime {
   async bind (runRequest) {
     try {
       assertRunRequest(runRequest)
-      return await this.gateway.modelAccessBind(runRequest, this.vault.sessionSlotIds())
+      const internal = await this.internal()
+      const availableSlotIds = internal.profiles.filter((profile) => this.vault.state(
+        profile.credential_slot_id, profile.credential_persistence, profile.credential_generation
+      ).present).map((profile) => profile.credential_slot_id)
+      return await this.gateway.modelAccessBind(runRequest, availableSlotIds)
     } catch (error) {
       const wrapped = new Error('Agent request is invalid')
       wrapped.code = error?.code === 'AGENT_PROVIDER_AUTH_FAILED' ? error.code : 'AGENT_REQUEST_INVALID'
       throw wrapped
     }
+  }
+
+  invalidateCredential (profileId) {
+    return this.serial(async () => {
+      try {
+        const internal = await this.internal()
+        const profile = internal.profiles.find((item) => item.profile_id === profileId)
+        if (!profile) return false
+        const clearToken = this.vault.prepareClear(
+          profile.credential_slot_id, profile.credential_persistence, profile.credential_generation
+        )
+        let result
+        try {
+          result = await this.gateway.modelAccessConfigure({
+            command: { type: 'clearCredential', expectedRevision: internal.revision, profileId }
+          })
+          this.vault.commitClear(clearToken)
+        } catch (error) {
+          this.vault.rollbackClear(clearToken)
+          throw error
+        }
+        try { this.onChanged({ revision: result.revision }) } catch {}
+        return true
+      } catch { return false }
+    })
   }
 
   failure (code) {

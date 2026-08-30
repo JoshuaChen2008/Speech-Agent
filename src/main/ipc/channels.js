@@ -42,5 +42,9 @@ module.exports = Object.freeze({
   REFINEMENT_NOTICE_CHANGED: 'refinement-notice:changed',
   AGENT_CONTEXT_GET_OVERVIEW: 'agent-context:get-overview',
   AGENT_CONTEXT_MANAGE: 'agent-context:manage',
-  AGENT_CONTEXT_CHANGED: 'agent-context:changed'
+  AGENT_CONTEXT_CHANGED: 'agent-context:changed',
+  AGENT_MODEL_GET_CATALOG: 'agent-model:get-catalog',
+  AGENT_MODEL_CONFIGURE: 'agent-model:configure',
+  AGENT_MODEL_PULL_REMOTE_CATALOG: 'agent-model:pull-remote-catalog',
+  AGENT_MODEL_CHANGED: 'agent-model:changed'
 })

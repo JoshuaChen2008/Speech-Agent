@@ -11,6 +11,15 @@ const {
   assertManageRequest,
   assertManageResponse
 } = require('../agent/contracts/agent-context-ui')
+const {
+  assertCatalogResponse: assertModelCatalogResponse,
+  assertChangedEvent: assertModelChangedEvent,
+  assertConfigureRequest: assertModelConfigureRequest,
+  assertConfigureResponse: assertModelConfigureResponse,
+  assertGetCatalogRequest: assertModelCatalogRequest,
+  assertPullRequest: assertModelPullRequest,
+  assertPullResponse: assertModelPullResponse
+} = require('../agent/contracts/agent-model-ui')
 
 function onAgentContextChanged (callback) {
   if (typeof callback !== 'function') throw new TypeError('callback must be a function')
@@ -19,6 +28,13 @@ function onAgentContextChanged (callback) {
   }
   ipcRenderer.on(CHANNELS.AGENT_CONTEXT_CHANGED, handler)
   return () => ipcRenderer.removeListener(CHANNELS.AGENT_CONTEXT_CHANGED, handler)
+}
+
+function onAgentModelChanged (callback) {
+  if (typeof callback !== 'function') throw new TypeError('callback must be a function')
+  const handler = (_event, value) => { try { callback(assertModelChangedEvent(value)) } catch {} }
+  ipcRenderer.on(CHANNELS.AGENT_MODEL_CHANGED, handler)
+  return () => ipcRenderer.removeListener(CHANNELS.AGENT_MODEL_CHANGED, handler)
 }
 
 contextBridge.exposeInMainWorld('shell', {
@@ -47,5 +63,18 @@ contextBridge.exposeInMainWorld('shell', {
     assertManageRequest(request)
     return ipcRenderer.invoke(CHANNELS.AGENT_CONTEXT_MANAGE, request).then((response) => assertManageResponse(response))
   },
-  onAgentContextChanged
+  onAgentContextChanged,
+  getAgentModelCatalog: (request) => {
+    assertModelCatalogRequest(request)
+    return ipcRenderer.invoke(CHANNELS.AGENT_MODEL_GET_CATALOG, request).then(assertModelCatalogResponse)
+  },
+  configureAgentModel: (request) => {
+    assertModelConfigureRequest(request)
+    return ipcRenderer.invoke(CHANNELS.AGENT_MODEL_CONFIGURE, request).then(assertModelConfigureResponse)
+  },
+  pullAgentModelCatalog: (request) => {
+    assertModelPullRequest(request)
+    return ipcRenderer.invoke(CHANNELS.AGENT_MODEL_PULL_REMOTE_CATALOG, request).then(assertModelPullResponse)
+  },
+  onAgentModelChanged
 })

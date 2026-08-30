@@ -871,12 +871,21 @@ END;
 
 CREATE TRIGGER agent_model_capability_update_exact
 BEFORE UPDATE OF capability_json ON agent_model_profile_models
+WHEN (SELECT COUNT(*) FROM json_each(NEW.capability_json)) <> 6 OR
+  EXISTS (SELECT 1 FROM json_each(NEW.capability_json) WHERE key NOT IN (
+    'maxInputTokens', 'maxOutputTokens', 'supportsToolCalling',
+    'supportsStructuredOutput', 'supportsStreaming', 'usageReporting'
+  )) OR
+  json_type(NEW.capability_json, '$.maxInputTokens') <> 'integer' OR
+  json_extract(NEW.capability_json, '$.maxInputTokens') < 1 OR
+  json_type(NEW.capability_json, '$.maxOutputTokens') <> 'integer' OR
+  json_extract(NEW.capability_json, '$.maxOutputTokens') < 1 OR
+  json_type(NEW.capability_json, '$.supportsToolCalling') NOT IN ('true', 'false') OR
+  json_type(NEW.capability_json, '$.supportsStructuredOutput') NOT IN ('true', 'false') OR
+  json_type(NEW.capability_json, '$.supportsStreaming') NOT IN ('true', 'false') OR
+  json_type(NEW.capability_json, '$.usageReporting') NOT IN ('true', 'false')
 BEGIN
-  SELECT CASE WHEN (SELECT COUNT(*) FROM json_each(NEW.capability_json)) <> 6 OR
-    EXISTS (SELECT 1 FROM json_each(NEW.capability_json) WHERE key NOT IN (
-      'maxInputTokens', 'maxOutputTokens', 'supportsToolCalling',
-      'supportsStructuredOutput', 'supportsStreaming', 'usageReporting'
-    )) THEN RAISE(ABORT, 'invalid model capability') END;
+  SELECT RAISE(ABORT, 'invalid model capability');
 END;
 
 CREATE TABLE agent_model_purpose_assignments (

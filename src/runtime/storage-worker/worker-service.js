@@ -251,8 +251,8 @@ class StorageWorkerService {
       return this.requireModelAccessStore().configure(payload.input)
     }
     if (operation === OPERATIONS.MODEL_ACCESS_BIND) {
-      assertExactKeys(payload, ['request', 'sessionSlotIds'])
-      return this.requireModelAccessStore().bind(payload.request, payload.sessionSlotIds)
+      assertExactKeys(payload, ['request', 'availableSlotIds'])
+      return this.requireModelAccessStore().bind(payload.request, payload.availableSlotIds)
     }
     if (operation === OPERATIONS.SHUTDOWN) {
       assertExactKeys(payload, [])

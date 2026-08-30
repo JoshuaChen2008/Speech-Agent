@@ -12,6 +12,7 @@ class CredentialVault {
     this.safeStorage = options.safeStorage
     this.fs = options.fs || fs
     this.session = new Map()
+    this.recover()
   }
 
   file (slotId, generation) {
@@ -74,6 +75,43 @@ class CredentialVault {
       if (this.fs.existsSync(file)) return { scope: 'persistent', generation, value: this.fs.readFileSync(file) }
     }
     return { scope: 'absent' }
+  }
+
+  prepareClear (slotId, persistence, generation) {
+    const snapshot = this.snapshot(slotId, persistence, generation)
+    const token = { slotId, snapshot, quarantine: null }
+    this.clearSession(slotId)
+    if (snapshot.scope === 'persistent') {
+      const source = this.file(slotId, snapshot.generation)
+      const quarantine = `${source}.quarantine.${crypto.randomBytes(8).toString('hex')}`
+      this.fs.renameSync(source, quarantine)
+      token.quarantine = quarantine
+    }
+    return token
+  }
+
+  commitClear (token) {
+    if (token?.quarantine) {
+      try { this.fs.rmSync(token.quarantine, { force: true }) } catch { /* retry at next startup */ }
+    }
+  }
+
+  rollbackClear (token) {
+    if (!token) return
+    if (token.quarantine && this.fs.existsSync(token.quarantine)) {
+      this.fs.renameSync(token.quarantine, this.file(token.slotId, token.snapshot.generation))
+      return
+    }
+    this.restore(token.slotId, token.snapshot)
+  }
+
+  recover () {
+    if (!this.fs.existsSync(this.directory)) return
+    for (const name of this.fs.readdirSync(this.directory)) {
+      if (name.includes('.quarantine.') || name.endsWith('.pending')) {
+        try { this.fs.rmSync(path.join(this.directory, name), { force: true }) } catch {}
+      }
+    }
   }
 
   restore (slotId, snapshot) {
