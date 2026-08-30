@@ -37,7 +37,7 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 | S1 | personal-context overview；查看、修改、删除、休眠、记住、忘记；revision conflict；changed revision | 设置、字幕历史 | J21 |
 | S2 | 多配置档案、模型清单、凭据存在性与 scope、四用途及回落、九命令结果、用户触发目录建议 | 设置 | J25 |
 | S3 | 九值 Agent 处理资格、范围投影、submit/cancel、运行中/终态状态、最小交互历史、结果、`ModelUsageV1`（input/output token，用量来源恒为 `provider`；未返回时整体为 `null` 且界面显示「用量未知」）、可空缓存命中率、相对时长 | Agent Bar、字幕历史 | J22/J24/J25 |
-| S4 | 预算耗尽、多 attempt、完整工具调用记录及七值工具错误 | Agent Bar 交互详情 | J22/J24 |
+| S4 | 预算耗尽、多 attempt、完整工具调用记录及七值工具错误；公开投影不含 recipe ID、轮次上限、工具授权或任一执行形态 | Agent Bar 交互详情 | J22/J24 |
 | S5-Core | `agent` 窗口生命周期、正式 preload、changed 订阅、单交互导出结果与保存对话框取消/失败 | Agent Bar、字幕历史 | J21/J22/J24/J25/J26 |
 
 每个切片的 fixture 必须使用合成身份与合成文本，只表达枚举、布尔、计数、相对时长、短 digest 和受控展示内容；不得含凭据、现场音频、音频路径、设备名、本地绝对路径、绝对单调时刻或时钟偏移，也不得含 price/cost/currency/pricing 或任何金额字段（SEM-F33、[ADR 0014](adr/0014-multi-profile-model-access-layer.md) 第 11 项）。
@@ -337,6 +337,20 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 - Core 判断：待填写
 - exact contract：待填写
 - S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；fixture 不构成 J22/J24 证据。
+
+### AUI-CR-020 · 工具调用审计与预算收束投影
+
+- 处理值：contract-ready
+- 提出面：agent / history
+- 用户意图：我查看一条正式 Agent 交互时，想确认它是否使用了受控只读工具、每次调用的结果或失败原因，以及预算是否导致交互收束；默认不想被大段审计正文打断。
+- 需要的事实或动作：签发 `speech-agent.agent-tool-trace.ui@1.0.0` 的只读 `ToolTraceSnapshotV1`。其公开顶层恰含 `status`、`budgetState`、`attemptCount` 与按 `(attempt, callOrder)` 全序的 `toolCalls`；每一调用恰含工具名、状态、七值工具错误码（可空）、相对开始/结束时长、已校验的有界 `args/result`、`sourceRefs` 与 `{resultBytes, sourceTextBytes, sourceReferenceCount}`。`budgetState` 只允许 `within_budget/exhausted`，用以显示预算收束，不公开任何上限数值。调用正文必须由 renderer 默认折叠，并只在用户明确展开后显示。S4 contract 不向 renderer 公开 recipe ID、recipe 版本、`maxTurns`、`toolGrants`、`single_shot`、`agent_loop`、`execution_form`、`escalation_reason`、提示正文、内部思维过程、provider 原始事件、凭据或本地路径。
+- 缺失时的 fail-closed 表现：交互详情省略工具审计区域；不得依据结果正文、等待时间或 DOM 状态猜测是否调用工具、是否超预算或是否已重试。
+- 受影响语义/旅程：SEM-F28 / SEM-F31 / SEM-F34 / SEM-T10 / J22 / J24
+- 建议的成功 fixture：一条 `search_context` 成功调用；一条 `read_sources` 成功调用；预算耗尽；两个 attempt 均保留且第二个 attempt 重新从 `callOrder=1` 开始；取消终态。所有正文使用合成内容并标记 preview-only。
+- 建议的失败 fixture：`TOOL_ARGS_INVALID`、`TOOL_SCOPE_DENIED`、`TOOL_NOT_AVAILABLE_FOR_RECIPE`、`TOOL_TIMEOUT`、未知工具名、未知状态或未知 contract 版本；后三类必须使整个详情只读不可用，不局部猜测渲染。
+- Core 判断：S4 仅提供纯 validator 与 preview fixture；tool adapter、IPC、preload、正式 renderer、storage 读取和用户展开动作全部留在 S5-Integration。`TOOL_BUDGET_EXCEEDED` 或 `TOOL_TIMEOUT` 的 trace 可见，但其外层预算收束只投影为 `budgetState='exhausted'`，不把任务错误码混入工具错误码。
+- exact contract：`src/agent/contracts/agent-tool-trace-ui.js`、`src/agent/contracts/controlled-tools.js` 与 `src/agent/contracts/fixtures/agent-tool-trace-ui/`；所有 fixture 固定 `preview_only=true`、`j22_evidence=false`、`j24_evidence=false`。
+- S5-Integration 证据：待真实 Agent Bar → preload/exact IPC → S3/S4 Core → v7 interaction store → renderer reload 组成 J22/J24；fixture 不构成 J22/J24 证据。
 
 ## 5. 关闭检查
 

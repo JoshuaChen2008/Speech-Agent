@@ -127,7 +127,7 @@ UX 设计稿、截图、fixture preview 或局部 renderer 回归都不晋级任
 |---|---|
 | S1 | `context.ingest.session`、十值任务错误码、九值 Agent 处理资格、个人上下文 exact 命令；RFC 8785 JCS digest；v1–v4 SQL/checksum；个人上下文三接口、调度生命周期、J21 的 S1 子边界与隐私负扫描 |
 | S2 | 四个模型用途、九条 `configure()` 命令、六字段能力、两个 `MODEL_CONFIG_*` 错误；固定绑定解析顺序、凭据槽和 J25 的 S2 Core 子边界 |
-| S3 | 十一个已登记 recipe 的 ID/版本/轮次上限/工具授权、两层意图收敛与 `routing_mode`、输入输出 Schema、取消终态、`ModelUsageV1`；统一 Agent Loop 路径；J22/J24 的执行宿主子边界 |
+| S3 | 十一个已登记 recipe 的 ID/版本/轮次上限/工具授权快照、两层意图收敛与 `routing_mode`、输入输出 Schema、取消终态、`ModelUsageV1`；统一 Agent Loop 生命周期与静态授权检查；J22/J24 的执行宿主子边界。两个工具的 exact Schema、范围校验、adapter 与十轴执法归 S4 |
 | S4 | 七值工具错误码与任务码隔离；`budget-axes.js` 十轴数值唯一定义、`maxTurns` 取自 recipe 登记、十轴执法；两个只读工具的 exact Schema 与 `maxResultBytes`；J22/J24 的工具与预算子边界 |
 | S5 | S5-Core 的新 `agent` 角色、preload/exact IPC 与 J26 导出；S5-UX 的 Agent Bar/settings/history renderer；S5-Integration 对 J21/J22/J24/J25/J26 的真实产品组合 |
 | S6 | J27 require 图、四棵旧树的打包排除、`src/agent/**` 正向存在与注入式反证 |
@@ -169,10 +169,10 @@ UX 设计稿、截图、fixture preview 或局部 renderer 回归都不晋级任
 
 ### 阶段 D（S3）：执行宿主与统一 recipe 执行路径
 
-**目标**：十一个已登记 recipe 的统一执行路径端到端成立，交互与工具记录落库。执行差异只来自登记表的轮次上限与工具授权（[ADR 0016](adr/0016-unified-agent-execution-path.md)）；S3 建立路径与登记表并先接入 0 工具与 `search_context` 两档，`read_sources` 与完整工具预算执法留给 S4。
+**目标**：十一个已登记 recipe 的统一执行路径端到端成立，交互与工具记录落库。执行差异只来自登记表的轮次上限与工具授权（[ADR 0016](adr/0016-unified-agent-execution-path.md)）；S3 建立路径、0 工具运行与静态授权快照，但不拥有任一工具的参数/返回值 Schema、范围读取或 adapter。`search_context`、`read_sources` 与完整工具预算执法都留给 S4。
 
 1. migration **v7**，恰好四组内容（详见 [`data-architecture.md`](data-architecture.md) §5）：`formal_agent_interactions`（`run_id` 唯一并外键指向 v5 `formal_agent_runs`，**不引入 `model_binding_id`**——模型事实经同一 `run_id` 关联 v6 绑定表；含 `max_turns`/`tool_grants_json` 登记快照，**无 `execution_form`、无 `escalation_reason`**）、`formal_agent_tool_calls`（`UNIQUE(interaction_id, attempt, call_order)`，args ≤8 KiB / result ≤64 KiB 由 `CHECK (length(CAST(... AS BLOB)) <= N)` 直接执法）、`formal_agent_report_presentations`（`session_id` 作主键，使「每个终态会话至多自动呈现一次」成为结构性不变量）、以及一列 tombstone 计数与四条分页/全序索引。v1–v6 SQL/checksum 逐字节不变。
-2. `src/agent/execution-host/`：静态 recipe 注册（ID、版本、输入/输出 Schema、所属用途、**轮次上限**、**工具授权**），以及包裹 Pi `agentLoop()` 的唯一执行路径；`config.shouldStopAfterTurn` 承载轮次上限与十轴预算的停止条件。recipe 不是插件，没有清单、发现或热重载。
+2. `src/agent/execution-host/`：静态 recipe 注册（ID、版本、输入/输出 Schema、所属用途、**轮次上限**、**工具授权**），以及包裹 Pi `agentLoop()` 的唯一执行路径；S3 只把登记快照交给该路径，S4 才提供工具 contract、adapter 与 `config.shouldStopAfterTurn` 所需的完整十轴执法。recipe 不是插件，没有清单、发现或热重载。
 3. 意图收敛（[ADR 0018](adr/0018-two-tier-intent-convergence.md)，两层机制）：先创建第十一个已登记 recipe `intent.route` 的运行（`maxTurns=1`、`toolGrants=[]`、默认用途、输出 Schema 恰好 `{ recipeId, confidence }`）由模型判定；资格不为 `ready`、以 `AGENT_PROVIDER_*`/`AGENT_OUTPUT_INVALID`/`AGENT_BUDGET_EXCEEDED`/`AGENT_WORKER_EXITED`/`AGENT_INTERNAL_FAILURE` 收束、或返回闭集外 `recipeId` 时，回落到按范围与受控关键词判定的确定性规则，全部不匹配收敛到 `qa.answer`——收敛没有失败态。用户取消不触发兜底。`routing_mode`（`model/rules/preset`）写入交互行。`context.ingest.*` 与自动纪要请求记 `preset`，不创建 `intent.route` 运行，自动路径运行数不变。收敛结果对用户可见为产品语言并允许改选，改选按「取消当前运行 + 新建运行」处理；界面不暴露 recipe ID、confidence 或 `routing_mode`。
 4. 不存在执行形态判定与升级理由。`max_turns` 与 `tool_grants_json` 在运行创建期从登记表快照进交互行，使审计在登记表未来变更后仍可复现；`bind()` 的 `executionForm` 只提交 `'agent_loop'`，`agent_model_run_bindings.execution_form` 因此恒为常量。`context.ingest.session` 与 `context.ingest.interaction` 的 runner 采用两段式：先以零模型调用建立会话经历记录的时间范围、来源引用、输入水位与 digest，再进入同一循环由模型提炼个人记忆条目；确定性前段位于 recipe 内部，不构成第二条执行路径，S1 已有的运行/租约/幂等机制不推倒重来。
 5. 输出 Schema 校验失败为 `AGENT_OUTPUT_INVALID`；模型在工具调用之外产生的中间 assistant 文本零持久化，只在内存中作为本次运行上下文。
@@ -188,9 +188,11 @@ UX 设计稿、截图、fixture preview 或局部 renderer 回归都不晋级任
 
 **目标**：两个只读工具、七值工具错误码、全序审计与十轴预算执法完整，`report.analysis` 与 `plan.proposal` 的 6 轮双工具档位成立。本片**无新 migration**。
 
+S4 可以先签发纯 `src/agent/contracts/` 的 exact validator、预算判断与 preview fixture；该准备层不拥有 tool adapter、Pi 接线、storage 写入、IPC 或 renderer，不能冒充本片完整运行时证据。
+
 1. 受控只读工具闭集为 `search_context` 与 `read_sources`：只读、Schema exact、无 shell/文件/网络/写能力。`search_context` 的 `aliasKeys` 是等值别名匹配，未命中的键以 `unmatchedAliasKeys` 显式回报，不退化为模糊搜索、不扩大范围。
 2. 工具错误码闭集七值，独立于任务错误码；`(attempt, call_order)` 全序，自动重试建新 attempt，旧 attempt 记录一律保留。
-3. 三档轮次上限与工具授权由登记表静态给出，运行期零判定：1 轮 0 工具（`text.rewrite`、`text.translate`）；3 轮 `search_context`（`qa.answer`、`extract.items`、`summary.minutes`、`text.enhance`、`context.ingest.session`、`context.ingest.interaction`）；6 轮 `search_context`+`read_sources`（`report.analysis`、`plan.proposal`）。`supportsToolCalling` 只对工具授权非空的 recipe 是硬绑定条件，工具授权为空的 recipe 不要求该能力，使不支持工具调用的 model 仍可用于文本变换用途。越权调用未授权工具以 `TOOL_NOT_AVAILABLE_FOR_RECIPE` 拒绝且不执行。
+3. 三档轮次上限与工具授权由登记表静态给出，运行期零判定：1 轮 0 工具（`intent.route`、`text.rewrite`、`text.translate`）；3 轮 `search_context`（`qa.answer`、`extract.items`、`summary.minutes`、`text.enhance`、`context.ingest.session`、`context.ingest.interaction`）；6 轮 `search_context`+`read_sources`（`report.analysis`、`plan.proposal`）。`supportsToolCalling` 只对工具授权非空的 recipe 是硬绑定条件，工具授权为空的 recipe 不要求该能力，使不支持工具调用的 model 仍可用于文本变换用途。越权调用未授权工具以 `TOOL_NOT_AVAILABLE_FOR_RECIPE` 拒绝且不执行。
 4. 十轴预算执法：轮次上限（取自 recipe 登记，1 / 3 / 6）；单次请求输入 token；累计计费输入 ≤120k；累计计费输出 ≤8k；墙钟 60 s 交互 / 180 s 后台；工具调用总数 ≤12；单工具超时 5 s；并行度 1；累计工具结果字节 ≤256 KiB；累计来源正文字节 ≤128 KiB。任一轴触顶为 `AGENT_BUDGET_EXCEEDED`。
 5. Pi 接入面：实例级 `Models`（`createModels()`），按 `provider.id` 键入，`setProvider()` 按 id upsert，`getModel(providerId, modelId)`，`createProvider({...})`，`models.streamSimple.bind(models)` 注入 `@earendil-works/pi-agent-core`。禁用面：`providers/all` 的 `builtinModels()`、`/compat`、coding-agent 的 `ModelRuntime`/`ModelRegistry`/`models.json`/`auth.json`/OAuth/home-dir、`envApiKeyAuth()`、`prepareNextTurn` 的换模型路径、gateway routing 字段。MIT 许可声明必须保留。
 6. 「一次运行内模型固定」由不实现 `prepareNextTurn` / `prepareNextTurnWithContext` 换模型路径实现，并配一条断言运行中绑定不被改写的测试。恢复不使用 `agentLoopContinue()`：按 SEM-F28 保留旧 attempt 的工具调用记录后，在同一 `runId`、同一绑定、同一冻结输入下整体重跑并递增 attempt。
@@ -239,7 +241,7 @@ UX 设计稿、截图、fixture preview 或局部 renderer 回归都不晋级任
 |---|---|---|---|---|
 | S1 个人上下文模块 | v5 | J21 子边界 | 三接口、保守会话经历记录、调度生命周期、水位级剔除与省略标记、明确用户控制产生的个人记忆、幂等删除 | `provider_not_configured` 时零自动运行、不伪造 `ready`、不从任意正文自动臆测个人记忆、不创建报告、字幕路径不加载新 store、v1–v4 逐字节不变 |
 | S2 模型接入层 | v6 | J25 Core 子边界 | 多档案、四用途独立绑定、九命令 revision 守卫、按档案凭据槽与 renderer fixture | 凭据不入档案行/SQLite/renderer/日志/报告、fixture 不冒充 J25、无自动远端刷新、能力不匹配不报 `AGENT_PROVIDER_UNAVAILABLE`、环境不再是凭据来源 |
-| S3 执行宿主与统一执行路径 | v7 | J22/J24 执行宿主 Core 子边界 | 两层意图收敛（模型判定 + 规则兜底 + `routing_mode`）、十 recipe 登记表（轮次上限/工具授权）快照进交互行、Schema 校验、取消为终态、两段式摄取、`ModelUsageV1` 与 renderer fixture | 无执行形态判定与 `escalation_reason`、中间 assistant 文本零持久化、提示正文终态后删除只留 digest、fixture 不含金额或提示正文、取消不补造结果 |
+| S3 执行宿主与统一执行路径 | v7 | J22/J24 执行宿主 Core 子边界 | 两层意图收敛（模型判定 + 规则兜底 + `routing_mode`）、十一 recipe 登记表（轮次上限/工具授权）快照进交互行、Schema 校验、取消为终态、两段式摄取、`ModelUsageV1` 与 renderer fixture | 无执行形态判定与 `escalation_reason`、中间 assistant 文本零持久化、提示正文终态后删除只留 digest、fixture 不含金额或提示正文、取消不补造结果 |
 | S4 受控只读工具与预算执法 | 无 | J22/J24 工具与预算 Core 子边界 | 工具全序与多 attempt 保留、三档轮次上限与工具授权按登记表执法、`maxResultBytes` 与字节子预算、十轴执法与 renderer fixture | 无写类工具、别名不退化为模糊搜索、工具授权为空的 recipe 留下空工具记录、fixture preview 不进入证据、运行中绑定不被改写 |
 | S5-Core / S5-UX / S5-Integration | 无 | J21、J22、J24、J25、J26 | 新 `agent` 角色、正式 renderer、默认零报告、偏好只影响以后会话、真实模块汇合与确定性重导出 | 不接旧 `agent-mvp`、无未读角标/系统通知/模态/抢焦点、导出不含提示与内部思维过程、重复通知不重复呈现同一 run |
 | S6 旧 Agent 锁定 | 无 | J27 | require 闭包守卫、四棵树打包排除、`src/agent/**` 正向存在 | 注入式反证必须变红、v3/v4 checksum 不变、隔离入口仍可手动启动 |

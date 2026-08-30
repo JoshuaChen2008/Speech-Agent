@@ -61,7 +61,7 @@ PLAN 或 README 落后于语义合同时，以语义合同为准，并把差异�
 | **窗口几何 / 拖动 / 拉伸 / 穿透** | `subtitle-window.md` §3 §4 §5；SEM-F20 | `src/main.js` 的 `CAP_LIMITS` / `dock` / `dragTick` / `resizeTick` | 存储、模型、契约 |
 | **打包 / 安装器** | SEM-F18/F19/T12 | `electron-builder*.cjs`、`scripts/verify-package-layout.js`、`qualify-nsis-lifecycle.js` | 字幕与存储实现细节 |
 | **CI / 测试分层** | testing-strategy §2 执行分层表；SEM-T03 | `.github/workflows/ci.yml`、`test/validation/test-lanes-contract.test.js`、`package.json` 的 scripts | 全部产品设计文档 |
-| **纯文案 / 颜色 / 图标** | `docs/ui-design-brief.md` | 对应 `.css` / `.html` | 其余全部 |
+| **纯文案 / 颜色 / 图标** | `docs/ui-design-brief.md` §2.3 token 分层 + §2.6 视觉不变量与禁止项 | `src/ui/shared/tokens.css`（语义层）、对应 `.css` / `.html`；改完跑 `node --test test/ui/renderer-style-guard.test.js` | 其余全部 |
 
 ---
 

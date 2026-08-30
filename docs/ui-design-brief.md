@@ -1,8 +1,8 @@
 # Live Subtitle Agent · 视觉/UI 模型交接说明
 
-> Agent UI/UX 的独立交接见 [`agent-ui-ux-handoff.md`](agent-ui-ux-handoff.md)。该文档同时审计 SEM-F29/J23 隔离开发入口的当前界面，并把 SEM-F25–F28 与 J20–J22 转换为正式首版设计约束；它不形成第二份产品语义权威，冲突时仍以 `semantic-contract.md` 为准。
+> 正式 Agent UI/UX 的独立交接见 [`agent-ui-ux-handoff.md`](agent-ui-ux-handoff.md)，UI → Core 缺口登记见 [`agent-ui-contract-requests.md`](agent-ui-contract-requests.md)。当前 handoff 已整体替代 2026-08-09 的旧 Agent 设计；隔离 Agent 内核开发入口 `src/agent-mvp/**` 不再作为正式 UI 模板。两份文档都不形成第二份产品语义权威，冲突时仍以 `semantic-contract.md` 为准。
 
-> 状态：Rev.9 · 2026-08-08
+> 状态：Rev.11 · 2026-08-31
 > 目的：让擅长视觉设计的模型可以独立改进界面，同时不接触音频、ASR、模型、存储和安全实现。
 
 ## 1. 核心原则
@@ -20,7 +20,7 @@
 
 - 字幕窗与工具条保持 TypeScript 直接 DOM，避免让临时字幕高频更新进入通用组件树。
 - 设置窗与字幕历史使用 React + TypeScript 组织既有信息架构，不新增后端能力。
-- 四窗由 Vite 多页面构建，共享本仓库的语义 token 和官方 Fluent System Icons SVG。
+- 现有字幕、工具条、设置、历史四窗由 Vite 多页面构建；S5 新增正式 `agent` 窗口后形成五个可见 renderer，共享本仓库的语义 token 和官方 Fluent System Icons SVG。
 - Fluent 2 的原则与图标服务于本项目语义；组件库默认状态、文案或布局不得覆盖 RuntimeSnapshot、CommandResult、字幕版本与窗口命中合同。
 
 ## 2. 文件所有权
@@ -37,6 +37,8 @@
 | `src/settings/settings.css` | 设置窗口、组件和主题 |
 | `src/history/index.html` | 历史会话、正文时间线和导出控件的语义结构 |
 | `src/history/history.css` | 历史窗口布局、主题、列表和时间线视觉 |
+| 未来正式 `agent` renderer 的 HTML/TSX | Agent Bar 语义结构、范围选择、结果与交互历史展示；实际根路径先由 Core owner 在 S5 登记 |
+| 未来正式 `agent` renderer 的 CSS | Agent Bar 布局、主题、状态与可访问性；不得复用 `src/agent-mvp/**` |
 | `src/ui/shared/tokens.css` | design token 单一真相（见 §2.3）；未来的共享组件样式和纯展示 helpers 同放 `src/ui/shared/`。⚠ 例外：`caption-reducer.js` 见 §2.2 |
 | `docs/ui-design-brief.md` | 视觉规范和交接说明 |
 
@@ -49,12 +51,13 @@
 | `src/toolbar/toolbar.ts` | 只允许把用户意图交给 `toolbarApi`，并根据 RuntimeSnapshot 渲染 |
 | `src/settings/settings.js` | 只允许表单/view-model 逻辑；运行配置必须等待 CommandResult |
 | `src/history/history.js` | 只允许历史列表/详情/导出交互和 DOM 渲染；终态过滤、投影和文件写由主进程/SQLite 决定 |
+| 未来正式 `agent` renderer 的 view-model/adapter | Core 拥有资格、错误、终态与下一动作；UI/UX 只把冻结 snapshot/CommandResult 转成展示，不新增同义状态 |
 | BrowserWindow 宽高、边距、工具条 overlap rect | 同时影响 CSS、窗口停靠和命中测试，必须更新共享 layout contract |
 | 新的按钮、设置或状态 | 可能需要新增 Command、Capability 或错误类型，先提出 contract request |
 
 ### 2.3 design token 层（V1 已落地）
 
-`src/ui/shared/tokens.css` 是四个可见 renderer 的唯一视觉真相，由四份 HTML 在各自组件样式**之前**引入：
+`src/ui/shared/tokens.css` 是现有四个、S5 后五个可见 renderer 的唯一视觉真相，由各 renderer 在自身组件样式**之前**引入：
 
 ```html
 <link rel="stylesheet" href="../ui/shared/tokens.css">
@@ -122,6 +125,39 @@
 - Electron 打包、安全选项和 native module 配置。
 
 如果视觉方案需要后端尚未提供的事实，必须在交接结果中列出“需要的 contract 变更”，不能在 renderer 内伪造成功状态或自行访问 Node/Electron API。
+
+### 2.6 视觉不变量与禁止项（守卫可执行）
+
+§2.3 的规则以前只是散文，实际已经漏过：`src/history/history.css` 曾有五处直接引用 `--c-accent` 调色板原始值，三条 lane 全绿也没有发现。现在这一节的每一行都对应 `test/ui/renderer-style-guard.test.js` 的一条断言，属 SEM-F23 与 J18 的 renderer 样式守卫子边界。
+
+守卫**按目录扫描而不是按窗口点名**：`src/**` 下任何 renderer 样式一出现就被覆盖，未来正式 `agent` 窗口不需要有人记得把它加进名单。
+
+| 禁止项 | 为什么 | 例外 |
+|---|---|---|
+| 字面色值（`#hex`、`rgb(255, …)`、`white`/`black` 等具名色） | 组件一旦自带色值，主题切换和高对比接管就会漏掉它 | 只有 `tokens.css` 的 §1 调色板 |
+| 直接引用 `--c-*` | 调色板是原始值层，组件绕过语义层等于把一个未命名的视觉决策焊死在组件里 | 只有 `tokens.css` 的语义层 |
+| 组件 CSS 里的 `[data-theme]` 分支 | 主题必须在 token 层切换，否则每加一个主题都要改所有组件 | 无 |
+| 渐变（`linear/radial/conic-gradient`） | Fluent 2 桌面壳不用渐变；它也是「AI 味界面」最常见的第一个入口 | 无。开发预览页的背景模拟色板不在扫描范围 |
+| `backdrop-filter` | 常驻置顶窗上的大面积模糊是性能与可读性双输，SEM-F23 已明确禁止 | 无 |
+| 新增无限循环动画 | 常驻窗不做无限装饰动画 | 守卫内的已登记闭集：临时字幕光标、`starting`/`recovering` 转圈。新增一条必须先改 SEM-F23 与测试策略同名小节 |
+| renderer 目录缺 `prefers-reduced-motion` / `forced-colors` 轮廓 | 两条系统偏好是无障碍底线 | 无 |
+| renderer 目录没有入口引用 `tokens.css` | 不引用就等于另立一份视觉真相 | 共享层 `src/ui/shared/` 自身 |
+
+扫描范围之外的树是硬编码闭集：构建产物 `src/renderer-dist/**` 与隔离 Agent 内核开发入口 `src/agent-mvp/**`。**扩大例外必须先改 `semantic-contract.md` 的 SEM-F23，不得直接放宽守卫默认值。** 守卫还先断言扫描结果非空且至少包含现有四窗与 `phases.css`，避免扫描表达式写错时空过。
+
+守卫只是静态样式边界：全绿不表示任何 renderer 已实现或已验收，真实 Mica、系统 DPI 与跨背景可读性仍然只能由 J15a/I2 的实机观察给出。
+
+### 2.7 Agent Bar 视觉设计基准页
+
+`src/ui/preview/agent-bar.html` 把 [`agent-ui-ux-handoff.md`](agent-ui-ux-handoff.md) §13.3 的状态矩阵与 §13.4 的文案渲染成可以直接看的画面，供 `UX-3` 接手模型对照风格，不必从七百行散文里复现视觉。
+
+- 它是**设计基准**，不是实现：数据是手写设计取值，不经任何 exact validator，不进入生产 bundle，**不构成 J22/J24 证据**，也不表示 `AUI-CR-010`–`019` 已签发。
+- 它只消费 `tokens.css` 的语义层，页面自身的排版变量一律 `--ab-` 前缀；守卫会拒绝预览页重新定义任何共享语义 token。
+- **控件外观与设置页同源**：页面直接 `<link>` 引用 `src/settings/settings.css`，全部状态由设置页既有控件搭出 —— `.group` / `.row` / `.label` / `.hint` / `.seg[role=radiogroup]` / `.primary-btn` / `.secondary-btn` / `.link-btn` / `.resource-list` / `.resource-row` / `.model-error` / `.note`。守卫会拒绝基准页重新定义这些类，所以两边不可能各自漂移。参照实现是设置页 · Agent 模型配置档案（`src/settings/agent-model-pane.tsx`）。
+- 基准页只补一处设置页确实没有的东西：可读长正文 `.agent-result-body`（设置页只有 `.label` / `.hint` / `.note` 三档）。新增第二处之前先问它是否该进设置页。
+- ⚠ 已知缺口：这套控件目前住在 `settings.css` 里，是 renderer 局部层。正式 `agent` 窗口落地时不能引用另一个 renderer 的样式表，届时需要把控件层抽到 `src/ui/shared/`，而不是把 `settings.css` 复制进 `src/agent-window/**`。该抽取尚未登记，属 UX-3 前的待决项。
+- 页面带一个「去掉颜色」开关，用来当场核对 §2.4 的那条规则：把颜色全部去掉后，状态仍须靠文字与形状区分。
+- 正式 renderer 落地时，这一页不迁移、不复用为模板；它和 `src/agent-mvp/**` 一样不是正式 UI 模板。
 
 ## 3. UI 唯一依赖的运行契约
 
@@ -255,7 +291,7 @@ UI 规则：
 
 以下是不变量：
 
-- 四个可见 renderer（字幕、工具条、设置、历史）与隐藏 audio host 的职责不能通过 CSS/DOM 合并。
+- 五个可见 renderer（字幕、工具条、设置、历史、正式 `agent`）与隐藏 audio host 的职责不能通过 CSS/DOM 合并；正式 `agent` renderer 不与隔离 `agent-mvp` 合并。
 - 字幕窗和工具条窗的点击穿透、停靠关系必须服从 layout contract。
 - 字幕命中必须使用工具条当前真实外接矩形；由当前停靠几何推导的 `588 × 64` 只允许在首帧、renderer reload、布局未就绪、非法或陈旧矩形时临时 fail-safe，收到同代有效矩形后立即收缩。
 - 命中顺序固定为透明外边距、工具条实际轮廓、`8px` 拉伸带、字幕拖动区域；锁定时字幕窗恒穿透且工具条只有现有明确握把可拖。
@@ -320,7 +356,7 @@ UI 规则：
 
 ### 6.4 后续顺序
 
-字幕 MVP 的 B4 ModelManager 资源入口已实现，开发态与 packaged Electron 四窗口产品壳均已通过 settings renderer 点击下载→preload/IPC→受控安装→热启用→字幕→SQLite 历史的专门旅程；当前 B5 正式 ASAR/NSIS 和隔离安装卸载也已从同一源码重建并通过确定性资格。退出绑定 I2 权威证据已记录 loopback 与 mic 标签启发式声学 fixture 各 5 轮：每来源由 5 个 schema-v5 child、5 个 schema-v1 exact-child-exit sidecar 和 1 个 schema-v6 series 组成；外部 runner 的 sidecar 防止 child 先写内部 pass、随后悬挂或超时仍被误判为绿色。冻结字幕可见延迟 P95 分别为 1158/1005ms，两来源分别超过未改变的 `<1000ms` 线 158ms/5ms，I2 整体仍未关闭。每轮 exact accepted partial 的六段 trace 与 40ms post-source captured-energy guard 只作诊断，不能改写该 UI/产品验收结论；sidecar 也不是签名、远端证明、硬件证明或崩溃根因证明。下一步推进两来源性能、拖动/DPI/权限/真实 pause/refine/设备变化/睡眠唤醒/硬崩溃等 I2 实机交互，再做 I3 长稳与 I4。当前 B5 候选已精确绑定但仍未签名，也没有干净机 I4；受控 UI 旅程使用小型受控资源和 fake ASR，只证明接线、打包路径与用户交互，不能冒充真实推理、真实公网或硬件身份。Agent UI 等 A1/A2 契约冻结后再做，不在 renderer 内先行伪造能力；当前设置页不展示翻译开关。
+字幕 MVP 的现有四窗口产品壳与 Agent 重设计保持独立。正式 Agent UI 可按 [`agent-ui-ux-handoff.md`](agent-ui-ux-handoff.md) 的 `UX-1/UX-2` 与 S1–S4 并行设计；生产 renderer 只在对应 Core contract 与 fixture 冻结后进入 `UX-3`，并在 S5-Integration 通过真实 preload/exact IPC/SQLite 汇合。缺少的事实和动作进入 [`agent-ui-contract-requests.md`](agent-ui-contract-requests.md)，renderer 不先行伪造能力。设计稿、截图和 fixture preview 不构成 J21/J22/J24/J25/J26 证据。
 
 ## 7. 每次视觉交接必须包含
 
@@ -330,11 +366,12 @@ UI 规则：
 4. 深浅色、高对比度、键盘 focus、reduced motion 检查结果。
 5. 需要壳层/后端新增的 contract requests；没有则明确写“无”。当前未结的见 §6。
 6. 若改变窗口尺寸或工具条位置，给出新的 layout contract 数值和理由，等待壳层所有者确认后再合并。
+7. 若范围包含正式 Agent，声明本轮是 `UX design`、`Renderer implementation` 或 `S5 integration support`，并列出消费的 contract/fixture 或 `AUI-CR-*`。
 
 ## 8. 验收底线
 
-- 视觉模型只看本文件和 contract fixtures，就能完成 UI，不必阅读 ASR 实现。
+- 字幕 UI 模型只看本文件和既有 contract fixtures 即可工作；正式 Agent UI 模型再读取当前 [`agent-ui-ux-handoff.md`](agent-ui-ux-handoff.md)，不必阅读 ASR 或旧 Agent 实现。
 - 后端替换模型、provider 或存储实现时，UI 不需要改 DOM/CSS。
 - renderer 重载后从完整快照恢复，不依赖“恰好收到过某个事件”。
-- 未安装模型和 worker 恢复已有明确界面；权限拒绝、设备拔出需在 I4 前随权限入口补成明确界面。Agent 上线后再增加 AI 断网/取消/失败界面，且不遮蔽字幕历史。
+- 未安装模型和 worker 恢复已有明确界面；权限拒绝、设备拔出需在 I4 前随权限入口补成明确界面。正式 Agent 按 handoff 第 6 节覆盖断网、取消、失败与 reload，且不遮蔽字幕历史。
 - 任何“看起来已经成功”的视觉状态，都能追溯到后端 RuntimeSnapshot 或 CommandResult。

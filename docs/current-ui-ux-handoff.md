@@ -12,7 +12,7 @@
 4. 本文
 5. 当前 renderer 代码
 
-Agent 系统仍是后置可选系统。当前生产页面首先服务可以独立运行的字幕系统；不要把字幕窗、设置或字幕历史改成 Agent 的附属界面。SEM-F29/J23 已有隔离 Agent 内核开发入口，但它不属于生产页面；其现状与未来正式 Agent 页面均见 [`agent-ui-ux-handoff.md`](agent-ui-ux-handoff.md)，不得在本轮页面微调中提前伪造正式能力。
+Agent 系统仍是后置可选系统。当前生产页面首先服务可以独立运行的字幕系统；不要把字幕窗、设置或字幕历史改成 Agent 的附属界面。SEM-F29/J23 的隔离 Agent 内核开发入口不属于生产页面；2026-08-09 的隔离入口 UI handoff 已由 Git 历史保留，不再是正式产品指令。新的正式 Agent 页面只以当前 [`agent-ui-ux-handoff.md`](agent-ui-ux-handoff.md) 为交接，不得在本轮页面微调中提前伪造正式能力。
 
 ## 1. 给接手模型的一分钟简报
 
