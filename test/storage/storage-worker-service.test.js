@@ -16,6 +16,8 @@ const {
   makeRefinementFaultKey
 } = require('../../src/runtime/storage-worker/protocol')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
+const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
+const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
 
 function tempDatabase (t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'storage-service-'))
@@ -433,5 +435,26 @@ test('stale recovery RPC is narrow and leaves immutable caption facts intact', (
   assert.deepEqual(service.handle(request(OPERATIONS.RECOVER_STALE_SESSIONS, {
     recoveredAt: 9000
   })).result, { status: 'none', recoveredSessionCount: 0 })
+  service.handle(request(OPERATIONS.SHUTDOWN))
+})
+
+test('SEM-F00/SEM-F33/J25: model-access unavailable leaves subtitle operations independent', (t) => {
+  const service = new StorageWorkerService({
+    storeFactory: ({ databasePath }) => {
+      const store = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 5) })
+      store.modelAccessUnavailable = true
+      return store
+    }
+  })
+  const databasePath = tempDatabase(t)
+  assert.equal(service.handle(request(OPERATIONS.INITIALIZE, { databasePath })).ok, true)
+  const unavailable = service.handle(request(OPERATIONS.MODEL_ACCESS_CATALOG))
+  assert.equal(unavailable.ok, false)
+  assert.equal(unavailable.error.code, 'MODEL_ACCESS_UNAVAILABLE')
+  const opened = { sessionId: 'subtitle-without-model-access', sourceId: 'mic', startedAt: 1, refinementEnabled: false }
+  assert.equal(service.handle(request(OPERATIONS.OPEN_SESSION, opened, {
+    idempotencyKey: makeOpenSessionKey(opened.sessionId)
+  })).ok, true)
+  assert.equal(service.handle(request(OPERATIONS.GET_STATS)).result.activeSessions, 1)
   service.handle(request(OPERATIONS.SHUTDOWN))
 })

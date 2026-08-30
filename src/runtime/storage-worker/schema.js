@@ -818,6 +818,171 @@ CREATE INDEX personal_context_episodes_session
   ON personal_context_episodes(session_id, through_event_order);
 `
 
+/* SEM-F33 / DB7 / J25: model-access facts are appended as v6. Credentials
+   remain in the main-owned vault; these tables contain only non-sensitive
+   configuration, slot identity, and immutable run binding snapshots. */
+const MODEL_ACCESS_SCHEMA_SQL = `
+CREATE TABLE agent_model_profiles (
+  profile_id TEXT PRIMARY KEY NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 128),
+  profile_revision INTEGER NOT NULL CHECK (profile_revision >= 1),
+  label TEXT NOT NULL CHECK (length(CAST(label AS BLOB)) BETWEEN 1 AND 256),
+  template_id TEXT CHECK (template_id IS NULL OR template_id = 'deepseek-openai-template@1'),
+  adapter_id TEXT NOT NULL CHECK (adapter_id = 'openai-compatible'),
+  api_style TEXT NOT NULL CHECK (api_style = 'chat-completions'),
+  https_origin TEXT NOT NULL CHECK (length(https_origin) BETWEEN 9 AND 2048),
+  base_path TEXT NOT NULL CHECK (length(base_path) BETWEEN 1 AND 1024),
+  catalog_revision INTEGER NOT NULL CHECK (catalog_revision >= 0),
+  credential_slot_id TEXT NOT NULL UNIQUE CHECK (length(credential_slot_id) BETWEEN 16 AND 160),
+  credential_generation TEXT CHECK (credential_generation IS NULL OR length(credential_generation) BETWEEN 16 AND 160),
+  credential_persistence TEXT NOT NULL CHECK (credential_persistence IN ('absent', 'persistent')),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+  CHECK ((credential_persistence = 'persistent') = (credential_generation IS NOT NULL))
+) STRICT;
+
+CREATE TABLE agent_model_profile_models (
+  profile_id TEXT NOT NULL,
+  model_id TEXT NOT NULL CHECK (length(CAST(model_id AS BLOB)) BETWEEN 1 AND 256),
+  capability_json TEXT NOT NULL CHECK (json_valid(capability_json)),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+  PRIMARY KEY (profile_id, model_id),
+  FOREIGN KEY (profile_id) REFERENCES agent_model_profiles(profile_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TRIGGER agent_model_capability_insert_exact
+BEFORE INSERT ON agent_model_profile_models
+WHEN (SELECT COUNT(*) FROM json_each(NEW.capability_json)) <> 6 OR
+  EXISTS (SELECT 1 FROM json_each(NEW.capability_json) WHERE key NOT IN (
+    'maxInputTokens', 'maxOutputTokens', 'supportsToolCalling',
+    'supportsStructuredOutput', 'supportsStreaming', 'usageReporting'
+  )) OR
+  json_type(NEW.capability_json, '$.maxInputTokens') <> 'integer' OR
+  json_extract(NEW.capability_json, '$.maxInputTokens') < 1 OR
+  json_type(NEW.capability_json, '$.maxOutputTokens') <> 'integer' OR
+  json_extract(NEW.capability_json, '$.maxOutputTokens') < 1 OR
+  json_type(NEW.capability_json, '$.supportsToolCalling') NOT IN ('true', 'false') OR
+  json_type(NEW.capability_json, '$.supportsStructuredOutput') NOT IN ('true', 'false') OR
+  json_type(NEW.capability_json, '$.supportsStreaming') NOT IN ('true', 'false') OR
+  json_type(NEW.capability_json, '$.usageReporting') NOT IN ('true', 'false')
+BEGIN
+  SELECT RAISE(ABORT, 'invalid model capability');
+END;
+
+CREATE TRIGGER agent_model_capability_update_exact
+BEFORE UPDATE OF capability_json ON agent_model_profile_models
+BEGIN
+  SELECT CASE WHEN (SELECT COUNT(*) FROM json_each(NEW.capability_json)) <> 6 OR
+    EXISTS (SELECT 1 FROM json_each(NEW.capability_json) WHERE key NOT IN (
+      'maxInputTokens', 'maxOutputTokens', 'supportsToolCalling',
+      'supportsStructuredOutput', 'supportsStreaming', 'usageReporting'
+    )) THEN RAISE(ABORT, 'invalid model capability') END;
+END;
+
+CREATE TABLE agent_model_purpose_assignments (
+  purpose TEXT PRIMARY KEY NOT NULL CHECK (purpose IN (
+    'default', 'information_extraction', 'summary', 'analysis_planning'
+  )),
+  profile_id TEXT,
+  model_id TEXT,
+  assigned_profile_revision INTEGER CHECK (assigned_profile_revision IS NULL OR assigned_profile_revision >= 1),
+  configuration_revision INTEGER NOT NULL CHECK (configuration_revision >= 0),
+  updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+  CHECK (
+    (profile_id IS NULL AND model_id IS NULL AND assigned_profile_revision IS NULL) OR
+    (profile_id IS NOT NULL AND model_id IS NOT NULL AND assigned_profile_revision IS NOT NULL)
+  ),
+  FOREIGN KEY (profile_id, model_id)
+    REFERENCES agent_model_profile_models(profile_id, model_id) ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE agent_model_run_bindings (
+  run_id TEXT PRIMARY KEY NOT NULL,
+  execution_form TEXT NOT NULL CHECK (execution_form IN ('single_shot', 'agent_loop')),
+  purpose TEXT NOT NULL CHECK (purpose IN (
+    'default', 'information_extraction', 'summary', 'analysis_planning'
+  )),
+  assignment_mode TEXT NOT NULL CHECK (assignment_mode IN ('direct', 'fallback_default')),
+  profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 128),
+  profile_revision INTEGER NOT NULL CHECK (profile_revision >= 1),
+  adapter_id TEXT NOT NULL CHECK (adapter_id = 'openai-compatible'),
+  api_style TEXT NOT NULL CHECK (api_style = 'chat-completions'),
+  https_origin TEXT NOT NULL CHECK (length(https_origin) BETWEEN 9 AND 2048),
+  base_path TEXT NOT NULL CHECK (length(base_path) BETWEEN 1 AND 1024),
+  model_id TEXT NOT NULL CHECK (length(CAST(model_id AS BLOB)) BETWEEN 1 AND 256),
+  capability_json TEXT NOT NULL CHECK (json_valid(capability_json)),
+  budget_json TEXT NOT NULL CHECK (json_valid(budget_json)),
+  provider_kind TEXT NOT NULL CHECK (provider_kind IN ('cloud', 'local')),
+  credential_slot_id TEXT NOT NULL CHECK (length(credential_slot_id) BETWEEN 16 AND 160),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  FOREIGN KEY (run_id) REFERENCES formal_agent_runs(run_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TRIGGER agent_model_purpose_no_delete
+BEFORE DELETE ON agent_model_purpose_assignments
+BEGIN
+  SELECT RAISE(ABORT, 'model purpose rows are permanent');
+END;
+
+CREATE TRIGGER agent_model_purpose_revision_monotonic
+BEFORE UPDATE OF configuration_revision ON agent_model_purpose_assignments
+WHEN NEW.configuration_revision <> OLD.configuration_revision AND
+  NEW.configuration_revision <> OLD.configuration_revision + 1
+BEGIN
+  SELECT RAISE(ABORT, 'invalid configuration revision');
+END;
+
+CREATE TRIGGER agent_model_purpose_revision_sync
+AFTER UPDATE OF configuration_revision ON agent_model_purpose_assignments
+WHEN EXISTS (
+  SELECT 1 FROM agent_model_purpose_assignments
+  WHERE configuration_revision <> NEW.configuration_revision
+)
+BEGIN
+  UPDATE agent_model_purpose_assignments
+  SET configuration_revision = NEW.configuration_revision
+  WHERE configuration_revision <> NEW.configuration_revision;
+END;
+
+CREATE TRIGGER agent_model_binding_no_update
+BEFORE UPDATE ON agent_model_run_bindings
+BEGIN
+  SELECT RAISE(ABORT, 'model run binding is immutable');
+END;
+
+CREATE TRIGGER agent_model_binding_owned_delete
+BEFORE DELETE ON agent_model_run_bindings
+WHEN EXISTS (SELECT 1 FROM formal_agent_runs WHERE run_id = OLD.run_id)
+BEGIN
+  SELECT RAISE(ABORT, 'model run binding is owned by its run');
+END;
+
+INSERT INTO agent_model_purpose_assignments(
+  purpose, profile_id, model_id, assigned_profile_revision, configuration_revision, updated_at
+) VALUES
+  ('default', NULL, NULL, NULL, 0, 0),
+  ('information_extraction', NULL, NULL, NULL, 0, 0),
+  ('summary', NULL, NULL, NULL, 0, 0),
+  ('analysis_planning', NULL, NULL, NULL, 0, 0);
+
+INSERT INTO agent_model_profiles(
+  profile_id, profile_revision, label, template_id, adapter_id, api_style,
+  https_origin, base_path, catalog_revision, credential_slot_id,
+  credential_generation, credential_persistence, created_at, updated_at
+) VALUES (
+  'deepseek', 1, 'DeepSeek', 'deepseek-openai-template@1',
+  'openai-compatible', 'chat-completions', 'https://api.deepseek.com', '/', 0,
+  'slot.' || lower(hex(randomblob(16))), NULL, 'absent', 0, 0
+);
+
+CREATE INDEX agent_model_profiles_catalog
+  ON agent_model_profiles(profile_id, profile_revision, catalog_revision);
+CREATE INDEX agent_model_purpose_target
+  ON agent_model_purpose_assignments(profile_id, model_id);
+CREATE INDEX agent_model_bindings_profile
+  ON agent_model_run_bindings(profile_id, model_id, created_at);
+`
+
 function checksum (sql) {
   return crypto.createHash('sha256').update(sql, 'utf8').digest('hex')
 }
@@ -856,6 +1021,11 @@ const FORMAL_AGENT_MIGRATIONS = Object.freeze([
     version: SUBTITLE_BASE_MIGRATIONS.length + 3,
     checksum: checksum(PERSONAL_CONTEXT_SCHEMA_SQL),
     sql: PERSONAL_CONTEXT_SCHEMA_SQL
+  }),
+  Object.freeze({
+    version: SUBTITLE_BASE_MIGRATIONS.length + 4,
+    checksum: checksum(MODEL_ACCESS_SCHEMA_SQL),
+    sql: MODEL_ACCESS_SCHEMA_SQL
   })
 ])
 
@@ -867,6 +1037,7 @@ module.exports = {
   FORMAL_AGENT_SCHEMA_SQL,
   FORMAL_AGENT_MEMORY_DELETION_SCHEMA_SQL,
   PERSONAL_CONTEXT_SCHEMA_SQL,
+  MODEL_ACCESS_SCHEMA_SQL,
   SUBTITLE_BASE_MIGRATIONS,
   FORMAL_AGENT_MIGRATIONS,
   MIGRATIONS,

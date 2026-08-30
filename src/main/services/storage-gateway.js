@@ -61,7 +61,10 @@ const ISOLATED_AGENT_OPERATIONS = new Set([
   'claimNextFormalAgentRun',
   'nextFormalAgentRunAt',
   'completeFormalAgentRun',
-  'failFormalAgentRun'
+  'failFormalAgentRun',
+  'modelAccessCatalog',
+  'modelAccessConfigure',
+  'modelAccessBind'
 ])
 const TRANSPORT_CODES = new Set([
   'NOT_INITIALIZED',
@@ -440,6 +443,18 @@ class StorageGateway {
     return this.enqueue('failFormalAgentRun', request)
   }
 
+  modelAccessCatalog () {
+    return this.enqueue('modelAccessCatalog', {})
+  }
+
+  modelAccessConfigure (input) {
+    return this.enqueue('modelAccessConfigure', input)
+  }
+
+  modelAccessBind (request, sessionSlotIds = []) {
+    return this.enqueue('modelAccessBind', { request, sessionSlotIds })
+  }
+
   invoke (host, item) {
     switch (item.operation) {
       case 'openSession': return host.openSession(item.payload)
@@ -476,6 +491,9 @@ class StorageGateway {
       case 'nextFormalAgentRunAt': return host.nextFormalAgentRunAt()
       case 'completeFormalAgentRun': return host.completeFormalAgentRun(item.payload)
       case 'failFormalAgentRun': return host.failFormalAgentRun(item.payload)
+      case 'modelAccessCatalog': return host.modelAccessCatalog()
+      case 'modelAccessConfigure': return host.modelAccessConfigure(item.payload)
+      case 'modelAccessBind': return host.modelAccessBind(item.payload.request, item.payload.sessionSlotIds)
       default: throw new TypeError(`unsupported gateway operation: ${item.operation}`)
     }
   }

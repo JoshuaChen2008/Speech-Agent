@@ -475,6 +475,18 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.FORMAL_AGENT_FAIL_RUN, { request })
   }
 
+  modelAccessCatalog () {
+    return this.perform(OPERATIONS.MODEL_ACCESS_CATALOG, {})
+  }
+
+  modelAccessConfigure (input) {
+    return this.perform(OPERATIONS.MODEL_ACCESS_CONFIGURE, { input })
+  }
+
+  modelAccessBind (request, sessionSlotIds = []) {
+    return this.perform(OPERATIONS.MODEL_ACCESS_BIND, { request, sessionSlotIds })
+  }
+
   shutdown () {
     if (this.shutdownPromise) return this.shutdownPromise
     this.closing = true

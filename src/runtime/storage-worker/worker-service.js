@@ -23,10 +23,21 @@ const {
 
 class StorageWorkerService {
   constructor (options = {}) {
-    this.storeFactory = options.storeFactory || ((storeOptions) => new SqliteSubtitleStore({
-      ...storeOptions,
-      migrations: FORMAL_AGENT_MIGRATIONS
-    }))
+    this.storeFactory = options.storeFactory || ((storeOptions) => {
+      try {
+        return new SqliteSubtitleStore({ ...storeOptions, migrations: FORMAL_AGENT_MIGRATIONS })
+      } catch (modelAccessMigrationError) {
+        /* v6 is an optional Agent capability boundary. Reopen against the
+           byte-stable v1-v5 catalog; checksum drift or an earlier failure will
+           fail again, while an isolated v6 failure leaves subtitles usable. */
+        const fallback = new SqliteSubtitleStore({
+          ...storeOptions,
+          migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 5)
+        })
+        fallback.modelAccessUnavailable = true
+        return fallback
+      }
+    })
     this.agentStoreFactory = options.agentStoreFactory || ((subtitleStore) => {
       /* 保持字幕系统对 Agent 运行时代码的物理惰性：只有正式 Agent 操作到达时
          才加载生命周期实现；字幕 open/append/close/history 不依赖该模块。 */
@@ -37,9 +48,14 @@ class StorageWorkerService {
       const { PersonalContextStore } = require('./personal-context-store')
       return new PersonalContextStore({ subtitleStore })
     })
+    this.modelAccessStoreFactory = options.modelAccessStoreFactory || ((subtitleStore) => {
+      const { ModelAccessStore } = require('./model-access-store')
+      return new ModelAccessStore({ subtitleStore })
+    })
     this.store = null
     this.agentStore = null
     this.personalContextStore = null
+    this.modelAccessStore = null
     this.shuttingDown = false
   }
 
@@ -58,6 +74,13 @@ class StorageWorkerService {
     const store = this.requireStore()
     if (!this.personalContextStore) this.personalContextStore = this.personalContextStoreFactory(store)
     return this.personalContextStore
+  }
+
+  requireModelAccessStore () {
+    const store = this.requireStore()
+    if (store.modelAccessUnavailable === true) throw new StorageError('MODEL_ACCESS_UNAVAILABLE')
+    if (!this.modelAccessStore) this.modelAccessStore = this.modelAccessStoreFactory(store)
+    return this.modelAccessStore
   }
 
   execute (request) {
@@ -219,6 +242,18 @@ class StorageWorkerService {
       assertExactKeys(payload, ['request'])
       return this.requirePersonalContextStore().failFormalRun(payload.request)
     }
+    if (operation === OPERATIONS.MODEL_ACCESS_CATALOG) {
+      assertExactKeys(payload, [])
+      return this.requireModelAccessStore().internalCatalog()
+    }
+    if (operation === OPERATIONS.MODEL_ACCESS_CONFIGURE) {
+      assertExactKeys(payload, ['input'])
+      return this.requireModelAccessStore().configure(payload.input)
+    }
+    if (operation === OPERATIONS.MODEL_ACCESS_BIND) {
+      assertExactKeys(payload, ['request', 'sessionSlotIds'])
+      return this.requireModelAccessStore().bind(payload.request, payload.sessionSlotIds)
+    }
     if (operation === OPERATIONS.SHUTDOWN) {
       assertExactKeys(payload, [])
       if (this.store) {
@@ -227,6 +262,7 @@ class StorageWorkerService {
       }
       this.agentStore = null
       this.personalContextStore = null
+      this.modelAccessStore = null
       this.shuttingDown = true
       return { stopped: true }
     }

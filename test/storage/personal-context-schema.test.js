@@ -8,10 +8,10 @@ const test = require('node:test')
 
 const {
   FORMAL_AGENT_MIGRATIONS,
-  FORMAL_AGENT_SCHEMA_VERSION,
   PERSONAL_CONTEXT_SCHEMA_SQL
 } = require('../../src/runtime/storage-worker/schema')
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
+const V5_MIGRATIONS = FORMAL_AGENT_MIGRATIONS.slice(0, 5)
 
 function databasePath (t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'personal-context-schema-'))
@@ -35,9 +35,9 @@ test('SEM-F30/DB7/J21: formal v4 upgrades by appending byte-stable migration v5'
   v4.closeSession({ sessionId: 'upgrade-v5', sourceId: 'mic', endedAt: 2, state: 'closed' })
   v4.close()
 
-  const v5 = new SqliteSubtitleStore({ databasePath: file, migrations: FORMAL_AGENT_MIGRATIONS })
+  const v5 = new SqliteSubtitleStore({ databasePath: file, migrations: V5_MIGRATIONS })
   try {
-    assert.equal(FORMAL_AGENT_SCHEMA_VERSION, 5)
+    assert.equal(V5_MIGRATIONS.at(-1).version, 5)
     assert.equal(Number(v5.database.prepare('PRAGMA user_version').get().user_version), 5)
     assert.deepEqual(
       v5.database.prepare('SELECT checksum FROM schema_migrations WHERE version <= 4 ORDER BY version')
@@ -141,7 +141,7 @@ test('SEM-F30/DB7/J21: a failed v5 migration leaves the v4 database recoverable 
   ]
   assert.throws(() => new SqliteSubtitleStore({ databasePath: file, migrations: broken }), /syntax|migration/i)
 
-  const recovered = new SqliteSubtitleStore({ databasePath: file, migrations: FORMAL_AGENT_MIGRATIONS })
+  const recovered = new SqliteSubtitleStore({ databasePath: file, migrations: V5_MIGRATIONS })
   try {
     assert.equal(Number(recovered.database.prepare('PRAGMA user_version').get().user_version), 5)
     assert.equal(recovered.database.prepare(

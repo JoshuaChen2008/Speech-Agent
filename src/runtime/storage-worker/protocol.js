@@ -43,6 +43,9 @@ const OPERATIONS = Object.freeze({
   FORMAL_AGENT_NEXT_RUN_AT: 'formal-agent:next-run-at',
   FORMAL_AGENT_COMPLETE_RUN: 'formal-agent:complete-run',
   FORMAL_AGENT_FAIL_RUN: 'formal-agent:fail-run',
+  MODEL_ACCESS_CATALOG: 'model-access:catalog',
+  MODEL_ACCESS_CONFIGURE: 'model-access:configure',
+  MODEL_ACCESS_BIND: 'model-access:bind',
   SHUTDOWN: 'storage:shutdown'
 })
 
@@ -82,6 +85,7 @@ const SAFE_ERROR_MESSAGES = Object.freeze({
   AGENT_CONTEXT_REVISION_CONFLICT: 'Personal context revision conflicts with the request.',
   AGENT_CONTEXT_NOT_FOUND: 'Personal context item was not found.',
   AGENT_CONTEXT_OPERATION_FAILED: 'Personal context operation failed.',
+  MODEL_ACCESS_UNAVAILABLE: 'Agent model access is unavailable.',
   STORAGE_COMMAND_FAILED: 'Storage command failed.'
 })
 

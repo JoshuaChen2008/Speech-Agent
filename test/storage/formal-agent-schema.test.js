@@ -42,7 +42,7 @@ function appendFinal (store, sessionId, text) {
   store.closeSession({ sessionId, sourceId: 'loopback', endedAt: 200, state: 'closed' })
 }
 
-test('DB7 / ADR 0010 / J21 upgrades subtitle v2 through formal Agent v5 without changing subtitle facts', (t) => {
+test('DB7 / ADR 0010 / J21/J25 upgrades subtitle v2 through formal Agent v6 without changing subtitle facts', (t) => {
   const databasePath = path.join(tempRoot(t), 'formal.sqlite3')
   const base = new SqliteSubtitleStore({ databasePath, now: () => 1000 })
   appendFinal(base, 'formal-upgrade', 'synthetic committed transcript')
@@ -74,6 +74,10 @@ test('DB7 / ADR 0010 / J21 upgrades subtitle v2 through formal Agent v5 without 
       'agent_debug_messages',
       'agent_debug_threads',
       'agent_jobs',
+      'agent_model_profile_models',
+      'agent_model_profiles',
+      'agent_model_purpose_assignments',
+      'agent_model_run_bindings',
       'caption_events',
       'formal_agent_run_claim_receipts',
       'formal_agent_runs',
@@ -160,7 +164,7 @@ test('DB7 / J24-B22 upgrades formal v3 suppression identity to one row per old s
 
   const v4 = new SqliteSubtitleStore({
     databasePath,
-    migrations: FORMAL_AGENT_MIGRATIONS,
+    migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 5),
     now: () => 2000
   })
   try {
