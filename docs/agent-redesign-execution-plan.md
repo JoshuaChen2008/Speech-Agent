@@ -244,7 +244,7 @@ UX 设计稿、截图、fixture preview 或局部 renderer 回归都不晋级任
 
 每片都必须依次通过 `npm run test:core` → `npm run test:integration` → `npm run test:evidence`，并附字幕系统零回归证明。任一片不得因后续片未完成而提升状态。
 
-2026-08-30：S1 个人上下文模块的状态为「实现完成·尚未验收」。v5、新旧表隔离、三接口、exact IPC、受控 scheduler lifecycle 和 J21 S1 失败矩阵均有确定性证据；产品路径保持 `provider_not_configured`，不创建自动运行或报告，字幕 `open/append/close/history` 不加载任一 Agent store。`npm run test:core` 与 `npm run test:evidence` 返回 0；完整 integration lane 因 Windows Electron GPU 子进程 `exit_code=-1073741515` 返回非零，S1 J21 联合测试自身返回 0。此记录不升级完整 J21；S2–S5 尚未开始。
+2026-08-30：S1 个人上下文模块与 S2 Agent 模型接入层 Core 子边界的状态均为「实现完成·尚未验收」。S2 已追加 v6，建立 main-owned 三接口、九命令、四用途、每档案 vault、不可变 binding、exact IPC/preload、token/cache 合同与 test-only `fauxProvider()`；DeepSeek 仍只是空 model 模板，零真实公网推理。最终 core 694/694、evidence 233/233；integration 的 S1/S2 联合测试自身返回 0，整条 lane 为 69/77，8 项失败均位于既有 Electron/utility 子进程旅程并伴随 Windows GPU `exit_code=-1073741515` 或子进程报告缺失；完整 `npm test` 因同一 integration 环境问题停止。此记录不升级完整 J21/J25；正式 settings renderer、Agent Bar、S3/S4、S5 历史/导出与真实公网能力仍未实现。
 
 ## 6. 风险与回退
 

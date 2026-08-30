@@ -327,3 +327,28 @@ test('SEM-F33/J25: credential quarantine recovery follows the committed SQLite f
   afterCommitRestart.close()
   fs.rmSync(root, { recursive: true, force: true })
 })
+
+test('SEM-F25/SEM-F33/J25: immutable binding borrows only its frozen slot identity', async (t) => {
+  const { instance } = vault(t, true)
+  const oldSlot = 'slot.0123456789abcdef0123456789abcdef'
+  const newSlot = 'slot.abcdef0123456789abcdef0123456789'
+  const oldState = instance.set(oldSlot, 'old-secret')
+  const binding = { profileId: 'profile.one', credentialSlotId: oldSlot }
+  const oldProfile = [{
+    profile_id: 'profile.one', credential_slot_id: oldSlot,
+    credential_persistence: 'persistent', credential_generation: oldState.generation
+  }]
+  await instance.borrowForBinding(binding, oldProfile, async (copy) => assert.equal(copy.toString(), 'old-secret'))
+
+  instance.clear(oldSlot)
+  const newState = instance.set(newSlot, 'new-secret')
+  const rebuiltProfile = [{
+    profile_id: 'profile.one', credential_slot_id: newSlot,
+    credential_persistence: 'persistent', credential_generation: newState.generation
+  }]
+  await assert.rejects(instance.borrowForBinding(binding, rebuiltProfile, async () => {}), (error) => {
+    assert.equal(error.code, 'AGENT_PROVIDER_AUTH_FAILED')
+    assert.equal(error.retryable, false)
+    return true
+  })
+})

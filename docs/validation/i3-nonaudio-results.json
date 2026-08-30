@@ -56,7 +56,7 @@
     "virtualDurationMs": 7200000
   },
   "gateStatus": "partial",
-  "generatedAt": "2026-08-30T12:16:42.591Z",
+  "generatedAt": "2026-08-30T12:22:28.780Z",
   "kind": "i3-nonaudio-soak",
   "limits": {
     "maxCpuPercent": 800,
@@ -70,24 +70,24 @@
   "metrics": {
     "captionEventCount": 4000,
     "checkpointedWalFrames": 0,
-    "cpuPercent": 11.258,
-    "cpuSystemMs": 281,
-    "cpuUserMs": 687,
+    "cpuPercent": 13.15,
+    "cpuSystemMs": 188,
+    "cpuUserMs": 1079,
     "exportCount": 3,
     "historyDomMaxNodes": 50,
     "historyPageCount": 72,
-    "maxHeapUsedBytes": 88044672,
+    "maxHeapUsedBytes": 90814656,
     "maxQueueDepth": 112,
-    "maxRssBytes": 294785024,
+    "maxRssBytes": 294576128,
     "pageCount": 668,
     "pageQueryCount": 72,
-    "pageQueryP95Ms": 8.532,
+    "pageQueryP95Ms": 11.324,
     "recoveredRefinedSegmentCount": 400,
     "segmentCount": 3600,
     "walBytes": 4173592,
     "walFrames": 879,
     "journalMode": "wal",
-    "wallDurationMs": 8598.541
+    "wallDurationMs": 9635.112
   },
   "privacy": {
     "persistedAudio": false,
@@ -106,7 +106,7 @@
     "storageGatewaySha256": "b46f7cb09b2506b90eb9be815da91375e05d3485ec54b135d8ded16d2845d99a",
     "storageWorkerServiceSha256": "25945f5f7e863aad0169f292625a202bb224a3607df3c44f681957a19e4087b1",
     "verifierSha256": "8014be2efdbd0d63a99a4de1a9f24ccb70eddcb158cc89b46d2d7bb731ed6ff1",
-    "productPayloadSha256": "ef3b9dab4b7c9622fe06c967a42f95d32d3d5386afab1e034f6abe489e745864"
+    "productPayloadSha256": "ed1bac11a60e26bf1668083d58b7e1826eec38880f5bc3bf6b583f42f966a066"
   },
   "result": "pass",
   "schemaVersion": 1

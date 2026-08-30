@@ -158,6 +158,30 @@ class CredentialVault {
     try { return await consume(copy) } finally { copy.fill(0) }
   }
 
+  async borrowForBinding (binding, profiles, consume) {
+    const profile = Array.isArray(profiles)
+      ? profiles.find((item) => item?.profile_id === binding?.profileId && item?.credential_slot_id === binding?.credentialSlotId)
+      : null
+    if (!profile) throw this.bindingAuthFailure()
+    try {
+      return await this.borrow(
+        binding.credentialSlotId,
+        profile.credential_persistence,
+        profile.credential_generation,
+        consume
+      )
+    } catch {
+      throw this.bindingAuthFailure()
+    }
+  }
+
+  bindingAuthFailure () {
+    const error = new Error('Agent provider authentication failed')
+    error.code = 'AGENT_PROVIDER_AUTH_FAILED'
+    error.retryable = false
+    return error
+  }
+
   snapshot (slotId, persistence, generation) {
     const session = this.session.get(slotId)
     if (session) return { scope: 'session_only', value: Buffer.from(session) }

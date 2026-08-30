@@ -147,6 +147,8 @@ S2 只登记 J25 在 renderer 汇合前的 Core 实现子边界。它使用真�
 
 S2 的 fixture 只服务 UI/UX 设计预览和 renderer 局部回归，不进入 `.artifacts/`、`docs/validation/` 或 J25 证据。S5-Integration 尚未闭合真实设置 renderer 与交互比较路径前，S2 状态最多为「实现完成·尚未验收」。
 
+2026-08-30 的 S2 Core 子边界为「实现完成·尚未验收」：真实临时 SQLite v5→v6、model-access store、每档案 vault、三接口、main exact IPC/preload 与 test-only `fauxProvider()` 已组成确定性证据；九命令、用途回落、不可变 binding、旧 slot 鉴权失败、origin/redirect、token/cache、reload、生产替身不可达及字幕独立路径均有回归。最终独立运行 `npm run test:core` 返回 0（694/694），`npm run test:evidence` 返回 0（233/233）；`npm run test:integration` 中 S2 两条联合测试返回 0，整条 lane 为 69/77，8 项失败均位于需启动 Electron/utility 子进程的既有旅程并伴随 Windows GPU `exit_code=-1073741515` 或子进程报告缺失。完整 `npm test` 因同一 integration 环境问题在 69/77 后停止，未在复合命令内再次进入 evidence。该记录不提升完整 J25，也不证明正式 settings renderer、真实公网模型能力或主动换模型后的历史比较。
+
 ### J21/J22/J24/J25/J26 的 S5 汇合边界
 
 S3 的单轮 Core 子边界、S4 的 Agent Loop Core 子边界、S5-Core 的窗口/IPC/导出与 S5-UX 的 renderer 必须在 S5-Integration 组合回既有旅程；不新增 `J22-ui`、`J24-agent-bar`、`J25-settings` 等同义旅程 ID。

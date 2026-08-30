@@ -221,6 +221,8 @@ Core contract 是 renderer 的唯一事实源：
 - renderer 不从等待时长、异常字符串、ID 格式、DOM 顺序或缺少字段推断状态。
 - fixture 与生产 snapshot 使用同一个 exact validator；设计 fixture 只能填合成内容。
 
+S2 Core 已签发 `agent-model-ui@1.0.0`，状态为「实现完成·尚未验收」。生产 contract 位于 `src/agent/contracts/agent-model-ui/v1.0.0.js`，preview-only 场景清单位于 `src/agent/contracts/fixtures/agent-model-ui/v1.0.0/scenarios.json`，覆盖空 model 模板、模板删除不重建、用户确认能力、三种 credential scope、direct/fallback/unconfigured、两个配置错误、changed/reload、六值 remote pull，以及 provider/estimated token 与缓存已知/未知。renderer 开始门槛是只消费该 exact contract、先订阅再读取、拒绝未知版本/值并保留用户输入；fixture 不构成 J25 证据。正式设置 renderer 与用户往返继续延后 S5-Integration。
+
 需要新事实或动作时，按 [`agent-ui-contract-requests.md`](agent-ui-contract-requests.md) 登记。若请求改变用户能力、默认值、状态闭集、数据保留或失败语义，先更新语义合同与旅程矩阵；UI/UX 模型不在 renderer 中试行新语义。
 
 ## 8. 视觉与交互基线
