@@ -25,15 +25,18 @@ const LIMITS = Object.freeze({
   maxSourceTextBytes: 128 * 1024
 })
 
-function deriveBudget (capabilities, executionForm, requestedBy) {
+function deriveBudget (capabilities, maxTurns, toolGrants, requestedBy) {
   if (!capabilities || !Number.isSafeInteger(capabilities.maxInputTokens) || capabilities.maxInputTokens < 1 ||
       !Number.isSafeInteger(capabilities.maxOutputTokens) || capabilities.maxOutputTokens < 1) {
     throw new TypeError('model capabilities are required')
   }
-  if (!['single_shot', 'agent_loop'].includes(executionForm)) throw new TypeError('execution form is invalid')
+  if (![1, 3, 6].includes(maxTurns)) throw new TypeError('maxTurns is invalid')
+  if (!Array.isArray(toolGrants) || toolGrants.some((tool) => !['search_context', 'read_sources'].includes(tool))) {
+    throw new TypeError('tool grants are invalid')
+  }
   if (!['automatic', 'user'].includes(requestedBy)) throw new TypeError('requestedBy is invalid')
   return Object.freeze({
-    maxTurns: executionForm === 'agent_loop' ? 6 : 1,
+    maxTurns,
     maxRequestInputTokens: Math.min(capabilities.maxInputTokens, LIMITS.maxCumulativeInputTokens),
     maxCumulativeInputTokens: LIMITS.maxCumulativeInputTokens,
     maxCumulativeOutputTokens: Math.min(capabilities.maxOutputTokens, LIMITS.maxCumulativeOutputTokens),

@@ -47,7 +47,7 @@ test('SEM-F33/J25: model-access core freezes the exact closed sets', () => {
   assert.deepEqual(CREDENTIAL_SCOPES, ['absent', 'persistent', 'session_only'])
   assert.deepEqual(ASSIGNMENT_MODES, ['direct', 'fallback_default', 'unconfigured'])
   assert.deepEqual(MODEL_READINESS, ['ready', 'provider_not_configured', 'credential_unavailable'])
-  assert.deepEqual(EXECUTION_FORMS, ['single_shot', 'agent_loop'])
+  assert.deepEqual(EXECUTION_FORMS, ['agent_loop'])
   assert.deepEqual(MODEL_USAGE_SOURCES, ['provider'])
   assert.deepEqual(REMOTE_CATALOG_STATUSES, [
     'success', 'revision_conflict', 'invalid_request', 'credential_unavailable',
@@ -75,8 +75,9 @@ test('SEM-F33/J25: capabilities and nine commands are exact and reject pricing o
 })
 
 test('SEM-F33/J25: runRequest is exact and never accepts model selection or credential fields', () => {
-  const request = { runId: 'run.one', recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'single_shot' }
+  const request = { runId: 'run.one', recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'agent_loop' }
   assert.deepEqual(assertRunRequest(request), request)
+  assert.throws(() => assertRunRequest({ ...request, executionForm: 'single_shot' }), /not registered/)
   for (const key of ['purpose', 'profileId', 'modelId', 'httpsOrigin', 'header', 'budget', 'credential']) {
     assert.throws(() => assertRunRequest({ ...request, [key]: 'forbidden' }), /not allowed|exact/i)
   }

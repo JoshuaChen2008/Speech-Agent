@@ -43,16 +43,17 @@ function addProfileModel (store, profileId = 'profile.one', modelId = 'model-one
   return profile.credential_slot_id
 }
 
-function insertRun (database, runId = 'run.bind.one') {
+function insertRun (database, runId = 'run.bind.one', recipeId = 'context.ingest.session', requestedBy = 'automatic') {
+  const clientIdempotencyKey = requestedBy === 'user' ? `client.${runId}` : null
   database.prepare(`INSERT INTO formal_agent_runs(
     run_id,dedupe_key,client_idempotency_key,request_digest,recipe_id,recipe_version,
     scope_json,scope_digest,transcript_version,input_watermark_json,input_digest,requested_by,
     state,attempt_count,max_attempts,next_attempt_at,created_at,updated_at
-  ) VALUES(?,?,NULL,?,'context.ingest.session','1',?,?, 'raw',?,?, 'automatic',
+  ) VALUES(?,?,?, ?,?,'1',?,?, 'raw',?,?, ?,
     'queued',0,3,0,1000,1000)`).run(
-    runId, sha256Canonical({ runId }), sha256Canonical({ request: runId }),
+    runId, sha256Canonical({ runId }), clientIdempotencyKey, sha256Canonical({ request: runId }), recipeId,
     canonicalize({ kind: 'session', reference: 'session-one' }), sha256Canonical({ scope: runId }),
-    canonicalize({ throughEventOrder: 1 }), sha256Canonical({ input: runId })
+    canonicalize({ throughEventOrder: 1 }), sha256Canonical({ input: runId }), requestedBy
   )
 }
 
@@ -116,7 +117,7 @@ test('SEM-F33/J25: bind validates an existing v5 run and replays one immutable s
   const slot = addProfileModel(store)
   command(store, { type: 'assignPurpose', purpose: 'information_extraction', target: { profileId: 'profile.one', modelId: 'model-one' } })
   insertRun(subtitleStore.database)
-  const request = { runId: 'run.bind.one', recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'single_shot' }
+  const request = { runId: 'run.bind.one', recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'agent_loop' }
   const first = store.bind(request, [slot])
   command(store, { type: 'updateModel', profileId: 'profile.one', modelId: 'model-one', capabilities: { ...capabilities, maxOutputTokens: 2048 } })
   assert.deepEqual(store.bind(request), first)
@@ -132,11 +133,28 @@ test('SEM-F33/J25: deleting a profile preserves binding identity and never resee
   const slot = addProfileModel(store)
   command(store, { type: 'assignPurpose', purpose: 'information_extraction', target: { profileId: 'profile.one', modelId: 'model-one' } })
   insertRun(subtitleStore.database)
-  const binding = store.bind({ runId: 'run.bind.one', recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'single_shot' }, [slot])
+  const binding = store.bind({ runId: 'run.bind.one', recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'agent_loop' }, [slot])
   command(store, { type: 'deleteProfile', profileId: 'profile.one' })
   assert.equal(subtitleStore.database.prepare("SELECT model_id FROM agent_model_run_bindings WHERE run_id='run.bind.one'").get().model_id, binding.modelId)
   command(store, { type: 'deleteProfile', profileId: 'deepseek' })
   assert.equal(store.internalCatalog().profiles.some((profile) => profile.profile_id === 'deepseek'), false)
   const reopened = new ModelAccessStore({ subtitleStore, now: () => 1000 })
   assert.equal(reopened.internalCatalog().profiles.some((profile) => profile.profile_id === 'deepseek'), false)
+})
+
+test('SEM-F16/SEM-F33/J22: zero-tool recipe binds to a model without tool calling', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  const noTools = { ...capabilities, supportsToolCalling: false }
+  command(store, { type: 'createProfile', profileId: 'text.profile', label: 'Text Profile', httpsOrigin: 'https://text.test', basePath: '/v1' })
+  command(store, { type: 'addModel', profileId: 'text.profile', modelId: 'text-model', capabilities: noTools })
+  const profile = store.internalCatalog().profiles.find((item) => item.profile_id === 'text.profile')
+  store.configure({
+    command: { type: 'setCredential', expectedRevision: store.revision(), profileId: 'text.profile', credential: 'synthetic' },
+    credentialState: { scope: 'persistent', generation: 'generation.0000000000000001' }
+  })
+  command(store, { type: 'assignPurpose', purpose: 'default', target: { profileId: 'text.profile', modelId: 'text-model' } })
+  insertRun(subtitleStore.database, 'run.text.no-tools', 'text.rewrite', 'user')
+  const binding = store.bind({ runId: 'run.text.no-tools', recipeId: 'text.rewrite', recipeVersion: '1', executionForm: 'agent_loop' }, [profile.credential_slot_id])
+  assert.equal(binding.executionForm, 'agent_loop')
+  assert.equal(binding.budget.maxTurns, 1)
 })

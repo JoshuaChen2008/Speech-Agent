@@ -13,26 +13,26 @@
 
 ## 2. 十一 recipe 与共享输出合同 tracer bullets
 
-- [ ] 2.1 先写会红的 recipe 闭集测试，断言恰好十一项、首版 version `'1'`、ID 唯一且每项 exact 包含 input/model/turn/tool/schema/persistence/artifact/failure 字段。
-- [ ] 2.2 新建 `src/agent/contracts/recipes.js` 并导出冻结 lookup/validator，使 2.1 转绿；不得从旧 PluginHost manifest 构造登记。
-- [ ] 2.3 定向回归 unknown recipe/version、额外登记字段、重复 ID、运行期 mutation 与跨模块复制表，确认全部 fail closed。
-- [ ] 2.4 先写会红的三档测试：`intent.route/text.rewrite/text.translate` 为 1/0，六项 bounded recipe 为 3/`search_context`，两项分析规划为 6/双工具。
-- [ ] 2.5 实现静态 `maxTurns/toolGrants` 登记并使 2.4 转绿；冻结对象必须是 `recipeId+recipeVersion`，不能由输入范围或模型覆盖。
-- [ ] 2.6 定向回归工具授权数组顺序、冻结性、0 工具空记录与 1 轮不进第二轮。
-- [ ] 2.7 先写会红的共享 `SourceRefV1/MemoryRefV1/InteractionSignalRefV1` exact validator，覆盖 extra/missing/unknown enum/event order/digest/Unicode 边界。
-- [ ] 2.8 实现共享引用 validator 与 code point/UTF-8 边界工具，使 2.7 转绿；不得切断 surrogate pair 或把正文放入引用。
+- [x] 2.1 先写会红的 recipe 闭集测试，断言恰好十一项、首版 version `'1'`、ID 唯一且每项 exact 包含 input/model/turn/tool/schema/persistence/artifact/failure 字段。
+- [x] 2.2 新建 `src/agent/contracts/recipes.js` 并导出冻结 lookup/validator，使 2.1 转绿；不得从旧 PluginHost manifest 构造登记。
+- [x] 2.3 定向回归 unknown recipe/version、额外登记字段、重复 ID、运行期 mutation 与跨模块复制表，确认全部 fail closed。
+- [x] 2.4 先写会红的三档测试：`intent.route/text.rewrite/text.translate` 为 1/0，六项 bounded recipe 为 3/`search_context`，两项分析规划为 6/双工具。
+- [x] 2.5 实现静态 `maxTurns/toolGrants` 登记并使 2.4 转绿；冻结对象必须是 `recipeId+recipeVersion`，不能由输入范围或模型覆盖。
+- [x] 2.6 定向回归工具授权数组顺序、冻结性、0 工具空记录与 1 轮不进第二轮。
+- [x] 2.7 先写会红的共享 `SourceRefV1/MemoryRefV1/InteractionSignalRefV1` exact validator，覆盖 extra/missing/unknown enum/event order/digest/Unicode 边界。
+- [x] 2.8 实现共享引用 validator 与 code point/UTF-8 边界工具，使 2.7 转绿；不得切断 surrogate pair 或把正文放入引用。
 - [ ] 2.9 定向回归 source range 无序/重叠、非 canonical transcript version、重复 stable ID 与绝对路径/音频字段泄漏。
-- [ ] 2.10 先写会红的 `intent.route` Schema：结果恰好 `{recipeId,confidence}`、目标只在其它十项、confidence 为 0..1 finite。
-- [ ] 2.11 实现 `intent.route@1` output validator，使 2.10 转绿；拒绝解释、候选数组、自指与闭集外 recipe。
-- [ ] 2.12 先写会红的两个 `context.ingest.*` Schema，覆盖 experiences/candidates 数量、枚举、引用、可空 scope proposal，并反证 `semanticKey` 不可出现。
-- [ ] 2.13 实现两个 ingest output validator，使 2.12 转绿；模型输出 kind 必须与当前 personal-context 闭集一致。
-- [ ] 2.14 先写会红的 `qa.answer/extract.items/summary.minutes` exact Schema 与 code point/array 上限矩阵。
-- [ ] 2.15 实现三项 validator，使 2.14 转绿；minutes 缺栏目使用空数组，extract 不创建 artifact。
-- [ ] 2.16 先写会红的 `report.analysis/plan.proposal` Schema，覆盖 source/memory refs、gaps/openQuestions、连续 step 与 dependsOn 只向后引用既有较小 step。
-- [ ] 2.17 实现分析/规划 validator，使 2.16 转绿；禁止外部执行动作与工具正文复制。
-- [ ] 2.18 先写会红的 `text.enhance/rewrite/translate` Schema，覆盖段集合完整性、1 轮、BCP-47、basedOnRevision 与零来源改写。
-- [ ] 2.19 实现三项 validator，使 2.18 转绿；增强文本独立保存，rewrite/translate 只存 interaction result。
-- [ ] 2.20 定向回归全部十一 outputSchemaId 都可解析到唯一 validator，任何登记/validator 缺项使启动合同 fail closed。
+- [x] 2.10 先写会红的 `intent.route` Schema：结果恰好 `{recipeId,confidence}`、目标只在其它十项、confidence 为 0..1 finite。
+- [x] 2.11 实现 `intent.route@1` output validator，使 2.10 转绿；拒绝解释、候选数组、自指与闭集外 recipe。
+- [x] 2.12 先写会红的两个 `context.ingest.*` Schema，覆盖 experiences/candidates 数量、枚举、引用、可空 scope proposal，并反证 `semanticKey` 不可出现。
+- [x] 2.13 实现两个 ingest output validator，使 2.12 转绿；模型输出 kind 必须与当前 personal-context 闭集一致。
+- [x] 2.14 先写会红的 `qa.answer/extract.items/summary.minutes` exact Schema 与 code point/array 上限矩阵。
+- [x] 2.15 实现三项 validator，使 2.14 转绿；minutes 缺栏目使用空数组，extract 不创建 artifact。
+- [x] 2.16 先写会红的 `report.analysis/plan.proposal` Schema，覆盖 source/memory refs、gaps/openQuestions、连续 step 与 dependsOn 只向后引用既有较小 step。
+- [x] 2.17 实现分析/规划 validator，使 2.16 转绿；禁止外部执行动作与工具正文复制。
+- [x] 2.18 先写会红的 `text.enhance/rewrite/translate` Schema，覆盖段集合完整性、1 轮、BCP-47、basedOnRevision 与零来源改写。
+- [x] 2.19 实现三项 validator，使 2.18 转绿；增强文本独立保存，rewrite/translate 只存 interaction result。
+- [x] 2.20 定向回归全部十一 outputSchemaId 都可解析到唯一 validator，任何登记/validator 缺项使启动合同 fail closed。
 
 ## 3. migration v7 与 schema 不变量 tracer bullets
 
@@ -78,14 +78,14 @@
 
 ## 5. bind 收窄、预算推导与统一 Loop tracer bullets
 
-- [ ] 5.1 先写会红的 model-access contract 测试，把 `EXECUTION_FORMS` 收窄为 `['agent_loop']` 并拒绝 `single_shot`。
-- [ ] 5.2 最小修改 `src/agent/contracts/model-access-core.js` 与 bind validator，使 5.1 转绿；v6 列仍保存常量 `'agent_loop'`。
-- [ ] 5.3 定向回归旧 S2 bind 测试/fixtures，把真实 `context.ingest.session` 请求改为统一路径且不修改 v6 migration 字节。
-- [ ] 5.4 先写会红的 `deriveBudget(capabilities,maxTurns,toolGrants,requestedBy)` exact 测试，第 1 轴来自 recipe 登记而非 execution form。
-- [ ] 5.5 修改 `budget-axes.js` 唯一定义点并使 5.4 转绿；其余九轴数值与来源保持既有合同。
+- [x] 5.1 先写会红的 model-access contract 测试，把 `EXECUTION_FORMS` 收窄为 `['agent_loop']` 并拒绝 `single_shot`。
+- [x] 5.2 最小修改 `src/agent/contracts/model-access-core.js` 与 bind validator，使 5.1 转绿；v6 列仍保存常量 `'agent_loop'`。
+- [x] 5.3 定向回归旧 S2 bind 测试/fixtures，把真实 `context.ingest.session` 请求改为统一路径且不修改 v6 migration 字节。
+- [x] 5.4 先写会红的 `deriveBudget(capabilities,maxTurns,toolGrants,requestedBy)` exact 测试，第 1 轴来自 recipe 登记而非 execution form。
+- [x] 5.5 修改 `budget-axes.js` 唯一定义点并使 5.4 转绿；其余九轴数值与来源保持既有合同。
 - [ ] 5.6 定向回归 1/3/6 轮、interactive/automatic wall clock、max input/output 能力裁剪和 invalid grants。
-- [ ] 5.7 先写会红的 capability 守卫：0 工具 recipe 可绑定 `supportsToolCalling=false`，非空 grants 必须为 true。
-- [ ] 5.8 实现 bind/readiness 按 grants 校验并使 5.7 转绿；能力不足为配置问题而非 `AGENT_PROVIDER_UNAVAILABLE`。
+- [x] 5.7 先写会红的 capability 守卫：0 工具 recipe 可绑定 `supportsToolCalling=false`，非空 grants 必须为 true。
+- [x] 5.8 实现 bind/readiness 按 grants 校验并使 5.7 转绿；能力不足为配置问题而非 `AGENT_PROVIDER_UNAVAILABLE`。
 - [ ] 5.9 先写会红的执行宿主单入口测试，十一 recipe 都调用同一 Pi `agentLoop()` adapter，生产无第二 executor。
 - [ ] 5.10 实现 `src/agent/execution-host/` 统一 runner facade 与 Pi loop adapter，使 5.9 转绿。
 - [ ] 5.11 先写会红的 `shouldStopAfterTurn` 矩阵，覆盖 1 轮绝不进第二轮、3/6 轮上限、自然早停与预算早停。
@@ -146,13 +146,13 @@
 
 ## 9. 用量、comparison group 与产物 registry tracer bullets
 
-- [ ] 9.1 先写会红的 `MODEL_USAGE_SOURCES` 合同，恰好 `['provider']` 并拒绝 estimated/amount/price/cost/currency/pricing。
-- [ ] 9.2 收窄 `model-access-core.js` usage validator 使 9.1 转绿；保持 normalize 缺失/usageReporting=false 返回 null。
+- [x] 9.1 先写会红的 `MODEL_USAGE_SOURCES` 合同，恰好 `['provider']` 并拒绝 estimated/amount/price/cost/currency/pricing。
+- [x] 9.2 收窄 `model-access-core.js` usage validator 使 9.1 转绿；保持 normalize 缺失/usageReporting=false 返回 null。
 - [ ] 9.3 定向回归 provider token、cache consistent/incomplete/inconsistent、input=0、负数/类型错误与 unknown UI 文案。
 - [ ] 9.4 先写会红的 interaction usage store：合法 provider object 或 SQL NULL，unknown 时两条累计计费用量轴不评估。
 - [ ] 9.5 实现 usage normalization/persistence 使 9.4 转绿；其它八轴继续执法且结果可成功。
-- [ ] 9.6 先写会红的 comparison digest vectors，RFC 8785 canonical `[recipeId,version,scopeDigest,inputDigest]` → lowercase SHA-256。
-- [ ] 9.7 实现权威 comparison digest 计算使 9.6 转绿；拒绝 renderer/provider 传入值。
+- [x] 9.6 先写会红的 comparison digest vectors，RFC 8785 canonical `[recipeId,version,scopeDigest,inputDigest]` → lowercase SHA-256。
+- [x] 9.7 实现权威 comparison digest 计算使 9.6 转绿；拒绝 renderer/provider 传入值。
 - [ ] 9.8 定向回归同源换模型同组、不同 recipe/version/scope/input 分组、model/run/usage 不进 digest。
 - [ ] 9.9 先写会红的 artifact registry，新增 `analysis-report/planning-proposal` 并冻结四项 recipe→artifact 映射。
 - [ ] 9.10 实现 registry/writer 守卫使 9.9 转绿；extract 不新增类型且 `reference-output` 正式不可达。

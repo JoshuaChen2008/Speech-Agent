@@ -101,9 +101,9 @@ test('SEM-F00/SEM-F33/J25: S2 Core configures two profiles, resolves fallback, b
     max_attempts,next_attempt_at,created_at,updated_at
   ) VALUES(?,?,?,'context.ingest.session','1',?,?, 'raw',?,?, 'automatic','queued',0,3,0,1000,1000)`)
     .run(runId, sha256Canonical({ runId }), sha256Canonical({ request: runId }), canonicalize({ kind: 'session' }), sha256Canonical({ scope: runId }), canonicalize({ throughEventOrder: 1 }), sha256Canonical({ input: runId }))
-  const binding = await runtime.bind({ runId, recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'single_shot' })
+  const binding = await runtime.bind({ runId, recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'agent_loop' })
   await configure({ type: 'updateModel', profileId: 'deepseek', modelId: 'deepseek-v4-flash', capabilities: { ...capabilities, maxOutputTokens: 2048 } })
-  assert.deepEqual(await runtime.bind({ runId, recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'single_shot' }), binding)
+  assert.deepEqual(await runtime.bind({ runId, recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'agent_loop' }), binding)
 
   const beforePull = (await getCatalog()).snapshot.revision
   const suggestions = await handlers.get(CHANNELS.AGENT_MODEL_PULL_REMOTE_CATALOG)(settings, {

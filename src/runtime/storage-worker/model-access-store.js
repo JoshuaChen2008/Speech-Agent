@@ -10,6 +10,7 @@ const {
   assertRunRequest
 } = require('../../agent/contracts/model-access-core')
 const { deriveBudget } = require('../../agent/contracts/budget-axes')
+const { getRecipe } = require('../../agent/contracts/recipes')
 const { canonicalizeConnection, providerKindForOrigin } = require('../../agent/model-access/connection')
 
 class ModelAccessStoreError extends Error {
@@ -148,6 +149,7 @@ class ModelAccessStore {
 
   bind (request, availableSlotIds = []) {
     assertRunRequest(request)
+    const recipe = getRecipe(request.recipeId, request.recipeVersion)
     this.database.exec('BEGIN IMMEDIATE')
     try {
       const existing = this.database.prepare('SELECT * FROM agent_model_run_bindings WHERE run_id=?').get(request.runId)
@@ -158,14 +160,14 @@ class ModelAccessStore {
         return this.bindingProjection(existing)
       }
       const run = this.database.prepare('SELECT recipe_id,recipe_version,requested_by FROM formal_agent_runs WHERE run_id=?').get(request.runId)
-      if (!run || run.recipe_id !== request.recipeId || run.recipe_version !== request.recipeVersion || request.recipeId !== 'context.ingest.session' || request.recipeVersion !== '1') fail('AGENT_REQUEST_INVALID')
-      const resolved = this.resolveAssignment('information_extraction')
+      if (!run || run.recipe_id !== request.recipeId || run.recipe_version !== request.recipeVersion) fail('AGENT_REQUEST_INVALID')
+      const resolved = this.resolveAssignment(recipe.modelPurpose)
       if (!resolved.profile || !resolved.model) fail('AGENT_REQUEST_INVALID')
       const capabilities = JSON.parse(resolved.model.capability_json)
-      if (request.executionForm === 'agent_loop' && capabilities.supportsToolCalling !== true) fail('AGENT_REQUEST_INVALID')
+      if (recipe.toolGrants.length > 0 && capabilities.supportsToolCalling !== true) fail('AGENT_REQUEST_INVALID')
       const credentialPresent = availableSlotIds.includes(resolved.profile.credential_slot_id)
       if (!credentialPresent) fail('AGENT_REQUEST_INVALID')
-      const budget = deriveBudget(capabilities, request.executionForm, run.requested_by)
+      const budget = deriveBudget(capabilities, recipe.maxTurns, recipe.toolGrants, run.requested_by)
       const now = this.now()
       this.database.prepare(`INSERT INTO agent_model_run_bindings(
         run_id,execution_form,purpose,assignment_mode,profile_id,profile_revision,adapter_id,
