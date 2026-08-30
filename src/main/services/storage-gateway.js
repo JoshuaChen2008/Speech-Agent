@@ -53,7 +53,10 @@ const ISOLATED_AGENT_OPERATIONS = new Set([
   'readAgentMemoryContext',
   'applyAgentTaskPolicy',
   'getAgentSessionDetail',
-  'deleteAgentSessionData'
+  'deleteAgentSessionData',
+  'personalContextIngest',
+  'personalContextResolve',
+  'personalContextManage'
 ])
 const TRANSPORT_CODES = new Set([
   'NOT_INITIALIZED',
@@ -400,6 +403,18 @@ class StorageGateway {
     return this.enqueue('deleteAgentSessionData', input)
   }
 
+  personalContextIngest (source) {
+    return this.enqueue('personalContextIngest', source)
+  }
+
+  personalContextResolve (request) {
+    return this.enqueue('personalContextResolve', request)
+  }
+
+  personalContextManage (command) {
+    return this.enqueue('personalContextManage', command)
+  }
+
   invoke (host, item) {
     switch (item.operation) {
       case 'openSession': return host.openSession(item.payload)
@@ -428,6 +443,9 @@ class StorageGateway {
       case 'applyAgentTaskPolicy': return host.applyAgentTaskPolicy(item.payload)
       case 'getAgentSessionDetail': return host.getAgentSessionDetail(item.payload)
       case 'deleteAgentSessionData': return host.deleteAgentSessionData(item.payload)
+      case 'personalContextIngest': return host.personalContextIngest(item.payload)
+      case 'personalContextResolve': return host.personalContextResolve(item.payload)
+      case 'personalContextManage': return host.personalContextManage(item.payload)
       default: throw new TypeError(`unsupported gateway operation: ${item.operation}`)
     }
   }

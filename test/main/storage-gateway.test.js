@@ -515,6 +515,45 @@ test('SEM-F00/SEM-F28 Agent business rejection is isolated from the subtitle dur
   ])
 })
 
+test('SEM-F00/SEM-F30/J21 personal-context rejection is isolated and unknown transport replays one identity', async (t) => {
+  const log = []
+  let generation = 0
+  const gateway = new StorageGateway({
+    databasePath: DATABASE_PATH,
+    hostFactory: () => {
+      const current = ++generation
+      return hostWith({
+        async personalContextManage (command) {
+          log.push(['manage', current, command])
+          if (command.type === 'remember') throw new StorageError('AGENT_CONTEXT_OPERATION_FAILED')
+          if (current === 1) throw transportFailure('result unknown')
+          return { revision: 1 }
+        },
+        async openSession (input) {
+          log.push(['open', current, input])
+          return { status: 'committed' }
+        }
+      })
+    }
+  })
+  t.after(() => gateway.terminate())
+  const rejected = gateway.personalContextManage({ type: 'remember', identity: 'same' })
+  const opened = gateway.openSession({ sessionId: 'subtitle-after-rejection', sourceId: 'mic', startedAt: 1 })
+  await assert.rejects(rejected, (error) => error?.code === 'AGENT_CONTEXT_OPERATION_FAILED')
+  assert.deepEqual(await opened, { status: 'committed' })
+  const identity = { type: 'view', identity: 'frozen' }
+  const recovered = gateway.personalContextManage(identity)
+  identity.identity = 'mutated'
+  assert.deepEqual(await recovered, { revision: 1 })
+  assert.deepEqual(log, [
+    ['manage', 1, { type: 'remember', identity: 'same' }],
+    ['open', 1, { sessionId: 'subtitle-after-rejection', sourceId: 'mic', startedAt: 1 }],
+    ['manage', 1, { type: 'view', identity: 'frozen' }],
+    ['manage', 2, { type: 'view', identity: 'frozen' }]
+  ])
+  assert.equal(gateway.faulted, false)
+})
+
 test('SEM-F28 / J24 gateway forwards formal result and deletion boundaries without widening payloads', async (t) => {
   const log = []
   const gateway = new StorageGateway({

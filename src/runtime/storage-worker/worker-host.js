@@ -443,6 +443,18 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.AGENT_DELETE_SESSION_DATA, input)
   }
 
+  personalContextIngest (source) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_INGEST, { source })
+  }
+
+  personalContextResolve (request) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_RESOLVE, { request })
+  }
+
+  personalContextManage (command) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_MANAGE, { command })
+  }
+
   shutdown () {
     if (this.shutdownPromise) return this.shutdownPromise
     this.closing = true

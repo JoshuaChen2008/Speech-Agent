@@ -35,6 +35,9 @@ const OPERATIONS = Object.freeze({
   AGENT_APPLY_TASK_POLICY: 'agent:apply-task-policy',
   AGENT_GET_SESSION_DETAIL: 'agent:get-session-detail',
   AGENT_DELETE_SESSION_DATA: 'agent:delete-session-data',
+  PERSONAL_CONTEXT_INGEST: 'personal-context:ingest',
+  PERSONAL_CONTEXT_RESOLVE: 'personal-context:resolve',
+  PERSONAL_CONTEXT_MANAGE: 'personal-context:manage',
   SHUTDOWN: 'storage:shutdown'
 })
 
@@ -71,6 +74,9 @@ const SAFE_ERROR_MESSAGES = Object.freeze({
   AGENT_OUTPUT_INVALID: 'Agent output is invalid.',
   AGENT_JOB_NOT_FOUND: 'Agent job was not found.',
   AGENT_JOB_STATE_CONFLICT: 'Agent job state conflicts with the request.',
+  AGENT_CONTEXT_REVISION_CONFLICT: 'Personal context revision conflicts with the request.',
+  AGENT_CONTEXT_NOT_FOUND: 'Personal context item was not found.',
+  AGENT_CONTEXT_OPERATION_FAILED: 'Personal context operation failed.',
   STORAGE_COMMAND_FAILED: 'Storage command failed.'
 })
 

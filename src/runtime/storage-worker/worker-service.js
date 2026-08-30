@@ -33,8 +33,13 @@ class StorageWorkerService {
       const { FormalAgentStore } = require('./formal-agent-store')
       return new FormalAgentStore({ subtitleStore })
     })
+    this.personalContextStoreFactory = options.personalContextStoreFactory || ((subtitleStore) => {
+      const { PersonalContextStore } = require('./personal-context-store')
+      return new PersonalContextStore({ subtitleStore })
+    })
     this.store = null
     this.agentStore = null
+    this.personalContextStore = null
     this.shuttingDown = false
   }
 
@@ -47,6 +52,12 @@ class StorageWorkerService {
     const store = this.requireStore()
     if (!this.agentStore) this.agentStore = this.agentStoreFactory(store)
     return this.agentStore
+  }
+
+  requirePersonalContextStore () {
+    const store = this.requireStore()
+    if (!this.personalContextStore) this.personalContextStore = this.personalContextStoreFactory(store)
+    return this.personalContextStore
   }
 
   execute (request) {
@@ -176,6 +187,18 @@ class StorageWorkerService {
       assertExactKeys(payload, ['sessionId', 'deletionIdempotencyKey'])
       return this.requireAgentStore().deleteSessionData(payload)
     }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_INGEST) {
+      assertExactKeys(payload, ['source'])
+      return this.requirePersonalContextStore().ingest(payload.source)
+    }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_RESOLVE) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().resolve(payload.request)
+    }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_MANAGE) {
+      assertExactKeys(payload, ['command'])
+      return this.requirePersonalContextStore().manage(payload.command)
+    }
     if (operation === OPERATIONS.SHUTDOWN) {
       assertExactKeys(payload, [])
       if (this.store) {
@@ -183,6 +206,7 @@ class StorageWorkerService {
         this.store = null
       }
       this.agentStore = null
+      this.personalContextStore = null
       this.shuttingDown = true
       return { stopped: true }
     }

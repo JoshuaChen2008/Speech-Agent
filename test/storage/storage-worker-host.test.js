@@ -250,14 +250,22 @@ test('SEM-F28 formal Agent host methods preserve exact operation and payload ide
     ['deleteAgentMemoryItem', OPERATIONS.AGENT_DELETE_MEMORY_ITEM, { memoryId: 'memory', deletionIdempotencyKey: 'delete-memory' }],
     ['applyAgentTaskPolicy', OPERATIONS.AGENT_APPLY_TASK_POLICY, { eligibilityContext: {} }],
     ['getAgentSessionDetail', OPERATIONS.AGENT_GET_SESSION_DETAIL, { sessionId: 's', eligibilityContext: {} }],
-    ['deleteAgentSessionData', OPERATIONS.AGENT_DELETE_SESSION_DATA, { sessionId: 's', deletionIdempotencyKey: 'delete' }]
+    ['deleteAgentSessionData', OPERATIONS.AGENT_DELETE_SESSION_DATA, { sessionId: 's', deletionIdempotencyKey: 'delete' }],
+    ['personalContextIngest', OPERATIONS.PERSONAL_CONTEXT_INGEST, { sourceKind: 'session', sessionId: 's' }],
+    ['personalContextResolve', OPERATIONS.PERSONAL_CONTEXT_RESOLVE, { scope: { kind: 'session', reference: 's' } }],
+    ['personalContextManage', OPERATIONS.PERSONAL_CONTEXT_MANAGE, { type: 'view' }]
   ]
   try {
     for (const [method, operation, payload] of cases) {
       const pending = host[method](payload)
       await nextTurn()
       const request = requestFor(child, operation)
-      assert.deepEqual(request.payload, payload)
+      const expectedPayload = method === 'personalContextIngest'
+        ? { source: payload }
+        : method === 'personalContextResolve'
+          ? { request: payload }
+          : method === 'personalContextManage' ? { command: payload } : payload
+      assert.deepEqual(request.payload, expectedPayload)
       child.emit('message', successResponse(request, { operation }))
       assert.deepEqual(await pending, { operation })
     }
