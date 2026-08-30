@@ -38,6 +38,10 @@ const OPERATIONS = Object.freeze({
   PERSONAL_CONTEXT_INGEST: 'personal-context:ingest',
   PERSONAL_CONTEXT_RESOLVE: 'personal-context:resolve',
   PERSONAL_CONTEXT_MANAGE: 'personal-context:manage',
+  FORMAL_AGENT_CLAIM_RUN: 'formal-agent:claim-run',
+  FORMAL_AGENT_NEXT_RUN_AT: 'formal-agent:next-run-at',
+  FORMAL_AGENT_COMPLETE_RUN: 'formal-agent:complete-run',
+  FORMAL_AGENT_FAIL_RUN: 'formal-agent:fail-run',
   SHUTDOWN: 'storage:shutdown'
 })
 

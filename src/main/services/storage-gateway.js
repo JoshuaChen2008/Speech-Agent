@@ -56,7 +56,11 @@ const ISOLATED_AGENT_OPERATIONS = new Set([
   'deleteAgentSessionData',
   'personalContextIngest',
   'personalContextResolve',
-  'personalContextManage'
+  'personalContextManage',
+  'claimNextFormalAgentRun',
+  'nextFormalAgentRunAt',
+  'completeFormalAgentRun',
+  'failFormalAgentRun'
 ])
 const TRANSPORT_CODES = new Set([
   'NOT_INITIALIZED',
@@ -415,6 +419,22 @@ class StorageGateway {
     return this.enqueue('personalContextManage', command)
   }
 
+  claimNextFormalAgentRun (request) {
+    return this.enqueue('claimNextFormalAgentRun', request)
+  }
+
+  nextFormalAgentRunAt () {
+    return this.enqueue('nextFormalAgentRunAt', {})
+  }
+
+  completeFormalAgentRun (request) {
+    return this.enqueue('completeFormalAgentRun', request)
+  }
+
+  failFormalAgentRun (request) {
+    return this.enqueue('failFormalAgentRun', request)
+  }
+
   invoke (host, item) {
     switch (item.operation) {
       case 'openSession': return host.openSession(item.payload)
@@ -446,6 +466,10 @@ class StorageGateway {
       case 'personalContextIngest': return host.personalContextIngest(item.payload)
       case 'personalContextResolve': return host.personalContextResolve(item.payload)
       case 'personalContextManage': return host.personalContextManage(item.payload)
+      case 'claimNextFormalAgentRun': return host.claimNextFormalAgentRun(item.payload)
+      case 'nextFormalAgentRunAt': return host.nextFormalAgentRunAt()
+      case 'completeFormalAgentRun': return host.completeFormalAgentRun(item.payload)
+      case 'failFormalAgentRun': return host.failFormalAgentRun(item.payload)
       default: throw new TypeError(`unsupported gateway operation: ${item.operation}`)
     }
   }

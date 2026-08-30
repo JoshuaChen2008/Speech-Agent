@@ -554,6 +554,32 @@ test('SEM-F00/SEM-F30/J21 personal-context rejection is isolated and unknown tra
   assert.equal(gateway.faulted, false)
 })
 
+test('SEM-F28/SEM-F30/J21 scheduler storage operations preserve frozen identities and stay FIFO-isolated', async (t) => {
+  const log = []
+  const gateway = new StorageGateway({
+    databasePath: DATABASE_PATH,
+    hostFactory: () => hostWith({
+      async claimNextFormalAgentRun (request) { log.push(['claim', request]); return null },
+      async nextFormalAgentRunAt () { log.push(['next']); return 2000 },
+      async completeFormalAgentRun (request) { log.push(['complete', request]); return { state: 'succeeded' } },
+      async failFormalAgentRun (request) { log.push(['fail', request]); throw new StorageError('AGENT_CONTEXT_OPERATION_FAILED') },
+      async openSession (request) { log.push(['open', request]); return { status: 'committed' } }
+    })
+  })
+  t.after(() => gateway.terminate())
+  const claim = { claimIdempotencyKey: 'claim.1', owner: 'owner.1', leaseMs: 1000 }
+  assert.equal(await gateway.claimNextFormalAgentRun(claim), null)
+  claim.owner = 'mutated'
+  assert.equal(await gateway.nextFormalAgentRunAt(), 2000)
+  assert.deepEqual(await gateway.completeFormalAgentRun({ attemptIdentity: { runId: 'run.1' }, resultDigest: 'a'.repeat(64), resultSummary: {} }), { state: 'succeeded' })
+  const failed = gateway.failFormalAgentRun({ attemptIdentity: { runId: 'run.2' }, errorCode: 'AGENT_INTERNAL_FAILURE' })
+  const opened = gateway.openSession({ sessionId: 'subtitle.after.scheduler', sourceId: 'mic', startedAt: 1 })
+  await assert.rejects(failed, (error) => error?.code === 'AGENT_CONTEXT_OPERATION_FAILED')
+  assert.deepEqual(await opened, { status: 'committed' })
+  assert.deepEqual(log[0], ['claim', { claimIdempotencyKey: 'claim.1', owner: 'owner.1', leaseMs: 1000 }])
+  assert.equal(gateway.faulted, false)
+})
+
 test('SEM-F28 / J24 gateway forwards formal result and deletion boundaries without widening payloads', async (t) => {
   const log = []
   const gateway = new StorageGateway({

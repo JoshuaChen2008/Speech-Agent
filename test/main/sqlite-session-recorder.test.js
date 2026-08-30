@@ -193,3 +193,30 @@ test('J15c recorder freezes refinement preference and sends only a stable fault 
     /valid refinement fault/
   )
 })
+
+test('SEM-F28/SEM-F30/J21: terminal listeners run detached only after close ACK and cannot change its receipt', async () => {
+  let acknowledge
+  const { gateway } = gatewayFixture({
+    closeSession: () => new Promise((resolve) => { acknowledge = resolve })
+  })
+  const recorder = new SqliteSessionRecorder({ gateway, now: () => 1000 })
+  const notifications = []
+  recorder.onTerminalCommitted((notice) => notifications.push(notice))
+  recorder.onTerminalCommitted(() => { throw new Error('scheduler failure') })
+  await recorder.openSession({ sessionId: 'session-terminal', sourceId: 'mic' })
+  const close = recorder.closeSession({ sessionId: 'session-terminal', sourceId: 'mic', state: 'closed' })
+  await Promise.resolve()
+  assert.deepEqual(notifications, [])
+  acknowledge({ status: 'committed' })
+  assert.deepEqual(await close, { status: 'committed' })
+  await Promise.resolve()
+  assert.deepEqual(notifications, [{ sessionId: 'session-terminal' }])
+
+  recorder.clearTerminalCommittedListeners()
+  await recorder.openSession({ sessionId: 'session-next', sourceId: 'mic' })
+  const nextClose = recorder.closeSession({ sessionId: 'session-next', sourceId: 'mic', state: 'closed' })
+  acknowledge({ status: 'committed-next' })
+  assert.deepEqual(await nextClose, { status: 'committed-next' })
+  await Promise.resolve()
+  assert.equal(notifications.length, 1)
+})

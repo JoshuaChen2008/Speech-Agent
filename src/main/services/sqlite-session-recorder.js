@@ -67,6 +67,7 @@ class SqliteSessionRecorder {
     this.onError = typeof options.onError === 'function' ? options.onError : () => {}
     this.active = null
     this.failure = null
+    this.terminalListeners = new Set()
   }
 
   reportError (error) {
@@ -103,7 +104,8 @@ class SqliteSessionRecorder {
       openPromise: null,
       openQueued: false,
       closePromise: null,
-      closeQueued: false
+      closeQueued: false,
+      terminalNotified: false
     }
     this.active = active
     return this.submitOpen(active)
@@ -185,6 +187,10 @@ class SqliteSessionRecorder {
     }
     const closePromise = this.track(operation).then(
       (result) => {
+        if (!active.terminalNotified) {
+          active.terminalNotified = true
+          this.notifyTerminalCommitted(active.sessionId)
+        }
         if (this.active === active) this.active = null
         this.failure = null
         return result
@@ -203,7 +209,13 @@ class SqliteSessionRecorder {
     this.failure = null
     if (this.active?.closePayload) {
       const active = this.active
-      if (active.closeQueued) this.active = null
+      if (active.closeQueued) {
+        if (!active.terminalNotified) {
+          active.terminalNotified = true
+          this.notifyTerminalCommitted(active.sessionId)
+        }
+        this.active = null
+      }
       else {
         active.closePromise = null
         return this.submitClose(active)
@@ -221,6 +233,28 @@ class SqliteSessionRecorder {
 
   flush () {
     return this.gateway.flush()
+  }
+
+  onTerminalCommitted (listener) {
+    if (typeof listener !== 'function') throw new TypeError('terminal listener must be a function')
+    this.terminalListeners.add(listener)
+    return () => this.terminalListeners.delete(listener)
+  }
+
+  clearTerminalCommittedListeners () {
+    this.terminalListeners.clear()
+  }
+
+  notifyTerminalCommitted (sessionId) {
+    const notification = Object.freeze({ sessionId })
+    queueMicrotask(() => {
+      for (const listener of [...this.terminalListeners]) {
+        try {
+          const result = listener(notification)
+          if (result && typeof result.then === 'function') result.catch(() => {})
+        } catch { /* detached Agent observers cannot affect subtitle persistence */ }
+      }
+    })
   }
 
   getActiveSession () {

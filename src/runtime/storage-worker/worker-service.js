@@ -199,6 +199,22 @@ class StorageWorkerService {
       assertExactKeys(payload, ['command'])
       return this.requirePersonalContextStore().manage(payload.command)
     }
+    if (operation === OPERATIONS.FORMAL_AGENT_CLAIM_RUN) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().claimNextFormalRun(payload.request)
+    }
+    if (operation === OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT) {
+      assertExactKeys(payload, [])
+      return this.requirePersonalContextStore().nextFormalRunAt()
+    }
+    if (operation === OPERATIONS.FORMAL_AGENT_COMPLETE_RUN) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().completeFormalRun(payload.request)
+    }
+    if (operation === OPERATIONS.FORMAL_AGENT_FAIL_RUN) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().failFormalRun(payload.request)
+    }
     if (operation === OPERATIONS.SHUTDOWN) {
       assertExactKeys(payload, [])
       if (this.store) {

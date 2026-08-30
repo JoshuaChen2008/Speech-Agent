@@ -30,6 +30,10 @@ function setRefinementPreference (enabled, refinementReady) {
   return requireStore().setRefinementPreference(enabled, refinementReady)
 }
 
+function updateAgentSettings (request) {
+  return requireStore().updateAgentSettings(request)
+}
+
 function reconcileRefinementReadiness (refinementReady) {
   return requireStore().reconcileRefinementReadiness(refinementReady)
 }
@@ -46,5 +50,6 @@ module.exports = {
   load,
   reconcileRefinementReadiness,
   set,
-  setRefinementPreference
+  setRefinementPreference,
+  updateAgentSettings
 }

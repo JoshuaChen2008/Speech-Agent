@@ -6,8 +6,11 @@ const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 
-const { sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
+const { canonicalize, sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
+const { createPersonalContextModule } = require('../../src/agent/personal-context')
+const { ContextIngestSessionRunner } = require('../../src/agent/execution-host')
 const { PersonalContextStore } = require('../../src/runtime/storage-worker/personal-context-store')
+const { FormalAgentStore } = require('../../src/runtime/storage-worker/formal-agent-store')
 const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
 
@@ -247,4 +250,82 @@ test('SEM-F26/SEM-F30/J21: a complete refinement is one selectable source versio
     transcript_version: 'refined',
     input_digest: frozenSource(subtitleStore.database, sessionId, 'refined').inputDigest
   })
+})
+
+test('SEM-F26/SEM-F30/J21: session deletion removes episodes and evidence while replaying all v5 tombstone counts', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  terminalSession(subtitleStore, 'session-delete-context')
+  store.ingest(frozenSource(subtitleStore.database, 'session-delete-context'))
+  store.manage({
+    type: 'remember', expected_revision: 1,
+    entry: {
+      display_text: 'Session-local explicit fact',
+      kind: 'project_fact',
+      scope: { kind: 'session', reference: 'session-delete-context' },
+      semantic_key: 'session:local_fact'
+    }
+  })
+  const oldAgentStore = new FormalAgentStore({ subtitleStore, now: () => 2000 })
+  const input = { sessionId: 'session-delete-context', deletionIdempotencyKey: 'delete.session.context.1' }
+  const deleted = oldAgentStore.deleteSessionData(input)
+  const replay = oldAgentStore.deleteSessionData(input)
+  assert.equal(deleted.deletedEpisodeCount, 1)
+  assert.equal(deleted.deletedContextEvidenceCount, 0)
+  assert.equal(deleted.deletedOrphanContextItemCount, 1)
+  assert.deepEqual(replay, deleted)
+  assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM personal_context_episodes').get().count, 0)
+  assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM personal_context_items').get().count, 0)
+  assert.equal(store.contentRevision(), 3)
+})
+
+test('SEM-F28/SEM-F30/J21: a controlled v5 run replays one claim attempt and settles through the real ingest seam', async (t) => {
+  const { subtitleStore, store } = fixture(t)
+  terminalSession(subtitleStore, 'session-scheduled')
+  const source = frozenSource(subtitleStore.database, 'session-scheduled')
+  const identity = {
+    recipeId: 'context.ingest.session', sourceKind: 'session', sessionId: source.sessionId,
+    transcriptVersion: source.transcriptVersion, inputWatermark: source.inputWatermark, inputDigest: source.inputDigest
+  }
+  const dedupeKey = sha256Canonical(identity)
+  const requestDigest = sha256Canonical({ identity })
+  subtitleStore.database.prepare(`
+    INSERT INTO formal_agent_runs(
+      run_id, dedupe_key, client_idempotency_key, request_digest, recipe_id, recipe_version,
+      scope_json, scope_digest, transcript_version, input_watermark_json, input_digest,
+      requested_by, state, attempt_count, max_attempts, next_attempt_at,
+      lease_owner, lease_expires_at, lease_renewed_from_expires_at, cancel_requested_at,
+      error_code, result_digest, result_summary_json, created_at, updated_at
+    ) VALUES (?, ?, NULL, ?, 'context.ingest.session', '1', ?, ?, ?, ?, ?,
+      'automatic', 'queued', 0, 3, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 1000, 1000)
+  `).run(
+    `run.${dedupeKey.slice(0, 48)}`, dedupeKey, requestDigest,
+    canonicalize({ kind: 'session', reference: source.sessionId }),
+    sha256Canonical({ kind: 'session', reference: source.sessionId }),
+    source.transcriptVersion, canonicalize({ throughEventOrder: source.inputWatermark }), source.inputDigest
+  )
+  const claimRequest = { claimIdempotencyKey: 'claim.scheduled.1', owner: 'owner.scheduled', leaseMs: 5000 }
+  const claim = store.claimNextFormalRun(claimRequest)
+  assert.deepEqual(store.claimNextFormalRun(claimRequest), claim)
+
+  const personalContext = createPersonalContextModule({
+    storage: {
+      personalContextIngest: async (value) => store.ingest(value),
+      personalContextResolve: async (value) => store.resolve(value),
+      personalContextManage: async (value) => store.manage(value)
+    }
+  })
+  const runner = new ContextIngestSessionRunner({
+    personalContext,
+    storage: {
+      completeFormalAgentRun: async (value) => store.completeFormalRun(value),
+      failFormalAgentRun: async (value) => store.failFormalRun(value)
+    }
+  })
+  await runner.run(claim)
+  assert.equal(subtitleStore.database.prepare('SELECT state FROM formal_agent_runs').get().state, 'succeeded')
+  assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM personal_context_episodes').get().count, 1)
+  const replacement = new PersonalContextStore({ subtitleStore, now: () => 1000 })
+  assert.equal(replacement.claimNextFormalRun({
+    claimIdempotencyKey: 'claim.scheduled.2', owner: 'owner.replacement', leaseMs: 5000
+  }), null)
 })

@@ -1671,6 +1671,11 @@ class FormalAgentStore {
       deletedDebugThreadCount: Number(row.deleted_debug_thread_count),
       deletedMemoryEvidenceCount: Number(row.deleted_memory_evidence_count),
       deletedOrphanMemoryCount: Number(row.deleted_orphan_memory_count),
+      deletedInteractionCount: Number(row.deleted_interaction_count),
+      deletedToolCallCount: Number(row.deleted_tool_call_count),
+      deletedEpisodeCount: Number(row.deleted_episode_count),
+      deletedContextEvidenceCount: Number(row.deleted_context_evidence_count),
+      deletedOrphanContextItemCount: Number(row.deleted_orphan_context_item_count),
       deletedAt: Number(row.deleted_at)
     })
     database.exec('BEGIN IMMEDIATE')
@@ -1700,6 +1705,10 @@ class FormalAgentStore {
       const deletedArtifactCount = scalar('SELECT COUNT(*) AS count FROM agent_artifacts WHERE session_id = ?')
       const deletedDebugThreadCount = scalar('SELECT COUNT(*) AS count FROM agent_debug_threads WHERE selected_session_id = ?')
       const deletedMemoryEvidenceCount = scalar('SELECT COUNT(*) AS count FROM memory_evidence WHERE session_id = ?')
+      const deletedInteractionCount = 0
+      const deletedToolCallCount = 0
+      const deletedEpisodeCount = scalar('SELECT COUNT(*) AS count FROM personal_context_episodes WHERE session_id = ?')
+      const deletedContextEvidenceCount = scalar('SELECT COUNT(*) AS count FROM personal_context_evidence WHERE session_id = ?')
       const orphanRows = database.prepare(`
         SELECT DISTINCT item.memory_id
         FROM memory_items AS item
@@ -1714,22 +1723,73 @@ class FormalAgentStore {
         )
       `).all(sessionId, sessionId, sessionId)
       const deletedOrphanMemoryCount = orphanRows.length
+      const contextOrphanRows = database.prepare(`
+        SELECT DISTINCT item.memory_id, scope.session_id AS scope_session_id
+        FROM personal_context_items AS item
+        JOIN personal_context_scopes AS scope ON scope.scope_id = item.scope_id
+        LEFT JOIN personal_context_evidence AS own
+          ON own.memory_id = item.memory_id AND own.session_id = ?
+        WHERE scope.session_id = ? OR (
+          item.origin = 'inferred' AND own.evidence_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM personal_context_evidence AS other
+            WHERE other.memory_id = item.memory_id AND other.session_id <> ?
+          )
+        )
+      `).all(sessionId, sessionId, sessionId)
+      const deletedOrphanContextItemCount = contextOrphanRows.length
       const now = this.nowValue()
       database.prepare(`
         INSERT INTO session_deletion_tombstones(
           session_id, deletion_idempotency_key, request_digest,
           deleted_job_count, deleted_artifact_count, deleted_debug_thread_count,
-          deleted_memory_evidence_count, deleted_orphan_memory_count, deleted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          deleted_memory_evidence_count, deleted_orphan_memory_count,
+          deleted_interaction_count, deleted_tool_call_count, deleted_episode_count,
+          deleted_context_evidence_count, deleted_orphan_context_item_count, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         sessionId, deletionIdempotencyKey, requestDigest,
         deletedJobCount, deletedArtifactCount, deletedDebugThreadCount,
-        deletedMemoryEvidenceCount, deletedOrphanMemoryCount, now
+        deletedMemoryEvidenceCount, deletedOrphanMemoryCount,
+        deletedInteractionCount, deletedToolCallCount, deletedEpisodeCount,
+        deletedContextEvidenceCount, deletedOrphanContextItemCount, now
       )
       for (const row of orphanRows) {
         deleteMemoryGraph(database, row.memory_id)
       }
       database.prepare('DELETE FROM memory_evidence WHERE session_id = ?').run(sessionId)
+      for (const row of contextOrphanRows) {
+        if (row.scope_session_id === sessionId) {
+          database.prepare('UPDATE personal_context_items SET current_revision_id = NULL WHERE memory_id = ?').run(row.memory_id)
+          database.prepare('UPDATE personal_context_revisions SET previous_revision_id = NULL WHERE memory_id = ?').run(row.memory_id)
+          database.prepare('DELETE FROM personal_context_evidence WHERE memory_id = ?').run(row.memory_id)
+          database.prepare('DELETE FROM personal_context_revisions WHERE memory_id = ?').run(row.memory_id)
+          database.prepare('DELETE FROM personal_context_items WHERE memory_id = ?').run(row.memory_id)
+        } else {
+          database.prepare("UPDATE personal_context_items SET lifecycle = 'inactive', updated_at = ? WHERE memory_id = ?").run(now, row.memory_id)
+        }
+      }
+      database.prepare('DELETE FROM personal_context_evidence WHERE session_id = ?').run(sessionId)
+      database.prepare('DELETE FROM personal_context_episodes WHERE session_id = ?').run(sessionId)
+      database.prepare('DELETE FROM personal_context_scopes WHERE session_id = ?').run(sessionId)
+      if (deletedEpisodeCount > 0 || deletedContextEvidenceCount > 0 || deletedOrphanContextItemCount > 0) {
+        const projection = database.prepare(`
+          SELECT content_revision FROM personal_context_projection_state WHERE singleton_key = 1
+        `).get()
+        const nextRevision = Number(projection.content_revision) + 1
+        if (!Number.isSafeInteger(nextRevision)) throw new StorageError('AGENT_INTERNAL_FAILURE')
+        const resultIdentity = {
+          operation: 'delete-session-context',
+          sessionId,
+          deletedEpisodeCount,
+          deletedContextEvidenceCount,
+          deletedOrphanContextItemCount
+        }
+        database.prepare(`
+          UPDATE personal_context_projection_state
+          SET content_revision = ?, last_command_digest = ?, last_result_identity_json = ?, updated_at = ?
+          WHERE singleton_key = 1
+        `).run(nextRevision, sha256Canonical(resultIdentity), canonicalize(resultIdentity), now)
+      }
       database.prepare('DELETE FROM memory_scopes WHERE session_id = ?').run(sessionId)
       database.prepare('DELETE FROM agent_debug_threads WHERE selected_session_id = ?').run(sessionId)
       database.prepare('DELETE FROM agent_jobs WHERE session_id = ?').run(sessionId)

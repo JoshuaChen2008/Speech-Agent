@@ -455,6 +455,22 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_MANAGE, { command })
   }
 
+  claimNextFormalAgentRun (request) {
+    return this.enqueue(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request })
+  }
+
+  nextFormalAgentRunAt () {
+    return this.enqueue(OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT, {})
+  }
+
+  completeFormalAgentRun (request) {
+    return this.enqueue(OPERATIONS.FORMAL_AGENT_COMPLETE_RUN, { request })
+  }
+
+  failFormalAgentRun (request) {
+    return this.enqueue(OPERATIONS.FORMAL_AGENT_FAIL_RUN, { request })
+  }
+
   shutdown () {
     if (this.shutdownPromise) return this.shutdownPromise
     this.closing = true

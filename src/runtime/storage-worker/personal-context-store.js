@@ -73,7 +73,8 @@ function publicItem (row) {
     lifecycle: row.lifecycle,
     scope: { kind: row.scope_kind, reference: row.scope_reference },
     semanticKey: row.semantic_key,
-    updatedAt: Number(row.updated_at)
+    updatedAt: Number(row.updated_at),
+    sourceReferenceCount: Number(row.source_reference_count || 0)
   }
 }
 
@@ -177,16 +178,23 @@ class PersonalContextStore {
     const dedupeKey = sha256Canonical(identity)
     const requestDigest = sha256Canonical({ identity })
     const existing = this.database.prepare(`
-      SELECT run_id, request_digest FROM formal_agent_runs WHERE dedupe_key = ?
+      SELECT run_id, request_digest, state FROM formal_agent_runs WHERE dedupe_key = ?
     `).get(dedupeKey)
     if (existing) {
       if (existing.request_digest !== requestDigest) fail('AGENT_REQUEST_INVALID')
-      return { runId: existing.run_id, replayed: true, episodeCount: 1, memoryCount: 0, revision: this.contentRevision() }
+      const episode = this.database.prepare(`
+        SELECT episode_id FROM personal_context_episodes
+        WHERE source_kind = 'session' AND session_id = ? AND input_digest = ?
+      `).get(snapshot.sessionId, snapshot.inputDigest)
+      if (episode) {
+        return { runId: existing.run_id, replayed: true, episodeCount: 1, memoryCount: 0, revision: this.contentRevision() }
+      }
+      if (!['queued', 'running', 'retry_wait'].includes(existing.state)) fail('AGENT_CONTEXT_OPERATION_FAILED')
     }
 
-    const runId = `run-${dedupeKey.slice(0, 48)}`
-    const scopeId = `scope-${sha256Canonical({ kind: 'session', reference: snapshot.sessionId }).slice(0, 48)}`
-    const episodeId = `episode-${dedupeKey.slice(0, 44)}`
+    const runId = `run.${dedupeKey.slice(0, 48)}`
+    const scopeId = `scope.${sha256Canonical({ kind: 'session', reference: snapshot.sessionId }).slice(0, 48)}`
+    const episodeId = `episode.${dedupeKey.slice(0, 44)}`
     const now = this.nowValue()
     const resultSummary = { episodeCount: 1, memoryCount: 0 }
     const episodeSummary = {
@@ -201,7 +209,7 @@ class PersonalContextStore {
           scope_id, kind, canonical_key, label, session_id, origin, lifecycle, created_at, updated_at
         ) VALUES (?, 'session', ?, 'Session', ?, 'automatic', 'active', ?, ?)
       `).run(scopeId, `session:${snapshot.sessionId}`, snapshot.sessionId, now, now)
-      this.database.prepare(`
+      if (!existing) this.database.prepare(`
         INSERT INTO formal_agent_runs(
           run_id, dedupe_key, client_idempotency_key, request_digest, recipe_id, recipe_version,
           scope_json, scope_digest, transcript_version, input_watermark_json, input_digest,
@@ -245,7 +253,7 @@ class PersonalContextStore {
     const canonicalKey = entry.scopeKind === 'global'
       ? 'global'
       : `${entry.scopeKind}:${entry.scopeReference}`
-    const scopeId = `scope-${sha256Canonical({ kind: entry.scopeKind, reference: entry.scopeReference }).slice(0, 48)}`
+    const scopeId = `scope.${sha256Canonical({ kind: entry.scopeKind, reference: entry.scopeReference }).slice(0, 48)}`
     const sessionId = entry.scopeKind === 'session' ? entry.scopeReference : null
     this.database.prepare(`
       INSERT OR IGNORE INTO personal_context_scopes(
@@ -265,7 +273,8 @@ class PersonalContextStore {
   memoryRow (memoryId) {
     return this.database.prepare(`
       SELECT item.*, scope.kind AS scope_kind,
-        CASE WHEN scope.kind = 'global' THEN NULL ELSE substr(scope.canonical_key, instr(scope.canonical_key, ':') + 1) END AS scope_reference
+        CASE WHEN scope.kind = 'global' THEN NULL ELSE substr(scope.canonical_key, instr(scope.canonical_key, ':') + 1) END AS scope_reference,
+        (SELECT COUNT(*) FROM personal_context_evidence AS evidence WHERE evidence.memory_id = item.memory_id) AS source_reference_count
       FROM personal_context_items AS item
       JOIN personal_context_scopes AS scope ON scope.scope_id = item.scope_id
       WHERE item.memory_id = ?
@@ -288,8 +297,42 @@ class PersonalContextStore {
     if (!['personal_memories', 'session_episodes'].includes(command.resource)) fail('AGENT_REQUEST_INVALID')
     safeInteger(command.limit, 1)
     if (command.limit > 20 || command.cursor !== null) fail('AGENT_REQUEST_INVALID')
-    const table = command.resource === 'personal_memories' ? 'personal_context_items' : 'personal_context_episodes'
-    return { revision: this.contentRevision(), rows: this.database.prepare(`SELECT * FROM ${table} ORDER BY updated_at DESC LIMIT ?`).all(command.limit) }
+    if (command.resource === 'personal_memories') {
+      const totalCount = Number(this.database.prepare('SELECT COUNT(*) AS count FROM personal_context_items').get().count)
+      const rows = this.database.prepare(`
+        SELECT item.*, scope.kind AS scope_kind,
+          CASE WHEN scope.kind = 'global' THEN NULL ELSE substr(scope.canonical_key, instr(scope.canonical_key, ':') + 1) END AS scope_reference,
+          (SELECT COUNT(*) FROM personal_context_evidence AS evidence WHERE evidence.memory_id = item.memory_id) AS source_reference_count
+        FROM personal_context_items AS item
+        JOIN personal_context_scopes AS scope ON scope.scope_id = item.scope_id
+        ORDER BY item.updated_at DESC, item.memory_id ASC LIMIT ?
+      `).all(command.limit)
+      return { revision: this.contentRevision(), totalCount, rows: rows.map(publicItem) }
+    }
+    const totalCount = Number(this.database.prepare('SELECT COUNT(*) AS count FROM personal_context_episodes WHERE lifecycle = \'active\'').get().count)
+    const rows = this.database.prepare(`
+      SELECT episode.*, scope.kind AS scope_kind,
+        CASE WHEN scope.kind = 'global' THEN NULL ELSE substr(scope.canonical_key, instr(scope.canonical_key, ':') + 1) END AS scope_reference
+      FROM personal_context_episodes AS episode
+      JOIN personal_context_scopes AS scope ON scope.scope_id = episode.scope_id
+      WHERE episode.lifecycle = 'active'
+      ORDER BY episode.updated_at DESC, episode.episode_id ASC LIMIT ?
+    `).all(command.limit).map((row) => {
+      const stored = JSON.parse(row.summary_json)
+      return {
+        episode_id: row.episode_id,
+        lifecycle: row.lifecycle,
+        occurredFromOffsetMs: Number(row.occurred_from_offset_ms),
+        occurredThroughOffsetMs: Number(row.occurred_through_offset_ms),
+        omissions: Array.isArray(stored.omissions) ? stored.omissions : [],
+        scope: { kind: row.scope_kind, reference: row.scope_reference },
+        sourceKind: row.source_kind,
+        sourceReferenceCount: 1,
+        summary: { title: stored.title, bullets: stored.bullets },
+        updatedAt: Number(row.updated_at)
+      }
+    })
+    return { revision: this.contentRevision(), totalCount, rows }
   }
 
   manageRemember (command) {
@@ -321,7 +364,7 @@ class PersonalContextStore {
             current_revision_id = ?, item_revision = ?, updated_at = ? WHERE memory_id = ?
         `).run(canonicalize({ displayText: entry.displayText }), revisionId, itemRevision, now, memoryId)
       } else {
-        memoryId = `memory-${sha256Canonical({ scopeId, kind: entry.kind, semanticKey: entry.semanticKey }).slice(0, 44)}`
+        memoryId = `memory.${sha256Canonical({ scopeId, kind: entry.kind, semanticKey: entry.semanticKey }).slice(0, 44)}`
         itemRevision = 1
         revisionId = `revision-${sha256Canonical({ memoryId, itemRevision }).slice(0, 44)}`
         this.database.prepare(`
@@ -576,6 +619,153 @@ class PersonalContextStore {
       hasMore: budgetOmitted,
       revision: this.contentRevision()
     }
+  }
+
+  claimNextFormalRun (request) {
+    assertExactKeys(request, ['claimIdempotencyKey', 'owner', 'leaseMs'], 'AGENT_REQUEST_INVALID')
+    identifier(request.claimIdempotencyKey)
+    identifier(request.owner)
+    safeInteger(request.leaseMs, 1)
+    const requestDigest = sha256Canonical(request)
+    const now = this.nowValue()
+    const receiptResult = (receipt) => {
+      if (receipt.run_id === null) return null
+      const row = this.database.prepare('SELECT * FROM formal_agent_runs WHERE run_id = ?').get(receipt.run_id)
+      if (!row) fail('STORAGE_COMMAND_FAILED')
+      const scope = JSON.parse(row.scope_json)
+      const watermark = JSON.parse(row.input_watermark_json)
+      return {
+        runId: row.run_id,
+        recipeId: row.recipe_id,
+        source: {
+          sourceKind: scope.kind,
+          sessionId: scope.reference,
+          transcriptVersion: row.transcript_version,
+          inputWatermark: Number(watermark.throughEventOrder),
+          inputDigest: row.input_digest
+        },
+        attemptIdentity: {
+          runId: row.run_id,
+          attempt: Number(row.attempt_count),
+          owner: receipt.lease_owner,
+          leaseExpiresAt: Number(receipt.lease_expires_at)
+        }
+      }
+    }
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const prior = this.database.prepare(`
+        SELECT * FROM formal_agent_run_claim_receipts WHERE claim_idempotency_key = ?
+      `).get(request.claimIdempotencyKey)
+      if (prior) {
+        if (prior.request_digest !== requestDigest) fail('AGENT_REQUEST_INVALID')
+        this.database.exec('COMMIT')
+        return receiptResult(prior)
+      }
+      const row = this.database.prepare(`
+        SELECT * FROM formal_agent_runs
+        WHERE recipe_id = 'context.ingest.session' AND (
+          (state IN ('queued', 'retry_wait') AND next_attempt_at <= ?) OR
+          (state = 'running' AND lease_expires_at <= ?)
+        )
+        ORDER BY next_attempt_at, run_order LIMIT 1
+      `).get(now, now)
+      let leaseExpiresAt = null
+      if (row) {
+        leaseExpiresAt = now + request.leaseMs
+        if (!Number.isSafeInteger(leaseExpiresAt)) fail('STORAGE_COMMAND_FAILED')
+        const attempt = Number(row.attempt_count) + 1
+        this.database.prepare(`
+          UPDATE formal_agent_runs
+          SET state = 'running', attempt_count = ?, lease_owner = ?, lease_expires_at = ?,
+            lease_renewed_from_expires_at = NULL, next_attempt_at = ?, error_code = NULL, updated_at = ?
+          WHERE run_id = ?
+        `).run(attempt, request.owner, leaseExpiresAt, now, now, row.run_id)
+      }
+      this.database.prepare(`
+        INSERT INTO formal_agent_run_claim_receipts(
+          claim_idempotency_key, request_digest, run_id, lease_owner, lease_expires_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        request.claimIdempotencyKey, requestDigest, row?.run_id || null,
+        row ? request.owner : null, leaseExpiresAt, now
+      )
+      const receipt = this.database.prepare(`
+        SELECT * FROM formal_agent_run_claim_receipts WHERE claim_idempotency_key = ?
+      `).get(request.claimIdempotencyKey)
+      this.database.exec('COMMIT')
+      return receiptResult(receipt)
+    } catch (error) {
+      rollbackQuietly(this.database)
+      throw error
+    }
+  }
+
+  nextFormalRunAt () {
+    const row = this.database.prepare(`
+      SELECT MIN(ready_at) AS ready_at FROM (
+        SELECT next_attempt_at AS ready_at FROM formal_agent_runs WHERE state IN ('queued', 'retry_wait')
+        UNION ALL
+        SELECT lease_expires_at AS ready_at FROM formal_agent_runs WHERE state = 'running'
+      )
+    `).get()
+    return row.ready_at === null ? null : Number(row.ready_at)
+  }
+
+  assertAttempt (attemptIdentity) {
+    assertExactKeys(attemptIdentity, ['runId', 'attempt', 'owner', 'leaseExpiresAt'], 'AGENT_REQUEST_INVALID')
+    identifier(attemptIdentity.runId)
+    safeInteger(attemptIdentity.attempt, 1)
+    identifier(attemptIdentity.owner)
+    safeInteger(attemptIdentity.leaseExpiresAt)
+    return attemptIdentity
+  }
+
+  completeFormalRun (request) {
+    assertExactKeys(request, ['attemptIdentity', 'resultDigest', 'resultSummary'], 'AGENT_REQUEST_INVALID')
+    const attempt = this.assertAttempt(request.attemptIdentity)
+    if (typeof request.resultDigest !== 'string' || !/^[0-9a-f]{64}$/.test(request.resultDigest)) fail('AGENT_REQUEST_INVALID')
+    if (sha256Canonical(request.resultSummary) !== request.resultDigest) fail('AGENT_REQUEST_INVALID')
+    const summaryJson = canonicalize(request.resultSummary)
+    const row = this.database.prepare('SELECT * FROM formal_agent_runs WHERE run_id = ?').get(attempt.runId)
+    if (!row) fail('AGENT_CONTEXT_NOT_FOUND')
+    if (row.state === 'succeeded') {
+      if (row.result_digest !== request.resultDigest) fail('AGENT_CONTEXT_OPERATION_FAILED')
+      return { runId: row.run_id, replayed: true, state: 'succeeded' }
+    }
+    if (row.state !== 'running' || Number(row.attempt_count) !== attempt.attempt ||
+        row.lease_owner !== attempt.owner || Number(row.lease_expires_at) !== attempt.leaseExpiresAt) {
+      fail('AGENT_CONTEXT_OPERATION_FAILED')
+    }
+    this.database.prepare(`
+      UPDATE formal_agent_runs SET state = 'succeeded', lease_owner = NULL, lease_expires_at = NULL,
+        result_digest = ?, result_summary_json = ?, error_code = NULL, updated_at = ? WHERE run_id = ?
+    `).run(request.resultDigest, summaryJson, this.nowValue(), attempt.runId)
+    return { runId: row.run_id, replayed: false, state: 'succeeded' }
+  }
+
+  failFormalRun (request) {
+    assertExactKeys(request, ['attemptIdentity', 'errorCode'], 'AGENT_REQUEST_INVALID')
+    const attempt = this.assertAttempt(request.attemptIdentity)
+    const errors = new Set([
+      'AGENT_PROVIDER_AUTH_FAILED', 'AGENT_PROVIDER_RATE_LIMITED', 'AGENT_PROVIDER_UNAVAILABLE',
+      'AGENT_PROVIDER_TIMEOUT', 'AGENT_OUTPUT_INVALID', 'AGENT_PERMISSION_DENIED',
+      'AGENT_REQUEST_INVALID', 'AGENT_WORKER_EXITED', 'AGENT_INTERNAL_FAILURE', 'AGENT_BUDGET_EXCEEDED'
+    ])
+    if (!errors.has(request.errorCode)) fail('AGENT_REQUEST_INVALID')
+    const row = this.database.prepare('SELECT * FROM formal_agent_runs WHERE run_id = ?').get(attempt.runId)
+    if (!row || row.state !== 'running' || Number(row.attempt_count) !== attempt.attempt ||
+        row.lease_owner !== attempt.owner || Number(row.lease_expires_at) !== attempt.leaseExpiresAt) {
+      fail('AGENT_CONTEXT_OPERATION_FAILED')
+    }
+    const terminal = Number(row.attempt_count) >= Number(row.max_attempts)
+    const now = this.nowValue()
+    const nextAttemptAt = terminal ? now : now + 1000
+    this.database.prepare(`
+      UPDATE formal_agent_runs SET state = ?, next_attempt_at = ?, lease_owner = NULL,
+        lease_expires_at = NULL, error_code = ?, updated_at = ? WHERE run_id = ?
+    `).run(terminal ? 'failed' : 'retry_wait', nextAttemptAt, terminal ? request.errorCode : null, now, attempt.runId)
+    return { runId: row.run_id, state: terminal ? 'failed' : 'retry_wait', nextAttemptAt }
   }
 }
 

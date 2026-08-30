@@ -253,7 +253,10 @@ test('SEM-F28 formal Agent host methods preserve exact operation and payload ide
     ['deleteAgentSessionData', OPERATIONS.AGENT_DELETE_SESSION_DATA, { sessionId: 's', deletionIdempotencyKey: 'delete' }],
     ['personalContextIngest', OPERATIONS.PERSONAL_CONTEXT_INGEST, { sourceKind: 'session', sessionId: 's' }],
     ['personalContextResolve', OPERATIONS.PERSONAL_CONTEXT_RESOLVE, { scope: { kind: 'session', reference: 's' } }],
-    ['personalContextManage', OPERATIONS.PERSONAL_CONTEXT_MANAGE, { type: 'view' }]
+    ['personalContextManage', OPERATIONS.PERSONAL_CONTEXT_MANAGE, { type: 'view' }],
+    ['claimNextFormalAgentRun', OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { claimIdempotencyKey: 'claim.new', owner: 'owner.new', leaseMs: 1000 }],
+    ['completeFormalAgentRun', OPERATIONS.FORMAL_AGENT_COMPLETE_RUN, { attemptIdentity: {}, resultDigest: 'a'.repeat(64), resultSummary: {} }],
+    ['failFormalAgentRun', OPERATIONS.FORMAL_AGENT_FAIL_RUN, { attemptIdentity: {}, errorCode: 'AGENT_INTERNAL_FAILURE' }]
   ]
   try {
     for (const [method, operation, payload] of cases) {
@@ -264,11 +267,28 @@ test('SEM-F28 formal Agent host methods preserve exact operation and payload ide
         ? { source: payload }
         : method === 'personalContextResolve'
           ? { request: payload }
-          : method === 'personalContextManage' ? { command: payload } : payload
+          : method === 'personalContextManage' ? { command: payload }
+            : ['claimNextFormalAgentRun', 'completeFormalAgentRun', 'failFormalAgentRun'].includes(method)
+              ? { request: payload }
+              : payload
       assert.deepEqual(request.payload, expectedPayload)
       child.emit('message', successResponse(request, { operation }))
       assert.deepEqual(await pending, { operation })
     }
+  } finally {
+    await terminateQuietly(host)
+  }
+})
+
+test('SEM-F28/SEM-F30/J21 formal Agent next-wake host request has an exact empty payload', async () => {
+  const { child, host } = await startReady()
+  try {
+    const pending = host.nextFormalAgentRunAt()
+    await nextTurn()
+    const request = requestFor(child, OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT)
+    assert.deepEqual(request.payload, {})
+    child.emit('message', successResponse(request, null))
+    assert.equal(await pending, null)
   } finally {
     await terminateQuietly(host)
   }
