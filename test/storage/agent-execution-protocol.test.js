@@ -81,3 +81,21 @@ test('SEM-F28/SEM-F34/J22: storage worker exposes exact v7 execution commands wi
   assert.equal(Object.hasOwn(result.result, 'database'), false)
 })
 
+test('SEM-F16/SEM-F29/J22/J24: run create/cancel commands reuse the execution worker boundary', (t) => {
+  const { service, call } = fixture(t)
+  const input = {
+    runId: 'run.protocol-created', recipeId: 'qa.answer', recipeVersion: '1',
+    scope: { kind: 'session', reference: 'protocol-session' }, transcriptVersion: 'raw',
+    inputWatermark: { throughEventOrder: 1 }, inputDigest: 'd'.repeat(64),
+    requestedBy: 'user', clientIdempotencyKey: 'protocol-client-created'
+  }
+  const created = call(OPERATIONS.AGENT_CREATE_RUN, { request: input })
+  assert.equal(created.ok, true)
+  assert.equal(created.result.state, 'queued')
+  assert.equal(call(OPERATIONS.AGENT_CREATE_RUN, { request: input }).result.replayed, true)
+  const cancelled = call(OPERATIONS.AGENT_CANCEL_RUN, { request: { runId: input.runId } })
+  assert.equal(cancelled.ok, true)
+  assert.equal(cancelled.result.state, 'cancelled')
+  assert.equal(Object.hasOwn(cancelled.result, 'database'), false)
+  void service
+})

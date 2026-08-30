@@ -249,6 +249,18 @@ class StorageWorkerService {
       assertExactKeys(payload, ['sessionId', 'deletionIdempotencyKey'])
       return this.requirePersonalContextStore().deleteSessionData(payload, this.requireAgentStore())
     }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_PREPARE_SESSION_INGEST) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().prepareSessionIngestRequest(payload.request)
+    }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT) {
+      assertExactKeys(payload, ['source'])
+      return this.requirePersonalContextStore().readSessionInput(payload.source)
+    }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_COMMIT_SESSION_INGEST) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().commitSessionIngest(payload.request)
+    }
     if (operation === OPERATIONS.FORMAL_AGENT_CLAIM_RUN) {
       assertExactKeys(payload, ['request'])
       return this.requirePersonalContextStore().claimNextFormalRun(payload.request)
@@ -280,6 +292,14 @@ class StorageWorkerService {
     if (operation === OPERATIONS.AGENT_CREATE_INTERACTION) {
       assertExactKeys(payload, ['request'])
       return this.requireAgentExecutionStore().createInteraction(payload.request)
+    }
+    if (operation === OPERATIONS.AGENT_CREATE_RUN) {
+      assertExactKeys(payload, ['request'])
+      return this.requireAgentExecutionStore().createRun(payload.request)
+    }
+    if (operation === OPERATIONS.AGENT_CANCEL_RUN) {
+      assertExactKeys(payload, ['request'])
+      return this.requireAgentExecutionStore().cancelRun(payload.request)
     }
     if (operation === OPERATIONS.AGENT_TERMINALIZE_INTERACTION) {
       assertExactKeys(payload, ['request'])

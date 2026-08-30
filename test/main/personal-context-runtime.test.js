@@ -63,3 +63,48 @@ test('SEM-F00/SEM-F30/J21: main stops Agent listeners and scheduler before subti
   assert.ok(agentRuntimeLoad > subtitleStart, 'Agent runtime must load only after subtitle startup enters its guarded seam')
   assert.match(source, /catch \{\s*personalContextRuntime = null\s*console\.error\('\[agent\.runtime\] AGENT_CONTEXT_UNAVAILABLE'\)/)
 })
+
+test('SEM-F28/SEM-F30/SEM-T10/J22/J24: ready terminal notice prepares one session ingest through scheduler lifecycle', async () => {
+  let listener = null
+  const calls = []
+  const output = {
+    schemaVersion: 1,
+    experiences: [],
+    memoryCandidates: []
+  }
+  const source = {
+    sourceKind: 'session', sessionId: 'session.runtime', transcriptVersion: 'raw',
+    inputWatermark: 1, inputDigest: 'a'.repeat(64)
+  }
+  const gateway = {
+    personalContextIngest: async () => ({}), personalContextResolve: async () => ({}),
+    personalContextManage: async () => ({ revision: 0, totalCount: 0, hasMore: false, nextCursor: null, rows: [] }),
+    preparePersonalContextSessionIngest: async (request) => { calls.push(['prepare', request]); return { runId: 'run.runtime' } },
+    readPersonalContextSessionInput: async () => ({ ...source, events: [{ eventOrder: 1, segmentId: 'segment.1', text: 'x' }] }),
+    commitPersonalContextSessionIngest: async (request) => { calls.push(['commit', request]); return { state: 'committed' } },
+    claimNextFormalAgentRun: async () => calls.some(([name]) => name === 'claim') ? null : (calls.push(['claim']), {
+      runId: 'run.runtime', recipeId: 'context.ingest.session', source,
+      attemptIdentity: { runId: 'run.runtime', attempt: 1, owner: 'scheduler', leaseExpiresAt: 100000 }
+    }),
+    nextFormalAgentRunAt: async () => null,
+    failFormalAgentRun: async (request) => { calls.push(['fail', request]); return { state: 'failed' } },
+    createAgentInteraction: async (request) => { calls.push(['interaction:create', request]); return request },
+    terminalizeAgentInteraction: async (request) => { calls.push(['interaction:terminalize', request]); return request }
+  }
+  const runtime = new PersonalContextRuntime({
+    gateway,
+    modelAccess: { bind: async (request) => { calls.push(['bind', request]); return { capabilities: { usageReporting: false } } } },
+    loop: { agentLoop: async (request) => { calls.push(['loop', request]); return { text: JSON.stringify(output) } } },
+    getAutomaticEligibility: async () => 'ready',
+    config: { get: () => ({}), updateAgentSettings: () => ({}) }
+  })
+  runtime.start({ onTerminalCommitted: (callback) => { listener = callback; return () => { listener = null } } })
+  listener({ sessionId: 'session.runtime' })
+  for (let i = 0; i < 10 && !calls.some(([name]) => name === 'bind'); i++) {
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+  assert.equal(calls.filter(([name]) => name === 'prepare').length, 1)
+  assert.equal(calls.some(([name]) => name === 'bind'), true)
+  assert.equal(calls.some(([name]) => name === 'commit'), true, JSON.stringify(calls))
+  await runtime.stop()
+})

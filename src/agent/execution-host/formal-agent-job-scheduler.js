@@ -29,6 +29,7 @@ class FormalAgentJobScheduler {
     this.queued = false
     this.timer = null
     this.pendingClaim = null
+    this.activeController = null
     this.claimSequence = 0
   }
 
@@ -55,6 +56,8 @@ class FormalAgentJobScheduler {
     this.generation += 1
     this.wakeEpoch += 1
     this.pendingClaim = null
+    if (this.activeController) this.activeController.abort()
+    this.activeController = null
     this.cancelTimer()
   }
 
@@ -101,10 +104,14 @@ class FormalAgentJobScheduler {
         }
         if (!this.active(generation)) return
         if (job) {
+          const controller = new AbortController()
+          this.activeController = controller
           try {
-            await this.runner.run(job)
+            await this.runner.run({ ...job, signal: controller.signal })
           } catch {
             this.diagnostic()
+          } finally {
+            if (this.activeController === controller) this.activeController = null
           }
           continue
         }

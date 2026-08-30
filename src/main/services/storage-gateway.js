@@ -62,6 +62,8 @@ const ISOLATED_AGENT_OPERATIONS = new Set([
   'nextFormalAgentRunAt',
   'completeFormalAgentRun',
   'failFormalAgentRun',
+  'createAgentRun',
+  'cancelAgentRun',
   'createAgentInteraction',
   'terminalizeAgentInteraction',
   'startAgentToolCall',
@@ -435,6 +437,18 @@ class StorageGateway {
     return this.enqueue('deletePersonalContextSessionData', input)
   }
 
+  preparePersonalContextSessionIngest (request) {
+    return this.enqueue('preparePersonalContextSessionIngest', request)
+  }
+
+  readPersonalContextSessionInput (source) {
+    return this.enqueue('readPersonalContextSessionInput', source)
+  }
+
+  commitPersonalContextSessionIngest (request) {
+    return this.enqueue('commitPersonalContextSessionIngest', request)
+  }
+
   claimNextFormalAgentRun (request) {
     return this.enqueue('claimNextFormalAgentRun', request)
   }
@@ -453,6 +467,14 @@ class StorageGateway {
 
   createAgentInteraction (request) {
     return this.enqueue('createAgentInteraction', request)
+  }
+
+  createAgentRun (request) {
+    return this.enqueue('createAgentRun', request)
+  }
+
+  cancelAgentRun (request) {
+    return this.enqueue('cancelAgentRun', request)
   }
 
   terminalizeAgentInteraction (request) {
@@ -527,10 +549,15 @@ class StorageGateway {
       case 'personalContextResolve': return host.personalContextResolve(item.payload)
       case 'personalContextManage': return host.personalContextManage(item.payload)
       case 'deletePersonalContextSessionData': return host.deletePersonalContextSessionData(item.payload)
+      case 'preparePersonalContextSessionIngest': return host.preparePersonalContextSessionIngest(item.payload)
+      case 'readPersonalContextSessionInput': return host.readPersonalContextSessionInput(item.payload)
+      case 'commitPersonalContextSessionIngest': return host.commitPersonalContextSessionIngest(item.payload)
       case 'claimNextFormalAgentRun': return host.claimNextFormalAgentRun(item.payload)
       case 'nextFormalAgentRunAt': return host.nextFormalAgentRunAt()
       case 'completeFormalAgentRun': return host.completeFormalAgentRun(item.payload)
       case 'failFormalAgentRun': return host.failFormalAgentRun(item.payload)
+      case 'createAgentRun': return host.createAgentRun(item.payload)
+      case 'cancelAgentRun': return host.cancelAgentRun(item.payload)
       case 'createAgentInteraction': return host.createAgentInteraction(item.payload)
       case 'terminalizeAgentInteraction': return host.terminalizeAgentInteraction(item.payload)
       case 'startAgentToolCall': return host.startAgentToolCall(item.payload)

@@ -55,6 +55,8 @@ const MAX_INTERACTION_PAGE = 100
 const MAX_SOURCE_REFS = 8
 const MAX_ARGS_BYTES = 8192
 const MAX_RESULT_BYTES = 65536
+const RUN_SCOPE_KINDS = Object.freeze(['selection', 'session', 'date_range', 'project', 'interaction'])
+const RUN_WATERMARK_KEYS = Object.freeze(['fromEventOrder', 'throughEventOrder', 'throughInteractionRevision'])
 
 function fail (code) {
   throw new StorageError(code)
@@ -140,6 +142,31 @@ function rowInteraction (row, replayed = false) {
   return replayed ? { ...value, replayed: true } : value
 }
 
+function rowRun (row, replayed = false) {
+  const value = {
+    runId: row.run_id,
+    recipeId: row.recipe_id,
+    recipeVersion: row.recipe_version,
+    scope: jsonObject(row.scope_json),
+    scopeDigest: row.scope_digest,
+    transcriptVersion: row.transcript_version,
+    inputWatermark: jsonObject(row.input_watermark_json),
+    inputDigest: row.input_digest,
+    requestedBy: row.requested_by,
+    state: row.state,
+    attemptCount: Number(row.attempt_count),
+    maxAttempts: Number(row.max_attempts),
+    nextAttemptAt: Number(row.next_attempt_at),
+    cancelRequested: row.cancel_requested_at !== null,
+    errorCode: row.error_code,
+    resultDigest: row.result_digest,
+    resultSummary: row.result_summary_json === null ? null : jsonObject(row.result_summary_json),
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at)
+  }
+  return replayed ? { ...value, replayed: true } : value
+}
+
 function rowToolCall (row, replayed = false) {
   const value = {
     callId: row.call_id,
@@ -195,6 +222,21 @@ function decodeCursor (value) {
   identifier(parsed.interactionId)
   if (encodeCursor(parsed) !== value) fail('AGENT_REQUEST_INVALID')
   return parsed
+}
+
+function validateRunScope (value) {
+  exactObject(value, ['kind', 'reference'])
+  if (!RUN_SCOPE_KINDS.includes(value.kind)) fail('AGENT_REQUEST_INVALID')
+  identifier(value.reference)
+  return { kind: value.kind, reference: value.reference }
+}
+
+function runWatermark (value) {
+  if (!isPlainObject(value)) fail('AGENT_REQUEST_INVALID')
+  const keys = Object.keys(value)
+  if (keys.some((key) => !RUN_WATERMARK_KEYS.includes(key))) fail('AGENT_REQUEST_INVALID')
+  for (const key of keys) nonNegativeInteger(value[key])
+  return JSON.parse(canonicalize(value))
 }
 
 class AgentExecutionStore {
@@ -256,6 +298,122 @@ class AgentExecutionStore {
     let capabilities
     try { capabilities = JSON.parse(binding.capability_json) } catch { fail('STORAGE_COMMAND_FAILED') }
     return { row: binding, capabilities }
+  }
+
+  createRun (input) {
+    exactObject(input, [
+      'runId', 'recipeId', 'recipeVersion', 'scope', 'transcriptVersion',
+      'inputWatermark', 'inputDigest', 'requestedBy', 'clientIdempotencyKey'
+    ])
+    const runId = identifier(input.runId)
+    let recipe
+    try { recipe = getRecipe(input.recipeId, input.recipeVersion) } catch { fail('AGENT_REQUEST_INVALID') }
+    const scope = validateRunScope(input.scope)
+    if (!recipe.inputScopes.includes(scope.kind)) fail('AGENT_REQUEST_INVALID')
+    if (!['raw', 'refined'].includes(input.transcriptVersion)) fail('AGENT_REQUEST_INVALID')
+    const inputWatermark = runWatermark(input.inputWatermark)
+    digest(input.inputDigest)
+    if (input.requestedBy !== 'automatic' && input.requestedBy !== 'user') fail('AGENT_REQUEST_INVALID')
+    if (input.requestedBy === 'user') identifier(input.clientIdempotencyKey)
+    else if (input.clientIdempotencyKey !== null) fail('AGENT_REQUEST_INVALID')
+    if (scope.kind === 'session' && !Object.hasOwn(inputWatermark, 'throughEventOrder')) fail('AGENT_REQUEST_INVALID')
+    const requestDigest = sha256Canonical({
+      recipeId: recipe.recipeId,
+      recipeVersion: recipe.recipeVersion,
+      scope,
+      transcriptVersion: input.transcriptVersion,
+      inputWatermark,
+      inputDigest: input.inputDigest,
+      requestedBy: input.requestedBy,
+      clientIdempotencyKey: input.clientIdempotencyKey
+    })
+    const dedupeKey = input.requestedBy === 'user'
+      ? sha256Canonical({ requestedBy: 'user', clientIdempotencyKey: input.clientIdempotencyKey })
+      : sha256Canonical({
+          requestedBy: 'automatic', recipeId: recipe.recipeId, recipeVersion: recipe.recipeVersion,
+          scope, transcriptVersion: input.transcriptVersion, inputWatermark, inputDigest: input.inputDigest
+        })
+    const scopeDigest = sha256Canonical(scope)
+    return this.transaction(() => {
+      const byId = this.database.prepare('SELECT * FROM formal_agent_runs WHERE run_id=?').get(runId)
+      if (byId) {
+        if (byId.request_digest !== requestDigest || byId.dedupe_key !== dedupeKey) fail('AGENT_REQUEST_INVALID')
+        return rowRun(byId, true)
+      }
+      const byDedupe = this.database.prepare('SELECT * FROM formal_agent_runs WHERE dedupe_key=?').get(dedupeKey)
+      if (byDedupe) {
+        if (byDedupe.request_digest !== requestDigest) fail('AGENT_REQUEST_INVALID')
+        return rowRun(byDedupe, true)
+      }
+      const byClient = input.clientIdempotencyKey === null ? null : this.database.prepare(
+        'SELECT * FROM formal_agent_runs WHERE client_idempotency_key=?'
+      ).get(input.clientIdempotencyKey)
+      if (byClient) {
+        if (byClient.request_digest !== requestDigest) fail('AGENT_REQUEST_INVALID')
+        return rowRun(byClient, true)
+      }
+      const now = this.nowValue()
+      this.database.prepare(`
+        INSERT INTO formal_agent_runs(
+          run_id, dedupe_key, client_idempotency_key, request_digest,
+          recipe_id, recipe_version, scope_json, scope_digest, transcript_version,
+          input_watermark_json, input_digest, requested_by, state, attempt_count,
+          max_attempts, next_attempt_at, lease_owner, lease_expires_at,
+          lease_renewed_from_expires_at, cancel_requested_at, error_code,
+          result_digest, result_summary_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, 3, ?, NULL, NULL,
+          NULL, NULL, NULL, NULL, NULL, ?, ?)
+      `).run(
+        runId, dedupeKey, input.clientIdempotencyKey, requestDigest,
+        recipe.recipeId, recipe.recipeVersion, canonicalize(scope), scopeDigest,
+        input.transcriptVersion, canonicalize(inputWatermark), input.inputDigest,
+        input.requestedBy, now, now, now
+      )
+      return rowRun(this.database.prepare('SELECT * FROM formal_agent_runs WHERE run_id=?').get(runId))
+    })
+  }
+
+  cancelRun (input) {
+    exactObject(input, ['runId'])
+    const runId = identifier(input.runId)
+    return this.transaction(() => {
+      const row = this.runRow(runId)
+      this.guardTombstone(row)
+      if (row.state === 'cancelled' && row.cancel_requested_at !== null) return rowRun(row, true)
+      if (['succeeded', 'failed'].includes(row.state)) fail('AGENT_INTERACTION_STATE_CONFLICT')
+      const now = this.nowValue()
+      if (row.state === 'running') {
+        this.database.prepare(`
+          UPDATE formal_agent_runs SET cancel_requested_at=COALESCE(cancel_requested_at, ?), updated_at=?
+          WHERE run_id=? AND state='running'
+        `).run(now, now, runId)
+      } else {
+        this.database.prepare(`
+          UPDATE formal_agent_runs SET state='cancelled', cancel_requested_at=COALESCE(cancel_requested_at, ?),
+            lease_owner=NULL, lease_expires_at=NULL, lease_renewed_from_expires_at=NULL,
+            error_code=NULL, result_digest=NULL, result_summary_json=NULL, updated_at=?
+          WHERE run_id=? AND state IN ('queued','retry_wait')
+        `).run(now, now, runId)
+        const interaction = this.database.prepare(`
+          SELECT * FROM formal_agent_interactions WHERE run_id=?
+        `).get(runId)
+        if (interaction && interaction.terminal_reason === null) {
+          this.database.prepare(`
+            UPDATE formal_agent_interactions
+            SET terminal_reason='cancelled', error_code=NULL, usage_json=NULL, duration_ms=0,
+                result_json=NULL, result_digest=NULL, terminal_at=?
+            WHERE interaction_id=? AND terminal_reason IS NULL
+          `).run(now, interaction.interaction_id)
+          this.database.prepare(`
+            UPDATE formal_agent_tool_calls
+            SET ended_offset_ms=started_offset_ms, status='cancelled', error_code='TOOL_CANCELLED',
+                result_json=NULL, result_digest=NULL
+            WHERE interaction_id=? AND status='started'
+          `).run(interaction.interaction_id)
+        }
+      }
+      return rowRun(this.runRow(runId))
+    })
   }
 
   createInteraction (input) {

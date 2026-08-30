@@ -4,6 +4,7 @@ const { canonicalize, sha256Canonical } = require('./canonical-json')
 const { rollbackQuietly } = require('./sqlite-store')
 const { StorageError, assertExactKeys, isPlainObject } = require('./protocol')
 const { FORMAL_AGENT_TASK_ERROR_CODES } = require('../../agent/contracts/personal-context-core')
+const { validateRecipeOutput } = require('../../agent/contracts/recipes')
 
 const MAX_CANDIDATES = 256
 const MAX_ITEMS = 20
@@ -149,7 +150,7 @@ class PersonalContextStore {
     return next
   }
 
-  sessionSnapshot (source) {
+  sessionInput (source, { allowRefinedFallback = false } = {}) {
     assertExactKeys(source, ['sourceKind', 'sessionId', 'transcriptVersion', 'inputWatermark', 'inputDigest'], 'AGENT_REQUEST_INVALID')
     if (source.sourceKind !== 'session' || !['raw', 'refined'].includes(source.transcriptVersion)) fail('AGENT_REQUEST_INVALID')
     const sessionId = identifier(source.sessionId)
@@ -164,13 +165,46 @@ class PersonalContextStore {
     const rows = this.database.prepare(`
       SELECT
         segment.segment_id,
+        segment.source_id,
         segment.t0_ms,
         segment.t1_ms,
         first_event.event_order AS first_event_order,
         first_event.text AS raw_text,
         updated_event.event_order AS updated_event_order,
         updated_event.kind AS updated_kind,
-        segment.text AS current_text
+        segment.text AS current_text,
+        (
+          SELECT refined.event_order FROM caption_events AS refined
+          WHERE refined.session_id = segment.session_id
+            AND refined.source_id = segment.source_id
+            AND refined.segment_id = segment.segment_id
+            AND refined.kind = 'refined'
+          ORDER BY refined.revision DESC, refined.event_order DESC LIMIT 1
+        ) AS refined_event_order,
+        (
+          SELECT refined.text FROM caption_events AS refined
+          WHERE refined.session_id = segment.session_id
+            AND refined.source_id = segment.source_id
+            AND refined.segment_id = segment.segment_id
+            AND refined.kind = 'refined'
+          ORDER BY refined.revision DESC, refined.event_order DESC LIMIT 1
+        ) AS refined_text,
+        (
+          SELECT refined.t0_ms FROM caption_events AS refined
+          WHERE refined.session_id = segment.session_id
+            AND refined.source_id = segment.source_id
+            AND refined.segment_id = segment.segment_id
+            AND refined.kind = 'refined'
+          ORDER BY refined.revision DESC, refined.event_order DESC LIMIT 1
+        ) AS refined_t0_ms,
+        (
+          SELECT refined.t1_ms FROM caption_events AS refined
+          WHERE refined.session_id = segment.session_id
+            AND refined.source_id = segment.source_id
+            AND refined.segment_id = segment.segment_id
+            AND refined.kind = 'refined'
+          ORDER BY refined.revision DESC, refined.event_order DESC LIMIT 1
+        ) AS refined_t1_ms
       FROM segments AS segment
       JOIN caption_events AS first_event ON first_event.event_order = segment.first_event_order
       JOIN caption_events AS updated_event ON updated_event.event_order = segment.updated_event_order
@@ -178,30 +212,321 @@ class PersonalContextStore {
       ORDER BY first_event.event_order
     `).all(sessionId)
     if (rows.length === 0) fail('AGENT_INPUT_EMPTY')
-    const maximumWatermark = Number(this.database.prepare(`
-      SELECT MAX(event_order) AS watermark FROM caption_events WHERE session_id = ?
-    `).get(sessionId).watermark)
-    if (inputWatermark !== maximumWatermark) fail('AGENT_INPUT_CHANGED')
-    if (source.transcriptVersion === 'refined' && rows.some((row) => row.updated_kind !== 'refined')) {
+    const refinedComplete = rows.every((row) => row.refined_event_order !== null)
+    if (source.transcriptVersion === 'refined' && !refinedComplete && !allowRefinedFallback) {
       fail('AGENT_INPUT_VERSION_UNAVAILABLE')
     }
+    // A requested refined view is a single-version choice.  If any committed
+    // segment lacks a refined event, freeze the complete raw view instead of
+    // mixing versions or dropping the session.
+    const transcriptVersion = source.transcriptVersion === 'refined' && refinedComplete ? 'refined' : 'raw'
     const events = rows.map((row) => ({
-      eventOrder: Number(source.transcriptVersion === 'refined' ? row.updated_event_order : row.first_event_order),
+      eventOrder: Number(transcriptVersion === 'refined' ? row.refined_event_order : row.first_event_order),
       segmentId: row.segment_id,
-      text: source.transcriptVersion === 'refined' ? row.current_text : row.raw_text
+      text: transcriptVersion === 'refined' ? row.refined_text : row.raw_text
     }))
-    const digestPayload = { sessionId, transcriptVersion: source.transcriptVersion, inputWatermark, events }
+    const selectedWatermark = Math.max(...events.map((event) => event.eventOrder))
+    if (inputWatermark !== selectedWatermark) fail('AGENT_INPUT_CHANGED')
+    const digestPayload = { sessionId, transcriptVersion, inputWatermark, events }
     if (sha256Canonical(digestPayload) !== source.inputDigest) fail('AGENT_INPUT_CHANGED')
     return {
       sessionId,
-      transcriptVersion: source.transcriptVersion,
+      transcriptVersion,
       inputWatermark,
       inputDigest: source.inputDigest,
       startedAt: Number(session.started_at),
       endedAt: Number(session.ended_at),
       fromEventOrder: Math.min(...events.map((event) => event.eventOrder)),
       throughEventOrder: Math.max(...events.map((event) => event.eventOrder)),
-      segmentCount: events.length
+      segmentCount: events.length,
+      events: events.map((event) => ({ ...event }))
+    }
+  }
+
+  sessionSnapshot (source, options = {}) {
+    const input = this.sessionInput(source, options)
+    const { events, ...snapshot } = input
+    return snapshot
+  }
+
+  readSessionInput (source) {
+    return this.sessionInput(source, { allowRefinedFallback: true })
+  }
+
+  deriveSessionSource (request) {
+    assertExactKeys(request, ['sessionId', 'transcriptVersion'], 'AGENT_REQUEST_INVALID')
+    identifier(request.sessionId)
+    if (!['raw', 'refined'].includes(request.transcriptVersion)) fail('AGENT_REQUEST_INVALID')
+    const session = this.database.prepare('SELECT * FROM sessions WHERE session_id=?').get(request.sessionId)
+    if (!session) fail('AGENT_SESSION_NOT_FOUND')
+    if (session.state === 'active') fail('AGENT_SESSION_NOT_TERMINAL')
+    const rows = this.database.prepare(`
+      SELECT segment.segment_id, first_event.event_order AS first_event_order,
+        first_event.text AS raw_text,
+        (SELECT refined.event_order FROM caption_events AS refined
+          WHERE refined.session_id=segment.session_id AND refined.source_id=segment.source_id
+            AND refined.segment_id=segment.segment_id AND refined.kind='refined'
+          ORDER BY refined.revision DESC, refined.event_order DESC LIMIT 1) AS refined_event_order,
+        (SELECT refined.text FROM caption_events AS refined
+          WHERE refined.session_id=segment.session_id AND refined.source_id=segment.source_id
+            AND refined.segment_id=segment.segment_id AND refined.kind='refined'
+          ORDER BY refined.revision DESC, refined.event_order DESC LIMIT 1) AS refined_text
+      FROM segments AS segment
+      JOIN caption_events AS first_event ON first_event.event_order=segment.first_event_order
+      WHERE segment.session_id=? ORDER BY first_event.event_order
+    `).all(request.sessionId)
+    if (rows.length === 0) fail('AGENT_INPUT_EMPTY')
+    const refinedComplete = rows.every((row) => row.refined_event_order !== null)
+    const transcriptVersion = request.transcriptVersion === 'refined' && refinedComplete ? 'refined' : 'raw'
+    const events = rows.map((row) => ({
+      eventOrder: Number(transcriptVersion === 'refined' ? row.refined_event_order : row.first_event_order),
+      segmentId: row.segment_id,
+      text: transcriptVersion === 'refined' ? row.refined_text : row.raw_text
+    }))
+    const inputWatermark = Math.max(...events.map((event) => event.eventOrder))
+    const inputDigest = sha256Canonical({ sessionId: request.sessionId, transcriptVersion, inputWatermark, events })
+    return { sourceKind: 'session', sessionId: request.sessionId, transcriptVersion, inputWatermark, inputDigest }
+  }
+
+  prepareSessionIngestRequest (request) {
+    const source = this.deriveSessionSource(request)
+    return this.prepareSessionIngest(source)
+  }
+
+  prepareSessionIngest (source) {
+    const snapshot = this.sessionSnapshot(source, { allowRefinedFallback: true })
+    const identity = {
+      recipeId: 'context.ingest.session', sourceKind: 'session',
+      sessionId: snapshot.sessionId, transcriptVersion: snapshot.transcriptVersion,
+      inputWatermark: snapshot.inputWatermark, inputDigest: snapshot.inputDigest
+    }
+    const dedupeKey = sha256Canonical(identity)
+    const requestDigest = sha256Canonical({ identity })
+    const runId = `run.${dedupeKey.slice(0, 48)}`
+    const episodeId = `episode.${dedupeKey.slice(0, 44)}`
+    const scopeId = `scope.${sha256Canonical({ kind: 'session', reference: snapshot.sessionId }).slice(0, 48)}`
+    const existing = this.database.prepare('SELECT * FROM formal_agent_runs WHERE dedupe_key=?').get(dedupeKey)
+    const existingEpisode = this.database.prepare(`
+      SELECT * FROM personal_context_episodes WHERE source_kind='session' AND session_id=? AND input_digest=?
+    `).get(snapshot.sessionId, snapshot.inputDigest)
+    if (existing) {
+      if (existing.request_digest !== requestDigest || existing.recipe_id !== 'context.ingest.session') fail('AGENT_REQUEST_INVALID')
+      if (existingEpisode) {
+        return {
+          runId: existing.run_id, recipeId: existing.recipe_id, recipeVersion: existing.recipe_version,
+          episodeId: existingEpisode.episode_id, state: existing.state, source: snapshot, replayed: true
+        }
+      }
+      if (!['queued', 'running', 'retry_wait'].includes(existing.state)) fail('AGENT_CONTEXT_OPERATION_FAILED')
+    }
+    const now = this.nowValue()
+    const episodeSummary = { title: 'Session experience', bullets: [`Segments: ${snapshot.segmentCount}`], omissions: [] }
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      this.database.prepare(`
+        INSERT OR IGNORE INTO personal_context_scopes(
+          scope_id, kind, canonical_key, label, session_id, origin, lifecycle, created_at, updated_at
+        ) VALUES (?, 'session', ?, 'Session', ?, 'automatic', 'active', ?, ?)
+      `).run(scopeId, `session:${snapshot.sessionId}`, snapshot.sessionId, now, now)
+      if (!existing) {
+        this.database.prepare(`
+          INSERT INTO formal_agent_runs(
+            run_id, dedupe_key, client_idempotency_key, request_digest, recipe_id, recipe_version,
+            scope_json, scope_digest, transcript_version, input_watermark_json, input_digest,
+            requested_by, state, attempt_count, max_attempts, next_attempt_at,
+            lease_owner, lease_expires_at, lease_renewed_from_expires_at, cancel_requested_at,
+            error_code, result_digest, result_summary_json, created_at, updated_at
+          ) VALUES (?, ?, NULL, ?, 'context.ingest.session', '1', ?, ?, ?, ?, ?,
+            'automatic', 'queued', 0, 3, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)
+        `).run(
+          runId, dedupeKey, requestDigest, canonicalize({ kind: 'session', reference: snapshot.sessionId }),
+          sha256Canonical({ kind: 'session', reference: snapshot.sessionId }), snapshot.transcriptVersion,
+          canonicalize({ throughEventOrder: snapshot.inputWatermark }), snapshot.inputDigest, now, now, now
+        )
+      }
+      this.database.prepare(`
+        INSERT OR IGNORE INTO personal_context_episodes(
+          episode_id, source_kind, session_id, interaction_id, scope_id, transcript_version,
+          input_watermark, from_event_order, through_event_order, input_digest, summary_json,
+          occurred_from_offset_ms, occurred_through_offset_ms, ingest_run_id, lifecycle,
+          created_at, updated_at
+        ) VALUES (?, 'session', ?, NULL, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 'active', ?, ?)
+      `).run(
+        episodeId, snapshot.sessionId, scopeId, snapshot.transcriptVersion,
+        snapshot.inputWatermark, snapshot.fromEventOrder, snapshot.throughEventOrder,
+        snapshot.inputDigest, canonicalize(episodeSummary), Math.max(0, snapshot.endedAt - snapshot.startedAt),
+        existing?.run_id || runId, now, now
+      )
+      this.database.exec('COMMIT')
+      const row = this.database.prepare('SELECT * FROM formal_agent_runs WHERE dedupe_key=?').get(dedupeKey)
+      return {
+        runId: row.run_id, recipeId: row.recipe_id, recipeVersion: row.recipe_version,
+        episodeId, state: row.state, source: snapshot, replayed: false
+      }
+    } catch (error) {
+      rollbackQuietly(this.database)
+      throw error
+    }
+  }
+
+  ingestAttempt (value) {
+    assertExactKeys(value, ['runId', 'attempt', 'owner', 'leaseExpiresAt'], 'AGENT_REQUEST_INVALID')
+    identifier(value.runId)
+    safeInteger(value.attempt, 1)
+    identifier(value.owner)
+    safeInteger(value.leaseExpiresAt, 0)
+    return value
+  }
+
+  ingestScope (candidate, sessionId, now) {
+    if (!['global', 'session', 'topic', 'project'].includes(candidate.scopeKind)) fail('AGENT_OUTPUT_INVALID')
+    if (candidate.scopeKind === 'session') {
+      if (candidate.scopeKeyProposal !== null && candidate.scopeKeyProposal !== sessionId) fail('AGENT_OUTPUT_INVALID')
+      const scope = this.database.prepare(`
+        SELECT * FROM personal_context_scopes
+        WHERE kind='session' AND canonical_key=? AND session_id=? AND origin='automatic' AND lifecycle='active'
+      `).get(`session:${sessionId}`, sessionId)
+      if (!scope) fail('AGENT_OUTPUT_INVALID')
+      return scope
+    }
+    if (candidate.scopeKind === 'global') {
+      if (candidate.scopeKeyProposal !== null) fail('AGENT_OUTPUT_INVALID')
+      const scopeId = this.scopeIdentity({ scopeKind: 'global', scopeReference: null }, now)
+      return this.database.prepare('SELECT * FROM personal_context_scopes WHERE scope_id=?').get(scopeId)
+    }
+    if (candidate.scopeKeyProposal === null) fail('AGENT_OUTPUT_INVALID')
+    const canonicalKey = `${candidate.scopeKind}:${candidate.scopeKeyProposal}`
+    const scopeId = `scope.${sha256Canonical({ kind: candidate.scopeKind, canonicalKey }).slice(0, 48)}`
+    this.database.prepare(`
+      INSERT OR IGNORE INTO personal_context_scopes(
+        scope_id, kind, canonical_key, label, session_id, origin, lifecycle, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, NULL, 'automatic', 'active', ?, ?)
+    `).run(scopeId, candidate.scopeKind, canonicalKey, candidate.scopeKeyProposal, now, now)
+    return this.database.prepare('SELECT * FROM personal_context_scopes WHERE scope_id=?').get(scopeId)
+  }
+
+  commitSessionIngest (input) {
+    assertExactKeys(input, ['runId', 'attemptIdentity', 'output'], 'AGENT_REQUEST_INVALID')
+    const attempt = this.ingestAttempt(input.attemptIdentity)
+    identifier(input.runId)
+    if (attempt.runId !== input.runId) fail('AGENT_REQUEST_INVALID')
+    try { validateRecipeOutput('context.ingest.session', '1', input.output) } catch { fail('AGENT_OUTPUT_INVALID') }
+    const database = this.database
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const run = database.prepare('SELECT * FROM formal_agent_runs WHERE run_id=?').get(input.runId)
+      if (!run) fail('AGENT_CONTEXT_NOT_FOUND')
+      const episode = database.prepare(`
+        SELECT * FROM personal_context_episodes WHERE ingest_run_id=? AND source_kind='session'
+      `).get(input.runId)
+      if (!episode) fail('AGENT_CONTEXT_OPERATION_FAILED')
+      if (run.state === 'succeeded') {
+        database.exec('COMMIT')
+        return { runId: input.runId, state: 'succeeded', replayed: true, episodeId: episode.episode_id }
+      }
+      if (run.state === 'cancelled' || run.state === 'failed') fail('AGENT_CONTEXT_OPERATION_FAILED')
+      if (run.state !== 'running' || Number(run.attempt_count) !== attempt.attempt ||
+          run.lease_owner !== attempt.owner || Number(run.lease_expires_at) !== attempt.leaseExpiresAt ||
+          run.cancel_requested_at !== null) fail('AGENT_CONTEXT_OPERATION_FAILED')
+      const snapshot = this.sessionSnapshot({
+        sourceKind: 'session', sessionId: episode.session_id, transcriptVersion: episode.transcript_version,
+        inputWatermark: Number(episode.input_watermark), inputDigest: episode.input_digest
+      })
+      const output = input.output
+      const validRef = (ref) => ref.sessionId === snapshot.sessionId && ref.transcriptVersion === snapshot.transcriptVersion &&
+        ref.fromEventOrder >= snapshot.fromEventOrder && ref.throughEventOrder <= snapshot.throughEventOrder
+      for (const experience of output.experiences) {
+        if (!validRef(experience.evidence)) fail('AGENT_OUTPUT_INVALID')
+      }
+      for (const candidate of output.memoryCandidates) {
+        if (!validRef(candidate.evidence)) fail('AGENT_OUTPUT_INVALID')
+      }
+      const now = this.nowValue()
+      let acceptedCandidateCount = 0
+      let discardedCandidateCount = 0
+      let revisionCount = 0
+      let evidenceCount = 0
+      const touched = new Set()
+      for (const candidate of output.memoryCandidates) {
+        if (candidate.salience === 'low' || (candidate.confidence === 'low' && candidate.kind !== 'preference')) {
+          discardedCandidateCount += 1
+          continue
+        }
+        const semanticKey = normalizeSemanticKey(candidate.content)
+        const scope = this.ingestScope(candidate, snapshot.sessionId, now)
+        if (!scope) fail('AGENT_OUTPUT_INVALID')
+        const identityHash = sha256Canonical({ scopeId: scope.scope_id, kind: candidate.kind, semanticKey })
+        if (database.prepare('SELECT 1 FROM personal_context_suppressions WHERE identity_hash=? AND source_digest=?').get(identityHash, snapshot.inputDigest)) {
+          discardedCandidateCount += 1
+          continue
+        }
+        const contentJson = canonicalize({ displayText: candidate.content })
+        let memory = database.prepare('SELECT * FROM personal_context_items WHERE scope_id=? AND kind=? AND semantic_key=?').get(scope.scope_id, candidate.kind, semanticKey)
+        if (memory && memory.origin === 'explicit' && memory.content_json !== contentJson) {
+          discardedCandidateCount += 1
+          continue
+        }
+        if (!memory) {
+          const memoryId = `memory.${sha256Canonical({ scopeId: scope.scope_id, kind: candidate.kind, semanticKey }).slice(0, 44)}`
+          database.prepare(`
+            INSERT INTO personal_context_items(
+              memory_id, scope_id, kind, semantic_key, content_json, origin,
+              confidence_band, salience_band, lifecycle, current_revision_id,
+              item_revision, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, 'inferred', ?, ?, 'active', NULL, 1, ?, ?)
+          `).run(memoryId, scope.scope_id, candidate.kind, semanticKey, contentJson, candidate.confidence, candidate.salience, now, now)
+          const revisionId = `revision.${sha256Canonical({ memoryId, itemRevision: 1 }).slice(0, 44)}`
+          database.prepare(`
+            INSERT INTO personal_context_revisions(
+              revision_id, memory_id, operation, content_json, previous_revision_id, run_id, created_at
+            ) VALUES (?, ?, 'create', ?, NULL, ?, ?)
+          `).run(revisionId, memoryId, contentJson, input.runId, now)
+          database.prepare('UPDATE personal_context_items SET current_revision_id=? WHERE memory_id=?').run(revisionId, memoryId)
+          memory = database.prepare('SELECT * FROM personal_context_items WHERE memory_id=?').get(memoryId)
+          revisionCount += 1
+        } else if (memory.content_json !== contentJson) {
+          const itemRevision = Number(memory.item_revision) + 1
+          const revisionId = `revision.${sha256Canonical({ memoryId: memory.memory_id, itemRevision, contentJson }).slice(0, 44)}`
+          database.prepare(`
+            INSERT INTO personal_context_revisions(
+              revision_id, memory_id, operation, content_json, previous_revision_id, run_id, created_at
+            ) VALUES (?, ?, 'merge', ?, ?, ?, ?)
+          `).run(revisionId, memory.memory_id, contentJson, memory.current_revision_id, input.runId, now)
+          database.prepare(`
+            UPDATE personal_context_items SET content_json=?, lifecycle='conflicted', current_revision_id=?,
+              item_revision=?, updated_at=? WHERE memory_id=?
+          `).run(contentJson, revisionId, itemRevision, now, memory.memory_id)
+          memory = database.prepare('SELECT * FROM personal_context_items WHERE memory_id=?').get(memory.memory_id)
+          revisionCount += 1
+        }
+        for (const ref of [candidate.evidence]) {
+          const inserted = database.prepare(`
+            INSERT INTO personal_context_evidence(
+              evidence_id, ingest_run_id, memory_id, source_kind, session_id, interaction_id,
+              transcript_version, input_watermark, from_event_order, through_event_order,
+              input_digest, recipe_id, recipe_version, created_at
+            ) VALUES (?, ?, ?, 'session', ?, NULL, ?, ?, ?, ?, ?, 'context.ingest.session', '1', ?)
+            ON CONFLICT DO NOTHING
+          `).run(
+            `evidence.${sha256Canonical({ runId: input.runId, memoryId: memory.memory_id, ref }).slice(0, 44)}`,
+            input.runId, memory.memory_id, snapshot.sessionId, snapshot.transcriptVersion,
+            snapshot.inputWatermark, ref.fromEventOrder, ref.throughEventOrder, snapshot.inputDigest, now
+          )
+          evidenceCount += Number(inserted.changes)
+        }
+        acceptedCandidateCount += 1
+        touched.add(memory.memory_id)
+      }
+      const bullets = output.experiences.slice(0, 8).map((experience) => experience.text)
+      const summary = { title: 'Session experience', bullets: bullets.length > 0 ? bullets : [`Segments: ${snapshot.segmentCount}`], omissions: [] }
+      database.prepare('UPDATE personal_context_episodes SET summary_json=?, updated_at=? WHERE episode_id=?').run(canonicalize(summary), now, episode.episode_id)
+      const result = { acceptedCandidateCount, discardedCandidateCount, memoryItemCount: touched.size, evidenceCount, revisionCount }
+      if (acceptedCandidateCount > 0 || bullets.length > 0) this.advanceRevision({ operation: 'ingest', runId: input.runId, episodeId: episode.episode_id })
+      database.exec('COMMIT')
+      return { runId: input.runId, state: 'committed', replayed: false, episodeId: episode.episode_id, ...result }
+    } catch (error) {
+      rollbackQuietly(database)
+      throw error
     }
   }
 

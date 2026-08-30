@@ -140,6 +140,24 @@ test('SEM-F00/SEM-F28/SEM-T04/J21: stop invalidates a hung claim without delayin
   releaseClaim(null)
 })
 
+test('SEM-F28/SEM-T04/J22/J24: scheduler stop aborts an active Agent attempt without waiting for the runner', async () => {
+  let resolveClaim
+  let signal
+  const scheduler = new FormalAgentJobScheduler({
+    storage: {
+      claimNextFormalAgentRun: async () => new Promise((resolve) => { resolveClaim = resolve }),
+      nextFormalAgentRunAt: async () => null
+    },
+    runner: { run: async (job) => { signal = job.signal; await new Promise(() => {}) } }
+  })
+  scheduler.start()
+  await settled()
+  resolveClaim({ runId: 'run.abort', recipeId: 'context.ingest.session', source: {}, attemptIdentity: { runId: 'run.abort', attempt: 1, owner: 'owner', leaseExpiresAt: 1 } })
+  await settled()
+  await scheduler.stop()
+  assert.equal(signal.aborted, true)
+})
+
 test('SEM-F28/SEM-F30/J21: context ingest runner settles one frozen attempt without exposing failures', async () => {
   const settlements = []
   const source = { sourceKind: 'session', sessionId: 'session.1' }

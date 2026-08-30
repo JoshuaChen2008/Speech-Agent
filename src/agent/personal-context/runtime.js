@@ -1,6 +1,6 @@
 'use strict'
 
-const { createPersonalContextModule } = require('./index')
+const { createPersonalContextExecutionAdapter, createPersonalContextModule } = require('./index')
 const { PersonalContextController } = require('./controller')
 const {
   ContextIngestSessionRunner,
@@ -23,13 +23,29 @@ class PersonalContextRuntime {
       updateAgentSettings: (request) => this.config.updateAgentSettings(request),
       onChanged: this.onChanged
     })
-    this.runner = new ContextIngestSessionRunner({ personalContext: this.module, storage: this.gateway })
+    this.executionAdapter = null
+    if (options.executionAdapter) this.executionAdapter = options.executionAdapter
+    else if (typeof this.gateway.preparePersonalContextSessionIngest === 'function') {
+      this.executionAdapter = createPersonalContextExecutionAdapter({ storage: this.gateway })
+    }
+    this.runner = new ContextIngestSessionRunner({
+      personalContext: (options.modelAccess && options.loop && this.executionAdapter) ? this.executionAdapter : this.module,
+      storage: this.gateway,
+      modelAccess: options.modelAccess,
+      interactions: options.interactions || {
+        create: (request) => this.gateway.createAgentInteraction(request),
+        terminalize: (request) => this.gateway.terminalizeAgentInteraction(request)
+      },
+      loop: options.loop,
+      resolveModel: options.resolveModel,
+      now: options.now
+    })
     this.scheduler = new FormalAgentJobScheduler({
       storage: this.gateway,
       runner: this.runner,
       onDiagnostic: this.onDiagnostic
     })
-    this.reconciler = new S1TerminalSessionReconciler()
+    this.reconciler = new S1TerminalSessionReconciler({ getEligibility: options.getAutomaticEligibility })
     this.unsubscribe = null
     this.started = false
   }
@@ -38,10 +54,11 @@ class PersonalContextRuntime {
     if (this.started) return false
     if (!recorder || typeof recorder.onTerminalCommitted !== 'function') throw new TypeError('recorder terminal seam is required')
     this.unsubscribe = recorder.onTerminalCommitted((notice) => {
-      void this.reconciler.reconcile(notice).then((result) => {
+      void this.reconciler.reconcile(notice).then(async (result) => {
         /* S1 has no model-access fact and therefore cannot enter ready. Keep
            the scheduler detached until a later slice supplies that fact. */
-        if (result.eligibility !== 'ready') return
+        if (result.eligibility !== 'ready' || !this.executionAdapter) return
+        await this.runner.prepare({ sessionId: notice.sessionId, transcriptVersion: 'raw' })
         if (!this.scheduler.started) this.scheduler.start()
         this.scheduler.wake('terminal-session')
       }).catch(() => {

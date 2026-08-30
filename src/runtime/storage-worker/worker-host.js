@@ -461,6 +461,18 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_DELETE_SESSION_DATA, input)
   }
 
+  preparePersonalContextSessionIngest (request) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_PREPARE_SESSION_INGEST, { request })
+  }
+
+  readPersonalContextSessionInput (source) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT, { source })
+  }
+
+  commitPersonalContextSessionIngest (request) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_COMMIT_SESSION_INGEST, { request })
+  }
+
   claimNextFormalAgentRun (request) {
     return this.enqueue(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request })
   }
@@ -479,6 +491,14 @@ class StorageWorkerHost {
 
   createAgentInteraction (request) {
     return this.enqueue(OPERATIONS.AGENT_CREATE_INTERACTION, { request })
+  }
+
+  createAgentRun (request) {
+    return this.enqueue(OPERATIONS.AGENT_CREATE_RUN, { request })
+  }
+
+  cancelAgentRun (request) {
+    return this.enqueue(OPERATIONS.AGENT_CANCEL_RUN, { request })
   }
 
   terminalizeAgentInteraction (request) {
