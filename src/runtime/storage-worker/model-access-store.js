@@ -49,7 +49,15 @@ class ModelAccessStore {
   }
 
   configure (input) {
-    const command = assertConfigureCommand(input.command)
+    const rawCommand = input.command
+    const command = rawCommand?.type === 'setCredential' && !Object.hasOwn(rawCommand, 'credential')
+      ? (() => {
+          if (!rawCommand || Object.keys(rawCommand).sort().join(',') !== 'expectedRevision,profileId,type' ||
+              rawCommand.type !== 'setCredential') fail()
+          assertConfigureCommand({ ...rawCommand, credential: 'main-owned-redacted' })
+          return rawCommand
+        })()
+      : assertConfigureCommand(rawCommand)
     const current = this.revision()
     if (command.expectedRevision !== current) fail('MODEL_CONFIG_REVISION_CONFLICT')
     const now = this.now()
