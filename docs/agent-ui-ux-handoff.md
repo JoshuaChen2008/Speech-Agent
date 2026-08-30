@@ -1,692 +1,446 @@
-# Agent UI/UX 交接：隔离内核现状与正式首版目标
+# 正式 Agent UI/UX 交接
 
-> 当前隔离入口状态：实现完成·尚未验收（SEM-F29 / J23）
+> 状态：已决定 · 2026-08-29
 >
-> 正式产品 UI 状态：已决定、尚未实现（SEM-F25–F28 / J20–J22）
+> 面向对象：负责正式 Agent 产品 UI/UX 设计或 renderer 实现的模型。
 >
-> 核对日期：2026-08-09
+> 历史替代：本文整体替代 2026-08-09 的同名 handoff。旧版描述的是隔离 Agent 内核开发入口、旧三任务设计、调试聊天与单一 provider 方案，只保留在 Git 历史中，不再是可执行交接。
 >
-> 面向对象：接手 Agent UI/UX 设计或 renderer 实现的模型
+> 权威顺序：[`semantic-contract.md`](semantic-contract.md) → ADR 0013–0015 → [`agent-redesign-execution-plan.md`](agent-redesign-execution-plan.md) → [`testing-strategy.md`](testing-strategy.md) → 本文。
 >
-> 文档职责：说明当前真实界面、权威状态来源、已知缺口、允许改动范围和正式首版目标。本文不定义新的产品语义，也不作为实现或验收证据。
->
-> 权威顺序：[`semantic-contract.md`](semantic-contract.md) > [ADR](adr/) > 架构文档 > 本交接 > 代码现状。术语以 [`CONTEXT.md`](../CONTEXT.md) 为准。
+> 本文把已决定的产品语义转成设计任务、所有权和交付门，不重新定义 Agent 行为。
 
-## 1. 先分清两个界面
+## 1. 接手时先选工作类型
 
-仓库里同时存在两个不同层级，接手模型必须先声明自己处理哪一个：
+每次接手先声明以下一种类型：
 
-| 层级 | 当前事实 | 可以做什么 | 绝不能宣称 |
-|---|---|---|---|
-| 隔离 Agent 内核开发入口 | `src/agent-mvp/` 已有可单独启动的 Electron + React 界面，只读无音频合成终态会话，生成 `reference-output` | 改善开发工具的信息层级、状态表达、响应式、可访问性与视觉一致性 | 不能称为正式 Agent 产品、会后结构化纪要、增强文本、个人记忆或正式调试聊天 |
-| 正式 Agent 产品 UI | 信息架构与语义已由 SEM-F25–F28/J20–J22 冻结，尚未接入正式设置、字幕历史或字幕提交边界 | 产出设计稿、状态矩阵、组件差异和后端 contract request | 不能用前端 mock 或隔离入口数据宣称正式能力已实现 |
-
-隔离入口不是正式产品页面的“早期皮肤”。它是验证 Agent 内核的开发应用，拥有独立生命周期、数据目录和候选 SQLite。正式 UI 可以复用交互经验与视觉 token，但不能直接继承开发入口的确定性测试 provider、合成 fixture 按钮、参考产物命名或候选数据。
-
-字幕系统始终是可独立运行的核心系统。任何 Agent UI 改动都不得让开始监听、字幕显示、首次稳定转写持久化、字幕历史或原始版导出依赖 Agent 系统。
-
-## 2. 当前隔离入口怎么运行
-
-开发入口：
-
-~~~powershell
-npm run start:agent-mvp
-~~~
-
-该命令先执行 `build:agent-mvp`，再以 `src/agent-mvp/main.js` 启动独立 Electron 应用。
-
-运行边界：
-
-- 应用名为“Live Subtitle Agent MVP”。
-- 默认窗口为 `1000 × 680`，最小 `820 × 560`。
-- 使用独立 `userData`、`agent-mvp.sqlite`、设置文件、凭据文件和 `agent-diagnostics/`。
-- 不导入 `src/main.js`、`SessionCoordinator`、audio host、实时识别 worker、精修 worker 或正式 renderer。
-- 正式打包配置显式排除 `src/agent-core/`、`src/agent-mvp/` 和 Pi 开发依赖。
-- `src/agent-mvp/renderer-dist/` 是构建产物，不要直接编辑。
-
-切换到 OpenAI-compatible HTTPS 服务会把所选合成终态会话正文发送给用户配置的服务。设计核对优先使用“确定性测试 provider”；不要为了视觉检查提交真实凭据或真实会话正文。
-
-## 3. 当前实现拓扑
-
-~~~text
-Agent MVP React renderer
-└─ window.agentMvp（受限 preload）
-   └─ main 进程 sender 校验 + exact payload IPC
-      └─ AgentMvpRuntimeHost
-         ├─ storage utility process
-         │  └─ 真实 storage worker 基础设施
-         │     └─ 独立 SQLite
-         │        ├─ sessions / caption_events
-         │        ├─ agent_jobs / agent_artifacts
-         │        └─ agent_debug_threads / agent_debug_messages
-         └─ Agent utility process
-            └─ Pi Agent Core
-               ├─ AgentPluginHost
-               ├─ 固定 recipe：reference-output-v1
-               ├─ 唯一工具：read_selected_transcript
-               └─ ModelGateway
-                  ├─ deterministic-test
-                  └─ openai-compatible HTTPS
-~~~
-
-关键边界：
-
-- renderer 不持有 Node、Electron、SQLite 或网络权限。
-- 插件拿不到 SQLite 句柄；结构通过校验后由宿主提交。
-- Agent utility process 与 storage utility process 分离。
-- 聊天和任务只读取固定 `sessionId + inputWatermark + transcriptVersion + inputDigest`。
-- 当前只读取 `original` 输入；没有正式精修稿选择 UI。
-- 流式 Agent 事件通过 `onEvent` 投影到界面；助手正文只在本轮请求结束后进入消息列表，当前不是逐 token 消息渲染。
-- 持久化聊天只保存最终用户/助手消息和工具预览、确认、结果；不保存内部思维过程或流式 delta。
-
-## 4. 当前窗口与布局
-
-### 4.1 实际结构
-
-~~~text
-┌──────────────────────────────────────────────────────────────────────┐
-│ 48px 内容标题带：Live Subtitle Agent · 状态行（唯一 aria-live）     │
-├──────────────────────────────────────────────────────────────────────┤
-│ provider 工具条：类型 ▾ · 凭据状态 · 展开配置                        │
-│ （展开后才出现 HTTPS 地址 / 模型 / 新凭据 / 云端披露 / 保存）        │
-├────────────────┬────────────────────────────┬────────────────────────┤
-│ 左 · 导航      │ 中 · 主视图槽位            │ 右 · 选中项详情        │
-│ 终态会话       │ ┌ 对话 │ 运行 ┐（分段）   │ 会话 / 任务 / 产物     │
-│ 合成 fixture   │ 对话视图：                 │ 三选一，随主视图里     │
-│ 会话列表       │  消息 · 待确认预览（内联） │ 选中的东西切换         │
-│                │  工具事件（折叠一行）      │ 任务详情内含取消动作   │
-│                │  输入 / 预览参考产物 / 发送│                        │
-│                │ 运行视图：任务列表 · 产物  │                        │
-└────────────────┴────────────────────────────┴────────────────────────┘
-~~~
-
-布局规则只有一句话：**左 = 导航，中 = 主视图槽位，右 = 当前选中项的详情**。
-中栏是槽位而不是「聊天区」——今天注册了「对话」和「运行」两个视图，将来加视图是往槽位里注册，不需要重排外壳。
-两个视图始终挂载、只切显隐（与 `settings.css` 的 `.pane` / `.pane.active` 同一手法），因此非活动视图里的
-`job-item` / `artifact-item` 仍留在 DOM 与自动化断言里。
-
-当前 CSS 数值（2026-08-09 方向 A′ 改版后）：
-
-| 区域 | 当前实现 |
-|---|---|
-| 应用栅格 | `48px auto auto auto minmax(0, 1fr)`（标题带 / provider 工具条 / 按需配置 / 错误条 / 工作区） |
-| 主工作区 | `244px / minmax(320px, 1fr) / 272px`，grid area 命名为 `sessions / slot / detail` |
-| 主视图槽位 | `.view` / `.view.active` 切显隐；分段控件为 `role=tablist`，视图为 `role=tabpanel` |
-| 会话列表 | 左栏独立滚动 |
-| 消息列表 | 对话视图 flex 剩余空间独立滚动，贴底时才跟随新消息与新预览 |
-| 选中项详情 | 右栏整体滚动 |
-| 断点 | `max-width: 1080px` 收窄三栏；`max-width: 960px` 时右栏改为跨列底部区域并保留自身滚动，**不隐藏任何一栏** |
-| 主题 | renderer 依据 `prefers-color-scheme` 写入 `data-theme`，消费 `tokens.css` 的主题分支 |
-| 高对比 | `forced-colors` 下补齐工具条、分组卡、控件、分段控件、消息气泡、预览卡、选中态与状态色 |
-| reduced motion | 关闭 transition、scroll behavior 与按钮按压位移 |
-
-主进程没有设置 frameless 或自定义 `titleBarStyle`。renderer 内的 `48px` 标题带只是内容区拖动带，不等同于正式设置/字幕历史的标题栏与窗口控制合同；交互控件一律放在标题带下方的工具条，不放进拖动区。
-
-视觉语言与设置窗/字幕历史窗对齐的方式：复用同一批 `tokens.css` 语义 token，复用 `.titlebar` / `.panel-heading` / `.session-card[aria-current]` / `.seg` / `.primary-btn` / `.secondary-btn` / `.link-btn` 的同名同值写法。本轮没有新增或修改共享 token。
-
-主按钮纪律：**同一时刻只允许一个 `.primary-btn` 可见**。有待确认预览时「确认执行」是主按钮，「发送」降级为 `.secondary-btn`。
-
-### 4.2 当前组件清单
-
-| 组件 | 事实来源 | 当前动作 |
+| 类型 | 本轮可以交付 | 本轮不构成 |
 |---|---|---|
-| provider 工具条 | 设置文件 + 凭据仓状态 | 常显类型与凭据状态；展开后配置地址、模型、新凭据、云端披露并保存。切到云端 provider 时自动展开 |
-| 错误条 | IPC 返回的稳定错误码 | `role=alert`；当前只本地化部分错误码 |
-| 合成终态会话区 | 独立 SQLite 的 `sessions` | 添加系统音频或麦克风 fixture；选择一条终态会话（`aria-current`） |
-| 主视图分段控件 | 本地 `view` 状态 | 在「对话」「运行」之间切换；运行标签在有活动任务时显示计数徽标 |
-| 对话视图 | `agent_debug_threads/messages` | 发送提示词；显示最终用户/助手消息与持久工具消息 |
-| 执行预览（内联） | 当前进程内 preview record + 持久 preview 消息 | 以卡片形式长在对话流末尾，就地显示固定 recipe、水位、digest、云端正文披露并确认或拒绝 |
-| 受控工具事件 | 当前 renderer 内存 | 默认折成一行摘要，展开才看细节；最多保留最近 20 条、显示最近 6 条；重启后不恢复 |
-| 运行视图 | `agent_jobs` + `agent_artifacts` | 任务与产物的列表，只给摘要；选中一条把详情交给右栏 |
-| 选中项详情 | 随主视图选中项 | 会话身份 / 任务状态与取消动作 / 产物条目三选一；选中项从快照消失时 fail closed 回落到会话 |
-| 顶栏状态行 | 本地 `busy` 与 `runtime.runningRunId` | 全窗唯一的 `role=status` `aria-live=polite`；只播报正在进行的动作，不产生新事实 |
+| `UX design` | 用户流程、信息架构、线框、状态矩阵、文案、可访问性说明、contract requests | renderer 实现或用户旅程证据 |
+| `Renderer implementation` | 基于冻结 contract/fixture 的 DOM、CSS、view-model 和局部渲染回归 | main/preload/SQLite 实现或确定性联合旅程 |
+| `S5 integration support` | 针对真实产品汇合暴露的 UI 缺口修正 | Core owner 的窗口、IPC、存储、导出与安全职责 |
 
-## 5. 当前能力与明确缺口
+作出类型声明后，按以下顺序读取：
 
-### 5.1 已有实现
+1. `CONTEXT.md` 全文，统一使用 Agent Bar、正式 Agent 交互、个人上下文包、工具调用记录、模型运行绑定等规范术语。
+2. `semantic-contract.md` 的 SEM-F00/F15/F26/F28/F30–F35/T15。
+3. `testing-strategy.md` 的 J21/J22/J24/J25/J26 及其 S1/S2/S5 子边界说明。
+4. `agent-redesign-execution-plan.md` 的 §1、§2.1–2.2、S1–S5 与 §5。
+5. 本文；需要新事实或动作时再读 [`agent-ui-contract-requests.md`](agent-ui-contract-requests.md)。
+6. 只有修改共享视觉语言、设置、历史或窗口布局时，才继续读 [`ui-design-brief.md`](ui-design-brief.md) 的相关章节。
 
-- OpenAI-compatible HTTPS Agent 模型 provider 配置。
-- 仅供自动化和开发验证的确定性测试 provider。
-- 云端正文披露确认。
-- 凭据只提交主进程；renderer 只读取 `hasCredential` / `credentialPersisted`。
-- `safeStorage` 可用时加密持久化；不可用时仅本次进程使用。
-- 由真实 storage worker 写入的系统音频/麦克风无音频合成终态会话。
-- 固定快照调试聊天、Pi Agent Loop 与受控读取工具事件。
-- `reference-output-v1` 执行预览、确认/拒绝、后台任务与参考结构化产物。
-- SQLite 任务状态、租约、重试、取消、产物和调试消息基础设施。
-- 成功产物及聊天消息在应用重启后恢复。
-- 正式安装包排除开发入口、Agent core 和 Pi 依赖。
+读取到此即可开始正式 Agent UI 工作；不需要阅读音频、ASR、SQLite schema 或旧 Agent 实现。
 
-### 5.2 尚未实现
+## 2. 唯一目标：正式 Agent 产品 UI
 
-- 正式字幕提交边界和 `MeetingStopped` 接线。
-- 正式设置页中的识别 provider、Agent 模型 provider 与个人记忆配置。
-- 正式字幕历史中的会后结构化纪要或增强文本。
-- 个人记忆、记忆候选、确认关键词及其范围。
-- 本地 Agent 模型 provider。
-- 云端主力识别与本地降级。
-- 三项并列的会后结构化纪要、个人记忆、增强文本后台 Agent 任务。
-- 正式业务工具与有界个人记忆注入。
-- 面向普通用户的 Agent 页面。
-- 外部待办执行、任意 shell、任意文件、任意 SQL、任意网络或递归委派。
+正式产品由三个用户表面协作：
 
-当前 `reference-output` 必须一直显示为“参考结构化产物”或“参考产物”。不得通过改文案把它包装成会后结构化纪要、增强文本或个人记忆。
-
-## 6. renderer 只能相信的契约
-
-权威 preload 是 `src/agent-mvp/preload.js`。接手模型不得在 renderer 里拼 IPC channel、读取文件或直接发网络请求。
-
-| API | 用途 | UI 注意点 |
-|---|---|---|
-| `getState()` | 读取 runtime 与 provider 脱敏快照 | 初始骨架、空态和读取失败都要有表现 |
-| `saveProvider(value)` | 保存 provider、模型、披露确认和可选新凭据 | payload 是 exactObject；既有凭据不会返回 |
-| `createFixture(sourceId)` | 创建 `loopback` 或 `mic` 合成终态会话 | 只属开发入口；正式 UI 不出现 |
-| `messages(sessionId)` | 读取所选会话的持久调试消息 | 只允许终态会话 |
-| `chat(sessionId, prompt)` | 执行一次调试聊天 Agent Loop | 当前没有 renderer 可用的“停止本轮聊天”命令 |
-| `preview(sessionId)` | 创建参考任务执行预览 | 预览消息持久化，但可确认的 preview record 当前只在内存 |
-| `confirm(previewId, decision)` | 接受或拒绝预览 | decision 仅为 `accepted` / `rejected` |
-| `cancel(runId)` | 请求取消后台任务 | 只影响 Agent 任务，不影响字幕系统 |
-| `onState(callback)` | 接收 runtime 快照 | provider 配置变化不通过该事件广播完整 provider 快照 |
-| `onEvent(callback)` | 接收投影后的 Agent 事件 | 不能把事件正文或内部推理持久化 |
-
-当前 `getState()` 的 UI 相关形状：
-
-~~~ts
-{
-  runtime: {
-    sessions: Array<{ sessionId, sourceId, state, startedAt }>,
-    jobs: Array<{ runId, state, errorCode, attemptCount, model }>,
-    artifacts: Array<{ artifactId, runId, sessionId, type, content }>,
-    runningRunId: string | null
-  },
-  provider: {
-    provider,
-    baseUrl,
-    model,
-    cloudDisclosureAccepted,
-    hasCredential,
-    credentialPersisted
-  }
-}
-~~~
-
-如果设计需要会话标题、完整来源说明、生成时间、任务进度、费用、token 用量、下一次重试时间、取消中状态、输入版本或更多可展示错误信息，先列 contract request；不要从 `runId`、等待时长、DOM 顺序或异常字符串推断。
-
-## 7. 当前状态矩阵
-
-### 7.1 Provider
-
-| 状态 | 当前事实 | 设计要求 |
-|---|---|---|
-| 确定性测试 provider | 无需凭据；模型固定回落为 `fixture-model` | 明确标记“仅开发验证”，不要伪装成本地 Agent 模型 provider |
-| OpenAI-compatible 未配置凭据 | 设置可能已保存，但下一次调用会返回鉴权失败 | 配置状态与调用状态分开表达 |
-| OpenAI-compatible 已持久化凭据 | `hasCredential=true` 且 `credentialPersisted=true` | 不回显密钥，不提供“复制既有密钥” |
-| 仅本次进程凭据 | `hasCredential=true` 且 `credentialPersisted=false` | 明确“关闭应用后需重新配置” |
-| 地址/披露无效 | 保存被拒绝 | 保留编辑值并给出可行动错误；当前 public error 映射仍需后端 contract 修正 |
-| provider 超时/限流/不可用 | 当前任务或聊天失败/稍后重试 | 不影响合成会话、已有消息与已有产物 |
-
-### 7.2 会话与聊天
-
-| 状态 | 当前表现 | 设计要求 |
-|---|---|---|
-| 无会话 | 左栏只有两个 fixture 动作；聊天输入禁用 | 空态要说明这是隔离入口，不暗示没有正式字幕历史 |
-| 已选择终态会话 | 标题显示来源和短 `sessionId` | 选择状态不能只靠底色；增加可访问选择语义 |
-| 无消息 | 显示“不进入个人记忆”说明 | 保留该边界文案 |
-| 响应中 | 全局 `busy=chat`，发送按钮显示“响应中…” | 需要明确取消能力时先提 contract request；不能做假的停止按钮 |
-| provider 故障 | 消息保留，顶部错误条显示错误码或短句 | 提供重试与回到 provider 配置的路径 |
-| 切换会话 | 重新读取该会话线程 | 不得把上一会话的消息短暂归入新会话 |
-
-### 7.3 执行预览与后台任务
-
-| 后端值 | 推荐用户文案 | 必须保留的事实 |
-|---|---|---|
-| `queued` | 等待中 | run、模型与固定输入已经冻结 |
-| `running` | 运行中 | 不展示虚构百分比 |
-| `retry_wait` | 稍后重试 | 自动重试沿用同一 `runId` |
-| `succeeded` | 已生成 | 只有产物持久化成功后才能显示 |
-| `failed` | 失败 | 显示稳定错误说明，已有产物不受影响 |
-| `cancelled` | 已取消 | 不把取消显示成 provider 故障 |
-
-执行预览至少保留：
-
-- 固定 recipe。
-- 输入水位。
-- input digest 的短显示。
-- 是否会向云端发送正文。
-- 确认与拒绝两个明确动作。
-
-当前可确认 preview record 只在主进程内存中。应用重启后，历史 preview 消息仍可见，但旧预览不能继续确认。若要把“恢复待确认预览”纳入 UX，必须先补持久化与 IPC contract。
-
-### 7.4 当前错误码覆盖
-
-renderer 已本地化：
-
-- `AGENT_PROVIDER_AUTH_FAILED`
-- `AGENT_PROVIDER_TIMEOUT`
-- `AGENT_PROVIDER_UNAVAILABLE`
-- `AGENT_OUTPUT_INVALID`
-- `AGENT_PERMISSION_DENIED`
-- `AGENT_REQUEST_INVALID`
-
-仍可能以原始 code 出现或被主进程折叠为 `AGENT_INTERNAL_FAILURE`：
-
-- provider 地址无效
-- provider 限流
-- worker 退出
-- job 不存在或状态冲突
-- 输入快照改变
-- 会话不存在或不是终态
-- 用户取消
-- 未分类内部故障
-
-接手模型可以先设计统一错误组件和文案映射提案，但错误分类、`nextAction` 和是否可重试必须由后端返回，不得由 renderer 猜测。
-
-## 8. 当前交互旅程
-
-### 8.1 创建合成终态会话并调试聊天
-
-1. 开发者启动隔离入口。
-2. 保持确定性测试 provider，或配置 OpenAI-compatible HTTPS 服务并确认云端正文披露。
-3. 点击“添加系统音频 fixture”或“添加麦克风 fixture”。
-4. storage utility process 通过真实字幕存储基础设施写入无音频合成终态会话。
-5. UI 选择该会话，读取或创建独立调试线程。
-6. 用户发送提示词。
-7. Pi Agent Loop 只允许调用 `read_selected_transcript` 一次。
-8. UI 临时显示受控工具事件，并在请求结束后显示助手正文。
-
-### 8.2 生成参考结构化产物
-
-1. 用户选择一条合成终态会话。
-2. 点击“预览参考产物”。
-3. UI 显示固定 recipe、水位、digest 与云端正文披露。
-4. 用户确认后创建一个 SQLite 后台 Agent 任务；拒绝则只记录决定。
-5. 任务经固定 recipe Agent Loop 返回结构化候选。
-6. 宿主通过 Schema 校验后写入 `agent_artifacts`。
-7. UI 从权威 runtime 快照显示“已生成”和参考结构化产物。
-
-### 8.3 重启恢复
-
-当前已有旅程证明的是：
-
-- 成功后的会话、聊天消息、任务与参考产物在同一独立 `userData` 重启后可读。
-- 凭据是否在重启后存在取决于 `safeStorage` 是否可持久化。
-
-尚未由完整 Electron 旅程证明的是：
-
-- 任务运行中被中断后以同一 `runId` 恢复。
-- renderer 中确认拒绝、任务取消和 provider 故障的完整状态往返。
-- 408/429/5xx 自动重试与鉴权/Schema/权限不重试的同一跨模块矩阵。
-
-## 9. 已知 UI/UX 缺口
-
-以下是代码审计结果，不是新的产品语义。
-
-2026-08-09 的视觉统一改版处理了其中一部分，逐条状态如下。
-
-### P0 · 接手时优先处理
-
-1. ~~**窄窗会丢失关键操作。**~~ 已处理：`960px` 以下右栏不再 `display:none`，改为跨列底部区域并保留自身滚动，执行预览、任务、产物与工具事件在 `820 × 560` 仍可达（DOM 未复制任何节点，仅栅格重排）。
-2. ~~**状态仍大量暴露内部值。**~~ 已处理：会话状态、任务状态、消息 role、Agent 事件类型与错误码都过纯 UI 映射层；未知值一律 fail closed 为“未知状态（原值）”，不冒充成功。`data-state` 仍保留后端原值供自动化断言。
-3. **聊天没有可用的停止动作。** 未处理，仍需 contract request。当前只在输入区写明“本轮请求结束后一次性写入；没有可用的停止命令”，不画假按钮。
-4. **待确认预览不可跨重启继续。** 未改变事实。预览卡已明写“待确认预览只在本次进程内有效，应用重启后这条预览无法继续确认”。
-
-### P1 · 视觉与交互一致性
-
-1. ~~未定义 token fallback、硬编码深色分支与 `!important`。~~ 已处理：全部色值改为消费既有共享 token（`--fg` / `--surface-settings` / `--accent-*` / `--tone-*` / `--radius-*` / `--dur-*`），深色分支与 `!important` 已删除，未新增共享 token。
-2. 主题仍只跟随系统：renderer 依据 `prefers-color-scheme` 写 `data-theme`，这样才能消费 `tokens.css` 的主题分支，但它不消费正式应用的 `config.theme`，只代表开发入口的系统主题行为。
-3. 内容标题带与原生 BrowserWindow frame 并存，不能直接当作正式产品 `48px` 标题栏范本。
-4. ~~`busy` 禁用规则不一致。~~ 已处理：preview 决定按钮与任务取消按钮统一按 `busy !== null` 禁用。
-5. ~~消息追加后没有滚动策略。~~ 已处理：仅在用户本来贴着底部时跟随到底，向上翻阅时不抢滚动位置。
-6. ~~会话列表未展示时间。~~ 已处理：会话卡改为「时间 / 来源 / 状态 · 短 ID」三层，与字幕历史的 `.session-card` 同结构同字阶。
-7. ~~工具事件像完整审计记录。~~ 已处理：分节说明写明“仅本轮内存事件：最多保留 20 条、显示最近 6 条，重启后不恢复，不是完整审计记录”。
-
-### P1 · 可访问性
-
-1. ~~会话选择缺少选择语义。~~ 已处理：`role=list/listitem` + `aria-current`，选中态同时有边框与底色。
-2. ~~没有克制的 `aria-live` 策略。~~ 已处理：全窗只有顶栏一处 `role=status` `aria-live=polite`，播报当前异步动作或后台任务运行中，不给每个面板各挂一个 live region。
-3. ~~执行预览没有焦点移动与返回触发点。~~ 已处理：预览出现时焦点移入面板（`tabIndex=-1` + `aria-labelledby`），确认或拒绝后焦点交还“预览参考产物”按钮。
-4. ~~高对比只覆盖选中会话。~~ 已处理：`forced-colors` 下补齐分组卡、控件、按钮、错误条、消息气泡、选中会话与状态色。
-5. ~~右栏被隐藏后键盘用户失去关键内容。~~ 已随 P0-1 关闭。
-6. ~~状态只靠颜色。~~ 已处理：任务状态是「形状标记 + 中文文案 + 色调」三通道，去掉颜色后仍可区分全部六种状态。
-
-### 方向 A′ 改版额外关闭的（2026-08-09 第二轮）
-
-第一轮只统一了视觉，信息架构问题仍在。第二轮按「左导航 / 中主视图槽位 / 右选中项详情」重排，实测对照：
-
-| 指标（默认窗口 `1000 × 680`） | 改版前 | 改版后 |
-|---|---|---|
-| 同时可见的 `.primary-btn` | 3（保存 / 发送 / 确认执行） | **1**（有预览时是确认执行，发送自动降级） |
-| 非导航动作按钮 | 分布在 4 个不相邻区域 | 6 个，集中在工具条与输入区 |
-| 顶部 chrome 占窗口高度 | 182px · 27% | **101px · 15%** |
-| 消息区可用高度 | 283px | **369px** |
-| 右栏折叠线以下内容 | 66% | **0%**（窄窗 `820 × 560` 为 29%） |
-| 预览触发点与确认按钮 | 跨栏，需视线跳到另一列 | 同栏同屏，卡片自动滚入视口并接管焦点 |
-
-具体改动：provider 从常驻横幅压成 40px 工具条 + 按需配置；执行预览从右栏搬进对话流就地确认；
-后台任务与产物搬进「运行」视图，行只给摘要，细节与取消动作交给右栏；工具事件折成一行摘要。
-
-> 说明：预览触发点到确认按钮的**直线距离**从 304px 变成 362px，这个数字没有变好 ——
-> 它现在主要由卡片内左对齐的按钮与输入区右对齐的按钮之间的**水平**偏移构成，垂直间距是 146px。
-> 真正改变的是「不再跨栏、卡片完整可见、焦点被带过去」，不是这个欧氏距离。
-
-### 第三轮：首帧缺失 bug、文案、可拖拽分栏与图标（2026-08-09）
-
-**已修的渲染 bug（回归重点）。** 打开窗口后下半部分是空背景，点左栏才逐渐长出来。
-两处成因都是「用栅格行去承载可选子元素」：
-
-1. `.app-shell` 曾是 `grid-template-rows: 48px auto auto auto minmax(0,1fr)`，但 provider 设置区与错误条是**条件渲染**的。
-   平时只有 3 个子元素，工作区落到第 3 行（`auto`），按内容高度收缩。已改为 flex 列 + `.workspace { flex: 1; min-height: 0 }`。
-2. `.workspace` 只声明了 `grid-template-columns`，隐式行是 `auto`，三栏仍按内容收缩。已补 `grid-template-rows: minmax(0, 1fr)`。
-
-真实 Electron 窗口实测（`1000 × 680`，内容区 643px）：修复前工作区高度 `287 → 345 → 379`（随数据到达增长，底部空 163px）；
-修复后自 80ms 首帧起恒为 `552`，三栏恒为 `549`，不再变化。
-
-> 教训写进规则：**外壳里凡是可选的子元素，一律不要用固定行数的 grid 承载。** 用 flex 列，或给每个子元素显式 `grid-row`。
-
-**文案。** 面向操作的词全部改成日常说法：`Agent 模型 provider` → 「AI 模型」、`确定性测试 provider` → 「内置假模型（不联网，仅供测试）」、
-`凭据` → 「密钥」、`终态会话` → 「会话」、`合成 fixture` → 「新建测试会话」、`执行预览` → 「开始前请确认」、
-`受控工具事件` → 「AI 用了哪些工具」、`runId` → 「任务编号」、`inputWatermark` → 「读取范围：到第 N 条为止」、
-`inputDigest` → 「内容指纹」。技术事实照旧显示，但每条配一句 `.fact-note` 解释它是什么。
-⚠ `参考结构化产物` 按 §5.2 保持原样未改名。
-
-**可拖拽分栏。** 四条 `role=separator`：会话列表宽、详情栏宽（宽窗）、详情栏高（窄窗）、输入框高。
-指针拖动与方向键都可用，带 `aria-valuenow/min/max`，尺寸存在 renderer 本地 `localStorage`（键 `agent-mvp.layout.v1`），
-不进任何契约或 SQLite。栏宽通过 `--w-left` / `--w-right` / `--h-detail` 传给 CSS，因此断点仍能决定用到哪几条，内联样式不会压掉媒体查询。
-
-**图标与交互层次。** 新增 `renderer/icons.tsx`：16×16 网格、1.6 描边、`currentColor` 的功能性图标，
-与设置窗 / 字幕历史窗的线性图标同族；只做功能识别，不画装饰性图形。
-交互层次借用 Material 的 state layer 思路（hover 6% / pressed 10% / 选中用强调色洗层）统一到 `.ghost-btn`、卡片与分段控件，
-但**配色与字体仍留在 Win11 一侧**，以免和设置窗、字幕历史窗割裂。若要整体转向 Material 配色与字阶，那是四个 renderer 的共同决定，需先改 `tokens.css`（§15.2）。
-
-### 为后续视图预留的结构
-
-接手模型如果要加新的主视图（例如个人记忆图），做法是往槽位里注册，不要在右栏加第五节：
-
-- 在 `ViewId` 上加一个值，在分段控件里加一个 `role=tab`，在 `.view-body` 里加一个 `.view`。
-- 右栏不需要改结构：给 `Selection` 加一种 `kind`，在详情区加一个分支。
-- ⚠ 个人记忆本身按 `SEM-F29` 明确禁止接入本开发入口；记忆图属于正式产品，不要在这里试。
-  另外 `SEM-F26` 首版禁止向量索引与图数据库，任何基于嵌入的点云视图都要先改语义合同。
-
-### 本轮遗留的 contract request
-
-纯 UI 改动无法解决、需要后端或窗口合同配合的只有三项：
-
-1. **停止本轮调试聊天。** 需要 renderer 可见的 chat `runId` 与一个停止命令，同步 protocol、main access policy、preload 与测试。在此之前 UI 不提供停止按钮。
-2. **恢复待确认预览。** 需要把可执行 preview record 持久化并补一条读取命令，UI 才能在重启后继续确认。
-3. **窗口 `backgroundColor`。** `src/agent-mvp/main.js` 仍写死浅色 `#f3f3f3`，在深色系统主题下首帧会闪一次浅底。属 BrowserWindow 合同，不是 CSS 决策，需共同评审后再改。
-
-除此之外本轮无新增字段、命令或错误码需求。
-
-## 10. 视觉语言
-
-隔离入口与正式 Agent UI 都应看起来属于当前 Win11 字幕产品：
-
-- 字体沿用 `Segoe UI Variable`。
-- 复用共享语义 token，不另建 Agent 专属渐变或玻璃卡片体系。
-- 使用中性窗口表面、轻边框、小到中等圆角和克制阴影。
-- 强调色只表达选择、焦点和明确主动作。
-- 不使用机器人插画、装饰性 AI 图形、虚构指标卡、发光状态点、胶囊标签堆叠或大卡片套小卡片。
-- 不用无限动画表示“智能”；运行中只需要局部、可停止且 reduced-motion 友好的反馈。
-- 浅色、深色、Windows 系统高对比和 reduced motion 都要有明确方案。
-- 所有状态遵循“文字/形状先于颜色”。
-
-正式设置与字幕历史仍以这些文件为视觉基准：
-
-- `src/settings/settings-view.tsx`
-- `src/settings/settings.css`
-- `src/history/history-view.tsx`
-- `src/history/history.css`
-- `src/ui/shared/tokens.css`
-
-## 11. 正式首版信息架构
-
-~~~text
+```text
 设置
-├─ 显示与字幕                         既有
-├─ 音频源                             既有
-├─ 语音识别
-│  ├─ 权威识别策略                    新增
-│  ├─ 识别 provider                   新增
-│  ├─ provider 能力与核心资源就绪      新增
-│  └─ 确认关键词                       新增轻量入口
-├─ 模型资源                            既有
-├─ Agent 与记忆                        新增
-│  ├─ Agent 模型 provider
-│  ├─ 云端正文发送说明
-│  ├─ 个人记忆总开关
-│  ├─ 三项后台 Agent 任务状态
-│  └─ 调试聊天入口                     仅开发/验证开关可见
-└─ 关于                                既有
+├─ 个人上下文管理
+└─ Agent 模型配置档案与四个模型用途
+
+Agent Bar（新 agent 窗口）
+├─ 选择当前选区 / 终态会话 / 日期范围 / 项目
+├─ 输入一次自然语言意图
+├─ 查看资格、运行、取消和结果
+└─ 对结果编辑 / 接受 / 拒绝 / 记住 / 忘记
 
 字幕历史
-└─ 所选终态会话
-   ├─ 权威原始转写 / 精修稿             既有事实层
-   ├─ 会后结构化纪要                    新增派生层
-   └─ 增强文本                          后端闭环后再启用
+├─ 正式 Agent 交互列表与终态详情
+├─ 默认折叠的完整工具调用记录
+└─ 单交互 JSON 导出
+```
 
-正式调试聊天（默认隐藏的独立正常窗口）
-├─ 已选择的终态会话
-├─ 对话与受控工具事件
-├─ 输入与停止
-└─ 上下文、输入版本、水位与任务检查
-~~~
+`src/agent-mvp/**` 是隔离 Agent 内核开发入口，只保留 J23 的历史资格和手动启动能力。正式 UI 使用新 `agent` 窗口、新 preload、新 IPC 与新 `src/agent/**` 深模块；设计与 renderer 实现都不复用、改造或包装 `src/agent-mvp/**`。
 
-识别 provider 和 Agent 模型 provider 必须在不同页面或明确分组中呈现。音频来源仍只是互斥的 `mic` 或 `loopback`；权威识别策略是另一根配置轴。
+旧 handoff 中以下方向已经失效：
 
-## 12. 正式页面设计约束
+| 2026-08-09 旧方向 | 当前正式方向 |
+|---|---|
+| 三项会后自动任务 | 默认零报告；终态会话默认只做个人上下文摄取 |
+| 调试聊天作为正式页面候选 | Agent Bar 是正式入口；调试聊天不进入正式导航 |
+| 单一 DeepSeek/provider 配置 | 多个 OpenAI-compatible 模型配置档案，DeepSeek 只提供空 model provider 模板 |
+| provider + model 的单选择 | 默认、信息提取、摘要与总结、分析与规划四个模型用途 |
+| 旧 `agent_jobs/agent_artifacts/memory_*` | 新 `formal_agent_runs/formal_agent_interactions/personal_context_*` |
+| 参考结构化产物 | 问答、分析报告、规划建议、增强文本等固定 recipe 结果 |
+| 开发入口 renderer | 新的正式 `agent` renderer + 设置/历史扩展 |
 
-### 12.1 语音识别
+## 3. 工作流：Core 与 UI/UX 两条线
 
-权威识别策略只有两个互斥选项：
+UI/UX 可与 S1–S4 并行进行流程设计，但生产 renderer 只消费对应 Core 切片签发的 contract 与 fixture：
 
-- 纯本地权威识别。
-- 云端主力识别与本地降级。
-
-UI 必须同时区分：
-
-- 未来新会话将读取的设置。
-- 当前活动会话已经冻结的运行快照。
-
-活动会话期间可以允许用户预先修改未来设置，但必须紧邻控件写明“只影响未来新会话”。云端主力识别需要独立披露实时音频处理范围、本地核心字幕模型资源包仍须就绪、只在明确连接故障后单向降级、降级后不自动切回。普通延迟波动不是降级条件。
-
-识别 provider 行需要显示配置状态、关键词能力和最近一次非侵入式连接检查。provider 不支持确认关键词时仍可选择，但必须明确显示能力缺失。
-
-确认关键词只做轻量二级视图：
-
-- 待确认候选。
-- 少量全局确认关键词。
-- 用户明确选择的主题/项目确认关键词。
-- 当前 provider 是否支持关键词。
-- “只对未来新会话生效”。
-
-自动候选不能默认启用。写作、摘要或表达偏好不能进入确认关键词。
-
-### 12.2 Agent 与记忆
-
-Agent 模型 provider 与识别 provider 分离。页面至少显示：
-
-- provider 类型、模型与脱敏配置状态。
-- 本地任务在活动字幕会话期间让路的资源规则。
-- 云端 provider 的终态会话正文发送说明。
-- `safeStorage` 不可用时“凭据仅本次进程使用”。
-
-首次选择云端 Agent 模型 provider 时必须明确披露：终态会话正文可能自动发送给该服务，用于会后结构化纪要、增强文本和个人记忆提取；派生结果与个人记忆仍保存在本机。用户确认后才允许将其用于未来后台 Agent 任务。
-
-个人记忆总开关默认开启。说明必须区分：
-
-- 每个终态会话接受筛选，不等于复制整场正文。
-- 长期结构化记忆、会话经历记录和丢弃是三种结果。
-- 自动推断先形成带来源的记忆候选。
-- 关闭后既有条目休眠，不自动删除。
-- 关闭后未来新会话不再读取由个人记忆产生的确认关键词。
-
-首版不设计完整个人记忆浏览、编辑、图谱或语义搜索。
-
-三项后台 Agent 任务必须独立显示：
-
-- 会后结构化纪要。
-- 个人记忆提取。
-- 增强文本。
-
-一项失败不得改变另外两项的状态。运行本地任务因字幕会话让路时，用“字幕会话优先，任务将在停止后继续”，不要显示成模型故障。
-
-### 12.3 字幕历史中的会后结构化纪要
-
-沿用“左侧会话列表 + 右侧详情”。右侧视图至少区分：
-
-- 权威原始转写。
-- 精修稿（存在时）。
-- 会后结构化纪要。
-- 增强文本（后端闭环后）。
-
-默认仍进入权威原始转写。Agent 派生内容必须显示输入版本、水位、digest 短值、provider、模型、生成时间和产物版本，视觉层级不得暗示它比权威原始转写更权威。
-
-会后结构化纪要固定栏目：
-
-1. 概要。
-2. 结论。
-3. 待办。
-4. 风险。
-
-待办只是一段内容，不出现外部执行动作。重新生成前展示所选会话、输入版本、水位、provider、云端正文发送/费用影响和新版本说明；确认后创建新 `runId`，旧版本保留。
-
-### 12.4 正式调试聊天
-
-正式调试聊天默认隐藏，只允许选择用户明确选中的终态会话，不跟随活动会话。它需要持续显示：
-
-- 会话非正文标识、来源与时间。
-- 输入转写版本、水位和 digest 短值。
-- Agent 模型 provider 与模型。
-- 注入的个人记忆条目数量和上下文预算。
-
-聊天记录独立保存在本地 SQLite，不自动进入个人记忆、确认关键词或会后结构化纪要输入。工具事件只显示名称、用途、目标会话、状态、耗时与结果摘要；不显示内部思维过程、隐藏提示词或模型草稿。
-
-读取工具可以直接执行。会生成新产物或云端费用的请求工具必须先展示执行预览并由用户确认，再由 Agent 插件宿主创建固定 recipe、固定能力与固定预算的一层专用子 Agent。
-
-## 13. 正式 UI 所需 contract request
-
-以下是设计可依赖的逻辑信息，不代表具体 TypeScript 名称已经冻结：
-
-| 快照/命令 | UI 最低需要 | 约束 |
+| Core 切片 | UI/UX 可并行设计 | 进入 renderer 实现的条件 |
 |---|---|---|
-| 识别设置快照 | 未来策略、活动会话冻结策略、provider、配置状态、关键词能力、核心资源就绪 | 不返回凭据；revision 单调 |
-| 保存识别设置 | 策略/provider 与云端披露确认版本 | 不改写活动会话 |
-| Agent 设置快照 | provider/模型、配置状态、个人记忆开关、披露确认版本、开发入口状态 | 与识别设置独立 |
-| 保存 Agent 设置 | provider、记忆开关与披露确认 | renderer 不持有既有密钥 |
-| 确认关键词分页 | 候选、已确认项、范围、来源摘要、启用状态、provider 能力 | 不返回整场正文 |
-| 会话 Agent 详情 | 三个 job 的独立状态、artifact 版本、输入身份、provider/模型、稳定错误 | 权威原始转写接口保持独立 |
-| 请求后台任务 | task type、终态会话、输入快照、执行预览确认 token | 自动重试沿用 run；主动请求创建新 run |
-| 调试聊天快照 | thread、会话、消息、工具事件、上下文摘要、诊断标识 | 与个人记忆表分离 |
-| 调试聊天命令 | 选择会话、发送、停止、确认/拒绝工具、清空 | 只允许固定工具；拒绝活动会话 |
+| S1 个人上下文 | 查看、修改、删除、休眠、记住、忘记；会话经历记录与个人记忆分层 | overview/manage exact contract、revision 与 fixture 冻结 |
+| S2 模型接入 | 配置档案、模型清单、凭据 scope、四用途与回落、目录建议 | catalog/configure/pull/changed contract 与 fixture 冻结 |
+| S3 单轮运行 | 范围选择、资格、提交、pending、取消、结果、最小历史与反馈 | run snapshot/command/error/interaction fixture 冻结 |
+| S4 Agent Loop | 工具记录、多个 attempt、预算耗尽、工具失败和取消终态 | tool trace、预算与执行形态 fixture 冻结 |
+| S5-Core | 窗口、preload、IPC、导出 | Core owner 签发正式 API；UI 不修改这些层 |
+| S5-Integration | 真实模块汇合 | 预览 adapter 被真实 preload 替换并进入 J21/J22/J24/J25/J26 |
 
-所有失败都需要稳定错误码、可展示短句、可重试性和明确下一步。任何“已生成”状态必须来自持久化成功后的权威快照或命令回执。
+fixture preview 只证明设计覆盖与渲染行为。它不证明模型、SQLite、preload、保存对话框或用户旅程成立，也不提升任何 J 旅程状态。
 
-## 14. 语义对齐结果
+## 4. 文件所有权
 
-本次核对后的状态：
+### 4.1 UI/UX 默认拥有
 
-| 语义/旅程 | 对齐结论 |
+正式 renderer 根在实现前由 Core owner登记；建议使用与 `settings/history` 并列、且不与深模块 `src/agent/**` 混淆的 `src/agent-window/**`。路径冻结后，UI/UX 可修改：
+
+- 正式 `agent` renderer 的 HTML/TSX、CSS、纯 view-model、ARIA 与纯展示 helpers。
+- `src/settings/` 中个人上下文与 Agent 模型配置档案的 view/样式。
+- `src/history/` 中正式 Agent 交互历史、工具调用记录与导出提示的 view/样式。
+- 与本轮设计直接相关的 fixture preview 页面。
+- 本文中的设计交接结果和 [`agent-ui-contract-requests.md`](agent-ui-contract-requests.md) 新请求。
+
+### 4.2 共同评审
+
+- `src/ui/shared/tokens.css`：会影响字幕、工具条、设置、历史与正式 Agent 五个 renderer。
+- renderer-facing view-model：Core 拥有事实与枚举，UI/UX 审查信息是否足够表达。
+- BrowserWindow 尺寸、最小尺寸、标题栏和断点：Core 拥有窗口合同，UI/UX提供布局依据。
+- 设置与历史的信息架构改动：不得遮蔽既有字幕、精修与模型资源路径。
+- 新按钮、动作、错误或下一步：先登记 contract request。
+
+### 4.3 Core 独占
+
+- `src/agent/**` 的 personal-context、model-access、execution-host 与 contracts。
+- `src/main.js`、`src/main/**`、窗口生命周期、角色、sender policy 与 IPC handler。
+- `src/preload/**`、payload exact 校验、凭据、`safeStorage` 和网络调用。
+- `src/runtime/**`、storage worker、SQLite、migration、调度、预算和导出 writer。
+- Electron 打包、安全选项、旧四棵 Agent 树与 `src/agent-mvp/**`。
+
+当设计依赖 Core 独占层尚未提供的事实时，保持入口显式不可用并登记请求；renderer 不建立临时 IPC、文件读取、网络、SQLite 或 Node/Electron 旁路。
+
+## 5. 产品表面与状态要求
+
+### 5.1 设置：个人上下文
+
+必须区分两类事实：
+
+- 会话经历记录：回答某段时间、会话或项目发生了什么。
+- 个人记忆：带来源、revision 与生命周期的长期上下文。
+
+用户动作闭集为查看、修改、删除、休眠、记住、忘记。写动作等待 CommandResult 后再呈现新状态；revision conflict 保留当前编辑并提供重新载入权威值的路径。删除与忘记必须表达动作对象，不能用一个含糊的“清除记忆”覆盖不同语义。
+
+个人上下文界面不展示 SQLite、完整个人记忆表、自由查询、模糊搜索、模型内部置信推理或无来源用户画像。普通点击、停留、滚动、浏览、焦点和复制不出现“已学习”反馈。
+
+### 5.2 设置：Agent 模型配置档案
+
+一个配置档案是一个受信任连接、一份独立凭据和一组 model。设置界面使用产品语言展示：
+
+- 配置档案与模型列表。
+- 凭据存在性布尔与 Core 签发的 scope 枚举；至少覆盖 `safeStorage` 不可用时的 `session_only` 及重启后 `absent`。
+- 默认、信息提取、摘要与总结、分析与规划四个模型用途。
+- 专用用途是单独配置，还是明确回落到默认。
+- 用户触发的远端目录建议及失败零写入结果。
+- 首次初始化的 `deepseek-openai-template@1` 只展示官方 API base URL 和非权威能力建议；model ID、两个 exact token 上限、全部六字段确认、用途和凭据都必须由用户明确提交。显式删除模板后不出现自动重建提示。
+
+界面不展示 recipe ID、adapter、factory、header、凭据槽 ID、金额字段或 IPC channel。既有凭据不回显；用户只能提交新凭据或清除凭据。能力不匹配呈现为配置问题，不包装成瞬时 provider 故障。
+
+### 5.3 Agent Bar
+
+Agent Bar 是紧凑的正式入口，不是通用聊天首页或任务面板。主流程固定为：
+
+1. 选择当前选区、终态会话、日期范围或项目。
+2. 查看 Core 返回的 Agent 处理资格；非 `ready` 时呈现对应原因与下一动作。
+3. 输入一次自然语言意图并提交。
+4. 运行中可请求取消；取消进入终态收束，不立即伪造“已取消”。
+5. 呈现最终结果、范围和模型身份；需要时展示 input/output token、用量来源、缓存命中率与相对时长，不展示金额。
+6. 用户可明确编辑、接受、拒绝、记住或忘记；这些动作等待回执。
+
+普通单轮请求与 Agent Loop 使用同一产品语言。UI 可以展示“分析了多个来源”“使用了只读工具”与升级理由的产品投影，但不展示内部 recipe ID、轮次调试台、中间 assistant 文本、隐藏提示、reasoning 或内部思维过程。
+
+### 5.4 交互历史、工具调用记录与导出
+
+终态正式 Agent 交互历史只展示时间戳、范围与模型身份、最终结果和工具调用记录。工具调用记录按 `(attempt, call_order)` 全序，默认折叠，用户明确展开后显示 Core 已校验且受预算约束的完整结构化参数与结果；重试后的旧 attempt 继续可见。
+
+即时问答进入最小历史，但不自动成为报告。用户主动请求的分析报告默认版本化保存。报告历史没有已读状态、标记、角标、红点或计数。
+
+终态详情提供单交互 JSON 导出。动作旁直接提示“导出包含完整工具输入与结果”；不再增加模态确认。被取消且已经收束的交互同样允许导出，最终结果可以为空，已发生的工具记录保留。
+
+### 5.5 报告自动呈现偏好
+
+报告自动呈现偏好默认关闭。关闭时，终态会话不自动创建或呈现会后结构化纪要；开启只影响未来满足资格的终态会话，每个 run 至多非模态呈现一次。关闭偏好不删除旧报告。
+
+呈现表面不使用系统通知、模态框、声音、抢焦点或未读标记。renderer reload、重复停止与重复通知只恢复同一权威 run，不生成第二份界面事实。
+
+## 6. 必须覆盖的状态矩阵
+
+### 6.1 Agent 处理资格
+
+九值由 Core 按固定顺序计算，UI 只翻译原因与下一动作：
+
+- `ready`
+- `no_committed_transcript`
+- `outside_automatic_window`
+- `agent_disabled`
+- `provider_not_configured`
+- `cloud_disclosure_required`
+- `credential_unavailable`
+- `local_model_not_ready`
+- `session_not_terminal`
+
+未知值 fail closed：入口不可提交，保留范围和用户输入，并显示通用不可运行说明；不猜测可重试性。
+
+### 6.2 配置与命令
+
+- 初始读取、model-access unavailable、空档案、DeepSeek 空 model provider 模板、当前 alias 瞬时建议与两个 token 上限未知。
+- 两个以上配置档案与不同用途绑定。
+- 专用用途回落默认。
+- 凭据不存在、`session_only` 及 Core 签发的持久作用域；重启后 `session_only` 明确回落 `absent`。
+- pending、成功回执、revision conflict、输入无效，以及 `success/revision_conflict/invalid_request/credential_unavailable/redirect_rejected/remote_unavailable` 六值目录拉取结果。
+- renderer reload 后由单调 revision 恢复。
+
+### 6.3 正式 Agent 交互
+
+- 空范围、有效范围、范围含省略标记。
+- single-shot pending、终态成功、终态失败、取消请求中、取消终态。
+- Agent Loop、多 attempt、工具成功、工具失败、预算耗尽。
+- provider 超时/限流/断网、鉴权失败、worker 退出和输出 Schema 失败。
+- 结果为空、用量来源为 provider 或 estimated、缓存命中已知或未知，且不存在金额字段。
+- reload、重复通知和迟到结果。
+
+### 6.4 历史与导出
+
+- 零工具调用与多 attempt 工具调用。
+- 工具记录折叠/展开不改变导出内容。
+- 成功终态与取消终态。
+- 保存对话框取消、目标存在、写入失败和确定性重导出。
+- 交互被删除、交互不存在、非终态和 digest/Schema 校验失败。
+
+每组同时覆盖深色、浅色、Windows 系统高对比、键盘 focus、屏幕阅读器名称与 reduced motion。状态含义使用文字和形状作为主通道，颜色作为冗余通道。
+
+## 7. Contract 与 fixture 规则
+
+Core contract 是 renderer 的唯一事实源：
+
+- 初始加载采用“先订阅、再读取 snapshot、按 revision 拒绝旧值”的恢复方式。
+- model catalog 读取使用 `{ok,snapshot,error}` envelope；`MODEL_ACCESS_UNAVAILABLE` 只表示 Core 初始化降级，不得伪装为空配置或 `provider_not_configured`。
+- 用户动作先进入 pending；只有 CommandResult 或后续权威 snapshot 才能呈现成功。
+- 错误码、可重试性、下一动作、范围、省略标记、模型身份和终态理由均由 Core 提供。
+- renderer 不从等待时长、异常字符串、ID 格式、DOM 顺序或缺少字段推断状态。
+- fixture 与生产 snapshot 使用同一个 exact validator；设计 fixture 只能填合成内容。
+
+需要新事实或动作时，按 [`agent-ui-contract-requests.md`](agent-ui-contract-requests.md) 登记。若请求改变用户能力、默认值、状态闭集、数据保留或失败语义，先更新语义合同与旅程矩阵；UI/UX 模型不在 renderer 中试行新语义。
+
+## 8. 视觉与交互基线
+
+- 正式 Agent 与现有 Win11 字幕产品共享 `Segoe UI Variable`、语义 token 和 Fluent System Icons，不另建 Agent 专属发光、渐变或玻璃体系。
+- 使用中性窗口表面、清晰层级、克制阴影和有限动效；持续运行不使用无限“智能”动画。
+- Agent Bar 可聚焦、不穿透、非模态；窗口几何和前台层级由 Core 管理。
+- 资格不足或能力缺失时给出明确原因与下一动作；没有下一动作时给出可理解的只读说明。
+- 报告、个人记忆、会话经历记录、权威原始转写与精修稿保持可辨层级，不通过视觉暗示派生文本更权威。
+- API key、受信任 origin 的内部校验细节、凭据槽、IPC channel、本地路径和 provider 原始事件不进入 UI。
+
+## 9. 每次交付的检查条件
+
+### UX design
+
+- 标明覆盖的设置、Agent Bar 或历史表面。
+- 给出端到端用户流程和第 6 节适用状态矩阵。
+- 每个展示事实映射到已决定 Core seam或一个 `AUI-CR-*`。
+- 给出深浅色、高对比、键盘、屏幕阅读器与 reduced motion 说明。
+- 明确哪些画面是 fixture preview，不将其描述为产品实现证据。
+
+### Renderer implementation
+
+- 只修改获批 renderer、样式、纯 view-model 与 fixture preview 路径。
+- 列出消费的 exact contract 与 fixture。
+- 未知状态和缺失字段 fail closed；没有乐观成功状态。
+- 不接 `src/agent-mvp/**`，不新增 IPC、文件、网络、SQLite 或 Electron 旁路。
+- 局部构建与适用 core/integration lane 结果使用规范状态词报告；局部回归不提升 J 旅程。
+
+### S5 integration support
+
+- 预览 adapter 已由 Core owner 替换为真实 preload。
+- UI 成功/失败/下一动作均可追溯到真实 snapshot 或 CommandResult。
+- reload、取消、重复通知、迟到结果和隐私负路径可观察。
+- J21/J22/J24/J25/J26 的证据由真实内部模块组成；fixture preview 不被计入。
+
+## 10. 可直接交给下一模型的起始指令
+
+> 你处理的是新的正式 Agent 产品 UI，不是 `src/agent-mvp/**` 隔离 Agent 内核开发入口。先按 `docs/agent-ui-ux-handoff.md` §1 读取所需材料，并声明本轮是 `UX design`、`Renderer implementation` 或 `S5 integration support`。只消费 Core 签发的 exact contract 与 fixture；缺少事实或动作时在 `docs/agent-ui-contract-requests.md` 登记一条请求。设计必须覆盖适用的资格、配置、运行、取消、失败、reload、历史与导出状态，以及深色、浅色、高对比、键盘和 reduced motion。任何设计预览都明确标记为 fixture preview，不把它称为 J21/J22/J24/J25/J26 证据。
+
+## 11. UX-1 交付 · 设置：个人上下文管理（S1 / J21）
+
+> 交付类型：`UX design` · 2026-08-29 · 覆盖表面只有 §5.1「设置：个人上下文」。
+>
+> 本节是流程、信息架构、状态矩阵、文案与可访问性说明，**不构成** renderer 实现、fixture preview 或任何 J 旅程证据；本轮未改动任何 `src/**` 文件，也未产生预览页面。J21 状态不因本节变化。
+>
+> 不覆盖：Agent 模型配置档案（S2）、Agent Bar（S3/S4）、交互历史与导出（S5）。
+
+### 11.1 信息架构
+
+设置窗新增一个类别，插在「模型资源」之后、「关于」之前，命名为「个人上下文」。既有「显示与字幕 / 音频源 / 语音识别 / 模型资源」四项的位置、路径与文案不变——新增类别不得遮蔽既有字幕、精修与模型资源入口（§4.2）。S2 的 Agent 模型配置档案是另一个并列类别，本轮不预留占位控件。
+
+```text
+设置 › 个人上下文
+├─ 处理状态区
+│  ├─ 个人记忆处理开关（休眠 / 处理中）
+│  └─ 个人记忆自动处理边界说明（关闭不补处理、重新开启建立新边界）
+├─ 事实分区切换（单选，二者不混列）
+│  ├─ 会话经历记录 —— 某段时间、会话或项目发生了什么
+│  └─ 个人记忆 —— 带来源引用、revision 与生命周期的长期上下文
+├─ 会话经历记录列表 → 单条详情
+│  └─ 来源范围（会话 / 正式 Agent 交互）· 发生时间范围 · 有界结构化轨迹 · 来源引用 · 省略标记
+└─ 个人记忆列表 → 单条详情
+   └─ 范围（全局 / 会话 / 主题 / 项目）· 类型（决定 / 结论 / 待办 / 术语 / 偏好 / 项目事实 / 经验）
+   └─ 来源（明确内容 / 自动推断）· 生命周期 · 来源引用 · 更新时间
+   └─ 动作：修改 · 忘记 · 删除
+```
+
+三条信息架构裁决：
+
+1. **两类事实不合并成一个列表。** 会话经历记录按来源范围回答时间线，个人记忆只保留可跨任务复用的原子事实；用同一个分区切换在两者之间移动，任何一个列表里都不出现另一类行。
+2. **没有搜索框。** 个人上下文只做 NFKC + casefold 后全等的结构化键与已登记别名匹配，界面不提供自由文本框、模糊搜索或排序自定义。`1.0.0` 的 `view` 也不提供筛选字段；UI 不得把本地筛选伪装成 Core 完整结果。
+3. **S1 不展示置信与显著性档位。** S1 的个人记忆只能由用户经 `manage` 的「记住」/修改产生，档位对用户不携带可操作信息；展示它会落进 §5.1 禁止的「模型内部置信推理」。展示 `origin` 的明确/自动之分即可。
+
+界面同样不展示：SQLite、完整个人记忆表、条目 ID 与 revision ID 原值、来源 digest、IPC channel、本地路径、无来源用户画像。
+
+### 11.2 端到端流程
+
+| # | 流程 | 步骤 |
+|---|---|---|
+| F0 | 载入与恢复 | 类别激活 → 先订阅 `agent-context:changed` → 再读 overview snapshot → 记住 revision。此后只接受更高 revision，较旧值直接丢弃。订阅失败或 snapshot 字段缺失 → 整个类别进入只读不可用，不猜测原因。 |
+| F1 | 查看会话经历记录 | 选「会话经历记录」→ 有界列表按发生时间范围倒序 → 展开单条 → 有界结构化轨迹、来源引用与省略标记。列表与详情都不复制整场正文。 |
+| F2 | 查看个人记忆 | 选「个人记忆」→ 有界列表 → 展开单条 → 正文、来源引用、范围、类型、来源、生命周期与三个动作。 |
+| F3 | 修改 | 编辑正文 → 保存 → 控件进入 pending 且保留用户输入 → 只有 CommandResult 或后续更高 revision 的权威 snapshot 才呈现新值。revision conflict → 保留用户编辑、明示未写入、提供「重新载入权威值」。 |
+| F4 | 忘记 | 明确点击 → 确认层说明作用对象（条目退出检索，条目/revision/来源引用与会话经历记录保留，自动摄取不得恢复）→ pending → 回执 → 列表按权威 snapshot 更新；只有用户后续明确记住或修改才可恢复。 |
+| F5 | 删除 | 明确点击 → 确认层说明作用对象（正文、revision 与来源引用被移除；相同旧来源不再重新生成同一条目；新的会话来源仍可能重新提出）→ pending → 回执 → 条目从列表消失。 |
+| F5r | 删除重放 | reload 后重复触发同一删除、或迟到回执抵达 → 呈现首次删除的同一组计数，不呈现第二次删除，不呈现被删除正文。 |
+| F6 | 休眠与重新开启 | 切换开关 → 确认层说明关闭期间不摄取、`resolve` 返回带稳定原因的零条目休眠上下文包、既有条目不被批量改写、重新开启建立新的个人记忆自动处理边界且不补处理关闭期间或更早的会话 → pending → 回执。 |
+| F7 | 记住 | 设置与字幕历史可提供「记住」入口；表单只提交已冻结的 `display_text`、七值 `kind`、四值 `scope` 与 NFKC + casefold `semantic_key`。不得提交自由文本命令、任意对象或数据库行。`kind=term` 仍不是 J20 确认关键词，不影响识别 provider。 |
+| F8 | 会话删除级联 | 用户在字幕历史删除会话 → `agent-context:changed` 携带更高 revision → 本类别按新 snapshot 重取：该会话的经历记录消失，仅由该会话支持的条目退出检索。界面不自行推断级联结果。 |
+
+流程不变量：写动作一律先 pending 再回执，没有乐观成功态；错误码、可重试性与下一动作全部取自 Core；界面不从等待时长、异常字符串、ID 形态、DOM 顺序或缺字段推断状态。
+
+### 11.3 状态矩阵
+
+**A 载入与恢复**
+
+| 状态 | 表现 |
 |---|---|
-| SEM-F00 | 正式字幕运行时仍与 Agent 独立；隔离入口不改变双系统边界 |
-| SEM-F15/F16 | 固定工具、项目自有插件宿主与 `ModelGateway` 已有隔离切片；正式字幕上下文和业务插件尚未实现 |
-| SEM-F25–F27 | 两套 provider、个人记忆与确认关键词均为已决定、尚未实现 |
-| SEM-F28 | 隔离入口只提供单一参考任务与调试壳；三项正式后台 Agent 任务和正式调试聊天尚未实现 |
-| SEM-F29 | 实现完成·尚未验收 |
-| SEM-T10 | 参考插件顺利路径已有真实宿主/SQLite/UI 证据；完整失败矩阵与正式 J13 尚未闭合 |
-| J20/J21/J22 | 已决定、尚未实现；J23 不得冒充这些旅程 |
-| J23 | 实现完成·尚未验收；顺利路径与成功后重启已有联合旅程，完整中断/恢复与失败矩阵待补 |
+| 首次读取中 | 骨架占位 + 「正在读取个人上下文」，无动作控件可用 |
+| 读取成功 | 列表可用；处理状态区显示当前档位 |
+| 订阅成功但 snapshot 未到 | 保持读取中；不显示空状态 |
+| 迟到的较旧 revision | 静默丢弃，界面不闪回 |
+| renderer reload | 重走「订阅 → snapshot → revision」；不恢复任何本地缓存的成功态 |
+| 订阅或读取失败 | 整个类别只读不可用 + 通用说明 + 「重试」；不猜测具体原因 |
+| snapshot 含未知字段或枚举值 | `1.0.0` exact validator 拒绝整个载荷；本类别进入只读不可用并可重试，不从部分字段继续渲染 |
 
-因此，接手模型可以说“隔离 Agent 内核开发入口为实现完成·尚未验收”，不能说“Agent 系统联合验收完成”，也不能说会后结构化纪要、个人记忆、增强文本或正式调试聊天已经存在。
+**B 列表内容**
 
-## 15. 文件所有权
-
-### 15.1 可直接做视觉/UI 改动
-
-| 路径 | 责任 |
+| 状态 | 表现 |
 |---|---|
-| `src/agent-mvp/renderer/main.tsx` | 当前隔离入口结构、展示逻辑、ARIA 与纯 UI 状态映射 |
-| `src/agent-mvp/renderer/icons.tsx` | 功能性图标集；只做功能识别，不加装饰性图形 |
-| `src/agent-mvp/renderer/styles.css` | 布局、响应式、主题、focus、高对比与 reduced motion |
-| `src/agent-mvp/renderer/index.html` | 文档语言、CSP、标题与根节点 |
-| `docs/agent-ui-ux-handoff.md` | 本交接；语义改变仍须先改权威文档 |
+| 会话经历记录为空 | 空状态说明「还没有会话经历记录」+ 形成条件说明 |
+| 个人记忆为空 | 空状态说明「还没有个人记忆」+ 说明 S1 只有用户明确记住或修改才会形成 |
+| 单条经历记录含省略标记 | 详情内显式标注 `not_committed_tail` 的产品说法（未提交尾部未纳入），不静默省略 |
+| 列表触达上界 | 显示「还有更多」并提供继续读取，不伪造完整总数 |
+| 条目已退出检索 | 生命周期以文字标注，条目仍可见，不改写来源历史 |
 
-### 15.2 需要共同评审
+**C 写动作**
 
-| 路径/改动 | 原因 |
+| 状态 | 表现 |
 |---|---|
-| `src/ui/shared/tokens.css` | 四个正式 renderer 共用；新增或改 token 可能改变字幕系统 UI |
-| 新增字段、命令、错误码或取消能力 | 必须同步 protocol、main access policy、preload、runtime 与测试 |
-| 默认窗口宽高、最小尺寸、frame/titlebar | 属 BrowserWindow/layout contract，不是纯 CSS 决策 |
-| provider 披露或凭据交互 | 涉及安全与持久化语义 |
-| 正式设置/历史入口 | 必须先登记 SEM-F25–F28 与 J20–J22 的 exact contract |
+| pending | 触发控件禁用 + `aria-busy`，用户输入完整保留，其它行不禁用 |
+| 成功回执 | 状态区一条 `role="status"` 文本 + 列表按权威 snapshot 更新 |
+| revision conflict | 行内 `role="alert"`：当前值已在别处更新、本次未写入、保留你的编辑、可重新载入权威值 |
+| 输入无效 | 行内说明具体字段问题，零写入，保留输入 |
+| 载荷被拒（角色或额外键） | 通用「本次操作未被接受」+ 无敏感细节；不暴露 channel 或校验内部 |
+| 回执迟到 | 只按 revision 收束，不出现两条成功提示 |
 
-### 15.3 不要直接修改
+**D 删除与忘记**
 
-- `src/agent-mvp/preload.js`
-- `src/agent-mvp/protocol.js`
-- `src/agent-mvp/main.js`
-- `src/agent-mvp/runtime-host.js`
-- `src/agent-mvp/*-worker.js` / `*-service.js`
-- `src/agent-core/`
-- 正式字幕 runtime、存储 schema、模型与打包配置
-- `src/agent-mvp/renderer-dist/`
+| 状态 | 表现 |
+|---|---|
+| 确认层 | 必须写出作用对象；不使用「清除记忆」这类含糊说法 |
+| 删除成功 | 回执按条目、revision 与来源引用报告计数 |
+| 同一删除重放 | 呈现首次的同一组计数，不呈现第二次删除，不回显被删除正文 |
+| 忘记成功 | 条目留在列表并标注已退出检索；条目 revision 推进，来源引用与经历记录不变；不显示删除计数 |
+| 会话删除级联 | 只按新 snapshot 更新；不在本类别提供删除会话的入口 |
 
-若 UI 方案确实需要这些层的新事实或动作，先提交 contract request。新增能力或改变语义时，必须先更新 `semantic-contract.md` 和 `testing-strategy.md`，再动实现。
+**E 处理状态与休眠**
 
-## 16. 接手模型的交付物
+| 状态 | 表现 |
+|---|---|
+| 处理中 | 说明终态会话会形成有界经历记录 |
+| 休眠 | 说明不再摄取、Agent 取不到个人记忆、既有条目保留 |
+| 切换 pending | 开关禁用 + `aria-busy`；不提前翻转视觉状态 |
+| 重新开启后 | 说明新的自动处理边界已建立，关闭期间与更早的会话不会补处理 |
+| 边界事实缺失 | exact validator 拒绝整个载荷，本类别进入只读不可用；不从当前档位推断边界时间 |
 
-至少交付：
+### 11.4 文案
 
-1. 明确选择“隔离入口改版”“正式首版设计”或两者，并保持两套页面命名和数据隔离。
-2. 当前隔离入口的宽屏与 `820–900px` 窄窗方案，保证执行预览、任务、产物和工具事件始终可达。
-3. Provider、空会话、已选会话、响应中、预览待确认、六种任务状态、provider 故障和重启恢复的状态矩阵。
-4. 浅色、深色、Windows 系统高对比、键盘 focus 与 reduced motion 说明。
-5. 共享 token 复用表、当前 fallback 清单和确需新增 token 的理由。
-6. 错误码/任务状态的 UI view-model 映射；未知状态必须 fail closed。
-7. 可访问性说明：选择语义、焦点路径、`aria-live`、预览焦点与窄窗可达性。
-8. 后端 contract request 清单；没有则明确写“无”。
-9. 若涉及正式首版，再提供设置、字幕历史、正式调试聊天与两类云端披露的设计稿。
-10. 若改变窗口尺寸、frame、标题栏或断点，给出精确 layout contract 和原因。
+规范术语固定为：个人上下文、会话经历记录、个人记忆、来源引用、生命周期、个人记忆自动处理边界。禁止「清除记忆」「AI 记忆」「学习了」「智能整理」这类说法。普通点击、停留、滚动、浏览、焦点与复制**不产生任何**「已学习」「已记录」反馈。
 
-不要把未接入能力画成看起来可以提交的按钮。尚无 contract 的入口要么不出现，要么明确标为设计占位且不能进入实现稿。
+| 位置 | 文案 |
+|---|---|
+| 类别标题 | 个人上下文 |
+| 类别副标题 | 管理会话经历记录与个人记忆；它们只在你明确操作时改变。 |
+| 分区切换 | 会话经历记录 / 个人记忆 |
+| 会话经历记录说明 | 按会话或正式 Agent 交互记录发生了什么，只保留有界轨迹与来源引用，不复制字幕正文。 |
+| 个人记忆说明 | 可跨任务复用的原子事实，带来源引用、修改历史与生命周期。 |
+| 经历记录空态 | 还没有会话经历记录。终态会话完成摄取后会在这里出现一条有界记录。 |
+| 个人记忆空态 | 还没有个人记忆。只有你明确记住或修改的内容会成为个人记忆。 |
+| 省略标记 | 本条未包含该会话尚未提交的尾部内容。 |
+| 上界提示 | 还有更多记录未载入。 |
+| 修改保存 | 保存修改 |
+| 记住动作 | 记住这条个人记忆 |
+| pending | 正在提交，请稍候。 |
+| 成功 | 修改已保存。 |
+| revision conflict | 这条个人记忆已在别处更新，本次修改未写入。你的编辑仍保留，可重新载入权威值后再提交。 |
+| 重载动作 | 重新载入权威值 |
+| 忘记动作 | 停用这条个人记忆 |
+| 忘记确认 | 停用后这条个人记忆不再被检索，它的修改历史、来源引用和会话经历记录都保留。只有你以后明确记住或修改它才会恢复。 |
+| 删除动作 | 删除这条个人记忆 |
+| 删除确认 | 删除会移除这条个人记忆的正文、修改历史与来源引用。同一份旧来源不会再重新生成它；将来新的会话来源仍可能重新提出同样的内容。 |
+| 删除重放 | 这条个人记忆已删除，本次没有产生新的删除。 |
+| 处理开关标签 | 处理个人记忆 |
+| 休眠说明 | 已休眠：不再摄取新的个人上下文，Agent 也取不到个人记忆；已有内容保留在这里。 |
+| 重新开启说明 | 已重新开启：从现在起的终态会话会被摄取。休眠期间以及更早的会话不会补处理。 |
+| 通用不可用 | 个人上下文暂时不可用。 |
+| 未知值降级 | 这条记录包含当前版本无法解释的内容，暂不提供操作。 |
 
-## 17. 验证入口
+「停用这条个人记忆」与「删除这条个人记忆」是两个不同动作：前者保留事实链但退出检索，后者执行 suppression 后物理移除。文案与交互必须继续保持二者可区分，不使用「清除记忆」统称。
 
-UI 改动至少执行：
+### 11.5 可访问性与视觉
 
-~~~powershell
-npm run build:agent-mvp
-npm run test:core
-npm run test:integration
-~~~
+跨全部五组状态一并成立：
 
-本次 2026-08-09 对齐复核记录（隔离入口 renderer 的视觉统一 + 方向 A′ 结构改版）：
+- **主通道是文字与形状，颜色只作冗余通道。** 生命周期、来源（明确/自动）、休眠与省略标记都先有文字标签，再叠图标形状；把颜色全部去掉后所有状态仍可区分。不使用红点、角标、未读计数。
+- **深色与浅色**在 `src/ui/shared/tokens.css` 的语义层切换，组件样式里不出现 `[data-theme]` 分支。不新建 Agent 专属发光、渐变或玻璃表面；标题栏沿用 `48px` 与 `--surface-window-titlebar` 加 `1px` 底部分隔线。
+- **Windows 系统高对比**由 `forced-colors` 基线接管颜色；界面在颜色被接管后不丢失任何状态区分，因为区分不依赖颜色。
+- **键盘 focus**：类别导航、分区切换、列表行、展开/折叠、三个动作与确认层全部可达；分区切换是 `radiogroup`，列表展开用 `aria-expanded`；确认层获得焦点并可 `Esc` 取消，关闭后焦点回到触发控件。禁用控件保留可及名称与禁用理由。
+- **屏幕阅读器名称**：列表行的可及名称包含范围、类型与来源，不只读正文首行；pending 用 `aria-busy`；成功用 `role="status"` 的 `aria-live="polite"`；冲突与失败用 `role="alert"`。删除与忘记的可及名称写出作用对象，不是裸「删除」。
+- **reduced motion**：只有 pending 存在过渡指示，且在 `prefers-reduced-motion` 下降级为静态文字；没有任何持续「智能」动画。
+- **隐私**：API key、凭据槽、受信任 origin 校验细节、IPC channel、本地绝对路径、设备名、provider 原始事件、音频与音频路径都不进入本界面，也不进入其可及名称。
 
-- Agent MVP 生产构建已生成。
-- core lane：`501/501`。
-- integration lane：`34/34`；包含 J23 的真实 React、preload、exact IPC、双 utility process、SQLite 与成功后重启旅程。两轮改版后的 DOM 都由这条真实 Electron 旅程实际驱动通过（fixture → 聊天 → 预览 → 确认 → 产物 → 重启恢复），消息、任务、产物与工具事件计数不变。
-- ⚠ core/integration 的用例总数比本文件上一版记录的 `482` / `33` 多，是同一工作树里其他模块的并行改动带来的，不属于本次 Agent UI/UX 改动。
-- evidence lane：`220/222`；两项 I3 非音频报告因当前产品载荷 SHA 与受跟踪报告不一致而 fail closed。已用 stash 复核：把本次 renderer 改动移除后这两项仍然失败，即该漂移先于本次改动存在，与 Agent UI/UX 无关；但它仍意味着当前工作树的完整 `npm test` 不能记为联合验收完成。
-- 改动范围只有 `src/agent-mvp/renderer/{index.html,main.tsx,styles.css}`，未触碰 preload、protocol、main、runtime-host、worker、`src/agent-core/`、共享 `tokens.css`、窗口尺寸与打包配置。所有 `data-testid` 与 `role=alert` + `data-error-code` 断言点保持不变，且没有为响应式复制任何带 testid 的节点。
+### 11.6 展示事实映射
 
-重点证据文件：
+| 展示事实 | 来源 |
+|---|---|
+| 区分会话经历记录与个人记忆两类事实 | 已决定 · 本文 §5.1；`data-architecture.md` 的 `personal_context_episodes` 与 `personal_context_items` |
+| 动作闭集：查看、修改、删除、休眠、记住、忘记 | 已决定 · `agent-ui-contract-requests.md` §2 的 S1 行；S1 `personal-context-core` spec |
+| 写动作携带 `expectedRevision`，冲突零写入且投影不变 | 已决定 · S1 spec |
+| 按更高 revision 恢复、拒绝旧值 | 已决定 · seam 3 的 `agent-context:changed`；本文 §7 |
+| 删除先写不含正文的抑制、再物理移除；同 key 重放只重放计数 | 已决定 · S1 spec；`personal_context_deletion_receipts` |
+| 会话删除级联经历记录与来源引用 | 已决定 · S1 spec |
+| 无自由查询、无模糊搜索（等值匹配） | 已决定 · S1 spec；`data-architecture.md` §160 |
+| 范围四值、类型七值、来源明确/自动、生命周期 | 已决定 · `data-architecture.md` §5 |
+| 休眠时 `resolve` 返回零条目休眠上下文包；重新开启不补处理 | 已决定 · `data-architecture.md` §161 |
+| S1 至多形成一条有界经历记录；只有用户明确操作形成个人记忆 | 已决定 · S1 `design.md` 裁决 6 |
+| 只允许 `settings` / `history` 角色与 exact 载荷 | 已决定 · S1 spec；seam 3 |
+| `48px` 标题栏、`--surface-window-titlebar`、token 层主题切换 | 已决定 · `ui-design-brief.md` §2.3、§4.3 |
+| 个人记忆列表的有界分页、Core-owned 稳定排序与「还有更多」 | 已决定 · `speech-agent.personal-context.ui@1.0.0`；`AUI-CR-001` contract-ready |
+| 会话经历记录的有界列表、发生时间范围与省略标记投影 | 已决定 · `speech-agent.personal-context.ui@1.0.0`；`AUI-CR-002` contract-ready |
+| 休眠档位与自动处理边界的可读状态 | 已决定 · `speech-agent.personal-context.ui@1.0.0`；`AUI-CR-003` contract-ready |
+| 「忘记」与「删除」的作用对象差异及对应文案 | 已决定 · SEM-F30；`AUI-CR-004` contract-ready |
+| 删除回执计数；忘记回执保留条目投影而不报告删除计数 | 已决定 · `speech-agent.personal-context.ui@1.0.0`；`AUI-CR-005` contract-ready |
+| 设置内「记住」的结构化输入形式 | 已决定 · SEM-F30；`AUI-CR-006` contract-ready |
 
-- `test/runtime/agent-core.test.js`
-- `test/runtime/agent-mvp-services.test.js`
-- `test/storage/agent-mvp-store.test.js`
-- `test/integration/agent-core-journey.test.js`
-- `test/integration/agent-mvp-electron-journey.test.js`
-- `test/validation/b5-packaging-contract.test.js`
+### 11.7 本轮不构成
 
-验收说明必须区分：
-
-- 构建与局部回归。
-- J23 确定性联合旅程。
-- 正式 J21/J22 产品旅程。
-- 真实 OpenAI-compatible 服务的网络/凭据边界。
-
-局部回归不能把 J23 提升为联合验收完成，J23 也不能把 J21/J22 提升为实现完成·尚未验收。
-
-## 18. 可直接交给下一模型的起始指令
-
-> 先完整阅读 `CONTEXT.md`，再读 `docs/semantic-contract.md` 的 SEM-F00/F15/F16/F25–F29/T04/T05/T06/T10、`docs/testing-strategy.md` 的 J20–J23，以及本交接。先说明你处理隔离 Agent 内核开发入口还是正式产品 UI。若处理当前代码，只修改 renderer 与经批准的共享 token；任何新字段、命令、错误码、窗口合同或正式产品入口先列 contract request。参考产物必须保持 `reference-output` 语义，不得改名为会后结构化纪要、增强文本或个人记忆。设计需覆盖 `820–900px` 窄窗、浅色/深色/高对比、键盘、reduced motion、全部任务状态和失败路径，并保证字幕系统在 Agent 完全不存在时仍独立工作。
+- 不构成 renderer 实现：`speech-agent.personal-context.ui@1.0.0` 只签发 Core validator 与 preview-only fixture，未修改 `src/settings/**` renderer。
+- 构成可供 UI/UX 消费的 fixture preview：唯一位置为 `src/agent/contracts/fixtures/agent-context-ui/v1.0.0/`；它不是产品数据或验收报告。
+- 不构成 J21 证据，不提升任何用户旅程状态。
+- `Renderer implementation` 的 contract 前置条件已经满足：`AUI-CR-001`–`AUI-CR-006` 均为 `contract-ready`，overview/manage/changed exact contract 与 fixture 已冻结；真实 preload/IPC/SQLite 汇合仍留给 S5-Integration。
