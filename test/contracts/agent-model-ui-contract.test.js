@@ -28,3 +28,40 @@ test('SEM-F33/J25: UI contract rejects extra fields, credentials, endpoint segme
   } }), /invalid|allowed|exact/i)
   assert.throws(() => assertPullResponse({ ...header, status: 'timeout', suggestions: [] }), /invalid/i)
 })
+
+test('SEM-F14/SEM-F33/J25: catalog and remote suggestions validate every nested public field exactly', () => {
+  const readiness = {
+    assignmentMode: 'unconfigured', providerKind: null, target: null,
+    singleShot: 'provider_not_configured', agentLoop: 'provider_not_configured'
+  }
+  const snapshot = {
+    revision: 0,
+    profiles: [{
+      profileId: 'deepseek', label: 'DeepSeek', profileRevision: 1, catalogRevision: 0,
+      httpsOrigin: 'https://api.deepseek.com', basePath: '/', templateId: 'deepseek-openai-template@1',
+      templateSuggestion: {
+        templateVersion: 1, source: 'official_docs', sourceSnapshotDate: '2026-08-30', modelId: 'deepseek-v4-flash',
+        capabilitySuggestion: {
+          maxInputTokens: null, maxOutputTokens: null, supportsToolCalling: true,
+          supportsStructuredOutput: true, supportsStreaming: true, usageReporting: true
+        }
+      },
+      models: [], credential: { present: false, scope: 'absent' }
+    }],
+    readinessByPurpose: {
+      default: readiness, information_extraction: readiness, summary: readiness, analysis_planning: readiness
+    }
+  }
+  assert.equal(assertCatalogResponse({ ...header, ok: true, snapshot, error: null }).ok, true)
+  assert.throws(() => assertCatalogResponse({
+    ...header, ok: true,
+    snapshot: { ...snapshot, profiles: [{ ...snapshot.profiles[0], credentialSlotId: 'private' }] }, error: null
+  }), /invalid/i)
+  assert.throws(() => assertCatalogResponse({
+    ...header, ok: true,
+    snapshot: { ...snapshot, readinessByPurpose: { ...snapshot.readinessByPurpose, summary: { ...readiness, unknown: true } } }, error: null
+  }), /invalid/i)
+  assert.throws(() => assertPullResponse({
+    ...header, status: 'success', suggestions: [{ modelId: 'model.one', capabilitySuggestion: null, endpoint: '/models' }]
+  }), /invalid/i)
+})

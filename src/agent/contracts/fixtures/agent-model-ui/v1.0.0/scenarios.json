@@ -1,0 +1,115 @@
+[
+  {
+    "previewOnly": true,
+    "scenario": ["deepseek-template-empty-models", "credential-restart-absent", "purpose-unconfigured"],
+    "kind": "catalogResponse",
+    "payload": {
+      "contractId": "agent-model-ui", "contractVersion": "1.0.0", "ok": true, "error": null,
+      "snapshot": {
+        "revision": 0,
+        "profiles": [{
+          "profileId": "deepseek", "label": "DeepSeek", "profileRevision": 1, "catalogRevision": 0,
+          "httpsOrigin": "https://api.deepseek.com", "basePath": "/", "templateId": "deepseek-openai-template@1",
+          "templateSuggestion": {
+            "templateVersion": 1, "source": "official_docs", "sourceSnapshotDate": "2026-08-30", "modelId": "deepseek-v4-flash",
+            "capabilitySuggestion": { "maxInputTokens": null, "maxOutputTokens": null, "supportsToolCalling": true, "supportsStructuredOutput": true, "supportsStreaming": true, "usageReporting": true }
+          },
+          "models": [], "credential": { "present": false, "scope": "absent" }
+        }],
+        "readinessByPurpose": {
+          "default": { "assignmentMode": "unconfigured", "providerKind": null, "target": null, "singleShot": "provider_not_configured", "agentLoop": "provider_not_configured" },
+          "information_extraction": { "assignmentMode": "unconfigured", "providerKind": null, "target": null, "singleShot": "provider_not_configured", "agentLoop": "provider_not_configured" },
+          "summary": { "assignmentMode": "unconfigured", "providerKind": null, "target": null, "singleShot": "provider_not_configured", "agentLoop": "provider_not_configured" },
+          "analysis_planning": { "assignmentMode": "unconfigured", "providerKind": null, "target": null, "singleShot": "provider_not_configured", "agentLoop": "provider_not_configured" }
+        }
+      }
+    }
+  },
+  {
+    "previewOnly": true,
+    "scenario": ["user-confirmed-capabilities", "credential-persistent", "purpose-direct"],
+    "kind": "catalogResponse",
+    "payload": {
+      "contractId": "agent-model-ui", "contractVersion": "1.0.0", "ok": true, "error": null,
+      "snapshot": {
+        "revision": 3,
+        "profiles": [{
+          "profileId": "deepseek", "label": "DeepSeek", "profileRevision": 3, "catalogRevision": 1,
+          "httpsOrigin": "https://api.deepseek.com", "basePath": "/", "templateId": "deepseek-openai-template@1",
+          "templateSuggestion": {
+            "templateVersion": 1, "source": "official_docs", "sourceSnapshotDate": "2026-08-30", "modelId": "deepseek-v4-flash",
+            "capabilitySuggestion": { "maxInputTokens": null, "maxOutputTokens": null, "supportsToolCalling": true, "supportsStructuredOutput": true, "supportsStreaming": true, "usageReporting": true }
+          },
+          "models": [{
+            "modelId": "deepseek-v4-flash",
+            "capabilities": { "maxInputTokens": 64000, "maxOutputTokens": 4096, "supportsToolCalling": true, "supportsStructuredOutput": true, "supportsStreaming": true, "usageReporting": true }
+          }],
+          "credential": { "present": true, "scope": "persistent" }
+        }],
+        "readinessByPurpose": {
+          "default": { "assignmentMode": "direct", "providerKind": "cloud", "target": { "profileId": "deepseek", "modelId": "deepseek-v4-flash" }, "singleShot": "ready", "agentLoop": "ready" },
+          "information_extraction": { "assignmentMode": "fallback_default", "providerKind": "cloud", "target": { "profileId": "deepseek", "modelId": "deepseek-v4-flash" }, "singleShot": "ready", "agentLoop": "ready" },
+          "summary": { "assignmentMode": "fallback_default", "providerKind": "cloud", "target": { "profileId": "deepseek", "modelId": "deepseek-v4-flash" }, "singleShot": "ready", "agentLoop": "ready" },
+          "analysis_planning": { "assignmentMode": "fallback_default", "providerKind": "cloud", "target": { "profileId": "deepseek", "modelId": "deepseek-v4-flash" }, "singleShot": "ready", "agentLoop": "ready" }
+        }
+      }
+    }
+  },
+  {
+    "previewOnly": true,
+    "scenario": ["credential-session-only", "purpose-fallback-default"],
+    "kind": "catalogResponse",
+    "payload": {
+      "contractId": "agent-model-ui", "contractVersion": "1.0.0", "ok": true, "error": null,
+      "snapshot": {
+        "revision": 4,
+        "profiles": [{
+          "profileId": "gateway", "label": "Gateway", "profileRevision": 3, "catalogRevision": 1,
+          "httpsOrigin": "https://gateway.example", "basePath": "/v1", "templateId": null, "templateSuggestion": null,
+          "models": [{
+            "modelId": "model.one",
+            "capabilities": { "maxInputTokens": 32000, "maxOutputTokens": 2048, "supportsToolCalling": false, "supportsStructuredOutput": true, "supportsStreaming": true, "usageReporting": true }
+          }],
+          "credential": { "present": true, "scope": "session_only" }
+        }],
+        "readinessByPurpose": {
+          "default": { "assignmentMode": "direct", "providerKind": "cloud", "target": { "profileId": "gateway", "modelId": "model.one" }, "singleShot": "ready", "agentLoop": "provider_not_configured" },
+          "information_extraction": { "assignmentMode": "fallback_default", "providerKind": "cloud", "target": { "profileId": "gateway", "modelId": "model.one" }, "singleShot": "ready", "agentLoop": "provider_not_configured" },
+          "summary": { "assignmentMode": "fallback_default", "providerKind": "cloud", "target": { "profileId": "gateway", "modelId": "model.one" }, "singleShot": "ready", "agentLoop": "provider_not_configured" },
+          "analysis_planning": { "assignmentMode": "fallback_default", "providerKind": "cloud", "target": { "profileId": "gateway", "modelId": "model.one" }, "singleShot": "ready", "agentLoop": "provider_not_configured" }
+        }
+      }
+    }
+  },
+  {
+    "previewOnly": true,
+    "scenario": "template-deleted-not-reseeded",
+    "kind": "catalogResponse",
+    "payload": {
+      "contractId": "agent-model-ui", "contractVersion": "1.0.0", "ok": true, "error": null,
+      "snapshot": {
+        "revision": 1, "profiles": [],
+        "readinessByPurpose": {
+          "default": { "assignmentMode": "unconfigured", "providerKind": null, "target": null, "singleShot": "provider_not_configured", "agentLoop": "provider_not_configured" },
+          "information_extraction": { "assignmentMode": "unconfigured", "providerKind": null, "target": null, "singleShot": "provider_not_configured", "agentLoop": "provider_not_configured" },
+          "summary": { "assignmentMode": "unconfigured", "providerKind": null, "target": null, "singleShot": "provider_not_configured", "agentLoop": "provider_not_configured" },
+          "analysis_planning": { "assignmentMode": "unconfigured", "providerKind": null, "target": null, "singleShot": "provider_not_configured", "agentLoop": "provider_not_configured" }
+        }
+      }
+    }
+  },
+  { "previewOnly": true, "scenario": "configure-success", "kind": "configureResponse", "payload": { "contractId": "agent-model-ui", "contractVersion": "1.0.0", "ok": true, "revision": 5, "error": null } },
+  { "previewOnly": true, "scenario": "configure-invalid", "kind": "configureResponse", "payload": { "contractId": "agent-model-ui", "contractVersion": "1.0.0", "ok": false, "revision": null, "error": { "code": "MODEL_CONFIG_INVALID", "nextAction": "correct_input" } } },
+  { "previewOnly": true, "scenario": "configure-revision-conflict", "kind": "configureResponse", "payload": { "contractId": "agent-model-ui", "contractVersion": "1.0.0", "ok": false, "revision": null, "error": { "code": "MODEL_CONFIG_REVISION_CONFLICT", "nextAction": "reload" } } },
+  { "previewOnly": true, "scenario": "changed-reload", "kind": "changedEvent", "payload": { "contractId": "agent-model-ui", "contractVersion": "1.0.0", "revision": 6 } },
+  { "previewOnly": true, "scenario": "remote-success", "kind": "pullResponse", "payload": { "contractId": "agent-model-ui", "contractVersion": "1.0.0", "status": "success", "suggestions": [{ "modelId": "deepseek-v4-flash", "capabilitySuggestion": { "maxInputTokens": null, "maxOutputTokens": null, "supportsToolCalling": true, "supportsStructuredOutput": true, "supportsStreaming": true, "usageReporting": true } }] } },
+  { "previewOnly": true, "scenario": "remote-revision-conflict", "kind": "pullResponse", "payload": { "contractId": "agent-model-ui", "contractVersion": "1.0.0", "status": "revision_conflict", "suggestions": [] } },
+  { "previewOnly": true, "scenario": "remote-invalid-request", "kind": "pullResponse", "payload": { "contractId": "agent-model-ui", "contractVersion": "1.0.0", "status": "invalid_request", "suggestions": [] } },
+  { "previewOnly": true, "scenario": "remote-credential-unavailable", "kind": "pullResponse", "payload": { "contractId": "agent-model-ui", "contractVersion": "1.0.0", "status": "credential_unavailable", "suggestions": [] } },
+  { "previewOnly": true, "scenario": "remote-redirect-rejected", "kind": "pullResponse", "payload": { "contractId": "agent-model-ui", "contractVersion": "1.0.0", "status": "redirect_rejected", "suggestions": [] } },
+  { "previewOnly": true, "scenario": "remote-unavailable", "kind": "pullResponse", "payload": { "contractId": "agent-model-ui", "contractVersion": "1.0.0", "status": "remote_unavailable", "suggestions": [] } },
+  { "previewOnly": true, "scenario": "provider-cache-hit", "kind": "modelUsage", "payload": { "inputTokens": 1000, "outputTokens": 200, "usageSource": "provider", "cacheHitInputTokens": 250, "cacheMissInputTokens": 750 } },
+  { "previewOnly": true, "scenario": "provider-cache-unknown", "kind": "modelUsage", "payload": { "inputTokens": 1000, "outputTokens": 200, "usageSource": "provider", "cacheHitInputTokens": null, "cacheMissInputTokens": null } },
+  { "previewOnly": true, "scenario": "estimated-cache-unknown", "kind": "modelUsage", "payload": { "inputTokens": 1000, "outputTokens": 200, "usageSource": "estimated", "cacheHitInputTokens": null, "cacheMissInputTokens": null } },
+  { "previewOnly": true, "scenario": "inconsistent-cache-unknown", "kind": "modelUsage", "payload": { "inputTokens": 1000, "outputTokens": 200, "usageSource": "provider", "cacheHitInputTokens": null, "cacheMissInputTokens": null } }
+]

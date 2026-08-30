@@ -73,6 +73,44 @@ test('SEM-F33/J25: nine commands use one revision and failures are zero-write', 
   assert.equal(store.internalCatalog().assignments.summary.configuration_revision, revision)
 })
 
+test('SEM-F33/J25: every configure command advances once and its business rejection is zero-write', (t) => {
+  const { store } = fixture(t)
+  const apply = (command, extra = {}) => {
+    const before = store.revision()
+    const result = store.configure({ command: { ...command, expectedRevision: before }, ...extra })
+    assert.equal(result.revision, before + 1, command.type)
+  }
+  const rejectWithoutWrite = (command, extra = {}) => {
+    const before = JSON.stringify(store.internalCatalog())
+    assert.throws(() => store.configure({ command: { ...command, expectedRevision: store.revision() }, ...extra }),
+      (error) => error.code === 'MODEL_CONFIG_INVALID')
+    assert.equal(JSON.stringify(store.internalCatalog()), before, command.type)
+  }
+
+  apply({ type: 'createProfile', profileId: 'profile.matrix', label: 'Matrix', httpsOrigin: 'https://matrix.test', basePath: '/v1' })
+  rejectWithoutWrite({ type: 'createProfile', profileId: 'profile.matrix', label: 'Duplicate', httpsOrigin: 'https://matrix.test', basePath: '/v1' })
+  apply({ type: 'updateProfile', profileId: 'profile.matrix', label: 'Matrix Updated', httpsOrigin: 'https://matrix.test', basePath: '/api' })
+  rejectWithoutWrite({ type: 'updateProfile', profileId: 'missing', label: 'Missing', httpsOrigin: 'https://matrix.test', basePath: '/v1' })
+  apply({ type: 'addModel', profileId: 'profile.matrix', modelId: 'model.one', capabilities })
+  rejectWithoutWrite({ type: 'addModel', profileId: 'profile.matrix', modelId: 'model.one', capabilities })
+  apply({ type: 'updateModel', profileId: 'profile.matrix', modelId: 'model.one', capabilities: { ...capabilities, maxOutputTokens: 2048 } })
+  rejectWithoutWrite({ type: 'updateModel', profileId: 'profile.matrix', modelId: 'missing', capabilities })
+  apply({ type: 'setCredential', profileId: 'profile.matrix' }, {
+    credentialState: { scope: 'persistent', generation: 'generation.00000000000000000000000000000001' }
+  })
+  rejectWithoutWrite({ type: 'setCredential', profileId: 'missing' }, {
+    credentialState: { scope: 'persistent', generation: 'generation.00000000000000000000000000000002' }
+  })
+  apply({ type: 'assignPurpose', purpose: 'summary', target: { profileId: 'profile.matrix', modelId: 'model.one' } })
+  rejectWithoutWrite({ type: 'assignPurpose', purpose: 'summary', target: { profileId: 'profile.matrix', modelId: 'missing' } })
+  apply({ type: 'removeModel', profileId: 'profile.matrix', modelId: 'model.one' })
+  rejectWithoutWrite({ type: 'removeModel', profileId: 'profile.matrix', modelId: 'model.one' })
+  apply({ type: 'clearCredential', profileId: 'profile.matrix' })
+  rejectWithoutWrite({ type: 'clearCredential', profileId: 'missing' })
+  apply({ type: 'deleteProfile', profileId: 'profile.matrix' })
+  rejectWithoutWrite({ type: 'deleteProfile', profileId: 'profile.matrix' })
+})
+
 test('SEM-F33/J25: bind validates an existing v5 run and replays one immutable snapshot', (t) => {
   const { subtitleStore, store } = fixture(t)
   const slot = addProfileModel(store)

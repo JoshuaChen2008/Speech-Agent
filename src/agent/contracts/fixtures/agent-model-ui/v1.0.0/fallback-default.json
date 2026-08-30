@@ -1,9 +1,0 @@
-{
-  "previewOnly": true,
-  "contractId": "agent-model-ui",
-  "contractVersion": "1.0.0",
-  "scenario": "fallback-default",
-  "purpose": "summary",
-  "assignmentMode": "fallback_default",
-  "readiness": { "singleShot": "ready", "agentLoop": "ready" }
-}

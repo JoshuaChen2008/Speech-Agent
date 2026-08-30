@@ -40,6 +40,7 @@ class ModelAccessRuntime {
         let result
         if (command.type === 'setCredential') {
           const internal = await this.internal()
+          if (command.expectedRevision !== internal.revision) return this.failure('MODEL_CONFIG_REVISION_CONFLICT')
           const profile = internal.profiles.find((item) => item.profile_id === command.profileId)
           if (!profile) return this.failure('MODEL_CONFIG_INVALID')
           let setToken = null
@@ -59,6 +60,7 @@ class ModelAccessRuntime {
           }
         } else {
           const internal = ['clearCredential', 'deleteProfile'].includes(command.type) ? await this.internal() : null
+          if (internal && command.expectedRevision !== internal.revision) return this.failure('MODEL_CONFIG_REVISION_CONFLICT')
           const profile = internal?.profiles.find((item) => item.profile_id === command.profileId)
           let clearToken = null
           if (profile) clearToken = this.vault.prepareClear(

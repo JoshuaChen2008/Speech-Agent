@@ -14,11 +14,20 @@ test('SEM-F33/J25: model IPC is settings-only and delegates exact requests', asy
     for (const role of ['caption', 'toolbar', 'history']) assert.equal(isRoleAllowed(channel, role), false)
   }
   const handlers = new Map()
+  const unconfigured = {
+    assignmentMode: 'unconfigured', providerKind: null, target: null,
+    singleShot: 'provider_not_configured', agentLoop: 'provider_not_configured'
+  }
   registerModelAccessIpc({
     ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
     authorize: (_event, channel) => { if (!channel.startsWith('agent-model:')) throw new Error() },
     getRuntime: () => ({
-      catalog: async () => ({ ok: true, snapshot: { revision: 0, profiles: [], readinessByPurpose: {} }, error: null }),
+      catalog: async () => ({ ok: true, snapshot: {
+        revision: 0, profiles: [], readinessByPurpose: {
+          default: unconfigured, information_extraction: unconfigured,
+          summary: unconfigured, analysis_planning: unconfigured
+        }
+      }, error: null }),
       configure: async () => ({ ok: true, revision: 1, error: null })
     }),
     getPullController: () => ({ pull: async () => ({ status: 'success', suggestions: [] }) })

@@ -9,6 +9,7 @@ const path = require('node:path')
 const { CredentialVault } = require('../../src/agent/model-access/credential-vault')
 const { ModelAccessRuntime } = require('../../src/agent/model-access/runtime')
 const { RemoteModelCatalogPullController } = require('../../src/agent/model-access/remote-catalog-controller')
+const { OpenAiCompatibleAdapter } = require('../../src/agent/model-access/openai-compatible-adapter')
 const { sanitizedEnvironment } = require('../../src/agent/model-access/environment')
 
 function vault (t, encryptionAvailable = true) {
@@ -100,6 +101,29 @@ test('SEM-F33/J25: remote pull is transient, rejects redirect, and clears creden
   assert.equal(invalidated, 'deepseek')
 })
 
+test('SEM-F33/J25: OpenAI-compatible catalog uses the fixed safe-joined endpoint and rejects every redirect', async () => {
+  const requests = []
+  const adapter = new OpenAiCompatibleAdapter({
+    fetch: async (url, options) => {
+      requests.push({ url, options })
+      return { ok: true, status: 200, json: async () => ({ data: [{ id: 'model.one' }] }) }
+    }
+  })
+  assert.deepEqual(await adapter.listModels({
+    connection: { httpsOrigin: 'https://example.test:8443', basePath: '/v1' },
+    credential: Buffer.from('bounded-secret')
+  }), [{ modelId: 'model.one', capabilitySuggestion: null }])
+  assert.equal(requests[0].url, 'https://example.test:8443/v1/models')
+  assert.equal(requests[0].options.redirect, 'manual')
+
+  for (const status of [301, 302, 307, 308]) {
+    const redirect = new OpenAiCompatibleAdapter({ fetch: async () => ({ ok: false, status }) })
+    await assert.rejects(redirect.listModels({
+      connection: { httpsOrigin: 'https://example.test', basePath: '/' }, credential: Buffer.from('secret')
+    }), (error) => error.code === 'REDIRECT_REJECTED')
+  }
+})
+
 test('SEM-F33/J25: startup environment removes every legacy credential spelling', () => {
   assert.deepEqual(sanitizedEnvironment({ Path: 'ok', DEEPSEEK_API_KEY: 'one', deepseek_api_key: 'two', Other: 3 }), { Path: 'ok' })
 })
@@ -174,6 +198,42 @@ test('SEM-F33/J25: setCredential rolls back the prepared generation when SQLite 
   assert.equal(fs.readdirSync(directory).filter((name) => name.endsWith('.bin')).length, 1)
   assert.equal(fs.existsSync(path.join(directory, 'journal.v1.json')), false)
   await instance.borrow(slot, 'persistent', oldState.generation, async (copy) => assert.equal(copy.toString(), 'old-secret'))
+})
+
+test('SEM-F33/J25: stale credential commands reject before any vault prepare', async (t) => {
+  const { instance } = vault(t, true)
+  const slot = 'slot.0123456789abcdef0123456789abcdef'
+  const state = instance.set(slot, 'old-secret')
+  const internal = { revision: 9, profiles: [{
+    profile_id: 'profile.one', credential_slot_id: slot,
+    credential_persistence: 'persistent', credential_generation: state.generation
+  }] }
+  let prepareSetCount = 0
+  let prepareClearCount = 0
+  const originalPrepareSet = instance.prepareSet.bind(instance)
+  const originalPrepareClear = instance.prepareClear.bind(instance)
+  instance.prepareSet = (...args) => { prepareSetCount += 1; return originalPrepareSet(...args) }
+  instance.prepareClear = (...args) => { prepareClearCount += 1; return originalPrepareClear(...args) }
+  const runtime = new ModelAccessRuntime({
+    vault: instance,
+    gateway: {
+      modelAccessCatalog: async () => internal,
+      modelAccessConfigure: async () => { const error = new Error(); error.code = 'MODEL_CONFIG_REVISION_CONFLICT'; throw error },
+      modelAccessBind: async () => ({})
+    }
+  })
+
+  for (const command of [
+    { type: 'setCredential', expectedRevision: 8, profileId: 'profile.one', credential: 'new-secret' },
+    { type: 'clearCredential', expectedRevision: 8, profileId: 'profile.one' },
+    { type: 'deleteProfile', expectedRevision: 8, profileId: 'profile.one' }
+  ]) {
+    const result = await runtime.configure(command)
+    assert.equal(result.error.code, 'MODEL_CONFIG_REVISION_CONFLICT')
+  }
+  assert.equal(prepareSetCount, 0)
+  assert.equal(prepareClearCount, 0)
+  assert.deepEqual(instance.state(slot, 'persistent', state.generation), { present: true, scope: 'persistent' })
 })
 
 test('SEM-F33/J25: credential quarantine recovery follows the committed SQLite fact', () => {

@@ -16,6 +16,7 @@ const CHANNELS = require('../../src/main/ipc/channels')
 const { registerModelAccessIpc } = require('../../src/main/ipc/model-access-ipc')
 const { canonicalize, sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
 const { fauxProvider } = require('./faux-provider')
+const { assertModelUsage, normalizeDeepSeekUsage } = require('../../src/agent/contracts/model-access-core')
 
 const capabilities = { maxInputTokens: 64000, maxOutputTokens: 4096, supportsToolCalling: true, supportsStructuredOutput: true, supportsStreaming: true, usageReporting: true }
 const contract = { contractId: 'agent-model-ui', contractVersion: '1.0.0' }
@@ -112,7 +113,60 @@ test('SEM-F00/SEM-F33/J25: S2 Core configures two profiles, resolves fallback, b
   assert.equal((await getCatalog()).snapshot.revision, beforePull)
   assert.equal(service.requireModelAccessStore().internalCatalog().profiles.find((p) => p.profile_id === 'deepseek').models.length, 1)
 
+  await configure({ type: 'setCredential', profileId: 'local.profile', credential: 'local-synthetic-secret' })
+  const beforeAuth = (await getCatalog()).snapshot
+  assert.equal(beforeAuth.profiles.find((profile) => profile.profileId === 'deepseek').credential.present, true)
+  assert.equal(beforeAuth.profiles.find((profile) => profile.profileId === 'local.profile').credential.present, true)
+  const authController = new RemoteModelCatalogPullController({ runtime, vault, adapter: fauxProvider('auth') })
+  assert.equal((await authController.pull({ profileId: 'deepseek', expectedRevision: beforeAuth.revision })).status, 'credential_unavailable')
+  const afterAuth = (await getCatalog()).snapshot
+  assert.equal(afterAuth.revision, beforeAuth.revision + 1)
+  assert.deepEqual(afterAuth.profiles.find((profile) => profile.profileId === 'deepseek').credential, { present: false, scope: 'absent' })
+  assert.deepEqual(afterAuth.profiles.find((profile) => profile.profileId === 'local.profile').credential, { present: true, scope: 'persistent' })
+
   assert.equal(subtitleStore.database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='formal_agent_interactions'").get().count, 0)
   assert.equal(JSON.stringify(snapshot).includes('credentialSlotId'), false)
   assert.equal(/price|cost|currency|pricing/i.test(JSON.stringify(binding)), false)
+})
+
+test('SEM-F33/J25: faux provider freezes provider, estimated, cache and bounded credential protocol without inference', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'model-access-usage-'))
+  const vault = new CredentialVault({ directory: path.join(root, 'vault'), safeStorage: {
+    isEncryptionAvailable: () => true,
+    encryptString: (value) => Buffer.from(value).reverse(),
+    decryptString: (value) => Buffer.from(value).reverse().toString()
+  } })
+  t.after(() => { vault.close(); fs.rmSync(root, { recursive: true, force: true }) })
+  const slot = 'slot.0123456789abcdef0123456789abcdef'
+  const state = vault.set(slot, 'usage-secret')
+  let borrowed
+  const complete = async (scenario) => vault.borrow(slot, 'persistent', state.generation, async (credential) => {
+    borrowed = credential
+    return fauxProvider(scenario).complete({ credential })
+  })
+
+  assert.deepEqual(normalizeDeepSeekUsage((await complete('usage-cache-hit')).usage), {
+    inputTokens: 1000, outputTokens: 200, usageSource: 'provider',
+    cacheHitInputTokens: 250, cacheMissInputTokens: 750
+  })
+  assert.equal(borrowed.every((byte) => byte === 0), true)
+  assert.deepEqual(normalizeDeepSeekUsage((await complete('usage-no-cache')).usage), {
+    inputTokens: 1000, outputTokens: 200, usageSource: 'provider',
+    cacheHitInputTokens: null, cacheMissInputTokens: null
+  })
+  assert.deepEqual(normalizeDeepSeekUsage((await complete('usage-inconsistent-cache')).usage), {
+    inputTokens: 1000, outputTokens: 200, usageSource: 'provider',
+    cacheHitInputTokens: null, cacheMissInputTokens: null
+  })
+  assert.equal((await complete('usage-absent')).usage, null)
+  assert.deepEqual(assertModelUsage({
+    inputTokens: 900, outputTokens: 180, usageSource: 'estimated',
+    cacheHitInputTokens: null, cacheMissInputTokens: null
+  }).usageSource, 'estimated')
+
+  const barrierProvider = fauxProvider('barrier')
+  const pending = vault.borrow(slot, 'persistent', state.generation, (credential) => barrierProvider.complete({ credential }))
+  await barrierProvider.entered
+  barrierProvider.release()
+  assert.equal((await pending).usage.prompt_tokens, 1)
 })
