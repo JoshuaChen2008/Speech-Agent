@@ -14,7 +14,8 @@ function read (relativePath) {
 test('settings expose separate core and optional refinement resource controls without resource internals', () => {
   const html = read('src/settings/settings-view.tsx')
   const paneStart = html.indexOf('data-pane="resources"')
-  const paneEnd = html.indexOf('data-pane="about"', paneStart)
+  // 切到下一个分区起点为止：模型资源之后是个人上下文，切片必须只含资源分区。
+  const paneEnd = html.indexOf('data-pane="context"', paneStart)
   const pane = html.slice(paneStart, paneEnd)
 
   assert.ok(paneStart >= 0)
