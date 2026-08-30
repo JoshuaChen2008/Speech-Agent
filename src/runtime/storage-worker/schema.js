@@ -577,6 +577,248 @@ CREATE TABLE memory_deletion_receipts (
 ) STRICT;
 `
 
+/* SEM-F30 / DB7 / J21：新个人上下文实现使用独立命名空间。正式 v1-v4
+   已由 migration checksum 冻结，因此这里只能追加 v5，不能改写旧 Agent 表。 */
+const PERSONAL_CONTEXT_SCHEMA_SQL = `
+ALTER TABLE session_deletion_tombstones
+  ADD COLUMN deleted_interaction_count INTEGER NOT NULL DEFAULT 0 CHECK (deleted_interaction_count >= 0);
+ALTER TABLE session_deletion_tombstones
+  ADD COLUMN deleted_tool_call_count INTEGER NOT NULL DEFAULT 0 CHECK (deleted_tool_call_count >= 0);
+ALTER TABLE session_deletion_tombstones
+  ADD COLUMN deleted_episode_count INTEGER NOT NULL DEFAULT 0 CHECK (deleted_episode_count >= 0);
+ALTER TABLE session_deletion_tombstones
+  ADD COLUMN deleted_context_evidence_count INTEGER NOT NULL DEFAULT 0 CHECK (deleted_context_evidence_count >= 0);
+ALTER TABLE session_deletion_tombstones
+  ADD COLUMN deleted_orphan_context_item_count INTEGER NOT NULL DEFAULT 0 CHECK (deleted_orphan_context_item_count >= 0);
+
+CREATE TABLE formal_agent_runs (
+  run_order INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL UNIQUE CHECK (length(run_id) BETWEEN 1 AND 160),
+  dedupe_key TEXT NOT NULL UNIQUE CHECK (length(dedupe_key) = 64),
+  client_idempotency_key TEXT UNIQUE CHECK (
+    client_idempotency_key IS NULL OR length(client_idempotency_key) BETWEEN 1 AND 160
+  ),
+  request_digest TEXT NOT NULL CHECK (length(request_digest) = 64),
+  recipe_id TEXT NOT NULL CHECK (length(recipe_id) BETWEEN 1 AND 80),
+  recipe_version TEXT NOT NULL CHECK (length(recipe_version) BETWEEN 1 AND 80),
+  scope_json TEXT NOT NULL CHECK (json_valid(scope_json)),
+  scope_digest TEXT NOT NULL CHECK (length(scope_digest) = 64),
+  transcript_version TEXT NOT NULL CHECK (transcript_version IN ('raw', 'refined')),
+  input_watermark_json TEXT NOT NULL CHECK (json_valid(input_watermark_json)),
+  input_digest TEXT NOT NULL CHECK (length(input_digest) = 64),
+  requested_by TEXT NOT NULL CHECK (requested_by IN ('automatic', 'user')),
+  state TEXT NOT NULL CHECK (state IN (
+    'queued', 'running', 'retry_wait', 'succeeded', 'failed', 'cancelled'
+  )),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count BETWEEN 0 AND 100),
+  max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts BETWEEN 1 AND 100),
+  next_attempt_at INTEGER NOT NULL CHECK (next_attempt_at >= 0),
+  lease_owner TEXT CHECK (lease_owner IS NULL OR length(lease_owner) BETWEEN 1 AND 160),
+  lease_expires_at INTEGER CHECK (lease_expires_at IS NULL OR lease_expires_at >= 0),
+  lease_renewed_from_expires_at INTEGER CHECK (
+    lease_renewed_from_expires_at IS NULL OR lease_renewed_from_expires_at >= 0
+  ),
+  cancel_requested_at INTEGER CHECK (cancel_requested_at IS NULL OR cancel_requested_at >= 0),
+  error_code TEXT CHECK (error_code IS NULL OR error_code IN (
+    'AGENT_PROVIDER_AUTH_FAILED',
+    'AGENT_PROVIDER_RATE_LIMITED',
+    'AGENT_PROVIDER_UNAVAILABLE',
+    'AGENT_PROVIDER_TIMEOUT',
+    'AGENT_OUTPUT_INVALID',
+    'AGENT_PERMISSION_DENIED',
+    'AGENT_REQUEST_INVALID',
+    'AGENT_WORKER_EXITED',
+    'AGENT_INTERNAL_FAILURE',
+    'AGENT_BUDGET_EXCEEDED'
+  )),
+  result_digest TEXT CHECK (result_digest IS NULL OR length(result_digest) = 64),
+  result_summary_json TEXT CHECK (result_summary_json IS NULL OR json_valid(result_summary_json)),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+  CHECK ((state = 'running') = (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)),
+  CHECK (state = 'running' OR lease_renewed_from_expires_at IS NULL),
+  CHECK ((state = 'failed') = (error_code IS NOT NULL)),
+  CHECK (
+    (state = 'succeeded' AND result_digest IS NOT NULL AND result_summary_json IS NOT NULL) OR
+    (state <> 'succeeded' AND result_digest IS NULL AND result_summary_json IS NULL)
+  ),
+  CHECK (
+    (requested_by = 'automatic' AND client_idempotency_key IS NULL) OR
+    (requested_by = 'user' AND client_idempotency_key IS NOT NULL)
+  )
+) STRICT;
+
+CREATE TABLE formal_agent_run_claim_receipts (
+  claim_idempotency_key TEXT PRIMARY KEY NOT NULL CHECK (length(claim_idempotency_key) BETWEEN 1 AND 160),
+  request_digest TEXT NOT NULL CHECK (length(request_digest) = 64),
+  run_id TEXT CHECK (run_id IS NULL OR length(run_id) BETWEEN 1 AND 160),
+  lease_owner TEXT CHECK (lease_owner IS NULL OR length(lease_owner) BETWEEN 1 AND 160),
+  lease_expires_at INTEGER CHECK (lease_expires_at IS NULL OR lease_expires_at >= 0),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  CHECK (
+    (run_id IS NULL AND lease_owner IS NULL AND lease_expires_at IS NULL) OR
+    (run_id IS NOT NULL AND lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)
+  )
+) STRICT;
+
+CREATE TABLE personal_context_projection_state (
+  singleton_key INTEGER PRIMARY KEY NOT NULL CHECK (singleton_key = 1),
+  content_revision INTEGER NOT NULL CHECK (content_revision >= 0),
+  last_command_digest TEXT CHECK (last_command_digest IS NULL OR length(last_command_digest) = 64),
+  last_result_identity_json TEXT CHECK (
+    last_result_identity_json IS NULL OR json_valid(last_result_identity_json)
+  ),
+  updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+  CHECK ((last_command_digest IS NULL) = (last_result_identity_json IS NULL))
+) STRICT;
+
+INSERT INTO personal_context_projection_state(
+  singleton_key, content_revision, last_command_digest, last_result_identity_json, updated_at
+) VALUES (1, 0, NULL, NULL, 0);
+
+CREATE TABLE personal_context_scopes (
+  scope_id TEXT PRIMARY KEY NOT NULL CHECK (length(scope_id) BETWEEN 1 AND 160),
+  kind TEXT NOT NULL CHECK (kind IN ('global', 'session', 'topic', 'project')),
+  canonical_key TEXT NOT NULL CHECK (length(canonical_key) BETWEEN 1 AND 240),
+  label TEXT NOT NULL CHECK (length(label) BETWEEN 1 AND 400),
+  session_id TEXT,
+  origin TEXT NOT NULL CHECK (origin IN ('user', 'automatic')),
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'forgotten', 'conflicted', 'inactive')),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+  FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
+  UNIQUE (kind, canonical_key),
+  CHECK ((kind = 'session') = (session_id IS NOT NULL))
+) STRICT;
+
+CREATE TABLE personal_context_items (
+  memory_id TEXT PRIMARY KEY NOT NULL CHECK (length(memory_id) BETWEEN 1 AND 160),
+  scope_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN (
+    'decision', 'conclusion', 'todo', 'term', 'preference', 'project_fact', 'experience'
+  )),
+  semantic_key TEXT NOT NULL CHECK (length(semantic_key) BETWEEN 1 AND 256),
+  content_json TEXT NOT NULL CHECK (json_valid(content_json)),
+  origin TEXT NOT NULL CHECK (origin IN ('explicit', 'inferred')),
+  confidence_band TEXT NOT NULL CHECK (confidence_band IN ('low', 'medium', 'high')),
+  salience_band TEXT NOT NULL CHECK (salience_band IN ('low', 'medium', 'high')),
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'forgotten', 'conflicted', 'inactive')),
+  current_revision_id TEXT CHECK (current_revision_id IS NULL OR length(current_revision_id) BETWEEN 1 AND 160),
+  item_revision INTEGER NOT NULL CHECK (item_revision >= 1),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+  FOREIGN KEY (scope_id) REFERENCES personal_context_scopes(scope_id) ON DELETE CASCADE,
+  FOREIGN KEY (current_revision_id, memory_id)
+    REFERENCES personal_context_revisions(revision_id, memory_id) ON DELETE SET NULL,
+  UNIQUE (scope_id, kind, semantic_key)
+) STRICT;
+
+CREATE TABLE personal_context_revisions (
+  revision_id TEXT PRIMARY KEY NOT NULL CHECK (length(revision_id) BETWEEN 1 AND 160),
+  memory_id TEXT NOT NULL,
+  operation TEXT NOT NULL CHECK (operation IN (
+    'create', 'merge', 'replace', 'invalidate', 'user-correct', 'forget', 'restore'
+  )),
+  content_json TEXT CHECK (content_json IS NULL OR json_valid(content_json)),
+  previous_revision_id TEXT,
+  run_id TEXT,
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  FOREIGN KEY (memory_id) REFERENCES personal_context_items(memory_id) ON DELETE CASCADE,
+  FOREIGN KEY (previous_revision_id, memory_id)
+    REFERENCES personal_context_revisions(revision_id, memory_id) ON DELETE SET NULL,
+  FOREIGN KEY (run_id) REFERENCES formal_agent_runs(run_id) ON DELETE SET NULL,
+  UNIQUE (revision_id, memory_id)
+) STRICT;
+
+CREATE TABLE personal_context_evidence (
+  evidence_id TEXT PRIMARY KEY NOT NULL CHECK (length(evidence_id) BETWEEN 1 AND 160),
+  ingest_run_id TEXT NOT NULL,
+  memory_id TEXT NOT NULL,
+  source_kind TEXT NOT NULL CHECK (source_kind IN ('session', 'interaction')),
+  session_id TEXT,
+  interaction_id TEXT,
+  transcript_version TEXT NOT NULL CHECK (transcript_version IN ('raw', 'refined')),
+  input_watermark INTEGER NOT NULL CHECK (input_watermark >= 1),
+  from_event_order INTEGER NOT NULL CHECK (from_event_order >= 1),
+  through_event_order INTEGER NOT NULL CHECK (through_event_order >= from_event_order),
+  input_digest TEXT NOT NULL CHECK (length(input_digest) = 64),
+  recipe_id TEXT NOT NULL CHECK (recipe_id IN ('context.ingest.session', 'context.ingest.interaction')),
+  recipe_version TEXT NOT NULL CHECK (length(recipe_version) BETWEEN 1 AND 80),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  FOREIGN KEY (ingest_run_id) REFERENCES formal_agent_runs(run_id) ON DELETE CASCADE,
+  FOREIGN KEY (memory_id) REFERENCES personal_context_items(memory_id) ON DELETE CASCADE,
+  FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
+  CHECK (
+    (source_kind = 'session' AND session_id IS NOT NULL AND interaction_id IS NULL) OR
+    (source_kind = 'interaction' AND session_id IS NULL AND interaction_id IS NOT NULL)
+  )
+) STRICT;
+
+CREATE TABLE personal_context_suppressions (
+  identity_hash TEXT NOT NULL CHECK (length(identity_hash) = 64),
+  scope_id TEXT NOT NULL,
+  source_digest TEXT NOT NULL CHECK (length(source_digest) = 64),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  PRIMARY KEY (identity_hash, source_digest),
+  FOREIGN KEY (scope_id) REFERENCES personal_context_scopes(scope_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE personal_context_deletion_receipts (
+  deletion_idempotency_key TEXT PRIMARY KEY NOT NULL CHECK (
+    length(deletion_idempotency_key) BETWEEN 1 AND 160
+  ),
+  request_digest TEXT NOT NULL CHECK (length(request_digest) = 64),
+  identity_hash TEXT NOT NULL CHECK (length(identity_hash) = 64),
+  deleted_item_count INTEGER NOT NULL CHECK (deleted_item_count >= 0),
+  deleted_revision_count INTEGER NOT NULL CHECK (deleted_revision_count >= 0),
+  deleted_evidence_count INTEGER NOT NULL CHECK (deleted_evidence_count >= 0),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0)
+) STRICT;
+
+CREATE TABLE personal_context_episodes (
+  episode_id TEXT PRIMARY KEY NOT NULL CHECK (length(episode_id) BETWEEN 1 AND 160),
+  source_kind TEXT NOT NULL CHECK (source_kind IN ('session', 'interaction')),
+  session_id TEXT,
+  interaction_id TEXT,
+  scope_id TEXT NOT NULL,
+  transcript_version TEXT NOT NULL CHECK (transcript_version IN ('raw', 'refined')),
+  input_watermark INTEGER NOT NULL CHECK (input_watermark >= 1),
+  from_event_order INTEGER NOT NULL CHECK (from_event_order >= 1),
+  through_event_order INTEGER NOT NULL CHECK (through_event_order >= from_event_order),
+  input_digest TEXT NOT NULL CHECK (length(input_digest) = 64),
+  summary_json TEXT NOT NULL CHECK (
+    json_valid(summary_json) AND length(CAST(summary_json AS BLOB)) <= 8192
+  ),
+  occurred_from_offset_ms INTEGER NOT NULL CHECK (occurred_from_offset_ms >= 0),
+  occurred_through_offset_ms INTEGER NOT NULL CHECK (
+    occurred_through_offset_ms >= occurred_from_offset_ms
+  ),
+  ingest_run_id TEXT NOT NULL,
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'forgotten', 'conflicted', 'inactive')),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+  FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
+  FOREIGN KEY (scope_id) REFERENCES personal_context_scopes(scope_id) ON DELETE CASCADE,
+  FOREIGN KEY (ingest_run_id) REFERENCES formal_agent_runs(run_id) ON DELETE CASCADE,
+  UNIQUE (source_kind, session_id, interaction_id, input_digest),
+  CHECK (
+    (source_kind = 'session' AND session_id IS NOT NULL AND interaction_id IS NULL) OR
+    (source_kind = 'interaction' AND session_id IS NULL AND interaction_id IS NOT NULL)
+  )
+) STRICT;
+
+CREATE INDEX formal_agent_runs_claim
+  ON formal_agent_runs(state, next_attempt_at, run_order);
+CREATE INDEX formal_agent_run_claim_receipts_run
+  ON formal_agent_run_claim_receipts(run_id, created_at);
+CREATE INDEX personal_context_items_lookup
+  ON personal_context_items(lifecycle, scope_id, kind, updated_at);
+CREATE INDEX personal_context_evidence_session
+  ON personal_context_evidence(session_id, through_event_order);
+CREATE INDEX personal_context_episodes_session
+  ON personal_context_episodes(session_id, through_event_order);
+`
+
 function checksum (sql) {
   return crypto.createHash('sha256').update(sql, 'utf8').digest('hex')
 }
@@ -610,6 +852,11 @@ const FORMAL_AGENT_MIGRATIONS = Object.freeze([
     version: SUBTITLE_BASE_MIGRATIONS.length + 2,
     checksum: checksum(FORMAL_AGENT_MEMORY_DELETION_SCHEMA_SQL),
     sql: FORMAL_AGENT_MEMORY_DELETION_SCHEMA_SQL
+  }),
+  Object.freeze({
+    version: SUBTITLE_BASE_MIGRATIONS.length + 3,
+    checksum: checksum(PERSONAL_CONTEXT_SCHEMA_SQL),
+    sql: PERSONAL_CONTEXT_SCHEMA_SQL
   })
 ])
 
@@ -620,6 +867,7 @@ module.exports = {
   REFINEMENT_SESSION_RESULTS_SCHEMA_SQL,
   FORMAL_AGENT_SCHEMA_SQL,
   FORMAL_AGENT_MEMORY_DELETION_SCHEMA_SQL,
+  PERSONAL_CONTEXT_SCHEMA_SQL,
   SUBTITLE_BASE_MIGRATIONS,
   FORMAL_AGENT_MIGRATIONS,
   MIGRATIONS,

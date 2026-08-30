@@ -42,7 +42,7 @@ function appendFinal (store, sessionId, text) {
   store.closeSession({ sessionId, sourceId: 'loopback', endedAt: 200, state: 'closed' })
 }
 
-test('DB7 / ADR 0010 upgrades subtitle v2 through formal Agent v4 without changing subtitle facts', (t) => {
+test('DB7 / ADR 0010 / J21 upgrades subtitle v2 through formal Agent v5 without changing subtitle facts', (t) => {
   const databasePath = path.join(tempRoot(t), 'formal.sqlite3')
   const base = new SqliteSubtitleStore({ databasePath, now: () => 1000 })
   appendFinal(base, 'formal-upgrade', 'synthetic committed transcript')
@@ -75,6 +75,8 @@ test('DB7 / ADR 0010 upgrades subtitle v2 through formal Agent v4 without changi
       'agent_debug_threads',
       'agent_jobs',
       'caption_events',
+      'formal_agent_run_claim_receipts',
+      'formal_agent_runs',
       'legacy_imports',
       'memory_deletion_receipts',
       'memory_evidence',
@@ -82,6 +84,14 @@ test('DB7 / ADR 0010 upgrades subtitle v2 through formal Agent v4 without changi
       'memory_revisions',
       'memory_scopes',
       'memory_suppressions',
+      'personal_context_deletion_receipts',
+      'personal_context_episodes',
+      'personal_context_evidence',
+      'personal_context_items',
+      'personal_context_projection_state',
+      'personal_context_revisions',
+      'personal_context_scopes',
+      'personal_context_suppressions',
       'recognition_session_configs',
       'recognition_term_set_members',
       'recognition_term_sets',
@@ -165,7 +175,7 @@ test('DB7 / J24-B22 upgrades formal v3 suppression identity to one row per old s
       .filter((column) => Number(column.pk) > 0)
       .sort((left, right) => Number(left.pk) - Number(right.pk))
       .map((column) => column.name), ['identity_hash', 'source_digest'])
-    assert.equal(Number(v4.database.prepare('PRAGMA user_version').get().user_version), 4)
+    assert.equal(Number(v4.database.prepare('PRAGMA user_version').get().user_version), 5)
   } finally {
     v4.close()
   }
