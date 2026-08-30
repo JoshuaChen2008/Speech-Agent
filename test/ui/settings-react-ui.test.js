@@ -1,33 +1,22 @@
 'use strict'
 
+require('./dom-bootstrap')
+
 const assert = require('node:assert/strict')
-const fs = require('node:fs')
-const Module = require('node:module')
 const path = require('node:path')
 const test = require('node:test')
 const React = require('react')
 const { act } = React
 const { createRoot } = require('react-dom/client')
 const { JSDOM } = require('jsdom')
+const { loadRendererModule } = require('./load-renderer-module')
 
 const root = path.resolve(__dirname, '..', '..')
 
 async function loadSettingsView () {
   const filename = path.join(root, 'src', 'settings', 'settings-view.tsx')
-  const { transformWithOxc } = await import('vite')
-  const transformed = await transformWithOxc(fs.readFileSync(filename, 'utf8'), filename, { lang: 'tsx' })
-  const output = transformed.code
-    .replace(/import \{([^}]+)\} from "react";/, (_, names) => `const {${names.replaceAll(' as ', ': ')}} = require("react");`)
-    .replace(/import Icons from "\.\.\/ui\/shared\/fluent-icons";/,
-      'const Icons = { iconMarkup: () => `<svg aria-hidden="true"></svg>` };')
-    .replace(/import \{([^}]+)\} from "react\/jsx-runtime";/,
-      (_, names) => `const {${names.replaceAll(' as ', ': ')}} = require("react/jsx-runtime");`)
-    .replace('export function SettingsView', 'function SettingsView') + '\nmodule.exports = { SettingsView };\n'
-  const loaded = new Module(filename, module)
-  loaded.filename = filename
-  loaded.paths = Module._nodeModulePaths(path.dirname(filename))
-  loaded._compile(output, filename)
-  return loaded.exports.SettingsView
+  const exports = await loadRendererModule(filename)
+  return exports.SettingsView
 }
 
 function deferred () {
@@ -142,4 +131,11 @@ test('SEM-F23/J18: source command exposes pending feedback and rolls back after 
   assert.equal(document.querySelector('[data-source="loopback"]').getAttribute('aria-checked'), 'true')
   assert.equal(document.querySelector('[data-source="mic"]').getAttribute('aria-checked'), 'false')
   assert.equal(document.querySelector('[data-source="mic"]').disabled, false)
+})
+
+test('S5-UX/J25(S2 Core 子边界): 设置导航新增 Agent 模型配置档案类别，既有五项文案与顺序不变', async (t) => {
+  const harness = await createHarness(); t.after(() => harness.dispose())
+  const labels = [...document.querySelectorAll('.nav-item')].map((item) => item.textContent)
+  assert.deepEqual(labels, ['显示与字幕', '音频源', '语音识别', '模型资源', 'Agent 模型配置档案', '关于'])
+  assert.equal(document.querySelector('.nav-item[data-pane="agentModel"]') !== null, true)
 })
