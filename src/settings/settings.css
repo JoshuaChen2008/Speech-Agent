@@ -349,138 +349,15 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 /* --------------------------------------------------------------------------
-   个人上下文：状态区分先靠文字与形状，颜色只作冗余通道；不展示条目 ID、
-   revision 原值、来源 digest、IPC channel 或本地路径。
-   -------------------------------------------------------------------------- */
-.pc-processing .hint { display: block; margin: 5px 0 0; max-width: 460px; line-height: 1.45; }
-.pc-sections { margin-top: 14px; padding-bottom: 14px; }
-.pc-tabs { margin-top: 12px; }
-.pc-sections .hint { display: block; margin: 10px 0 0; max-width: 520px; line-height: 1.5; }
-.pc-status {
-  margin: 14px 0 0;
-  min-height: 1.2em;
-  font-size: var(--fs-hint);
-  opacity: 0.62;
-  line-height: 1.5;
-}
-.pc-alert {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-top: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--tone-danger);
-  border-left-width: 4px;
-  border-radius: var(--radius-control);
-  color: var(--tone-danger);
-  font-size: var(--fs-hint);
-  line-height: 1.55;
-}
-.pc-alert[hidden] { display: none; }
-.pc-loading, .pc-unavailable { margin-top: 4px; padding: 16px; }
-.pc-loading .hint, .pc-unavailable p { display: block; margin: 0 0 12px; font-size: var(--fs-label); line-height: 1.55; }
-.pc-unavailable p { opacity: 0.72; }
-.pc-skeleton {
-  display: block;
-  height: 5px;
-  border-radius: 3px;
-  background: rgba(var(--fg), 0.14);
-}
-.pc-list-group { margin-top: 14px; }
-.pc-list { margin: 0; padding: 0; list-style: none; }
-.pc-item { border-bottom: 1px solid rgba(var(--fg), 0.07); }
-.pc-item:last-child { border-bottom: 0; }
-/* 已退出检索：文字标签在行内，虚线左边框作形状冗余，不靠颜色表达 */
-.pc-item[data-lifecycle="forgotten"] { border-left: 3px dashed rgba(var(--fg), 0.35); padding-left: 9px; }
-.pc-row {
-  display: grid;
-  gap: 5px;
-  width: 100%;
-  padding: 13px 0;
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: rgb(var(--fg));
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.pc-row:hover { background: rgba(var(--fg), 0.06); }
-.pc-text { font-size: var(--fs-body); line-height: 1.5; }
-.pc-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: var(--fs-hint); opacity: 0.58; }
-.pc-detail { padding: 0 0 14px; }
-.pc-detail .hint { display: block; margin: 0 0 10px; }
-.pc-bullets { margin: 0 0 10px; padding-left: 18px; font-size: var(--fs-label); line-height: 1.6; opacity: 0.8; }
-.pc-omission {
-  margin: 0 0 10px;
-  padding-left: 9px;
-  border-left: 3px solid rgba(var(--fg), 0.35);
-  font-size: var(--fs-hint);
-  line-height: 1.5;
-  opacity: 0.72;
-}
-.pc-more { display: block; margin: 12px 0 4px; }
-.pc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.pc-form { display: grid; gap: 8px; justify-items: start; padding: 0 0 14px; }
-.pc-form label { font-size: var(--fs-label); opacity: 0.72; }
-.pc-form textarea {
-  width: 100%;
-  min-height: 76px;
-  padding: 9px 11px;
-  border: 1px solid rgba(var(--fg), 0.22);
-  border-radius: var(--radius-control);
-  background: rgba(var(--fg), 0.04);
-  color: rgb(var(--fg));
-  font-family: inherit;
-  font-size: var(--fs-label);
-  line-height: 1.55;
-  resize: vertical;
-  user-select: text;
-}
-.pc-form select {
-  padding: 7px 10px;
-  border: 1px solid rgba(var(--fg), 0.22);
-  border-radius: var(--radius-control);
-  background: rgba(var(--fg), 0.04);
-  color: rgb(var(--fg));
-  font-family: inherit;
-  font-size: var(--fs-label);
-}
-.pc-form .hint { margin: 0; }
-.pc-problem { margin: 0; color: var(--tone-danger); font-size: var(--fs-hint); line-height: 1.5; }
-.pc-problem[hidden] { display: none; }
-/* 确认层：非模态、在流内出现并接收焦点，可 Esc 取消；不抢焦点也不遮挡整窗 */
-.pc-confirm {
-  margin-top: 14px;
-  padding: 16px;
-  border: 1px solid rgba(var(--fg), 0.28);
-  border-radius: var(--radius-bar);
-  background: rgba(var(--fg), 0.07);
-}
-.pc-confirm h2 { margin: 0 0 8px; font-size: var(--fs-body); font-weight: var(--fw-medium); }
-.pc-confirm p { margin: 0 0 12px; font-size: var(--fs-label); line-height: 1.6; opacity: 0.78; }
-.pc-confirm-target {
-  padding-left: 9px;
-  border-left: 3px solid rgba(var(--fg), 0.35);
-  user-select: text;
-}
-
-/* --------------------------------------------------------------------------
    高对比度：开关/分段控件靠底色区分状态，强制色下会失去差异，补形状编码
    -------------------------------------------------------------------------- */
 @media (forced-colors: active) {
   .group, .seg, .resource-list, .model-progress, .secondary-btn { border: 1px solid CanvasText; }
   .seg button.on { border: 2px solid Highlight; }
   .nav-item.active, .preset-card:hover { border: 1px solid Highlight; }
-  .pc-alert, .pc-confirm, .pc-form textarea, .pc-form select { border: 1px solid CanvasText; }
-  .pc-alert { border-left-width: 4px; }
-  .pc-item[data-lifecycle="forgotten"] { border-left: 3px dashed CanvasText; }
-  .pc-omission, .pc-confirm-target { border-left: 3px solid CanvasText; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .pane { animation: none; }
   .tb-close:active, .primary-btn:active, .secondary-btn:active, .preset-card:active { transform: none; }
-  /* pending 只由 aria-busy 与状态区文字表达，不留任何过渡指示 */
-  .pc-row, .pc-skeleton { transition: none; }
 }

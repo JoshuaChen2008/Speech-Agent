@@ -3,6 +3,7 @@
 const { canonicalize, sha256Canonical } = require('./canonical-json')
 const { rollbackQuietly } = require('./sqlite-store')
 const { StorageError, assertExactKeys, isPlainObject } = require('./protocol')
+const { FORMAL_AGENT_TASK_ERROR_CODES } = require('../../agent/contracts/personal-context-core')
 
 const MAX_CANDIDATES = 256
 const MAX_ITEMS = 20
@@ -929,11 +930,7 @@ class PersonalContextStore {
   failFormalRun (request) {
     assertExactKeys(request, ['attemptIdentity', 'errorCode'], 'AGENT_REQUEST_INVALID')
     const attempt = this.assertAttempt(request.attemptIdentity)
-    const errors = new Set([
-      'AGENT_PROVIDER_AUTH_FAILED', 'AGENT_PROVIDER_RATE_LIMITED', 'AGENT_PROVIDER_UNAVAILABLE',
-      'AGENT_PROVIDER_TIMEOUT', 'AGENT_OUTPUT_INVALID', 'AGENT_PERMISSION_DENIED',
-      'AGENT_REQUEST_INVALID', 'AGENT_WORKER_EXITED', 'AGENT_INTERNAL_FAILURE', 'AGENT_BUDGET_EXCEEDED'
-    ])
+    const errors = new Set(FORMAL_AGENT_TASK_ERROR_CODES)
     if (!errors.has(request.errorCode)) fail('AGENT_REQUEST_INVALID')
     const row = this.database.prepare('SELECT * FROM formal_agent_runs WHERE run_id = ?').get(attempt.runId)
     if (!row || row.state !== 'running' || Number(row.attempt_count) !== attempt.attempt ||

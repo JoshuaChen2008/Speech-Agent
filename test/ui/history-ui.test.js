@@ -7,9 +7,8 @@ const path = require('node:path')
 const test = require('node:test')
 const React = require('react')
 const { act } = React
+const { createRoot } = require('react-dom/client')
 const { JSDOM } = require('jsdom')
-
-const { createRoot } = require('./react-dom-runtime')
 
 const root = path.resolve(__dirname, '..', '..')
 

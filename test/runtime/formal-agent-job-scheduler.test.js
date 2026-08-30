@@ -122,6 +122,24 @@ test('SEM-F28/SEM-F30/J21: scheduler diagnostics are stable and contain no excep
   await scheduler.stop()
 })
 
+test('SEM-F00/SEM-F28/SEM-T04/J21: stop invalidates a hung claim without delaying subtitle shutdown', async () => {
+  let releaseClaim
+  const scheduler = new FormalAgentJobScheduler({
+    storage: {
+      claimNextFormalAgentRun: async () => new Promise((resolve) => { releaseClaim = resolve }),
+      nextFormalAgentRunAt: async () => null
+    },
+    runner: { run: async () => {} }
+  })
+  scheduler.start()
+  await settled()
+  await Promise.race([
+    scheduler.stop(),
+    new Promise((_, reject) => setImmediate(() => reject(new Error('scheduler stop waited for claim'))))
+  ])
+  releaseClaim(null)
+})
+
 test('SEM-F28/SEM-F30/J21: context ingest runner settles one frozen attempt without exposing failures', async () => {
   const settlements = []
   const source = { sourceKind: 'session', sessionId: 'session.1' }

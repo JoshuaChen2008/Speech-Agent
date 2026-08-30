@@ -56,7 +56,6 @@ class FormalAgentJobScheduler {
     this.wakeEpoch += 1
     this.pendingClaim = null
     this.cancelTimer()
-    while (this.draining) await new Promise((resolve) => this.queue(resolve))
   }
 
   scheduleDrain (generation) {

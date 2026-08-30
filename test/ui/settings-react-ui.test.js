@@ -1,13 +1,34 @@
 'use strict'
 
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const Module = require('node:module')
+const path = require('node:path')
 const test = require('node:test')
 const React = require('react')
 const { act } = React
+const { createRoot } = require('react-dom/client')
 const { JSDOM } = require('jsdom')
 
-const { loadSettingsView } = require('./load-settings-view')
-const { createRoot } = require('./react-dom-runtime')
+const root = path.resolve(__dirname, '..', '..')
+
+async function loadSettingsView () {
+  const filename = path.join(root, 'src', 'settings', 'settings-view.tsx')
+  const { transformWithOxc } = await import('vite')
+  const transformed = await transformWithOxc(fs.readFileSync(filename, 'utf8'), filename, { lang: 'tsx' })
+  const output = transformed.code
+    .replace(/import \{([^}]+)\} from "react";/, (_, names) => `const {${names.replaceAll(' as ', ': ')}} = require("react");`)
+    .replace(/import Icons from "\.\.\/ui\/shared\/fluent-icons";/,
+      'const Icons = { iconMarkup: () => `<svg aria-hidden="true"></svg>` };')
+    .replace(/import \{([^}]+)\} from "react\/jsx-runtime";/,
+      (_, names) => `const {${names.replaceAll(' as ', ': ')}} = require("react/jsx-runtime");`)
+    .replace('export function SettingsView', 'function SettingsView') + '\nmodule.exports = { SettingsView };\n'
+  const loaded = new Module(filename, module)
+  loaded.filename = filename
+  loaded.paths = Module._nodeModulePaths(path.dirname(filename))
+  loaded._compile(output, filename)
+  return loaded.exports.SettingsView
+}
 
 function deferred () {
   let resolve

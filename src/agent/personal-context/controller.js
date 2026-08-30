@@ -4,21 +4,13 @@ const {
   CONTRACT_ID,
   CONTRACT_VERSION,
   ERROR_CODES,
+  ERROR_RULES,
   assertChangedEvent,
   assertGetOverviewRequest,
   assertGetOverviewResponse,
   assertManageRequest,
   assertManageResponse
 } = require('../contracts/agent-context-ui')
-
-const ERROR_RULES = Object.freeze({
-  [ERROR_CODES.notFound]: ['not_found', 'reload', 'reload'],
-  [ERROR_CODES.operationFailed]: ['failure', 'reload', 'reload'],
-  [ERROR_CODES.permissionDenied]: ['permission', 'none', null],
-  [ERROR_CODES.requestInvalid]: ['validation', 'none', null],
-  [ERROR_CODES.revisionConflict]: ['conflict', 'reload', 'reload'],
-  [ERROR_CODES.unavailable]: ['unavailable', 'retry_same_request', 'retry']
-})
 
 function checkedRevision (value) {
   if (!Number.isSafeInteger(value) || value < 0) throw new RangeError('revision must be a non-negative safe integer')
@@ -33,11 +25,11 @@ function sumRevisions (contentRevision, settingsRevision) {
 function publicError (code, currentRevision = null) {
   const rule = ERROR_RULES[code] || ERROR_RULES[ERROR_CODES.operationFailed]
   return {
-    category: rule[0],
+    category: rule.category,
     code: ERROR_RULES[code] ? code : ERROR_CODES.operationFailed,
     current_revision: code === ERROR_CODES.revisionConflict ? checkedRevision(currentRevision) : null,
-    next_action: rule[2],
-    retry_policy: rule[1]
+    next_action: rule.next_action,
+    retry_policy: rule.retry_policy
   }
 }
 

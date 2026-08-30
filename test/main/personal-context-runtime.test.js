@@ -11,7 +11,7 @@ function nextTurn () {
   return new Promise((resolve) => setImmediate(resolve))
 }
 
-test('SEM-F00/SEM-F28/SEM-F30/J21: runtime wires terminal notification to S1 reconciliation and removes it before stop', async () => {
+test('SEM-F00/SEM-F28/SEM-F30/J21: runtime keeps S1 terminal notifications ineligible and removes them before stop', async () => {
   let listener = null
   let unsubscribed = false
   let claims = 0
@@ -44,7 +44,7 @@ test('SEM-F00/SEM-F28/SEM-F30/J21: runtime wires terminal notification to S1 rec
   const initialClaims = claims
   listener({ sessionId: 'session.terminal' })
   await nextTurn()
-  assert.ok(claims > initialClaims)
+  assert.equal(claims, initialClaims)
   await runtime.stop()
   assert.equal(unsubscribed, true)
   assert.equal(listener, null)

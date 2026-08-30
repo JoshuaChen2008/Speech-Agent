@@ -4,6 +4,7 @@ const {
   CONTRACT_ID,
   CONTRACT_VERSION,
   ERROR_CODES,
+  ERROR_RULES,
   IPC_CHANNELS,
   assertChangedEvent,
   assertGetOverviewResponse,
@@ -13,12 +14,8 @@ const {
 const CHANNELS = require('./channels')
 
 function error (code) {
-  const rules = {
-    [ERROR_CODES.permissionDenied]: ['permission', 'none', null],
-    [ERROR_CODES.unavailable]: ['unavailable', 'retry_same_request', 'retry']
-  }
-  const rule = rules[code]
-  return { code, category: rule[0], current_revision: null, retry_policy: rule[1], next_action: rule[2] }
+  const rule = ERROR_RULES[code]
+  return { code, category: rule.category, current_revision: null, retry_policy: rule.retry_policy, next_action: rule.next_action }
 }
 
 function unavailableOverview (code = ERROR_CODES.unavailable) {

@@ -37,11 +37,16 @@ class PersonalContextRuntime {
     if (this.started) return false
     if (!recorder || typeof recorder.onTerminalCommitted !== 'function') throw new TypeError('recorder terminal seam is required')
     this.unsubscribe = recorder.onTerminalCommitted((notice) => {
-      void this.reconciler.reconcile(notice).then(() => this.scheduler.wake('terminal-session')).catch(() => {
+      void this.reconciler.reconcile(notice).then((result) => {
+        /* S1 has no model-access fact and therefore cannot enter ready. Keep
+           the scheduler detached until a later slice supplies that fact. */
+        if (result.eligibility !== 'ready') return
+        if (!this.scheduler.started) this.scheduler.start()
+        this.scheduler.wake('terminal-session')
+      }).catch(() => {
         try { this.onDiagnostic({ code: 'AGENT_SCHEDULER_FAILED' }) } catch { /* observer isolation */ }
       })
     })
-    this.scheduler.start()
     this.started = true
     return true
   }
