@@ -4,8 +4,9 @@ const { DEEPSEEK_TEMPLATE_SUGGESTION } = require('./catalog')
 
 class RemoteModelCatalogPullController {
   constructor (options = {}) {
-    if (!options.runtime || !options.vault || !options.adapter) throw new TypeError('runtime, vault and adapter are required')
+    if (!options.runtime || !options.gateway || !options.vault || !options.adapter) throw new TypeError('runtime, gateway, vault and adapter are required')
     this.runtime = options.runtime
+    this.gateway = options.gateway
     this.vault = options.vault
     this.adapter = options.adapter
   }
@@ -16,7 +17,7 @@ class RemoteModelCatalogPullController {
       return this.result('invalid_request')
     }
     let internal
-    try { internal = await this.runtime.internal() } catch { return this.result('remote_unavailable') }
+    try { internal = await this.gateway.modelAccessCatalog() } catch { return this.result('remote_unavailable') }
     if (request.expectedRevision !== internal.revision) return this.result('revision_conflict')
     const profile = internal.profiles.find((item) => item.profile_id === request.profileId)
     if (!profile) return this.result('invalid_request')
@@ -36,7 +37,11 @@ class RemoteModelCatalogPullController {
     } catch (error) {
       if (error?.code === 'REDIRECT_REJECTED') return this.result('redirect_rejected')
       if (error?.code === 'AUTH_REJECTED') {
-        await this.runtime.invalidateCredential(profile.profile_id)
+        await this.runtime.configure({
+          type: 'clearCredential',
+          expectedRevision: internal.revision,
+          profileId: profile.profile_id
+        })
         return this.result('credential_unavailable')
       }
       return this.result('remote_unavailable')

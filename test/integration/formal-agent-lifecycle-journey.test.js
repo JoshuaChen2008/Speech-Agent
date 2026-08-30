@@ -896,11 +896,20 @@ test('SEM-F26/SEM-F28/SEM-T15 / D11/J24-B14/B23/B26/B30 将 ConfigStore v2 设�
   assert.equal(configBytes.includes(credentialBytes), false)
   assert.equal(configBytes.includes(providerUrlBytes), false)
   assert.equal(configBytes.includes(Buffer.from('deepseek-v4-flash', 'utf8')), false)
+  const modelProfiles = client.service.store.database.prepare(`
+    SELECT template_id, https_origin, base_path
+    FROM agent_model_profiles
+    WHERE template_id IS NOT NULL
+  `).all().map((row) => ({ ...row }))
+  assert.deepEqual(modelProfiles, [{
+    template_id: 'deepseek-openai-template@1',
+    https_origin: 'https://api.deepseek.com',
+    base_path: '/'
+  }])
   for (const databaseFile of [environment.databasePath, `${environment.databasePath}-wal`, `${environment.databasePath}-shm`]) {
     if (!fs.existsSync(databaseFile)) continue
     const databaseBytes = fs.readFileSync(databaseFile)
     assert.equal(databaseBytes.includes(credentialBytes), false)
-    assert.equal(databaseBytes.includes(providerUrlBytes), false)
   }
 })
 

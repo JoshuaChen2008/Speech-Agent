@@ -20,6 +20,26 @@ class ModelAccessRuntime {
 
   async internal () { return this.gateway.modelAccessCatalog() }
 
+  async settleUnknownCredentialWrite (command, token, operation) {
+    let internal
+    try { internal = await this.internal() } catch { return null }
+    const profile = internal.profiles.find((item) => item.profile_id === command.profileId)
+    const committed = operation === 'set'
+      ? Boolean(profile && profile.credential_persistence === token.state.scope &&
+          profile.credential_generation === token.state.generation)
+      : command.type === 'deleteProfile'
+        ? !profile
+        : Boolean(profile && profile.credential_persistence === 'absent' && profile.credential_generation === null)
+    if (committed) {
+      if (operation === 'set') this.vault.commitSet(token)
+      else this.vault.commitClear(token)
+      return { revision: internal.revision }
+    }
+    if (operation === 'set') this.vault.rollbackSet(token)
+    else this.vault.rollbackClear(token)
+    return false
+  }
+
   async initialize () {
     const internal = await this.internal()
     this.vault.recover(internal.profiles)
@@ -55,8 +75,10 @@ class ModelAccessRuntime {
             })
             this.vault.commitSet(setToken)
           } catch (error) {
-            this.vault.rollbackSet(setToken)
-            throw error
+            const settled = await this.settleUnknownCredentialWrite(command, setToken, 'set')
+            if (settled) result = settled
+            else if (settled === false) throw error
+            else throw error
           }
         } else {
           const internal = ['clearCredential', 'deleteProfile'].includes(command.type) ? await this.internal() : null
@@ -70,8 +92,10 @@ class ModelAccessRuntime {
             result = await this.gateway.modelAccessConfigure({ command })
             this.vault.commitClear(clearToken)
           } catch (error) {
-            this.vault.rollbackClear(clearToken)
-            throw error
+            const settled = await this.settleUnknownCredentialWrite(command, clearToken, 'clear')
+            if (settled) result = settled
+            else if (settled === false) throw error
+            else throw error
           }
         }
         try { this.onChanged({ revision: result.revision }) } catch {}
@@ -113,8 +137,11 @@ class ModelAccessRuntime {
           })
           this.vault.commitClear(clearToken)
         } catch (error) {
-          this.vault.rollbackClear(clearToken)
-          throw error
+          const command = { type: 'clearCredential', expectedRevision: internal.revision, profileId }
+          const settled = await this.settleUnknownCredentialWrite(command, clearToken, 'clear')
+          if (settled) result = settled
+          else if (settled === false) throw error
+          else throw error
         }
         try { this.onChanged({ revision: result.revision }) } catch {}
         return true

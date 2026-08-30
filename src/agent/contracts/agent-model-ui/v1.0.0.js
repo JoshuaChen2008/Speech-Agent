@@ -40,7 +40,7 @@ function assertCapabilitySuggestion (value, path) {
   nullablePositiveInteger(value.maxInputTokens, `${path}.maxInputTokens`)
   nullablePositiveInteger(value.maxOutputTokens, `${path}.maxOutputTokens`)
   for (const key of ['supportsToolCalling', 'supportsStructuredOutput', 'supportsStreaming', 'usageReporting']) {
-    if (typeof value[key] !== 'boolean') fail(`${path}.${key}`)
+    if (value[key] !== null && typeof value[key] !== 'boolean') fail(`${path}.${key}`)
   }
 }
 

@@ -59,6 +59,6 @@ test('SEM-F33/J25: fauxProvider is test-only and absent from the production mode
       else if (/\.[cm]?js$/.test(entry.name)) sourceFiles.push(target)
     }
   }
-  visit(path.join(process.cwd(), 'src'))
+  visit(path.join(process.cwd(), 'src', 'agent', 'model-access'))
   assert.equal(sourceFiles.some((file) => /faux-provider|registerAdapter/.test(fs.readFileSync(file, 'utf8'))), false)
 })

@@ -458,3 +458,24 @@ test('SEM-F00/SEM-F33/J25: model-access unavailable leaves subtitle operations i
   assert.equal(service.handle(request(OPERATIONS.GET_STATS)).result.activeSessions, 1)
   service.handle(request(OPERATIONS.SHUTDOWN))
 })
+
+test('SEM-F33/J25: model configuration revision conflict survives the real worker protocol', (t) => {
+  const service = new StorageWorkerService()
+  const databasePath = tempDatabase(t)
+  assert.equal(service.handle(request(OPERATIONS.INITIALIZE, { databasePath })).ok, true)
+  const response = service.handle(request(OPERATIONS.MODEL_ACCESS_CONFIGURE, {
+    input: {
+      command: {
+        type: 'createProfile',
+        expectedRevision: 99,
+        profileId: 'profile.one',
+        label: 'Profile One',
+        httpsOrigin: 'https://example.test',
+        basePath: '/'
+      }
+    }
+  }))
+  assert.equal(response.ok, false)
+  assert.equal(response.error.code, 'MODEL_CONFIG_REVISION_CONFLICT')
+  service.handle(request(OPERATIONS.SHUTDOWN))
+})

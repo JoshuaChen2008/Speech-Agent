@@ -85,6 +85,8 @@ const SAFE_ERROR_MESSAGES = Object.freeze({
   AGENT_CONTEXT_REVISION_CONFLICT: 'Personal context revision conflicts with the request.',
   AGENT_CONTEXT_NOT_FOUND: 'Personal context item was not found.',
   AGENT_CONTEXT_OPERATION_FAILED: 'Personal context operation failed.',
+  MODEL_CONFIG_INVALID: 'Agent model configuration is invalid.',
+  MODEL_CONFIG_REVISION_CONFLICT: 'Agent model configuration revision conflicts with the request.',
   MODEL_ACCESS_UNAVAILABLE: 'Agent model access is unavailable.',
   STORAGE_COMMAND_FAILED: 'Storage command failed.'
 })
@@ -168,6 +170,9 @@ function assertIdempotencyKey (actual, expected) {
 
 function publicError (error) {
   if (error instanceof StorageError) return { code: error.code, message: error.message }
+  if (error?.code === 'MODEL_CONFIG_INVALID' || error?.code === 'MODEL_CONFIG_REVISION_CONFLICT') {
+    return { code: error.code, message: SAFE_ERROR_MESSAGES[error.code] }
+  }
   return { code: 'STORAGE_COMMAND_FAILED', message: SAFE_ERROR_MESSAGES.STORAGE_COMMAND_FAILED }
 }
 

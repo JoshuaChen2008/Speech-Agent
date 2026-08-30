@@ -65,3 +65,21 @@ test('SEM-F14/SEM-F33/J25: catalog and remote suggestions validate every nested 
     ...header, status: 'success', suggestions: [{ modelId: 'model.one', capabilitySuggestion: null, endpoint: '/models' }]
   }), /invalid/i)
 })
+
+test('SEM-F33/J25: capability suggestions preserve independently unknown fields', () => {
+  assert.doesNotThrow(() => assertPullResponse({
+    ...header,
+    status: 'success',
+    suggestions: [{
+      modelId: 'future-model',
+      capabilitySuggestion: {
+        maxInputTokens: null,
+        maxOutputTokens: null,
+        supportsToolCalling: null,
+        supportsStructuredOutput: true,
+        supportsStreaming: null,
+        usageReporting: false
+      }
+    }]
+  }))
+})

@@ -58,9 +58,9 @@ test('SEM-F00/SEM-F33/J25: model access initializes during bootstrap and is inde
   const noticeEnd = source.indexOf('async function runRuntimeCommand', noticeStart)
   const notice = source.slice(noticeStart, noticeEnd)
 
-  assert.match(bootstrap, /await applicationRuntime\.start\(\)[\s\S]*modelAccessRuntime = new ModelAccessRuntime\(/)
+  assert.match(bootstrap, /await applicationRuntime\.start\(\)[\s\S]*modelAccessRuntime = await createModelAccess\(/)
   assert.match(bootstrap, /directory: path\.join\(userDataDir, 'agent-model-credentials'\)/)
-  assert.doesNotMatch(notice, /CredentialVault|ModelAccessRuntime|RemoteModelCatalogPullController/)
+  assert.doesNotMatch(notice, /CredentialVault|createModelAccess|RemoteModelCatalogPullController/)
 })
 
 test('quit and native-crash diagnostics are wired at the product composition root', () => {

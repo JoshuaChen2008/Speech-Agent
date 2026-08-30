@@ -325,7 +325,7 @@ reload 固定流程为“先订阅 changed，再 get-catalog”。renderer 只�
 - 原始 input/output usage、cached input token 的合法/缺失/不一致响应；
 - 调用 barrier 与凭据副本清零观察。
 
-S2 测试通过真实 catalog/configure/bind/controller/vault/storage 路径抵达该外部边界，不允许测试直接写 binding、提交产物或伪造 readiness。生产 package/module graph 必须证明 test-only factory 不可达；测试不以源码关键词正则代替可达性证明。
+S2 测试经由真实 catalog/configure/bind/controller/vault/storage 路径抵达该外部边界，不允许测试直接写 binding、提交产物或伪造 readiness。生产 package/module graph 必须证明 test-only factory 不可达；测试不以源码关键词正则代替可达性证明。
 
 ## Risks / Trade-offs
 

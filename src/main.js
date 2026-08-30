@@ -105,7 +105,8 @@ for (const key of Object.keys(process.env)) {
 /** @type {OverlayStartupController | null} */ let overlayStartupController = null
 /** @type {RefinementFaultLog | null} */ let refinementFaultLog = null
 /** @type {null | { start: Function, stop: Function, getOverview: Function, manage: Function }} */ let personalContextRuntime = null
-/** @type {null | import('./agent/model-access/runtime').ModelAccessRuntime} */ let modelAccessRuntime = null
+/** @type {null | {catalog: Function, configure: Function, bind: Function}} */ let modelAccessRuntime = null
+/** @type {null | import('./agent/model-access/credential-vault').CredentialVault} */ let modelAccessVault = null
 /** @type {null | import('./agent/model-access/remote-catalog-controller').RemoteModelCatalogPullController} */ let remoteModelCatalogController = null
 
 let quitBarrierComplete = false
@@ -1105,25 +1106,27 @@ async function bootstrapApplication () {
   }
   try {
     const { CredentialVault } = require('./agent/model-access/credential-vault')
-    const { ModelAccessRuntime } = require('./agent/model-access/runtime')
+    const { createModelAccess } = require('./agent/model-access')
     const { OpenAiCompatibleAdapter } = require('./agent/model-access/openai-compatible-adapter')
     const { RemoteModelCatalogPullController } = require('./agent/model-access/remote-catalog-controller')
-    const vault = new CredentialVault({
+    modelAccessVault = new CredentialVault({
       directory: path.join(userDataDir, 'agent-model-credentials'),
       safeStorage
     })
-    modelAccessRuntime = new ModelAccessRuntime({
+    modelAccessRuntime = await createModelAccess({
       gateway: applicationRuntime.gateway,
-      vault,
+      vault: modelAccessVault,
       onChanged: broadcastAgentModelChanged
     })
-    await modelAccessRuntime.initialize()
     remoteModelCatalogController = new RemoteModelCatalogPullController({
       runtime: modelAccessRuntime,
-      vault,
+      gateway: applicationRuntime.gateway,
+      vault: modelAccessVault,
       adapter: new OpenAiCompatibleAdapter()
     })
   } catch {
+    try { modelAccessVault?.close() } catch {}
+    modelAccessVault = null
     modelAccessRuntime = null
     remoteModelCatalogController = null
     console.error('[agent.model-access] MODEL_ACCESS_UNAVAILABLE')
@@ -1175,9 +1178,12 @@ function beginQuitBarrier (event) {
       personalContextRuntime = null
     }
     if (modelAccessRuntime) {
-      try { modelAccessRuntime.close() } catch {}
       modelAccessRuntime = null
       remoteModelCatalogController = null
+    }
+    if (modelAccessVault) {
+      try { modelAccessVault.close() } catch {}
+      modelAccessVault = null
     }
     const shutdownTasks = []
     if (modelManager) {

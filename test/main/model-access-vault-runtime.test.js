@@ -79,7 +79,8 @@ test('SEM-F33/J25: remote pull is transient, rejects redirect, and clears creden
   }] }
   let copy
   const controller = new RemoteModelCatalogPullController({
-    runtime: { internal: async () => internal }, vault: instance,
+    runtime: { configure: async () => ({ ok: true, revision: 5, error: null }) },
+    gateway: { modelAccessCatalog: async () => internal }, vault: instance,
     adapter: { listModels: async ({ credential }) => { copy = credential; return [{ modelId: 'deepseek-v4-flash', capabilitySuggestion: null }] } }
   })
   const result = await controller.pull({ profileId: 'deepseek', expectedRevision: 4 })
@@ -87,13 +88,15 @@ test('SEM-F33/J25: remote pull is transient, rejects redirect, and clears creden
   assert.equal(result.suggestions[0].capabilitySuggestion.maxInputTokens, null)
   assert.equal(copy.every((byte) => byte === 0), true)
   const redirect = new RemoteModelCatalogPullController({
-    runtime: { internal: async () => internal }, vault: instance,
+    runtime: { configure: async () => ({ ok: true, revision: 5, error: null }) },
+    gateway: { modelAccessCatalog: async () => internal }, vault: instance,
     adapter: { listModels: async () => { const error = new Error(); error.code = 'REDIRECT_REJECTED'; throw error } }
   })
   assert.deepEqual(await redirect.pull({ profileId: 'deepseek', expectedRevision: 4 }), { status: 'redirect_rejected', suggestions: [] })
   let invalidated = null
   const auth = new RemoteModelCatalogPullController({
-    runtime: { internal: async () => internal, invalidateCredential: async (profileId) => { invalidated = profileId } },
+    runtime: { configure: async (command) => { invalidated = command.profileId; return { ok: true, revision: 5, error: null } } },
+    gateway: { modelAccessCatalog: async () => internal },
     vault: instance,
     adapter: { listModels: async () => { const error = new Error(); error.code = 'AUTH_REJECTED'; throw error } }
   })
@@ -122,6 +125,32 @@ test('SEM-F33/J25: OpenAI-compatible catalog uses the fixed safe-joined endpoint
       connection: { httpsOrigin: 'https://example.test', basePath: '/' }, credential: Buffer.from('secret')
     }), (error) => error.code === 'REDIRECT_REJECTED')
   }
+})
+
+test('SEM-F33/J25: remote catalog rejects declared and decoded responses above its byte budget', async () => {
+  const request = {
+    connection: { httpsOrigin: 'https://example.test', basePath: '/' },
+    credential: Buffer.from('secret')
+  }
+  const declared = new OpenAiCompatibleAdapter({
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => String(256 * 1024 + 1) },
+      text: async () => JSON.stringify({ data: [] })
+    })
+  })
+  await assert.rejects(declared.listModels(request), /remote unavailable/)
+
+  const decoded = new OpenAiCompatibleAdapter({
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      text: async () => JSON.stringify({ data: [{ id: 'model.one', ignored: 'x'.repeat(256 * 1024) }] })
+    })
+  })
+  await assert.rejects(decoded.listModels(request), /remote unavailable/)
 })
 
 test('SEM-F33/J25: startup environment removes every legacy credential spelling', () => {
@@ -198,6 +227,42 @@ test('SEM-F33/J25: setCredential rolls back the prepared generation when SQLite 
   assert.equal(fs.readdirSync(directory).filter((name) => name.endsWith('.bin')).length, 1)
   assert.equal(fs.existsSync(path.join(directory, 'journal.v1.json')), false)
   await instance.borrow(slot, 'persistent', oldState.generation, async (copy) => assert.equal(copy.toString(), 'old-secret'))
+})
+
+test('SEM-F33/J25: committed credential write survives a lost storage reply', async (t) => {
+  const { instance, directory } = vault(t, true)
+  const slot = 'slot.0123456789abcdef0123456789abcdef'
+  const oldState = instance.set(slot, 'old-secret')
+  let internal = { revision: 8, profiles: [{
+    profile_id: 'profile.one', credential_slot_id: slot,
+    credential_persistence: 'persistent', credential_generation: oldState.generation
+  }] }
+  const runtime = new ModelAccessRuntime({
+    vault: instance,
+    gateway: {
+      modelAccessCatalog: async () => internal,
+      modelAccessConfigure: async ({ credentialState }) => {
+        internal = {
+          revision: 9,
+          profiles: [{
+            profile_id: 'profile.one', credential_slot_id: slot,
+            credential_persistence: credentialState.scope,
+            credential_generation: credentialState.generation
+          }]
+        }
+        throw new Error('reply lost after commit')
+      },
+      modelAccessBind: async () => ({})
+    }
+  })
+
+  const result = await runtime.configure({
+    type: 'setCredential', expectedRevision: 8, profileId: 'profile.one', credential: 'committed-secret'
+  })
+  assert.deepEqual(result, { ok: true, revision: 9, error: null })
+  assert.equal(fs.existsSync(path.join(directory, 'journal.v1.json')), false)
+  await instance.borrow(slot, 'persistent', internal.profiles[0].credential_generation,
+    async (copy) => assert.equal(copy.toString(), 'committed-secret'))
 })
 
 test('SEM-F33/J25: stale credential commands reject before any vault prepare', async (t) => {

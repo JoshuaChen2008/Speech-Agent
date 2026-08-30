@@ -65,7 +65,7 @@ test('SEM-F00/SEM-F33/J25: S2 Core configures two profiles, resolves fallback, b
   const changes = []
   const runtime = new ModelAccessRuntime({ gateway, vault, onChanged: ({ revision }) => changes.push(revision) })
   await runtime.initialize()
-  const pullController = new RemoteModelCatalogPullController({ runtime, vault, adapter: fauxProvider() })
+  const pullController = new RemoteModelCatalogPullController({ runtime, gateway, vault, adapter: fauxProvider() })
   const handlers = new Map()
   registerModelAccessIpc({
     ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
@@ -117,7 +117,7 @@ test('SEM-F00/SEM-F33/J25: S2 Core configures two profiles, resolves fallback, b
   const beforeAuth = (await getCatalog()).snapshot
   assert.equal(beforeAuth.profiles.find((profile) => profile.profileId === 'deepseek').credential.present, true)
   assert.equal(beforeAuth.profiles.find((profile) => profile.profileId === 'local.profile').credential.present, true)
-  const authController = new RemoteModelCatalogPullController({ runtime, vault, adapter: fauxProvider('auth') })
+  const authController = new RemoteModelCatalogPullController({ runtime, gateway, vault, adapter: fauxProvider('auth') })
   assert.equal((await authController.pull({ profileId: 'deepseek', expectedRevision: beforeAuth.revision })).status, 'credential_unavailable')
   const afterAuth = (await getCatalog()).snapshot
   assert.equal(afterAuth.revision, beforeAuth.revision + 1)
