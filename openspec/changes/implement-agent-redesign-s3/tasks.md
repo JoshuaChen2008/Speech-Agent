@@ -124,16 +124,16 @@
 - [ ] 7.10 先写会红的整体重跑测试：可重试错误递增 attempt、同 run/binding/input/snapshot、旧 tool records 保留。
 - [ ] 7.11 实现 retry/resume orchestration 使 7.10 转绿；不得保存 turn cursor、中间 assistant 文本或 continuation token。
 - [ ] 7.12 定向回归配置变化不影响旧 run、主动换模型才新 run、已取消 run 重启扫描不领取。
-- [ ] 7.13 复用 S1 logical claim key/receipt/lease/wakeEpoch/generation，写行为测试证明没有第二套任务或租约协议。
-- [ ] 7.14 定向回归 claim/result reply loss、storage replacement 先重放策略、scheduler stop 终态与字幕停止不等待。
+- [x] 7.13 复用 S1 logical claim key/receipt/lease/wakeEpoch/generation，写行为测试证明没有第二套任务或租约协议。
+- [x] 7.14 定向回归 claim/result reply loss、storage replacement 先重放策略、scheduler stop 终态与字幕停止不等待。
 
 ## 8. 两段式 personal-context 摄取 tracer bullets
 
-- [ ] 8.1 先写会红的 `context.ingest.session` 两阶段测试：零模型前段建立 episode 骨架，后段才 bind/Loop，二者共享 run/attempt。
-- [ ] 8.2 扩展 S1 session runner 使 8.1 转绿；不新建 run 表、租约协议或第二 episode。
-- [ ] 8.3 定向回归 raw、整场 N=M refined、N!=M 回落 raw、partial/未定稿尾部排除与 input digest 复算。
-- [ ] 8.4 先写会红的模型失败/重试/提交失败矩阵，骨架可重放、候选零部分写入。
-- [ ] 8.5 实现 session candidate commit 使 8.4 转绿；相同 source identity/digest 重放计数不增长。
+- [x] 8.1 先写会红的 `context.ingest.session` 两阶段测试：零模型前段建立 episode 骨架，后段才 bind/Loop，二者共享 run/attempt。
+- [x] 8.2 扩展 S1 session runner 使 8.1 转绿；不新建 run 表、租约协议或第二 episode。
+- [x] 8.3 定向回归 raw、整场 N=M refined、N!=M 回落 raw、partial/未定稿尾部排除与 input digest 复算。
+- [x] 8.4 先写会红的模型失败/重试/提交失败矩阵，骨架可重放、候选零部分写入。
+- [x] 8.5 实现 session candidate commit 使 8.4 转绿；相同 source identity/digest 重放计数不增长。
 - [ ] 8.6 先写会红的 `context.ingest.interaction` 两阶段测试，只接受 terminal formal interaction 与六值信号。
 - [ ] 8.7 实现 interaction episode skeleton/runner 使 8.6 转绿。
 - [ ] 8.8 定向回归点击/停留/滚动/浏览/焦点/复制/调试聊天/内部工具/未采纳输出零信号零运行。
@@ -199,8 +199,8 @@
 - [ ] 12.4 在同一旅程逐项运行十一 recipe 的登记/Schema/persistence/artifact 表，证明 1 轮不进第二轮、0 工具记录为空。
 - [ ] 12.5 先写会红的取消/迟到/重试/replacement/reply-loss 联合矩阵，内部模块保持真实。
 - [ ] 12.6 最小实现使 12.5 转绿，逐项证明终态不可改写、同 run 绑定/输入不变、旧 attempt 工具记录保留。
-- [ ] 12.7 先写会红的两段式摄取联合矩阵：session/interaction 骨架、模型失败重放、semantic key 派生、suppression/forget/term 不影响 ASR。
-- [ ] 12.8 最小实现使 12.7 转绿；字幕提交与历史在每个故障注入点继续成立。
+- [x] 12.7 先写会红的两段式摄取联合矩阵：session 骨架、模型失败重放、semantic key 派生、suppression/forget/term 不影响 ASR。
+- [x] 12.8 最小实现使 12.7 转绿；字幕提交与历史在每个故障注入点继续成立。
 - [ ] 12.9 先写会红的 v7 删除/分页/presentation 联合矩阵，覆盖并发写入、reload、重复通知与 tombstone 迟到拒绝。
 - [ ] 12.10 最小实现使 12.9 转绿，确认 keyset 不跳行/重复、presentation 至多一次、计数幂等。
 - [ ] 12.11 先写会红的 provider usage/null/cache/comparison/artifact 联合矩阵，全产品零 estimated/金额。
