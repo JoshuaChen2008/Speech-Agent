@@ -349,12 +349,39 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 /* --------------------------------------------------------------------------
+   Agent 模型配置档案
+   -------------------------------------------------------------------------- */
+input[type="text"], input[type="password"], input[type="number"], select {
+  font: inherit;
+  color: rgb(var(--fg));
+  background: rgba(var(--fg), 0.06);
+  border: 1px solid rgba(var(--fg), 0.16);
+  border-radius: var(--radius-control);
+  padding: 6px 10px;
+  min-width: 0;
+}
+input[type="text"]:disabled, input[type="password"]:disabled, input[type="number"]:disabled, select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.agent-model-profile-card {
+  border-bottom: 1px solid rgba(var(--fg), 0.1);
+  padding: 10px 0 18px;
+}
+.agent-model-profile-card:last-child { border-bottom: 0; }
+.agent-model-profiles, .agent-model-new-profile, .agent-model-purposes { margin-top: 14px; }
+.capability-row .seg { flex: none; }
+.purpose-row select { min-width: 220px; }
+[role="alertdialog"] { border: 1px solid var(--tone-danger); margin-top: 8px; }
+
+/* --------------------------------------------------------------------------
    高对比度：开关/分段控件靠底色区分状态，强制色下会失去差异，补形状编码
    -------------------------------------------------------------------------- */
 @media (forced-colors: active) {
   .group, .seg, .resource-list, .model-progress, .secondary-btn { border: 1px solid CanvasText; }
   .seg button.on { border: 2px solid Highlight; }
   .nav-item.active, .preset-card:hover { border: 1px solid Highlight; }
+  input[type="text"], input[type="password"], input[type="number"], select, [role="alertdialog"] { border: 1px solid CanvasText; }
 }
 
 @media (prefers-reduced-motion: reduce) {
