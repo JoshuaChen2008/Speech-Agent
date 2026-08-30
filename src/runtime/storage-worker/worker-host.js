@@ -455,6 +455,10 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_MANAGE, { command })
   }
 
+  deletePersonalContextSessionData (input) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_DELETE_SESSION_DATA, input)
+  }
+
   claimNextFormalAgentRun (request) {
     return this.enqueue(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request })
   }

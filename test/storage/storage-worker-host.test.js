@@ -254,6 +254,7 @@ test('SEM-F28 formal Agent host methods preserve exact operation and payload ide
     ['personalContextIngest', OPERATIONS.PERSONAL_CONTEXT_INGEST, { sourceKind: 'session', sessionId: 's' }],
     ['personalContextResolve', OPERATIONS.PERSONAL_CONTEXT_RESOLVE, { scope: { kind: 'session', reference: 's' } }],
     ['personalContextManage', OPERATIONS.PERSONAL_CONTEXT_MANAGE, { type: 'view' }],
+    ['deletePersonalContextSessionData', OPERATIONS.PERSONAL_CONTEXT_DELETE_SESSION_DATA, { sessionId: 's', deletionIdempotencyKey: 'delete.new' }],
     ['claimNextFormalAgentRun', OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { claimIdempotencyKey: 'claim.new', owner: 'owner.new', leaseMs: 1000 }],
     ['completeFormalAgentRun', OPERATIONS.FORMAL_AGENT_COMPLETE_RUN, { attemptIdentity: {}, resultDigest: 'a'.repeat(64), resultSummary: {} }],
     ['failFormalAgentRun', OPERATIONS.FORMAL_AGENT_FAIL_RUN, { attemptIdentity: {}, errorCode: 'AGENT_INTERNAL_FAILURE' }]

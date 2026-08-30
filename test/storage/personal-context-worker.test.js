@@ -73,3 +73,27 @@ test('SEM-F30/J21: the formal module exposes exactly ingest, resolve and manage'
   })
   assert.deepEqual(calls.map(([name]) => name), ['ingest', 'resolve', 'manage'])
 })
+
+test('SEM-F26/SEM-F30/J21: session deletion delegates new-table ownership to the lazy personal-context store', () => {
+  const personalStore = { planSessionDeletion: () => ({}), applySessionDeletion: () => {} }
+  let received = null
+  const service = new StorageWorkerService({
+    storeFactory: () => ({ close: () => {} }),
+    agentStoreFactory: () => ({
+      deleteSessionData: () => ({ deletedEpisodeCount: 0 })
+    }),
+    personalContextStoreFactory: () => ({
+      ...personalStore,
+      deleteSessionData: (payload, legacyStore) => {
+        received = { payload, legacyStore }
+        return { deletedEpisodeCount: 0 }
+      }
+    })
+  })
+  service.handle(request('init-delete', OPERATIONS.INITIALIZE, { databasePath: 'synthetic' }))
+  const payload = { sessionId: 'session-delete', deletionIdempotencyKey: 'delete-session-key' }
+  const response = service.handle(request('delete-session', OPERATIONS.PERSONAL_CONTEXT_DELETE_SESSION_DATA, payload))
+  assert.equal(response.ok, true)
+  assert.equal(received.payload, payload)
+  assert.equal(typeof received.legacyStore.deleteSessionData, 'function')
+})

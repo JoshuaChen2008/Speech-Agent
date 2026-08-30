@@ -199,6 +199,10 @@ class StorageWorkerService {
       assertExactKeys(payload, ['command'])
       return this.requirePersonalContextStore().manage(payload.command)
     }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_DELETE_SESSION_DATA) {
+      assertExactKeys(payload, ['sessionId', 'deletionIdempotencyKey'])
+      return this.requirePersonalContextStore().deleteSessionData(payload, this.requireAgentStore())
+    }
     if (operation === OPERATIONS.FORMAL_AGENT_CLAIM_RUN) {
       assertExactKeys(payload, ['request'])
       return this.requirePersonalContextStore().claimNextFormalRun(payload.request)

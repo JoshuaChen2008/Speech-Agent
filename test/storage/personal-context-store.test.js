@@ -178,7 +178,7 @@ test('SEM-F26/SEM-F30/J21: resolve uses normalized exact equality and whole-item
   assert.deepEqual(bounded.omissions, ['budget'])
 })
 
-test('SEM-F26/SEM-F30/J21: ingest rejects empty, active, mismatched and incomplete-refinement sources with zero writes', (t) => {
+test('SEM-F26/SEM-F30/J21: ingest rejects empty, active, mismatched and incomplete-refinement frozen sources', (t) => {
   const { subtitleStore, store } = fixture(t)
   subtitleStore.openSession({ sessionId: 'empty', sourceId: 'mic', startedAt: 1, refinementEnabled: false })
   subtitleStore.closeSession({ sessionId: 'empty', sourceId: 'mic', endedAt: 2, state: 'closed' })
@@ -199,13 +199,56 @@ test('SEM-F26/SEM-F30/J21: ingest rejects empty, active, mismatched and incomple
   assert.throws(() => store.ingest(incomplete), (error) => error?.code === 'AGENT_INPUT_VERSION_UNAVAILABLE')
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_runs').get().count, 0)
 
-  const source = frozenSource(subtitleStore.database, 'incomplete-refined')
+  terminalSession(subtitleStore, 'rollback-session')
+  const source = frozenSource(subtitleStore.database, 'rollback-session')
   subtitleStore.database.exec(`
     CREATE TRIGGER inject_episode_failure BEFORE INSERT ON personal_context_episodes
     BEGIN SELECT RAISE(ABORT, 'injected episode failure'); END;
   `)
   assert.throws(() => store.ingest(source), /injected episode failure/)
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_runs').get().count, 0)
+})
+
+test('SEM-F30/J21: resolve restricts memories to the requested scope and omits a whole item above the source budget', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  terminalSession(subtitleStore, 'scope-session-a')
+  const ingested = store.ingest(frozenSource(subtitleStore.database, 'scope-session-a'))
+  const global = store.manage({ type: 'remember', expected_revision: 1, entry: entry('global-key') })
+  store.manage({
+    type: 'remember', expected_revision: 2,
+    entry: {
+      display_text: 'Session A', kind: 'project_fact',
+      scope: { kind: 'session', reference: 'scope-session-a' }, semantic_key: 'session-a-key'
+    }
+  })
+  store.manage({
+    type: 'remember', expected_revision: 3,
+    entry: {
+      display_text: 'Session B', kind: 'project_fact',
+      scope: { kind: 'session', reference: 'scope-session-b' }, semantic_key: 'session-b-key'
+    }
+  })
+  const scoped = store.resolve({
+    scope: { kind: 'session', reference: 'scope-session-a' }, semantic_keys: [], aliases: []
+  })
+  assert.deepEqual(scoped.personalMemories.map((item) => item.semanticKey).sort(), ['global-key', 'session-a-key'])
+
+  const insertEvidence = subtitleStore.database.prepare(`
+    INSERT INTO personal_context_evidence(
+      evidence_id, ingest_run_id, memory_id, source_kind, session_id, interaction_id,
+      transcript_version, input_watermark, from_event_order, through_event_order,
+      input_digest, recipe_id, recipe_version, created_at
+    ) VALUES (?, ?, ?, 'session', 'scope-session-a', NULL, 'raw', 2, 1, 2, ?, 'context.ingest.session', '1', 1000)
+  `)
+  for (let index = 0; index < 9; index += 1) {
+    insertEvidence.run(`evidence.${index}`, ingested.runId, global.item.memory_id, String(index).padStart(64, '0'))
+  }
+  const overSourceBudget = store.resolve({
+    scope: { kind: 'session', reference: 'scope-session-a' }, semantic_keys: ['global-key'], aliases: []
+  })
+  assert.equal(overSourceBudget.personalMemories.length, 0)
+  assert.deepEqual(overSourceBudget.omissions, ['budget'])
+  assert.equal(overSourceBudget.hasMore, true)
 })
 
 test('SEM-F30/J21: explicit remember restores forgotten identity while delete key digest mismatches fail closed', (t) => {
@@ -255,7 +298,7 @@ test('SEM-F26/SEM-F30/J21: a complete refinement is one selectable source versio
 test('SEM-F26/SEM-F30/J21: session deletion removes episodes and evidence while replaying all v5 tombstone counts', (t) => {
   const { subtitleStore, store } = fixture(t)
   terminalSession(subtitleStore, 'session-delete-context')
-  store.ingest(frozenSource(subtitleStore.database, 'session-delete-context'))
+  const targetRun = store.ingest(frozenSource(subtitleStore.database, 'session-delete-context'))
   store.manage({
     type: 'remember', expected_revision: 1,
     entry: {
@@ -265,17 +308,46 @@ test('SEM-F26/SEM-F30/J21: session deletion removes episodes and evidence while 
       semantic_key: 'session:local_fact'
     }
   })
+  terminalSession(subtitleStore, 'session-delete-other')
+  const otherRun = store.ingest(frozenSource(subtitleStore.database, 'session-delete-other'))
+  const shared = store.manage({
+    type: 'remember', expected_revision: 3, entry: entry('shared-fact')
+  })
+  const insertEvidence = subtitleStore.database.prepare(`
+    INSERT INTO personal_context_evidence(
+      evidence_id, ingest_run_id, memory_id, source_kind, session_id, interaction_id,
+      transcript_version, input_watermark, from_event_order, through_event_order,
+      input_digest, recipe_id, recipe_version, created_at
+    ) VALUES (?, ?, ?, 'session', ?, NULL, 'raw', ?, ?, ?, ?, 'context.ingest.session', '1', 1000)
+  `)
+  for (const [suffix, run, sessionId] of [
+    ['target', targetRun, 'session-delete-context'], ['other', otherRun, 'session-delete-other']
+  ]) {
+    const source = frozenSource(subtitleStore.database, sessionId)
+    insertEvidence.run(
+      `evidence.${suffix}`, run.runId, shared.item.memory_id, sessionId,
+      source.inputWatermark, source.inputWatermark - 1, source.inputWatermark, source.inputDigest
+    )
+  }
   const oldAgentStore = new FormalAgentStore({ subtitleStore, now: () => 2000 })
   const input = { sessionId: 'session-delete-context', deletionIdempotencyKey: 'delete.session.context.1' }
-  const deleted = oldAgentStore.deleteSessionData(input)
-  const replay = oldAgentStore.deleteSessionData(input)
+  const deleted = store.deleteSessionData(input, oldAgentStore)
+  const replay = store.deleteSessionData(input, oldAgentStore)
   assert.equal(deleted.deletedEpisodeCount, 1)
-  assert.equal(deleted.deletedContextEvidenceCount, 0)
+  assert.equal(deleted.deletedContextEvidenceCount, 1)
   assert.equal(deleted.deletedOrphanContextItemCount, 1)
   assert.deepEqual(replay, deleted)
-  assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM personal_context_episodes').get().count, 0)
-  assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM personal_context_items').get().count, 0)
-  assert.equal(store.contentRevision(), 3)
+  assert.equal(subtitleStore.database.prepare(`
+    SELECT COUNT(*) AS count FROM personal_context_episodes WHERE session_id = 'session-delete-context'
+  `).get().count, 0)
+  assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM personal_context_items').get().count, 2)
+  assert.deepEqual(subtitleStore.database.prepare(`
+    SELECT semantic_key, lifecycle FROM personal_context_items ORDER BY semantic_key
+  `).all().map((row) => ({ ...row })), [
+    { semantic_key: 'session:local_fact', lifecycle: 'inactive' },
+    { semantic_key: 'shared-fact', lifecycle: 'active' }
+  ])
+  assert.equal(store.contentRevision(), 5)
 })
 
 test('SEM-F28/SEM-F30/J21: a controlled v5 run replays one claim attempt and settles through the real ingest seam', async (t) => {
@@ -357,5 +429,8 @@ test('SEM-F30/J21: resolve keeps ready terminal scope while reporting selection 
     semantic_keys: [], aliases: []
   })
   assert.equal(selection.eligibility, 'ready')
+  assert.equal(selection.episodes.length, 1)
+  assert.equal(selection.episodes[0].inputWatermark, 1)
+  assert.equal(selection.episodes[0].transcriptVersion, 'raw')
   assert.deepEqual(selection.omissions, ['not_committed_tail'])
 })

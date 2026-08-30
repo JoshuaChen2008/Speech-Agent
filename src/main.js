@@ -39,7 +39,6 @@ const {
 const { HistoryService } = require('./main/services/history-service')
 const { RefinementFaultLog } = require('./main/services/refinement-fault-log')
 const { RefinementNoticeStore } = require('./main/services/refinement-notice')
-const { PersonalContextRuntime } = require('./agent/personal-context/runtime')
 const {
   broadcastPersonalContextChanged,
   registerPersonalContextIpc
@@ -94,7 +93,7 @@ exitEvidence.markLifecycle('main-started')
 /** @type {PowerSessionGuard | null} */ let powerSessionGuard = null
 /** @type {OverlayStartupController | null} */ let overlayStartupController = null
 /** @type {RefinementFaultLog | null} */ let refinementFaultLog = null
-/** @type {PersonalContextRuntime | null} */ let personalContextRuntime = null
+/** @type {null | { start: Function, stop: Function, getOverview: Function, manage: Function }} */ let personalContextRuntime = null
 
 let quitBarrierComplete = false
 let quitBarrierPromise = null
@@ -1066,6 +1065,7 @@ async function bootstrapApplication () {
   if (quitRequested) return false
   coordinator = started.coordinator
   try {
+    const { PersonalContextRuntime } = require('./agent/personal-context/runtime')
     personalContextRuntime = new PersonalContextRuntime({
       gateway: applicationRuntime.gateway,
       config,

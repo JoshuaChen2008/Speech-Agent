@@ -151,10 +151,6 @@ class PersonalContextController {
       try {
         assertGetOverviewRequest(request)
         const state = await this.state()
-        const hasContent = state.memories.totalCount > 0 || state.episodes.totalCount > 0
-        const eligibility = !state.config.agentEnabled
-          ? 'agent_disabled'
-          : (!hasContent ? 'no_committed_transcript' : 'provider_not_configured')
         const response = {
           ...header(), ok: true, error: null,
           snapshot: {
@@ -162,7 +158,7 @@ class PersonalContextController {
               personal_memories: state.memories.totalCount,
               session_episodes: state.episodes.totalCount
             },
-            eligibility,
+            eligibility: 'provider_not_configured',
             memory_processing: processingProjection(state.config),
             revision: state.publicRevision
           }

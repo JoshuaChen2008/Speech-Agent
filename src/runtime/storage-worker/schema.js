@@ -686,7 +686,6 @@ CREATE TABLE personal_context_scopes (
   lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'forgotten', 'conflicted', 'inactive')),
   created_at INTEGER NOT NULL CHECK (created_at >= 0),
   updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
-  FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
   UNIQUE (kind, canonical_key),
   CHECK ((kind = 'session') = (session_id IS NOT NULL))
 ) STRICT;

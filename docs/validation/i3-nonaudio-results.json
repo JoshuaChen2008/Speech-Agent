@@ -100,13 +100,13 @@
     "historyServiceSha256": "beafb8d7590cf52d7eab29417cad34427857c1dbd537275aef64d47fef5a1584",
     "runnerSha256": "29be92da468463002dde768f201f24243b1621a0596c28ebdd582de530feb0e0",
     "sessionCoordinatorSha256": "85cd1190f2012e87d961d5af0f6ecbca74e93328ad0e472c6d13b275b6649189",
-    "sqliteSessionRecorderSha256": "4acadaafe49b2b72ddbd1d6599a95d215d85427f79ad6a6d134f16214864b743",
+    "sqliteSessionRecorderSha256": "d9e467076b3893e88a18d99b100d5f550e4541947b6fd36195f3f130382484d2",
     "sqliteSubtitleStoreSha256": "f7baad9291001b628787a06666375cc26497b125c41bb9ba54515d65c48ffee6",
     "strictEvidenceParserSha256": "5155fc8df5449133a8d9710a581fbd03bedfb44729da3c5d910a81df74b5e63e",
-    "storageGatewaySha256": "bdaf7faa48c9cd725b2bb72ee5bb686da74a812755841e85d6994e00722cde2d",
-    "storageWorkerServiceSha256": "66f05fd6ef95a4d6afafc064a0fa5b149d67667ac40208b1b28249d922d4f89c",
+    "storageGatewaySha256": "ec9ca3f1f5b172ad128982a15a1e1e4851f0ebf1e91d761b228c7a7cda427153",
+    "storageWorkerServiceSha256": "ff71d25c9043b0e05abebaf96067720ba1e282084c0d662a60dba51fb9703ffb",
     "verifierSha256": "8014be2efdbd0d63a99a4de1a9f24ccb70eddcb158cc89b46d2d7bb731ed6ff1",
-    "productPayloadSha256": "bc4ceeeafc1caf74e3ec7f5e5a1795ded81bb53fb505184592bb8aa492906d49"
+    "productPayloadSha256": "fb1c864e37ae98866185db4730b7d8560a2a1472635642ef43bcda98e937e7af"
   },
   "result": "pass",
   "schemaVersion": 1

@@ -38,6 +38,7 @@ const OPERATIONS = Object.freeze({
   PERSONAL_CONTEXT_INGEST: 'personal-context:ingest',
   PERSONAL_CONTEXT_RESOLVE: 'personal-context:resolve',
   PERSONAL_CONTEXT_MANAGE: 'personal-context:manage',
+  PERSONAL_CONTEXT_DELETE_SESSION_DATA: 'personal-context:delete-session-data',
   FORMAL_AGENT_CLAIM_RUN: 'formal-agent:claim-run',
   FORMAL_AGENT_NEXT_RUN_AT: 'formal-agent:next-run-at',
   FORMAL_AGENT_COMPLETE_RUN: 'formal-agent:complete-run',

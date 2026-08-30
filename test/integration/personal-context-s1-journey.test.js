@@ -10,13 +10,55 @@ const { CONTRACT_ID, CONTRACT_VERSION } = require('../../src/agent/contracts/age
 const { PersonalContextRuntime } = require('../../src/agent/personal-context/runtime')
 const { ConfigStore } = require('../../src/main/services/config-store')
 const { SqliteSessionRecorder } = require('../../src/main/services/sqlite-session-recorder')
+const { StorageGateway } = require('../../src/main/services/storage-gateway')
 const { sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
-const { PersonalContextStore } = require('../../src/runtime/storage-worker/personal-context-store')
-const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
-const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
+const {
+  OPERATIONS, PROTOCOL_VERSION, StorageError,
+  makeCaptionEventId, makeCloseSessionKey, makeOpenSessionKey, makeRefinementFaultKey
+} = require('../../src/runtime/storage-worker/protocol')
+const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
 
 function nextTurn () {
   return new Promise((resolve) => setImmediate(resolve))
+}
+
+function serviceBackedHost (service, databasePath) {
+  let sequence = 0
+  return {
+    state: 'stopped',
+    call (operation, payload, idempotencyKey) {
+      const response = service.handle({
+        version: PROTOCOL_VERSION, type: 'storage:request',
+        requestId: `s1-journey.${++sequence}`, operation, payload,
+        ...(idempotencyKey ? { idempotencyKey } : {})
+      })
+      if (!response.ok) throw new StorageError(response.error.code)
+      return response.result
+    },
+    async start () { this.call(OPERATIONS.INITIALIZE, { databasePath }); this.state = 'ready' },
+    async openSession (value) { return this.call(OPERATIONS.OPEN_SESSION, value, makeOpenSessionKey(value.sessionId)) },
+    async appendCaption (event) { return this.call(OPERATIONS.APPEND_CAPTION, { event }, makeCaptionEventId(event)) },
+    async closeSession (value) { return this.call(OPERATIONS.CLOSE_SESSION, value, makeCloseSessionKey(value.sessionId)) },
+    async recordRefinementFault (value) {
+      return this.call(OPERATIONS.RECORD_REFINEMENT_FAULT, value, makeRefinementFaultKey(value.sessionId, value.faultCode))
+    },
+    async personalContextIngest (source) { return this.call(OPERATIONS.PERSONAL_CONTEXT_INGEST, { source }) },
+    async personalContextResolve (request) { return this.call(OPERATIONS.PERSONAL_CONTEXT_RESOLVE, { request }) },
+    async personalContextManage (command) { return this.call(OPERATIONS.PERSONAL_CONTEXT_MANAGE, { command }) },
+    async claimNextFormalAgentRun (request) { return this.call(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request }) },
+    async nextFormalAgentRunAt () { return this.call(OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT, {}) },
+    async completeFormalAgentRun (request) { return this.call(OPERATIONS.FORMAL_AGENT_COMPLETE_RUN, { request }) },
+    async failFormalAgentRun (request) { return this.call(OPERATIONS.FORMAL_AGENT_FAIL_RUN, { request }) },
+    async shutdown () {
+      if (!service.shuttingDown) this.call(OPERATIONS.SHUTDOWN, {})
+      this.state = 'closed'
+    },
+    async terminateAndWait () {
+      if (!service.shuttingDown) this.call(OPERATIONS.SHUTDOWN, {})
+      this.state = 'closed'
+      return 0
+    }
+  }
 }
 
 function frozenSource (database, sessionId) {
@@ -39,26 +81,15 @@ function frozenSource (database, sessionId) {
 
 test('SEM-F00/SEM-F26/SEM-F28/SEM-F30/J21: S1 real subtitle commit reaches personal context seams while automatic product path stays ineligible', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'personal-context-s1-journey-'))
-  const subtitleStore = new SqliteSubtitleStore({
-    databasePath: path.join(root, 'speech-agent.sqlite3'), migrations: FORMAL_AGENT_MIGRATIONS,
-    now: () => 946684800000
+  const databasePath = path.join(root, 'speech-agent.sqlite3')
+  const service = new StorageWorkerService()
+  const gateway = new StorageGateway({
+    databasePath,
+    hostFactory: () => serviceBackedHost(service, databasePath),
+    maxRestarts: 0
   })
-  const contextStore = new PersonalContextStore({ subtitleStore, now: () => 946684800000 })
-  const gateway = {
-    openSession: async (value) => subtitleStore.openSession(value),
-    appendCaption: async (value) => subtitleStore.appendCaption(value),
-    closeSession: async (value) => subtitleStore.closeSession(value),
-    recordRefinementFault: async (value) => subtitleStore.recordRefinementFault(value),
-    flush: async () => {},
-    retry: async () => {},
-    personalContextIngest: async (value) => contextStore.ingest(value),
-    personalContextResolve: async (value) => contextStore.resolve(value),
-    personalContextManage: async (value) => contextStore.manage(value),
-    claimNextFormalAgentRun: async (value) => contextStore.claimNextFormalRun(value),
-    nextFormalAgentRunAt: async () => contextStore.nextFormalRunAt(),
-    completeFormalAgentRun: async (value) => contextStore.completeFormalRun(value),
-    failFormalAgentRun: async (value) => contextStore.failFormalRun(value)
-  }
+  await gateway.start()
+  const database = service.requireStore().database
   let clock = 946684800000
   const recorder = new SqliteSessionRecorder({ gateway, now: () => clock++ })
   const config = new ConfigStore(path.join(root, 'config.json'), { now: () => clock++ })
@@ -80,7 +111,7 @@ test('SEM-F00/SEM-F26/SEM-F28/SEM-F30/J21: S1 real subtitle commit reaches perso
   runtime.start(recorder)
   t.after(async () => {
     await runtime.stop()
-    subtitleStore.close()
+    await gateway.shutdown().catch(() => gateway.terminate())
     fs.rmSync(root, { recursive: true, force: true })
   })
 
@@ -93,12 +124,12 @@ test('SEM-F00/SEM-F26/SEM-F28/SEM-F30/J21: S1 real subtitle commit reaches perso
   const closeReceipt = await recorder.closeSession({ sessionId: 'session.s1.journey', sourceId: 'mic', state: 'closed' })
   await nextTurn()
   assert.equal(closeReceipt.state, 'closed')
-  assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_runs').get().count, 0,
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM formal_agent_runs').get().count, 0,
     'S2 absence must create no automatic run')
-  assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM agent_artifacts').get().count, 0,
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM agent_artifacts').get().count, 0,
     'S2 absence must create no report')
 
-  const source = frozenSource(subtitleStore.database, 'session.s1.journey')
+  const source = frozenSource(database, 'session.s1.journey')
   const ingested = await runtime.module.ingest(source)
   assert.deepEqual({ episodes: ingested.episodeCount, memories: ingested.memoryCount }, { episodes: 1, memories: 0 })
   const resolved = await runtime.module.resolve({
@@ -135,5 +166,5 @@ test('SEM-F00/SEM-F26/SEM-F28/SEM-F30/J21: S1 real subtitle commit reaches perso
     })
   }
   assert.deepEqual(applied, [remembered.revision], 'consumer applies only higher changed revisions')
-  assert.equal(subtitleStore.database.prepare('PRAGMA integrity_check').get().integrity_check, 'ok')
+  assert.equal(database.prepare('PRAGMA integrity_check').get().integrity_check, 'ok')
 })

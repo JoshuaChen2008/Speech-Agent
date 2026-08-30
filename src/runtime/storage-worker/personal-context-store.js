@@ -561,9 +561,9 @@ class PersonalContextStore {
       const throughEventOrder = safeInteger(reference.through_event_order, 1)
       episodeRows = this.database.prepare(`
         SELECT * FROM personal_context_episodes
-        WHERE session_id = ? AND lifecycle = 'active'
+        WHERE session_id = ? AND lifecycle = 'active' AND from_event_order <= ?
         ORDER BY updated_at DESC, episode_id ASC LIMIT ?
-      `).all(sessionId, MAX_ITEMS + 1)
+      `).all(sessionId, throughEventOrder, MAX_ITEMS + 1)
       const session = this.database.prepare('SELECT state, ended_at FROM sessions WHERE session_id = ?').get(sessionId)
       if (session && (!['closed', 'interrupted'].includes(session.state) || session.ended_at === null)) {
         excludedScopes.push({ kind: 'session', reference: sessionId, reason: 'session_not_terminal' })
@@ -611,25 +611,104 @@ class PersonalContextStore {
       `).all(`project:${reference}`, MAX_ITEMS + 1)
     }
 
-    const rows = this.database.prepare(`
+    let allowedSessionIds = null
+    if (request.scope.kind === 'date_range') {
+      allowedSessionIds = new Set(this.database.prepare(`
+        SELECT session_id FROM sessions
+        WHERE started_at <= ? AND COALESCE(ended_at, started_at) >= ?
+      `).all(reference.through, reference.from).map((row) => row.session_id))
+    }
+    const requestedSessionId = request.scope.kind === 'selection' ? reference.session_id : reference
+    const inRequestedScope = (row) => {
+      if (row.scope_kind === 'global') return true
+      if (request.scope.kind === 'session' || request.scope.kind === 'selection') {
+        return row.scope_kind === 'session' && row.scope_reference === requestedSessionId
+      }
+      if (request.scope.kind === 'project') {
+        return row.scope_kind === 'project' && row.scope_reference === reference
+      }
+      return row.scope_kind === 'session' && allowedSessionIds.has(row.scope_reference)
+    }
+    const candidateRows = this.database.prepare(`
       SELECT item.*, scope.kind AS scope_kind,
-        CASE WHEN scope.kind = 'global' THEN NULL ELSE substr(scope.canonical_key, instr(scope.canonical_key, ':') + 1) END AS scope_reference
+        CASE WHEN scope.kind = 'global' THEN NULL ELSE substr(scope.canonical_key, instr(scope.canonical_key, ':') + 1) END AS scope_reference,
+        (SELECT COUNT(*) FROM personal_context_evidence AS evidence WHERE evidence.memory_id = item.memory_id) AS source_count
       FROM personal_context_items AS item
       JOIN personal_context_scopes AS scope ON scope.scope_id = item.scope_id
       WHERE item.lifecycle = 'active'
       ORDER BY item.updated_at DESC, item.memory_id ASC
       LIMIT ?
-    `).all(MAX_CANDIDATES)
-    const filtered = rows.filter((row) => terms.size === 0 || terms.has(normalizeSemanticKey(row.semantic_key)))
+    `).all(MAX_CANDIDATES + 1)
+    let budgetOmitted = candidateRows.length > MAX_CANDIDATES
+    const filtered = candidateRows.slice(0, MAX_CANDIDATES).filter((row) =>
+      inRequestedScope(row) && (terms.size === 0 || terms.has(normalizeSemanticKey(row.semantic_key))))
     const personalMemories = []
     let bytes = 0
-    let budgetOmitted = filtered.length > MAX_ITEMS
+    budgetOmitted = budgetOmitted || filtered.length > MAX_ITEMS
+    const episodes = []
+    if (episodeRows.length > MAX_ITEMS) {
+      budgetOmitted = true
+      episodeRows = episodeRows.slice(0, MAX_ITEMS)
+    }
+    for (const row of episodeRows) {
+      let episode = {
+        episodeId: row.episode_id, sessionId: row.session_id,
+        transcriptVersion: row.transcript_version, inputWatermark: Number(row.input_watermark),
+        inputDigest: row.input_digest, summary: JSON.parse(row.summary_json)
+      }
+      if (request.scope.kind === 'selection' && Number(row.through_event_order) > reference.through_event_order) {
+        const selectedRows = this.database.prepare(`
+          SELECT segment.segment_id, first_event.event_order AS first_event_order,
+            first_event.text AS raw_text, updated_event.event_order AS updated_event_order,
+            updated_event.kind AS updated_kind, segment.text AS current_text
+          FROM segments AS segment
+          JOIN caption_events AS first_event ON first_event.event_order = segment.first_event_order
+          JOIN caption_events AS updated_event ON updated_event.event_order = segment.updated_event_order
+          WHERE segment.session_id = ? AND first_event.event_order <= ?
+          ORDER BY first_event.event_order
+        `).all(row.session_id, reference.through_event_order)
+        if (selectedRows.length === 0) continue
+        const wholeSessionRefinement = this.database.prepare(`
+          SELECT COUNT(*) AS segment_count,
+            SUM(CASE WHEN updated_event.kind = 'refined' THEN 1 ELSE 0 END) AS refined_count
+          FROM segments AS segment
+          JOIN caption_events AS updated_event ON updated_event.event_order = segment.updated_event_order
+          WHERE segment.session_id = ?
+        `).get(row.session_id)
+        const refinedComplete = Number(wholeSessionRefinement.segment_count) > 0 &&
+          Number(wholeSessionRefinement.segment_count) === Number(wholeSessionRefinement.refined_count) &&
+          selectedRows.every((segment) => Number(segment.updated_event_order) <= reference.through_event_order)
+        const transcriptVersion = refinedComplete ? 'refined' : 'raw'
+        const events = selectedRows.map((segment) => ({
+          eventOrder: Number(transcriptVersion === 'refined' ? segment.updated_event_order : segment.first_event_order),
+          segmentId: segment.segment_id,
+          text: transcriptVersion === 'refined' ? segment.current_text : segment.raw_text
+        }))
+        const inputWatermark = Math.max(...events.map((event) => event.eventOrder))
+        episode = {
+          episodeId: row.episode_id, sessionId: row.session_id, transcriptVersion, inputWatermark,
+          inputDigest: sha256Canonical({ sessionId: row.session_id, transcriptVersion, inputWatermark, events }),
+          summary: { title: 'Session experience', bullets: [`Segments: ${events.length}`], omissions: ['not_committed_tail'] }
+        }
+      }
+      const episodeBytes = Buffer.byteLength(canonicalize(episode), 'utf8')
+      if (bytes + episodeBytes > MAX_CANONICAL_BYTES) {
+        budgetOmitted = true
+        continue
+      }
+      bytes += episodeBytes
+      episodes.push(episode)
+    }
     for (const row of filtered) {
       if (personalMemories.length >= MAX_ITEMS) break
+      if (Number(row.source_count) > MAX_SOURCES_PER_ITEM) {
+        budgetOmitted = true
+        continue
+      }
       const evidence = this.database.prepare(`
         SELECT input_digest FROM personal_context_evidence
-        WHERE memory_id = ? ORDER BY evidence_id LIMIT ?
-      `).all(row.memory_id, MAX_SOURCES_PER_ITEM).map((item) => item.input_digest)
+        WHERE memory_id = ? ORDER BY evidence_id
+      `).all(row.memory_id).map((item) => item.input_digest)
       const item = {
         memoryId: row.memory_id,
         semanticKey: row.semantic_key,
@@ -646,20 +725,8 @@ class PersonalContextStore {
       bytes += itemBytes
       personalMemories.push(item)
     }
-    if (episodeRows.length > MAX_ITEMS) {
-      budgetOmitted = true
-      episodeRows = episodeRows.slice(0, MAX_ITEMS)
-      excludedScopes.push({ kind: request.scope.kind, reference, reason: 'budget' })
-    }
-    const episodes = episodeRows.map((row) => ({
-      episodeId: row.episode_id,
-      sessionId: row.session_id,
-      transcriptVersion: row.transcript_version,
-      inputWatermark: Number(row.input_watermark),
-      inputDigest: row.input_digest,
-      summary: JSON.parse(row.summary_json)
-    }))
-    return {
+    if (budgetOmitted) excludedScopes.push({ kind: request.scope.kind, reference, reason: 'budget' })
+    const result = {
       eligibility: episodes.length > 0 || personalMemories.length > 0 ? 'ready' : 'no_committed_transcript',
       episodes,
       personalMemories,
@@ -668,6 +735,72 @@ class PersonalContextStore {
       hasMore: budgetOmitted,
       revision: this.contentRevision()
     }
+    while (Buffer.byteLength(canonicalize(result), 'utf8') > MAX_CANONICAL_BYTES) {
+      budgetOmitted = true
+      if (result.personalMemories.length > 0) result.personalMemories.pop()
+      else if (result.episodes.length > 0) result.episodes.pop()
+      else if (result.excludedScopes.length > 0) result.excludedScopes.pop()
+      else fail('AGENT_BUDGET_EXCEEDED')
+      result.hasMore = true
+      if (!result.omissions.includes('budget')) result.omissions.push('budget')
+      if (!result.excludedScopes.some((item) => item.reason === 'budget')) {
+        result.excludedScopes.push({ kind: request.scope.kind, reference, reason: 'budget' })
+      }
+      result.eligibility = result.episodes.length > 0 || result.personalMemories.length > 0
+        ? 'ready'
+        : 'no_committed_transcript'
+    }
+    return result
+  }
+
+  planSessionDeletion (sessionId) {
+    identifier(sessionId)
+    const episodeCount = Number(this.database.prepare(`
+      SELECT COUNT(*) AS count FROM personal_context_episodes WHERE session_id = ?
+    `).get(sessionId).count)
+    const evidenceCount = Number(this.database.prepare(`
+      SELECT COUNT(*) AS count FROM personal_context_evidence WHERE session_id = ?
+    `).get(sessionId).count)
+    const orphanItemIds = this.database.prepare(`
+      SELECT DISTINCT item.memory_id
+      FROM personal_context_items AS item
+      JOIN personal_context_scopes AS scope ON scope.scope_id = item.scope_id
+      LEFT JOIN personal_context_evidence AS own
+        ON own.memory_id = item.memory_id AND own.session_id = ?
+      WHERE (scope.session_id = ? OR own.evidence_id IS NOT NULL) AND NOT EXISTS (
+          SELECT 1 FROM personal_context_evidence AS other
+          WHERE other.memory_id = item.memory_id
+            AND (other.session_id IS NULL OR other.session_id <> ?)
+      )
+      ORDER BY item.memory_id
+    `).all(sessionId, sessionId, sessionId).map((row) => row.memory_id)
+    return { episodeCount, evidenceCount, orphanItemIds }
+  }
+
+  applySessionDeletion (sessionId, plan, now) {
+    identifier(sessionId)
+    safeInteger(now)
+    if (!isPlainObject(plan) || !Array.isArray(plan.orphanItemIds)) fail('STORAGE_COMMAND_FAILED')
+    for (const memoryId of plan.orphanItemIds) {
+      this.database.prepare(`
+        UPDATE personal_context_items SET lifecycle = 'inactive', updated_at = ? WHERE memory_id = ?
+      `).run(now, memoryId)
+    }
+    this.database.prepare('DELETE FROM personal_context_evidence WHERE session_id = ?').run(sessionId)
+    this.database.prepare('DELETE FROM personal_context_episodes WHERE session_id = ?').run(sessionId)
+    if (plan.episodeCount > 0 || plan.evidenceCount > 0 || plan.orphanItemIds.length > 0) {
+      this.advanceRevision({
+        operation: 'delete-session-context', sessionId,
+        deletedEpisodeCount: plan.episodeCount,
+        deletedContextEvidenceCount: plan.evidenceCount,
+        deletedOrphanContextItemCount: plan.orphanItemIds.length
+      })
+    }
+  }
+
+  deleteSessionData (input, legacyStore) {
+    if (!legacyStore || typeof legacyStore.deleteSessionData !== 'function') fail('STORAGE_COMMAND_FAILED')
+    return legacyStore.deleteSessionData(input, this)
   }
 
   claimNextFormalRun (request) {

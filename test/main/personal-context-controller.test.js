@@ -66,7 +66,7 @@ test('SEM-F30/J21: controller projects empty overview and composite revision thr
   assert.equal(response.ok, true)
   assert.deepEqual(response.snapshot.counts, { personal_memories: 0, session_episodes: 0 })
   assert.equal(response.snapshot.revision, 0)
-  assert.equal(response.snapshot.eligibility, 'agent_disabled')
+  assert.equal(response.snapshot.eligibility, 'provider_not_configured')
 })
 
 test('SEM-F30/J21: remember, update and forget expose exact projections and one changed event per revision', async (t) => {
