@@ -20,6 +20,12 @@ class ModelAccessRuntime {
 
   async internal () { return this.gateway.modelAccessCatalog() }
 
+  async initialize () {
+    const internal = await this.internal()
+    this.vault.recover(internal.profiles)
+    return this
+  }
+
   async catalog () {
     try { return { ok: true, snapshot: publicCatalog(await this.internal(), this.vault), error: null } } catch {
       return { ok: false, snapshot: null, error: { code: 'MODEL_ACCESS_UNAVAILABLE' } }
@@ -36,16 +42,19 @@ class ModelAccessRuntime {
           const internal = await this.internal()
           const profile = internal.profiles.find((item) => item.profile_id === command.profileId)
           if (!profile) return this.failure('MODEL_CONFIG_INVALID')
-          const previous = this.vault.snapshot(profile.credential_slot_id, profile.credential_persistence, profile.credential_generation)
-          let state
+          let setToken = null
           try {
-            state = this.vault.set(profile.credential_slot_id, command.credential)
+            setToken = this.vault.prepareSet(profile.credential_slot_id, command.credential, {
+              persistence: profile.credential_persistence,
+              generation: profile.credential_generation
+            })
             result = await this.gateway.modelAccessConfigure({
               command: { type: command.type, expectedRevision: command.expectedRevision, profileId: command.profileId },
-              credentialState: state
+              credentialState: setToken.state
             })
+            this.vault.commitSet(setToken)
           } catch (error) {
-            this.vault.restore(profile.credential_slot_id, previous)
+            this.vault.rollbackSet(setToken)
             throw error
           }
         } else {

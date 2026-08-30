@@ -49,6 +49,20 @@ test('startup audits the optional refinement readiness without initiating a down
   assert.doesNotMatch(bootstrap, /reconcileRefinementReadiness[\s\S]{0,160}install(?:Core|Refinement)?\(/)
 })
 
+test('SEM-F00/SEM-F33/J25: model access initializes during bootstrap and is independent of post-session refinement notice', () => {
+  const source = fs.readFileSync(MAIN_PATH, 'utf8')
+  const bootstrapStart = source.indexOf('async function bootstrapApplication ()')
+  const bootstrapEnd = source.indexOf('function cleanupUiRuntime ()', bootstrapStart)
+  const bootstrap = source.slice(bootstrapStart, bootstrapEnd)
+  const noticeStart = source.indexOf('async function refreshPostSessionRefinementNotice')
+  const noticeEnd = source.indexOf('async function runRuntimeCommand', noticeStart)
+  const notice = source.slice(noticeStart, noticeEnd)
+
+  assert.match(bootstrap, /await applicationRuntime\.start\(\)[\s\S]*modelAccessRuntime = new ModelAccessRuntime\(/)
+  assert.match(bootstrap, /directory: path\.join\(userDataDir, 'agent-model-credentials'\)/)
+  assert.doesNotMatch(notice, /CredentialVault|ModelAccessRuntime|RemoteModelCatalogPullController/)
+})
+
 test('quit and native-crash diagnostics are wired at the product composition root', () => {
   const source = fs.readFileSync(MAIN_PATH, 'utf8')
   const managerShutdown = source.indexOf('shutdownTasks.push(modelManager.shutdownWithin')

@@ -57,6 +57,7 @@ function harness (Host, options = {}) {
         }
       }
     },
+    childEnvironment: options.childEnvironment,
     onFatalError: (diagnostic) => fatal.push(diagnostic)
   })
   return { child, fatal, forkArguments: () => forkArguments, host }
@@ -83,6 +84,17 @@ const CASES = [
     startWithTimeout: (host, configureTimeoutMs) => host.start({ model: {}, configureTimeoutMs })
   }
 ]
+
+for (const entry of CASES) {
+  test(`SEM-F33/J25: ${entry.name} utility uses the frozen sanitized child environment`, async () => {
+    const childEnvironment = { Path: 'safe' }
+    const context = harness(entry.Host, { childEnvironment })
+    await entry.start(context.host)
+    assert.deepEqual(context.forkArguments()[2].env, childEnvironment)
+    assert.equal(Object.keys(context.forkArguments()[2].env).some((key) => key.toUpperCase() === 'DEEPSEEK_API_KEY'), false)
+    context.child.emit('exit', 0)
+  })
+}
 
 test('native utility defaults reserve model/decode grace before exact-child kill', () => {
   assert.equal(REALTIME_SHUTDOWN_TIMEOUT_MS, 30000)

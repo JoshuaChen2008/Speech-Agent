@@ -75,6 +75,7 @@ class RealtimeRuntimeAdapter {
     this.acceptanceRefineResponseDelayMs = options.acceptanceRefineResponseDelayMs ?? null
     this.refineWorkerFactory = options.refineWorkerFactory || (() => new RefineWorkerHost({
       electron: this.electron,
+      childEnvironment: options.childEnvironment,
       onFatalError: options.onRefineUtilityFatal
     }))
     this.onDegraded = options.onDegraded || ((message) => console.warn(`[runtime] ${message}`))
@@ -87,6 +88,7 @@ class RealtimeRuntimeAdapter {
     }))
     this.workerFactory = options.workerFactory || (() => new RealtimeWorkerHost({
       electron: this.electron,
+      childEnvironment: options.childEnvironment,
       onFatalError: options.onRealtimeUtilityFatal
     }))
     this.captionHandler = null

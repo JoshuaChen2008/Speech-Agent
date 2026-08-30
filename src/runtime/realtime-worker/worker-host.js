@@ -108,6 +108,7 @@ function sanitizeCaptionTiming (value, event, workerHostMainClockMs) {
 class RealtimeWorkerHost {
   constructor (options = {}) {
     this.electron = options.electron || require('electron')
+    this.childEnvironment = options.childEnvironment ? { ...options.childEnvironment } : null
     this.child = null
     this.captionListeners = new Set()
     this.statsListeners = new Set()
@@ -252,7 +253,10 @@ class RealtimeWorkerHost {
       throw new TypeError('sessionId is required')
     }
     assertSingleSourceIds(config.sourceIds)
-    const child = this.electron.utilityProcess.fork(WORKER_PATH, [], { serviceName: SERVICE_NAME })
+    const child = this.electron.utilityProcess.fork(WORKER_PATH, [], {
+      serviceName: SERVICE_NAME,
+      ...(this.childEnvironment ? { env: { ...this.childEnvironment } } : {})
+    })
     this.child = child
     this.clockCalibration = null
     this.installChild(child)

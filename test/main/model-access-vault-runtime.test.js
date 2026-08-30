@@ -114,3 +114,91 @@ test('SEM-F33/J25: credential quarantine rolls back before a failed SQLite comma
   assert.deepEqual(instance.state(slot, 'persistent', state.generation), { present: true, scope: 'persistent' })
   await instance.borrow(slot, 'persistent', state.generation, async (copy) => assert.equal(copy.toString(), 'rollback-secret'))
 })
+
+test('SEM-F33/J25: persistent credential journal recovers set from the committed SQLite generation', async (t) => {
+  const created = vault(t, true)
+  const slot = 'slot.0123456789abcdef0123456789abcdef'
+  const oldState = created.instance.set(slot, 'old-secret')
+  const prepared = created.instance.prepareSet(slot, 'new-secret', {
+    persistence: 'persistent',
+    generation: oldState.generation
+  })
+  const journalText = fs.readFileSync(path.join(created.directory, 'journal.v1.json'), 'utf8')
+  assert.equal(journalText.includes('old-secret'), false)
+  assert.equal(journalText.includes('new-secret'), false)
+  assert.equal(journalText.includes('https://'), false)
+
+  const beforeCommitRestart = new CredentialVault({ directory: created.directory, safeStorage: created.instance.safeStorage })
+  beforeCommitRestart.recover([{ credential_slot_id: slot, credential_persistence: 'persistent', credential_generation: oldState.generation }])
+  assert.deepEqual(beforeCommitRestart.state(slot, 'persistent', oldState.generation), { present: true, scope: 'persistent' })
+  assert.deepEqual(beforeCommitRestart.state(slot, 'persistent', prepared.state.generation), { present: false, scope: 'absent' })
+
+  const preparedAfterRestart = beforeCommitRestart.prepareSet(slot, 'committed-secret', {
+    persistence: 'persistent',
+    generation: oldState.generation
+  })
+  const afterCommitRestart = new CredentialVault({ directory: created.directory, safeStorage: created.instance.safeStorage })
+  afterCommitRestart.recover([{ credential_slot_id: slot, credential_persistence: 'persistent', credential_generation: preparedAfterRestart.state.generation }])
+  assert.deepEqual(afterCommitRestart.state(slot, 'persistent', oldState.generation), { present: false, scope: 'absent' })
+  await afterCommitRestart.borrow(slot, 'persistent', preparedAfterRestart.state.generation, async (copy) => assert.equal(copy.toString(), 'committed-secret'))
+})
+
+test('SEM-F33/J25: setCredential rolls back the prepared generation when SQLite rejects the command', async (t) => {
+  const { instance, directory } = vault(t, true)
+  const slot = 'slot.0123456789abcdef0123456789abcdef'
+  const oldState = instance.set(slot, 'old-secret')
+  const internal = { revision: 8, profiles: [{
+    profile_id: 'profile.one', credential_slot_id: slot,
+    credential_persistence: 'persistent', credential_generation: oldState.generation
+  }] }
+  let oldGenerationRemainedAuthoritative = false
+  let journalWasPrepared = false
+  const runtime = new ModelAccessRuntime({
+    vault: instance,
+    gateway: {
+      modelAccessCatalog: async () => internal,
+      modelAccessConfigure: async () => {
+        oldGenerationRemainedAuthoritative = instance.state(slot, 'persistent', oldState.generation).present
+        journalWasPrepared = fs.existsSync(path.join(directory, 'journal.v1.json'))
+        throw new Error('injected storage failure')
+      },
+      modelAccessBind: async () => ({})
+    }
+  })
+
+  const result = await runtime.configure({ type: 'setCredential', expectedRevision: 8, profileId: 'profile.one', credential: 'new-secret' })
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'MODEL_CONFIG_INVALID')
+  assert.equal(oldGenerationRemainedAuthoritative, true)
+  assert.equal(journalWasPrepared, true)
+  assert.equal(fs.readdirSync(directory).filter((name) => name.endsWith('.bin')).length, 1)
+  assert.equal(fs.existsSync(path.join(directory, 'journal.v1.json')), false)
+  await instance.borrow(slot, 'persistent', oldState.generation, async (copy) => assert.equal(copy.toString(), 'old-secret'))
+})
+
+test('SEM-F33/J25: credential quarantine recovery follows the committed SQLite fact', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'model-vault-recover-'))
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (value) => Buffer.from(value, 'utf8').reverse(),
+    decryptString: (value) => Buffer.from(value).reverse().toString('utf8')
+  }
+  const slot = 'slot.0123456789abcdef0123456789abcdef'
+  const first = new CredentialVault({ directory: root, safeStorage })
+  const state = first.set(slot, 'recover-secret')
+  first.prepareClear(slot, 'persistent', state.generation)
+
+  const beforeCommitRestart = new CredentialVault({ directory: root, safeStorage })
+  beforeCommitRestart.recover([{ credential_slot_id: slot, credential_persistence: 'persistent', credential_generation: state.generation }])
+  assert.deepEqual(beforeCommitRestart.state(slot, 'persistent', state.generation), { present: true, scope: 'persistent' })
+
+  beforeCommitRestart.prepareClear(slot, 'persistent', state.generation)
+  const afterCommitRestart = new CredentialVault({ directory: root, safeStorage })
+  afterCommitRestart.recover([])
+  assert.deepEqual(afterCommitRestart.state(slot, 'persistent', state.generation), { present: false, scope: 'absent' })
+  assert.deepEqual(fs.readdirSync(root), [])
+  first.close()
+  beforeCommitRestart.close()
+  afterCommitRestart.close()
+  fs.rmSync(root, { recursive: true, force: true })
+})

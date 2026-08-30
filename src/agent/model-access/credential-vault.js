@@ -4,6 +4,11 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 
+const SLOT_PATTERN = /^slot\.[a-f0-9]{32}$/
+const GENERATION_PATTERN = /^generation\.[a-f0-9]{32}$/
+const OPERATION_PATTERN = /^operation\.[a-f0-9]{32}$/
+const JOURNAL_NAME = 'journal.v1.json'
+
 class CredentialVault {
   constructor (options = {}) {
     if (typeof options.directory !== 'string' || !path.isAbsolute(options.directory)) throw new TypeError('vault directory is required')
@@ -12,25 +17,76 @@ class CredentialVault {
     this.safeStorage = options.safeStorage
     this.fs = options.fs || fs
     this.session = new Map()
-    this.recover()
+    this.cleanupPendingFiles()
   }
 
   file (slotId, generation) {
-    if (!/^slot\.[a-f0-9]{32}$/.test(slotId) || !/^generation\.[a-f0-9]{32}$/.test(generation)) throw new TypeError('vault identity is invalid')
+    if (!SLOT_PATTERN.test(slotId) || !GENERATION_PATTERN.test(generation)) throw new TypeError('vault identity is invalid')
     return path.join(this.directory, `${slotId}.${generation}.bin`)
   }
 
-  set (slotId, credential) {
+  journalFile () { return path.join(this.directory, JOURNAL_NAME) }
+
+  quarantineFile (slotId, generation, operationId) {
+    if (!OPERATION_PATTERN.test(operationId)) throw new TypeError('vault operation identity is invalid')
+    return path.join(this.directory, `${slotId}.${generation}.quarantine.${operationId}`)
+  }
+
+  cleanupPendingFiles () {
+    if (!this.fs.existsSync(this.directory)) return
+    for (const name of this.fs.readdirSync(this.directory)) {
+      if (name.endsWith('.pending')) {
+        try { this.fs.rmSync(path.join(this.directory, name), { force: true }) } catch {}
+      }
+    }
+  }
+
+  writeJournal (record) {
+    this.fs.mkdirSync(this.directory, { recursive: true })
+    const target = this.journalFile()
+    if (this.fs.existsSync(target)) throw new Error('credential transaction already active')
+    const temporary = `${target}.pending`
+    try {
+      this.fs.writeFileSync(temporary, JSON.stringify({ version: 1, ...record }), { flag: 'wx' })
+      this.fs.renameSync(temporary, target)
+    } catch (error) {
+      try { this.fs.rmSync(temporary, { force: true }) } catch {}
+      throw error
+    }
+  }
+
+  readJournal () {
+    const target = this.journalFile()
+    if (!this.fs.existsSync(target)) return null
+    const value = JSON.parse(this.fs.readFileSync(target, 'utf8'))
+    if (value?.version !== 1 || !['set', 'clear'].includes(value.operation) ||
+        !SLOT_PATTERN.test(value.slotId) || !OPERATION_PATTERN.test(value.operationId)) {
+      throw new Error('credential recovery journal is invalid')
+    }
+    for (const key of ['oldGeneration', 'newGeneration']) {
+      if (value[key] !== null && value[key] !== undefined && !GENERATION_PATTERN.test(value[key])) {
+        throw new Error('credential recovery generation is invalid')
+      }
+    }
+    return value
+  }
+
+  clearJournal () { this.fs.rmSync(this.journalFile(), { force: true }) }
+
+  prepareSet (slotId, credential, previous = { persistence: 'absent', generation: null }) {
+    if (!SLOT_PATTERN.test(slotId)) throw new TypeError('vault identity is invalid')
     if (typeof credential !== 'string' || credential !== credential.trim() || credential.length === 0 || Buffer.byteLength(credential) > 4096) {
       throw new TypeError('credential is invalid')
     }
-    this.clear(slotId)
+    const snapshot = this.snapshot(slotId, previous.persistence, previous.generation)
     if (this.safeStorage.isEncryptionAvailable() !== true) {
-      const value = Buffer.from(credential, 'utf8')
-      this.session.set(slotId, value)
-      return Object.freeze({ scope: 'session_only', generation: null })
+      this.clearSession(slotId)
+      this.session.set(slotId, Buffer.from(credential, 'utf8'))
+      return { kind: 'session', slotId, snapshot, state: Object.freeze({ scope: 'session_only', generation: null }) }
     }
+
     const generation = `generation.${crypto.randomBytes(16).toString('hex')}`
+    const operationId = `operation.${crypto.randomBytes(16).toString('hex')}`
     const target = this.file(slotId, generation)
     const temporary = `${target}.pending`
     this.fs.mkdirSync(this.directory, { recursive: true })
@@ -39,11 +95,46 @@ class CredentialVault {
     try {
       this.fs.writeFileSync(temporary, encrypted, { flag: 'wx' })
       this.fs.renameSync(temporary, target)
+      this.writeJournal({ operation: 'set', operationId, slotId, oldGeneration: previous.generation || null, newGeneration: generation, phase: 'prepared' })
     } catch (error) {
       try { this.fs.rmSync(temporary, { force: true }) } catch {}
+      try { this.fs.rmSync(target, { force: true }) } catch {}
       throw error
     }
-    return Object.freeze({ scope: 'persistent', generation })
+    return { kind: 'persistent', slotId, snapshot, operationId, state: Object.freeze({ scope: 'persistent', generation }) }
+  }
+
+  commitSet (token) {
+    if (!token) return
+    if (token.kind === 'session') {
+      this.releaseSnapshot(token.snapshot)
+      return
+    }
+    let cleaned = true
+    try {
+      const oldGeneration = token.snapshot?.scope === 'persistent' ? token.snapshot.generation : null
+      if (oldGeneration && oldGeneration !== token.state.generation) this.fs.rmSync(this.file(token.slotId, oldGeneration), { force: true })
+      this.clearSession(token.slotId)
+    } catch { cleaned = false }
+    this.releaseSnapshot(token.snapshot)
+    if (cleaned) {
+      try { this.clearJournal() } catch { /* recovery finishes committed cleanup */ }
+    }
+  }
+
+  rollbackSet (token) {
+    if (!token) return
+    if (token.kind === 'persistent') this.fs.rmSync(this.file(token.slotId, token.state.generation), { force: true })
+    this.clearSession(token.slotId)
+    if (token.snapshot?.scope === 'session_only') this.session.set(token.slotId, Buffer.from(token.snapshot.value))
+    this.releaseSnapshot(token.snapshot)
+    if (token.kind === 'persistent') this.clearJournal()
+  }
+
+  set (slotId, credential) {
+    const token = this.prepareSet(slotId, credential)
+    this.commitSet(token)
+    return token.state
   }
 
   state (slotId, persistence, generation) {
@@ -77,22 +168,35 @@ class CredentialVault {
     return { scope: 'absent' }
   }
 
+  releaseSnapshot (snapshot) {
+    if (Buffer.isBuffer(snapshot?.value)) snapshot.value.fill(0)
+  }
+
   prepareClear (slotId, persistence, generation) {
     const snapshot = this.snapshot(slotId, persistence, generation)
-    const token = { slotId, snapshot, quarantine: null }
+    const token = { kind: snapshot.scope, slotId, snapshot, quarantine: null, operationId: null }
     this.clearSession(slotId)
     if (snapshot.scope === 'persistent') {
+      const operationId = `operation.${crypto.randomBytes(16).toString('hex')}`
       const source = this.file(slotId, snapshot.generation)
-      const quarantine = `${source}.quarantine.${crypto.randomBytes(8).toString('hex')}`
-      this.fs.renameSync(source, quarantine)
+      const quarantine = this.quarantineFile(slotId, snapshot.generation, operationId)
+      this.writeJournal({ operation: 'clear', operationId, slotId, oldGeneration: snapshot.generation, newGeneration: null, phase: 'prepared' })
+      try { this.fs.renameSync(source, quarantine) } catch (error) { this.clearJournal(); throw error }
+      token.operationId = operationId
       token.quarantine = quarantine
     }
     return token
   }
 
   commitClear (token) {
-    if (token?.quarantine) {
-      try { this.fs.rmSync(token.quarantine, { force: true }) } catch { /* retry at next startup */ }
+    if (!token) return
+    let cleaned = true
+    if (token.quarantine) {
+      try { this.fs.rmSync(token.quarantine, { force: true }) } catch { cleaned = false }
+    }
+    this.releaseSnapshot(token.snapshot)
+    if (token.kind === 'persistent' && cleaned) {
+      try { this.clearJournal() } catch { /* recovery finishes committed cleanup */ }
     }
   }
 
@@ -100,16 +204,48 @@ class CredentialVault {
     if (!token) return
     if (token.quarantine && this.fs.existsSync(token.quarantine)) {
       this.fs.renameSync(token.quarantine, this.file(token.slotId, token.snapshot.generation))
-      return
+    } else if (token.snapshot?.scope === 'session_only') {
+      this.session.set(token.slotId, Buffer.from(token.snapshot.value))
     }
-    this.restore(token.slotId, token.snapshot)
+    this.releaseSnapshot(token.snapshot)
+    if (token.kind === 'persistent') this.clearJournal()
   }
 
-  recover () {
+  recover (profiles = []) {
+    const committed = new Map()
+    for (const profile of profiles) {
+      if (SLOT_PATTERN.test(profile?.credential_slot_id) && profile.credential_persistence === 'persistent' && GENERATION_PATTERN.test(profile.credential_generation)) {
+        committed.set(profile.credential_slot_id, profile.credential_generation)
+      }
+    }
+    const journal = this.readJournal()
+    if (journal) {
+      const committedGeneration = committed.get(journal.slotId) || null
+      if (journal.operation === 'set') {
+        const discarded = committedGeneration === journal.newGeneration ? journal.oldGeneration : journal.newGeneration
+        if (discarded) this.fs.rmSync(this.file(journal.slotId, discarded), { force: true })
+      } else {
+        const source = this.file(journal.slotId, journal.oldGeneration)
+        const quarantine = this.quarantineFile(journal.slotId, journal.oldGeneration, journal.operationId)
+        if (committedGeneration === journal.oldGeneration) {
+          if (this.fs.existsSync(quarantine) && !this.fs.existsSync(source)) this.fs.renameSync(quarantine, source)
+          else this.fs.rmSync(quarantine, { force: true })
+        } else {
+          this.fs.rmSync(source, { force: true })
+          this.fs.rmSync(quarantine, { force: true })
+        }
+      }
+      this.clearJournal()
+    }
     if (!this.fs.existsSync(this.directory)) return
     for (const name of this.fs.readdirSync(this.directory)) {
-      if (name.includes('.quarantine.') || name.endsWith('.pending')) {
-        try { this.fs.rmSync(path.join(this.directory, name), { force: true }) } catch {}
+      const match = /^(slot\.[a-f0-9]{32})\.(generation\.[a-f0-9]{32})\.bin$/.exec(name)
+      if (match && committed.get(match[1]) !== match[2]) this.fs.rmSync(path.join(this.directory, name), { force: true })
+      const quarantined = /^(slot\.[a-f0-9]{32})\.(generation\.[a-f0-9]{32})\.quarantine\.(operation\.[a-f0-9]{32})$/.exec(name)
+      if (quarantined) {
+        const source = this.file(quarantined[1], quarantined[2])
+        if (committed.get(quarantined[1]) === quarantined[2] && !this.fs.existsSync(source)) this.fs.renameSync(path.join(this.directory, name), source)
+        else this.fs.rmSync(path.join(this.directory, name), { force: true })
       }
     }
   }

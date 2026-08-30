@@ -19,7 +19,11 @@ function registerModelAccessIpc (options = {}) {
   })
   options.ipcMain.handle(CHANNELS.AGENT_MODEL_CONFIGURE, async (event, request) => {
     try { options.authorize(event, CHANNELS.AGENT_MODEL_CONFIGURE); assertConfigureRequest(request) } catch { return assertConfigureResponse(withHeader({ ok: false, revision: null, error: { code: 'MODEL_CONFIG_INVALID', nextAction: 'correct_input' } })) }
-    return assertConfigureResponse(withHeader(await options.getRuntime().configure(request.command)))
+    const runtime = options.getRuntime()
+    if (!runtime) return assertConfigureResponse(withHeader({ ok: false, revision: null, error: { code: 'MODEL_CONFIG_INVALID', nextAction: 'correct_input' } }))
+    try { return assertConfigureResponse(withHeader(await runtime.configure(request.command))) } catch {
+      return assertConfigureResponse(withHeader({ ok: false, revision: null, error: { code: 'MODEL_CONFIG_INVALID', nextAction: 'correct_input' } }))
+    }
   })
   options.ipcMain.handle(CHANNELS.AGENT_MODEL_PULL_REMOTE_CATALOG, async (event, request) => {
     try { options.authorize(event, CHANNELS.AGENT_MODEL_PULL_REMOTE_CATALOG); assertPullRequest(request) } catch { return assertPullResponse(withHeader({ status: 'invalid_request', suggestions: [] })) }

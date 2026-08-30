@@ -123,6 +123,7 @@ class StorageWorkerHost {
     this.electron = options.electron || require('electron')
     this.databasePath = options.databasePath
     this.workerPath = options.workerPath || WORKER_PATH
+    this.childEnvironment = options.childEnvironment ? { ...options.childEnvironment } : null
     this.requestTimeoutMs = positiveTimeout(options.requestTimeoutMs, 5000)
     this.child = null
     this.childExit = null
@@ -203,7 +204,8 @@ class StorageWorkerHost {
     let child
     try {
       child = this.electron.utilityProcess.fork(this.workerPath, [], {
-        serviceName: SERVICE_NAME
+        serviceName: SERVICE_NAME,
+        ...(this.childEnvironment ? { env: { ...this.childEnvironment } } : {})
       })
     } catch (cause) {
       this.state = 'failed'

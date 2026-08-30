@@ -254,6 +254,7 @@ const CHILD_PROCESS_REASONS = Object.freeze([
 ])
 
 const runtimeEvidenceOptions = Object.freeze({
+  childEnvironment: modelAccessChildEnvironment,
   registerAudioHostWebContents: (webContents) => exitEvidence.registerWebContents(webContents, 'audio-host'),
   onAudioHostRenderProcessGone: (webContents, details) => exitEvidence.recordRenderProcessGone(webContents, details),
   onAudioHostPreloadError: (webContents) => exitEvidence.recordPreloadError(webContents),
@@ -973,30 +974,6 @@ async function refreshPostSessionRefinementNotice (sessionId) {
        a command failure. Detailed facts remain available through history. */
     console.error('[refinement.notice] result unavailable')
   }
-  try {
-    const { CredentialVault } = require('./agent/model-access/credential-vault')
-    const { ModelAccessRuntime } = require('./agent/model-access/runtime')
-    const { OpenAiCompatibleAdapter } = require('./agent/model-access/openai-compatible-adapter')
-    const { RemoteModelCatalogPullController } = require('./agent/model-access/remote-catalog-controller')
-    const vault = new CredentialVault({
-      directory: path.join(userDataDir, 'agent-model-credentials'),
-      safeStorage
-    })
-    modelAccessRuntime = new ModelAccessRuntime({
-      gateway: applicationRuntime.gateway,
-      vault,
-      onChanged: broadcastAgentModelChanged
-    })
-    remoteModelCatalogController = new RemoteModelCatalogPullController({
-      runtime: modelAccessRuntime,
-      vault,
-      adapter: new OpenAiCompatibleAdapter()
-    })
-  } catch {
-    modelAccessRuntime = null
-    remoteModelCatalogController = null
-    console.error('[agent.model-access] MODEL_ACCESS_UNAVAILABLE')
-  }
 }
 
 async function runRuntimeCommand (name) {
@@ -1105,6 +1082,7 @@ async function bootstrapApplication () {
   if (quitRequested) return false
   applicationRuntime = new SubtitleApplicationRuntime({
     userDataDir,
+    childEnvironment: modelAccessChildEnvironment,
     coordinatorFactory: ({ persistenceSink }) => createCoordinator(persistenceSink),
     onError: (error) => logError('subtitle.storage', error),
     onStorageUtilityFatal: () => exitEvidence.recordUtilityFatal('storage')
@@ -1124,6 +1102,31 @@ async function bootstrapApplication () {
   } catch {
     personalContextRuntime = null
     console.error('[agent.runtime] AGENT_CONTEXT_UNAVAILABLE')
+  }
+  try {
+    const { CredentialVault } = require('./agent/model-access/credential-vault')
+    const { ModelAccessRuntime } = require('./agent/model-access/runtime')
+    const { OpenAiCompatibleAdapter } = require('./agent/model-access/openai-compatible-adapter')
+    const { RemoteModelCatalogPullController } = require('./agent/model-access/remote-catalog-controller')
+    const vault = new CredentialVault({
+      directory: path.join(userDataDir, 'agent-model-credentials'),
+      safeStorage
+    })
+    modelAccessRuntime = new ModelAccessRuntime({
+      gateway: applicationRuntime.gateway,
+      vault,
+      onChanged: broadcastAgentModelChanged
+    })
+    await modelAccessRuntime.initialize()
+    remoteModelCatalogController = new RemoteModelCatalogPullController({
+      runtime: modelAccessRuntime,
+      vault,
+      adapter: new OpenAiCompatibleAdapter()
+    })
+  } catch {
+    modelAccessRuntime = null
+    remoteModelCatalogController = null
+    console.error('[agent.model-access] MODEL_ACCESS_UNAVAILABLE')
   }
   powerSessionGuard = new PowerSessionGuard({
     powerMonitor,

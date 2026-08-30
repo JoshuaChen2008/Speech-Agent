@@ -119,7 +119,7 @@ class StorageGateway {
     this.maxRestarts = maxRestarts
     this.maxQueue = maxQueue
     this.hostOptions = { databasePath: this.databasePath }
-    for (const key of ['electron', 'workerPath', 'requestTimeoutMs']) {
+    for (const key of ['electron', 'workerPath', 'requestTimeoutMs', 'childEnvironment']) {
       if (options[key] !== undefined) this.hostOptions[key] = options[key]
     }
     if (options.onFatalError) this.hostOptions.onFatalError = options.onFatalError

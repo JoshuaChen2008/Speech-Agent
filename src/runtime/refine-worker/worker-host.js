@@ -49,6 +49,7 @@ function waitWithTimeout (promise, timeoutMs, message) {
 class RefineWorkerHost {
   constructor (options = {}) {
     this.electron = options.electron || require('electron')
+    this.childEnvironment = options.childEnvironment ? { ...options.childEnvironment } : null
     this.child = null
     this.statsListeners = new Set()
     this.exitListeners = new Set()
@@ -99,7 +100,10 @@ class RefineWorkerHost {
     if (this.disposed) throw new Error('refine worker host is disposed')
     if (this.child) throw new Error('refine worker is already running')
     const responseDelayMs = acceptanceResponseDelayMs(config?.acceptanceResponseDelayMs)
-    const child = this.electron.utilityProcess.fork(WORKER_PATH, [], { serviceName: SERVICE_NAME })
+    const child = this.electron.utilityProcess.fork(WORKER_PATH, [], {
+      serviceName: SERVICE_NAME,
+      ...(this.childEnvironment ? { env: { ...this.childEnvironment } } : {})
+    })
     this.child = child
     this.installChild(child)
     child.on('message', (message) => {

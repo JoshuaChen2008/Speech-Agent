@@ -97,6 +97,7 @@ class SubtitleApplicationRuntime {
     this.onStorageUtilityFatal = typeof options.onStorageUtilityFatal === 'function'
       ? options.onStorageUtilityFatal
       : () => {}
+    this.childEnvironment = options.childEnvironment ? { ...options.childEnvironment } : null
 
     this.state = 'new'
     this.gateway = null
@@ -132,6 +133,7 @@ class SubtitleApplicationRuntime {
       const recoveredAt = epochMilliseconds(this.now(), 'startup clock')
       this.gateway = assertGateway(this.gatewayFactory({
         databasePath: this.databasePath,
+        ...(this.childEnvironment ? { childEnvironment: { ...this.childEnvironment } } : {}),
         onFatalError: this.onStorageUtilityFatal
       }))
       await this.gateway.start()

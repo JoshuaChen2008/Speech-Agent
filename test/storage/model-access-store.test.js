@@ -85,6 +85,8 @@ test('SEM-F33/J25: bind validates an existing v5 run and replays one immutable s
   assert.equal(first.capabilities.maxOutputTokens, 4096)
   assert.equal(Object.keys(first).some((key) => /price|cost|currency|pricing/i.test(key)), false)
   assert.throws(() => subtitleStore.database.prepare("UPDATE agent_model_run_bindings SET model_id='other' WHERE run_id='run.bind.one'").run(), /immutable/i)
+  subtitleStore.database.prepare("DELETE FROM formal_agent_runs WHERE run_id='run.bind.one'").run()
+  assert.equal(subtitleStore.database.prepare("SELECT COUNT(*) AS count FROM agent_model_run_bindings WHERE run_id='run.bind.one'").get().count, 0)
 })
 
 test('SEM-F33/J25: deleting a profile preserves binding identity and never reseeds the template', (t) => {
