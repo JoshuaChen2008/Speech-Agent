@@ -230,12 +230,16 @@ test('SEM-F00/F09/F12/F16/F25/F28/SEM-T15 / D6/D10/D12/D13/D14/J7/J24-B01/B04/B0
   }
 
   const files = listFiles(dataRoot)
+  const databasePath = path.join(dataRoot, 'data', 'speech-agent.sqlite3')
   assert.equal(files.some((file) => AUDIO_PATH.test(path.basename(file))), false)
+  /* v6 的 MODEL_ACCESS_SCHEMA_SQL seed 了内置模板的 https_origin：它是每个安装逐字节
+     相同的产品常量，不是用户事实，允许留在该 seed 行。其余文件仍须为零；凭据、现场
+     音频、音频路径与转写正文不享有任何豁免。 */
   for (const file of files) {
     const bytes = fs.readFileSync(file)
     assert.equal(bytes.includes(Buffer.from(initial.credentialCanary)), false)
     assert.equal(bytes.includes(Buffer.from(recovery.credentialCanary)), false)
-    assert.equal(bytes.includes(Buffer.from(PROVIDER_URL)), false)
+    if (file !== databasePath) assert.equal(bytes.includes(Buffer.from(PROVIDER_URL)), false)
   }
   const config = JSON.parse(fs.readFileSync(path.join(dataRoot, 'data', 'config.json'), 'utf8'))
   assert.equal(Object.hasOwn(config, 'providerId'), false)
@@ -245,7 +249,6 @@ test('SEM-F00/F09/F12/F16/F25/F28/SEM-T15 / D6/D10/D12/D13/D14/J7/J24-B01/B04/B0
   const smokeSource = fs.readFileSync(mainPath, 'utf8')
   assert.doesNotMatch(smokeSource, /new\s+BrowserWindow\s*\(/)
   assert.match(smokeSource, /BrowserWindow\.getAllWindows\(\)/)
-  const databasePath = path.join(dataRoot, 'data', 'speech-agent.sqlite3')
   assert.equal(files.includes(databasePath), true)
 
   const database = new DatabaseSync(databasePath, { readOnly: true })
@@ -274,6 +277,15 @@ test('SEM-F00/F09/F12/F16/F25/F28/SEM-T15 / D6/D10/D12/D13/D14/J7/J24-B01/B04/B0
     assert.equal(Number(database.prepare('SELECT COUNT(*) AS count FROM memory_items').get().count), 1)
     assert.equal(Number(database.prepare('SELECT COUNT(*) AS count FROM memory_evidence').get().count), 1)
     assert.equal(Number(database.prepare('SELECT COUNT(*) AS count FROM caption_events').get().count), 3)
+    assert.deepEqual(database.prepare(`
+      SELECT profile_id, https_origin, credential_generation, credential_persistence
+      FROM agent_model_profiles WHERE https_origin = ?
+    `).all(PROVIDER_URL).map((row) => ({ ...row })), [{
+      profile_id: 'deepseek',
+      https_origin: PROVIDER_URL,
+      credential_generation: null,
+      credential_persistence: 'absent'
+    }])
     const storageColumns = database.prepare(`
       SELECT schema.name AS table_name, columns.name AS column_name
       FROM sqlite_schema AS schema

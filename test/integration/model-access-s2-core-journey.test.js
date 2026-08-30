@@ -124,7 +124,10 @@ test('SEM-F00/SEM-F33/J25: S2 Core configures two profiles, resolves fallback, b
   assert.deepEqual(afterAuth.profiles.find((profile) => profile.profileId === 'deepseek').credential, { present: false, scope: 'absent' })
   assert.deepEqual(afterAuth.profiles.find((profile) => profile.profileId === 'local.profile').credential, { present: true, scope: 'persistent' })
 
-  assert.equal(subtitleStore.database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='formal_agent_interactions'").get().count, 0)
+  /* v7 的 formal_agent_interactions 由共享 migration 链建立，S2 边界不拥有它：
+     表存在是 schema 事实，S2 必须对它零写入。 */
+  assert.equal(subtitleStore.database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='formal_agent_interactions'").get().count, 1)
+  assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_interactions').get().count, 0)
   assert.equal(JSON.stringify(snapshot).includes('credentialSlotId'), false)
   assert.equal(/price|cost|currency|pricing/i.test(JSON.stringify(binding)), false)
 })
