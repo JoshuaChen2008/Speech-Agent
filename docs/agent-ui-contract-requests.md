@@ -196,6 +196,148 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 - exact contract：[`agent-context-ui-contract.md`](agent-context-ui-contract.md) §5/§6.3；`speech-agent.personal-context.ui@1.1.0` 继续使用 `cursor/limit/next_cursor/has_more` 字段，Core 按 `(updated_at DESC, stable ID DESC)` 严格小于 cursor 复合键续读，拒绝 offset/伪造/跨 resource cursor；`v1.1.0/manage-view-page-1.json` / `manage-view-page-2.json`；`test/{main,storage}/personal-context-*.test.js`。
 - S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；须含「第二页返回不同条目」与「并发插入不跳行不重复」两条正证据。
 
+下列十条由 2026-08-31 的 UX-2 交付（[`agent-ui-ux-handoff.md`](agent-ui-ux-handoff.md) §13，Agent Bar：范围、资格、运行与最小交互历史）提出。S3 的 `agent-run:*` exact contract 与 fixture 尚未签发，全部处理值为 `open`；不为 S4 的工具调用记录/多 attempt/预算执法登记请求。
+
+### AUI-CR-010 · 四类范围的可选项与冻结身份投影
+
+- 处理值：open
+- 提出面：agent
+- 用户意图：我想在 Agent Bar 里选一个终态会话、一段日期范围或一个项目，而不是只能选当前选区。
+- 需要的事实或动作：`终态会话` 需要一份有界可选清单（稳定标识 + 可展示标签 + 终态时间）；`日期范围` 需要边界的产品化表达方式（相对偏移或用户可选的起止，不含绝对单调时刻）；`项目` 复用 `AUI-CR-008` 已裁定的 `scope_directory` 投影（`kind='project'` 子集），不新造第二套项目目录。
+- 缺失时的 fail-closed 表现：只保留已有明确来源的范围入口（如当前选区），其余范围类型显示空状态说明，不提供无法选出结果的下拉框。
+- 受影响语义/旅程：SEM-F28 / SEM-F31 / J22 / J24
+- 建议的成功 fixture：终态会话清单含多条与空清单各一；日期范围最小/最大边界各一；项目目录复用 `AUI-CR-008` 的非空与空清单。
+- 建议的失败 fixture：范围标识指向不存在的会话/项目被拒；日期范围起止颠倒被拒。
+- Core 判断：待填写
+- exact contract：待填写
+- S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；fixture 不构成 J22/J24 证据。
+
+### AUI-CR-011 ·「当前选区」的跨窗口身份传递
+
+- 处理值：open
+- 提出面：agent
+- 用户意图：我在字幕历史里选中一段文字后打开 Agent Bar，希望它已经知道我选的是什么，而不用再选一次。
+- 需要的事实或动作：字幕历史窗与 `agent` 窗口是两个独立 BrowserWindow；需要 Core 说明"当前选区"这一冻结身份如何从字幕历史传到 Agent Bar（例如由 main 持有最近一次选区身份并通过 IPC 投影给 `agent` 角色），以及选区身份的有效期与失效条件（例如选区来源会话被删除后如何降级）。
+- 缺失时的 fail-closed 表现：「当前选区」入口在 Agent Bar 内显示为不可选并说明"请先在字幕历史选择内容"；不用当前会话范围默默替代选区语义。
+- 受影响语义/旅程：SEM-F31 / J22 / J24
+- 建议的成功 fixture：选区已建立并有效；选区来源会话被删除后的失效态。
+- 建议的失败 fixture：选区身份格式非法被拒；跨会话的陈旧选区身份被拒。
+- Core 判断：待填写
+- exact contract：待填写
+- S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；fixture 不构成 J22/J24 证据。
+
+### AUI-CR-012 · 九值资格的原因与下一动作闭集
+
+- 处理值：open
+- 提出面：agent
+- 用户意图：资格不是 `ready` 时，我想知道原因，并且如果有能做的事（比如去设置里配置模型），界面能直接带我过去。
+- 需要的事实或动作：九值资格中除 `ready` 外的每一值，是否附带一个"下一动作"投影（例如目标表面标识：设置 · Agent 模型配置档案 / 设置 · 个人上下文 / 云端披露确认弹层），以及该动作是否需要额外参数。`cloud_disclosure_required` 尤其需要说明确认动作的 exact 命令与去向。
+- 缺失时的 fail-closed 表现：只显示只读原因说明文案，不提供任何"前往设置"之类的跳转按钮，不猜测该资格是否可重试。
+- 受影响语义/旅程：SEM-F28 / J22 / J24
+- 建议的成功 fixture：九值资格各一条，其中至少一条附带下一动作、至少一条不附带。
+- 建议的失败 fixture：未登记资格值；下一动作目标表面为未知枚举。
+- Core 判断：待填写
+- exact contract：待填写
+- S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；fixture 不构成 J22/J24 证据。
+
+### AUI-CR-013 · run 生命周期状态闭集与取消转换
+
+- 处理值：open
+- 提出面：agent
+- 用户意图：我提交一个请求后，想清楚地看到它是在排队、在运行、在取消中还是已经取消/完成，不想被误导成"已取消"却其实还在处理。
+- 需要的事实或动作：run 的生命周期状态闭集（例如 `pending`/`cancelling`/`cancelled`/`succeeded`/`failed`）与其间的可观察转换事件；"取消请求中"到"取消终态"之间是否有中间信号，还是只能等待下一次 `changed`。
+- 缺失时的 fail-closed 表现：取消后持续显示"正在取消"直到收到权威终态 `changed`，不提前渲染"已取消"。
+- 受影响语义/旅程：SEM-F28 / J22 / J24
+- 建议的成功 fixture：pending → cancelling → cancelled 的完整序列；pending → succeeded；pending → failed。
+- 建议的失败 fixture：取消已终态的 run 被拒；未知生命周期值。
+- Core 判断：待填写
+- exact contract：待填写
+- S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；fixture 不构成 J22/J24 证据。
+
+### AUI-CR-014 · 结果头部最小身份投影
+
+- 处理值：open
+- 提出面：agent
+- 用户意图：看到一个结果时，我想知道它是针对什么范围、用了什么模型、花了多久、用了多少 token（如果知道的话）。
+- 需要的事实或动作：结果头部 exact 投影，至少含范围可读标签、模型运行身份的可展示形式（不含 adapter/API key/凭据槽）、相对时长、可空 `ModelUsageV1`（用量来源恒为 `provider`，未知时整体 `null`）、可空缓存命中率。
+- 缺失时的 fail-closed 表现：只显示最终结果正文，不显示任何身份或用量行，不用占位符（如"—"或"0"）冒充已知值。
+- 受影响语义/旅程：SEM-F31 / SEM-F33 / J22 / J24 / J25
+- 建议的成功 fixture：用量已知；用量未知；缓存命中率已知；缓存命中率未知。
+- 建议的失败 fixture：`usage_json` 含 `estimated` 来源被拒；含金额字段被拒。
+- Core 判断：待填写
+- exact contract：待填写
+- S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；fixture 不构成 J22/J24 证据。
+
+### AUI-CR-015 · 意图收敛结果的产品语言标签与改选
+
+- 处理值：open
+- 提出面：agent
+- 用户意图：我提交一句话后，想知道系统把它理解成了"问答"还是"分析报告"之类，如果理解错了想换一种方式处理。
+- 需要的事实或动作：十项面向用户 recipe（`intent.route` 除外）到产品语言标签的映射投影；改选动作的 exact 命令（"取消当前运行 + 新建运行"如何在 IPC 层表达，是否需要用户显式选择新标签，还是重新走一次收敛）。
+- 缺失时的 fail-closed 表现：不呈现收敛结果标签、不提供改选入口，只呈现最终结果正文。
+- 受影响语义/旅程：SEM-F28 / J22 / J24
+- 建议的成功 fixture：十项标签各一条；改选后产生新 `runId` 的前后两条结果。
+- 建议的失败 fixture：`recipeId` 落在闭集外（含 `intent.route` 自身）被拒进入用户可见投影。
+- Core 判断：待填写
+- exact contract：待填写
+- S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；fixture 不构成 J22/J24 证据。
+
+### AUI-CR-016 · Agent Bar 最近交互的有界投影与续读
+
+- 处理值：open
+- 提出面：agent / history
+- 用户意图：我想在 Agent Bar 里看到最近几次交互，但不需要在这里看完整历史——完整历史我会去字幕历史查。
+- 需要的事实或动作：Agent Bar 侧"最近交互"是否是 `agent-run:get-history` 的一个小 `limit` 调用，还是独立投影；与字幕历史里完整交互历史列表的关系（同一份 keyset 分页数据的不同 `limit`，还是两个独立读取路径）；`intent.route` 排除规则是否在两处一致。
+- 缺失时的 fail-closed 表现：不显示最近交互区，提供"查看完整历史"入口指向字幕历史窗。
+- 受影响语义/旅程：SEM-F31 / J22 / J24
+- 建议的成功 fixture：Agent Bar 小页与字幕历史大页取自同一 keyset 序列的一致性验证。
+- 建议的失败 fixture：Agent Bar 侧误把 `intent.route` 计入列表。
+- Core 判断：待填写
+- exact contract：待填写
+- S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；fixture 不构成 J22/J24 证据。
+
+### AUI-CR-017 · 反馈动作的 exact 命令与幂等
+
+- 处理值：open
+- 提出面：agent
+- 用户意图：我想对一个结果说"记住这条"或"这不对"，并且重复点击不会重复生效。
+- 需要的事实或动作：编辑/接受/拒绝/记住/忘记五个反馈动作各自的 exact 命令载荷、CommandResult 形状、幂等键规则；"记住"是否复用 `AUI-CR-006` 已裁定的设置内结构化「记住」输入形式，还是 Agent Bar 场景有专属的结果绑定字段（例如绑定 `interactionId` 而非自由结构化条目）。
+- 缺失时的 fail-closed 表现：反馈入口整体缺席，不提供任何本地"已采纳"视觉标记（不得在未收到 CommandResult 前用本地状态渲染"已记住"）。
+- 受影响语义/旅程：SEM-F32 / SEM-F30 / J22 / J24
+- 建议的成功 fixture：五个动作各自的 pending → 成功回执；同一动作重复提交的幂等收束。
+- 建议的失败 fixture：对已终态交互重复编辑被拒；revision conflict 零写入。
+- Core 判断：待填写
+- exact contract：待填写
+- S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；fixture 不构成 J22/J24 证据。
+
+### AUI-CR-018 · 报告自动呈现偏好的读写投影与呈现回执
+
+- 处理值：open
+- 提出面：agent / settings
+- 用户意图：我想在设置里开启"自动生成会后纪要"，并且在 Agent Bar 或非模态表面看到它，不想每次停止都被打断，也不想错过。
+- 需要的事实或动作：偏好本身的读写命令（大概率属于既有设置角色而非 `agent` 角色，需要 Core 确认承载表面）；「每个满足资格的终态会话至多呈现一次」在 renderer 侧如何观察到（例如 `formal_agent_report_presentations` 的 `presented_at` 投影，见 openspec S3 spec）；reload/重复停止/重复通知的幂等呈现规则。
+- 缺失时的 fail-closed 表现：偏好开关缺席，Agent Bar 不自动呈现任何报告；用户只能从最近交互/字幕历史主动查看。
+- 受影响语义/旅程：SEM-F28 / SEM-F31 / J22 / J24
+- 建议的成功 fixture：偏好开启后首次终态会话的非模态呈现；reload 后不重复呈现同一 run。
+- 建议的失败 fixture：偏好关闭时任何自动呈现请求被拒。
+- Core 判断：待填写
+- exact contract：待填写
+- S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；fixture 不构成 J22/J24 证据。
+
+### AUI-CR-019 ·`agent-run:changed` 的 revision 语义与未知值降级
+
+- 处理值：open
+- 提出面：agent
+- 用户意图：Agent Bar 重新打开或联网抖动之后，我希望看到的是权威最新状态，而不是一个损坏或过期的画面。
+- 需要的事实或动作：`agent-run:changed` 的单调 revision 定义域（是否与 `agent-context:changed`/`agent-model:changed` 各自独立计数，还是共享）；`agent-run:get-eligibility`/`get-history`/`get-interaction` 在收到更高 revision 后各自的重读范围；未知 `terminal_reason`、未知 `routing_mode` 标签、未知 contract 版本时的降级粒度（整表面只读，还是可局部降级）。
+- 缺失时的 fail-closed 表现：整个 Agent Bar 进入只读不可用 + 通用说明 + 重试，不部分渲染已知字段。
+- 受影响语义/旅程：SEM-T15 / J22 / J24
+- 建议的成功 fixture：先订阅后读取的正常序列；旧 revision 事件被丢弃。
+- 建议的失败 fixture：未知 contract 版本；额外未登记字段。
+- Core 判断：待填写
+- exact contract：待填写
+- S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；fixture 不构成 J22/J24 证据。
+
 ## 5. 关闭检查
 
 一条请求进入 `consumed` 或在 S5-Integration 中收束前，逐项核对：
