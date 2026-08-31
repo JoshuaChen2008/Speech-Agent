@@ -30,17 +30,14 @@ function assertPrompt (value) {
 
 class AgentLoopExecutor {
   constructor (options = {}) {
-    if (options.adapter !== undefined && (!options.adapter || typeof options.adapter.run !== 'function')) {
+    if (!options.adapter || typeof options.adapter.run !== 'function') {
       throw new TypeError('agent loop adapter is required')
     }
-    this.adapter = options.adapter || null
+    this.adapter = options.adapter
     this.onToolCall = typeof options.onToolCall === 'function' ? options.onToolCall : () => {}
   }
 
   async resolveAdapter () {
-    if (this.adapter) return this.adapter
-    const { PiAgentAdapter } = require('../../agent-core/pi-agent-adapter')
-    this.adapter = new PiAgentAdapter()
     return this.adapter
   }
 
@@ -105,6 +102,9 @@ class AgentLoopExecutor {
       if (input.signal?.aborted && error?.code !== 'AGENT_CANCELLED') throw executionError('AGENT_CANCELLED')
       throw error
     }
+    // The provider may resolve after the caller has cancelled its bounded run.
+    // Do not let that late result reach schema validation or persistence.
+    if (input.signal?.aborted) throw executionError('AGENT_CANCELLED')
     if (!result || typeof result !== 'object' || Array.isArray(result) || typeof result.text !== 'string') {
       throw executionError('AGENT_OUTPUT_INVALID')
     }

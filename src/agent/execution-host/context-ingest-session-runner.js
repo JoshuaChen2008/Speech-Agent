@@ -3,6 +3,8 @@
 const { canonicalize, sha256Canonical } = require('../../runtime/storage-worker/canonical-json')
 const { assertModelUsage } = require('../contracts/model-access-core')
 const { getRecipe, validateRecipeOutput } = require('../contracts/recipes')
+const { createControlledToolRuntime } = require('./controlled-tool-runtime')
+const { createToolAuditRuntime } = require('./tool-audit-runtime')
 
 const RETRYABLE_ERRORS = new Set([
   'AGENT_PROVIDER_AUTH_FAILED',
@@ -143,6 +145,29 @@ class ContextIngestSessionRunner {
     }
   }
 
+  async toolsForRun (recipe, binding, interactionId, attemptIdentity, signal) {
+    if (typeof this.personalContext.readToolContext !== 'function' ||
+        typeof this.interactions.startToolCall !== 'function' ||
+        typeof this.interactions.finishToolCall !== 'function' ||
+        !binding?.budget) {
+      return undefined
+    }
+    const context = await this.personalContext.readToolContext({ runId: attemptIdentity.runId })
+    const controlled = createControlledToolRuntime({ context, signal })
+    const audited = createToolAuditRuntime({
+      interactionId,
+      recipeId: recipe.recipeId,
+      recipeVersion: recipe.recipeVersion,
+      attempt: attemptIdentity.attempt,
+      tools: controlled.toolsForRecipe(recipe.recipeId, recipe.recipeVersion),
+      budget: binding.budget,
+      interactions: this.interactions,
+      signal,
+      now: this.now
+    })
+    return audited.tools()
+  }
+
   async runLegacy (job) {
     try {
       const result = await this.personalContext.ingest(job.source)
@@ -190,6 +215,7 @@ class ContextIngestSessionRunner {
         : job.source
       const prompt = promptForInput(input)
       const resolvedModel = await this.resolveModel(binding)
+      const tools = await this.toolsForRun(recipe, binding, interactionId, attemptIdentity, job.signal)
       const result = await this.loop.agentLoop({
         recipeId: recipe.recipeId,
         recipeVersion: recipe.recipeVersion,
@@ -197,6 +223,7 @@ class ContextIngestSessionRunner {
         resolvedModel,
         signal: job.signal,
         budget: binding?.budget,
+        ...(tools === undefined ? {} : { tools }),
         usageReporting: binding?.capabilities?.usageReporting !== false
       })
       const output = outputValue(result)

@@ -6,6 +6,10 @@ const assert = require('node:assert/strict')
 const { AgentLoopExecutor, shouldStopAfterTurn } = require('../../src/agent/execution-host/agent-loop')
 const { RECIPE_CATALOG } = require('../../src/agent/contracts/recipes')
 
+test('SEM-F28/SEM-F29/J22/J27: the formal Agent Loop requires an execution-host adapter', () => {
+  assert.throws(() => new AgentLoopExecutor(), /agent loop adapter is required/)
+})
+
 test('SEM-F16/SEM-F28/J22/J24: every registered recipe enters one agentLoop with static turns and grants', async () => {
   const calls = []
   const executor = new AgentLoopExecutor({
@@ -84,4 +88,25 @@ test('SEM-F28/SEM-T10/J22: cancellation is propagated and no continuation API is
   }), (error) => error.code === 'AGENT_CANCELLED')
   assert.equal(seenSignal, controller.signal)
   assert.equal(Object.hasOwn(executor, 'agentLoopContinue'), false)
+})
+
+test('SEM-F28/SEM-T04/J22/J24: a provider success arriving after cancellation is rejected before interaction settlement', async () => {
+  const controller = new AbortController()
+  let release
+  const entered = new Promise((resolve) => { release = resolve })
+  const executor = new AgentLoopExecutor({
+    adapter: {
+      run: async () => {
+        await entered
+        return { text: JSON.stringify({ recipeId: 'qa.answer', confidence: 0.5 }) }
+      }
+    }
+  })
+  const pending = executor.agentLoop({
+    recipeId: 'intent.route', recipeVersion: '1', prompt: 'route', signal: controller.signal,
+    resolvedModel: { model: 'test', streamFn: async function * () {} }
+  })
+  controller.abort()
+  release()
+  await assert.rejects(pending, (error) => error.code === 'AGENT_CANCELLED')
 })

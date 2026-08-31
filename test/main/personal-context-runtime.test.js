@@ -6,6 +6,7 @@ const path = require('node:path')
 const test = require('node:test')
 
 const { PersonalContextRuntime } = require('../../src/agent/personal-context/runtime')
+const { deriveRecipeBudget } = require('../../src/agent/contracts/budget-axes')
 
 function nextTurn () {
   return new Promise((resolve) => setImmediate(resolve))
@@ -81,6 +82,15 @@ test('SEM-F28/SEM-F30/SEM-T10/J22/J24: ready terminal notice prepares one sessio
     personalContextManage: async () => ({ revision: 0, totalCount: 0, hasMore: false, nextCursor: null, rows: [] }),
     preparePersonalContextSessionIngest: async (request) => { calls.push(['prepare', request]); return { runId: 'run.runtime' } },
     readPersonalContextSessionInput: async () => ({ ...source, events: [{ eventOrder: 1, segmentId: 'segment.1', text: 'x' }] }),
+    readPersonalContextToolContext: async () => {
+      const sourceRef = { sessionId: 'session.runtime', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }
+      const memoryRef = { memoryId: 'memory.runtime', revisionId: 'revision.runtime' }
+      return {
+        scope: { registeredAliasKeys: ['decision'], memoryRefs: [memoryRef], sourceRefs: [sourceRef] },
+        entries: [{ aliasKey: 'decision', memoryRef, kind: 'decision', displayText: 'Bounded decision.', sourceRefs: [sourceRef] }],
+        sources: [{ sourceRef, text: 'Bounded source.' }]
+      }
+    },
     commitPersonalContextSessionIngest: async (request) => { calls.push(['commit', request]); return { state: 'committed' } },
     claimNextFormalAgentRun: async () => calls.some(([name]) => name === 'claim') ? null : (calls.push(['claim']), {
       runId: 'run.runtime', recipeId: 'context.ingest.session', source,
@@ -89,12 +99,29 @@ test('SEM-F28/SEM-F30/SEM-T10/J22/J24: ready terminal notice prepares one sessio
     nextFormalAgentRunAt: async () => null,
     failFormalAgentRun: async (request) => { calls.push(['fail', request]); return { state: 'failed' } },
     createAgentInteraction: async (request) => { calls.push(['interaction:create', request]); return request },
-    terminalizeAgentInteraction: async (request) => { calls.push(['interaction:terminalize', request]); return request }
+    terminalizeAgentInteraction: async (request) => { calls.push(['interaction:terminalize', request]); return request },
+    startAgentToolCall: async (request) => { calls.push(['tool:start', request]); return request },
+    finishAgentToolCall: async (request) => { calls.push(['tool:finish', request]); return request }
   }
   const runtime = new PersonalContextRuntime({
     gateway,
-    modelAccess: { bind: async (request) => { calls.push(['bind', request]); return { capabilities: { usageReporting: false } } } },
-    loop: { agentLoop: async (request) => { calls.push(['loop', request]); return { text: JSON.stringify(output) } } },
+    modelAccess: {
+      bind: async (request) => {
+        calls.push(['bind', request])
+        return {
+          capabilities: { usageReporting: false },
+          budget: deriveRecipeBudget({ maxInputTokens: 64000, maxOutputTokens: 4096 }, 'context.ingest.session', '1', 'automatic')
+        }
+      }
+    },
+    loop: {
+      agentLoop: async (request) => {
+        calls.push(['loop', request])
+        assert.ok(Array.isArray(request.tools), 'default runtime interaction adapter must expose audited tools')
+        await request.tools[0].execute({ schemaVersion: 1, aliasKeys: ['decision'] })
+        return { text: JSON.stringify(output) }
+      }
+    },
     getAutomaticEligibility: async () => 'ready',
     config: { get: () => ({}), updateAgentSettings: () => ({}) }
   })
@@ -106,5 +133,7 @@ test('SEM-F28/SEM-F30/SEM-T10/J22/J24: ready terminal notice prepares one sessio
   assert.equal(calls.filter(([name]) => name === 'prepare').length, 1)
   assert.equal(calls.some(([name]) => name === 'bind'), true)
   assert.equal(calls.some(([name]) => name === 'commit'), true, JSON.stringify(calls))
+  assert.equal(calls.filter(([name]) => name === 'tool:start').length, 1)
+  assert.equal(calls.filter(([name]) => name === 'tool:finish').length, 1)
   await runtime.stop()
 })
