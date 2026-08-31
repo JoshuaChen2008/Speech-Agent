@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
+const Module = require('node:module')
 const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
@@ -80,6 +81,23 @@ function legacyImport (overrides = {}) {
     captions: [event],
     ...overrides
   }
+}
+
+function traceFormalAgentStoreLoads (operation) {
+  const target = require.resolve('../../src/runtime/storage-worker/formal-agent-store')
+  const originalLoad = Module._load
+  const loads = []
+  Module._load = function tracedLoad (request, parent, isMain) {
+    const resolved = Module._resolveFilename(request, parent, isMain)
+    if (resolved === target) loads.push(resolved)
+    return originalLoad.call(this, request, parent, isMain)
+  }
+  try {
+    operation()
+  } finally {
+    Module._load = originalLoad
+  }
+  return loads
 }
 
 test('service composes protocol, real SQLite and subtitle semantics without SQL exposure', (t) => {
@@ -165,6 +183,45 @@ test('service composes protocol, real SQLite and subtitle semantics without SQL 
   })
   assert.equal(service.handle(request(OPERATIONS.SHUTDOWN)).ok, true)
   assert.equal(service.shuttingDown, true)
+})
+
+test('SEM-F00/J27: subtitle storage uses formal migrations without loading the historical Agent store', (t) => {
+  const service = new StorageWorkerService()
+  const databasePath = tempDatabase(t)
+  const opened = {
+    sessionId: 'subtitle-only-session', sourceId: 'mic', startedAt: 1000, refinementEnabled: false
+  }
+  const final = caption({ sessionId: opened.sessionId, sourceId: opened.sourceId })
+  const closed = {
+    sessionId: opened.sessionId, sourceId: opened.sourceId, endedAt: 2000, state: 'closed'
+  }
+
+  const historicalStoreLoads = traceFormalAgentStoreLoads(() => {
+    assert.equal(service.handle(request(OPERATIONS.INITIALIZE, { databasePath })).ok, true)
+    assert.equal(service.handle(request(OPERATIONS.OPEN_SESSION, opened, {
+      idempotencyKey: makeOpenSessionKey(opened.sessionId)
+    })).ok, true)
+    assert.equal(service.handle(request(OPERATIONS.APPEND_CAPTION, { event: final }, {
+      idempotencyKey: makeCaptionEventId(final)
+    })).ok, true)
+    assert.equal(service.handle(request(OPERATIONS.CLOSE_SESSION, closed, {
+      idempotencyKey: makeCloseSessionKey(closed.sessionId)
+    })).ok, true)
+    assert.equal(service.handle(request(OPERATIONS.GET_SESSION, {
+      sessionId: opened.sessionId
+    })).ok, true)
+    assert.equal(service.handle(request(OPERATIONS.GET_SESSION_PAGE, {
+      sessionId: opened.sessionId, limit: 50, cursor: null
+    })).ok, true)
+  })
+
+  const migrationRows = service.store.database.prepare(
+    'SELECT version, checksum FROM schema_migrations ORDER BY version'
+  ).all().map(({ version, checksum }) => ({ version, checksum }))
+  assert.deepEqual(migrationRows, FORMAL_AGENT_MIGRATIONS.map(({ version, checksum }) => ({ version, checksum })))
+  assert.deepEqual(historicalStoreLoads, [])
+  assert.equal(service.agentStore, null)
+  assert.equal(service.handle(request(OPERATIONS.SHUTDOWN)).ok, true)
 })
 
 test('malformed, overprivileged and mismatched requests fail safely without poisoning the service', (t) => {

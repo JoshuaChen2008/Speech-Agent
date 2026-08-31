@@ -24,7 +24,9 @@ module.exports = {
     'package.json',
     'src/**/*',
     '!src/agent-core/**/*',
-    '!src/agent-mvp/**/*'
+    '!src/agent-mvp/**/*',
+    '!src/agent-provider/**/*',
+    '!src/agent-runtime/**/*'
   ],
   asarUnpack: [
     'node_modules/sherpa-onnx-win-x64/**/*'

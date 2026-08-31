@@ -258,7 +258,9 @@ test('release package uses an explicit ASAR allowlist, hardened fuses and per-us
     'package.json',
     'src/**/*',
     '!src/agent-core/**/*',
-    '!src/agent-mvp/**/*'
+    '!src/agent-mvp/**/*',
+    '!src/agent-provider/**/*',
+    '!src/agent-runtime/**/*'
   ])
   assert.deepEqual(releaseConfig.asarUnpack, ['node_modules/sherpa-onnx-win-x64/**/*'])
   assert.deepEqual(releaseConfig.electronFuses, {
@@ -277,6 +279,8 @@ test('release package uses an explicit ASAR allowlist, hardened fuses and per-us
   assert.equal(releaseConfig.files.some((entry) => /models|scripts|test|docs|artifacts/i.test(entry)), false)
   assert.equal(releaseConfig.files.includes('!src/agent-core/**/*'), true)
   assert.equal(releaseConfig.files.includes('!src/agent-mvp/**/*'), true)
+  assert.equal(releaseConfig.files.includes('!src/agent-provider/**/*'), true)
+  assert.equal(releaseConfig.files.includes('!src/agent-runtime/**/*'), true)
 
   const textExtensions = ['.css', '.html', '.js', '.json', '.md', '.mjs', '.ts', '.tsx']
   const productExtensions = [...new Set(collectProductPayloadEntries(path.join(ROOT, 'src'))
@@ -296,11 +300,15 @@ test('SEM-F18/SEM-F29/SEM-T12: product payload identity excludes build-only decl
   fs.mkdirSync(path.join(root, 'nested'))
   fs.mkdirSync(path.join(root, 'agent-core'))
   fs.mkdirSync(path.join(root, 'agent-mvp'))
+  fs.mkdirSync(path.join(root, 'agent-provider'))
+  fs.mkdirSync(path.join(root, 'agent-runtime'))
   fs.writeFileSync(path.join(root, 'runtime.js'), 'module.exports = true\n')
   fs.writeFileSync(path.join(root, 'renderer-globals.d.ts'), 'declare const runtimeOnly: boolean\n')
   fs.writeFileSync(path.join(root, 'nested', 'view.tsx'), 'export const view = null\n')
   fs.writeFileSync(path.join(root, 'agent-core', 'loop.js'), 'module.exports = true\n')
   fs.writeFileSync(path.join(root, 'agent-mvp', 'main.js'), 'module.exports = true\n')
+  fs.writeFileSync(path.join(root, 'agent-provider', 'provider.js'), 'module.exports = true\n')
+  fs.writeFileSync(path.join(root, 'agent-runtime', 'runtime.js'), 'module.exports = true\n')
 
   assert.deepEqual(
     collectProductPayloadEntries(root).map((entry) => entry.name).sort(),

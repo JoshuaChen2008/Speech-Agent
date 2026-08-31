@@ -12,7 +12,12 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const IDENTITY_VERSION = 'live-subtitle-product-payload-v1'
-const DEVELOPMENT_ONLY_SRC_PREFIXES = Object.freeze(['agent-core/', 'agent-mvp/'])
+const DEVELOPMENT_ONLY_SRC_PREFIXES = Object.freeze([
+  'agent-core/',
+  'agent-mvp/',
+  'agent-provider/',
+  'agent-runtime/'
+])
 
 function normalizeEntryName (value) {
   if (typeof value !== 'string') throw new TypeError('product payload entry name must be a string')
