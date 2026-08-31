@@ -110,3 +110,48 @@ test('SEM-F28/SEM-F30/SEM-T10/J22/J24: storage derives a terminal source and rep
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_runs').get().count, 1)
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM personal_context_episodes').get().count, 1)
 })
+
+test('SEM-F15/SEM-F34/J22/J24: storage derives a frozen controlled-tool context from committed personal context and the transcript boundary', (t) => {
+  const { subtitleStore, personalContext } = fixture(t)
+  appendSession(subtitleStore)
+  const source = sourceFor(personalContext)
+  const prepared = personalContext.prepareSessionIngest(source)
+  const claimed = personalContext.claimNextFormalRun({ claimIdempotencyKey: 'claim.tool-context', owner: 'worker.tool-context', leaseMs: 1000 })
+  personalContext.commitSessionIngest({ runId: prepared.runId, attemptIdentity: claimed.attemptIdentity, output })
+
+  const context = personalContext.readToolContext({ runId: prepared.runId })
+  assert.deepEqual(context.scope.registeredAliasKeys, ['ship the project'])
+  assert.equal(context.entries.length, 1)
+  assert.equal(context.entries[0].memoryRef.memoryId.startsWith('memory.'), true)
+  assert.equal(context.entries[0].memoryRef.revisionId.startsWith('revision.'), true)
+  assert.deepEqual(context.entries[0].sourceRefs, [{
+    sessionId: 'session.ingest', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1
+  }])
+  assert.deepEqual(context.sources, [{
+    sourceRef: { sessionId: 'session.ingest', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 },
+    text: 'Project decision'
+  }])
+  assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM caption_events').get().count, 1)
+})
+
+test('SEM-F15/SEM-F34/J22: a frozen tool context keeps one alias for multiple matching memory entries', (t) => {
+  const { subtitleStore, personalContext } = fixture(t)
+  appendSession(subtitleStore)
+  const source = sourceFor(personalContext)
+  const prepared = personalContext.prepareSessionIngest(source)
+  const claimed = personalContext.claimNextFormalRun({ claimIdempotencyKey: 'claim.tool-context-alias', owner: 'worker.tool-context', leaseMs: 1000 })
+  personalContext.commitSessionIngest({
+    runId: prepared.runId,
+    attemptIdentity: claimed.attemptIdentity,
+    output: {
+      ...output,
+      memoryCandidates: [
+        output.memoryCandidates[0],
+        { ...output.memoryCandidates[0], kind: 'conclusion', content: 'Ship the project' }
+      ]
+    }
+  })
+  const context = personalContext.readToolContext({ runId: prepared.runId })
+  assert.deepEqual(context.scope.registeredAliasKeys, ['ship the project'])
+  assert.equal(context.entries.length, 2)
+})

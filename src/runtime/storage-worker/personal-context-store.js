@@ -253,6 +253,91 @@ class PersonalContextStore {
     return this.sessionInput(source, { allowRefinedFallback: true })
   }
 
+  readToolContext (input) {
+    assertExactKeys(input, ['runId'], 'AGENT_REQUEST_INVALID')
+    const runId = identifier(input.runId)
+    const run = this.database.prepare(`
+      SELECT scope_json, transcript_version, input_watermark_json, input_digest
+      FROM formal_agent_runs WHERE run_id = ?
+    `).get(runId)
+    if (!run) fail('AGENT_RUN_NOT_FOUND')
+    let scope
+    try { scope = JSON.parse(run.scope_json) } catch { fail('STORAGE_COMMAND_FAILED') }
+    if (!isPlainObject(scope) || scope.kind !== 'session' || typeof scope.reference !== 'string') {
+      fail('AGENT_REQUEST_INVALID')
+    }
+    const sessionId = identifier(scope.reference)
+    let watermark
+    try { watermark = JSON.parse(run.input_watermark_json) } catch { fail('STORAGE_COMMAND_FAILED') }
+    if (!isPlainObject(watermark) || !Number.isSafeInteger(watermark.throughEventOrder) || watermark.throughEventOrder < 1) {
+      fail('AGENT_REQUEST_INVALID')
+    }
+    const items = this.database.prepare(`
+      SELECT item.memory_id, item.current_revision_id, item.semantic_key, item.kind, item.content_json
+      FROM personal_context_items AS item
+      JOIN personal_context_scopes AS scope ON scope.scope_id = item.scope_id
+      WHERE item.lifecycle = 'active' AND (
+        scope.kind = 'global' OR (scope.kind = 'session' AND scope.session_id = ?)
+      )
+      ORDER BY item.updated_at DESC, item.memory_id ASC LIMIT ?
+    `).all(sessionId, MAX_ITEMS + 1)
+    if (items.length > MAX_ITEMS) fail('AGENT_BUDGET_EXCEEDED')
+
+    const sourceByKey = new Map()
+    const entries = []
+    for (const item of items) {
+      if (typeof item.current_revision_id !== 'string') continue
+      const evidenceRows = this.database.prepare(`
+        SELECT session_id, transcript_version, from_event_order, through_event_order
+        FROM personal_context_evidence
+        WHERE memory_id = ? AND source_kind = 'session'
+        ORDER BY created_at ASC, evidence_id ASC LIMIT ?
+      `).all(item.memory_id, MAX_SOURCES_PER_ITEM + 1)
+      if (evidenceRows.length > MAX_SOURCES_PER_ITEM) continue
+      const sourceRefs = []
+      for (const evidence of evidenceRows) {
+        const sourceRef = {
+          sessionId: evidence.session_id,
+          transcriptVersion: evidence.transcript_version,
+          fromEventOrder: Number(evidence.from_event_order),
+          throughEventOrder: Number(evidence.through_event_order)
+        }
+        const key = canonicalize(sourceRef)
+        if (!sourceByKey.has(key)) {
+          const kind = sourceRef.transcriptVersion === 'raw' ? 'final' : 'refined'
+          const rows = this.database.prepare(`
+            SELECT text FROM caption_events
+            WHERE session_id = ? AND kind = ? AND event_order >= ? AND event_order <= ?
+            ORDER BY event_order ASC
+          `).all(sourceRef.sessionId, kind, sourceRef.fromEventOrder, sourceRef.throughEventOrder)
+          if (rows.length === 0) fail('AGENT_INPUT_CHANGED')
+          sourceByKey.set(key, { sourceRef, text: rows.map((row) => row.text).join(' ') })
+        }
+        sourceRefs.push(sourceRef)
+      }
+      let displayText
+      try { displayText = JSON.parse(item.content_json).displayText } catch { fail('STORAGE_COMMAND_FAILED') }
+      entries.push({
+        aliasKey: item.semantic_key,
+        memoryRef: { memoryId: item.memory_id, revisionId: item.current_revision_id },
+        kind: item.kind,
+        displayText,
+        sourceRefs
+      })
+    }
+    const result = {
+      scope: {
+        registeredAliasKeys: [...new Set(entries.map((entry) => entry.aliasKey))],
+        memoryRefs: entries.map((entry) => entry.memoryRef),
+        sourceRefs: [...sourceByKey.values()].map((source) => source.sourceRef)
+      },
+      entries,
+      sources: [...sourceByKey.values()]
+    }
+    if (Buffer.byteLength(canonicalize(result), 'utf8') > MAX_CANONICAL_BYTES) fail('AGENT_BUDGET_EXCEEDED')
+    return result
+  }
+
   deriveSessionSource (request) {
     assertExactKeys(request, ['sessionId', 'transcriptVersion'], 'AGENT_REQUEST_INVALID')
     identifier(request.sessionId)

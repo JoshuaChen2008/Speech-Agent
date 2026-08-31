@@ -25,12 +25,14 @@ function createPersonalContextExecutionAdapter (options = {}) {
   if (!storage ||
       typeof storage.preparePersonalContextSessionIngest !== 'function' ||
       typeof storage.readPersonalContextSessionInput !== 'function' ||
+      typeof storage.readPersonalContextToolContext !== 'function' ||
       typeof storage.commitPersonalContextSessionIngest !== 'function') {
     throw new TypeError('storage personal-context execution adapter is required')
   }
   return Object.freeze({
     prepareSessionIngest: (request) => storage.preparePersonalContextSessionIngest(request),
     readSessionInput: (source) => storage.readPersonalContextSessionInput(source),
+    readToolContext: (request) => storage.readPersonalContextToolContext(request),
     commitSessionIngest: (request) => storage.commitPersonalContextSessionIngest(request)
   })
 }

@@ -57,6 +57,7 @@ const ISOLATED_AGENT_OPERATIONS = new Set([
   'personalContextIngest',
   'personalContextResolve',
   'personalContextManage',
+  'readPersonalContextToolContext',
   'deletePersonalContextSessionData',
   'claimNextFormalAgentRun',
   'nextFormalAgentRunAt',
@@ -445,6 +446,10 @@ class StorageGateway {
     return this.enqueue('readPersonalContextSessionInput', source)
   }
 
+  readPersonalContextToolContext (request) {
+    return this.enqueue('readPersonalContextToolContext', request)
+  }
+
   commitPersonalContextSessionIngest (request) {
     return this.enqueue('commitPersonalContextSessionIngest', request)
   }
@@ -551,6 +556,7 @@ class StorageGateway {
       case 'deletePersonalContextSessionData': return host.deletePersonalContextSessionData(item.payload)
       case 'preparePersonalContextSessionIngest': return host.preparePersonalContextSessionIngest(item.payload)
       case 'readPersonalContextSessionInput': return host.readPersonalContextSessionInput(item.payload)
+      case 'readPersonalContextToolContext': return host.readPersonalContextToolContext(item.payload)
       case 'commitPersonalContextSessionIngest': return host.commitPersonalContextSessionIngest(item.payload)
       case 'claimNextFormalAgentRun': return host.claimNextFormalAgentRun(item.payload)
       case 'nextFormalAgentRunAt': return host.nextFormalAgentRunAt()
