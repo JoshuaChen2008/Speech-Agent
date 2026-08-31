@@ -1,6 +1,7 @@
 'use strict'
 
 const agentToolTraceUi = require('./agent-tool-trace-ui')
+const agentRunEligibilityUi = require('./agent-run-eligibility-ui')
 const controlledTools = require('./controlled-tools')
 
 module.exports = Object.freeze({
@@ -9,6 +10,7 @@ module.exports = Object.freeze({
   ...require('./model-access-core'),
   ...require('./personal-context-core'),
   ...require('./recipes'),
+  agentRunEligibilityUi,
   agentToolTraceUi,
   controlledTools
 })

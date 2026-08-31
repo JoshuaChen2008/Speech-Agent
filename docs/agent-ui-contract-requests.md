@@ -228,7 +228,7 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 
 ### AUI-CR-012 · 九值资格的原因与下一动作闭集
 
-- 处理值：open
+- 处理值：contract-ready（只读资格 v1；下一动作尚未签发）
 - 提出面：agent
 - 用户意图：资格不是 `ready` 时，我想知道原因，并且如果有能做的事（比如去设置里配置模型），界面能直接带我过去。
 - 需要的事实或动作：九值资格中除 `ready` 外的每一值，是否附带一个"下一动作"投影（例如目标表面标识：设置 · Agent 模型配置档案 / 设置 · 个人上下文 / 云端披露确认弹层），以及该动作是否需要额外参数。`cloud_disclosure_required` 尤其需要说明确认动作的 exact 命令与去向。
@@ -236,8 +236,8 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 - 受影响语义/旅程：SEM-F28 / J22 / J24
 - 建议的成功 fixture：九值资格各一条，其中至少一条附带下一动作、至少一条不附带。
 - 建议的失败 fixture：未登记资格值；下一动作目标表面为未知枚举。
-- Core 判断：待填写
-- exact contract：待填写
+- Core 判断：S3 已签发 `agent-run:get-eligibility` 的只读资格投影。范围只以既有不透明 `{ kind, reference }` 身份传入，main 是唯一资格计算者；九值闭集与单调 revision 对 renderer 可见。下一动作的目标表面、参数与云端披露命令仍无 exact 事实，因此当前所有状态一律返回 `next_action=null`，renderer 只能显示只读原因，不能猜测跳转。
+- exact contract：[`src/agent/contracts/agent-run-eligibility-ui.js`](../src/agent/contracts/agent-run-eligibility-ui.js)，`speech-agent.agent-run.ui@1.0.0`；未知范围/资格、额外字段、未知版本和非空下一动作均 fail closed。
 - S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；fixture 不构成 J22/J24 证据。
 
 ### AUI-CR-013 · run 生命周期状态闭集与取消转换
@@ -326,7 +326,7 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 
 ### AUI-CR-019 ·`agent-run:changed` 的 revision 语义与未知值降级
 
-- 处理值：open
+- 处理值：contract-ready（资格 revision v1；完整 interaction 读模型尚未签发）
 - 提出面：agent
 - 用户意图：Agent Bar 重新打开或联网抖动之后，我希望看到的是权威最新状态，而不是一个损坏或过期的画面。
 - 需要的事实或动作：`agent-run:changed` 的单调 revision 定义域（是否与 `agent-context:changed`/`agent-model:changed` 各自独立计数，还是共享）；`agent-run:get-eligibility`/`get-history`/`get-interaction` 在收到更高 revision 后各自的重读范围；未知 `terminal_reason`、未知 `routing_mode` 标签、未知 contract 版本时的降级粒度（整表面只读，还是可局部降级）。
@@ -334,8 +334,8 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 - 受影响语义/旅程：SEM-T15 / J22 / J24
 - 建议的成功 fixture：先订阅后读取的正常序列；旧 revision 事件被丢弃。
 - 建议的失败 fixture：未知 contract 版本；额外未登记字段。
-- Core 判断：待填写
-- exact contract：待填写
+- Core 判断：S3 已签发 `agent-run:changed` 的独立单调非负 revision。收到更高 revision 后，当前已签发的 `get-eligibility` 必须重读；历史与交互详情尚未签发，不得被 renderer 假定为可读。未知 contract 版本、额外字段或未知枚举使整个资格表面只读不可用，不进行局部猜测渲染。
+- exact contract：[`src/agent/contracts/agent-run-eligibility-ui.js`](../src/agent/contracts/agent-run-eligibility-ui.js)，`ChangedEvent` 恰含 contract header 与 `revision`。
 - S5-Integration 证据：待真实 preload / exact IPC / SQLite 联合旅程收束；fixture 不构成 J22/J24 证据。
 
 ### AUI-CR-020 · 工具调用审计与预算收束投影
