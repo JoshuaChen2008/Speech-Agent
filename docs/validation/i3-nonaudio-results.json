@@ -56,7 +56,7 @@
     "virtualDurationMs": 7200000
   },
   "gateStatus": "partial",
-  "generatedAt": "2026-08-30T19:31:44.295Z",
+  "generatedAt": "2026-08-31T00:31:56.297Z",
   "kind": "i3-nonaudio-soak",
   "limits": {
     "maxCpuPercent": 800,
@@ -70,24 +70,24 @@
   "metrics": {
     "captionEventCount": 4000,
     "checkpointedWalFrames": 0,
-    "cpuPercent": 6.998,
-    "cpuSystemMs": 78,
-    "cpuUserMs": 610,
+    "cpuPercent": 10.079,
+    "cpuSystemMs": 250,
+    "cpuUserMs": 828,
     "exportCount": 3,
     "historyDomMaxNodes": 50,
     "historyPageCount": 72,
-    "maxHeapUsedBytes": 90686176,
+    "maxHeapUsedBytes": 90937480,
     "maxQueueDepth": 112,
-    "maxRssBytes": 295866368,
+    "maxRssBytes": 299466752,
     "pageCount": 668,
     "pageQueryCount": 72,
-    "pageQueryP95Ms": 11.179,
+    "pageQueryP95Ms": 12.65,
     "recoveredRefinedSegmentCount": 400,
     "segmentCount": 3600,
     "walBytes": 4173592,
     "walFrames": 879,
     "journalMode": "wal",
-    "wallDurationMs": 9831.119
+    "wallDurationMs": 10695.394
   },
   "privacy": {
     "persistedAudio": false,
@@ -103,10 +103,10 @@
     "sqliteSessionRecorderSha256": "d9e467076b3893e88a18d99b100d5f550e4541947b6fd36195f3f130382484d2",
     "sqliteSubtitleStoreSha256": "f7baad9291001b628787a06666375cc26497b125c41bb9ba54515d65c48ffee6",
     "strictEvidenceParserSha256": "5155fc8df5449133a8d9710a581fbd03bedfb44729da3c5d910a81df74b5e63e",
-    "storageGatewaySha256": "eb496889744e164de4ccee11397787a1477d3691917f1895a7033cdfaf4e35bf",
-    "storageWorkerServiceSha256": "ed8274a25d8975af7f5e2d6b2e13caf9854bd9672e8fa440ea1ec5e687fb29f6",
+    "storageGatewaySha256": "107bace09dbf68b8c7168746d8845e9268bc1cab8c33ca8acb200f171a4f871f",
+    "storageWorkerServiceSha256": "683874d32d3b15d0a9b10b5a3afc0dcc116532c7976bb6fc09dbe6e7261889ac",
     "verifierSha256": "8014be2efdbd0d63a99a4de1a9f24ccb70eddcb158cc89b46d2d7bb731ed6ff1",
-    "productPayloadSha256": "121138e85255aa5b9d31359d4341c18450cc0c6fc75da75d13aec319590cf8d1"
+    "productPayloadSha256": "283ccd423f39a4c65794eb92161eb15d1d963baf416a2367df642b6cfd1a9015"
   },
   "result": "pass",
   "schemaVersion": 1
