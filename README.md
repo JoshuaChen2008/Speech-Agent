@@ -4,7 +4,7 @@
 
 会议在放、视频在播、你在自言自语——它把听到的话变成屏幕上一直在走的字幕，把说定的部分存到本地，然后让你可以回过头对这些内容提问、要一份纪要、要一段译文、要一个下一步计划。
 
-> 本文讲的是这个项目**被设计成什么样**，以及为什么这样设计。它不是功能清单，也不是进度表。具体做到哪一步、哪些门禁已经关闭，见 [`docs/`](docs/) 下的工程文档。
+> 下面讲的是这个项目**被设计成什么样**，以及为什么这样设计——不是功能清单，也不是进度表。工程上做到了哪一步、哪些门禁还没关，单独放在文末的[当前状态](#当前状态)里，两者不要混着读。
 
 ---
 
@@ -174,6 +174,27 @@ npm run package:release   # 生成 Windows x64 安装器
 ```
 
 自动化测试不会打开真实音频设备，也不替代实机音源、DWM 行为和干净机验收。安装器输出在 `.artifacts/release-package/`，模型不打进包里，首次使用时按固定清单下载校验。
+
+## 当前状态
+
+> 进度复核基线（2026-08-07）：revision `bbfd7041e5963e51942392323735298a7b81cb30` 的远端 Windows CI run `31191838016` 已达到联合验收完成。core 422 tests=415 pass+7 expected model/Silero-asset skips、integration 29/29、evidence 204/204；总计 655 tests=648 pass+7 expected skips+0 fail。布局、DB0/DB1/Gateway、schema-v4 四资源产品壳、packaged 首启/复启、exact NSIS、隔离安装卸载、revision 绑定与 artifact 上传均有对应证据；artifact ID `8999273285`、GitHub ZIP digest `5ce4070cee109df6d3d86b43b165b20a40636e8e3cd638fd9f28096da95855af`、installer SHA `d77d16c00337696727e00ad41d3fc61e1eab85d99edc4527c7cf55b548e0060c`、产品载荷 SHA `e95fd87f8af1e46e50745d8fb541d337bab783905202120df4d92e579beea35a`。7 项跳过不计作模型测试成立。
+
+| 范围 | 状态 | 说明 |
+|---|---|---|
+| 固定高度字幕流、版本隔离、可选精修及历史 | 联合验收完成 | 本地确定性范围已有跨模块用户旅程和打包态证据。 |
+| 非音频回归与同源两阶段实时识别 | 联合验收完成 | run `31191838016` 为 core 422 tests=415 pass+7 expected skips、integration 29/29、evidence 204/204；总计 655 tests=648 pass+7 expected skips+0 fail。J16 分别以 `mic`/`loopback` 证明单来源同帧扇出、临时字幕、权威接管、唯一首次稳定转写、失败边界与零临时字幕持久化。 |
+| 远端 Windows CI 资格 | 联合验收完成 | run `31191838016` 精确绑定 revision `bbfd7041…cb30`；core 422 tests=415 pass+7 expected skips、integration 29/29、evidence 204/204，总计 655 tests=648 pass+7 expected skips+0 fail。schema-v4 产品壳与 packaged 首启/复启证明三项核心 marker、四项总资源和独立精修资源，并包含 exact NSIS 与隔离安装卸载证据。artifact ID `8999273285`、ZIP digest `5ce4070c…55af`、installer SHA `d77d16c0…060c`、产品载荷 SHA `e95fd87f…a35a`。该资格不关闭真实张量、物理来源、DWM、两小时或干净机门禁。 |
+| 36 组合 DWM、主题、透明窗和异缩放双屏观察 | 实现完成·尚未验收 | runner 和严格 verifier 已就位，仍需可见实机矩阵。 |
+| 真实 `loopback` / `mic` 性能与两小时稳定性 | 实现完成·尚未验收 | revision `b96b8fe7…521f` 的 `loopback` 五轮结构/精修/自然退出/零损失证据闭合，但冻结 P95=1242ms，仍高于 `<1000 ms`，六段 trace 已重新开启 Gate 0B realtime 模型替换评估；该历史 Gate 0B summary 中三个新登记的官方在线中英候选均满足裸模型 RTF/首个临时字幕边界，但都未保住内容质量，因此保持 `evaluation-only`、尚未选定替代模型，当时的生产 manifest 未变。revision `82d56f64…7939` 的 75 秒 I3 `loopback` 资格取得 31 个首次稳定转写、29 个精修稿与 15/15 成立检查，但它是 `pass/partial`，不替代真人原生拖动、7,200 秒/3,000 段或物理麦克风五轮。详情见[验收导航](docs/validation/README.md)。 |
+| I4 非音频干净 Windows 子门禁 | 实现完成·尚未验收 | runner/verifier 已实现；需要无仓库、无 Node、无既有数据的标准用户机器复核真实 `userData` 与安装生命周期。 |
+| 完整 I4 干净机发布验收 | 实现完成·尚未验收 | `loopback`/`mic` 来源隔离 child、strict summary 与不含仓库/Node 的移交包入口已实现；尚无专用干净 Win11 三份 child 报告，SmartScreen 与真实来源旅程仍归此门禁。 |
+| Agent 系统 | 实现完成·尚未验收 | 个人上下文、模型接入层、统一执行路径与受控只读工具的 Core 子边界已实现；正式 Agent Bar 窗口、preload 与 exact IPC 尚未汇合，因此不构成 J21/J22/J24/J25/J26 的联合验收。全程不阻断字幕 MVP。 |
+| 代码签名 | 已决定 | 内部 MVP 阶段暂缓，当前安装器不是公开签名版本。 |
+
+本轮按项目负责人要求取消声音测试，未执行采集、播放、WAV 推理或模型推理；因此 I2、I3 音频实机范围与完整 I4 保持实现完成·尚未验收，不以本轮 CI 结果替代。
+
+这里的“联合验收完成”只描述已经取得确定性证据的范围，不代表真实声卡、物理麦克风、DWM 行为或干净机发布验收完成。
+各门禁入口、环境、发声边界、证据位置和下一动作见[字幕 MVP 验收导航](docs/validation/README.md)。
 
 ## 想改代码
 
