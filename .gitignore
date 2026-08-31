@@ -8,3 +8,7 @@ out/
 models/
 .artifacts/
 .claude/settings.local.json
+
+# archify 产物：可由 docs/current-framework.architecture.json 重建
+docs/current-framework.html
+docs/current-framework.visual-check.*

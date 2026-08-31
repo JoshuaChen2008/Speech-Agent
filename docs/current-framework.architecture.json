@@ -1,0 +1,348 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Speech-Agent 2.0 当前框架",
+    "output": "docs/current-framework.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/JoshuaChen2008/Speech-Agent.git",
+      "revision": "cc0a4d00daf1b9457bc697c447fda1136a6011df"
+    },
+    "viewBox": [1450, 715],
+    "views": [
+      {
+        "id": "subtitle-core",
+        "label": "字幕核心链路",
+        "focus": ["desktop-ui", "main-coordinator", "audio-host", "realtime-asr", "caption-ui", "storage", "history-export"],
+        "note": "从用户命令到实时字幕、SQLite 持久化和历史导出的主路径。"
+      },
+      {
+        "id": "refinement-boundary",
+        "label": "精修与版本边界",
+        "focus": ["realtime-asr", "refine-worker", "storage", "commit-boundary", "history-export"],
+        "note": "精修是独立版本；首次稳定转写仍是权威原始事实。"
+      },
+      {
+        "id": "agent-boundary",
+        "label": "Agent 消费边界",
+        "focus": ["storage", "commit-boundary", "agent-runtime", "agent-artifacts"],
+        "note": "Agent 只能异步消费字幕提交边界后的已提交正文，不阻塞字幕系统。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "desktop-ui",
+      "type": "frontend",
+      "label": "Electron 可见窗口",
+      "sublabel": "字幕 / 工具条 / 设置 / 历史",
+      "tag": "renderer",
+      "pos": [50, 120],
+      "size": [180, 72],
+      "sources": [
+        { "path": "src/main.js", "label": "窗口编排" },
+        { "path": "src/caption/entry.ts", "label": "字幕 UI" }
+      ]
+    },
+    {
+      "id": "model-manager",
+      "type": "backend",
+      "label": "ModelManager",
+      "sublabel": "核心 ASR+VAD / 可选精修",
+      "tag": "ready proof",
+      "pos": [250, 50],
+      "size": [220, 84],
+      "sources": [
+        { "path": "src/main/services/model-manager.js", "label": "资源生命周期" },
+        { "path": "src/main/services/model-manifest.js", "label": "固定 manifest" }
+      ]
+    },
+    {
+      "id": "main-coordinator",
+      "type": "backend",
+      "label": "主进程与 SessionCoordinator",
+      "sublabel": "IPC / 状态机 / 生命周期",
+      "tag": "single state authority",
+      "pos": [500, 100],
+      "size": [240, 90],
+      "sources": [
+        { "path": "src/main/session/session-coordinator.js", "label": "会话协调" },
+        { "path": "src/main.js", "label": "应用生命周期" }
+      ]
+    },
+    {
+      "id": "caption-ui",
+      "type": "frontend",
+      "label": "字幕窗口",
+      "sublabel": "临时字幕 / 首次稳定转写",
+      "tag": "fixed-height flow",
+      "pos": [880, 100],
+      "size": [200, 80],
+      "sources": [
+        { "path": "src/caption/entry.ts", "label": "实时显示" },
+        { "path": "src/ui/shared/caption-reducer.js", "label": "状态折叠" }
+      ]
+    },
+    {
+      "id": "audio-host",
+      "type": "backend",
+      "label": "audio-host",
+      "sublabel": "mic 或 loopback · 有界 PCM",
+      "tag": "hidden renderer",
+      "pos": [300, 300],
+      "size": [200, 82],
+      "sources": [
+        { "path": "src/runtime/audio-host/host.js", "label": "采集与流控" },
+        { "path": "src/runtime/audio-host/preload.js", "label": "最小权限" }
+      ]
+    },
+    {
+      "id": "realtime-asr",
+      "type": "backend",
+      "label": "realtime-asr-worker",
+      "sublabel": "VAD + 实时 ASR",
+      "tag": "partial / final",
+      "pos": [570, 300],
+      "size": [220, 82],
+      "sources": [
+        { "path": "src/runtime/realtime-worker/worker-core.js", "label": "分段与事件" },
+        { "path": "src/runtime/realtime-worker/sherpa-recognizer.js", "label": "本地识别" }
+      ]
+    },
+    {
+      "id": "storage",
+      "type": "database",
+      "label": "StorageGateway → SQLite",
+      "sublabel": "唯一写者 · 事件 + 投影",
+      "tag": "caption_events / segments",
+      "pos": [880, 300],
+      "size": [220, 88],
+      "sources": [
+        { "path": "src/main/services/storage-gateway.js", "label": "异步边界" },
+        { "path": "src/runtime/storage-worker/worker-service.js", "label": "SQLite 单写者" }
+      ]
+    },
+    {
+      "id": "history-export",
+      "type": "frontend",
+      "label": "字幕历史与导出",
+      "sublabel": "时间戳读取 · txt / md / srt",
+      "tag": "默认原始版",
+      "pos": [1170, 300],
+      "size": [200, 82],
+      "sources": [
+        { "path": "src/history/history-view.tsx", "label": "历史 renderer" },
+        { "path": "src/main/services/history-service.js", "label": "白名单服务" }
+      ]
+    },
+    {
+      "id": "refine-worker",
+      "type": "backend",
+      "label": "refine-worker",
+      "sublabel": "可选离线精修",
+      "tag": "精修稿独立保存",
+      "pos": [570, 450],
+      "size": [220, 82],
+      "sources": [
+        { "path": "src/runtime/refine-worker/refine-worker.js", "label": "独立世代" }
+      ]
+    },
+    {
+      "id": "commit-boundary",
+      "type": "messagebus",
+      "label": "字幕提交边界",
+      "sublabel": "持久化成功的 final / refined",
+      "tag": "input watermark",
+      "pos": [880, 450],
+      "size": [220, 74],
+      "sources": [
+        { "path": "docs/data-architecture.md", "label": "提交语义" },
+        { "path": "src/main/services/storage-gateway.js", "label": "持久化确认" }
+      ]
+    },
+    {
+      "id": "agent-runtime",
+      "type": "backend",
+      "label": "Agent 执行宿主",
+      "sublabel": "个人上下文 · 模型接入层 · 受控只读工具",
+      "tag": "统一 Agent Loop · 固定 recipe",
+      "pos": [570, 600],
+      "size": [240, 84],
+      "sources": [
+        { "path": "src/agent/execution-host/agent-loop.js", "label": "统一执行路径" },
+        { "path": "src/agent/personal-context/index.js", "label": "ingest / resolve / manage" },
+        { "path": "src/agent/contracts/recipes.js", "label": "固定 recipe 闭集" }
+      ]
+    },
+    {
+      "id": "agent-artifacts",
+      "type": "database",
+      "label": "Agent 派生事实",
+      "sublabel": "交互 / 工具调用 / 个人上下文",
+      "tag": "v5–v7 · 版本化 + digest",
+      "pos": [880, 600],
+      "size": [230, 84],
+      "sources": [
+        { "path": "src/runtime/storage-worker/personal-context-store.js", "label": "个人上下文存储" },
+        { "path": "docs/data-architecture.md", "label": "派生数据约束" }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "字幕系统（可独立运行）",
+      "wraps": [
+        "desktop-ui",
+        "model-manager",
+        "main-coordinator",
+        "caption-ui",
+        "audio-host",
+        "realtime-asr",
+        "storage",
+        "history-export",
+        "refine-worker",
+        "commit-boundary"
+      ],
+      "pad": 34
+    },
+    {
+      "kind": "region",
+      "label": "Agent 系统（可选）",
+      "wraps": ["agent-runtime", "agent-artifacts"],
+      "pad": 20
+    }
+  ],
+  "connections": [
+    {
+      "id": "ui-to-coordinator",
+      "from": "desktop-ui",
+      "to": "main-coordinator",
+      "label": "命令 / RuntimeSnapshot",
+      "variant": "emphasis"
+    },
+    {
+      "id": "models-to-coordinator",
+      "from": "model-manager",
+      "to": "main-coordinator",
+      "label": "模型就绪证明 / capabilities",
+      "variant": "security",
+      "labelDy": 110
+    },
+    {
+      "id": "coordinator-to-audio",
+      "from": "main-coordinator",
+      "to": "audio-host",
+      "label": "start / pause / stop",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "orthogonal-v"
+    },
+    {
+      "id": "audio-to-realtime",
+      "from": "audio-host",
+      "to": "realtime-asr",
+      "label": "PCM frame · MessagePort",
+      "variant": "emphasis",
+      "labelDy": -35
+    },
+    {
+      "id": "realtime-to-coordinator",
+      "from": "realtime-asr",
+      "to": "main-coordinator",
+      "label": "CaptionEvent: partial / final",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "route": "orthogonal-v",
+      "labelDx": -180
+    },
+    {
+      "id": "coordinator-to-caption",
+      "from": "main-coordinator",
+      "to": "caption-ui",
+      "label": "已接纳事件 / snapshot"
+    },
+    {
+      "id": "coordinator-to-storage",
+      "from": "main-coordinator",
+      "to": "storage",
+      "label": "final / refined → 持久化事务",
+      "variant": "emphasis"
+    },
+    {
+      "id": "storage-to-history",
+      "from": "storage",
+      "to": "history-export",
+      "label": "segments 投影 / 导出",
+      "labelDy": -38
+    },
+    {
+      "id": "realtime-to-refine",
+      "from": "realtime-asr",
+      "to": "refine-worker",
+      "label": "有界样本 ↔ refined / fault",
+      "variant": "dashed",
+      "labelDy": 24
+    },
+    {
+      "id": "storage-to-boundary",
+      "from": "storage",
+      "to": "commit-boundary",
+      "label": "commit ACK + input watermark",
+      "variant": "emphasis",
+      "labelDy": 24
+    },
+    {
+      "id": "boundary-to-agent",
+      "from": "commit-boundary",
+      "to": "agent-runtime",
+      "label": "异步只读消费",
+      "variant": "dashed"
+    },
+    {
+      "id": "agent-to-artifacts",
+      "from": "agent-runtime",
+      "to": "agent-artifacts",
+      "label": "版本化派生产物",
+      "variant": "dashed",
+      "labelDy": 59
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "核心链路",
+      "items": [
+        "用户命令进入主进程；每个会话只选择 mic 或 loopback",
+        "audio-host 通过 MessagePort 直送有界 PCM",
+        "SessionCoordinator 统一 CaptionEvent、RuntimeSnapshot 与生命周期"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "持久化边界",
+      "items": [
+        "partial 只服务实时 UI，不进入 SQLite、历史或 Agent 上下文",
+        "首次稳定转写是不可变事实，segments 是可重建当前投影",
+        "历史与导出读取 SQLite；Agent 不阻塞字幕系统",
+        "SEM-F14：不保存现场音频；报告只写指标与哈希"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "可选分支",
+      "items": [
+        "精修默认关闭，按会话开始时冻结的全局偏好启用",
+        "精修稿独立保存，不覆盖首次稳定转写",
+        "Agent 只消费字幕提交边界后的已提交正文",
+        "个人上下文与模型接入层各自是深模块；recipe 不直连 SQLite 或凭据",
+        "受控只读工具闭集只有 search_context 与 read_sources，无写工具",
+        "SEM-F02：mic / loopback 互斥，运行中不换源",
+        "J1/J2/J10/J14/J15b/J15c · DB0–DB2"
+      ]
+    }
+  ]
+}
