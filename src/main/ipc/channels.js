@@ -46,5 +46,13 @@ module.exports = Object.freeze({
   AGENT_MODEL_GET_CATALOG: 'agent-model:get-catalog',
   AGENT_MODEL_CONFIGURE: 'agent-model:configure',
   AGENT_MODEL_PULL_REMOTE_CATALOG: 'agent-model:pull-remote-catalog',
-  AGENT_MODEL_CHANGED: 'agent-model:changed'
+  AGENT_MODEL_CHANGED: 'agent-model:changed',
+  AGENT_RUN_GET_SCOPES: 'agent-run:get-scopes',
+  AGENT_RUN_GET_ELIGIBILITY: 'agent-run:get-eligibility',
+  AGENT_RUN_SUBMIT: 'agent-run:submit',
+  AGENT_RUN_CANCEL: 'agent-run:cancel',
+  AGENT_RUN_GET_HISTORY: 'agent-run:get-history',
+  AGENT_RUN_GET_INTERACTION: 'agent-run:get-interaction',
+  AGENT_RUN_CHANGED: 'agent-run:changed',
+  AGENT_RUN_EXPORT_INTERACTION: 'agent-run:export-interaction'
 })

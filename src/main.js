@@ -48,6 +48,9 @@ const {
   broadcastModelAccessChanged,
   registerModelAccessIpc
 } = require('./main/ipc/model-access-ipc')
+const { registerAgentRunIpc } = require('./main/ipc/agent-run-ipc')
+const agentRunUi = require('./agent/contracts/agent-run-ui')
+const { AgentRunService } = require('./agent/formal-run/agent-run-service')
 const { sanitizedEnvironment } = require('./agent/model-access/environment')
 const { createMainEvidenceBridge } = require('./main/services/electron-exit-evidence')
 const { PowerSessionGuard } = require('./main/services/power-session-guard')
@@ -99,6 +102,7 @@ for (const key of Object.keys(process.env)) {
 /** @type {BrowserWindow | null} */ let toolbarWin = null
 /** @type {BrowserWindow | null} */ let settingsWin = null
 /** @type {BrowserWindow | null} */ let historyWin = null
+/** @type {BrowserWindow | null} */ let agentWin = null
 /** @type {SessionCoordinator | null} */ let coordinator = null
 /** @type {HistoryService | null} */ let historyService = null
 /** @type {PowerSessionGuard | null} */ let powerSessionGuard = null
@@ -108,6 +112,7 @@ for (const key of Object.keys(process.env)) {
 /** @type {null | {catalog: Function, configure: Function, bind: Function}} */ let modelAccessRuntime = null
 /** @type {null | import('./agent/model-access/credential-vault').CredentialVault} */ let modelAccessVault = null
 /** @type {null | import('./agent/model-access/remote-catalog-controller').RemoteModelCatalogPullController} */ let remoteModelCatalogController = null
+/** @type {null | AgentRunService} */ let formalAgentService = null
 
 let quitBarrierComplete = false
 let quitBarrierPromise = null
@@ -324,6 +329,11 @@ function broadcastAgentModelChanged (event) {
   broadcastModelAccessChanged(settingsWin, event.revision)
 }
 
+function broadcastAgentRunChanged (event) {
+  send(agentWin, CHANNELS.AGENT_RUN_CHANGED, event)
+  send(historyWin, CHANNELS.AGENT_RUN_CHANGED, event)
+}
+
 refinementNoticeStore.onChanged(broadcastRefinementNotice)
 
 registerPersonalContextIpc({
@@ -337,6 +347,30 @@ registerModelAccessIpc({
   authorize: requireSender,
   getRuntime: () => modelAccessRuntime,
   getPullController: () => remoteModelCatalogController
+})
+
+function unavailableAgentCommand () {
+  return { contract_id: agentRunUi.CONTRACT_ID, contract_version: agentRunUi.CONTRACT_VERSION, ok: false, error: { category: 'unavailable', code: agentRunUi.ERROR_CODES.unavailable, next_action: null }, result: null }
+}
+
+function unavailableAgentScopes () {
+  return { contract_id: agentRunUi.CONTRACT_ID, contract_version: agentRunUi.CONTRACT_VERSION, ok: true, error: null, scopes: [], next_cursor: null, default_scope: null, revision: 0 }
+}
+
+// Formal Agent IPC is main-owned. The proxy keeps the subtitle shell available
+// while the storage/model services are still starting or have failed closed.
+registerAgentRunIpc({
+  ipcMain,
+  authorize: requireSender,
+  service: {
+    async getScopes (request, context) { return formalAgentService ? formalAgentService.getScopes(request, context) : unavailableAgentScopes() },
+    async getEligibility (request, context) { return formalAgentService ? formalAgentService.getEligibility(request, context) : { contract_id: agentRunUi.CONTRACT_ID, contract_version: agentRunUi.CONTRACT_VERSION, ok: true, error: null, snapshot: { scope: request.scope, eligibility: 'provider_not_configured', next_action: null, revision: 0 } } },
+    async submit (request, context) { return formalAgentService ? formalAgentService.submit(request, context) : unavailableAgentCommand() },
+    async cancel (request, context) { return formalAgentService ? formalAgentService.cancel(request, context) : unavailableAgentCommand() },
+    async getHistory (request, context) { return formalAgentService ? formalAgentService.getHistory(request, context) : { contract_id: agentRunUi.CONTRACT_ID, contract_version: agentRunUi.CONTRACT_VERSION, ok: true, error: null, result: { items: [], has_more: false, next_cursor: null } } },
+    async getInteraction (request, context) { return formalAgentService ? formalAgentService.getInteraction(request, context) : unavailableAgentCommand() },
+    async exportInteraction (request, context) { return formalAgentService ? formalAgentService.exportInteraction(request, context) : unavailableAgentCommand() }
+  }
 })
 
 function registerWindowRole (win, role) {
@@ -650,6 +684,21 @@ function openHistoryWindow () {
     .catch((error) => logError('renderer.history.load', error))
 }
 
+function openAgentWindow () {
+  if (agentWin && !agentWin.isDestroyed()) { agentWin.show(); agentWin.focus(); return }
+  agentWin = new BrowserWindow({
+    width: 720, height: 640, minWidth: 520, minHeight: 420,
+    titleBarStyle: 'hidden', backgroundMaterial: 'mica', backgroundColor: '#202020',
+    resizable: true, maximizable: true, minimizable: true, skipTaskbar: false, show: false,
+    webPreferences: { preload: preloadPath('agent'), contextIsolation: true, nodeIntegration: false, sandbox: false }
+  })
+  registerWindowRole(agentWin, 'agent')
+  hardenContents(agentWin)
+  agentWin.once('ready-to-show', () => { if (!agentWin.isDestroyed()) { agentWin.show(); agentWin.focus() } })
+  agentWin.on('closed', () => { agentWin = null })
+  void loadRendererFailClosed(agentWin, 'agent', { isPackaged: app.isPackaged }).catch((error) => logError('renderer.agent.load', error))
+}
+
 function persistCaptionBounds (bounds) {
   try {
     config.set({ captionWidth: bounds.width, captionHeight: bounds.height })
@@ -924,7 +973,8 @@ ipcMain.on(CHANNELS.TOOLBAR_ACTION, (event, action) => {
   else if (action === 'history') {
     refinementNoticeStore.clear()
     openHistoryWindow()
-  } else if (action === 'dismiss-refinement-notice') refinementNoticeStore.clear()
+  } else if (action === 'agent') openAgentWindow()
+  else if (action === 'dismiss-refinement-notice') refinementNoticeStore.clear()
   else if (action === 'minimize') applicationWindowLifecycleController.minimize()
   else if (action === 'close') app.quit()
 })
@@ -1131,6 +1181,16 @@ async function bootstrapApplication () {
     remoteModelCatalogController = null
     console.error('[agent.model-access] MODEL_ACCESS_UNAVAILABLE')
   }
+  try {
+    formalAgentService = new AgentRunService({
+      storage: applicationRuntime.gateway,
+      modelAccess: modelAccessRuntime,
+      onChanged: broadcastAgentRunChanged
+    })
+  } catch (error) {
+    formalAgentService = null
+    console.error(`[agent.run] ${error instanceof Error ? error.message : 'AGENT_RUN_UNAVAILABLE'}`)
+  }
   powerSessionGuard = new PowerSessionGuard({
     powerMonitor,
     getCoordinator: () => coordinator,
@@ -1181,6 +1241,7 @@ function beginQuitBarrier (event) {
       modelAccessRuntime = null
       remoteModelCatalogController = null
     }
+    formalAgentService = null
     if (modelAccessVault) {
       try { modelAccessVault.close() } catch {}
       modelAccessVault = null

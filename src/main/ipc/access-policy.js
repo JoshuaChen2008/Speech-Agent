@@ -2,7 +2,7 @@
 
 const CHANNELS = require('./channels')
 
-const ROLES = Object.freeze(['caption', 'toolbar', 'settings', 'history'])
+const ROLES = Object.freeze(['caption', 'toolbar', 'settings', 'history', 'agent'])
 const ROLE_ACCESS = Object.freeze({
   [CHANNELS.MOUSE_THROUGH]: Object.freeze(['caption', 'toolbar']),
   [CHANNELS.DRAG_START]: Object.freeze(['caption', 'toolbar', 'settings', 'history']),
@@ -37,7 +37,15 @@ const ROLE_ACCESS = Object.freeze({
   [CHANNELS.AGENT_CONTEXT_MANAGE]: Object.freeze(['settings', 'history']),
   [CHANNELS.AGENT_MODEL_GET_CATALOG]: Object.freeze(['settings']),
   [CHANNELS.AGENT_MODEL_CONFIGURE]: Object.freeze(['settings']),
-  [CHANNELS.AGENT_MODEL_PULL_REMOTE_CATALOG]: Object.freeze(['settings'])
+  [CHANNELS.AGENT_MODEL_PULL_REMOTE_CATALOG]: Object.freeze(['settings']),
+  [CHANNELS.AGENT_RUN_GET_SCOPES]: Object.freeze(['agent', 'history']),
+  [CHANNELS.AGENT_RUN_GET_ELIGIBILITY]: Object.freeze(['agent', 'history']),
+  [CHANNELS.AGENT_RUN_SUBMIT]: Object.freeze(['agent']),
+  [CHANNELS.AGENT_RUN_CANCEL]: Object.freeze(['agent']),
+  [CHANNELS.AGENT_RUN_GET_HISTORY]: Object.freeze(['agent', 'history']),
+  [CHANNELS.AGENT_RUN_GET_INTERACTION]: Object.freeze(['agent', 'history']),
+  [CHANNELS.AGENT_RUN_CHANGED]: Object.freeze(['agent', 'history']),
+  [CHANNELS.AGENT_RUN_EXPORT_INTERACTION]: Object.freeze(['agent', 'history'])
 })
 
 const RENDERER_CONFIG_KEYS = Object.freeze([

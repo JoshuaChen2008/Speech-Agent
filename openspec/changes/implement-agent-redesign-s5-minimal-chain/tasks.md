@@ -1,6 +1,6 @@
 ## 1. Contract and service boundary
 
-- [ ] 1.1 Add the terminal-session scope request/response contract and register its channel in the semantic and testing ledgers.
+- [x] 1.1 Add the terminal-session scope request/response contract and register its channel in the semantic and testing ledgers.
 - [ ] 1.2 Add exact response validators for submit, cancel, history, interaction detail, and export; reject unknown versions, fields, credentials, paths, audio, and amount fields.
 - [ ] 1.3 Implement `AgentRunService` eligibility, scope projection, input freezing, idempotent submit, cancel, and monotonic changed revisions.
 - [ ] 1.4 Replace the placeholder main service with the real service composition and preserve the subtitle window lifecycle when Agent dependencies fail.
