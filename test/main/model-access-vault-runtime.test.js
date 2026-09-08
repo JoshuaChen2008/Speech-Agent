@@ -118,6 +118,7 @@ test('SEM-F33/J25: OpenAI-compatible catalog uses the fixed safe-joined endpoint
   }), [{ modelId: 'model.one', capabilitySuggestion: null }])
   assert.equal(requests[0].url, 'https://example.test:8443/v1/models')
   assert.equal(requests[0].options.redirect, 'manual')
+  assert.equal(requests[0].options.headers.authorization, '')
 
   for (const status of [301, 302, 307, 308]) {
     const redirect = new OpenAiCompatibleAdapter({ fetch: async () => ({ ok: false, status }) })
@@ -151,6 +152,157 @@ test('SEM-F33/J25: remote catalog rejects declared and decoded responses above i
     })
   })
   await assert.rejects(decoded.listModels(request), /remote unavailable/)
+})
+
+test('SEM-F33/J25: production loop adapter uses the frozen endpoint, normalizes provider usage, and runs authorized tools sequentially', async () => {
+  const requests = []
+  const responses = [
+    {
+      choices: [{ message: {
+        role: 'assistant', content: null,
+        tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'search_context', arguments: '{"schemaVersion":1,"aliasKeys":["decision"]}' } }]
+      } }],
+      usage: { prompt_tokens: 11, completion_tokens: 3, prompt_cache_hit_tokens: 4, prompt_cache_miss_tokens: 7 }
+    },
+    {
+      choices: [{ message: { role: 'assistant', content: '{"schemaVersion":1,"answer":"bounded"}' } }],
+      usage: { prompt_tokens: 21, completion_tokens: 5 }
+    }
+  ]
+  const adapter = new OpenAiCompatibleAdapter({
+    fetch: async (url, options) => {
+      requests.push({ url, options, authorization: options.headers.authorization, body: JSON.parse(options.body) })
+      const payload = responses.shift()
+      return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify(payload) }
+    }
+  })
+  const calls = []
+  const result = await adapter.run({
+    connection: { httpsOrigin: 'https://example.test:8443', basePath: '/v1' },
+    credential: Buffer.from('bounded-secret'),
+    resolvedModel: { modelId: 'model.one', capabilities: {
+      maxOutputTokens: 1024, supportsToolCalling: true, supportsStructuredOutput: true, usageReporting: true
+    } },
+    prompt: '{"scope":"session"}',
+    tools: [{
+      name: 'search_context',
+      execute: async (args) => { calls.push(args); return { schemaVersion: 1, matches: [] } }
+    }],
+    maxTurns: 3,
+    timeoutMs: 1000,
+    shouldStopAfterTurn: ({ turn }) => turn >= 3
+  })
+  assert.equal(result.text, '{"schemaVersion":1,"answer":"bounded"}')
+  assert.deepEqual(result.usage, {
+    inputTokens: 32, outputTokens: 8, usageSource: 'provider',
+    cacheHitInputTokens: null, cacheMissInputTokens: null
+  })
+  assert.deepEqual(calls, [{ schemaVersion: 1, aliasKeys: ['decision'] }])
+  assert.equal(requests.length, 2)
+  assert.equal(requests[0].url, 'https://example.test:8443/v1/chat/completions')
+  assert.equal(requests[0].options.redirect, 'manual')
+  assert.equal(requests[0].authorization, 'Bearer bounded-secret')
+  assert.equal(requests[0].options.headers.authorization, '')
+  assert.equal(requests[0].body.response_format.type, 'json_object')
+  assert.equal(requests[1].body.messages.at(-1).role, 'tool')
+  assert.equal(requests[1].body.messages.at(-1).tool_call_id, 'call-1')
+})
+
+test('SEM-F33/J25: production loop adapter maps redirects, provider failures, malformed output, cancellation, and bounded responses', async () => {
+  const request = {
+    connection: { httpsOrigin: 'https://example.test', basePath: '/' },
+    credential: Buffer.from('secret'),
+    resolvedModel: { modelId: 'model.one', capabilities: {
+      maxOutputTokens: 1024, supportsToolCalling: false, supportsStructuredOutput: false, usageReporting: true
+    } },
+    prompt: 'prompt'
+  }
+  for (const [status, code] of [[301, 'AGENT_PROVIDER_UNAVAILABLE'], [401, 'AGENT_PROVIDER_AUTH_FAILED'],
+    [429, 'AGENT_PROVIDER_RATE_LIMITED'], [503, 'AGENT_PROVIDER_UNAVAILABLE'], [504, 'AGENT_PROVIDER_TIMEOUT']]) {
+    const adapter = new OpenAiCompatibleAdapter({ fetch: async () => ({ ok: false, status }) })
+    await assert.rejects(adapter.run(request), (error) => error.code === code)
+  }
+  const malformed = new OpenAiCompatibleAdapter({
+    fetch: async () => ({ ok: true, status: 200, text: async () => '{"choices":[{"message":{"content":null}}]}' })
+  })
+  await assert.rejects(malformed.run(request), (error) => error.code === 'AGENT_OUTPUT_INVALID')
+  const bounded = new OpenAiCompatibleAdapter({
+    fetch: async () => ({ ok: true, status: 200, headers: { get: () => String(512 * 1024 + 1) }, text: async () => '{}' })
+  })
+  await assert.rejects(bounded.run(request), (error) => error.code === 'AGENT_OUTPUT_INVALID')
+  const controller = new AbortController()
+  controller.abort()
+  const cancelled = new OpenAiCompatibleAdapter({ fetch: async () => { throw new Error('must not fetch') } })
+  await assert.rejects(cancelled.run({ ...request, signal: controller.signal }), (error) => error.code === 'AGENT_CANCELLED')
+})
+
+test('SEM-F34/J24: production loop adapter bounds tool execution and propagates cancellation without waiting for a hanging tool', async () => {
+  const toolResponse = () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({
+      choices: [{ message: {
+        role: 'assistant', content: null,
+        tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'search_context', arguments: '{}' } }]
+      } }]
+    })
+  })
+  const base = {
+    connection: { httpsOrigin: 'https://example.test', basePath: '/' },
+    credential: Buffer.from('secret'),
+    resolvedModel: { modelId: 'model.one', capabilities: {
+      maxOutputTokens: 1024, supportsToolCalling: true, supportsStructuredOutput: false, usageReporting: true
+    } },
+    prompt: 'prompt', tools: [{ name: 'search_context', execute: async () => new Promise(() => {}) }],
+    maxTurns: 2, timeoutMs: 100
+  }
+  const timeoutAdapter = new OpenAiCompatibleAdapter({ fetch: async () => toolResponse() })
+  await assert.rejects(timeoutAdapter.run(base), (error) => error.code === 'TOOL_TIMEOUT')
+  const controller = new AbortController()
+  const cancelAdapter = new OpenAiCompatibleAdapter({ fetch: async () => toolResponse() })
+  const pending = cancelAdapter.run({ ...base, signal: controller.signal })
+  setTimeout(() => controller.abort(), 10)
+  await assert.rejects(pending, (error) => error.code === 'AGENT_CANCELLED')
+})
+
+test('SEM-F33/J25: model access owns loop execution and borrows only the binding credential slot', async (t) => {
+  const { instance } = vault(t, true)
+  const slot = 'slot.0123456789abcdef0123456789abcdef'
+  const state = instance.set(slot, 'loop-secret')
+  const internal = { profiles: [{
+    profile_id: 'profile.one', credential_slot_id: slot, credential_persistence: 'persistent',
+    credential_generation: state.generation, https_origin: 'https://current.example', base_path: '/v1'
+  }] }
+  let observed = null
+  let borrowed = null
+  let credentialText = null
+  const runtime = new ModelAccessRuntime({
+    vault: instance,
+    gateway: { modelAccessCatalog: async () => internal, modelAccessBind: async () => ({}) },
+    adapter: { run: async (request) => {
+      observed = request
+      borrowed = request.credential
+      credentialText = request.credential.toString()
+      return { text: '{}', usage: null }
+    } }
+  })
+  await runtime.initialize()
+  const loop = runtime.createLoopAdapter({
+    runId: 'run.one', profileId: 'profile.one', credentialSlotId: slot,
+    httpsOrigin: 'https://frozen.example', basePath: '/v1', modelId: 'model.one',
+    capabilities: { maxOutputTokens: 1024 }, budget: { toolTimeoutMs: 5000 }
+  })
+  await loop.run({ prompt: 'bounded', connection: { httpsOrigin: 'https://attacker.example', basePath: '/' } })
+  assert.equal(observed.resolvedModel.modelId, 'model.one')
+  assert.equal(Object.isFrozen(observed.resolvedModel), true)
+  assert.equal(Object.isFrozen(observed.resolvedModel.capabilities), true)
+  assert.deepEqual(observed.connection, { httpsOrigin: 'https://frozen.example', basePath: '/v1' })
+  assert.equal(credentialText, 'loop-secret')
+  assert.equal(borrowed.every((byte) => byte === 0), true)
+  await assert.rejects(runtime.runWithBinding({
+    runId: 'run.one', profileId: 'profile.one', credentialSlotId: 'slot.abcdef0123456789abcdef0123456789',
+    httpsOrigin: 'https://frozen.example', basePath: '/v1', modelId: 'model.one'
+  }, {}), (error) => error.code === 'AGENT_PROVIDER_AUTH_FAILED')
 })
 
 test('SEM-F33/J25: startup environment removes every legacy credential spelling', () => {

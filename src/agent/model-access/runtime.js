@@ -2,12 +2,25 @@
 
 const { assertConfigureCommand, assertRunRequest } = require('../contracts/model-access-core')
 const { publicCatalog } = require('./catalog')
+const { OpenAiCompatibleAdapter } = require('./openai-compatible-adapter')
+
+function freezeBinding (binding) {
+  const snapshot = { ...binding }
+  for (const key of ['capabilities', 'budget']) {
+    if (snapshot[key] && typeof snapshot[key] === 'object' && !Array.isArray(snapshot[key])) {
+      snapshot[key] = Object.freeze({ ...snapshot[key] })
+    }
+  }
+  return Object.freeze(snapshot)
+}
 
 class ModelAccessRuntime {
   constructor (options = {}) {
     if (!options.gateway || !options.vault) throw new TypeError('gateway and vault are required')
     this.gateway = options.gateway
     this.vault = options.vault
+    this.adapter = options.adapter || new OpenAiCompatibleAdapter()
+    if (!this.adapter || typeof this.adapter.run !== 'function') throw new TypeError('model loop adapter is required')
     this.onChanged = typeof options.onChanged === 'function' ? options.onChanged : () => {}
     this.tail = Promise.resolve()
   }
@@ -119,6 +132,37 @@ class ModelAccessRuntime {
       wrapped.code = error?.code === 'AGENT_PROVIDER_AUTH_FAILED' ? error.code : 'AGENT_REQUEST_INVALID'
       throw wrapped
     }
+  }
+
+  async runWithBinding (binding, request = {}) {
+    if (!binding || typeof binding !== 'object' || Array.isArray(binding) ||
+        typeof binding.profileId !== 'string' || typeof binding.credentialSlotId !== 'string' ||
+        typeof binding.httpsOrigin !== 'string' || typeof binding.basePath !== 'string' ||
+        typeof binding.modelId !== 'string') {
+      const error = new Error('Agent request is invalid')
+      error.code = 'AGENT_REQUEST_INVALID'
+      throw error
+    }
+    const internal = await this.internal()
+    const profile = internal.profiles.find((item) => item?.profile_id === binding.profileId)
+    if (!profile) throw this.vault.bindingAuthFailure()
+    const safeRequest = request && typeof request === 'object' && !Array.isArray(request)
+      ? { ...request }
+      : {}
+    delete safeRequest.connection
+    delete safeRequest.credential
+    return this.vault.borrowForBinding(binding, internal.profiles, (credential) => this.adapter.run({
+      ...safeRequest,
+      resolvedModel: binding,
+      connection: { httpsOrigin: binding.httpsOrigin, basePath: binding.basePath },
+      credential
+    }))
+  }
+
+  createLoopAdapter (binding) {
+    if (!binding || typeof binding !== 'object' || Array.isArray(binding)) throw new TypeError('binding is required')
+    const frozenBinding = freezeBinding(binding)
+    return Object.freeze({ run: (request) => this.runWithBinding(frozenBinding, request) })
   }
 
   invalidateCredential (profileId) {

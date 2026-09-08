@@ -8,7 +8,8 @@ async function createModelAccess (options = {}) {
   return Object.freeze({
     catalog: runtime.catalog.bind(runtime),
     configure: runtime.configure.bind(runtime),
-    bind: runtime.bind.bind(runtime)
+    bind: runtime.bind.bind(runtime),
+    createLoopAdapter: runtime.createLoopAdapter.bind(runtime)
   })
 }
 

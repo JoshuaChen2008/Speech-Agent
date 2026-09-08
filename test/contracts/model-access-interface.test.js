@@ -4,7 +4,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { createModelAccess } = require('../../src/agent/model-access')
 
-test('SEM-F33/J25: formal model-access facade exposes exactly catalog configure and bind', async () => {
+test('SEM-F33/J25: formal model-access facade exposes catalog configure bind and main-owned loop adapter', async () => {
   const calls = []
   const internal = {
     revision: 0,
@@ -21,9 +21,10 @@ test('SEM-F33/J25: formal model-access facade exposes exactly catalog configure 
     vault: {
       recover: () => calls.push('recover'),
       state: () => ({ present: false, scope: 'absent' })
-    }
+    },
+    adapter: { run: async () => ({ text: '{}', usage: null }) }
   })
-  assert.deepEqual(Object.keys(facade).sort(), ['bind', 'catalog', 'configure'])
+  assert.deepEqual(Object.keys(facade).sort(), ['bind', 'catalog', 'configure', 'createLoopAdapter'])
   assert.deepEqual(await facade.catalog(), {
     ok: true,
     snapshot: {

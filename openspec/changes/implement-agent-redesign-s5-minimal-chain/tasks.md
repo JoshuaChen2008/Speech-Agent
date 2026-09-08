@@ -8,7 +8,7 @@
 
 ## 2. Execution and SQLite convergence
 
-- [ ] 2.1 Add the production OpenAI-compatible Loop adapter behind Model Access; keep credential borrowing and origin/redirect checks inside the access layer.
+- [x] 2.1 Add the production OpenAI-compatible Loop adapter behind Model Access; keep credential borrowing and origin/redirect checks inside the access layer. (局部实现完成·尚未验收；定向 Model Access/S2/S3 回归 23/23，Luna 语义审查通过；完整 J25/J24 仍待 S5-Integration)
 - [ ] 2.2 Connect target execution to Personal Context resolve, Intent Route Orchestrator, Agent Loop, controlled tools, budget enforcement, and the scheduler using real storage interfaces.
 - [ ] 2.3 Add the smallest migration or storage command needed to preserve request-to-route/target identity and restart terminalization without storing prompt text.
 - [ ] 2.4 Implement atomic interaction terminalization, result/schema validation, tool audit ordering, retry preservation, and late-generation rejection.
