@@ -27,17 +27,18 @@ class StorageWorkerService {
       try {
         return new SqliteSubtitleStore({ ...storeOptions, migrations: FORMAL_AGENT_MIGRATIONS })
       } catch (agentExecutionMigrationError) {
-        /* v7 is an optional formal-Agent execution boundary.  Keep a valid v6
-           database usable for subtitles and model access when only the newest
-           migration fails; if v6 also fails, fall back one more rung to the
-           byte-stable v1-v5 catalog.  Earlier checksum failures remain fatal. */
+        /* v8 is an optional formal-Agent context-snapshot boundary.  Keep a
+           valid v7 database usable for subtitles and model access when only
+           the newest migration fails; if v7 also fails, fall back one more
+           rung to the byte-stable v1-v5 catalog. Earlier checksum failures
+           remain fatal. */
         try {
-          const fallbackV6 = new SqliteSubtitleStore({
+          const fallbackV7 = new SqliteSubtitleStore({
             ...storeOptions,
-            migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 6)
+            migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 7)
           })
-          fallbackV6.agentExecutionUnavailable = true
-          return fallbackV6
+          fallbackV7.agentExecutionUnavailable = true
+          return fallbackV7
         } catch (modelAccessMigrationError) {
           const fallbackV5 = new SqliteSubtitleStore({
             ...storeOptions,
@@ -274,8 +275,11 @@ class StorageWorkerService {
       return this.requirePersonalContextStore().claimNextFormalRun(payload.request)
     }
     if (operation === OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT) {
-      assertExactKeys(payload, [])
-      return this.requirePersonalContextStore().nextFormalRunAt()
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload) ||
+          (Object.keys(payload).length !== 0 && Object.keys(payload).join(',') !== 'requestedBy')) {
+        throw new StorageError('AGENT_REQUEST_INVALID')
+      }
+      return this.requirePersonalContextStore().nextFormalRunAt(payload)
     }
     if (operation === OPERATIONS.FORMAL_AGENT_COMPLETE_RUN) {
       assertExactKeys(payload, ['request'])

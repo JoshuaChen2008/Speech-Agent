@@ -31,6 +31,9 @@ function createPersonalContextExecutionAdapter (options = {}) {
   }
   return Object.freeze({
     prepareSessionIngest: (request) => storage.preparePersonalContextSessionIngest(request),
+    resolve: typeof storage.personalContextResolve === 'function'
+      ? (request) => storage.personalContextResolve(request)
+      : undefined,
     readSessionInput: (source) => storage.readPersonalContextSessionInput(source),
     readToolContext: (request) => storage.readPersonalContextToolContext(request),
     commitSessionIngest: (request) => storage.commitPersonalContextSessionIngest(request)

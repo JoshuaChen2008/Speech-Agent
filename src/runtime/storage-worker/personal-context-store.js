@@ -257,7 +257,8 @@ class PersonalContextStore {
     assertExactKeys(input, ['runId'], 'AGENT_REQUEST_INVALID')
     const runId = identifier(input.runId)
     const run = this.database.prepare(`
-      SELECT scope_json, transcript_version, input_watermark_json, input_digest
+      SELECT scope_json, transcript_version, input_watermark_json, input_digest,
+        requested_by, personal_context_revision
       FROM formal_agent_runs WHERE run_id = ?
     `).get(runId)
     if (!run) fail('AGENT_RUN_NOT_FOUND')
@@ -271,6 +272,11 @@ class PersonalContextStore {
     try { watermark = JSON.parse(run.input_watermark_json) } catch { fail('STORAGE_COMMAND_FAILED') }
     if (!isPlainObject(watermark) || !Number.isSafeInteger(watermark.throughEventOrder) || watermark.throughEventOrder < 1) {
       fail('AGENT_REQUEST_INVALID')
+    }
+    const personalContextRevision = Number(run.personal_context_revision)
+    if (!Number.isSafeInteger(personalContextRevision) || personalContextRevision < 0) fail('STORAGE_COMMAND_FAILED')
+    if (run.requested_by === 'user' && personalContextRevision !== this.contentRevision()) {
+      fail('AGENT_INPUT_CHANGED')
     }
     const items = this.database.prepare(`
       SELECT item.memory_id, item.current_revision_id, item.semantic_key, item.kind, item.content_json
@@ -414,19 +420,21 @@ class PersonalContextStore {
         ) VALUES (?, 'session', ?, 'Session', ?, 'automatic', 'active', ?, ?)
       `).run(scopeId, `session:${snapshot.sessionId}`, snapshot.sessionId, now, now)
       if (!existing) {
+        const personalContextRevision = this.contentRevision()
         this.database.prepare(`
           INSERT INTO formal_agent_runs(
             run_id, dedupe_key, client_idempotency_key, request_digest, recipe_id, recipe_version,
             scope_json, scope_digest, transcript_version, input_watermark_json, input_digest,
-            requested_by, state, attempt_count, max_attempts, next_attempt_at,
+            personal_context_revision, requested_by, state, attempt_count, max_attempts, next_attempt_at,
             lease_owner, lease_expires_at, lease_renewed_from_expires_at, cancel_requested_at,
             error_code, result_digest, result_summary_json, created_at, updated_at
-          ) VALUES (?, ?, NULL, ?, 'context.ingest.session', '1', ?, ?, ?, ?, ?,
+          ) VALUES (?, ?, NULL, ?, 'context.ingest.session', '1', ?, ?, ?, ?, ?, ?,
             'automatic', 'queued', 0, 3, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)
         `).run(
           runId, dedupeKey, requestDigest, canonicalize({ kind: 'session', reference: snapshot.sessionId }),
           sha256Canonical({ kind: 'session', reference: snapshot.sessionId }), snapshot.transcriptVersion,
-          canonicalize({ throughEventOrder: snapshot.inputWatermark }), snapshot.inputDigest, now, now, now
+          canonicalize({ throughEventOrder: snapshot.inputWatermark }), snapshot.inputDigest,
+          personalContextRevision, now, now, now
         )
       }
       this.database.prepare(`
@@ -654,6 +662,7 @@ class PersonalContextStore {
     }
     this.database.exec('BEGIN IMMEDIATE')
     try {
+      const personalContextRevision = this.contentRevision()
       this.database.prepare(`
         INSERT OR IGNORE INTO personal_context_scopes(
           scope_id, kind, canonical_key, label, session_id, origin, lifecycle, created_at, updated_at
@@ -663,10 +672,10 @@ class PersonalContextStore {
         INSERT INTO formal_agent_runs(
           run_id, dedupe_key, client_idempotency_key, request_digest, recipe_id, recipe_version,
           scope_json, scope_digest, transcript_version, input_watermark_json, input_digest,
-          requested_by, state, attempt_count, max_attempts, next_attempt_at,
+          personal_context_revision, requested_by, state, attempt_count, max_attempts, next_attempt_at,
           lease_owner, lease_expires_at, lease_renewed_from_expires_at, cancel_requested_at,
           error_code, result_digest, result_summary_json, created_at, updated_at
-        ) VALUES (?, ?, NULL, ?, 'context.ingest.session', '1', ?, ?, ?, ?, ?,
+        ) VALUES (?, ?, NULL, ?, 'context.ingest.session', '1', ?, ?, ?, ?, ?, ?,
           'automatic', 'succeeded', 1, 3, 0, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?)
       `).run(
         runId, dedupeKey, requestDigest,
@@ -674,7 +683,7 @@ class PersonalContextStore {
         sha256Canonical({ kind: 'session', reference: snapshot.sessionId }),
         snapshot.transcriptVersion,
         canonicalize({ throughEventOrder: snapshot.inputWatermark }),
-        snapshot.inputDigest,
+        snapshot.inputDigest, personalContextRevision,
         sha256Canonical(resultSummary), canonicalize(resultSummary), now, now
       )
       this.database.prepare(`
@@ -1313,7 +1322,14 @@ class PersonalContextStore {
   }
 
   claimNextFormalRun (request) {
-    assertExactKeys(request, ['claimIdempotencyKey', 'owner', 'leaseMs'], 'AGENT_REQUEST_INVALID')
+    if (!isPlainObject(request)) fail('AGENT_REQUEST_INVALID')
+    const requestKeys = Object.keys(request).sort()
+    const legacyKeys = ['claimIdempotencyKey', 'leaseMs', 'owner']
+    const scopedKeys = ['claimIdempotencyKey', 'leaseMs', 'owner', 'requestedBy']
+    const exact = (keys) => requestKeys.length === keys.length && keys.every((key, index) => key === requestKeys[index])
+    if (!exact(legacyKeys) && !exact(scopedKeys)) fail('AGENT_REQUEST_INVALID')
+    const requestedBy = request.requestedBy === undefined ? 'automatic' : request.requestedBy
+    if (!['automatic', 'user'].includes(requestedBy)) fail('AGENT_REQUEST_INVALID')
     identifier(request.claimIdempotencyKey)
     identifier(request.owner)
     safeInteger(request.leaseMs, 1)
@@ -1325,9 +1341,14 @@ class PersonalContextStore {
       if (!row) fail('STORAGE_COMMAND_FAILED')
       const scope = JSON.parse(row.scope_json)
       const watermark = JSON.parse(row.input_watermark_json)
+      const interaction = this.database.prepare(`
+        SELECT interaction_id FROM formal_agent_interactions WHERE run_id = ?
+      `).get(row.run_id)
       return {
         runId: row.run_id,
         recipeId: row.recipe_id,
+        interactionId: interaction?.interaction_id || null,
+        requestedBy: row.requested_by,
         source: {
           sourceKind: scope.kind,
           sessionId: scope.reference,
@@ -1355,12 +1376,15 @@ class PersonalContextStore {
       }
       const row = this.database.prepare(`
         SELECT * FROM formal_agent_runs
-        WHERE recipe_id = 'context.ingest.session' AND (
+        WHERE requested_by = ? AND (
+          (? = 'automatic' AND recipe_id = 'context.ingest.session') OR
+          (? = 'user' AND recipe_id IN ('summary.minutes', 'qa.answer'))
+        ) AND (
           (state IN ('queued', 'retry_wait') AND next_attempt_at <= ?) OR
           (state = 'running' AND lease_expires_at <= ?)
         )
         ORDER BY next_attempt_at, run_order LIMIT 1
-      `).get(now, now)
+      `).get(requestedBy, requestedBy, requestedBy, now, now)
       let leaseExpiresAt = null
       if (row) {
         leaseExpiresAt = now + request.leaseMs
@@ -1392,14 +1416,27 @@ class PersonalContextStore {
     }
   }
 
-  nextFormalRunAt () {
+  nextFormalRunAt (request = {}) {
+    if (!isPlainObject(request)) fail('AGENT_REQUEST_INVALID')
+    const keys = Object.keys(request).sort()
+    if (!(keys.length === 0 || (keys.length === 1 && keys[0] === 'requestedBy'))) fail('AGENT_REQUEST_INVALID')
+    const requestedBy = request.requestedBy === undefined ? 'automatic' : request.requestedBy
+    if (!['automatic', 'user'].includes(requestedBy)) fail('AGENT_REQUEST_INVALID')
     const row = this.database.prepare(`
       SELECT MIN(ready_at) AS ready_at FROM (
-        SELECT next_attempt_at AS ready_at FROM formal_agent_runs WHERE state IN ('queued', 'retry_wait')
+        SELECT next_attempt_at AS ready_at FROM formal_agent_runs
+          WHERE requested_by = ? AND (
+            (? = 'automatic' AND recipe_id = 'context.ingest.session') OR
+            (? = 'user' AND recipe_id IN ('summary.minutes', 'qa.answer'))
+          ) AND state IN ('queued', 'retry_wait')
         UNION ALL
-        SELECT lease_expires_at AS ready_at FROM formal_agent_runs WHERE state = 'running'
+        SELECT lease_expires_at AS ready_at FROM formal_agent_runs
+          WHERE requested_by = ? AND (
+            (? = 'automatic' AND recipe_id = 'context.ingest.session') OR
+            (? = 'user' AND recipe_id IN ('summary.minutes', 'qa.answer'))
+          ) AND state = 'running'
       )
-    `).get()
+    `).get(requestedBy, requestedBy, requestedBy, requestedBy, requestedBy, requestedBy)
     return row.ready_at === null ? null : Number(row.ready_at)
   }
 

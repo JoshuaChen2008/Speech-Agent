@@ -485,8 +485,8 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request })
   }
 
-  nextFormalAgentRunAt () {
-    return this.enqueue(OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT, {})
+  nextFormalAgentRunAt (request = {}) {
+    return this.enqueue(OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT, request)
   }
 
   completeFormalAgentRun (request) {

@@ -2,17 +2,17 @@
 
 - [x] 1.1 Add the terminal-session scope request/response contract and register its channel in the semantic and testing ledgers.
 - [x] 1.2 Add exact response validators for submit, cancel, history, interaction detail, and export; reject unknown versions, fields, credentials, paths, audio, and amount fields.
-- [ ] 1.3 Implement `AgentRunService` eligibility, scope projection, input freezing, idempotent submit, cancel, and monotonic changed revisions (model-first intent convergence remains in §2).
-- [ ] 1.4 Replace the placeholder main service with the real service composition and preserve the subtitle window lifecycle when Agent dependencies fail.
-- [ ] 1.5 Add contract/main tests for duplicate keys, non-terminal sessions, reload ordering, cancellation, and unavailable provider facts.
+- [x] 1.3 Implement `AgentRunService` eligibility, scope projection, input freezing, idempotent submit, cancel, and monotonic changed revisions, with model-first convergence delegated through the execution host (实现完成·尚未验收；正式 renderer/preload reload 旅程仍待 S5-UX).
+- [x] 1.4 Replace the placeholder main service with the real service composition and preserve the subtitle window lifecycle when Agent dependencies fail (实现完成·尚未验收；main-owned route/target scheduler and dependency fail-closed wiring已接入).
+- [ ] 1.5 Add contract/main tests for duplicate keys, non-terminal sessions, reload ordering, cancellation, and unavailable provider facts (局部实现完成·尚未验收；重复 key、非终态、取消与 provider 资格已有定向覆盖，正式 renderer reload 仍待 S5-UX).
 
 ## 2. Execution and SQLite convergence
 
 - [x] 2.1 Add the production OpenAI-compatible Loop adapter behind Model Access; keep credential borrowing and origin/redirect checks inside the access layer. (局部实现完成·尚未验收；定向 Model Access/S2/S3 回归 23/23，Luna 语义审查通过；完整 J25/J24 仍待 S5-Integration)
-- [ ] 2.2 Connect target execution to Personal Context resolve, Intent Route Orchestrator, Agent Loop, controlled tools, budget enforcement, and the scheduler using real storage interfaces.
-- [ ] 2.3 Add the smallest migration or storage command needed to preserve request-to-route/target identity and restart terminalization without storing prompt text.
-- [ ] 2.4 Implement atomic interaction terminalization, result/schema validation, tool audit ordering, retry preservation, and late-generation rejection.
-- [ ] 2.5 Add runtime/storage/integration tests for minutes, QA, rules fallback, unsupported UI recipe, provider timeout, schema failure, budget exhaustion, cancellation, and replacement.
+- [x] 2.2 Connect target execution to Personal Context resolve, Intent Route Orchestrator, Agent Loop, controlled tools, budget enforcement, and the scheduler using real storage interfaces (实现完成·尚未验收；summary.minutes/qa.answer target runner 与 user claim filter 已接入，非 session scope 明确 fail closed，完整失败矩阵仍待 2.5).
+- [x] 2.3 Preserve request-to-route/target identity and restart terminalization without storing prompt text, and freeze the Personal Context projection revision through an additive v8 migration (实现完成·尚未验收；route/target client key、interaction digest、prompt 清理与 `personal_context_revision` 一致性 guard 已由定向测试覆盖).
+- [x] 2.4 Implement atomic interaction terminalization, result/schema validation, tool audit ordering, retry preservation, and late-generation rejection (实现完成·尚未验收；SQLite late-success rejection、取消与工具审计已有真实 storage 覆盖).
+- [ ] 2.5 Add runtime/storage/integration tests for minutes, QA, rules fallback, unsupported UI recipe, provider timeout, schema failure, budget exhaustion, cancellation, and replacement (局部实现完成·尚未验收；QA、rules fallback、timeout、schema/cancel 子集已有，minutes/export/replacement 仍待补齐).
 
 ## 3. Agent Bar and history
 

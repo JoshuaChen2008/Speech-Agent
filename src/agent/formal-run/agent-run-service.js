@@ -87,6 +87,15 @@ function publicEligibility (scope, eligibility, revision) {
   return okSnapshot({ scope, eligibility, next_action: null, revision })
 }
 
+function publicEligibilityFailure (nextAction = 'retry') {
+  return {
+    ...header(),
+    ok: false,
+    error: { category: 'unavailable', code: c.ERROR_CODES.unavailable, next_action: nextAction },
+    snapshot: null
+  }
+}
+
 function publicFailure (code = c.ERROR_CODES.unavailable, nextAction = 'retry') {
   return {
     ...header(),
@@ -165,6 +174,10 @@ function isTerminal (state) {
   return state === 'closed' || state === 'interrupted'
 }
 
+function isSupportedExecutionScope (scope) {
+  return scope?.kind === 'session'
+}
+
 function mapErrorCode (error) {
   const code = error?.code
   if (code === 'AGENT_REQUEST_INVALID') return 'invalid'
@@ -181,6 +194,8 @@ class AgentRunService {
     this.storage = options.storage
     this.modelAccess = options.modelAccess || null
     this.scheduler = options.scheduler || null
+    this.routeOrchestrator = options.routeOrchestrator || null
+    this.promptStore = options.promptStore instanceof Map ? options.promptStore : null
     this.now = typeof options.now === 'function' ? options.now : Date.now
     this.idFactory = typeof options.idFactory === 'function' ? options.idFactory : () => crypto.randomUUID()
     this.onChanged = typeof options.onChanged === 'function' ? options.onChanged : () => {}
@@ -258,6 +273,7 @@ class AgentRunService {
   async getEligibility (request) {
     try {
       c.assertGetEligibilityRequest(request)
+      if (!isSupportedExecutionScope(request.scope)) return publicEligibilityFailure('choose_supported_scope')
       const transcript = await this.storage.getSessionTranscript(request.scope.reference)
       const session = transcript?.session
       if (!session || !isTerminal(session.state)) return publicEligibility(request.scope, 'session_not_terminal', this.revision)
@@ -272,13 +288,14 @@ class AgentRunService {
       if (error?.code === 'SESSION_ACTIVE') return publicEligibility(request.scope, 'session_not_terminal', this.revision)
       if (error?.code === 'SESSION_NOT_FOUND') return publicEligibility(request.scope, 'no_committed_transcript', this.revision)
       if (error?.message === 'AGENT_REQUEST_INVALID' || error?.code === 'AGENT_REQUEST_INVALID') return { ...header(), ok: false, error: { category: 'invalid', code: c.ERROR_CODES.invalid, next_action: 'correct_input' }, snapshot: null }
-      return { ...header(), ok: false, error: { category: 'unavailable', code: c.ERROR_CODES.unavailable, next_action: 'retry' }, snapshot: null }
+      return publicEligibilityFailure('retry')
     }
   }
 
   async submit (request) {
     try {
       c.assertSubmitRequest(request)
+      if (!isSupportedExecutionScope(request.scope)) return publicFailure(c.ERROR_CODES.unavailable, 'choose_supported_scope')
       const eligibility = await this.getEligibility({ ...header(), scope: request.scope })
       if (!eligibility.ok || eligibility.snapshot?.eligibility !== 'ready') {
         return publicFailure(c.ERROR_CODES.unavailable, 'retry')
@@ -300,6 +317,34 @@ class AgentRunService {
       const requestKeyDigest = sha256Canonical(request.client_idempotency_key)
       const runId = `run.user.${requestKeyDigest.slice(0, 48)}`
       const interactionId = `interaction.user.${requestKeyDigest.slice(0, 44)}`
+      if (this.routeOrchestrator && typeof this.routeOrchestrator.submit === 'function') {
+        let routed
+        try {
+          routed = await this.routeOrchestrator.submit({
+            scope: request.scope,
+            prompt: request.prompt,
+            transcriptVersion: frozen.transcriptVersion,
+            inputWatermark,
+            inputDigest: frozen.inputDigest,
+            clientIdempotencyKey: request.client_idempotency_key,
+            signal: null
+          })
+        } catch (error) {
+          if (error?.code === 'AGENT_CANCELLED') return publicFailure(c.ERROR_CODES.unavailable, 'retry')
+          if (error?.code === 'AGENT_REQUEST_INVALID') return invalid()
+          return publicFailure(c.ERROR_CODES.unavailable, 'retry')
+        }
+        if (routed?.unsupported === true) return publicFailure(c.ERROR_CODES.unavailable, 'choose_supported_recipe')
+        if (routed?.eligibility !== 'ready' || typeof routed?.runId !== 'string' || typeof routed?.interactionId !== 'string') {
+          return publicFailure(c.ERROR_CODES.unavailable, 'retry')
+        }
+        if (this.promptStore && routed.state !== 'succeeded' && routed.state !== 'failed' && routed.state !== 'cancelled') {
+          this.promptStore.set(routed.runId, request.prompt)
+        }
+        if (this.scheduler && typeof this.scheduler.wake === 'function') this.scheduler.wake('submit')
+        if (routed.replayed !== true) this.emitChanged()
+        return projectSubmit(routed, routed.interactionId, routed.recipeId, routed.routingMode, this.revision)
+      }
       const run = await this.storage.createAgentRun({
         runId,
         recipeId: route.recipeId,
@@ -335,6 +380,7 @@ class AgentRunService {
         await this.storage.cancelAgentRun({ runId: run.runId }).catch(() => {})
         return publicFailure(c.ERROR_CODES.unavailable, error?.code === 'AGENT_PROVIDER_AUTH_FAILED' ? 'settings' : 'retry')
       }
+      if (this.promptStore && typeof request.prompt === 'string') this.promptStore.set(run.runId, request.prompt)
       if (this.scheduler && typeof this.scheduler.wake === 'function') this.scheduler.wake('submit')
       if (run?.replayed !== true) this.emitChanged()
       return projectSubmit(run, interactionId, route.recipeId, route.routingMode, this.revision)
@@ -354,6 +400,8 @@ class AgentRunService {
       const runId = detail?.interaction?.runId || detail?.interaction?.run_id || detail?.runId
       if (typeof runId !== 'string') return publicFailure()
       const run = await this.storage.cancelAgentRun({ runId })
+      if (this.scheduler && typeof this.scheduler.cancel === 'function') this.scheduler.cancel(runId)
+      if (run?.state === 'cancelled' && this.promptStore) this.promptStore.delete(runId)
       if (run?.replayed !== true) this.emitChanged()
       return c.assertCancelResponse({ ...header(), ok: true, error: null, result: {
         interaction_id: request.interaction_id,

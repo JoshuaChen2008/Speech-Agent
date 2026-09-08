@@ -13,6 +13,8 @@ class FormalAgentJobScheduler {
     if (!options.runner || typeof options.runner.run !== 'function') throw new TypeError('runner is required')
     this.storage = options.storage
     this.runner = options.runner
+    this.requestedBy = options.requestedBy === undefined ? 'automatic' : options.requestedBy
+    if (!['automatic', 'user'].includes(this.requestedBy)) throw new TypeError('requestedBy is invalid')
     this.owner = typeof options.owner === 'string' && options.owner.length > 0 ? options.owner : `scheduler.${crypto.randomUUID()}`
     this.leaseMs = Number.isSafeInteger(options.leaseMs) && options.leaseMs > 0 ? options.leaseMs : 30000
     this.retryMs = Number.isSafeInteger(options.retryMs) && options.retryMs > 0 ? options.retryMs : 1000
@@ -30,6 +32,7 @@ class FormalAgentJobScheduler {
     this.timer = null
     this.pendingClaim = null
     this.activeController = null
+    this.activeRunId = null
     this.claimSequence = 0
   }
 
@@ -58,7 +61,15 @@ class FormalAgentJobScheduler {
     this.pendingClaim = null
     if (this.activeController) this.activeController.abort()
     this.activeController = null
+    this.activeRunId = null
     this.cancelTimer()
+  }
+
+  cancel (runId) {
+    if (typeof runId !== 'string' || runId.length === 0) return false
+    if (this.activeRunId !== runId || !this.activeController) return false
+    this.activeController.abort()
+    return true
   }
 
   scheduleDrain (generation) {
@@ -78,11 +89,16 @@ class FormalAgentJobScheduler {
   nextClaimIdentity () {
     if (!this.pendingClaim) {
       this.claimSequence += 1
-      this.pendingClaim = Object.freeze({
+      const identity = {
         claimIdempotencyKey: `${this.owner}.${this.claimSequence}`,
         owner: this.owner,
         leaseMs: this.leaseMs
-      })
+      }
+      /* Preserve the original automatic claim shape for the S1 scheduler.
+         User work is filtered in storage with an explicit requestor so the
+         two schedulers cannot wake each other into a spin loop. */
+      if (this.requestedBy !== 'automatic') identity.requestedBy = this.requestedBy
+      this.pendingClaim = Object.freeze(identity)
     }
     return this.pendingClaim
   }
@@ -106,18 +122,22 @@ class FormalAgentJobScheduler {
         if (job) {
           const controller = new AbortController()
           this.activeController = controller
+          this.activeRunId = typeof job.runId === 'string' ? job.runId : job.attemptIdentity?.runId || null
           try {
             await this.runner.run({ ...job, signal: controller.signal })
           } catch {
             this.diagnostic()
           } finally {
             if (this.activeController === controller) this.activeController = null
+            if (this.activeController === null) this.activeRunId = null
           }
           continue
         }
         let nextAt
         try {
-          nextAt = await this.storage.nextFormalAgentRunAt()
+          nextAt = await this.storage.nextFormalAgentRunAt(
+            this.requestedBy === 'automatic' ? undefined : { requestedBy: this.requestedBy }
+          )
         } catch {
           this.diagnostic()
           this.arm(this.retryMs, generation)

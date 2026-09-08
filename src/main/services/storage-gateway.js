@@ -463,8 +463,8 @@ class StorageGateway {
     return this.enqueue('claimNextFormalAgentRun', request)
   }
 
-  nextFormalAgentRunAt () {
-    return this.enqueue('nextFormalAgentRunAt', {})
+  nextFormalAgentRunAt (request = {}) {
+    return this.enqueue('nextFormalAgentRunAt', request)
   }
 
   completeFormalAgentRun (request) {
@@ -565,7 +565,7 @@ class StorageGateway {
       case 'readPersonalContextToolContext': return host.readPersonalContextToolContext(item.payload)
       case 'commitPersonalContextSessionIngest': return host.commitPersonalContextSessionIngest(item.payload)
       case 'claimNextFormalAgentRun': return host.claimNextFormalAgentRun(item.payload)
-      case 'nextFormalAgentRunAt': return host.nextFormalAgentRunAt()
+      case 'nextFormalAgentRunAt': return host.nextFormalAgentRunAt(item.payload)
       case 'completeFormalAgentRun': return host.completeFormalAgentRun(item.payload)
       case 'failFormalAgentRun': return host.failFormalAgentRun(item.payload)
       case 'createAgentRun': return host.createAgentRun(item.payload)

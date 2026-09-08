@@ -55,18 +55,24 @@ class IntentRouteOrchestrator {
     if (!options.interactions || typeof options.interactions.create !== 'function' || typeof options.interactions.terminalize !== 'function') {
       throw new TypeError('interaction commands are required')
     }
-    if (!options.loop || typeof options.loop.agentLoop !== 'function') throw new TypeError('loop.agentLoop is required')
+    if ((!options.loop || typeof options.loop.agentLoop !== 'function') && typeof options.loopFactory !== 'function') {
+      throw new TypeError('loop or loopFactory is required')
+    }
     this.runs = options.runs
     this.modelAccess = options.modelAccess
     this.interactions = options.interactions
-    this.loop = options.loop
+    this.loop = options.loop || null
+    this.loopFactory = typeof options.loopFactory === 'function' ? options.loopFactory : null
     this.eligibility = typeof options.eligibility === 'function' ? options.eligibility : async () => 'ready'
     this.resolveModel = typeof options.resolveModel === 'function' ? options.resolveModel : async (binding) => binding
     this.idFactory = typeof options.idFactory === 'function' ? options.idFactory : () => crypto.randomUUID()
+    this.allowedTargetRecipes = options.allowedTargetRecipes
+      ? new Set(options.allowedTargetRecipes)
+      : null
   }
 
-  nextId (prefix) {
-    return idValue(this.idFactory(), `${prefix}.${Date.now().toString(36)}`)
+  nextId (prefix, stableKey = undefined) {
+    return idValue(this.idFactory(prefix, stableKey), `${prefix}.${Date.now().toString(36)}`)
   }
 
   async submit (input) {
@@ -87,8 +93,8 @@ class IntentRouteOrchestrator {
 
   async runRoute (input) {
     const promptDigest = sha256Canonical(input.prompt)
-    const routeRunId = this.nextId('run.route')
-    const routeInteractionId = this.nextId('interaction.route')
+    const routeRunId = this.nextId('run.route', input.clientIdempotencyKey)
+    const routeInteractionId = this.nextId('interaction.route', input.clientIdempotencyKey)
     const routeRun = await this.runs.create({
       runId: routeRunId, recipeId: 'intent.route', recipeVersion: '1', scope: input.scope,
       transcriptVersion: input.transcriptVersion, inputWatermark: input.inputWatermark,
@@ -96,11 +102,29 @@ class IntentRouteOrchestrator {
     })
     let interactionCreated = false
     try {
+      if (routeRun.replayed && typeof this.runs.getInteraction === 'function') {
+        const existing = await this.runs.getInteraction({ interactionId: routeInteractionId })
+        const interaction = existing?.interaction || existing
+        if (interaction?.terminalReason === 'cancelled') {
+          const cancelled = new Error('AGENT_CANCELLED')
+          cancelled.code = 'AGENT_CANCELLED'
+          throw cancelled
+        }
+        if (interaction?.terminalReason === 'succeeded') {
+          const selected = routeTarget(interaction.result)
+          if (selected) return this.createTarget(input, selected, 'model', 'ready')
+        }
+        if (interaction?.terminalReason === 'failed') {
+          return this.createTarget(input, deterministicRoute({ scope: input.scope, prompt: input.prompt }).recipeId, 'rules', 'ready')
+        }
+      }
       const binding = await this.modelAccess.bind({ runId: routeRun.runId, recipeId: 'intent.route', recipeVersion: '1', executionForm: 'agent_loop' })
       await this.interactions.create({ runId: routeRun.runId, interactionId: routeInteractionId, routingMode: 'model', promptDigest })
       interactionCreated = true
       const resolvedModel = await this.resolveModel(binding)
-      const result = await this.loop.agentLoop({
+      const loop = this.loopFactory ? await this.loopFactory(binding) : this.loop
+      if (!loop || typeof loop.agentLoop !== 'function') throw invalid('route loop is unavailable')
+      const result = await loop.agentLoop({
         recipeId: 'intent.route', recipeVersion: '1', prompt: input.prompt,
         resolvedModel, signal: input.signal, usageReporting: binding?.capabilities?.usageReporting !== false
       })
@@ -150,8 +174,11 @@ class IntentRouteOrchestrator {
   async createTarget (input, recipeId, routingMode, eligibility = 'ready') {
     assertTargetRecipe(recipeId)
     if (eligibility !== 'ready') return { runId: null, interactionId: null, recipeId, routingMode, eligibility }
-    const runId = this.nextId('run.target')
-    const interactionId = this.nextId('interaction.target')
+    if (this.allowedTargetRecipes && !this.allowedTargetRecipes.has(recipeId)) {
+      return { runId: null, interactionId: null, recipeId, routingMode, eligibility: 'ready', unsupported: true }
+    }
+    const runId = this.nextId('run.target', input.clientIdempotencyKey)
+    const interactionId = this.nextId('interaction.target', input.clientIdempotencyKey)
     const run = await this.runs.create({
       runId, recipeId, recipeVersion: '1', scope: input.scope,
       transcriptVersion: input.transcriptVersion, inputWatermark: input.inputWatermark,
@@ -159,7 +186,16 @@ class IntentRouteOrchestrator {
     })
     const binding = await this.modelAccess.bind({ runId: run.runId, recipeId, recipeVersion: '1', executionForm: 'agent_loop' })
     await this.interactions.create({ runId: run.runId, interactionId, routingMode, promptDigest: sha256Canonical(input.prompt) })
-    return { runId: run.runId, interactionId, recipeId, routingMode, eligibility: 'ready', binding }
+    return {
+      runId: run.runId,
+      interactionId,
+      recipeId,
+      routingMode,
+      eligibility: 'ready',
+      state: run.state,
+      replayed: run.replayed === true,
+      binding
+    }
   }
 
   async reselect (input) {

@@ -101,6 +101,36 @@ test('S5-1 eligibility distinguishes terminal transcript and model readiness', a
   assert.equal(result.snapshot.next_action, null)
 })
 
+test('S5-1/J22: unsupported non-session scopes fail closed before transcript or run creation', async () => {
+  let transcriptReads = 0
+  let runCreates = 0
+  const storage = storageWith([])
+  storage.getSessionTranscript = async () => {
+    transcriptReads += 1
+    throw new Error('unsupported scope should not read a transcript')
+  }
+  storage.createAgentRun = async () => {
+    runCreates += 1
+    throw new Error('unsupported scope should not create a run')
+  }
+  const service = new AgentRunService({ storage })
+  for (const kind of ['selection', 'date_range', 'project']) {
+    const scope = { kind, reference: `${kind}.unsupported` }
+    const eligibility = await service.getEligibility(header({ scope }))
+    assert.equal(eligibility.ok, false)
+    assert.equal(eligibility.error.code, c.ERROR_CODES.unavailable)
+    assert.equal(eligibility.error.next_action, 'choose_supported_scope')
+    const submitted = await service.submit(header({
+      scope, prompt: 'x', client_idempotency_key: `client.${kind}.unsupported`
+    }))
+    assert.equal(submitted.ok, false)
+    assert.equal(submitted.error.code, c.ERROR_CODES.unavailable)
+    assert.equal(submitted.error.next_action, 'choose_supported_scope')
+  }
+  assert.equal(transcriptReads, 0)
+  assert.equal(runCreates, 0)
+})
+
 test('S5-2 submit freezes one rules-routed request and replays the same interaction', async () => {
   const h = header({ scope: { kind: 'session', reference: 'session.submit' }, prompt: '请整理会议纪要', client_idempotency_key: 'client.submit' })
   const created = []
@@ -142,6 +172,79 @@ test('S5-2 submit freezes one rules-routed request and replays the same interact
   const changedPrompt = await service.submit({ ...h, prompt: '换一个问题' })
   assert.equal(changedPrompt.ok, false)
   assert.equal(changedPrompt.error.code, c.ERROR_CODES.invalid)
+})
+
+test('S5-2/J22: submit delegates model-first convergence while keeping prompt and scheduling main-owned', async () => {
+  const h = header({ scope: { kind: 'session', reference: 'session.route-service' }, prompt: '请整理会议纪要', client_idempotency_key: 'client.route-service' })
+  const storage = storageWith([], {
+    sessionId: 'session.route-service',
+    value: { session: { state: 'closed' }, segments: [{ segmentId: 'segment.1', firstEventOrder: 1, text: 'hello' }] }
+  })
+  storage.derivePersonalContextSessionSource = async () => ({
+    sourceKind: 'session', sessionId: 'session.route-service', transcriptVersion: 'raw', inputWatermark: 1,
+    inputDigest: 'c'.repeat(64)
+  })
+  const routeCalls = []
+  const wakes = []
+  const prompts = new Map()
+  const service = new AgentRunService({
+    storage,
+    modelAccess: {
+      catalog: async () => ({ ok: true, snapshot: { readinessByPurpose: { summary: { agentLoop: 'ready' } } } })
+    },
+    routeOrchestrator: {
+      submit: async (request) => {
+        routeCalls.push(request)
+        return { runId: 'run.target.route-service', interactionId: 'interaction.target.route-service', recipeId: 'summary.minutes', routingMode: 'model', eligibility: 'ready' }
+      }
+    },
+    scheduler: { wake: (reason) => wakes.push(reason) },
+    promptStore: prompts
+  })
+  const result = await service.submit(h)
+  assert.equal(result.ok, true)
+  assert.equal(result.result.routing_mode, 'model')
+  assert.deepEqual(routeCalls[0], {
+    scope: h.scope,
+    prompt: h.prompt,
+    transcriptVersion: 'raw',
+    inputWatermark: { throughEventOrder: 1 },
+    inputDigest: 'c'.repeat(64),
+    clientIdempotencyKey: h.client_idempotency_key,
+    signal: null
+  })
+  assert.equal(prompts.get('run.target.route-service'), h.prompt)
+  assert.deepEqual(wakes, ['submit'])
+})
+
+test('S5-2/J22: model-first idempotency mismatch remains an invalid request', async () => {
+  const storage = storageWith([], {
+    sessionId: 'session.route-mismatch',
+    value: { session: { state: 'closed' }, segments: [{ segmentId: 'segment.1', firstEventOrder: 1, text: 'hello' }] }
+  })
+  storage.derivePersonalContextSessionSource = async () => ({
+    sourceKind: 'session', sessionId: 'session.route-mismatch', transcriptVersion: 'raw', inputWatermark: 1,
+    inputDigest: 'd'.repeat(64)
+  })
+  const service = new AgentRunService({
+    storage,
+    modelAccess: {
+      catalog: async () => ({ ok: true, snapshot: { readinessByPurpose: { summary: { agentLoop: 'ready' } } } })
+    },
+    routeOrchestrator: {
+      submit: async ({ prompt }) => {
+        if (prompt === '第二个问题') {
+          const error = new Error('AGENT_REQUEST_INVALID'); error.code = 'AGENT_REQUEST_INVALID'; throw error
+        }
+        return { runId: 'run.target.route-mismatch', interactionId: 'interaction.target.route-mismatch', recipeId: 'qa.answer', routingMode: 'rules', eligibility: 'ready', state: 'queued' }
+      }
+    }
+  })
+  const first = await service.submit({ ...header({ scope: { kind: 'session', reference: 'session.route-mismatch' }, prompt: '第一个问题', client_idempotency_key: 'client.route-mismatch' }) })
+  const second = await service.submit({ ...header({ scope: { kind: 'session', reference: 'session.route-mismatch' }, prompt: '第二个问题', client_idempotency_key: 'client.route-mismatch' }) })
+  assert.equal(first.ok, true)
+  assert.equal(second.ok, false)
+  assert.equal(second.error.category, 'invalid')
 })
 
 test('S5-2 cancel and detail preserve running/cancelling state projections', async () => {

@@ -91,3 +91,26 @@ test('SEM-F29/SEM-F16/J22: reselect cancels the current run before creating a ne
   assert.equal(harnessed.calls[0][0], 'run.cancel')
   assert.equal(harnessed.calls.some(([name, request]) => name === 'run.create' && request.recipeId === 'plan.proposal'), true)
 })
+
+test('SEM-F16/SEM-F28/J22: loopFactory is a supported production seam and stable client keys reuse route identities', async () => {
+  const first = harness()
+  const binding = { modelId: 'model.test', capabilities: { usageReporting: true } }
+  let factoryCalls = 0
+  const loopFactoryOrchestrator = new IntentRouteOrchestrator({
+    runs: first.orchestrator.runs,
+    modelAccess: { bind: async () => binding },
+    interactions: first.orchestrator.interactions,
+    loopFactory: async () => {
+      factoryCalls += 1
+      return { agentLoop: async () => ({ result: { recipeId: 'qa.answer', confidence: 0.8 }, usage: null }) }
+    },
+    idFactory: (prefix, key) => `${prefix}.${key || 'missing'}`
+  })
+  const result = await loopFactoryOrchestrator.submit(base)
+  assert.equal(result.recipeId, 'qa.answer')
+  assert.equal(factoryCalls, 1)
+  const route = first.calls.find(([name, request]) => name === 'run.create' && request.recipeId === 'intent.route')
+  const target = first.calls.find(([name, request]) => name === 'run.create' && request.recipeId === 'qa.answer')
+  assert.equal(route[1].runId, `run.route.${base.clientIdempotencyKey}`)
+  assert.equal(target[1].runId, `run.target.${base.clientIdempotencyKey}`)
+})

@@ -13,6 +13,7 @@ const {
   PersonalContextStore,
   normalizeSemanticKey
 } = require('../../src/runtime/storage-worker/personal-context-store')
+const { AgentExecutionStore } = require('../../src/runtime/storage-worker/agent-execution-store')
 const { FormalAgentStore } = require('../../src/runtime/storage-worker/formal-agent-store')
 const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
@@ -111,6 +112,25 @@ test('SEM-F26/SEM-F30/J21: ingest rereads a terminal source and replays one boun
   assert.doesNotMatch(summary, /synthetic committed/)
   assert.throws(
     () => store.ingest({ ...source, inputDigest: 'f'.repeat(64) }),
+    (error) => error?.code === 'AGENT_INPUT_CHANGED'
+  )
+})
+
+test('SEM-F28/SEM-F34/J22: user tool context rejects a newer personal-context projection revision', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  terminalSession(subtitleStore)
+  const source = frozenSource(subtitleStore.database)
+  const execution = new AgentExecutionStore({ subtitleStore, now: () => 1000 })
+  const run = execution.createRun({
+    runId: 'run.user.context-snapshot', recipeId: 'qa.answer', recipeVersion: '1',
+    scope: { kind: 'session', reference: 'session-1' }, transcriptVersion: 'raw',
+    inputWatermark: { throughEventOrder: source.inputWatermark }, inputDigest: source.inputDigest,
+    requestedBy: 'user', clientIdempotencyKey: 'client.user.context-snapshot'
+  })
+  assert.deepEqual(store.readToolContext({ runId: run.runId }).entries, [])
+  store.manage({ expected_revision: 0, type: 'remember', entry: entry('Revision changes after submit') })
+  assert.throws(
+    () => store.readToolContext({ runId: run.runId }),
     (error) => error?.code === 'AGENT_INPUT_CHANGED'
   )
 })
@@ -558,6 +578,36 @@ test('SEM-F28/SEM-F30/J21: a controlled v5 run replays one claim attempt and set
   assert.equal(replacement.claimNextFormalRun({
     claimIdempotencyKey: 'claim.scheduled.2', owner: 'owner.replacement', leaseMs: 5000
   }), null)
+})
+
+test('SEM-F28/J22/J24: formal claim filters user target recipes without changing the automatic claim contract', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  terminalSession(subtitleStore, 'session-user-claim')
+  const source = frozenSource(subtitleStore.database, 'session-user-claim')
+  const runId = 'run.user.claim'
+  const scope = { kind: 'session', reference: source.sessionId }
+  subtitleStore.database.prepare(`
+    INSERT INTO formal_agent_runs(
+      run_id, dedupe_key, client_idempotency_key, request_digest, recipe_id, recipe_version,
+      scope_json, scope_digest, transcript_version, input_watermark_json, input_digest,
+      requested_by, state, attempt_count, max_attempts, next_attempt_at,
+      lease_owner, lease_expires_at, lease_renewed_from_expires_at, cancel_requested_at,
+      error_code, result_digest, result_summary_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'qa.answer', '1', ?, ?, 'raw', ?, ?,
+      'user', 'queued', 0, 3, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 1000, 1000)
+  `).run(
+    runId, 'a'.repeat(64), 'client.user.claim', 'b'.repeat(64), canonicalize(scope), sha256Canonical(scope),
+    canonicalize({ throughEventOrder: source.inputWatermark }), source.inputDigest
+  )
+  assert.equal(store.claimNextFormalRun({ claimIdempotencyKey: 'claim.automatic.only', owner: 'owner.automatic', leaseMs: 1000 }), null)
+  const claim = store.claimNextFormalRun({
+    claimIdempotencyKey: 'claim.user.only', owner: 'owner.user', leaseMs: 1000, requestedBy: 'user'
+  })
+  assert.equal(claim.runId, runId)
+  assert.equal(claim.recipeId, 'qa.answer')
+  assert.equal(claim.requestedBy, 'user')
+  assert.equal(claim.interactionId, null)
+  assert.equal(subtitleStore.database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get(runId).state, 'running')
 })
 
 test('SEM-F30/J21: resolve keeps ready terminal scope while reporting selection tails and excluded sessions', (t) => {

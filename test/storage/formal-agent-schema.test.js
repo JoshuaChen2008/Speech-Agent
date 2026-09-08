@@ -42,7 +42,7 @@ function appendFinal (store, sessionId, text) {
   store.closeSession({ sessionId, sourceId: 'loopback', endedAt: 200, state: 'closed' })
 }
 
-test('DB7 / ADR 0010 / J21/J25 upgrades subtitle v2 through formal Agent v6 without changing subtitle facts', (t) => {
+test('DB7 / ADR 0010 / J21/J25 upgrades subtitle v2 through formal Agent v8 without changing subtitle facts', (t) => {
   const databasePath = path.join(tempRoot(t), 'formal.sqlite3')
   const base = new SqliteSubtitleStore({ databasePath, now: () => 1000 })
   appendFinal(base, 'formal-upgrade', 'synthetic committed transcript')
@@ -213,8 +213,8 @@ test('DB7 formal Agent constraints reject candidate task semantics and sensitive
   }
 })
 
-test('SEM-F28/SEM-F34/DB7/J22/J24: v7 adds exact interaction, tool-call and presentation facts with four registered indexes', (t) => {
-  const databasePath = path.join(tempRoot(t), 'formal-v7.sqlite3')
+test('SEM-F28/SEM-F34/DB7/J22/J24: v7/v8 add interaction facts and the context snapshot revision', (t) => {
+  const databasePath = path.join(tempRoot(t), 'formal-v7-v8.sqlite3')
   const v6 = new SqliteSubtitleStore({
     databasePath,
     now: () => 1000,
@@ -227,8 +227,8 @@ test('SEM-F28/SEM-F34/DB7/J22/J24: v7 adds exact interaction, tool-call and pres
 
   const store = new SqliteSubtitleStore({ databasePath, now: () => 2000, migrations: FORMAL_AGENT_MIGRATIONS })
   try {
-    assert.equal(FORMAL_AGENT_SCHEMA_VERSION, 7)
-    assert.equal(Number(store.database.prepare('PRAGMA user_version').get().user_version), 7)
+    assert.equal(FORMAL_AGENT_SCHEMA_VERSION, 8)
+    assert.equal(Number(store.database.prepare('PRAGMA user_version').get().user_version), 8)
     assert.equal(store.database.prepare('SELECT COUNT(*) AS count FROM caption_events').get().count, before)
     assert.deepEqual(
       store.database.prepare('SELECT version, checksum FROM schema_migrations WHERE version <= 6 ORDER BY version').all(),
@@ -248,6 +248,11 @@ test('SEM-F28/SEM-F34/DB7/J22/J24: v7 adds exact interaction, tool-call and pres
     assert.deepEqual(store.database.prepare('PRAGMA table_info(formal_agent_report_presentations)').all().map((row) => row.name), [
       'session_id', 'run_id', 'presented_at', 'created_at'
     ])
+    assert.equal(
+      store.database.prepare('PRAGMA table_info(formal_agent_runs)').all()
+        .some((row) => row.name === 'personal_context_revision'),
+      true
+    )
     assert.equal(store.database.prepare('PRAGMA table_info(session_deletion_tombstones)').all().some((row) => row.name === 'deleted_report_presentation_count'), true)
     for (const table of ['formal_agent_interactions', 'formal_agent_tool_calls', 'formal_agent_report_presentations']) {
       const tableInfo = store.database.prepare('PRAGMA table_list').all().find((row) => row.name === table)

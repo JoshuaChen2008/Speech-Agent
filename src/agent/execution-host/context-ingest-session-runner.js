@@ -188,8 +188,9 @@ class ContextIngestSessionRunner {
   }
 
   async runS3 (job) {
-    exactObject(job, ['recipeId', 'source', 'attemptIdentity'], ['interactionId', 'signal', 'runId'])
+    exactObject(job, ['recipeId', 'source', 'attemptIdentity'], ['interactionId', 'requestedBy', 'signal', 'runId'])
     if (job.recipeId !== 'context.ingest.session') throw codedError('AGENT_REQUEST_INVALID')
+    if (job.requestedBy !== undefined && job.requestedBy !== 'automatic') throw codedError('AGENT_REQUEST_INVALID')
     const attemptIdentity = job.attemptIdentity
     if (job.runId !== undefined && job.runId !== attemptIdentity.runId) throw codedError('AGENT_REQUEST_INVALID')
     const interactionId = job.interactionId || this.nextInteractionId(attemptIdentity.runId)

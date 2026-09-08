@@ -12,6 +12,7 @@ const {
   screen
 } = require('electron')
 const path = require('node:path')
+const crypto = require('node:crypto')
 const config = require('./config')
 const CHANNELS = require('./main/ipc/channels')
 const {
@@ -52,6 +53,7 @@ const { registerAgentRunIpc } = require('./main/ipc/agent-run-ipc')
 const agentRunUi = require('./agent/contracts/agent-run-ui')
 const { AgentRunService } = require('./agent/formal-run/agent-run-service')
 const { sanitizedEnvironment } = require('./agent/model-access/environment')
+const { sha256Canonical } = require('./runtime/storage-worker/canonical-json')
 const { createMainEvidenceBridge } = require('./main/services/electron-exit-evidence')
 const { PowerSessionGuard } = require('./main/services/power-session-guard')
 const {
@@ -113,6 +115,9 @@ for (const key of Object.keys(process.env)) {
 /** @type {null | import('./agent/model-access/credential-vault').CredentialVault} */ let modelAccessVault = null
 /** @type {null | import('./agent/model-access/remote-catalog-controller').RemoteModelCatalogPullController} */ let remoteModelCatalogController = null
 /** @type {null | AgentRunService} */ let formalAgentService = null
+/** @type {null | { start: Function, stop: Function, wake: Function, cancel: Function }} */ let formalAgentScheduler = null
+/** @type {null | { submit: Function }} */ let formalRouteOrchestrator = null
+const formalAgentPrompts = new Map()
 
 let quitBarrierComplete = false
 let quitBarrierPromise = null
@@ -1182,9 +1187,69 @@ async function bootstrapApplication () {
     console.error('[agent.model-access] MODEL_ACCESS_UNAVAILABLE')
   }
   try {
+    const { AgentLoopExecutor, IntentRouteOrchestrator } = require('./agent/execution-host')
+    if (!modelAccessRuntime || typeof modelAccessRuntime.createLoopAdapter !== 'function') {
+      throw new Error('intent route model access is unavailable')
+    }
+    const gateway = applicationRuntime.gateway
+    formalRouteOrchestrator = new IntentRouteOrchestrator({
+      runs: {
+        create: (request) => gateway.createAgentRun(request),
+        cancel: (request) => gateway.cancelAgentRun(request),
+        getInteraction: (request) => gateway.getAgentInteraction(request)
+      },
+      modelAccess: modelAccessRuntime,
+      interactions: {
+        create: (request) => gateway.createAgentInteraction(request),
+        terminalize: (request) => gateway.terminalizeAgentInteraction(request)
+      },
+      loopFactory: (binding) => new AgentLoopExecutor({
+        adapter: modelAccessRuntime.createLoopAdapter(binding)
+      }),
+      allowedTargetRecipes: ['summary.minutes', 'qa.answer'],
+      idFactory: (prefix, stableKey) => {
+        const identity = stableKey === undefined ? crypto.randomUUID() : stableKey
+        return `${prefix}.${sha256Canonical(identity).slice(0, 48)}`
+      }
+    })
+  } catch (error) {
+    formalRouteOrchestrator = null
+    console.error(`[agent.route] ${error instanceof Error ? error.message : 'AGENT_ROUTE_UNAVAILABLE'}`)
+  }
+  try {
+    const { FormalAgentRunRunner, FormalAgentJobScheduler } = require('./agent/execution-host')
+    const executionAdapter = personalContextRuntime?.executionAdapter
+    if (!executionAdapter || !modelAccessRuntime) throw new Error('formal Agent execution dependencies are unavailable')
+    const runner = new FormalAgentRunRunner({
+      storage: applicationRuntime.gateway,
+      personalContext: executionAdapter,
+      modelAccess: modelAccessRuntime,
+      promptProvider: (runId) => formalAgentPrompts.get(runId) || null,
+      onSettled: (runId) => formalAgentPrompts.delete(runId),
+      interactions: {
+        terminalize: (request) => applicationRuntime.gateway.terminalizeAgentInteraction(request),
+        startToolCall: (request) => applicationRuntime.gateway.startAgentToolCall(request),
+        finishToolCall: (request) => applicationRuntime.gateway.finishAgentToolCall(request)
+      }
+    })
+    formalAgentScheduler = new FormalAgentJobScheduler({
+      storage: applicationRuntime.gateway,
+      runner,
+      requestedBy: 'user',
+      onDiagnostic: () => console.error('[agent.scheduler] AGENT_SCHEDULER_FAILED')
+    })
+    formalAgentScheduler.start()
+  } catch (error) {
+    formalAgentScheduler = null
+    console.error(`[agent.run] ${error instanceof Error ? error.message : 'AGENT_RUN_UNAVAILABLE'}`)
+  }
+  try {
     formalAgentService = new AgentRunService({
       storage: applicationRuntime.gateway,
       modelAccess: modelAccessRuntime,
+      scheduler: formalAgentScheduler,
+      routeOrchestrator: formalRouteOrchestrator,
+      promptStore: formalAgentPrompts,
       onChanged: broadcastAgentRunChanged
     })
   } catch (error) {
@@ -1237,10 +1302,16 @@ function beginQuitBarrier (event) {
       try { await personalContextRuntime.stop() } catch { console.error('[agent.scheduler] AGENT_SCHEDULER_FAILED') }
       personalContextRuntime = null
     }
+    if (formalAgentScheduler) {
+      try { await formalAgentScheduler.stop() } catch { console.error('[agent.scheduler] AGENT_SCHEDULER_FAILED') }
+      formalAgentScheduler = null
+    }
+    formalAgentPrompts.clear()
     if (modelAccessRuntime) {
       modelAccessRuntime = null
       remoteModelCatalogController = null
     }
+    formalRouteOrchestrator = null
     formalAgentService = null
     if (modelAccessVault) {
       try { modelAccessVault.close() } catch {}

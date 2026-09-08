@@ -158,6 +158,26 @@ test('SEM-F28/SEM-T04/J22/J24: scheduler stop aborts an active Agent attempt wit
   assert.equal(signal.aborted, true)
 })
 
+test('SEM-F28/J22/J24: user scheduler scopes claims and wakeups to user recipes', async () => {
+  const claims = []
+  const nextRequests = []
+  const scheduler = new FormalAgentJobScheduler({
+    storage: {
+      claimNextFormalAgentRun: async (request) => { claims.push(request); return null },
+      nextFormalAgentRunAt: async (request) => { nextRequests.push(request); return null }
+    },
+    runner: { run: async () => null },
+    owner: 'scheduler.user', requestedBy: 'user', queueMicrotask: (callback) => callback()
+  })
+  scheduler.start()
+  await new Promise((resolve) => setImmediate(resolve))
+  await scheduler.stop()
+  assert.deepEqual(claims[0], {
+    claimIdempotencyKey: 'scheduler.user.1', owner: 'scheduler.user', leaseMs: 30000, requestedBy: 'user'
+  })
+  assert.deepEqual(nextRequests, [{ requestedBy: 'user' }])
+})
+
 test('SEM-F28/SEM-F30/J21: context ingest runner settles one frozen attempt without exposing failures', async () => {
   const settlements = []
   const source = { sourceKind: 'session', sessionId: 'session.1' }

@@ -353,21 +353,28 @@ class AgentExecutionStore {
         return rowRun(byClient, true)
       }
       const now = this.nowValue()
+      const revisionRow = this.database.prepare(`
+        SELECT content_revision FROM personal_context_projection_state WHERE singleton_key = 1
+      `).get()
+      const personalContextRevision = Number(revisionRow?.content_revision)
+      if (!Number.isSafeInteger(personalContextRevision) || personalContextRevision < 0) {
+        fail('STORAGE_COMMAND_FAILED')
+      }
       this.database.prepare(`
         INSERT INTO formal_agent_runs(
           run_id, dedupe_key, client_idempotency_key, request_digest,
           recipe_id, recipe_version, scope_json, scope_digest, transcript_version,
-          input_watermark_json, input_digest, requested_by, state, attempt_count,
+          input_watermark_json, input_digest, personal_context_revision, requested_by, state, attempt_count,
           max_attempts, next_attempt_at, lease_owner, lease_expires_at,
           lease_renewed_from_expires_at, cancel_requested_at, error_code,
           result_digest, result_summary_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, 3, ?, NULL, NULL,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, 3, ?, NULL, NULL,
           NULL, NULL, NULL, NULL, NULL, ?, ?)
       `).run(
         runId, dedupeKey, input.clientIdempotencyKey, requestDigest,
         recipe.recipeId, recipe.recipeVersion, canonicalize(scope), scopeDigest,
         input.transcriptVersion, canonicalize(inputWatermark), input.inputDigest,
-        input.requestedBy, now, now, now
+        personalContextRevision, input.requestedBy, now, now, now
       )
       return rowRun(this.database.prepare('SELECT * FROM formal_agent_runs WHERE run_id=?').get(runId))
     })
@@ -494,6 +501,10 @@ class AgentExecutionStore {
       }
       if (input.usage !== null && JSON.parse(binding.row.capability_json).usageReporting !== true) fail('AGENT_REQUEST_INVALID')
       if (terminalReason === 'succeeded') {
+        /* A running request may receive a provider result after the user has
+           requested cancellation.  The cancellation fact is authoritative;
+           do not allow that late result to rewrite the run into success. */
+        if (run.cancel_requested_at !== null) fail('AGENT_INTERACTION_STATE_CONFLICT')
         try { validateRecipeOutput(row.recipe_id, row.recipe_version, input.result) } catch (error) {
           if (error.code === 'AGENT_OUTPUT_INVALID') fail('AGENT_OUTPUT_INVALID')
           fail('AGENT_OUTPUT_INVALID')

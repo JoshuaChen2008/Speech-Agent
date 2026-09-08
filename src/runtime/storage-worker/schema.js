@@ -1182,6 +1182,18 @@ CREATE INDEX personal_context_episodes_page
   ON personal_context_episodes(lifecycle, updated_at DESC, episode_id);
 `
 
+/* SEM-F28 / J22/J24: v8 freezes the personal-context projection revision on
+   every formal run.  The revision is a bounded invalidation token: execution
+   must not read a newer personal-context projection than the one observed when
+   the run was created.  This is additive so all v1-v7 checksums remain exact. */
+const AGENT_CONTEXT_SNAPSHOT_SCHEMA_SQL = `
+ALTER TABLE formal_agent_runs
+  ADD COLUMN personal_context_revision INTEGER NOT NULL DEFAULT 0 CHECK (personal_context_revision >= 0);
+
+CREATE INDEX formal_agent_runs_context_revision
+  ON formal_agent_runs(personal_context_revision);
+`
+
 function checksum (sql) {
   return crypto.createHash('sha256').update(sql, 'utf8').digest('hex')
 }
@@ -1230,6 +1242,11 @@ const FORMAL_AGENT_MIGRATIONS = Object.freeze([
     version: SUBTITLE_BASE_MIGRATIONS.length + 5,
     checksum: checksum(AGENT_EXECUTION_SCHEMA_SQL),
     sql: AGENT_EXECUTION_SCHEMA_SQL
+  }),
+  Object.freeze({
+    version: SUBTITLE_BASE_MIGRATIONS.length + 6,
+    checksum: checksum(AGENT_CONTEXT_SNAPSHOT_SCHEMA_SQL),
+    sql: AGENT_CONTEXT_SNAPSHOT_SCHEMA_SQL
   })
 ])
 
@@ -1243,6 +1260,7 @@ module.exports = {
   PERSONAL_CONTEXT_SCHEMA_SQL,
   MODEL_ACCESS_SCHEMA_SQL,
   AGENT_EXECUTION_SCHEMA_SQL,
+  AGENT_CONTEXT_SNAPSHOT_SCHEMA_SQL,
   SUBTITLE_BASE_MIGRATIONS,
   FORMAL_AGENT_MIGRATIONS,
   MIGRATIONS,
