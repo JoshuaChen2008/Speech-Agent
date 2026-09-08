@@ -253,6 +253,10 @@ class StorageWorkerService {
       assertExactKeys(payload, ['request'])
       return this.requirePersonalContextStore().prepareSessionIngestRequest(payload.request)
     }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_DERIVE_SESSION_SOURCE) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().deriveSessionSource(payload.request)
+    }
     if (operation === OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT) {
       assertExactKeys(payload, ['source'])
       return this.requirePersonalContextStore().readSessionInput(payload.source)

@@ -2,7 +2,9 @@
 
 const crypto = require('node:crypto')
 const { canonicalize } = require('../../runtime/storage-worker/canonical-json')
+const { sha256Canonical } = require('../../runtime/storage-worker/canonical-json')
 const c = require('../contracts/agent-run-ui')
+const { deterministicRoute } = require('../execution-host/intent-router')
 
 const MAX_SCOPE_LABEL_BYTES = 256
 
@@ -85,6 +87,80 @@ function publicEligibility (scope, eligibility, revision) {
   return okSnapshot({ scope, eligibility, next_action: null, revision })
 }
 
+function publicFailure (code = c.ERROR_CODES.unavailable, nextAction = 'retry') {
+  return {
+    ...header(),
+    ok: false,
+    error: { category: 'unavailable', code, next_action: nextAction },
+    result: null
+  }
+}
+
+function publicState (value, terminalReason = null, cancelRequested = false) {
+  if (terminalReason === 'succeeded') return 'succeeded'
+  if (terminalReason === 'failed') return 'failed'
+  if (terminalReason === 'cancelled') return 'cancelled'
+  if (cancelRequested) return 'cancelling'
+  if (value === 'running') return 'running'
+  return 'pending'
+}
+
+function publicUsage (usage) {
+  if (!usage) return { usage: null, usage_state: 'unknown' }
+  return {
+    usage: {
+      input_tokens: usage.inputTokens,
+      output_tokens: usage.outputTokens,
+      usage_source: usage.usageSource,
+      cache_hit_input_tokens: usage.cacheHitInputTokens,
+      cache_miss_input_tokens: usage.cacheMissInputTokens
+    },
+    usage_state: 'known'
+  }
+}
+
+function publicInteractionId (value) {
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+function projectSubmit (run, interactionId, recipeId, routingMode, revision) {
+  return c.assertSubmitResponse({
+    ...header(), ok: true, error: null,
+    result: {
+      eligibility: 'ready',
+      interaction_id: publicInteractionId(interactionId),
+      recipe_id: recipeId || run?.recipeId || null,
+      revision,
+      routing_mode: routingMode || null,
+      run_id: publicInteractionId(run?.runId),
+      state: publicState(run?.state)
+    }
+  })
+}
+
+function freezeSourceFromTranscript (sessionId, transcript) {
+  const session = transcript?.session
+  if (!session || !isTerminal(session.state)) {
+    const error = new Error('session not terminal'); error.code = 'SESSION_ACTIVE'; throw error
+  }
+  const segments = Array.isArray(transcript.segments) ? transcript.segments : []
+  const events = segments.map((segment) => ({
+    eventOrder: segment.firstEventOrder,
+    segmentId: segment.segmentId,
+    text: segment.text
+  }))
+  if (events.length === 0 || events.some((event) => !Number.isSafeInteger(event.eventOrder) || event.eventOrder < 1 ||
+      typeof event.segmentId !== 'string' || typeof event.text !== 'string')) {
+    const error = new Error('no committed transcript'); error.code = 'AGENT_INPUT_EMPTY'; throw error
+  }
+  const inputWatermark = Math.max(...events.map((event) => event.eventOrder))
+  return {
+    transcriptVersion: 'raw',
+    inputWatermark: { throughEventOrder: inputWatermark },
+    inputDigest: sha256Canonical({ sessionId, transcriptVersion: 'raw', inputWatermark, events })
+  }
+}
+
 function isTerminal (state) {
   return state === 'closed' || state === 'interrupted'
 }
@@ -104,6 +180,7 @@ class AgentRunService {
     }
     this.storage = options.storage
     this.modelAccess = options.modelAccess || null
+    this.scheduler = options.scheduler || null
     this.now = typeof options.now === 'function' ? options.now : Date.now
     this.idFactory = typeof options.idFactory === 'function' ? options.idFactory : () => crypto.randomUUID()
     this.onChanged = typeof options.onChanged === 'function' ? options.onChanged : () => {}
@@ -199,13 +276,173 @@ class AgentRunService {
     }
   }
 
-  async submit () { return unavailable() }
+  async submit (request) {
+    try {
+      c.assertSubmitRequest(request)
+      const eligibility = await this.getEligibility({ ...header(), scope: request.scope })
+      if (!eligibility.ok || eligibility.snapshot?.eligibility !== 'ready') {
+        return publicFailure(c.ERROR_CODES.unavailable, 'retry')
+      }
+      const route = deterministicRoute({ scope: request.scope, prompt: request.prompt })
+      if (!['summary.minutes', 'qa.answer'].includes(route.recipeId)) {
+        return publicFailure(c.ERROR_CODES.unavailable, 'choose_supported_recipe')
+      }
+      const transcript = await this.storage.getSessionTranscript(request.scope.reference)
+      const frozen = typeof this.storage.derivePersonalContextSessionSource === 'function'
+        ? await this.storage.derivePersonalContextSessionSource({ sessionId: request.scope.reference, transcriptVersion: 'raw' })
+        : freezeSourceFromTranscript(request.scope.reference, transcript)
+      const inputWatermark = Number.isSafeInteger(frozen.inputWatermark)
+        ? { throughEventOrder: frozen.inputWatermark }
+        : frozen.inputWatermark
+      if (!inputWatermark || !Number.isSafeInteger(inputWatermark.throughEventOrder)) {
+        const error = new Error('frozen input watermark is invalid'); error.code = 'AGENT_REQUEST_INVALID'; throw error
+      }
+      const requestKeyDigest = sha256Canonical(request.client_idempotency_key)
+      const runId = `run.user.${requestKeyDigest.slice(0, 48)}`
+      const interactionId = `interaction.user.${requestKeyDigest.slice(0, 44)}`
+      const run = await this.storage.createAgentRun({
+        runId,
+        recipeId: route.recipeId,
+        recipeVersion: '1',
+        scope: request.scope,
+        transcriptVersion: frozen.transcriptVersion,
+        inputWatermark,
+        inputDigest: frozen.inputDigest,
+        requestedBy: 'user',
+        clientIdempotencyKey: request.client_idempotency_key
+      })
+      const promptDigest = sha256Canonical(request.prompt)
+      if (run?.replayed && typeof this.storage.getAgentInteraction === 'function') {
+        const existing = await this.storage.getAgentInteraction({ interactionId }).catch(() => null)
+        const existingDigest = existing?.interaction?.promptDigest || existing?.interaction?.prompt_digest
+        if (existingDigest && existingDigest !== promptDigest) {
+          return { ...publicFailure(c.ERROR_CODES.invalid, 'correct_input'), error: { category: 'invalid', code: c.ERROR_CODES.invalid, next_action: 'correct_input' } }
+        }
+      }
+      if (!this.modelAccess || typeof this.modelAccess.bind !== 'function') {
+        await this.storage.cancelAgentRun({ runId: run.runId }).catch(() => {})
+        return publicFailure(c.ERROR_CODES.unavailable, 'settings')
+      }
+      try {
+        await this.modelAccess.bind({ runId: run.runId, recipeId: route.recipeId, recipeVersion: '1', executionForm: 'agent_loop' })
+        await this.storage.createAgentInteraction({
+          runId: run.runId,
+          interactionId,
+          routingMode: route.routingMode,
+          promptDigest
+        })
+      } catch (error) {
+        await this.storage.cancelAgentRun({ runId: run.runId }).catch(() => {})
+        return publicFailure(c.ERROR_CODES.unavailable, error?.code === 'AGENT_PROVIDER_AUTH_FAILED' ? 'settings' : 'retry')
+      }
+      if (this.scheduler && typeof this.scheduler.wake === 'function') this.scheduler.wake('submit')
+      if (run?.replayed !== true) this.emitChanged()
+      return projectSubmit(run, interactionId, route.recipeId, route.routingMode, this.revision)
+    } catch (error) {
+      if (error?.code === 'AGENT_REQUEST_INVALID') return { ...publicFailure(c.ERROR_CODES.invalid, 'correct_input'), error: { category: 'invalid', code: c.ERROR_CODES.invalid, next_action: 'correct_input' } }
+      if (error?.code === 'SESSION_ACTIVE') return publicFailure(c.ERROR_CODES.unavailable, 'wait_for_terminal')
+      if (error?.code === 'AGENT_INPUT_EMPTY') return publicFailure(c.ERROR_CODES.unavailable, 'choose_committed_session')
+      return publicFailure()
+    }
+  }
 
-  async cancel () { return unavailable() }
+  async cancel (request) {
+    try {
+      c.assertCancelRequest(request)
+      if (!this.storage.getAgentInteraction || !this.storage.cancelAgentRun) return publicFailure()
+      const detail = await this.storage.getAgentInteraction({ interactionId: request.interaction_id })
+      const runId = detail?.interaction?.runId || detail?.interaction?.run_id || detail?.runId
+      if (typeof runId !== 'string') return publicFailure()
+      const run = await this.storage.cancelAgentRun({ runId })
+      if (run?.replayed !== true) this.emitChanged()
+      return c.assertCancelResponse({ ...header(), ok: true, error: null, result: {
+        interaction_id: request.interaction_id,
+        revision: this.revision,
+        state: publicState(run?.state, run?.state === 'cancelled' ? 'cancelled' : null, run?.cancelRequested)
+      } })
+    } catch (error) {
+      if (error?.code === 'AGENT_REQUEST_INVALID') return { ...publicFailure(c.ERROR_CODES.invalid, 'correct_input'), error: { category: 'invalid', code: c.ERROR_CODES.invalid, next_action: 'correct_input' } }
+      return publicFailure()
+    }
+  }
 
-  async getHistory () { return okCommand({ items: [], has_more: false, next_cursor: null }) }
+  async getHistory (request) {
+    try {
+      c.assertHistoryRequest(request)
+      if (typeof this.storage.listAgentInteractions !== 'function') return c.assertHistoryResponse({ ...header(), ok: true, error: null, result: { items: [], has_more: false, next_cursor: null } })
+      const page = await this.storage.listAgentInteractions({ limit: request.limit, cursor: request.cursor })
+      const items = (page?.items || []).map((item) => {
+        const usage = publicUsage(item.usage)
+        return {
+          attempt_count: item.attemptCount,
+          created_at: item.createdAt,
+          duration_ms: item.durationMs,
+          error_code: item.errorCode,
+          interaction_id: item.interactionId,
+          recipe_id: item.recipeId,
+          recipe_version: item.recipeVersion,
+          result: item.result,
+          result_digest: item.resultDigest,
+          terminal_at: item.terminalAt,
+          terminal_reason: item.terminalReason,
+          usage: usage.usage,
+          usage_state: usage.usage_state
+        }
+      })
+      return c.assertHistoryResponse({ ...header(), ok: true, error: null, result: {
+        items, has_more: Boolean(page?.hasMore), next_cursor: page?.nextCursor || null
+      } })
+    } catch (error) {
+      if (error?.code === 'AGENT_REQUEST_INVALID') return { ...publicFailure(c.ERROR_CODES.invalid, 'correct_input'), error: { category: 'invalid', code: c.ERROR_CODES.invalid, next_action: 'correct_input' } }
+      return publicFailure()
+    }
+  }
 
-  async getInteraction () { return unavailable() }
+  async getInteraction (request) {
+    try {
+      c.assertInteractionRequest(request)
+      if (typeof this.storage.getAgentInteraction !== 'function') return publicFailure()
+      const detail = await this.storage.getAgentInteraction({ interactionId: request.interaction_id })
+      const item = detail?.interaction
+      if (!item) return publicFailure()
+      const binding = detail.binding
+      if (!binding || typeof binding.adapterId !== 'string' || typeof binding.modelId !== 'string' ||
+          typeof binding.profileId !== 'string' || !Number.isSafeInteger(binding.profileRevision) ||
+          !['local', 'cloud'].includes(binding.providerKind)) return publicFailure()
+      const usage = publicUsage(item.usage)
+      const state = publicState(detail.runState, item.terminalReason, detail.cancelRequested === true)
+      const result = {
+        attempt_count: item.attemptCount,
+        created_at: item.createdAt,
+        duration_ms: item.durationMs,
+        error_code: item.errorCode,
+        interaction_id: item.interactionId,
+        model: { adapter_id: binding.adapterId, model_id: binding.modelId, profile_id: binding.profileId, profile_revision: binding.profileRevision, provider_kind: binding.providerKind },
+        recipe_id: item.recipeId,
+        recipe_version: item.recipeVersion,
+        result: item.result,
+        result_digest: item.resultDigest,
+        routing_mode: item.routingMode,
+        run_id: item.runId,
+        source_refs: (detail.toolCalls || []).flatMap((call) => Array.isArray(call.sourceRefs) ? call.sourceRefs : []),
+        state,
+        terminal_at: item.terminalAt,
+        terminal_reason: item.terminalReason,
+        tool_calls: (detail.toolCalls || []).map((call) => ({
+          attempt: call.attempt, call_order: call.callOrder, counts: call.counts,
+          ended_offset_ms: call.endedOffsetMs, error_code: call.errorCode,
+          result_digest: call.resultDigest, source_refs: call.sourceRefs,
+          started_offset_ms: call.startedOffsetMs, status: call.status, tool_name: call.toolName
+        })),
+        usage: usage.usage,
+        usage_state: usage.usage_state
+      }
+      return c.assertInteractionResponse({ ...header(), ok: true, error: null, result })
+    } catch (error) {
+      if (error?.code === 'AGENT_REQUEST_INVALID') return { ...publicFailure(c.ERROR_CODES.invalid, 'correct_input'), error: { category: 'invalid', code: c.ERROR_CODES.invalid, next_action: 'correct_input' } }
+      return publicFailure()
+    }
+  }
 
   async exportInteraction () { return unavailable() }
 }

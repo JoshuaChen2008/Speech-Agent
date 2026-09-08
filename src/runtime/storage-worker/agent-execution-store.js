@@ -741,6 +741,7 @@ class AgentExecutionStore {
     exactObject(input, ['interactionId'])
     const interactionId = identifier(input.interactionId)
     const row = this.interactionRow(interactionId)
+    const run = this.runRow(row.run_id)
     const calls = this.database.prepare(`
       SELECT * FROM formal_agent_tool_calls
       WHERE interaction_id=? ORDER BY attempt ASC, call_order ASC
@@ -748,6 +749,8 @@ class AgentExecutionStore {
     const binding = this.database.prepare('SELECT * FROM agent_model_run_bindings WHERE run_id=?').get(row.run_id)
     return {
       interaction: rowInteraction(row),
+      runState: run.state,
+      cancelRequested: run.cancel_requested_at !== null,
       binding: binding
         ? {
             runId: binding.run_id,

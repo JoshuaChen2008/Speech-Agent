@@ -465,6 +465,10 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_PREPARE_SESSION_INGEST, { request })
   }
 
+  derivePersonalContextSessionSource (request) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_DERIVE_SESSION_SOURCE, { request })
+  }
+
   readPersonalContextSessionInput (source) {
     return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT, { source })
   }

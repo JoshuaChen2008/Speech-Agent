@@ -26,9 +26,9 @@ contextBridge.exposeInMainWorld('agentApi', {
   },
   getScopes: (request) => invoke(CHANNELS.AGENT_RUN_GET_SCOPES, c.assertGetScopesRequest, c.assertGetScopesResponse, request),
   getEligibility: (request) => invoke(CHANNELS.AGENT_RUN_GET_ELIGIBILITY, c.assertGetEligibilityRequest, c.assertGetEligibilityResponse, request),
-  submit: (request) => invoke(CHANNELS.AGENT_RUN_SUBMIT, c.assertSubmitRequest, c.assertCommandResponse, request),
-  cancel: (request) => invoke(CHANNELS.AGENT_RUN_CANCEL, c.assertCancelRequest, c.assertCommandResponse, request),
-  getHistory: (request) => invoke(CHANNELS.AGENT_RUN_GET_HISTORY, c.assertHistoryRequest, c.assertCommandResponse, request),
-  getInteraction: (request) => invoke(CHANNELS.AGENT_RUN_GET_INTERACTION, c.assertInteractionRequest, c.assertCommandResponse, request),
-  exportInteraction: (request) => invoke(CHANNELS.AGENT_RUN_EXPORT_INTERACTION, c.assertExportRequest, c.assertCommandResponse, request)
+  submit: (request) => invoke(CHANNELS.AGENT_RUN_SUBMIT, c.assertSubmitRequest, c.assertSubmitResponse, request),
+  cancel: (request) => invoke(CHANNELS.AGENT_RUN_CANCEL, c.assertCancelRequest, c.assertCancelResponse, request),
+  getHistory: (request) => invoke(CHANNELS.AGENT_RUN_GET_HISTORY, c.assertHistoryRequest, c.assertHistoryResponse, request),
+  getInteraction: (request) => invoke(CHANNELS.AGENT_RUN_GET_INTERACTION, c.assertInteractionRequest, c.assertInteractionResponse, request),
+  exportInteraction: (request) => invoke(CHANNELS.AGENT_RUN_EXPORT_INTERACTION, c.assertExportRequest, c.assertExportResponse, request)
 })

@@ -100,3 +100,77 @@ test('S5-1 eligibility distinguishes terminal transcript and model readiness', a
   assert.equal(result.snapshot.eligibility, 'ready')
   assert.equal(result.snapshot.next_action, null)
 })
+
+test('S5-2 submit freezes one rules-routed request and replays the same interaction', async () => {
+  const h = header({ scope: { kind: 'session', reference: 'session.submit' }, prompt: '请整理会议纪要', client_idempotency_key: 'client.submit' })
+  const created = []
+  const interactions = new Map()
+  const storage = storageWith([], {
+    sessionId: 'session.submit',
+    value: { session: { state: 'closed' }, segments: [{ segmentId: 'segment.1', firstEventOrder: 1, text: 'hello' }] }
+  })
+  storage.createAgentRun = async (request) => {
+    const replayed = created.length > 0
+    if (!replayed) created.push(request)
+    return { runId: request.runId, recipeId: request.recipeId, state: 'queued', replayed }
+  }
+  storage.createAgentInteraction = async (request) => {
+    const current = interactions.get(request.interactionId)
+    if (current) return { ...current, replayed: true }
+    const value = { interactionId: request.interactionId, runId: request.runId, promptDigest: request.promptDigest }
+    interactions.set(request.interactionId, value)
+    return value
+  }
+  storage.getAgentInteraction = async ({ interactionId }) => ({ interaction: interactions.get(interactionId) })
+  storage.derivePersonalContextSessionSource = async () => ({
+    sourceKind: 'session', sessionId: 'session.submit', transcriptVersion: 'raw', inputWatermark: 1,
+    inputDigest: 'a'.repeat(64)
+  })
+  const service = new AgentRunService({
+    storage,
+    modelAccess: {
+      catalog: async () => ({ ok: true, snapshot: { readinessByPurpose: { summary: { agentLoop: 'ready' } } } }),
+      bind: async ({ runId }) => ({ runId })
+    }
+  })
+  const first = await service.submit(h)
+  const second = await service.submit(h)
+  assert.equal(first.ok, true)
+  assert.equal(second.ok, true)
+  assert.equal(first.result.interaction_id, second.result.interaction_id)
+  assert.equal(created.length, 1)
+  const changedPrompt = await service.submit({ ...h, prompt: '换一个问题' })
+  assert.equal(changedPrompt.ok, false)
+  assert.equal(changedPrompt.error.code, c.ERROR_CODES.invalid)
+})
+
+test('S5-2 cancel and detail preserve running/cancelling state projections', async () => {
+  const storage = storageWith([])
+  storage.getAgentInteraction = async () => ({
+    runState: 'running', cancelRequested: false,
+    interaction: {
+      interactionId: 'interaction.running', runId: 'run.running', recipeId: 'qa.answer', recipeVersion: '1',
+      routingMode: 'rules', terminalReason: null, errorCode: null, usage: null, durationMs: 0,
+      attemptCount: 1, result: null, resultDigest: null, createdAt: 1, terminalAt: null
+    },
+    binding: { adapterId: 'openai-compatible', modelId: 'model.demo', profileId: 'profile.demo', profileRevision: 1, providerKind: 'local' },
+    toolCalls: []
+  })
+  let cancelCalls = 0
+  storage.cancelAgentRun = async () => {
+    cancelCalls += 1
+    return cancelCalls === 1 ? { state: 'running', cancelRequested: true } : { state: 'cancelled', cancelRequested: true, replayed: true }
+  }
+  const service = new AgentRunService({ storage })
+  const detail = await service.getInteraction(header({ interaction_id: 'interaction.running' }))
+  assert.equal(detail.ok, true)
+  assert.equal(detail.result.state, 'running')
+  const cancel = await service.cancel(header({ interaction_id: 'interaction.running' }))
+  assert.equal(cancel.ok, true)
+  assert.equal(cancel.result.state, 'cancelling')
+  const revision = cancel.result.revision
+  const replay = await service.cancel(header({ interaction_id: 'interaction.running' }))
+  assert.equal(replay.ok, true)
+  assert.equal(replay.result.state, 'cancelled')
+  assert.equal(replay.result.revision, revision)
+})

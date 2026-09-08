@@ -51,7 +51,7 @@ function assertGetEligibilityRequest (v) { exact(v, ['contract_id', 'contract_ve
 function assertGetScopesRequest (v) { exact(v, ['contract_id', 'contract_version', 'cursor', 'limit'], 'request'); header(v, 'request'); integer(v.limit, 'request.limit'); if (v.limit < 1 || v.limit > 50) fail('request.limit', 'out of range'); assertOpaqueCursor(v.cursor, 'request.cursor'); return v }
 function assertSubmitRequest (v) { exact(v, ['client_idempotency_key', 'contract_id', 'contract_version', 'prompt', 'scope'], 'request'); header(v, 'request'); scope(v.scope); if (typeof v.prompt !== 'string' || v.prompt.length === 0 || v.prompt.length > 4096) fail('request.prompt', 'invalid'); id(v.client_idempotency_key, 'request.client_idempotency_key'); return v }
 function assertCancelRequest (v) { exact(v, ['contract_id', 'contract_version', 'interaction_id'], 'request'); header(v, 'request'); id(v.interaction_id, 'request.interaction_id'); return v }
-function assertHistoryRequest (v) { exact(v, ['contract_id', 'contract_version', 'limit', 'cursor'], 'request'); header(v, 'request'); integer(v.limit, 'request.limit'); if (v.limit < 1 || v.limit > 100) fail('request.limit', 'out of range'); if (v.cursor !== null) id(v.cursor, 'request.cursor'); return v }
+function assertHistoryRequest (v) { exact(v, ['contract_id', 'contract_version', 'limit', 'cursor'], 'request'); header(v, 'request'); integer(v.limit, 'request.limit'); if (v.limit < 1 || v.limit > 100) fail('request.limit', 'out of range'); assertOpaqueCursor(v.cursor, 'request.cursor'); return v }
 function assertInteractionRequest (v) { exact(v, ['contract_id', 'contract_version', 'interaction_id'], 'request'); header(v, 'request'); id(v.interaction_id, 'request.interaction_id'); return v }
 function assertExportRequest (v) { exact(v, ['contract_id', 'contract_version', 'interaction_id'], 'request'); header(v, 'request'); id(v.interaction_id, 'request.interaction_id'); return v }
 function assertSnapshot (v, p = 'snapshot') { exact(v, ['scope', 'eligibility', 'next_action', 'revision'], p); scope(v.scope, `${p}.scope`); enumValue(v.eligibility, ELIGIBILITY_STATES, `${p}.eligibility`); if (v.next_action !== null) fail(`${p}.next_action`, 'must be null until an exact action contract is signed'); integer(v.revision, `${p}.revision`); return v }
@@ -82,10 +82,158 @@ function assertGetScopesResponse (v) {
   return v
 }
 function assertError (v, p = 'error') { plain(v, p); exact(v, ['category', 'code', 'next_action'], p); if (typeof v.category !== 'string') fail(`${p}.category`, 'must be a string'); enumValue(v.code, RUN_ERROR_CODES, `${p}.code`); if (v.next_action !== null && typeof v.next_action !== 'string') fail(`${p}.next_action`, 'must be null or string'); return v }
-function assertCommandResponse (v, p = 'response') { exact(v, ['contract_id', 'contract_version', 'ok', 'error', 'result'], p); header(v, p); if (typeof v.ok !== 'boolean') fail(`${p}.ok`, 'must be boolean'); if (v.ok) { if (v.error !== null) fail(`${p}.error`, 'must be null'); if (v.result !== null && (!v.result || typeof v.result !== 'object' || Array.isArray(v.result) || Object.getPrototypeOf(v.result) !== Object.prototype)) fail(`${p}.result`, 'must be a plain object or null') } else { if (v.result !== null) fail(`${p}.result`, 'must be null'); assertError(v.error, `${p}.error`) } if (v.result !== null) assertFixturePrivacy(v.result, `${p}.result`); return v }
+function assertCommandEnvelope (v, p = 'response') {
+  exact(v, ['contract_id', 'contract_version', 'ok', 'error', 'result'], p)
+  header(v, p)
+  if (typeof v.ok !== 'boolean') fail(`${p}.ok`, 'must be boolean')
+  if (v.ok) {
+    if (v.error !== null) fail(`${p}.error`, 'must be null')
+  } else {
+    if (v.result !== null) fail(`${p}.result`, 'must be null')
+    assertError(v.error, `${p}.error`)
+  }
+  return v
+}
+function assertPublicState (v, p) { enumValue(v, TERMINAL_STATES, p); return v }
+function assertRevision (v, p) { integer(v, p); return v }
+function assertNullableDigest (v, p) { if (v !== null && (typeof v !== 'string' || !/^[a-f0-9]{64}$/.test(v))) fail(p, 'must be null or a SHA-256 digest'); return v }
+function assertUsage (v, p) {
+  if (v === null) return v
+  exact(v, ['cache_hit_input_tokens', 'cache_miss_input_tokens', 'input_tokens', 'output_tokens', 'usage_source'], p)
+  integer(v.input_tokens, `${p}.input_tokens`)
+  integer(v.output_tokens, `${p}.output_tokens`)
+  if (v.usage_source !== 'provider') fail(`${p}.usage_source`, 'must be provider')
+  const bothNull = v.cache_hit_input_tokens === null && v.cache_miss_input_tokens === null
+  if (!bothNull) {
+    integer(v.cache_hit_input_tokens, `${p}.cache_hit_input_tokens`)
+    integer(v.cache_miss_input_tokens, `${p}.cache_miss_input_tokens`)
+    if (v.cache_hit_input_tokens + v.cache_miss_input_tokens !== v.input_tokens) fail(p, 'cache input tokens are inconsistent')
+  }
+  return v
+}
+function assertUsageState (v, p) { enumValue(v, USAGE_STATES, p); return v }
+function assertHistoryItem (v, p = 'history item') {
+  exact(v, [
+    'attempt_count', 'created_at', 'duration_ms', 'error_code', 'interaction_id',
+    'recipe_id', 'recipe_version', 'result', 'result_digest', 'terminal_at',
+    'terminal_reason', 'usage', 'usage_state'
+  ], p)
+  id(v.interaction_id, `${p}.interaction_id`)
+  id(v.recipe_id, `${p}.recipe_id`)
+  id(v.recipe_version, `${p}.recipe_version`)
+  enumValue(v.terminal_reason, ['succeeded', 'failed', 'cancelled'], `${p}.terminal_reason`)
+  if (v.error_code !== null) enumValue(v.error_code, RUN_ERROR_CODES, `${p}.error_code`)
+  integer(v.duration_ms, `${p}.duration_ms`)
+  integer(v.attempt_count, `${p}.attempt_count`)
+  integer(v.created_at, `${p}.created_at`)
+  integer(v.terminal_at, `${p}.terminal_at`)
+  assertUsage(v.usage, `${p}.usage`)
+  assertUsageState(v.usage_state, `${p}.usage_state`)
+  assertNullableDigest(v.result_digest, `${p}.result_digest`)
+  if (v.result !== null) assertFixturePrivacy(v.result, `${p}.result`)
+  return v
+}
+function assertSubmitResult (v, p = 'response.result') {
+  exact(v, ['eligibility', 'interaction_id', 'recipe_id', 'revision', 'routing_mode', 'run_id', 'state'], p)
+  if (v.interaction_id !== null) id(v.interaction_id, `${p}.interaction_id`)
+  if (v.run_id !== null) id(v.run_id, `${p}.run_id`)
+  if (v.recipe_id !== null) id(v.recipe_id, `${p}.recipe_id`)
+  if (v.routing_mode !== null) enumValue(v.routing_mode, ROUTING_MODES, `${p}.routing_mode`)
+  if (v.state !== null) assertPublicState(v.state, `${p}.state`)
+  if (v.eligibility !== null) enumValue(v.eligibility, ELIGIBILITY_STATES, `${p}.eligibility`)
+  assertRevision(v.revision, `${p}.revision`)
+  return v
+}
+function assertCancelResult (v, p = 'response.result') {
+  exact(v, ['interaction_id', 'revision', 'state'], p)
+  id(v.interaction_id, `${p}.interaction_id`)
+  assertPublicState(v.state, `${p}.state`)
+  assertRevision(v.revision, `${p}.revision`)
+  return v
+}
+function assertHistoryResult (v, p = 'response.result') {
+  exact(v, ['has_more', 'items', 'next_cursor'], p)
+  if (typeof v.has_more !== 'boolean') fail(`${p}.has_more`, 'must be boolean')
+  assertOpaqueCursor(v.next_cursor, `${p}.next_cursor`)
+  if (!Array.isArray(v.items) || v.items.length > 100) fail(`${p}.items`, 'must be an array of at most 100 items')
+  v.items.forEach((item, index) => assertHistoryItem(item, `${p}.items[${index}]`))
+  return v
+}
+function assertModelIdentity (v, p) {
+  exact(v, ['adapter_id', 'model_id', 'profile_id', 'profile_revision', 'provider_kind'], p)
+  id(v.adapter_id, `${p}.adapter_id`)
+  id(v.model_id, `${p}.model_id`)
+  id(v.profile_id, `${p}.profile_id`)
+  integer(v.profile_revision, `${p}.profile_revision`)
+  enumValue(v.provider_kind, ['local', 'cloud'], `${p}.provider_kind`)
+  return v
+}
+function assertToolCall (v, p) {
+  exact(v, ['attempt', 'call_order', 'counts', 'ended_offset_ms', 'error_code', 'result_digest', 'source_refs', 'started_offset_ms', 'status', 'tool_name'], p)
+  integer(v.attempt, `${p}.attempt`)
+  integer(v.call_order, `${p}.call_order`)
+  enumValue(v.tool_name, ['search_context', 'read_sources'], `${p}.tool_name`)
+  enumValue(v.status, ['started', 'succeeded', 'failed', 'cancelled'], `${p}.status`)
+  if (v.error_code !== null) {
+    enumValue(v.error_code, ['TOOL_ARGS_INVALID', 'TOOL_SCOPE_DENIED', 'TOOL_NOT_AVAILABLE_FOR_RECIPE', 'TOOL_BUDGET_EXCEEDED', 'TOOL_TIMEOUT', 'TOOL_CANCELLED', 'TOOL_INTERNAL_FAILURE'], `${p}.error_code`)
+  }
+  integer(v.started_offset_ms, `${p}.started_offset_ms`)
+  if (v.ended_offset_ms !== null) integer(v.ended_offset_ms, `${p}.ended_offset_ms`)
+  assertNullableDigest(v.result_digest, `${p}.result_digest`)
+  if (!v.counts || typeof v.counts !== 'object' || Array.isArray(v.counts)) fail(`${p}.counts`, 'must be an object')
+  if (!Array.isArray(v.source_refs) || v.source_refs.length > 8) fail(`${p}.source_refs`, 'must be an array')
+  assertFixturePrivacy(v.counts, `${p}.counts`)
+  assertFixturePrivacy(v.source_refs, `${p}.source_refs`)
+  return v
+}
+function assertInteractionResult (v, p = 'response.result') {
+  exact(v, [
+    'attempt_count', 'created_at', 'duration_ms', 'error_code', 'interaction_id',
+    'model', 'recipe_id', 'recipe_version', 'result', 'result_digest',
+    'routing_mode', 'run_id', 'source_refs', 'state', 'terminal_at',
+    'terminal_reason', 'tool_calls', 'usage', 'usage_state'
+  ], p)
+  id(v.interaction_id, `${p}.interaction_id`)
+  id(v.run_id, `${p}.run_id`)
+  id(v.recipe_id, `${p}.recipe_id`)
+  id(v.recipe_version, `${p}.recipe_version`)
+  enumValue(v.routing_mode, ROUTING_MODES, `${p}.routing_mode`)
+  assertPublicState(v.state, `${p}.state`)
+  if (v.terminal_reason !== null) enumValue(v.terminal_reason, ['succeeded', 'failed', 'cancelled'], `${p}.terminal_reason`)
+  if (v.error_code !== null) enumValue(v.error_code, RUN_ERROR_CODES, `${p}.error_code`)
+  assertModelIdentity(v.model, `${p}.model`)
+  integer(v.duration_ms, `${p}.duration_ms`)
+  integer(v.attempt_count, `${p}.attempt_count`)
+  integer(v.created_at, `${p}.created_at`)
+  if (v.terminal_at !== null) integer(v.terminal_at, `${p}.terminal_at`)
+  assertUsage(v.usage, `${p}.usage`)
+  assertUsageState(v.usage_state, `${p}.usage_state`)
+  assertNullableDigest(v.result_digest, `${p}.result_digest`)
+  if (v.result !== null) assertFixturePrivacy(v.result, `${p}.result`)
+  if (!Array.isArray(v.source_refs) || v.source_refs.length > 16) fail(`${p}.source_refs`, 'must be an array')
+  assertFixturePrivacy(v.source_refs, `${p}.source_refs`)
+  if (!Array.isArray(v.tool_calls) || v.tool_calls.length > 100) fail(`${p}.tool_calls`, 'must be an array')
+  v.tool_calls.forEach((call, index) => assertToolCall(call, `${p}.tool_calls[${index}]`))
+  return v
+}
+function assertExportResult (v, p = 'response.result') {
+  exact(v, ['bytes_sha256', 'interaction_id', 'schema_version', 'snapshot'], p)
+  id(v.interaction_id, `${p}.interaction_id`)
+  if (v.schema_version !== 1) fail(`${p}.schema_version`, 'must be 1')
+  if (typeof v.bytes_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(v.bytes_sha256)) fail(`${p}.bytes_sha256`, 'must be a SHA-256 digest')
+  if (!v.snapshot || typeof v.snapshot !== 'object' || Array.isArray(v.snapshot)) fail(`${p}.snapshot`, 'must be an object')
+  assertFixturePrivacy(v.snapshot, `${p}.snapshot`)
+  return v
+}
+function assertSubmitResponse (v) { assertCommandEnvelope(v); if (v.ok && v.result !== null) assertSubmitResult(v.result); return v }
+function assertCancelResponse (v) { assertCommandEnvelope(v); if (v.ok && v.result !== null) assertCancelResult(v.result); return v }
+function assertHistoryResponse (v) { assertCommandEnvelope(v); if (v.ok) { if (v.result === null) fail('response.result', 'must be present'); assertHistoryResult(v.result) }; return v }
+function assertInteractionResponse (v) { assertCommandEnvelope(v); if (v.ok) { if (v.result === null) fail('response.result', 'must be present'); assertInteractionResult(v.result) }; return v }
+function assertExportResponse (v) { assertCommandEnvelope(v); if (v.ok) { if (v.result === null) fail('response.result', 'must be present'); assertExportResult(v.result) }; return v }
+function assertCommandResponse (v, p = 'response') { assertCommandEnvelope(v, p); if (v.ok && v.result !== null) assertFixturePrivacy(v.result, `${p}.result`); return v }
 function assertGetEligibilityResponse (v) { exact(v, ['contract_id', 'contract_version', 'ok', 'error', 'snapshot'], 'response'); header(v, 'response'); if (typeof v.ok !== 'boolean') fail('response.ok', 'must be boolean'); if (v.ok) { if (v.error !== null) fail('response.error', 'must be null'); assertSnapshot(v.snapshot) } else { if (v.snapshot !== null) fail('response.snapshot', 'must be null'); plain(v.error, 'response.error'); exact(v.error, ['category', 'code', 'next_action'], 'response.error'); enumValue(v.error.code, Object.values(ERROR_CODES), 'response.error.code'); if (v.error.next_action !== null && typeof v.error.next_action !== 'string') fail('response.error.next_action', 'invalid') } return v }
 function assertChangedEvent (v) { exact(v, ['contract_id', 'contract_version', 'revision'], 'event'); header(v, 'event'); integer(v.revision, 'event.revision'); return v }
 function assertFixturePrivacy (v, p = 'fixture') { if (!v || typeof v !== 'object') return v; for (const [k, val] of Object.entries(v)) { if (FORBIDDEN.has(normalizeField(k))) fail(`${p}.${k}`, 'forbidden'); if (typeof val === 'string' && (/^[A-Z]:[\\/]/i.test(val) || /(?:\.wav|\.pcm|\.mp3)$/i.test(val) || /^bearer\s/i.test(val))) fail(`${p}.${k}`, 'forbidden'); if (val && typeof val === 'object') assertFixturePrivacy(val, `${p}.${k}`) } return v }
 function isSupportedContract (idValue, version) { return idValue === CONTRACT_ID && version === CONTRACT_VERSION }
 
-module.exports = { CONTRACT_ID, CONTRACT_VERSION, ALLOWED_ROLES, IPC_CHANNELS, TERMINAL_STATES, ROUTING_MODES, USAGE_STATES, ELIGIBILITY_STATES, SCOPE_KINDS, ERROR_CODES, RUN_ERROR_CODES, assertGetScopesRequest, assertGetScopesResponse, assertGetEligibilityRequest, assertGetEligibilityResponse, assertSubmitRequest, assertCancelRequest, assertHistoryRequest, assertInteractionRequest, assertExportRequest, assertCommandResponse, assertChangedEvent, assertFixturePrivacy, scope, assertScopeItem, isSupportedContract }
+module.exports = { CONTRACT_ID, CONTRACT_VERSION, ALLOWED_ROLES, IPC_CHANNELS, TERMINAL_STATES, ROUTING_MODES, USAGE_STATES, ELIGIBILITY_STATES, SCOPE_KINDS, ERROR_CODES, RUN_ERROR_CODES, assertGetScopesRequest, assertGetScopesResponse, assertGetEligibilityRequest, assertGetEligibilityResponse, assertSubmitRequest, assertCancelRequest, assertHistoryRequest, assertInteractionRequest, assertExportRequest, assertCommandResponse, assertSubmitResponse, assertCancelResponse, assertHistoryResponse, assertInteractionResponse, assertExportResponse, assertChangedEvent, assertFixturePrivacy, scope, assertScopeItem, isSupportedContract }
