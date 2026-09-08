@@ -179,7 +179,8 @@ const windowInteractionGenerationController = new WindowInteractionGenerationCon
     caption: captionWin,
     toolbar: toolbarWin,
     settings: settingsWin,
-    history: historyWin
+    history: historyWin,
+    agent: agentWin
   })[role] || null,
   getCursorScreenPoint: () => screen.getCursorScreenPoint(),
   getLocked: () => locked,
@@ -989,6 +990,10 @@ ipcMain.on(CHANNELS.SETTINGS_CLOSE, (event) => {
 })
 ipcMain.on(CHANNELS.HISTORY_CLOSE, (event) => {
   const { win } = requireSender(event, CHANNELS.HISTORY_CLOSE)
+  win.close()
+})
+ipcMain.on(CHANNELS.AGENT_CLOSE, (event) => {
+  const { win } = requireSender(event, CHANNELS.AGENT_CLOSE)
   win.close()
 })
 ipcMain.handle(CHANNELS.CONFIG_GET, (event) => {

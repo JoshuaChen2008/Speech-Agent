@@ -2,7 +2,7 @@
 
 const INTERACTION_SCHEMA_VERSION = 1
 const INTERACTION_PHASES = Object.freeze(['suspend', 'resume'])
-const INTERACTION_ROLES = Object.freeze(['caption', 'toolbar', 'settings', 'history'])
+const INTERACTION_ROLES = Object.freeze(['caption', 'toolbar', 'settings', 'history', 'agent'])
 const POINTER_ROLES = Object.freeze(['caption', 'toolbar'])
 const RESIZE_EDGES = Object.freeze(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'])
 

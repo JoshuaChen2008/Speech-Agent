@@ -7,7 +7,7 @@ const {
 } = require('./window-layout-contract')
 const { toolbarWindowViewportBounds } = require('./toolbar-dock-invariant')
 
-const DRAG_ROLES = Object.freeze(['caption', 'toolbar', 'settings', 'history'])
+const DRAG_ROLES = Object.freeze(['caption', 'toolbar', 'settings', 'history', 'agent'])
 const RESIZE_EDGES = Object.freeze(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'])
 
 function isUsableWindow (win) {

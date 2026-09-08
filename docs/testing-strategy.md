@@ -212,6 +212,7 @@ S3 的统一执行宿主 Core 子边界、S4 的 `read_sources` 与完整工具�
 | S5-Core | `agent` BrowserWindow、sender policy、preload、保存对话框、canonical 导出 | 与 S5-UX 同一 renderer 组合，覆盖 reload、取消、失败、幂等和字幕系统独立边界 |
 | S5-UX | 信息架构、状态矩阵、DOM/CSS/view-model、可访问性和 fixture preview | 移除预览 adapter；所有成功、失败与下一动作来自真实 snapshot/CommandResult |
 
+> **2026-09-08 S5-UX renderer 局部记录（不提升 J22/J24 状态）**：正式 `src/agent` renderer 已从占位页收束为 exact `agent-run-ui@1.0.0` facade：先订阅 `agent-run:changed` 再读取终态会话范围/历史，资格快照决定提交可用性；纪要快捷操作与 QA 输入共享 `submit`，运行、取消、终态、结果栏目、来源引用和折叠工具调用记录均只由 CommandResult/detail 投影。`test/ui/agent-ui.test.js` 覆盖订阅顺序、空范围、无乐观成功、取消等待回执、changed 后活动详情刷新和隐私文案边界；窗口 close 与五窗交互角色也保持 least-privilege。该记录只证明 renderer 局部实现完成·尚未验收，不替代真实 preload/SQLite/Agent Loop 联合旅程；导出仍由 S5-Core 后续切片完成。
 设计稿、截图、fixture preview、Storybook 类预览、单独 renderer snapshot 或直接调用最终 exporter 均不构成确定性联合旅程。只有保留真实内部产品模块、仅替代已登记外部边界的 S5-Integration 结果才能晋级对应 J 旅程。
 
 新增功能必须在本表增加或更新场景；只有单元测试、没有对应用户旅程时，状态最多写“实现完成·尚未验收”。

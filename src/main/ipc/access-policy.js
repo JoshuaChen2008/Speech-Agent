@@ -5,11 +5,11 @@ const CHANNELS = require('./channels')
 const ROLES = Object.freeze(['caption', 'toolbar', 'settings', 'history', 'agent'])
 const ROLE_ACCESS = Object.freeze({
   [CHANNELS.MOUSE_THROUGH]: Object.freeze(['caption', 'toolbar']),
-  [CHANNELS.DRAG_START]: Object.freeze(['caption', 'toolbar', 'settings', 'history']),
-  [CHANNELS.DRAG_END]: Object.freeze(['caption', 'toolbar', 'settings', 'history']),
+  [CHANNELS.DRAG_START]: Object.freeze(['caption', 'toolbar', 'settings', 'history', 'agent']),
+  [CHANNELS.DRAG_END]: Object.freeze(['caption', 'toolbar', 'settings', 'history', 'agent']),
   [CHANNELS.RESIZE_START]: Object.freeze(['caption']),
   [CHANNELS.RESIZE_END]: Object.freeze(['caption']),
-  [CHANNELS.WINDOW_INTERACTION_READY]: Object.freeze(['caption', 'toolbar', 'settings', 'history']),
+  [CHANNELS.WINDOW_INTERACTION_READY]: Object.freeze(['caption', 'toolbar', 'settings', 'history', 'agent']),
   [CHANNELS.LOCK_TOGGLE]: Object.freeze(['toolbar']),
   [CHANNELS.LOCK_GET]: Object.freeze(['caption', 'toolbar']),
   [CHANNELS.TOOLBAR_LAYOUT_GET_CONTEXT]: Object.freeze(['toolbar']),
@@ -17,6 +17,7 @@ const ROLE_ACCESS = Object.freeze({
   [CHANNELS.TOOLBAR_ACTION]: Object.freeze(['toolbar']),
   [CHANNELS.SETTINGS_CLOSE]: Object.freeze(['settings']),
   [CHANNELS.HISTORY_CLOSE]: Object.freeze(['history']),
+  [CHANNELS.AGENT_CLOSE]: Object.freeze(['agent']),
   [CHANNELS.HISTORY_LIST]: Object.freeze(['history']),
   [CHANNELS.HISTORY_PAGE]: Object.freeze(['history']),
   [CHANNELS.HISTORY_EXPORT]: Object.freeze(['history']),

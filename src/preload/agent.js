@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('agentApi', {
   dragStart: interaction.dragStart,
   dragEnd: interaction.dragEnd,
   onInteractionSync: interaction.onInteractionSync,
+  close: () => ipcRenderer.send(CHANNELS.AGENT_CLOSE),
   subscribeChanged: onChanged,
   subscribeAndGetEligibility: (request, callback) => {
     const unsubscribe = onChanged(callback)

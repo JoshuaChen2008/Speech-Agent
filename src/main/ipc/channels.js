@@ -18,6 +18,7 @@ module.exports = Object.freeze({
   SETTINGS_CLOSE: 'settings:close',
   SETTINGS_NAVIGATE: 'settings:navigate',
   HISTORY_CLOSE: 'history:close',
+  AGENT_CLOSE: 'agent:close',
   HISTORY_LIST: 'history:list-sessions',
   HISTORY_PAGE: 'history:get-session-page',
   HISTORY_EXPORT: 'history:export-session',

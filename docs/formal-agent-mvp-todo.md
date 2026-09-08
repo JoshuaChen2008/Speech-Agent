@@ -77,11 +77,11 @@ subscribeChanged(listener)
 
 ### P3：Agent Bar（S5 change）
 
-- [ ] 提供终态会话范围列表和可见默认范围。
-- [ ] 提供纪要快捷操作和 QA 输入。
-- [ ] 渲染 pending/running/succeeded/failed/cancelling/cancelled。
-- [ ] 渲染概要、结论、待办、风险、来源引用和可操作错误。
-- [ ] reload 后先订阅 changed，再读取权威 snapshot/history。
+- [x] 提供终态会话范围列表和可见默认范围。（实现完成·尚未验收；正式 renderer 已接入 `getScopes`，真实 SQLite 联合旅程仍待补证。）
+- [x] 提供纪要快捷操作和 QA 输入。（实现完成·尚未验收；请求仍由 exact preload facade 提交，完整 recipe 旅程仍待补证。）
+- [x] 渲染 pending/running/succeeded/failed/cancelling/cancelled。（实现完成·尚未验收；取消等待 CommandResult，未知状态 fail closed。）
+- [x] 渲染概要、结论、待办、风险、来源引用和可操作错误。（实现完成·尚未验收；缺口与待确认字段也按受控结果投影，未展示内部 ID/reasoning。）
+- [x] reload 后先订阅 changed，再读取权威 snapshot/history。（实现完成·尚未验收；局部 UI 回归覆盖先订阅、历史与活动详情刷新。）
 - [ ] 在工具条加入正式 Agent 入口。
 
 ### P4：历史与导出（S5 change）
@@ -94,8 +94,8 @@ subscribeChanged(listener)
 
 ### P5：S5 子边界证据（不等同正式 MVP 联合验收）
 
-- [ ] J22：Agent Bar → `summary.minutes` → SQLite interaction → 结果与历史详情（局部实现完成·尚未验收；当前真实纵切以 `qa.answer` 为主，正式 Agent Bar 仍待接通）。
-- [ ] J24：取消、provider 不可用、重复停止、reload、字幕独立性（局部实现完成·尚未验收；取消、provider/字幕独立性子集已有，reload 与重复停止仍待补证）。
+- [ ] J22：Agent Bar → `summary.minutes` → SQLite interaction → 结果与历史详情（局部实现完成·尚未验收；正式 Agent Bar renderer 已接通 exact facade 并有局部 UI 回归，真实 preload/SQLite 纪要纵切仍待补证）。
+- [ ] J24：取消、provider 不可用、重复停止、reload、字幕独立性（局部实现完成·尚未验收；renderer 已覆盖取消等待回执、changed reload 与状态投影，provider/字幕独立性和完整联合旅程仍待补证）。
 - [ ] J26：成功和取消交互的确定性 JSON 导出（已决定；export writer 与真实快照旅程仍待实施）。
 - [ ] J21：终态会话 → `context.ingest.session` → 经历/记忆候选与管理（局部实现完成·尚未验收；S3 摄取子边界有真实 SQLite 旅程，production main 自动摄取与完整 J21 证据仍是后续门禁）。
 - [ ] J27：正式入口与隔离入口的 userData/SQLite 边界（实现完成·尚未验收；require/打包守卫已有，隔离入口联合证据仍待补齐）。

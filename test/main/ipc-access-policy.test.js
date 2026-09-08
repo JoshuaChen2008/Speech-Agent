@@ -30,8 +30,10 @@ test('every inbound channel has an explicit least-privilege role allowlist', () 
 })
 
 test('window roles cannot invoke one another privileged APIs', () => {
-  for (const role of ['caption', 'toolbar', 'settings', 'history']) {
+  for (const role of ['caption', 'toolbar', 'settings', 'history', 'agent']) {
     assert.equal(isRoleAllowed(CHANNELS.WINDOW_INTERACTION_READY, role), true)
+    assert.equal(isRoleAllowed(CHANNELS.DRAG_START, role), true)
+    assert.equal(isRoleAllowed(CHANNELS.DRAG_END, role), true)
   }
   assert.equal(isRoleAllowed(CHANNELS.RUNTIME_COMMAND, 'toolbar'), true)
   assert.equal(isRoleAllowed(CHANNELS.RUNTIME_COMMAND, 'caption'), false)
@@ -73,6 +75,8 @@ test('window roles cannot invoke one another privileged APIs', () => {
   assert.equal(isRoleAllowed(CHANNELS.HISTORY_PAGE, 'settings'), false)
   assert.equal(isRoleAllowed(CHANNELS.HISTORY_EXPORT, 'caption'), false)
   assert.equal(isRoleAllowed(CHANNELS.HISTORY_CLOSE, 'toolbar'), false)
+  assert.equal(isRoleAllowed(CHANNELS.AGENT_CLOSE, 'agent'), true)
+  assert.equal(isRoleAllowed(CHANNELS.AGENT_CLOSE, 'history'), false)
   for (const channel of [CHANNELS.AGENT_CONTEXT_GET_OVERVIEW, CHANNELS.AGENT_CONTEXT_MANAGE]) {
     assert.equal(isRoleAllowed(channel, 'settings'), true)
     assert.equal(isRoleAllowed(channel, 'history'), true)

@@ -16,10 +16,10 @@
 
 ## 3. Agent Bar and history
 
-- [ ] 3.1 Implement the terminal-session scope projection and empty-state behavior in the formal Agent window.
-- [ ] 3.2 Implement minutes shortcut, QA input, product-language routing feedback, explicit pending/running/cancelling/terminal states, and no optimistic success.
-- [ ] 3.3 Implement result rendering for summary, conclusions, action items, risks, gaps, open questions, and source references without exposing internal IDs or reasoning.
-- [ ] 3.4 Implement subscribe-before-read reload and paged interaction history/detail with collapsed tool audit.
+- [x] 3.1 Implement the terminal-session scope projection and empty-state behavior in the formal Agent window (实现完成·尚未验收；真实 preload/SQLite 联合旅程仍待 S5-Integration).
+- [x] 3.2 Implement minutes shortcut, QA input, product-language routing feedback, explicit pending/running/cancelling/terminal states, and no optimistic success (实现完成·尚未验收；正式 renderer 已消费 exact run contract，完整 recipe/失败矩阵仍待补证).
+- [x] 3.3 Implement result rendering for summary, conclusions, action items, risks, gaps, open questions, and source references without exposing internal IDs or reasoning (实现完成·尚未验收；工具审计默认折叠，完整结果 schema 仍由 Core 校验).
+- [x] 3.4 Implement subscribe-before-read reload and paged interaction history/detail with collapsed tool audit (实现完成·尚未验收；局部 UI 回归覆盖 reload/迟到 detail，真实 SQLite 联合旅程仍待 S5-Integration).
 - [ ] 3.5 Add UI/integration tests proving subtitle stop/history/export remain functional when Agent is disabled or fails.
 
 ## 4. Deterministic export and evidence

@@ -2,6 +2,7 @@ export {}
 
 declare global {
   interface Window {
+    agentApi?: any
     historyApi?: any
     Appearance: any
     CaptionReducer: any
