@@ -52,6 +52,7 @@ const {
 const { registerAgentRunIpc } = require('./main/ipc/agent-run-ipc')
 const agentRunUi = require('./agent/contracts/agent-run-ui')
 const { AgentRunService } = require('./agent/formal-run/agent-run-service')
+const { AgentInteractionExporter } = require('./agent/formal-run/agent-interaction-exporter')
 const { sanitizedEnvironment } = require('./agent/model-access/environment')
 const { sha256Canonical } = require('./runtime/storage-worker/canonical-json')
 const { createMainEvidenceBridge } = require('./main/services/electron-exit-evidence')
@@ -1255,6 +1256,15 @@ async function bootstrapApplication () {
       scheduler: formalAgentScheduler,
       routeOrchestrator: formalRouteOrchestrator,
       promptStore: formalAgentPrompts,
+      exporter: new AgentInteractionExporter({
+        storage: applicationRuntime.gateway,
+        showSaveDialog: (ownerWindow, options) => ownerWindow
+          ? dialog.showSaveDialog(ownerWindow, options)
+          : dialog.showSaveDialog(options)
+      }),
+      getOwnerWindow: (sender) => {
+        try { return sender ? BrowserWindow.fromWebContents(sender) : null } catch { return null }
+      },
       onChanged: broadcastAgentRunChanged
     })
   } catch (error) {

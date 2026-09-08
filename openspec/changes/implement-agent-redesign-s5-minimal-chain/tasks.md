@@ -24,9 +24,9 @@
 
 ## 4. Deterministic export and evidence
 
-- [ ] 4.1 Implement main-owned save-dialog and canonical JSON export from one validated SQLite snapshot.
-- [ ] 4.2 Implement same-directory temporary write, atomic replacement, cancellation zero-write, old-target preservation, and cleanup on failure.
-- [ ] 4.3 Add export tests for succeeded, failed, cancelled, multi-attempt, usage-known/unknown, tool order, digest mismatch, and repeated-byte equality.
-- [ ] 4.4 Add privacy negative scans for prompt, reasoning, provider events, credentials, audio, paths, device names, absolute monotonic times, and amount fields.
-- [ ] 4.5 Record S5 sub-boundary evidence and update the minimal-chain spec/TODO with precise implementation and acceptance states; leave J21/J27/full J25 marked as follow-up.
-- [ ] 4.6 Run affected core/integration/evidence lanes, have the semantic/function review performed by `gpt-5.6-luna`, and commit only after the review is clean.
+- [x] 4.1 Implement main-owned save-dialog and canonical JSON export from one validated SQLite snapshot。（实现完成·尚未验收；`AgentInteractionExporter` 只由 main-owned `AgentRunService` 调用，读取单次 `StorageGateway` 交互详情。）
+- [x] 4.2 Implement same-directory temporary write, atomic replacement, cancellation zero-write, old-target preservation, and cleanup on failure。（实现完成·尚未验收；文件 flush/close 后原子替换，取消与故障不触碰既有目标。）
+- [x] 4.3 Add export tests for succeeded, failed, cancelled, multi-attempt, usage-known/unknown, tool order, digest mismatch, and repeated-byte equality。（实现完成·尚未验收；包含真实 SQLite J26 旅程与 exporter/renderer 定向回归。）
+- [x] 4.4 Add privacy negative scans for prompt, reasoning, provider events, credentials, audio, paths, device names, absolute monotonic times, and amount fields。（实现完成·尚未验收；共享 Agent UI privacy validator 与 exporter snapshot validator 均 fail closed。）
+- [x] 4.5 Record S5 sub-boundary evidence and update the minimal-chain spec/TODO with precise implementation and acceptance states; leave J21/J27/full J25 marked as follow-up。（实现完成·尚未验收；SEM-F35/J26 状态已更新，J21/J27/完整 J25 未提前晋级。）
+- [x] 4.6 Run affected core/integration/evidence lanes, have the semantic/function review performed by `gpt-5.6-luna`, and commit only after the review is clean。（实现完成·尚未验收；renderer 验证、44 项受影响 focus、OpenSpec validate 与 Luna 复核均通过。）

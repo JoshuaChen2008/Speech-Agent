@@ -16,6 +16,7 @@ test('S5-1 exact Agent run channels and fail-closed contracts', () => {
   assert.throws(() => c.assertExportRequest({ ...h, interaction_id:'interaction.demo', format:'markdown' }), /exact keys/)
   assert.doesNotThrow(() => c.assertCommandResponse({ ...h, ok:true, error:null, result:{ input_token:1, output_token:2 } }))
   assert.throws(() => c.assertCommandResponse({ ...h, ok:true, error:null, result:{ token_value:'secret' } }), /forbidden/)
+  assert.throws(() => c.assertExportResponse({ ...h, ok:true, error:null, result:{ bytes_sha256:'a'.repeat(64), interaction_id:'interaction.demo', schema_version:1, snapshot:{ result:{ local_path:'/tmp/agent.json' } } } }), /forbidden/)
   assert.throws(() => c.assertGetEligibilityRequest({ ...h, contract_version:'9.0.0', scope }), /unsupported/)
   assert.throws(() => c.assertHistoryRequest({ ...h, limit:101, cursor:null }), /range/)
 })

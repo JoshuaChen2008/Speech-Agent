@@ -7,6 +7,7 @@ const os = require('node:os')
 const path = require('node:path')
 
 const { AgentRunService } = require('../../src/agent/formal-run/agent-run-service')
+const { AgentInteractionExporter } = require('../../src/agent/formal-run/agent-interaction-exporter')
 const { FormalAgentJobScheduler, FormalAgentRunRunner } = require('../../src/agent/execution-host')
 const { CredentialVault } = require('../../src/agent/model-access/credential-vault')
 const { ModelAccessRuntime } = require('../../src/agent/model-access/runtime')
@@ -141,7 +142,11 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34/J22/J24: terminal session request 
     storage: gateway,
     modelAccess,
     scheduler,
-    promptStore: prompts
+    promptStore: prompts,
+    exporter: new AgentInteractionExporter({
+      storage: gateway,
+      showSaveDialog: async () => ({ canceled: false, filePath: path.join(root, 'agent-interaction.json') })
+    })
   })
   scheduler.start()
   t.after(async () => {
@@ -183,4 +188,20 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34/J22/J24: terminal session request 
   assert.equal(database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get(submitted.result.run_id).state, 'succeeded')
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM formal_agent_interactions WHERE run_id=? AND terminal_reason=\'succeeded\'').get(submitted.result.run_id).count, 1)
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM formal_agent_tool_calls WHERE interaction_id=? AND status=\'succeeded\'').get(submitted.result.interaction_id).count, 1)
+  const exported = await agent.exportInteraction({
+    contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
+    interaction_id: submitted.result.interaction_id
+  })
+  const firstBytes = fs.readFileSync(path.join(root, 'agent-interaction.json'))
+  assert.equal(exported.ok, true)
+  assert.equal(exported.result.bytes_sha256, require('node:crypto').createHash('sha256').update(firstBytes).digest('hex'))
+  assert.equal(JSON.parse(firstBytes.toString('utf8')).terminal_reason, 'succeeded')
+  const replayedExport = await agent.exportInteraction({
+    contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
+    interaction_id: submitted.result.interaction_id
+  })
+  const secondBytes = fs.readFileSync(path.join(root, 'agent-interaction.json'))
+  assert.equal(replayedExport.ok, true)
+  assert.deepEqual(secondBytes, firstBytes)
+  assert.equal(replayedExport.result.bytes_sha256, exported.result.bytes_sha256)
 })

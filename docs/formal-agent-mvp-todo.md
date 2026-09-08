@@ -64,7 +64,7 @@ subscribeChanged(listener)
 ### P1：合同与 facade（S5 change）
 
 - [x] 统一 `agent-run-ui` 与旧 eligibility contract；旧入口只保留兼容投影，不再维护第二套字段定义。
-- [ ] 补齐 submit/cancel/history/detail/export 的 exact request/result validator（局部实现完成·尚未验收；export response 与正式 renderer 仍待补齐）。
+- [x] 补齐 submit/cancel/history/detail/export 的 exact request/result validator（实现完成·尚未验收；export response 与正式 renderer 已接入，完整联合旅程与阶段门禁证据仍待补齐）。
 - [x] 实现 `AgentRunService`：资格、范围、输入冻结、幂等、状态机、取消、revision 和错误投影（实现完成·尚未验收；model-first route 与 user target scheduler 已接入）。
 - [x] 用真实 `StorageGateway`、SQLite 和 `ModelAccessRuntime` 替换 [src/main.js](../src/main.js) 的占位 service（实现完成·尚未验收；依赖缺失时仍保持字幕生命周期独立）。
 
@@ -86,17 +86,17 @@ subscribeChanged(listener)
 
 ### P4：历史与导出（S5 change）
 
-- [ ] 历史使用 `(terminal_at DESC, interaction_id)` keyset 分页。
-- [ ] `intent.route` 不进入用户历史列表。
-- [ ] 详情默认折叠工具审计，展开仍受有界投影约束。
-- [ ] main-owned 保存对话框写 canonical JSON；取消零写入。
-- [ ] 重复导出字节和 SHA-256 一致。
+- [x] 历史使用 `(terminal_at DESC, interaction_id)` keyset 分页。（实现完成·尚未验收；真实 SQLite 历史读取已有分页回归，正式联合验收仍待阶段门禁。）
+- [x] `intent.route` 不进入用户历史列表。（实现完成·尚未验收；storage projection 已排除该内部 recipe。）
+- [x] 详情默认折叠工具审计，展开仍受有界投影约束。（实现完成·尚未验收；Agent Bar 只显示受控工具元数据，导出保留已校验审计。）
+- [x] main-owned 保存对话框写 canonical JSON；取消零写入。（实现完成·尚未验收；同目录临时文件 flush/close 后原子替换，取消与写入失败保持目标不变。）
+- [x] 重复导出字节和 SHA-256 一致。（实现完成·尚未验收；真实 SQLite 旅程与 exporter 回归已覆盖。）
 
 ### P5：S5 子边界证据（不等同正式 MVP 联合验收）
 
 - [ ] J22：Agent Bar → `summary.minutes` → SQLite interaction → 结果与历史详情（局部实现完成·尚未验收；正式 Agent Bar renderer 已接通 exact facade 并有局部 UI 回归，真实 preload/SQLite 纪要纵切仍待补证）。
 - [ ] J24：取消、provider 不可用、重复停止、reload、字幕独立性（局部实现完成·尚未验收；renderer 已覆盖取消等待回执、changed reload 与状态投影，provider/字幕独立性和完整联合旅程仍待补证）。
-- [ ] J26：成功和取消交互的确定性 JSON 导出（已决定；export writer 与真实快照旅程仍待实施）。
+- [x] J26：成功、失败和取消交互的确定性 JSON 导出。（实现完成·尚未验收；真实 SQLite 成功重导出、取消零写入、digest/顺序/隐私负扫描已有，阶段联合证据仍待补齐。）
 - [ ] J21：终态会话 → `context.ingest.session` → 经历/记忆候选与管理（局部实现完成·尚未验收；S3 摄取子边界有真实 SQLite 旅程，production main 自动摄取与完整 J21 证据仍是后续门禁）。
 - [ ] J27：正式入口与隔离入口的 userData/SQLite 边界（实现完成·尚未验收；require/打包守卫已有，隔离入口联合证据仍待补齐）。
 - [ ] `.artifacts/` 与 `docs/validation/` 通过 SEM-F14 负扫描。

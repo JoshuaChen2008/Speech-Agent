@@ -196,6 +196,8 @@ class AgentRunService {
     this.scheduler = options.scheduler || null
     this.routeOrchestrator = options.routeOrchestrator || null
     this.promptStore = options.promptStore instanceof Map ? options.promptStore : null
+    this.exporter = options.exporter || null
+    this.getOwnerWindow = typeof options.getOwnerWindow === 'function' ? options.getOwnerWindow : () => null
     this.now = typeof options.now === 'function' ? options.now : Date.now
     this.idFactory = typeof options.idFactory === 'function' ? options.idFactory : () => crypto.randomUUID()
     this.onChanged = typeof options.onChanged === 'function' ? options.onChanged : () => {}
@@ -492,7 +494,24 @@ class AgentRunService {
     }
   }
 
-  async exportInteraction () { return unavailable() }
+  async exportInteraction (request, context = {}) {
+    try {
+      c.assertExportRequest(request)
+    } catch {
+      return c.assertExportResponse({ ...publicFailure(c.ERROR_CODES.invalid, 'correct_input'), error: { category: 'invalid', code: c.ERROR_CODES.invalid, next_action: 'correct_input' } })
+    }
+    if (!this.exporter || typeof this.exporter.exportInteraction !== 'function') {
+      return c.assertExportResponse(publicFailure(c.ERROR_CODES.unavailable, 'retry'))
+    }
+    try {
+      const ownerWindow = context?.sender ? this.getOwnerWindow(context.sender) : null
+      const result = await this.exporter.exportInteraction({ interactionId: request.interaction_id, ownerWindow })
+      if (result?.cancelled === true) return c.assertExportResponse(publicFailure(c.ERROR_CODES.unavailable, 'export_cancelled'))
+      return c.assertExportResponse({ ...header(), ok: true, error: null, result })
+    } catch {
+      return c.assertExportResponse(publicFailure(c.ERROR_CODES.unavailable, 'retry'))
+    }
+  }
 }
 
 function createAgentRunService (options) { return new AgentRunService(options) }

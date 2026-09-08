@@ -40,6 +40,7 @@ async function createHarness () {
   const calls = []
   const submitRequests = []
   const cancelRequests = []
+  const exportRequests = []
   const detailRequests = []
   const detailById = new Map()
   const detailDeferredById = new Map()
@@ -65,13 +66,17 @@ async function createHarness () {
       if (delayed) return delayed.promise
       const value = detailById.get(request.interaction_id) || { ...currentDetail, interaction_id: request.interaction_id, run_id: `run.${request.interaction_id}`, state: 'pending', terminal_reason: null, terminal_at: null }
       return { ok: true, result: value }
+    },
+    async exportInteraction (request) {
+      exportRequests.push(request)
+      return { ok: true, error: null, result: { bytes_sha256: 'c'.repeat(64), interaction_id: request.interaction_id, schema_version: 1, snapshot: {} } }
     }
   }
   const reactRoot = createRoot(dom.window.document.getElementById('root'))
   await act(async () => reactRoot.render(React.createElement(AgentView)))
   await flush()
   return {
-    calls, changed, cancelRequests, detailRequests, dom, historyItem, submitRequests,
+    calls, changed, cancelRequests, detailRequests, dom, exportRequests, historyItem, submitRequests,
     async dispose () {
       await act(async () => reactRoot.unmount())
       dom.window.close()
@@ -87,7 +92,7 @@ test('S5-UX/J22/J24: formal Agent renderer consumes the exact facade and keeps p
   assert.match(source('src/agent/index.html'), /src="\.\/entry\.tsx"/)
   assert.match(source('src/agent/entry.tsx'), /createRoot[\s\S]*AgentView/)
   const view = source('src/agent/agent-view.tsx')
-  for (const method of ['subscribeChanged', 'getScopes', 'getEligibility', 'submit', 'cancel', 'getHistory', 'getInteraction']) assert.match(view, new RegExp(`api\\.${method}`))
+  for (const method of ['subscribeChanged', 'getScopes', 'getEligibility', 'submit', 'cancel', 'getHistory', 'getInteraction', 'exportInteraction']) assert.match(view, new RegExp(`api\\.${method}`))
   assert.match(view, /生成纪要/)
   assert.match(view, /工具调用记录/)
   assert.match(view, /正在读取处理资格/)
@@ -151,4 +156,17 @@ test('S5-UX/J22: list pagination only requests the list being extended', async (
   await act(async () => click(document.querySelector('.scope-panel .more-button')))
   await flush()
   assert.deepEqual(harness.calls.slice(before), [['scopes', 'scope.next']])
+})
+
+test('S5-UX/J26: terminal detail exports by interaction ID and does not expose a target path', async (t) => {
+  const harness = await createHarness(); t.after(() => harness.dispose())
+  await act(async () => click(document.querySelectorAll('.history-card')[1]))
+  await flush()
+  const button = [...document.querySelectorAll('button')].find((item) => item.textContent === '导出交互 JSON')
+  assert.ok(button)
+  await act(async () => click(button))
+  await flush()
+  assert.deepEqual(harness.exportRequests, [{ ...CONTRACT, interaction_id: 'interaction.ui.2' }])
+  assert.equal(document.body.textContent.includes('已导出交互 JSON'), true)
+  assert.equal(JSON.stringify(harness.exportRequests).includes('filePath'), false)
 })

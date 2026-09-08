@@ -21,7 +21,7 @@ const SCOPE_KINDS = Object.freeze(['selection', 'session', 'date_range', 'projec
 const ERROR_CODES = Object.freeze({ unavailable: 'AGENT_RUN_UNAVAILABLE', invalid: 'AGENT_RUN_INVALID' })
 const RUN_ERROR_CODES = Object.freeze(['AGENT_RUN_UNAVAILABLE', 'AGENT_RUN_INVALID', 'AGENT_CANCELLED', 'AGENT_PROVIDER_AUTH_FAILED', 'AGENT_PROVIDER_RATE_LIMITED', 'AGENT_PROVIDER_UNAVAILABLE', 'AGENT_PROVIDER_TIMEOUT', 'AGENT_OUTPUT_INVALID', 'AGENT_PERMISSION_DENIED', 'AGENT_REQUEST_INVALID', 'AGENT_WORKER_EXITED', 'AGENT_INTERNAL_FAILURE', 'AGENT_BUDGET_EXCEEDED'])
 const ID = /^[a-z0-9][a-z0-9._:-]{0,159}$/
-const FORBIDDEN = new Set(['prompt', 'prompt_text', 'assistant', 'reasoning', 'provider_event', 'raw_error', 'stack', 'credential', 'credentials', 'api_key', 'secret', 'password', 'audio', 'pcm', 'wav', 'audio_path', 'path', 'local_path', 'absolute_path', 'amount', 'price', 'cost', 'currency', 'api_token', 'access_token', 'refresh_token', 'token_value', 'transcript_text', 'caption_text'])
+const FORBIDDEN = new Set(['prompt', 'prompt_text', 'user_prompt', 'prompt_body', 'assistant', 'assistant_text', 'reasoning', 'internal_reasoning', 'provider_event', 'provider_events', 'provider_raw_event', 'raw_error', 'stack', 'credential', 'credentials', 'api_key', 'secret', 'password', 'audio', 'audio_file', 'audio_uri', 'pcm', 'wav', 'audio_path', 'path', 'local_path', 'absolute_path', 'target_path', 'save_target', 'device', 'device_name', 'device_id', 'clock_offset_ms', 'absolute_monotonic_ms', 'monotonic_timestamp', 'amount', 'amount_cents', 'price', 'price_amount', 'cost', 'cost_amount', 'currency', 'currency_code', 'pricing', 'api_token', 'access_token', 'refresh_token', 'token_value', 'transcript_text', 'caption_text'])
 const RFC3339_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/
 
 function fail (p, m) { throw new TypeError(`${p}: ${m}`) }
@@ -233,7 +233,19 @@ function assertExportResponse (v) { assertCommandEnvelope(v); if (v.ok) { if (v.
 function assertCommandResponse (v, p = 'response') { assertCommandEnvelope(v, p); if (v.ok && v.result !== null) assertFixturePrivacy(v.result, `${p}.result`); return v }
 function assertGetEligibilityResponse (v) { exact(v, ['contract_id', 'contract_version', 'ok', 'error', 'snapshot'], 'response'); header(v, 'response'); if (typeof v.ok !== 'boolean') fail('response.ok', 'must be boolean'); if (v.ok) { if (v.error !== null) fail('response.error', 'must be null'); assertSnapshot(v.snapshot) } else { if (v.snapshot !== null) fail('response.snapshot', 'must be null'); plain(v.error, 'response.error'); exact(v.error, ['category', 'code', 'next_action'], 'response.error'); enumValue(v.error.code, Object.values(ERROR_CODES), 'response.error.code'); if (v.error.next_action !== null && typeof v.error.next_action !== 'string') fail('response.error.next_action', 'invalid') } return v }
 function assertChangedEvent (v) { exact(v, ['contract_id', 'contract_version', 'revision'], 'event'); header(v, 'event'); integer(v.revision, 'event.revision'); return v }
-function assertFixturePrivacy (v, p = 'fixture') { if (!v || typeof v !== 'object') return v; for (const [k, val] of Object.entries(v)) { if (FORBIDDEN.has(normalizeField(k))) fail(`${p}.${k}`, 'forbidden'); if (typeof val === 'string' && (/^[A-Z]:[\\/]/i.test(val) || /(?:\.wav|\.pcm|\.mp3)$/i.test(val) || /^bearer\s/i.test(val))) fail(`${p}.${k}`, 'forbidden'); if (val && typeof val === 'object') assertFixturePrivacy(val, `${p}.${k}`) } return v }
+function assertFixturePrivacy (v, p = 'fixture') {
+  if (typeof v === 'string') {
+    if (/^(?:[A-Z]:[\\/]|\\\\|\/(?:Users|home|tmp|var|private|mnt|workspace|root|data|opt|etc)(?:[\\/]|$))/i.test(v)) fail(p, 'forbidden')
+    return v
+  }
+  if (!v || typeof v !== 'object') return v
+  for (const [k, val] of Object.entries(v)) {
+    if (FORBIDDEN.has(normalizeField(k))) fail(`${p}.${k}`, 'forbidden')
+    if (typeof val === 'string' && (/^(?:[A-Z]:[\\/]|\\\\|\/(?:Users|home|tmp|var|private|mnt|workspace|root|data|opt|etc)(?:[\\/]|$))/i.test(val) || /(?:\.wav|\.pcm|\.mp3)$/i.test(val) || /^bearer\s/i.test(val))) fail(`${p}.${k}`, 'forbidden')
+    if (val && typeof val === 'object') assertFixturePrivacy(val, `${p}.${k}`)
+  }
+  return v
+}
 function isSupportedContract (idValue, version) { return idValue === CONTRACT_ID && version === CONTRACT_VERSION }
 
 module.exports = { CONTRACT_ID, CONTRACT_VERSION, ALLOWED_ROLES, IPC_CHANNELS, TERMINAL_STATES, ROUTING_MODES, USAGE_STATES, ELIGIBILITY_STATES, SCOPE_KINDS, ERROR_CODES, RUN_ERROR_CODES, assertGetScopesRequest, assertGetScopesResponse, assertGetEligibilityRequest, assertGetEligibilityResponse, assertSubmitRequest, assertCancelRequest, assertHistoryRequest, assertInteractionRequest, assertExportRequest, assertCommandResponse, assertSubmitResponse, assertCancelResponse, assertHistoryResponse, assertInteractionResponse, assertExportResponse, assertChangedEvent, assertFixturePrivacy, scope, assertScopeItem, isSupportedContract }
