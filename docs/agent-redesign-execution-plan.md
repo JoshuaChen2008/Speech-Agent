@@ -273,6 +273,14 @@ S5 下一步执行以 [`openspec/changes/implement-agent-redesign-s5-minimal-cha
 
 以上证据把 S5 子边界推进到「实现完成·尚未验收」，但不改变正式 MVP 的总门槛：J21 生产后台摄取、完整 J25 设置/模型比较、J27 隔离入口 userData/SQLite 仍未形成完整产品旅程；系统保存对话框与确定性 Agent 模型 provider 仍按已登记外部边界记录。完整 J22/J24/J26 以及阶段联合验收必须在这些后续条件与适用实机证据齐备后再晋级。
 
+### 2026-09-09 J21/J25/J27 计划切片收束（仍为实现完成·尚未验收）
+
+本轮按计划补齐三个阻断切片的实现与定向跨模块证据，旧记录保留为历史基线。J21 已把生产 main 的终态会话自动摄取接到真实 `PersonalContextRuntime`、`StorageGateway`、`StorageWorkerService` 与 SQLite，并把正式 Agent 交互中的提示、明确编辑、接受/拒绝、记住/忘记信号接入受治理的摄取入口；`test/main/personal-context-runtime.test.js`、`test/main/agent-interaction-signal-service.test.js` 与 `test/integration/personal-context-s1-journey.test.js` 覆盖自动路径、交互信号、冻结输入、失败隔离与字幕独立性。`agent-redesign-s3-session-ingest-journey` 保留为 J22/J24 的真实 SQLite 摄取、租约与 scheduler wake 子边界证据，模型 provider、网络等已登记外部边界使用确定性替身。J25 已把配置 renderer 的用量未知文案、完整冻结模型身份（含档案修订）与历史比较投影接入 `AgentRunService`/SQLite；`agent-redesign-j25-model-comparison-journey` 验证同一来源以不同模型建立独立 run、已知 provider 用量与缓存字段的比较，以及重复同一冻结模型身份不会形成比较组；用量未知不估算由 settings/contract/UI 定向测试单独覆盖。J27 已补齐真实正式 `SubtitleApplicationRuntime` 与真实 Electron `src/agent-mvp/main.js` 的独立 `userData`/SQLite 旅程，正式入口的 require 闭包、四棵旧树的打包排除和字幕独立性守卫继续生效。
+
+当前 revision 的验证为：`npm run test:core` 875/875；`npm run test:evidence` 229/229（I3 报告已按 `TZ=UTC --segments 3600 --batch-size 100` 刷新，`result=pass`、`gateStatus=partial`，报告只含指标、布尔值和哈希）；J21/J25/J27 定向 integration 分别通过，J27 的相关 focus 还覆盖正式字幕 SQLite 生命周期与旧入口 smoke。并行执行完整 `npm run test:integration` 得到 83/84，唯一失败是既有 `agent-mvp-electron-journey` 边界矩阵超时；单独重跑该文件为 6/6，因此不能把并行 lane 的非零返回码写成联合验收完成。
+
+三个旅程的状态仍统一为「实现完成·尚未验收」：J21 尚缺完整管理 UI 与正式产品入口的联合覆盖；J25 尚缺真实公网 provider/系统凭据边界和正式设置→运行→历史的全链路；J27 尚缺当前 revision 的完整三条 lane 全绿、正式打包产物与干净机手动启动证据。上述边界满足后才能晋级对应旅程或阶段联合验收。
+
 ### 目标验收矩阵
 
 | 切片 | 新 migration | 阻断旅程 | 正证据 | 负证据 |
