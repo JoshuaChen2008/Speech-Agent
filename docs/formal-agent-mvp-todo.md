@@ -98,12 +98,13 @@ subscribeChanged(listener)
 - [x] J24：取消、provider 不可用、重复停止、reload、字幕独立性（实现完成·尚未验收；真实 Electron 旅程在 provider 不可用检查前覆盖字幕启动/停止，随后验证 Agent 打开/聚焦/关闭不影响已停止会话的历史/文本导出；本地真实 SQLite 旅程覆盖取消/迟到结果，取消进入 `cancelling` 后及 Schema 失败收束为 `failed` 后分别由独立 recorder 读取字幕历史/文本导出；runtime/storage 与既有 utility-process 证据覆盖重复请求、预算/timeout/replacement 失败矩阵。以上为分层子边界证据，完整 J24 总门槛仍待正式 MVP 阶段验收。）
 - [x] J26：成功、失败和取消交互的确定性 JSON 导出。（实现完成·尚未验收；`AgentInteractionExporter`、同一 `StorageGateway` 快照、取消零写入、digest/顺序/隐私负扫描、真实 SQLite 重导出字节一致均有证据；系统保存对话框属于外部边界，正式 MVP 阶段门禁仍待统一记录。）
 - [ ] J21：终态会话 → `context.ingest.session` → 经历/记忆候选与管理（实现完成·尚未验收；production main 自动摄取、正式设置中的个人上下文管理 UI、exact preload/IPC 与 UI 回归已接入，完整正式入口联合旅程仍待门禁记录）。
+- [ ] J25：正式设置 → Agent Bar 运行 → 交互历史（实现完成·尚未验收；受控 loopback provider 的真实 Electron 旅程已覆盖 settings renderer/preload 写入档案、model、用途与凭据，Agent Bar preload/main 执行，SQLite 终态交互与 history renderer 重载；真实公网 provider、系统凭据边界与正式模型比较实机证据仍待门禁记录）。
 - [ ] J27：正式入口与隔离入口的 userData/SQLite 边界（实现完成·尚未验收；production main 与隔离入口已有真实 userData/SQLite 定向旅程，require/打包守卫已有，当前 revision 的完整三条 lane、正式打包产物与干净机手动启动证据仍待补齐）。
 - [x] `.artifacts/` 与 `docs/validation/` 通过 SEM-F14 负扫描。（实现完成·尚未验收；`npm run test:evidence` 229/229，报告只保留指标、布尔值和哈希，未写入正文、现场音频或路径。）
 
 后续门禁索引（本 S5 不实施）：J21 完整个人上下文管理 UI 与正式入口联合覆盖；
-J27 当前 revision 的完整三条 lane、正式打包产物与干净机手动启动；完整 J25
-设置→运行→历史链路、真实公网 provider 与系统凭据边界也继续由正式 MVP 总门槛追踪。
+J27 当前 revision 的完整三条 lane、正式打包产物与干净机手动启动；J25 的真实公网
+provider、系统凭据边界与适用实机证据也继续由正式 MVP 总门槛追踪。
 
 以上清单只记录 S5 子切片的实现与证据，不得据此记录「联合验收完成」。正式 MVP
 仍须同时关闭 J21、J22、J24、J25、J26、J27；其中完整 J25 模型接入层仍是后续门禁。

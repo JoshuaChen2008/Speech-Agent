@@ -29,8 +29,10 @@ test('main bridge reduces renderer, audio host and utility details to fixed role
   const bridge = createMainEvidenceBridge({ send: (value) => sent.push(value) })
   const visibleContents = {}
   const audioContents = {}
+  const agentContents = {}
   bridge.registerWebContents(visibleContents, 'caption')
   bridge.registerWebContents(audioContents, 'audio-host')
+  assert.doesNotThrow(() => bridge.registerWebContents(agentContents, 'agent'))
 
   bridge.recordRenderProcessGone(visibleContents, {
     reason: 'crashed',

@@ -281,6 +281,17 @@ S5 下一步执行以 [`openspec/changes/implement-agent-redesign-s5-minimal-cha
 
 三个旅程的状态仍统一为「实现完成·尚未验收」：J21 尚缺完整管理 UI 与正式产品入口的联合覆盖；J25 尚缺真实公网 provider/系统凭据边界和正式设置→运行→历史的全链路；J27 尚缺当前 revision 的完整三条 lane 全绿、正式打包产物与干净机手动启动证据。上述边界满足后才能晋级对应旅程或阶段联合验收。
 
+### 2026-09-10 J25 正式设置链路收束（仍为实现完成·尚未验收）
+
+本轮补齐了当前最小正式入口的 J25 组合证据：新增的
+`test/integration/agent-redesign-j25-formal-settings-journey.test.js` 启动真实生产
+`src/main.js`，从正式 settings renderer/preload 提交连接、model、用途和凭据，随后通过
+正式 Agent Bar preload/main 执行同一终态会话请求，并在重载后的 history renderer 中读取
+同一 StorageGateway/SQLite 交互历史。provider 只使用 loopback 控制 seam，报告只保留布尔值与
+计数并明确公网 provider、系统凭据边界未验收；同时修正 `agent` renderer 在退出证据 role
+白名单中的缺口。该证据把“正式设置→运行→历史”推进到实现完成·尚未验收，不改变真实公网、
+系统凭据、当前 revision 三条 lane、正式包、干净机或阶段联合验收门槛。
+
 ### 目标验收矩阵
 
 | 切片 | 新 migration | 阻断旅程 | 正证据 | 负证据 |

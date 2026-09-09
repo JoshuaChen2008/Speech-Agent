@@ -30,6 +30,7 @@ const WEB_CONTENTS_ROLE_MAP = Object.freeze({
   toolbar: 'renderer',
   settings: 'renderer',
   history: 'renderer',
+  agent: 'renderer',
   renderer: 'renderer',
   'audio-host': 'audio-host'
 })
