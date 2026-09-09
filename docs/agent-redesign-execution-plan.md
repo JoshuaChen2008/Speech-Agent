@@ -265,6 +265,14 @@ S5 下一步执行以 [`openspec/changes/implement-agent-redesign-s5-minimal-cha
 
 上述读取不含本轮产品全量测试。2026-08-31 文档基线为 core 785/785、integration 72/80；8 项失败涉及 Electron/utility/renderer 启动边界，根因分离前不统称环境问题。历史记录留档，不能作为当前工作树结果。正式 MVP 待办集中在 `formal-agent-mvp-todo.md`，小改动选测遵循 `testing-strategy.md` §2.1。
 
+### 2026-09-09 S5 实现 revision 证据收束（`adcfa31`，不晋级联合验收）
+
+本轮 S5 收束已把工具条正式 `agent` action、Agent Bar renderer/preload、main-owned `AgentRunService`、Personal Context/Model Access/Agent Loop、真实 storage worker/SQLite、字幕会话停止与历史/文本导出接到可核对的跨模块路径。`test/integration/agent-bar-ipc-journey.test.js` 使用 production Vite renderer、真实 preload 和 exact main IPC，验证入口打开/复用/聚焦/关闭、`provider_not_configured` 资格投影；该检查发生在字幕启动/停止之后，随后验证 Agent 窗口关闭后已停止会话的历史/文本导出仍可读取。本地真实 SQLite 目标旅程补齐 `qa.answer`、`summary.minutes`、工具 args/results、取消/迟到结果、历史详情和确定性重导出；取消回执进入 `cancelling` 后、以及 Schema 失败收束为 `failed` 后，分别由独立 recorder 关闭字幕并读取历史/文本导出，属于局部 SQLite 证据。既有 eligibility 旅程另记录 `agent_disabled` 策略下先关闭字幕、再读取历史/文本导出。
+
+当前 revision 的验证记录为：`npm run verify:renderer` 返回码 0；`npm run test:core` 返回码 0（842/842）；Electron/utility 子进程可运行环境下 `npm run test:integration` 返回码 0（82/82）；`npm run test:evidence` 返回码 0（229/229）。受限沙箱的 integration 运行记录为 73/82，失败均落在 Electron GPU/utility/renderer 启动边界，属于执行环境诊断，不计作产品断言失败。tracked I3 非音频报告按 `TZ=UTC --segments 3600 --batch-size 100` 重建并通过当前 provenance/export 校验，仍为 `result=pass`、`gateStatus=partial`，只含指标、布尔值和哈希。
+
+以上证据把 S5 子边界推进到「实现完成·尚未验收」，但不改变正式 MVP 的总门槛：J21 生产后台摄取、完整 J25 设置/模型比较、J27 隔离入口 userData/SQLite 仍未形成完整产品旅程；系统保存对话框与确定性 Agent 模型 provider 仍按已登记外部边界记录。完整 J22/J24/J26 以及阶段联合验收必须在这些后续条件与适用实机证据齐备后再晋级。
+
 ### 目标验收矩阵
 
 | 切片 | 新 migration | 阻断旅程 | 正证据 | 负证据 |

@@ -6,7 +6,7 @@
 > `docs/semantic-contract.md`、`docs/testing-strategy.md` 与现有 ADR。
 > `src/agent-mvp` 是隔离开发入口，不计入正式 MVP 证据。
 
-> 2026-09-09 核对：当前工作树已有正式 Agent Bar renderer、Agent run contract/controller、preload、main-owned service、model-first route、user target scheduler、交互历史与 canonical JSON 导出；正式工具条入口和 renderer → preload → Agent Loop → storage worker/SQLite 的联合证据仍待收束。以下复选框跟踪产品闭环，不表示对应目录完全没有代码。开发选测与阶段门禁统一见 `testing-strategy.md` §2.1，不要求每个小任务重复三条 lane。
+> 2026-09-09 核对（S5 实现 revision `adcfa31`）：当前工作树已有正式 Agent Bar renderer、工具条入口、Agent run contract/controller、preload、main-owned service、model-first route、user target scheduler、交互历史与 canonical JSON 导出；真实 Electron renderer → preload → main/Agent Loop → storage worker/SQLite → 字幕系统的 S5 子边界旅程已经纳入，完整 J21/J25/J27 与正式 MVP 总门槛仍待后续收束。以下复选框跟踪产品闭环，不表示对应目录完全没有代码。开发选测与阶段门禁统一见 `testing-strategy.md` §2.1，不要求每个小任务重复三条 lane。
 
 > 2026-09-08 S5 执行入口：具体 proposal/design/spec/tasks 见 [`openspec/changes/implement-agent-redesign-s5-minimal-chain/`](../openspec/changes/implement-agent-redesign-s5-minimal-chain/)。本文件只保留正式 MVP 的跨切片导航；S5 的可执行任务以该 change 为准，J21/J27/完整 J25 仍是后续门禁。
 
@@ -57,9 +57,9 @@ subscribeChanged(listener)
 
 ### P0：基线收束
 
-- [ ] 复核 2026-08-31 基线中的 integration 8 项失败；GPU、utility、renderer 启动异常必须与产品断言分离，历史数字不冒充当前结果。
-- [ ] 复核 I3 `productPayloadSha256` 的当前输入绑定；已有 `56b0237` 刷新记录，后续产品载荷变化仍需重验，不能按旧 TODO 断言修复缺失。
-- [ ] 独立运行并记录 core / integration / evidence 三条 lane 的真实返回码。
+- [x] 复核 2026-08-31 基线中的 integration 8 项失败；GPU、utility、renderer 启动异常必须与产品断言分离，历史数字不冒充当前结果。（实现完成·尚未验收；受限沙箱仍记录为 Electron 启动环境边界，Electron/utility 可运行环境下当前 revision 的 integration 返回码为 0。）
+- [x] 复核 I3 `productPayloadSha256` 的当前输入绑定；已有 `56b0237` 刷新记录，后续产品载荷变化仍需重验，不能按旧 TODO 断言修复缺失。（实现完成·尚未验收；已按当前源码与 `TZ=UTC --segments 3600 --batch-size 100` 重建 tracked I3 非音频报告，`productPayloadSha256` 与 storage provenance 已更新，报告仍为 `result=pass`/`gateStatus=partial`。）
+- [x] 独立运行并记录 core / integration / evidence 三条 lane 的真实返回码。（实现完成·尚未验收；当前 revision 记录为 core 842/842、integration 82/82、evidence 229/229，均返回码 0。）
 
 ### P1：合同与 facade（S5 change）
 
@@ -71,18 +71,18 @@ subscribeChanged(listener)
 ### P2：执行汇合（S5 change）
 
 - [x] 将 `PersonalContextRuntime`、`IntentRouteOrchestrator`、`AgentLoopExecutor` 和 scheduler 接入 production main（实现完成·尚未验收；formal target runner 与 model-first route 已接线）。
-- [x] `summary.minutes` 与 `qa.answer` 统一经过同一个 Agent Loop（实现完成·尚未验收；完整 minutes 旅程仍待补证）。
+- [x] `summary.minutes` 与 `qa.answer` 统一经过同一个 Agent Loop（实现完成·尚未验收；本地真实 SQLite 目标旅程已分别验证 QA 与 minutes 的结果、历史、详情和导出，正式 MVP 阶段门禁仍待总验收）。
 - [ ] `context.ingest.session` 仅在字幕提交 ACK 后异步启动（局部实现完成·尚未验收；S3 runner、自动 requestor 过滤与真实 SQLite 证据已保留，但 production main 当前未注入模型接入层，J21 自动摄取接线留后续）。
-- [ ] 覆盖 provider 不可用、Schema 失败、超时、取消、重试、worker replacement 和迟到消息拒绝（局部实现完成·尚未验收；timeout/cancel/late-result 已有，replacement 与完整失败矩阵仍待补齐）。
+- [x] 覆盖 provider 不可用、Schema 失败、超时、取消、重试、worker replacement 和迟到消息拒绝（实现完成·尚未验收；runner/orchestrator/scheduler 与本地真实 SQLite 目标旅程覆盖 Schema/预算/timeout/取消/迟到结果，worker replacement 由 `test/runtime/formal-agent-job-scheduler.test.js` 与既有 utility-process integration 证据覆盖，真实 Agent Bar IPC 旅程覆盖 provider 不可用；未把本地 S5 目标旅程写成 replacement 证明，完整 J24 总门槛仍待正式 MVP 阶段验收）。
 
 ### P3：Agent Bar（S5 change）
 
-- [x] 提供终态会话范围列表和可见默认范围。（实现完成·尚未验收；正式 renderer 已接入 `getScopes`，真实 SQLite 联合旅程仍待补证。）
-- [x] 提供纪要快捷操作和 QA 输入。（实现完成·尚未验收；请求仍由 exact preload facade 提交，完整 recipe 旅程仍待补证。）
+- [x] 提供终态会话范围列表和可见默认范围。（实现完成·尚未验收；正式 renderer 已接入 `getScopes`，真实 Electron IPC 与本地 SQLite 目标旅程均已覆盖范围投影。）
+- [x] 提供纪要快捷操作和 QA 输入。（实现完成·尚未验收；请求经 exact preload facade 提交，本地真实 SQLite 目标旅程已覆盖两个开放 recipe。）
 - [x] 渲染 pending/running/succeeded/failed/cancelling/cancelled。（实现完成·尚未验收；取消等待 CommandResult，未知状态 fail closed。）
 - [x] 渲染概要、结论、待办、风险、来源引用和可操作错误。（实现完成·尚未验收；缺口与待确认字段也按受控结果投影，未展示内部 ID/reasoning。）
 - [x] reload 后先订阅 changed，再读取权威 snapshot/history。（实现完成·尚未验收；局部 UI 回归覆盖先订阅、历史与活动详情刷新。）
-- [ ] 在工具条加入正式 Agent 入口。（当前 main 已有 `agent` action 路由，toolbar renderer 尚未呈现入口；需补正式入口、打开/关闭行为和字幕系统独立性旅程。）
+- [x] 在工具条加入正式 Agent 入口。（实现完成·尚未验收；`agent` action 已接入工具条并由真实 Electron 旅程验证打开、复用、聚焦、关闭，字幕系统继续独立运行。）
 
 ### P4：历史与导出（S5 change）
 
@@ -94,12 +94,12 @@ subscribeChanged(listener)
 
 ### P5：S5 子边界证据（不等同正式 MVP 联合验收）
 
-- [ ] J22：Agent Bar → `summary.minutes` → SQLite interaction → 结果与历史详情（局部实现完成·尚未验收；正式 Agent Bar renderer、exact facade 与 main service 已接通，真实 Electron/preload/SQLite 纪要纵切仍待补证）。
-- [ ] J24：取消、provider 不可用、重复停止、reload、字幕独立性（局部实现完成·尚未验收；renderer 已覆盖取消等待回执、changed reload 与状态投影，工具条入口、provider/字幕独立性、storage replacement 和完整联合旅程仍待补证）。
-- [x] J26：成功、失败和取消交互的确定性 JSON 导出。（实现完成·尚未验收；`AgentInteractionExporter`、同一 `StorageGateway` 快照、取消零写入、digest/顺序/隐私负扫描已有，正式保存对话框联合证据与当前 revision 三条 lane 记录仍待补齐。）
+- [x] J22：Agent Bar → `summary.minutes` → SQLite interaction → 结果与历史详情（实现完成·尚未验收；真实 Electron Agent Bar IPC 旅程覆盖工具条入口、provider 资格、窗口生命周期与字幕独立；本地真实 SQLite 旅程覆盖 `summary.minutes`/`qa.answer` → Agent Loop → interaction/history/detail/export；该证据只闭合 S5 子边界，完整 J22 总门槛仍待正式 MVP 阶段验收。）
+- [x] J24：取消、provider 不可用、重复停止、reload、字幕独立性（实现完成·尚未验收；真实 Electron 旅程在 provider 不可用检查前覆盖字幕启动/停止，随后验证 Agent 打开/聚焦/关闭不影响已停止会话的历史/文本导出；本地真实 SQLite 旅程覆盖取消/迟到结果，取消进入 `cancelling` 后及 Schema 失败收束为 `failed` 后分别由独立 recorder 读取字幕历史/文本导出；runtime/storage 与既有 utility-process 证据覆盖重复请求、预算/timeout/replacement 失败矩阵。以上为分层子边界证据，完整 J24 总门槛仍待正式 MVP 阶段验收。）
+- [x] J26：成功、失败和取消交互的确定性 JSON 导出。（实现完成·尚未验收；`AgentInteractionExporter`、同一 `StorageGateway` 快照、取消零写入、digest/顺序/隐私负扫描、真实 SQLite 重导出字节一致均有证据；系统保存对话框属于外部边界，正式 MVP 阶段门禁仍待统一记录。）
 - [ ] J21：终态会话 → `context.ingest.session` → 经历/记忆候选与管理（局部实现完成·尚未验收；S3 摄取子边界有真实 SQLite 旅程，production main 自动摄取与完整 J21 证据仍是后续门禁）。
 - [ ] J27：正式入口与隔离入口的 userData/SQLite 边界（实现完成·尚未验收；require/打包守卫已有，隔离入口联合证据仍待补齐）。
-- [ ] `.artifacts/` 与 `docs/validation/` 通过 SEM-F14 负扫描。
+- [x] `.artifacts/` 与 `docs/validation/` 通过 SEM-F14 负扫描。（实现完成·尚未验收；`npm run test:evidence` 229/229，报告只保留指标、布尔值和哈希，未写入正文、现场音频或路径。）
 
 后续门禁索引（本 S5 不实施）：J21 后台摄取、J27 正式入口与旧隔离入口的
 userData/SQLite 隔离；完整 J25 模型接入层也继续由正式 MVP 总门槛追踪。

@@ -14,8 +14,8 @@
 |---|---|---|
 | S3 执行宿主 | `recipes.js` 已登记 11 个固定 recipe；统一 `agent-loop`、意图收敛、两段式 session ingest、v7 interaction/tool/presentation storage 与真实 SQLite 联合测试已存在 | 实现完成·尚未验收。正式 Agent 窗口与真实 Agent Bar 汇合缺失 |
 | S4 工具与预算 | `ControlledToolRuntime`、`ToolAuditRuntime`、`search_context`/`read_sources`、十轴预算和 `(attempt, call_order)` 审计已存在；定向 runtime/storage/integration 29/29 通过 | 实现完成·尚未验收。完整 Loop 预算观测和正式 UI 汇合缺失 |
-| S5-Core | 工作树已有 `agent-run:*` contract/controller、`agent` 角色、preload、main-owned `AgentRunService`、真实 StorageGateway 读取、意图收敛、统一 Agent Loop 接线、分页、changed revision 与 canonical 导出 | 局部 S5-Core 实现完成·尚未验收；正式 Electron/preload/SQLite 纵切、完整失败矩阵与字幕系统独立性仍缺 |
-| S5-UX | `src/agent/**` 已是正式 Agent Bar renderer，覆盖终态会话范围、纪要/问答、状态、结果、来源引用、折叠工具调用、历史详情与导出动作；设置页另有模型配置档案 renderer | 实现完成·尚未验收（局部 UI）；工具条正式入口和真实 preload/SQLite/Agent Loop 联合证据仍缺 |
+| S5-Core | 工作树已有 `agent-run:*` contract/controller、`agent` 角色、preload、main-owned `AgentRunService`、真实 StorageGateway 读取、意图收敛、统一 Agent Loop 接线、分页、changed revision 与 canonical 导出；真实 Electron Agent Bar IPC 旅程已接入 storage worker/SQLite 与字幕停止路径 | 局部 S5-Core 实现完成·尚未验收；provider/Schema/预算/replacement 失败矩阵和正式 MVP 总门槛仍待后续验收 |
+| S5-UX | `src/agent/**` 已是正式 Agent Bar renderer，覆盖终态会话范围、纪要/问答、状态、结果、来源引用、折叠工具调用、历史详情与导出动作；工具条 `agent` action 已验证打开、复用、聚焦与关闭；设置页另有模型配置档案 renderer | 实现完成·尚未验收（局部 UI 与 S5 子边界）；J21/J25/J27 及完整 J22/J24/J26 阶段门禁仍缺 |
 | S6 旧实现隔离 | 产品入口 require 图不到达四棵旧树；打包排除四棵旧树并保留 `src/agent/**`；J27 定向 integration 1/1、validation 17/17 | 实现完成·尚未验收。隔离入口独立 userData 的联合证据仍缺 |
 
 ### 1.1 实际回归基线（2026-08-31）
@@ -23,6 +23,12 @@
 - `npm run test:core`：785/785，返回码 0。
 - `npm run test:integration`：72/80。8 项失败位于 Electron/utility/renderer 启动边界，包含 GPU `exit_code=-1073741515`、开发 renderer 启动失败、受监督退出状态异常及 utility 初始报告缺失；在根因分离前不得统称为环境问题，也不得计作 Agent 旅程通过。
 - 工作树已有用户未跟踪的 `docs/current-framework.*` 可视化文件；本设计不修改或纳入这些文件。
+
+### 1.2 S5 实现 revision 证据（2026-09-09，`adcfa31`）
+
+- `npm run verify:renderer` 返回码 0；`npm run test:core` 返回码 0（842/842）；Electron/utility 子进程可运行环境下 `npm run test:integration` 返回码 0（82/82）；`npm run test:evidence` 返回码 0（229/229）。受限沙箱的 integration 记录为 73/82，失败均为 Electron GPU/utility/renderer 启动边界，属于执行环境诊断。
+- `test/integration/agent-bar-ipc-journey.test.js` 使用 production Vite renderer、真实 preload、exact main IPC、`SessionCoordinator`、`StorageWorkerHost`/utility、SQLite、HistoryService 与文本导出，覆盖工具条 Agent 入口；该旅程在 `provider_not_configured` 检查前完成字幕启动/停止，随后验证 Agent 窗口关闭后已停止会话的历史与导出独立性。`test/integration/agent-redesign-s5-target-journey.test.js` 以真实 StorageGateway/SQLite 覆盖 `qa.answer`、`summary.minutes`、取消、迟到结果、工具 args/results、历史详情和重复导出；取消回执进入 `cancelling` 后、以及 Schema 失败收束为 `failed` 后，分别由独立 recorder 关闭字幕并读取历史/文本导出，这些是局部 SQLite 证据。`test/integration/formal-agent-lifecycle-journey.test.js` 另以真实 SQLite eligibility 旅程记录 `agent_disabled` 策略下先关闭字幕、再读取历史/文本导出。worker replacement 仍由 scheduler/runtime 与既有 utility-process integration 证据负责。
+- tracked I3 非音频报告按 `TZ=UTC --segments 3600 --batch-size 100` 重建后通过 provenance/export 校验，保持 `result=pass`、`gateStatus=partial`，只记录指标、布尔值和哈希。以上证据只收束 S5 子边界，J21 生产后台摄取、完整 J25 设置/模型比较、J27 隔离入口 userData/SQLite 仍是后续阻断项。
 
 ## 2. MVP 目标与非目标
 
@@ -204,3 +210,7 @@ Pi、DeepSeek Harness、OpenAI Agents SDK、LangGraph、LangMem、Letta、Mem0 �
 4. 将进程内 host 转发、手工 execution adapter、确定性 Agent 模型 provider 和系统对话框替身标记为测试边界；它们只能证明局部行为，不能晋级 J22/J24/J26。
 
 收束条件：`openspec validate` 通过；受影响的 core/integration/evidence lane 按 `testing-strategy.md` §2.1 记录当前 revision 的返回码；三条 lane 和 J22/J24/J26 真实联合证据未齐前，状态保持「实现完成·尚未验收」。
+
+### 10.2 S5 实现 revision 证据收束（2026-09-09，`adcfa31`）
+
+10.1 的四项收束面已纳入当前 revision：工具条正式入口、真实 Electron Agent Bar IPC 与已停止会话的字幕历史/导出边界、真实 SQLite 目标旅程、取消/迟到结果和确定性导出均有对应代码与旅程记录；取消进入 `cancelling` 后及 Schema 失败收束为 `failed` 后的字幕 recorder/history/export 证据均为局部 SQLite 证据。`test:core` 842/842、Electron/utility 可运行环境下 `test:integration` 82/82、`test:evidence` 229/229，均返回码 0。该结果记录为「实现完成·尚未验收」，不把确定性 provider 或系统保存对话框替身当成正式 provider/实机证据，也不提前晋级 J21、完整 J25 或 J27。

@@ -1,6 +1,6 @@
 ## Context
 
-S3/S4 provide the fixed recipe registry, unified Agent Loop, controlled read-only tools, model-access runtime, personal-context runtime, scheduler, and v7/v8 interaction storage. The current worktree also contains the formal `agent` window, exact preload facade, main-owned `AgentRunService`, terminal-session scope projection, Agent Bar renderer, history/detail projections, and canonical exporter. The remaining work is to expose the toolbar entry and prove the path with real internal modules across the renderer, preload, main service, storage worker/SQLite, and subtitle lifecycle. Renderer code must never receive SQLite handles, providers, credentials, prompts, or filesystem paths.
+S3/S4 provide the fixed recipe registry, unified Agent Loop, controlled read-only tools, model-access runtime, personal-context runtime, scheduler, and v7/v8 interaction storage. The current revision has exposed the toolbar entry and recorded the production Electron path with real internal modules across the renderer, preload, main service, storage worker/SQLite, and subtitle lifecycle. Remaining evidence keeps the Agent-disabled, provider-unavailable, cancellation, and terminal-failure subtitle boundaries attributed to their respective real journeys. Renderer code must never receive SQLite handles, providers, credentials, prompts, or filesystem paths.
 
 ## Goals / Non-Goals
 
@@ -45,3 +45,7 @@ No SQLite migration is required. Implement the toolbar action and integration co
 ## Open Questions
 
 There are no unresolved product decisions for this slice. J21, full J25, and J27 remain explicit follow-up gates, and no implementation choice in this change may promote them or add a second user journey.
+
+## Current status (2026-09-09, implementation revision `adcfa31`)
+
+The toolbar action, production Agent Bar preload/IPC path, real storage worker/SQLite subtitle path, local Agent Loop target, cancellation/late-result rejection, terminal Schema failure, and deterministic export evidence are recorded. The Electron journey completes subtitle start/stop before using `provider_not_configured` as the unavailable external boundary, then verifies history/export for the already-stopped session after Agent close; it does not claim a concurrent provider-failure subtitle journey, a configured provider, or native save-dialog behavior. The local target's cancellation and post-failure recorder/history/export checks remain SQLite-local evidence. The status remains `实现完成·尚未验收`; J21, complete J25, J27, and the formal J22/J24/J26 stage gates remain open.

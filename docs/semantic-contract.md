@@ -166,3 +166,9 @@
 3. 旅程通过后在测试策略和 PLAN 更新证据，但不得删除失败路径或缩小边界来制造通过。
 4. “当前状态”至少在阶段验收、存储后端切换、摘要上线和发布前复核一次。
 5. 模糊词按 [`CONTEXT.md`](../CONTEXT.md) 替换；特别禁止用“本地声音”“最终字幕”“单测通过所以完成”。
+
+### 2026-09-09 S5 实现 revision 证据状态（`adcfa31`）
+
+本段只更新当前状态，不改变上表冻结语义。SEM-F31/F34/F35 的 S5 子边界已形成真实 Electron Agent Bar IPC 旅程：production Vite renderer、真实 Agent/toolbar/caption preload、exact main IPC、`SessionCoordinator`、`StorageWorkerHost`/utility、SQLite、HistoryService 与文本导出共同运行；工具条入口的打开/复用/聚焦/关闭、`provider_not_configured` 资格投影、工具调用详情默认折叠并按需展开均有断言。该 Electron 旅程在 provider 不可用检查前完成字幕启动/停止，随后验证 Agent 窗口关闭后已停止会话的历史/文本导出。另有本地真实 StorageGateway/SQLite 目标旅程覆盖 `summary.minutes`、`qa.answer`、完整工具 args/results、取消/迟到结果、历史详情与重复导出字节一致；取消回执进入 `cancelling` 后、以及 Schema 失败收束为 `failed` 后，分别由独立 recorder 关闭字幕并读取历史/文本导出，这些属于 SQLite/local evidence，不是生产 `SessionCoordinator`/Agent Bar 失败保全旅程。既有 eligibility 旅程另记录 `agent_disabled` 策略下先关闭字幕、再读取历史/文本导出。worker replacement 仍由 scheduler/runtime 与 utility-process 证据负责。该确定性 provider 仅属于外部边界替身，不能代替真实公网模型或实机证据。
+
+当前验证记录为：`npm run verify:renderer` 返回码 0；`npm run test:core` 返回码 0（842/842）；Electron/utility 子进程可运行环境下 `npm run test:integration` 返回码 0（82/82）；`npm run test:evidence` 返回码 0（229/229）。受限沙箱的 integration 记录为 73/82，失败均为 Electron GPU/utility/renderer 启动边界，单独归类为执行环境诊断。tracked I3 非音频报告按 `TZ=UTC --segments 3600 --batch-size 100` 重建并通过 provenance/export 校验，保持 `result=pass`、`gateStatus=partial`，只含指标、布尔值和哈希。上述 S5 状态仍为「实现完成·尚未验收」；J21 生产后台摄取、完整 J25 设置/模型比较、J27 隔离入口 userData/SQLite 及正式 J22/J24/J26 总门槛仍未晋级。
