@@ -6,7 +6,7 @@
 > `docs/semantic-contract.md`、`docs/testing-strategy.md` 与现有 ADR。
 > `src/agent-mvp` 是隔离开发入口，不计入正式 MVP 证据。
 
-> 2026-09-09 核对（S5 实现 revision `adcfa31`）：当前工作树已有正式 Agent Bar renderer、工具条入口、Agent run contract/controller、preload、main-owned service、model-first route、user target scheduler、交互历史与 canonical JSON 导出；真实 Electron renderer → preload → main/Agent Loop → storage worker/SQLite → 字幕系统的 S5 子边界旅程已经纳入，完整 J21/J25/J27 与正式 MVP 总门槛仍待后续收束。以下复选框跟踪产品闭环，不表示对应目录完全没有代码。开发选测与阶段门禁统一见 `testing-strategy.md` §2.1，不要求每个小任务重复三条 lane。
+> 2026-09-09 核对（S5 基线 revision `adcfa31`）：该基线已有正式 Agent Bar renderer、工具条入口、Agent run contract/controller、preload、main-owned service、model-first route、user target scheduler、交互历史与 canonical JSON 导出；真实 Electron renderer → preload → main/Agent Loop → storage worker/SQLite → 字幕系统的 S5 子边界旅程已经纳入。当前工作树在此基础上继续推进，完整 J21/J25/J27 与正式 MVP 总门槛仍待后续收束。以下复选框跟踪产品闭环，不表示对应目录完全没有代码。开发选测与阶段门禁统一见 `testing-strategy.md` §2.1，不要求每个小任务重复三条 lane。
 
 > 2026-09-08 S5 执行入口：具体 proposal/design/spec/tasks 见 [`openspec/changes/implement-agent-redesign-s5-minimal-chain/`](../openspec/changes/implement-agent-redesign-s5-minimal-chain/)。本文件只保留正式 MVP 的跨切片导航；S5 的可执行任务以该 change 为准，J21/J27/完整 J25 仍是后续门禁。
 
@@ -59,7 +59,7 @@ subscribeChanged(listener)
 
 - [x] 复核 2026-08-31 基线中的 integration 8 项失败；GPU、utility、renderer 启动异常必须与产品断言分离，历史数字不冒充当前结果。（实现完成·尚未验收；受限沙箱仍记录为 Electron 启动环境边界，Electron/utility 可运行环境下当前 revision 的 integration 返回码为 0。）
 - [x] 复核 I3 `productPayloadSha256` 的当前输入绑定；已有 `56b0237` 刷新记录，后续产品载荷变化仍需重验，不能按旧 TODO 断言修复缺失。（实现完成·尚未验收；已按当前源码与 `TZ=UTC --segments 3600 --batch-size 100` 重建 tracked I3 非音频报告，`productPayloadSha256` 与 storage provenance 已更新，报告仍为 `result=pass`/`gateStatus=partial`。）
-- [x] 独立运行并记录 core / integration / evidence 三条 lane 的真实返回码。（实现完成·尚未验收；当前 revision 记录为 core 842/842、integration 82/82、evidence 229/229，均返回码 0。）
+- [x] 独立运行并记录 core / integration / evidence 三条 lane 的真实返回码。（实现完成·尚未验收；最新记录为 core 875/875、integration 83/84、evidence 229/229；integration 当前未全绿，单文件重跑 6/6 不能改写完整 lane 结果。）
 
 ### P1：合同与 facade（S5 change）
 
@@ -72,7 +72,7 @@ subscribeChanged(listener)
 
 - [x] 将 `PersonalContextRuntime`、`IntentRouteOrchestrator`、`AgentLoopExecutor` 和 scheduler 接入 production main（实现完成·尚未验收；formal target runner 与 model-first route 已接线）。
 - [x] `summary.minutes` 与 `qa.answer` 统一经过同一个 Agent Loop（实现完成·尚未验收；本地真实 SQLite 目标旅程已分别验证 QA 与 minutes 的结果、历史、详情和导出，正式 MVP 阶段门禁仍待总验收）。
-- [ ] `context.ingest.session` 仅在字幕提交 ACK 后异步启动（局部实现完成·尚未验收；S3 runner、自动 requestor 过滤与真实 SQLite 证据已保留，但 production main 当前未注入模型接入层，J21 自动摄取接线留后续）。
+- [x] `context.ingest.session` 仅在字幕提交 ACK 后异步启动（实现完成·尚未验收；production main 已组合 Personal Context、Model Access、统一 Agent Loop、真实 StorageGateway/SQLite 与 scheduler，自动摄取仍需正式管理 UI 与完整 J21 联合旅程验收）。
 - [x] 覆盖 provider 不可用、Schema 失败、超时、取消、重试、worker replacement 和迟到消息拒绝（实现完成·尚未验收；runner/orchestrator/scheduler 与本地真实 SQLite 目标旅程覆盖 Schema/预算/timeout/取消/迟到结果，worker replacement 由 `test/runtime/formal-agent-job-scheduler.test.js` 与既有 utility-process integration 证据覆盖，真实 Agent Bar IPC 旅程覆盖 provider 不可用；未把本地 S5 目标旅程写成 replacement 证明，完整 J24 总门槛仍待正式 MVP 阶段验收）。
 
 ### P3：Agent Bar（S5 change）
@@ -98,11 +98,12 @@ subscribeChanged(listener)
 - [x] J24：取消、provider 不可用、重复停止、reload、字幕独立性（实现完成·尚未验收；真实 Electron 旅程在 provider 不可用检查前覆盖字幕启动/停止，随后验证 Agent 打开/聚焦/关闭不影响已停止会话的历史/文本导出；本地真实 SQLite 旅程覆盖取消/迟到结果，取消进入 `cancelling` 后及 Schema 失败收束为 `failed` 后分别由独立 recorder 读取字幕历史/文本导出；runtime/storage 与既有 utility-process 证据覆盖重复请求、预算/timeout/replacement 失败矩阵。以上为分层子边界证据，完整 J24 总门槛仍待正式 MVP 阶段验收。）
 - [x] J26：成功、失败和取消交互的确定性 JSON 导出。（实现完成·尚未验收；`AgentInteractionExporter`、同一 `StorageGateway` 快照、取消零写入、digest/顺序/隐私负扫描、真实 SQLite 重导出字节一致均有证据；系统保存对话框属于外部边界，正式 MVP 阶段门禁仍待统一记录。）
 - [ ] J21：终态会话 → `context.ingest.session` → 经历/记忆候选与管理（局部实现完成·尚未验收；S3 摄取子边界有真实 SQLite 旅程，production main 自动摄取与完整 J21 证据仍是后续门禁）。
-- [ ] J27：正式入口与隔离入口的 userData/SQLite 边界（实现完成·尚未验收；require/打包守卫已有，隔离入口联合证据仍待补齐）。
+- [ ] J27：正式入口与隔离入口的 userData/SQLite 边界（实现完成·尚未验收；production main 与隔离入口已有真实 userData/SQLite 定向旅程，require/打包守卫已有，当前 revision 的完整三条 lane、正式打包产物与干净机手动启动证据仍待补齐）。
 - [x] `.artifacts/` 与 `docs/validation/` 通过 SEM-F14 负扫描。（实现完成·尚未验收；`npm run test:evidence` 229/229，报告只保留指标、布尔值和哈希，未写入正文、现场音频或路径。）
 
-后续门禁索引（本 S5 不实施）：J21 后台摄取、J27 正式入口与旧隔离入口的
-userData/SQLite 隔离；完整 J25 模型接入层也继续由正式 MVP 总门槛追踪。
+后续门禁索引（本 S5 不实施）：J21 完整个人上下文管理 UI 与正式入口联合覆盖；
+J27 当前 revision 的完整三条 lane、正式打包产物与干净机手动启动；完整 J25
+设置→运行→历史链路、真实公网 provider 与系统凭据边界也继续由正式 MVP 总门槛追踪。
 
 以上清单只记录 S5 子切片的实现与证据，不得据此记录「联合验收完成」。正式 MVP
 仍须同时关闭 J21、J22、J24、J25、J26、J27；其中完整 J25 模型接入层仍是后续门禁。
