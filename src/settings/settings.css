@@ -372,6 +372,63 @@ input[type="text"]:disabled, input[type="password"]:disabled, input[type="number
 .agent-model-profiles, .agent-model-new-profile, .agent-model-purposes { margin-top: 14px; }
 .capability-row .seg { flex: none; }
 .purpose-row select { min-width: 220px; }
+
+/* --------------------------------------------------------------------------
+   个人上下文：管理界面只消费有界 exact projection，不展示内部存储细节。
+   -------------------------------------------------------------------------- */
+.agent-context-tabs {
+  display: inline-flex;
+  gap: 2px;
+  margin: 14px 0;
+  padding: 2px;
+  border-radius: var(--radius-control);
+  background: rgba(var(--fg), 0.08);
+}
+.agent-context-tabs button {
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: rgb(var(--fg));
+  font: inherit;
+  font-size: var(--fs-label);
+  padding: 7px 12px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.agent-context-tabs button.on { background: var(--accent-solid); color: var(--on-accent); opacity: 1; }
+.agent-context-remember { padding: 4px 16px 14px; }
+.agent-context-remember textarea, .agent-context-item textarea {
+  width: 100%;
+  min-height: 70px;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+  color: rgb(var(--fg));
+  background: rgba(var(--fg), 0.06);
+  border: 1px solid rgba(var(--fg), 0.16);
+  border-radius: var(--radius-control);
+  padding: 8px 10px;
+}
+.agent-context-form-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.agent-context-form-row select { flex: 1; }
+.agent-context-list { margin-top: 14px; border-radius: var(--radius-bar); background: rgba(var(--fg), 0.05); padding: 4px 16px; }
+.agent-context-item { padding: 14px 0; border-bottom: 1px solid rgba(var(--fg), 0.07); }
+.agent-context-item:last-child { border-bottom: 0; }
+.agent-context-item-text { font-size: var(--fs-body); line-height: 1.5; white-space: pre-wrap; }
+.agent-context-item-meta { display: flex; flex-wrap: wrap; gap: 7px 14px; margin-top: 7px; font-size: var(--fs-hint); opacity: 0.58; }
+.agent-context-item-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.agent-context-item textarea { margin-top: 2px; }
+.agent-context-bullets { margin: 8px 0 0 18px; padding: 0; font-size: var(--fs-label); line-height: 1.5; opacity: 0.8; }
+.agent-context-empty { margin: 0; padding: 18px 0; font-size: var(--fs-label); opacity: 0.62; line-height: 1.5; }
+.agent-context-notice { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.agent-context-confirm { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--tone-danger); border-radius: var(--radius-control); font-size: var(--fs-label); }
+.agent-context-confirm p { margin: 6px 0 0; line-height: 1.5; opacity: 0.72; }
+.danger-btn { color: var(--tone-danger); border-color: color-mix(in srgb, var(--tone-danger) 55%, transparent); }
+@media (forced-colors: active) {
+  .agent-context-tabs, .agent-context-list, .agent-context-remember { border: 1px solid CanvasText; }
+  .agent-context-tabs button.on { border: 2px solid Highlight; }
+  .agent-context-remember textarea, .agent-context-item textarea { border: 1px solid CanvasText; }
+}
 [role="alertdialog"] { border: 1px solid var(--tone-danger); margin-top: 8px; }
 
 /* --------------------------------------------------------------------------

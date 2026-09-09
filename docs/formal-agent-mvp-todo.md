@@ -97,7 +97,7 @@ subscribeChanged(listener)
 - [x] J22：Agent Bar → `summary.minutes` → SQLite interaction → 结果与历史详情（实现完成·尚未验收；真实 Electron Agent Bar IPC 旅程覆盖工具条入口、provider 资格、窗口生命周期与字幕独立；本地真实 SQLite 旅程覆盖 `summary.minutes`/`qa.answer` → Agent Loop → interaction/history/detail/export；该证据只闭合 S5 子边界，完整 J22 总门槛仍待正式 MVP 阶段验收。）
 - [x] J24：取消、provider 不可用、重复停止、reload、字幕独立性（实现完成·尚未验收；真实 Electron 旅程在 provider 不可用检查前覆盖字幕启动/停止，随后验证 Agent 打开/聚焦/关闭不影响已停止会话的历史/文本导出；本地真实 SQLite 旅程覆盖取消/迟到结果，取消进入 `cancelling` 后及 Schema 失败收束为 `failed` 后分别由独立 recorder 读取字幕历史/文本导出；runtime/storage 与既有 utility-process 证据覆盖重复请求、预算/timeout/replacement 失败矩阵。以上为分层子边界证据，完整 J24 总门槛仍待正式 MVP 阶段验收。）
 - [x] J26：成功、失败和取消交互的确定性 JSON 导出。（实现完成·尚未验收；`AgentInteractionExporter`、同一 `StorageGateway` 快照、取消零写入、digest/顺序/隐私负扫描、真实 SQLite 重导出字节一致均有证据；系统保存对话框属于外部边界，正式 MVP 阶段门禁仍待统一记录。）
-- [ ] J21：终态会话 → `context.ingest.session` → 经历/记忆候选与管理（局部实现完成·尚未验收；S3 摄取子边界有真实 SQLite 旅程，production main 自动摄取与完整 J21 证据仍是后续门禁）。
+- [ ] J21：终态会话 → `context.ingest.session` → 经历/记忆候选与管理（实现完成·尚未验收；production main 自动摄取、正式设置中的个人上下文管理 UI、exact preload/IPC 与 UI 回归已接入，完整正式入口联合旅程仍待门禁记录）。
 - [ ] J27：正式入口与隔离入口的 userData/SQLite 边界（实现完成·尚未验收；production main 与隔离入口已有真实 userData/SQLite 定向旅程，require/打包守卫已有，当前 revision 的完整三条 lane、正式打包产物与干净机手动启动证据仍待补齐）。
 - [x] `.artifacts/` 与 `docs/validation/` 通过 SEM-F14 负扫描。（实现完成·尚未验收；`npm run test:evidence` 229/229，报告只保留指标、布尔值和哈希，未写入正文、现场音频或路径。）
 
