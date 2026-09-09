@@ -58,6 +58,28 @@ test('SEM-F28/SEM-F30/SEM-T10/J22/J24: S3 session runner freezes a skeleton befo
   assert.equal(calls.find(([name]) => name === 'interaction:create')[1].routingMode, 'preset')
 })
 
+test('SEM-F28/SEM-F30/J21: production session ingest creates its loop from the frozen model binding', async () => {
+  const { options, calls } = seams({
+    loop: undefined,
+    loopFactory: async (binding) => {
+      calls.push(['loopFactory', binding])
+      return { agentLoop: async (value) => {
+        calls.push(['loop', value])
+        return { text: JSON.stringify(output), usage: undefined }
+      } }
+    }
+  })
+  const runner = new ContextIngestSessionRunner(options)
+  const result = await runner.run({
+    recipeId: 'context.ingest.session', source,
+    attemptIdentity: { runId: 'run.ingest', attempt: 1, owner: 'runner', leaseExpiresAt: 1000 },
+    interactionId: 'interaction.ingest'
+  })
+  assert.equal(result.state, 'succeeded')
+  assert.equal(calls.some(([name]) => name === 'loopFactory'), true)
+  assert.equal(calls.filter(([name]) => name === 'loop').length, 1)
+})
+
 test('SEM-F28/SEM-F30/SEM-T04/J22/J24: S3 session runner keeps the skeleton replayable after provider failure', async () => {
   const { options, calls } = seams({
     loop: { agentLoop: async () => { const error = new Error('provider unavailable'); error.code = 'AGENT_PROVIDER_UNAVAILABLE'; throw error } }

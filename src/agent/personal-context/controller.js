@@ -206,7 +206,7 @@ class PersonalContextController {
           return this.failure(ERROR_CODES.revisionConflict, state.publicRevision)
         }
 
-        if (command.type === 'set_processing') return this.setProcessing(command, state)
+        if (command.type === 'set_processing') return await this.setProcessing(command, state)
         const result = await this.storageManage({ ...command, expected_revision: state.contentRevision })
         const publicRevision = sumRevisions(result.revision, state.config.agentSettingsRevision)
         const response = this.success(command, result, publicRevision)
@@ -237,7 +237,7 @@ class PersonalContextController {
     })
   }
 
-  setProcessing (command, state) {
+  async setProcessing (command, state) {
     const enabled = command.state === 'enabled'
     if (enabled === state.config.memoryEnabled) {
       return assertManageResponse({
@@ -245,7 +245,7 @@ class PersonalContextController {
         result: { kind: 'processing', operation: 'set_processing', memory_processing: processingProjection(state.config) }
       })
     }
-    const updated = this.updateAgentSettings({
+    const updated = await this.updateAgentSettings({
       expectedRevision: state.config.agentSettingsRevision,
       agentEnabled: state.config.agentEnabled,
       memoryEnabled: enabled,

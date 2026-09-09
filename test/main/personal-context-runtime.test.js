@@ -137,3 +137,217 @@ test('SEM-F28/SEM-F30/SEM-T10/J22/J24: ready terminal notice prepares one sessio
   assert.equal(calls.filter(([name]) => name === 'tool:finish').length, 1)
   await runtime.stop()
 })
+
+test('SEM-F28/SEM-T04/J21: stopping while eligibility is pending prevents late automatic ingest and scheduler restart', async () => {
+  let listener = null
+  let releaseEligibility
+  let prepared = 0
+  const eligibility = new Promise((resolve) => { releaseEligibility = resolve })
+  const gateway = {
+    personalContextIngest: async () => ({}),
+    personalContextResolve: async () => ({}),
+    personalContextManage: async () => ({ revision: 0, totalCount: 0, hasMore: false, nextCursor: null, rows: [] }),
+    preparePersonalContextSessionIngest: async () => { prepared += 1; return { runId: 'run.late' } },
+    readPersonalContextSessionInput: async () => ({}),
+    readPersonalContextToolContext: async () => ({}),
+    commitPersonalContextSessionIngest: async () => ({}),
+    claimNextFormalAgentRun: async () => null,
+    nextFormalAgentRunAt: async () => null,
+    completeFormalAgentRun: async () => ({}),
+    failFormalAgentRun: async () => ({})
+  }
+  const runtime = new PersonalContextRuntime({
+    gateway,
+    modelAccess: { bind: async () => ({}) },
+    loopFactory: async () => ({ agentLoop: async () => ({ text: '{}' }) }),
+    getAutomaticEligibility: async () => eligibility,
+    config: { get: () => ({}), updateAgentSettings: () => ({}) }
+  })
+  runtime.start({
+    onTerminalCommitted: (callback) => {
+      listener = callback
+      return () => { listener = null }
+    }
+  })
+  listener({ sessionId: 'session.late' })
+  await new Promise((resolve) => setImmediate(resolve))
+  const stopping = runtime.stop()
+  releaseEligibility('ready')
+  await stopping
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(prepared, 0)
+  assert.equal(runtime.scheduler.started, false)
+})
+
+test('SEM-F28/SEM-T04/J21: stopping after automatic prepare starts cancels its queued skeleton before returning', async () => {
+  let listener = null
+  let prepareStarted = false
+  let releasePrepare
+  let cancelled = 0
+  const prepare = new Promise((resolve) => { releasePrepare = resolve })
+  const gateway = {
+    personalContextIngest: async () => ({}),
+    personalContextResolve: async () => ({}),
+    personalContextManage: async () => ({ revision: 0, totalCount: 0, hasMore: false, nextCursor: null, rows: [] }),
+    preparePersonalContextSessionIngest: async () => {
+      prepareStarted = true
+      await prepare
+      return { runId: 'run.prepare-late' }
+    },
+    cancelPersonalContextSessionIngest: async ({ runId }) => {
+      assert.equal(runId, 'run.prepare-late')
+      cancelled += 1
+      return { runId, state: 'cancelled', replayed: false }
+    },
+    readPersonalContextSessionInput: async () => ({}),
+    readPersonalContextToolContext: async () => ({}),
+    commitPersonalContextSessionIngest: async () => ({}),
+    claimNextFormalAgentRun: async () => null,
+    nextFormalAgentRunAt: async () => null,
+    completeFormalAgentRun: async () => ({}),
+    failFormalAgentRun: async () => ({})
+  }
+  const runtime = new PersonalContextRuntime({
+    gateway,
+    modelAccess: { bind: async () => ({}) },
+    loopFactory: async () => ({ agentLoop: async () => ({ text: '{}' }) }),
+    getAutomaticEligibility: async () => 'ready',
+    config: { get: () => ({}), updateAgentSettings: () => ({}) }
+  })
+  runtime.start({
+    onTerminalCommitted: (callback) => {
+      listener = callback
+      return () => { listener = null }
+    }
+  })
+  listener({ sessionId: 'session.prepare-late' })
+  for (let index = 0; index < 10 && !prepareStarted; index += 1) await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(prepareStarted, true)
+  const stopping = runtime.stop()
+  releasePrepare()
+  await stopping
+  assert.equal(cancelled, 1)
+  assert.equal(runtime.scheduler.started, false)
+})
+
+test('SEM-F28/SEM-T04/J21: settings refresh invalidates old terminal work but new terminal notices use the current generation', async () => {
+  let listener = null
+  let prepared = 0
+  const eligibilityWaiters = []
+  const settings = {
+    agentEnabled: true,
+    automaticProcessingSince: 100,
+    memoryEnabled: true,
+    memoryProcessingSince: 100,
+    cloudDisclosureAccepted: false,
+    agentSettingsRevision: 0
+  }
+  const gateway = {
+    personalContextIngest: async () => ({}),
+    personalContextResolve: async () => ({}),
+    personalContextManage: async () => ({ revision: 0, totalCount: 0, hasMore: false, nextCursor: null, rows: [] }),
+    applyPersonalContextAutomaticPolicy: async () => ({ applied: true }),
+    preparePersonalContextSessionIngest: async () => { prepared += 1; return { runId: `run.generation.${prepared}` } },
+    readPersonalContextSessionInput: async () => ({}),
+    readPersonalContextToolContext: async () => ({}),
+    commitPersonalContextSessionIngest: async () => ({}),
+    claimNextFormalAgentRun: async () => null,
+    nextFormalAgentRunAt: async () => null,
+    completeFormalAgentRun: async () => ({}),
+    failFormalAgentRun: async () => ({})
+  }
+  const runtime = new PersonalContextRuntime({
+    gateway,
+    modelAccess: { bind: async () => ({}) },
+    loopFactory: async () => ({ agentLoop: async () => ({ text: '{}' }) }),
+    getAutomaticEligibility: async () => new Promise((resolve) => eligibilityWaiters.push(resolve)),
+    config: {
+      get: () => ({ ...settings }),
+      updateAgentSettings: (request) => {
+        settings.agentEnabled = request.agentEnabled
+        settings.memoryEnabled = request.memoryEnabled
+        settings.cloudDisclosureAccepted = request.cloudDisclosureAccepted
+        settings.agentSettingsRevision += 1
+        return { ...settings }
+      }
+    }
+  })
+  runtime.start({
+    onTerminalCommitted: (callback) => {
+      listener = callback
+      return () => { listener = null }
+    }
+  })
+  listener({ sessionId: 'session.before-settings' })
+  for (let index = 0; index < 10 && eligibilityWaiters.length < 1; index += 1) await nextTurn()
+  assert.equal(eligibilityWaiters.length, 1)
+
+  const updating = runtime.updateAgentSettings({
+    expectedRevision: 0, agentEnabled: true, memoryEnabled: true, cloudDisclosureAccepted: false
+  })
+  await updating
+  eligibilityWaiters.shift()('ready')
+  await nextTurn()
+  assert.equal(prepared, 0, 'work started before settings refresh must be invalidated')
+
+  listener({ sessionId: 'session.after-settings' })
+  for (let index = 0; index < 10 && eligibilityWaiters.length < 1; index += 1) await nextTurn()
+  assert.equal(eligibilityWaiters.length, 1)
+  eligibilityWaiters.shift()('ready')
+  for (let index = 0; index < 10 && prepared === 0; index += 1) await nextTurn()
+  assert.equal(prepared, 1, 'new terminal notices must observe the refreshed generation')
+  await runtime.stop()
+})
+
+test('SEM-F28/SEM-T04/J21: policy application failure is surfaced and stops the automatic scheduler fail closed', async () => {
+  let policyCalls = 0
+  let diagnostic = null
+  const gateway = {
+    personalContextIngest: async () => ({}),
+    personalContextResolve: async () => ({}),
+    personalContextManage: async () => ({ revision: 0, totalCount: 0, hasMore: false, nextCursor: null, rows: [] }),
+    applyPersonalContextAutomaticPolicy: async () => {
+      policyCalls += 1
+      if (policyCalls > 1) throw new Error('storage details must stay private')
+      return { applied: true }
+    },
+    claimNextFormalAgentRun: async () => null,
+    nextFormalAgentRunAt: async () => null,
+    completeFormalAgentRun: async () => ({}),
+    failFormalAgentRun: async () => ({})
+  }
+  const settings = {
+    agentEnabled: true,
+    automaticProcessingSince: 100,
+    memoryEnabled: true,
+    memoryProcessingSince: 100,
+    cloudDisclosureAccepted: false,
+    agentSettingsRevision: 0
+  }
+  const runtime = new PersonalContextRuntime({
+    gateway,
+    config: {
+      get: () => ({ ...settings }),
+      updateAgentSettings: (request) => {
+        settings.agentEnabled = request.agentEnabled
+        settings.memoryEnabled = request.memoryEnabled
+        settings.cloudDisclosureAccepted = request.cloudDisclosureAccepted
+        settings.agentSettingsRevision += 1
+        return { ...settings }
+      }
+    },
+    onDiagnostic: (event) => { diagnostic = event }
+  })
+  runtime.start({ onTerminalCommitted: () => () => {} })
+  for (let index = 0; index < 10 && policyCalls < 1; index += 1) await nextTurn()
+  await assert.rejects(
+    runtime.updateAgentSettings({
+      expectedRevision: 0, agentEnabled: true, memoryEnabled: false, cloudDisclosureAccepted: false
+    }),
+    (error) => error?.code === 'AGENT_CONTEXT_OPERATION_FAILED'
+  )
+  assert.equal(runtime.policyReady, false)
+  assert.equal(runtime.scheduler.started, false)
+  assert.deepEqual(diagnostic, { code: 'AGENT_SCHEDULER_FAILED' })
+  await runtime.stop()
+})

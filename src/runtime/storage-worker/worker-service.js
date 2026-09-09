@@ -254,6 +254,14 @@ class StorageWorkerService {
       assertExactKeys(payload, ['request'])
       return this.requirePersonalContextStore().prepareSessionIngestRequest(payload.request)
     }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_APPLY_AUTOMATIC_POLICY) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().applyAutomaticTaskPolicy(payload.request)
+    }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_CANCEL_SESSION_INGEST) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().cancelSessionIngest(payload.request)
+    }
     if (operation === OPERATIONS.PERSONAL_CONTEXT_DERIVE_SESSION_SOURCE) {
       assertExactKeys(payload, ['request'])
       return this.requirePersonalContextStore().deriveSessionSource(payload.request)

@@ -30,10 +30,12 @@ function hostFactory (service, databasePath) {
     async personalContextResolve (v) { return call(OPERATIONS.PERSONAL_CONTEXT_RESOLVE, { request: v }) },
     async personalContextManage (v) { return call(OPERATIONS.PERSONAL_CONTEXT_MANAGE, { command: v }) },
     async preparePersonalContextSessionIngest (v) { return call(OPERATIONS.PERSONAL_CONTEXT_PREPARE_SESSION_INGEST, { request: v }) },
+    async applyPersonalContextAutomaticPolicy (v) { return call(OPERATIONS.PERSONAL_CONTEXT_APPLY_AUTOMATIC_POLICY, { request: v }) },
+    async cancelPersonalContextSessionIngest (v) { return call(OPERATIONS.PERSONAL_CONTEXT_CANCEL_SESSION_INGEST, { request: v }) },
     async readPersonalContextSessionInput (v) { return call(OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT, { source: v }) },
     async commitPersonalContextSessionIngest (v) { return call(OPERATIONS.PERSONAL_CONTEXT_COMMIT_SESSION_INGEST, { request: v }) },
     async claimNextFormalAgentRun (v) { return call(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request: v }) },
-    async nextFormalAgentRunAt () { return call(OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT, {}) },
+    async nextFormalAgentRunAt (v = {}) { return call(OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT, v) },
     async failFormalAgentRun (v) { return call(OPERATIONS.FORMAL_AGENT_FAIL_RUN, { request: v }) },
     async shutdown () { if (!service.shuttingDown) call(OPERATIONS.SHUTDOWN, {}); this.state = 'closed' },
     async terminateAndWait () { await this.shutdown(); return 0 }
@@ -51,6 +53,9 @@ test('SEM-F28/SEM-F30/SEM-T10/SEM-T15/J22/J24: terminal session ingest uses real
   const recorder = new SqliteSessionRecorder({ gateway, now: () => 1000 })
   const config = new ConfigStore(path.join(root, 'config.json'), { now: () => 1000 })
   config.load()
+  config.updateAgentSettings({
+    expectedRevision: 0, agentEnabled: true, memoryEnabled: true, cloudDisclosureAccepted: false
+  })
   const calls = []
   const runtime = new PersonalContextRuntime({
     gateway,
@@ -59,7 +64,7 @@ test('SEM-F28/SEM-F30/SEM-T10/SEM-T15/J22/J24: terminal session ingest uses real
       readSessionInput: async (value) => ({ ...value, events: [{ eventOrder: 1, segmentId: 'segment.1', text: 'decision' }] }),
       commitSessionIngest: (request) => gateway.commitPersonalContextSessionIngest(request)
     },
-    config: { get: () => config.get(), updateAgentSettings: () => ({}) },
+    config: { get: () => config.get(), updateAgentSettings: (request) => config.updateAgentSettings(request) },
     modelAccess: { bind: async (request) => { calls.push(['bind', request]); return { capabilities: { usageReporting: false } } } },
     loop: { agentLoop: async () => { calls.push(['loop']); return { text: JSON.stringify({ schemaVersion: 1, experiences: [], memoryCandidates: [] }) } } },
     interactions: {

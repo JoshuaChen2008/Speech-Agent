@@ -95,13 +95,18 @@ class ContextIngestSessionRunner {
   constructor (options = {}) {
     this.personalContext = options.personalContext || null
     this.storage = options.storage || null
+    const loopFactory = typeof options.loopFactory === 'function'
+      ? options.loopFactory
+      : options.loop && typeof options.loop.agentLoop === 'function'
+        ? () => options.loop
+        : null
     this.s3 = Boolean(this.personalContext &&
       typeof this.personalContext.prepareSessionIngest === 'function' &&
       typeof this.personalContext.commitSessionIngest === 'function' &&
       options.modelAccess && typeof options.modelAccess.bind === 'function' &&
       options.interactions && typeof options.interactions.create === 'function' &&
       typeof options.interactions.terminalize === 'function' &&
-      options.loop && typeof options.loop.agentLoop === 'function')
+      loopFactory)
     if (!this.s3) {
       if (!this.personalContext || typeof this.personalContext.ingest !== 'function') {
         throw new TypeError('personalContext ingest seam is required')
@@ -114,7 +119,7 @@ class ContextIngestSessionRunner {
     }
     this.modelAccess = options.modelAccess
     this.interactions = options.interactions
-    this.loop = options.loop
+    this.loopFactory = loopFactory
     this.resolveModel = typeof options.resolveModel === 'function' ? options.resolveModel : async (binding) => binding
     this.now = typeof options.now === 'function' ? options.now : Date.now
     this.nextInteractionId = typeof options.nextInteractionId === 'function'
@@ -217,7 +222,9 @@ class ContextIngestSessionRunner {
       const prompt = promptForInput(input)
       const resolvedModel = await this.resolveModel(binding)
       const tools = await this.toolsForRun(recipe, binding, interactionId, attemptIdentity, job.signal)
-      const result = await this.loop.agentLoop({
+      const loop = await this.loopFactory(binding)
+      if (!loop || typeof loop.agentLoop !== 'function') throw codedError('AGENT_INTERNAL_FAILURE')
+      const result = await loop.agentLoop({
         recipeId: recipe.recipeId,
         recipeVersion: recipe.recipeVersion,
         prompt,

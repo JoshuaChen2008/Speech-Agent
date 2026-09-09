@@ -1153,19 +1153,6 @@ async function bootstrapApplication () {
   if (quitRequested) return false
   coordinator = started.coordinator
   try {
-    const { PersonalContextRuntime } = require('./agent/personal-context/runtime')
-    personalContextRuntime = new PersonalContextRuntime({
-      gateway: applicationRuntime.gateway,
-      config,
-      onChanged: broadcastAgentContextChanged,
-      onDiagnostic: () => console.error('[agent.scheduler] AGENT_SCHEDULER_FAILED')
-    })
-    personalContextRuntime.start(applicationRuntime.recorder)
-  } catch {
-    personalContextRuntime = null
-    console.error('[agent.runtime] AGENT_CONTEXT_UNAVAILABLE')
-  }
-  try {
     const { CredentialVault } = require('./agent/model-access/credential-vault')
     const { createModelAccess } = require('./agent/model-access')
     const { OpenAiCompatibleAdapter } = require('./agent/model-access/openai-compatible-adapter')
@@ -1191,6 +1178,42 @@ async function bootstrapApplication () {
     modelAccessRuntime = null
     remoteModelCatalogController = null
     console.error('[agent.model-access] MODEL_ACCESS_UNAVAILABLE')
+  }
+  try {
+    const { PersonalContextRuntime } = require('./agent/personal-context/runtime')
+    const { evaluateAutomaticEligibility } = require('./agent/personal-context/automatic-eligibility')
+    const { AgentLoopExecutor } = require('./agent/execution-host')
+    const gateway = applicationRuntime.gateway
+    const getAutomaticEligibility = async ({ sessionId }) => {
+      let detail
+      try {
+        detail = await gateway.getSessionTranscript(sessionId)
+      } catch {
+        return 'no_committed_transcript'
+      }
+      const catalog = await modelAccessRuntime?.catalog?.()
+      return evaluateAutomaticEligibility({
+        session: detail?.session,
+        segmentCount: Array.isArray(detail?.segments) ? detail.segments.length : 0,
+        settings: config.get(),
+        catalog
+      })
+    }
+    personalContextRuntime = new PersonalContextRuntime({
+      gateway,
+      config,
+      modelAccess: modelAccessRuntime,
+      loopFactory: modelAccessRuntime?.createLoopAdapter
+        ? (binding) => new AgentLoopExecutor({ adapter: modelAccessRuntime.createLoopAdapter(binding) })
+        : null,
+      getAutomaticEligibility,
+      onChanged: broadcastAgentContextChanged,
+      onDiagnostic: () => console.error('[agent.scheduler] AGENT_SCHEDULER_FAILED')
+    })
+    personalContextRuntime.start(applicationRuntime.recorder)
+  } catch {
+    personalContextRuntime = null
+    console.error('[agent.runtime] AGENT_CONTEXT_UNAVAILABLE')
   }
   try {
     const { AgentLoopExecutor, IntentRouteOrchestrator } = require('./agent/execution-host')

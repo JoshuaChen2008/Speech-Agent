@@ -465,6 +465,14 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_PREPARE_SESSION_INGEST, { request })
   }
 
+  applyPersonalContextAutomaticPolicy (request) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_APPLY_AUTOMATIC_POLICY, { request })
+  }
+
+  cancelPersonalContextSessionIngest (request) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_CANCEL_SESSION_INGEST, { request })
+  }
+
   derivePersonalContextSessionSource (request) {
     return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_DERIVE_SESSION_SOURCE, { request })
   }

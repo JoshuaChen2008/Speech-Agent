@@ -37,6 +37,32 @@ function identifier (value, code = 'AGENT_REQUEST_INVALID') {
   return value
 }
 
+function automaticTaskPolicy (value) {
+  assertExactKeys(value, [
+    'agentEnabled', 'automaticProcessingSince', 'memoryEnabled', 'memoryProcessingSince'
+  ], 'AGENT_REQUEST_INVALID')
+  if (typeof value.agentEnabled !== 'boolean' || typeof value.memoryEnabled !== 'boolean' ||
+      (value.automaticProcessingSince !== null &&
+       (!Number.isSafeInteger(value.automaticProcessingSince) || value.automaticProcessingSince < 0)) ||
+      (value.memoryProcessingSince !== null &&
+       (!Number.isSafeInteger(value.memoryProcessingSince) || value.memoryProcessingSince < 0)) ||
+      (value.automaticProcessingSince !== null) !== value.agentEnabled ||
+      (value.memoryProcessingSince !== null) !== (value.agentEnabled && value.memoryEnabled)) {
+    fail('AGENT_REQUEST_INVALID')
+  }
+  return Object.freeze({
+    agentEnabled: value.agentEnabled,
+    automaticProcessingSince: value.automaticProcessingSince,
+    memoryEnabled: value.memoryEnabled,
+    memoryProcessingSince: value.memoryProcessingSince
+  })
+}
+
+function automaticTaskPolicyAllows (policy) {
+  return Boolean(policy && policy.agentEnabled === true && policy.memoryEnabled === true &&
+    policy.automaticProcessingSince !== null && policy.memoryProcessingSince !== null)
+}
+
 function normalizeSemanticKey (value) {
   boundedString(value, 1, 2048)
   const folded = value.normalize('NFKC')
@@ -127,6 +153,7 @@ class PersonalContextStore {
     this.now = typeof options.now === 'function'
       ? options.now
       : typeof options.subtitleStore.now === 'function' ? options.subtitleStore.now : () => Date.now()
+    this.automaticPolicy = null
   }
 
   nowValue () {
@@ -382,6 +409,115 @@ class PersonalContextStore {
   prepareSessionIngestRequest (request) {
     const source = this.deriveSessionSource(request)
     return this.prepareSessionIngest(source)
+  }
+
+  applyAutomaticTaskPolicy (request) {
+    const policy = automaticTaskPolicy(request)
+    const now = this.nowValue()
+    const allowed = automaticTaskPolicyAllows(policy)
+    const database = this.database
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      let queuedCancelled = 0
+      let runningCancellationRequested = 0
+      if (!allowed) {
+        const queued = database.prepare(`
+          SELECT run_id FROM formal_agent_runs
+          WHERE requested_by = 'automatic' AND recipe_id = 'context.ingest.session'
+            AND state IN ('queued', 'retry_wait')
+        `).all()
+        for (const row of queued) {
+          const changed = database.prepare(`
+            UPDATE formal_agent_runs
+            SET state = 'cancelled', cancel_requested_at = COALESCE(cancel_requested_at, ?),
+              lease_owner = NULL, lease_expires_at = NULL,
+              lease_renewed_from_expires_at = NULL, error_code = NULL, updated_at = ?
+            WHERE run_id = ? AND state IN ('queued', 'retry_wait')
+          `).run(now, now, row.run_id)
+          queuedCancelled += Number(changed.changes)
+          if (Number(changed.changes) === 1) this.removeSessionIngestSkeleton(row.run_id)
+        }
+        const running = database.prepare(`
+          UPDATE formal_agent_runs
+          SET cancel_requested_at = COALESCE(cancel_requested_at, ?), updated_at = ?
+          WHERE requested_by = 'automatic' AND recipe_id = 'context.ingest.session'
+            AND state = 'running' AND cancel_requested_at IS NULL
+        `).run(now, now)
+        runningCancellationRequested = Number(running.changes)
+      }
+      database.exec('COMMIT')
+      this.automaticPolicy = policy
+      return { queuedCancelled, runningCancellationRequested }
+    } catch (error) {
+      rollbackQuietly(database)
+      throw error
+    }
+  }
+
+  cancelSessionIngest (request) {
+    assertExactKeys(request, ['runId'], 'AGENT_REQUEST_INVALID')
+    identifier(request.runId)
+    const database = this.database
+    const existing = database.prepare(`
+      SELECT run_id, recipe_id, requested_by, state FROM formal_agent_runs WHERE run_id = ?
+    `).get(request.runId)
+    if (!existing || existing.recipe_id !== 'context.ingest.session' || existing.requested_by !== 'automatic') {
+      fail('AGENT_RUN_NOT_FOUND')
+    }
+    if (existing.state === 'cancelled') return { runId: request.runId, state: 'cancelled', replayed: true }
+    if (!['queued', 'retry_wait'].includes(existing.state)) {
+      if (existing.state === 'running') {
+        const now = this.nowValue()
+        database.prepare(`
+          UPDATE formal_agent_runs
+          SET cancel_requested_at = COALESCE(cancel_requested_at, ?), updated_at = ?
+          WHERE run_id = ? AND state = 'running'
+        `).run(now, now, request.runId)
+        return { runId: request.runId, state: 'running', cancellationRequested: true, replayed: false }
+      }
+      fail('AGENT_CONTEXT_OPERATION_FAILED')
+    }
+    const now = this.nowValue()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const changed = database.prepare(`
+        UPDATE formal_agent_runs
+        SET state = 'cancelled', cancel_requested_at = COALESCE(cancel_requested_at, ?),
+          lease_owner = NULL, lease_expires_at = NULL,
+          lease_renewed_from_expires_at = NULL, error_code = NULL, updated_at = ?
+        WHERE run_id = ? AND state IN ('queued', 'retry_wait')
+      `).run(now, now, request.runId)
+      if (Number(changed.changes) !== 1) {
+        const current = database.prepare('SELECT state FROM formal_agent_runs WHERE run_id = ?').get(request.runId)
+        if (current?.state === 'cancelled') {
+          database.exec('COMMIT')
+          return { runId: request.runId, state: 'cancelled', replayed: true }
+        }
+        fail('AGENT_CONTEXT_OPERATION_FAILED')
+      }
+      this.removeSessionIngestSkeleton(request.runId)
+      database.exec('COMMIT')
+      return { runId: request.runId, state: 'cancelled', replayed: false }
+    } catch (error) {
+      rollbackQuietly(database)
+      throw error
+    }
+  }
+
+  removeSessionIngestSkeleton (runId) {
+    const episodes = this.database.prepare(`
+      SELECT episode_id, scope_id FROM personal_context_episodes
+      WHERE ingest_run_id = ? AND source_kind = 'session'
+    `).all(runId)
+    for (const episode of episodes) {
+      this.database.prepare('DELETE FROM personal_context_episodes WHERE episode_id = ?').run(episode.episode_id)
+      this.database.prepare(`
+        DELETE FROM personal_context_scopes
+        WHERE scope_id = ? AND kind = 'session' AND origin = 'automatic'
+          AND NOT EXISTS (SELECT 1 FROM personal_context_episodes WHERE scope_id = ?)
+          AND NOT EXISTS (SELECT 1 FROM personal_context_items WHERE scope_id = ?)
+      `).run(episode.scope_id, episode.scope_id, episode.scope_id)
+    }
   }
 
   prepareSessionIngest (source) {
@@ -1326,15 +1462,27 @@ class PersonalContextStore {
     const requestKeys = Object.keys(request).sort()
     const legacyKeys = ['claimIdempotencyKey', 'leaseMs', 'owner']
     const scopedKeys = ['claimIdempotencyKey', 'leaseMs', 'owner', 'requestedBy']
+    const policyKeys = ['automaticPolicy', 'claimIdempotencyKey', 'leaseMs', 'owner']
+    const scopedPolicyKeys = ['automaticPolicy', 'claimIdempotencyKey', 'leaseMs', 'owner', 'requestedBy']
     const exact = (keys) => requestKeys.length === keys.length && keys.every((key, index) => key === requestKeys[index])
-    if (!exact(legacyKeys) && !exact(scopedKeys)) fail('AGENT_REQUEST_INVALID')
+    const hasPolicy = Object.hasOwn(request, 'automaticPolicy')
+    if (!exact(legacyKeys) && !exact(scopedKeys) && !exact(policyKeys) && !exact(scopedPolicyKeys)) fail('AGENT_REQUEST_INVALID')
     const requestedBy = request.requestedBy === undefined ? 'automatic' : request.requestedBy
     if (!['automatic', 'user'].includes(requestedBy)) fail('AGENT_REQUEST_INVALID')
+    if (hasPolicy && requestedBy !== 'automatic') fail('AGENT_REQUEST_INVALID')
+    const requestPolicy = hasPolicy ? automaticTaskPolicy(request.automaticPolicy) : null
     identifier(request.claimIdempotencyKey)
     identifier(request.owner)
     safeInteger(request.leaseMs, 1)
     const requestDigest = sha256Canonical(request)
     const now = this.nowValue()
+    const policyMatches = requestedBy !== 'automatic' || !this.automaticPolicy || !requestPolicy ||
+      canonicalize(this.automaticPolicy) === canonicalize(requestPolicy)
+    const effectivePolicy = requestedBy === 'automatic'
+      ? (this.automaticPolicy || requestPolicy)
+      : null
+    const automaticPolicyAllowed = requestedBy === 'user' ||
+      (policyMatches && automaticTaskPolicyAllows(effectivePolicy))
     const receiptResult = (receipt) => {
       if (receipt.run_id === null) return null
       const row = this.database.prepare('SELECT * FROM formal_agent_runs WHERE run_id = ?').get(receipt.run_id)
@@ -1379,12 +1527,12 @@ class PersonalContextStore {
         WHERE requested_by = ? AND (
           (? = 'automatic' AND recipe_id = 'context.ingest.session') OR
           (? = 'user' AND recipe_id IN ('summary.minutes', 'qa.answer'))
-        ) AND (
-          (state IN ('queued', 'retry_wait') AND next_attempt_at <= ?) OR
-          (state = 'running' AND lease_expires_at <= ?)
+        ) AND (? = 1) AND (
+          (state IN ('queued', 'retry_wait') AND next_attempt_at <= ? AND cancel_requested_at IS NULL) OR
+          (state = 'running' AND lease_expires_at <= ? AND cancel_requested_at IS NULL)
         )
         ORDER BY next_attempt_at, run_order LIMIT 1
-      `).get(requestedBy, requestedBy, requestedBy, now, now)
+      `).get(requestedBy, requestedBy, requestedBy, automaticPolicyAllowed ? 1 : 0, now, now)
       let leaseExpiresAt = null
       if (row) {
         leaseExpiresAt = now + request.leaseMs
@@ -1409,6 +1557,7 @@ class PersonalContextStore {
         SELECT * FROM formal_agent_run_claim_receipts WHERE claim_idempotency_key = ?
       `).get(request.claimIdempotencyKey)
       this.database.exec('COMMIT')
+      if (requestedBy === 'automatic' && !this.automaticPolicy && requestPolicy) this.automaticPolicy = requestPolicy
       return receiptResult(receipt)
     } catch (error) {
       rollbackQuietly(this.database)
@@ -1419,22 +1568,29 @@ class PersonalContextStore {
   nextFormalRunAt (request = {}) {
     if (!isPlainObject(request)) fail('AGENT_REQUEST_INVALID')
     const keys = Object.keys(request).sort()
-    if (!(keys.length === 0 || (keys.length === 1 && keys[0] === 'requestedBy'))) fail('AGENT_REQUEST_INVALID')
+    if (!(keys.length === 0 || (keys.length === 1 && (keys[0] === 'requestedBy' || keys[0] === 'automaticPolicy')))) fail('AGENT_REQUEST_INVALID')
     const requestedBy = request.requestedBy === undefined ? 'automatic' : request.requestedBy
     if (!['automatic', 'user'].includes(requestedBy)) fail('AGENT_REQUEST_INVALID')
+    if (Object.hasOwn(request, 'automaticPolicy') && requestedBy !== 'automatic') fail('AGENT_REQUEST_INVALID')
+    const requestPolicy = Object.hasOwn(request, 'automaticPolicy') ? automaticTaskPolicy(request.automaticPolicy) : null
+    const policyMatches = requestedBy !== 'automatic' || !this.automaticPolicy || !requestPolicy ||
+      canonicalize(this.automaticPolicy) === canonicalize(requestPolicy)
+    const effectivePolicy = requestedBy === 'automatic' ? (this.automaticPolicy || requestPolicy) : null
+    if (requestedBy === 'automatic' && (!policyMatches || !automaticTaskPolicyAllows(effectivePolicy))) return null
+    if (requestedBy === 'automatic' && !this.automaticPolicy && requestPolicy) this.automaticPolicy = requestPolicy
     const row = this.database.prepare(`
       SELECT MIN(ready_at) AS ready_at FROM (
         SELECT next_attempt_at AS ready_at FROM formal_agent_runs
           WHERE requested_by = ? AND (
             (? = 'automatic' AND recipe_id = 'context.ingest.session') OR
             (? = 'user' AND recipe_id IN ('summary.minutes', 'qa.answer'))
-          ) AND state IN ('queued', 'retry_wait')
+          ) AND state IN ('queued', 'retry_wait') AND cancel_requested_at IS NULL
         UNION ALL
         SELECT lease_expires_at AS ready_at FROM formal_agent_runs
           WHERE requested_by = ? AND (
             (? = 'automatic' AND recipe_id = 'context.ingest.session') OR
             (? = 'user' AND recipe_id IN ('summary.minutes', 'qa.answer'))
-          ) AND state = 'running'
+          ) AND state = 'running' AND cancel_requested_at IS NULL
       )
     `).get(requestedBy, requestedBy, requestedBy, requestedBy, requestedBy, requestedBy)
     return row.ready_at === null ? null : Number(row.ready_at)

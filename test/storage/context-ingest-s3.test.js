@@ -44,6 +44,15 @@ function sourceFor (personalContext, sessionId = 'session.ingest') {
   }
 }
 
+function enableAutomaticPolicy (personalContext) {
+  personalContext.applyAutomaticTaskPolicy({
+    agentEnabled: true,
+    automaticProcessingSince: 0,
+    memoryEnabled: true,
+    memoryProcessingSince: 0
+  })
+}
+
 const output = {
   schemaVersion: 1,
   experiences: [{ kind: 'decision', text: 'Ship the project', evidence: { sessionId: 'session.ingest', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }, confidence: 'high' }],
@@ -67,6 +76,7 @@ test('SEM-F16/SEM-F28/SEM-F35/J22/J24: session ingest preflight creates one repl
 
 test('SEM-F14/SEM-F16/SEM-F35/J22/J24: session ingest commits candidates atomically and derives semantic_key in storage', (t) => {
   const { subtitleStore, personalContext } = fixture(t)
+  enableAutomaticPolicy(personalContext)
   appendSession(subtitleStore)
   const source = sourceFor(personalContext)
   const prepared = personalContext.prepareSessionIngest(source)
@@ -86,6 +96,7 @@ test('SEM-F14/SEM-F16/SEM-F35/J22/J24: session ingest commits candidates atomica
 
 test('SEM-F35/SEM-T04/J22: invalid session ingest output preserves skeleton and writes no partial memory', (t) => {
   const { subtitleStore, personalContext } = fixture(t)
+  enableAutomaticPolicy(personalContext)
   appendSession(subtitleStore)
   const source = sourceFor(personalContext)
   const prepared = personalContext.prepareSessionIngest(source)
@@ -113,6 +124,7 @@ test('SEM-F28/SEM-F30/SEM-T10/J22/J24: storage derives a terminal source and rep
 
 test('SEM-F15/SEM-F34/J22/J24: storage derives a frozen controlled-tool context from committed personal context and the transcript boundary', (t) => {
   const { subtitleStore, personalContext } = fixture(t)
+  enableAutomaticPolicy(personalContext)
   appendSession(subtitleStore)
   const source = sourceFor(personalContext)
   const prepared = personalContext.prepareSessionIngest(source)
@@ -136,6 +148,7 @@ test('SEM-F15/SEM-F34/J22/J24: storage derives a frozen controlled-tool context 
 
 test('SEM-F15/SEM-F34/J22: a frozen tool context keeps one alias for multiple matching memory entries', (t) => {
   const { subtitleStore, personalContext } = fixture(t)
+  enableAutomaticPolicy(personalContext)
   appendSession(subtitleStore)
   const source = sourceFor(personalContext)
   const prepared = personalContext.prepareSessionIngest(source)

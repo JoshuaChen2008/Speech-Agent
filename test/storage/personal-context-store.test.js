@@ -92,6 +92,15 @@ function entry (displayText) {
   }
 }
 
+function enableAutomaticPolicy (store) {
+  return store.applyAutomaticTaskPolicy({
+    agentEnabled: true,
+    automaticProcessingSince: 0,
+    memoryEnabled: true,
+    memoryProcessingSince: 0
+  })
+}
+
 test('SEM-F26/SEM-F30/J21: ingest rereads a terminal source and replays one bounded episode atomically', (t) => {
   const { subtitleStore, store } = fixture(t)
   terminalSession(subtitleStore)
@@ -530,6 +539,7 @@ test('SEM-F26/SEM-F30/J21: session deletion removes episodes and evidence while 
 
 test('SEM-F28/SEM-F30/J21: a controlled v5 run replays one claim attempt and settles through the real ingest seam', async (t) => {
   const { subtitleStore, store } = fixture(t)
+  enableAutomaticPolicy(store)
   terminalSession(subtitleStore, 'session-scheduled')
   const source = frozenSource(subtitleStore.database, 'session-scheduled')
   const identity = {
@@ -582,6 +592,7 @@ test('SEM-F28/SEM-F30/J21: a controlled v5 run replays one claim attempt and set
 
 test('SEM-F28/J22/J24: formal claim filters user target recipes without changing the automatic claim contract', (t) => {
   const { subtitleStore, store } = fixture(t)
+  enableAutomaticPolicy(store)
   terminalSession(subtitleStore, 'session-user-claim')
   const source = frozenSource(subtitleStore.database, 'session-user-claim')
   const runId = 'run.user.claim'
@@ -608,6 +619,41 @@ test('SEM-F28/J22/J24: formal claim filters user target recipes without changing
   assert.equal(claim.requestedBy, 'user')
   assert.equal(claim.interactionId, null)
   assert.equal(subtitleStore.database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get(runId).state, 'running')
+})
+
+test('SEM-F26/SEM-F28/SEM-T04/J21: automatic policy gates claims and cancels queued session skeletons', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  terminalSession(subtitleStore, 'session.policy')
+  const prepared = store.prepareSessionIngestRequest({ sessionId: 'session.policy', transcriptVersion: 'raw' })
+  assert.equal(store.claimNextFormalRun({ claimIdempotencyKey: 'claim.policy.disabled', owner: 'owner.policy', leaseMs: 1000 }), null)
+  assert.equal(store.nextFormalRunAt(), null)
+
+  enableAutomaticPolicy(store)
+  const enabledClaim = store.claimNextFormalRun({ claimIdempotencyKey: 'claim.policy.enabled', owner: 'owner.policy', leaseMs: 1000 })
+  assert.equal(enabledClaim.runId, prepared.runId)
+  store.failFormalRun({ attemptIdentity: enabledClaim.attemptIdentity, errorCode: 'AGENT_PROVIDER_UNAVAILABLE' })
+  const retrying = store.database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get(prepared.runId).state
+  assert.equal(retrying, 'retry_wait')
+  assert.equal(store.claimNextFormalRun({
+    claimIdempotencyKey: 'claim.policy.stale', owner: 'owner.policy', leaseMs: 1000,
+    automaticPolicy: {
+      agentEnabled: false,
+      automaticProcessingSince: null,
+      memoryEnabled: true,
+      memoryProcessingSince: null
+    }
+  }), null, 'a stale claim policy must fail closed against the store policy')
+
+  const policyResult = store.applyAutomaticTaskPolicy({
+    agentEnabled: false,
+    automaticProcessingSince: null,
+    memoryEnabled: true,
+    memoryProcessingSince: null
+  })
+  assert.equal(policyResult.queuedCancelled, 1)
+  assert.equal(store.database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get(prepared.runId).state, 'cancelled')
+  assert.equal(store.database.prepare('SELECT COUNT(*) AS count FROM personal_context_episodes WHERE ingest_run_id=?').get(prepared.runId).count, 0)
+  assert.equal(store.claimNextFormalRun({ claimIdempotencyKey: 'claim.policy.after-disable', owner: 'owner.policy', leaseMs: 1000 }), null)
 })
 
 test('SEM-F30/J21: resolve keeps ready terminal scope while reporting selection tails and excluded sessions', (t) => {

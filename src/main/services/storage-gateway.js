@@ -60,6 +60,8 @@ const ISOLATED_AGENT_OPERATIONS = new Set([
   'derivePersonalContextSessionSource',
   'readPersonalContextToolContext',
   'deletePersonalContextSessionData',
+  'applyPersonalContextAutomaticPolicy',
+  'cancelPersonalContextSessionIngest',
   'claimNextFormalAgentRun',
   'nextFormalAgentRunAt',
   'completeFormalAgentRun',
@@ -443,6 +445,14 @@ class StorageGateway {
     return this.enqueue('preparePersonalContextSessionIngest', request)
   }
 
+  applyPersonalContextAutomaticPolicy (request) {
+    return this.enqueue('applyPersonalContextAutomaticPolicy', request)
+  }
+
+  cancelPersonalContextSessionIngest (request) {
+    return this.enqueue('cancelPersonalContextSessionIngest', request)
+  }
+
   derivePersonalContextSessionSource (request) {
     return this.enqueue('derivePersonalContextSessionSource', request)
   }
@@ -560,6 +570,8 @@ class StorageGateway {
       case 'personalContextManage': return host.personalContextManage(item.payload)
       case 'deletePersonalContextSessionData': return host.deletePersonalContextSessionData(item.payload)
       case 'preparePersonalContextSessionIngest': return host.preparePersonalContextSessionIngest(item.payload)
+      case 'applyPersonalContextAutomaticPolicy': return host.applyPersonalContextAutomaticPolicy(item.payload)
+      case 'cancelPersonalContextSessionIngest': return host.cancelPersonalContextSessionIngest(item.payload)
       case 'derivePersonalContextSessionSource': return host.derivePersonalContextSessionSource(item.payload)
       case 'readPersonalContextSessionInput': return host.readPersonalContextSessionInput(item.payload)
       case 'readPersonalContextToolContext': return host.readPersonalContextToolContext(item.payload)

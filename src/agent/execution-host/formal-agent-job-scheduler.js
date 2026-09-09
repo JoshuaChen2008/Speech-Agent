@@ -16,6 +16,7 @@ class FormalAgentJobScheduler {
     this.requestedBy = options.requestedBy === undefined ? 'automatic' : options.requestedBy
     if (!['automatic', 'user'].includes(this.requestedBy)) throw new TypeError('requestedBy is invalid')
     this.owner = typeof options.owner === 'string' && options.owner.length > 0 ? options.owner : `scheduler.${crypto.randomUUID()}`
+    this.getAutomaticPolicy = typeof options.getAutomaticPolicy === 'function' ? options.getAutomaticPolicy : null
     this.leaseMs = Number.isSafeInteger(options.leaseMs) && options.leaseMs > 0 ? options.leaseMs : 30000
     this.retryMs = Number.isSafeInteger(options.retryMs) && options.retryMs > 0 ? options.retryMs : 1000
     this.now = typeof options.now === 'function' ? options.now : Date.now
@@ -45,8 +46,9 @@ class FormalAgentJobScheduler {
     return true
   }
 
-  wake (_reason) {
+  wake (reason) {
     if (!this.started || this.stopped) return false
+    if (reason === 'settings') this.pendingClaim = null
     this.wakeEpoch += 1
     this.cancelTimer()
     this.scheduleDrain(this.generation)
@@ -98,6 +100,10 @@ class FormalAgentJobScheduler {
          User work is filtered in storage with an explicit requestor so the
          two schedulers cannot wake each other into a spin loop. */
       if (this.requestedBy !== 'automatic') identity.requestedBy = this.requestedBy
+      else if (this.getAutomaticPolicy) {
+        const policy = this.getAutomaticPolicy()
+        if (policy && typeof policy === 'object' && !Array.isArray(policy)) identity.automaticPolicy = structuredClone(policy)
+      }
       this.pendingClaim = Object.freeze(identity)
     }
     return this.pendingClaim
@@ -135,9 +141,14 @@ class FormalAgentJobScheduler {
         }
         let nextAt
         try {
-          nextAt = await this.storage.nextFormalAgentRunAt(
-            this.requestedBy === 'automatic' ? undefined : { requestedBy: this.requestedBy }
-          )
+          let nextRequest
+          if (this.requestedBy === 'automatic' && this.getAutomaticPolicy) {
+            const policy = this.getAutomaticPolicy()
+            nextRequest = policy ? { automaticPolicy: structuredClone(policy) } : undefined
+          } else if (this.requestedBy !== 'automatic') {
+            nextRequest = { requestedBy: this.requestedBy }
+          }
+          nextAt = await this.storage.nextFormalAgentRunAt(nextRequest)
         } catch {
           this.diagnostic()
           this.arm(this.retryMs, generation)
