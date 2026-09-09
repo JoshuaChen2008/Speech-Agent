@@ -21,3 +21,14 @@ The export SHALL exclude prompt text, intermediate assistant text, reasoning, pr
 #### Scenario: Privacy validation
 - **WHEN** a snapshot or generated export contains a forbidden field or an invalid digest/order/schema
 - **THEN** export fails closed before writing and the service returns a stable bounded error projection
+
+### Requirement: Formal terminal-detail export handoff
+The formal Agent renderer SHALL offer export only from a terminal interaction detail and SHALL pass only the interaction identity to the main-owned export command. The save dialog and selected target path SHALL remain main-owned; the renderer SHALL receive only the bounded command result and SHALL never persist or display a target path as interaction data.
+
+#### Scenario: Export from terminal detail
+- **WHEN** the user explicitly chooses export from a succeeded, failed, or cancelled interaction detail
+- **THEN** the renderer sends only the exact interaction identifier, main reads and validates one SQLite snapshot, and the command result reports success or a bounded failure without exposing provider, credential, prompt, reasoning, or target-path fields
+
+#### Scenario: Export is unavailable for a non-terminal interaction
+- **WHEN** the selected interaction is pending, running, or cancelling
+- **THEN** the renderer keeps export disabled and does not open a save dialog or create a partial file

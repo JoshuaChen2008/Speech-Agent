@@ -1,30 +1,29 @@
 ## Why
 
-The formal Agent window is currently wired to a placeholder service, so the product cannot carry a committed transcript from an Agent Bar request through model execution, SQLite history, and a deterministic export. The S3/S4 execution host and storage primitives now exist; this change joins them through the production main/preload/renderer boundary while preserving the subtitle system's independent lifecycle.
+S5 Core has now supplied the formal Agent service, exact preload boundary, unified Agent Loop wiring, interaction history, and canonical single-interaction exporter. The remaining gap is the product-facing proof: the toolbar must open the formal Agent Bar, and one current-revision journey must cross the real renderer, preload, main service, storage worker/SQLite, and subtitle independence boundaries. This change keeps those requirements in one executable slice without relabeling the unfinished J21, J25, or J27 journeys.
 
 ## What Changes
 
-- Add a main-owned formal Agent run service for terminal-session scopes, eligibility, idempotent submission, cancellation, history, detail, and monotonic change notifications.
-- Connect `summary.minutes` and `qa.answer` to the existing intent convergence, model binding, controlled tools, unified Agent Loop, scheduler, and SQLite execution store.
-- Add the real terminal-session scope projection and minimal Agent Bar surface; keep other registered recipes unavailable in the UI with an explicit product response.
-- Add bounded interaction detail with collapsed tool-call audit and a main-owned canonical JSON export with atomic writes and deterministic bytes.
-- Add recovery and privacy evidence for cancellation, provider/schema/budget failure, renderer reload, storage replacement, late-result rejection, prompt cleanup, and subtitle independence.
-- Record the remaining J21 background-ingest, J27 isolated-entry evidence, and full J25 acceptance as follow-up work; this change does not relabel those journeys as accepted.
+- Add the formal Agent Bar entry to the existing toolbar action and preserve the independent subtitle window lifecycle when the entry or Agent service is unavailable.
+- Turn the current S5 request surface into one verifiable vertical journey for `summary.minutes` and `qa.answer`, using the existing terminal-session scope, eligibility, frozen input, model binding, Personal Context, controlled tools, Agent Loop, scheduler, and SQLite projections.
+- Complete the remaining contract/main/runtime/storage/UI coverage for idempotency, unsupported recipes, provider and Schema failure, budget exhaustion, cancellation, reload, replacement, and late-result rejection.
+- Keep interaction history, bounded detail, collapsed tool-call audit, and canonical JSON export aligned with the existing exact contracts; add the formal save-dialog handoff and subtitle-independence evidence.
+- Record implementation versus local evidence versus S5-Integration evidence by current revision. J21 background ingestion, complete J25 settings/model comparison, and J27 isolated-entry userData/SQLite evidence remain follow-up gates.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `formal-agent-run`: production formal Agent request lifecycle from a committed transcript scope through result/history projections.
-- `agent-interaction-export`: deterministic, privacy-bounded export of one terminal formal Agent interaction.
+- `formal-agent-run`: formal Agent request lifecycle from a committed transcript scope through result, history, reload, cancellation, and product-entry projections.
+- `agent-interaction-export`: deterministic, privacy-bounded export of one terminal formal Agent interaction from the formal terminal detail.
 
 ### Modified Capabilities
 
-None. Existing semantic-contract requirements remain authoritative; this change supplies their missing production implementation and evidence.
+None. Existing semantic-contract requirements and J21/J22/J24/J25/J26/J27 definitions remain authoritative; this change adds the remaining S5 product-entry and integration behavior without creating a new journey identifier.
 
 ## Impact
 
-- Main composition in `src/main.js`, formal Agent service, model execution adapter, scheduler and storage gateway wiring.
-- Versioned Agent run contracts, IPC channels, preload facade, Agent renderer, SQLite command projections, and canonical export writer.
-- New integration/evidence tests under the existing `test/{main,runtime,storage,ui,integration,validation}` lanes.
-- No changes to subtitle event semantics, audio persistence policy, recipe registry, model-purpose vocabulary, or the old isolated Agent entry point.
+- Toolbar command presentation and the existing `agent` window lifecycle in main/preload/renderer composition.
+- S5 exact contracts, `AgentRunService`, execution-host/storage-worker/SQLite integration, formal Agent Bar renderer, and export handoff.
+- Focused contract, main, runtime, storage, UI, integration, and evidence checks under the existing test lanes, plus current-revision status records.
+- No new migration, recipe, controlled tool, provider category, subtitle event semantic, audio persistence behavior, or isolated Agent entry-point behavior.
