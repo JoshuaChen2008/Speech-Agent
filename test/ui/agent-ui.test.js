@@ -53,6 +53,7 @@ async function createHarness () {
   const submitRequests = []
   const cancelRequests = []
   const exportRequests = []
+  const signalRequests = []
   const detailRequests = []
   const detailById = new Map()
   const detailDeferredById = new Map()
@@ -82,13 +83,17 @@ async function createHarness () {
     async exportInteraction (request) {
       exportRequests.push(request)
       return { ok: true, error: null, result: { bytes_sha256: 'c'.repeat(64), interaction_id: request.interaction_id, schema_version: 1, snapshot: {} } }
+    },
+    async recordSignal (request) {
+      signalRequests.push(request)
+      return { ok: true, error: null, result: { accepted: true, interaction_id: request.interaction_id, replayed: false, signal_kind: request.signal_kind } }
     }
   }
   const reactRoot = createRoot(dom.window.document.getElementById('root'))
   await act(async () => reactRoot.render(React.createElement(AgentView)))
   await flush()
   return {
-    calls, changed, cancelRequests, detailRequests, dom, exportRequests, historyItem, submitRequests,
+    calls, changed, cancelRequests, detailRequests, dom, exportRequests, historyItem, signalRequests, submitRequests,
     async dispose () {
       await act(async () => reactRoot.unmount())
       dom.window.close()
@@ -104,9 +109,10 @@ test('S5-UX/J22/J24: formal Agent renderer consumes the exact facade and keeps p
   assert.match(source('src/agent/index.html'), /src="\.\/entry\.tsx"/)
   assert.match(source('src/agent/entry.tsx'), /createRoot[\s\S]*AgentView/)
   const view = source('src/agent/agent-view.tsx')
-  for (const method of ['subscribeChanged', 'getScopes', 'getEligibility', 'submit', 'cancel', 'getHistory', 'getInteraction', 'exportInteraction']) assert.match(view, new RegExp(`api\\.${method}`))
+  for (const method of ['subscribeChanged', 'getScopes', 'getEligibility', 'submit', 'cancel', 'getHistory', 'getInteraction', 'exportInteraction', 'recordSignal']) assert.match(view, new RegExp(`api\\.${method}`))
   assert.match(view, /生成纪要/)
   assert.match(view, /工具调用记录/)
+  for (const signal of ['提交编辑', '接受', '拒绝', '记住', '忘记']) assert.match(view, new RegExp(signal))
   assert.match(view, /正在读取处理资格/)
   assert.doesNotMatch(view, /data-(?:scope|interaction)-id/)
   assert.doesNotMatch(`${source('src/agent/index.html')}\n${view}`, /<audio\b|reasoning|provider_event|apiKey|absolute_path/i)
@@ -205,4 +211,26 @@ test('SEM-F34/J24: tool audit stays collapsed until expanded, then shows complet
   detail.open = true
   assert.match(document.body.textContent, /"sourceRefs"/)
   assert.match(document.body.textContent, /受控来源/)
+})
+
+test('SEM-F32/J21: terminal Agent results expose only explicit interaction signals', async (t) => {
+  const harness = await createHarness(); t.after(() => harness.dispose())
+  harness.setDetail({
+    interaction_id: 'interaction.ui.2', run_id: 'run.ui.2', recipe_id: 'qa.answer', recipe_version: '1',
+    routing_mode: 'model', state: 'succeeded', terminal_reason: 'succeeded', terminal_at: 3,
+    duration_ms: 24, created_at: 2, attempt_count: 1, error_code: null, result: { answer: '结果' },
+    result_digest: 'b'.repeat(64), source_refs: [], tool_calls: [],
+    model: { adapter_id: 'adapter.internal', model_id: 'model.internal', profile_id: 'profile.internal', profile_revision: 1, provider_kind: 'cloud' },
+    usage: null, usage_state: 'unknown'
+  })
+  await act(async () => click(document.querySelectorAll('.history-card')[1]))
+  await flush()
+  assert.equal(document.querySelectorAll('[data-signal]').length, 5)
+  for (const kind of ['accept', 'reject', 'remember', 'forget']) {
+    await act(async () => click(document.querySelector(`[data-signal="${kind}"]`)))
+    await flush()
+  }
+  assert.deepEqual(harness.signalRequests.map((request) => request.signal_kind), ['accept', 'reject', 'remember', 'forget'])
+  assert.equal(harness.signalRequests.every((request) => request.result_digest === 'b'.repeat(64)), true)
+  assert.equal(harness.signalRequests.every((request) => request.payload === null), true)
 })

@@ -62,6 +62,10 @@ const ISOLATED_AGENT_OPERATIONS = new Set([
   'deletePersonalContextSessionData',
   'applyPersonalContextAutomaticPolicy',
   'cancelPersonalContextSessionIngest',
+  'preparePersonalContextInteractionIngest',
+  'readPersonalContextInteractionInput',
+  'commitPersonalContextInteractionIngest',
+  'cancelPersonalContextInteractionIngest',
   'claimNextFormalAgentRun',
   'nextFormalAgentRunAt',
   'completeFormalAgentRun',
@@ -469,6 +473,22 @@ class StorageGateway {
     return this.enqueue('commitPersonalContextSessionIngest', request)
   }
 
+  preparePersonalContextInteractionIngest (request) {
+    return this.enqueue('preparePersonalContextInteractionIngest', request)
+  }
+
+  readPersonalContextInteractionInput (source, ephemeral = null) {
+    return this.enqueue('readPersonalContextInteractionInput', { source, ephemeral })
+  }
+
+  commitPersonalContextInteractionIngest (request) {
+    return this.enqueue('commitPersonalContextInteractionIngest', request)
+  }
+
+  cancelPersonalContextInteractionIngest (request) {
+    return this.enqueue('cancelPersonalContextInteractionIngest', request)
+  }
+
   claimNextFormalAgentRun (request) {
     return this.enqueue('claimNextFormalAgentRun', request)
   }
@@ -576,6 +596,10 @@ class StorageGateway {
       case 'readPersonalContextSessionInput': return host.readPersonalContextSessionInput(item.payload)
       case 'readPersonalContextToolContext': return host.readPersonalContextToolContext(item.payload)
       case 'commitPersonalContextSessionIngest': return host.commitPersonalContextSessionIngest(item.payload)
+      case 'preparePersonalContextInteractionIngest': return host.preparePersonalContextInteractionIngest(item.payload)
+      case 'readPersonalContextInteractionInput': return host.readPersonalContextInteractionInput(item.payload.source, item.payload.ephemeral)
+      case 'commitPersonalContextInteractionIngest': return host.commitPersonalContextInteractionIngest(item.payload)
+      case 'cancelPersonalContextInteractionIngest': return host.cancelPersonalContextInteractionIngest(item.payload)
       case 'claimNextFormalAgentRun': return host.claimNextFormalAgentRun(item.payload)
       case 'nextFormalAgentRunAt': return host.nextFormalAgentRunAt(item.payload)
       case 'completeFormalAgentRun': return host.completeFormalAgentRun(item.payload)

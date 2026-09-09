@@ -54,6 +54,7 @@ const {
 const { registerAgentRunIpc } = require('./main/ipc/agent-run-ipc')
 const agentRunUi = require('./agent/contracts/agent-run-ui')
 const { AgentRunService } = require('./agent/formal-run/agent-run-service')
+const { AgentInteractionSignalService } = require('./agent/formal-run/agent-interaction-signal-service')
 const { AgentInteractionExporter } = require('./agent/formal-run/agent-interaction-exporter')
 const { sanitizedEnvironment } = require('./agent/model-access/environment')
 const { sha256Canonical } = require('./runtime/storage-worker/canonical-json')
@@ -118,6 +119,7 @@ for (const key of Object.keys(process.env)) {
 /** @type {null | import('./agent/model-access/credential-vault').CredentialVault} */ let modelAccessVault = null
 /** @type {null | import('./agent/model-access/remote-catalog-controller').RemoteModelCatalogPullController} */ let remoteModelCatalogController = null
 /** @type {null | AgentRunService} */ let formalAgentService = null
+/** @type {null | AgentInteractionSignalService} */ let formalAgentSignalService = null
 /** @type {null | { start: Function, stop: Function, wake: Function, cancel: Function }} */ let formalAgentScheduler = null
 /** @type {null | { submit: Function }} */ let formalRouteOrchestrator = null
 const formalAgentPrompts = new Map()
@@ -382,10 +384,25 @@ registerAgentRunIpc({
     async getScopes (request, context) { return formalAgentService ? formalAgentService.getScopes(request, context) : unavailableAgentScopes() },
     async getEligibility (request, context) { return formalAgentService ? formalAgentService.getEligibility(request, context) : { contract_id: agentRunUi.CONTRACT_ID, contract_version: agentRunUi.CONTRACT_VERSION, ok: true, error: null, snapshot: { scope: request.scope, eligibility: 'provider_not_configured', next_action: null, revision: 0 } } },
     async submit (request, context) { return formalAgentService ? formalAgentService.submit(request, context) : unavailableAgentCommand() },
-    async cancel (request, context) { return formalAgentService ? formalAgentService.cancel(request, context) : unavailableAgentCommand() },
+    async cancel (request, context) {
+      if (!formalAgentService) return unavailableAgentCommand()
+      const response = await formalAgentService.cancel(request, context)
+      if (response?.ok && response.result?.state === 'cancelled' && formalAgentSignalService) {
+        await formalAgentSignalService.recordPromptSignal({ interactionId: request.interaction_id })
+      }
+      if (response?.ok && response.result?.state === 'cancelled') {
+        try {
+          const detail = await applicationRuntime?.gateway?.getAgentInteraction({ interactionId: request.interaction_id })
+          const runId = detail?.interaction?.runId || detail?.interaction?.run_id || detail?.runId
+          if (typeof runId === 'string') formalAgentPrompts.delete(runId)
+        } catch { /* prompt cleanup remains best effort when storage is unavailable */ }
+      }
+      return response
+    },
     async getHistory (request, context) { return formalAgentService ? formalAgentService.getHistory(request, context) : { contract_id: agentRunUi.CONTRACT_ID, contract_version: agentRunUi.CONTRACT_VERSION, ok: true, error: null, result: { items: [], has_more: false, next_cursor: null } } },
     async getInteraction (request, context) { return formalAgentService ? formalAgentService.getInteraction(request, context) : unavailableAgentCommand() },
-    async exportInteraction (request, context) { return formalAgentService ? formalAgentService.exportInteraction(request, context) : unavailableAgentCommand() }
+    async exportInteraction (request, context) { return formalAgentService ? formalAgentService.exportInteraction(request, context) : unavailableAgentCommand() },
+    async recordSignal (request, context) { return formalAgentSignalService ? formalAgentSignalService.recordSignal(request, context) : unavailableAgentCommand() }
   }
 })
 
@@ -1255,6 +1272,16 @@ async function bootstrapApplication () {
     console.error(`[agent.route] ${error instanceof Error ? error.message : 'AGENT_ROUTE_UNAVAILABLE'}`)
   }
   try {
+    formalAgentSignalService = new AgentInteractionSignalService({
+      storage: applicationRuntime.gateway,
+      personalContext: personalContextRuntime,
+      promptStore: formalAgentPrompts
+    })
+  } catch (error) {
+    formalAgentSignalService = null
+    console.error(`[agent.signal] ${error instanceof Error ? error.message : 'AGENT_SIGNAL_UNAVAILABLE'}`)
+  }
+  try {
     const { FormalAgentRunRunner, FormalAgentJobScheduler } = require('./agent/execution-host')
     const executionAdapter = personalContextRuntime?.executionAdapter
     if (!executionAdapter || !modelAccessRuntime) throw new Error('formal Agent execution dependencies are unavailable')
@@ -1263,7 +1290,13 @@ async function bootstrapApplication () {
       personalContext: executionAdapter,
       modelAccess: modelAccessRuntime,
       promptProvider: (runId) => formalAgentPrompts.get(runId) || null,
-      onSettled: (runId) => formalAgentPrompts.delete(runId),
+      onSettled: async (runId, terminalReason, interactionId) => {
+        if (terminalReason && interactionId && formalAgentSignalService) {
+          const prompt = formalAgentPrompts.get(runId)
+          await formalAgentSignalService.recordPromptSignal({ interactionId, prompt })
+        }
+        formalAgentPrompts.delete(runId)
+      },
       interactions: {
         terminalize: (request) => applicationRuntime.gateway.terminalizeAgentInteraction(request),
         startToolCall: (request) => applicationRuntime.gateway.startAgentToolCall(request),

@@ -15,7 +15,8 @@ test('S5-1 controller gates roles and delegates exact requests', async () => {
       cancel: async () => ({ contract_id:c.CONTRACT_ID, contract_version:c.CONTRACT_VERSION, ok:true, error:null, result:null }),
       getHistory: async () => ({ contract_id:c.CONTRACT_ID, contract_version:c.CONTRACT_VERSION, ok:true, error:null, result:{ items:[], has_more:false, next_cursor:null } }),
       getInteraction: async () => ({ contract_id:c.CONTRACT_ID, contract_version:c.CONTRACT_VERSION, ok:true, error:null, result:null }),
-      exportInteraction: async () => ({ contract_id:c.CONTRACT_ID, contract_version:c.CONTRACT_VERSION, ok:true, error:null, result:null })
+      exportInteraction: async () => ({ contract_id:c.CONTRACT_ID, contract_version:c.CONTRACT_VERSION, ok:true, error:null, result:null }),
+      recordSignal: async () => ({ contract_id:c.CONTRACT_ID, contract_version:c.CONTRACT_VERSION, ok:true, error:null, result:{ accepted:true, interaction_id:'interaction.x', replayed:false, signal_kind:'accept' } })
     }
   })
   const req = { contract_id:c.CONTRACT_ID, contract_version:c.CONTRACT_VERSION, scope:{kind:'session',reference:'session.x'} }
@@ -47,7 +48,8 @@ test('SEM-F31/J22/J24: IPC revalidates the service response before exposing it t
         result: { items: [], has_more: false, next_cursor: null }, extra: 'must be rejected'
       }),
       getInteraction: async () => ({ contract_id: c.CONTRACT_ID, contract_version: c.CONTRACT_VERSION, ok: true, error: null, result: null }),
-      exportInteraction: async () => ({ contract_id: c.CONTRACT_ID, contract_version: c.CONTRACT_VERSION, ok: true, error: null, result: null })
+      exportInteraction: async () => ({ contract_id: c.CONTRACT_ID, contract_version: c.CONTRACT_VERSION, ok: true, error: null, result: null }),
+      recordSignal: async () => ({ contract_id: c.CONTRACT_ID, contract_version: c.CONTRACT_VERSION, ok: true, error: null, result: { accepted: true, interaction_id: 'interaction.x', replayed: false, signal_kind: 'accept' } })
     }
   })
 

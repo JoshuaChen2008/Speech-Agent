@@ -2,6 +2,7 @@
 
 const { createPersonalContextExecutionAdapter, createPersonalContextModule } = require('./index')
 const { PersonalContextController } = require('./controller')
+const { canonicalize } = require('../../runtime/storage-worker/canonical-json')
 const {
   ContextIngestSessionRunner,
   FormalAgentJobScheduler,
@@ -12,6 +13,35 @@ function policyFailure () {
   const error = new Error('AGENT_CONTEXT_OPERATION_FAILED')
   error.code = 'AGENT_CONTEXT_OPERATION_FAILED'
   return error
+}
+
+const INTERACTION_SIGNAL_KINDS = new Set(['prompt', 'edit', 'accept', 'reject', 'remember', 'forget'])
+const MAX_PENDING_INTERACTION_SIGNALS = 64
+
+function interactionPayload (signalKind, value) {
+  if (value === undefined) return null
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw policyFailure()
+  const keys = Object.keys(value).sort()
+  if (keys.length !== 3 || keys.join(',') !== 'editText,prompt,result') throw policyFailure()
+  const text = (input) => {
+    if (typeof input !== 'string' || input.length < 1 || input.length > 4096 ||
+        /[\u0000-\u001f\u007f]/u.test(input) || Buffer.byteLength(input, 'utf8') > 16384) throw policyFailure()
+    return input
+  }
+  const prompt = value.prompt === null ? null : text(value.prompt)
+  const editText = value.editText === null ? null : text(value.editText)
+  const result = value.result
+  if (result !== null && (!result || typeof result !== 'object' || Array.isArray(result))) throw policyFailure()
+  if (result !== null && Buffer.byteLength(canonicalize(result), 'utf8') > 65536) throw policyFailure()
+  if (signalKind === 'prompt') {
+    if (prompt === null || editText !== null) throw policyFailure()
+  } else {
+    if (prompt !== null || result === null) throw policyFailure()
+    if (signalKind === 'edit') {
+      if (editText === null) throw policyFailure()
+    } else if (editText !== null) throw policyFailure()
+  }
+  return structuredClone({ prompt, editText, result })
 }
 
 class PersonalContextRuntime {
@@ -34,6 +64,9 @@ class PersonalContextRuntime {
     else if (typeof this.gateway.preparePersonalContextSessionIngest === 'function') {
       this.executionAdapter = createPersonalContextExecutionAdapter({ storage: this.gateway })
     }
+    this.interactionPayloads = new Map()
+    this.interactionWaiters = new Map()
+    this.pendingInteractionPrepares = new Set()
     this.runner = new ContextIngestSessionRunner({
       personalContext: (options.modelAccess && (options.loop || options.loopFactory) && this.executionAdapter)
         ? this.executionAdapter
@@ -49,7 +82,9 @@ class PersonalContextRuntime {
       loop: options.loop,
       loopFactory: options.loopFactory,
       resolveModel: options.resolveModel,
-      now: options.now
+      now: options.now,
+      interactionPayloadProvider: (runId) => this.interactionPayloads.get(runId) || null,
+      onSettled: (runId, terminalReason) => this.settleInteraction(runId, terminalReason)
     })
     this.scheduler = new FormalAgentJobScheduler({
       storage: this.gateway,
@@ -107,14 +142,19 @@ class PersonalContextRuntime {
         this.policyReady = true
         const allowed = settings.agentEnabled === true && settings.memoryEnabled === true &&
           settings.automaticProcessingSince !== null && settings.memoryProcessingSince !== null
-        if (!allowed && this.scheduler.activeRunId) this.scheduler.cancel(this.scheduler.activeRunId)
+        if (!allowed) {
+          await this.invalidateInteractionPayloads()
+          if (this.scheduler.activeRunId) this.scheduler.cancel(this.scheduler.activeRunId)
+        }
         if (allowed && this.scheduler.started) this.scheduler.wake('settings')
       }
       return result
     } catch (error) {
       if (generation === this.generation && (generation === 0 || this.started)) {
         this.policyReady = false
-        void this.scheduler.stop()
+        await this.scheduler.stop()
+        await Promise.allSettled([...this.pendingInteractionPrepares])
+        await this.invalidateInteractionPayloads()
         try { this.onDiagnostic({ code: 'AGENT_SCHEDULER_FAILED' }) } catch { /* observer isolation */ }
       }
       throw error
@@ -125,10 +165,123 @@ class PersonalContextRuntime {
     return this.started && this.generation === generation
   }
 
+  policyAllows (settings = this.config.get()) {
+    return settings?.agentEnabled === true && settings?.memoryEnabled === true &&
+      settings?.automaticProcessingSince !== null && settings?.memoryProcessingSince !== null
+  }
+
+  settleInteraction (runId, terminalReason, completed = true) {
+    if (typeof runId !== 'string') return
+    this.interactionPayloads.delete(runId)
+    const waiter = this.interactionWaiters.get(runId)
+    if (!waiter) return
+    this.interactionWaiters.delete(runId)
+    waiter.resolve({ completed, terminalReason })
+  }
+
+  async invalidateInteractionPayloads () {
+    const runIds = [...new Set([
+      ...this.interactionPayloads.keys(),
+      ...this.interactionWaiters.keys()
+    ])]
+    await Promise.allSettled(runIds.map((runId) => this.cancelPrepared({
+      runId, recipeId: 'context.ingest.interaction'
+    })))
+    for (const runId of runIds) this.settleInteraction(runId, 'cancelled', false)
+  }
+
   async cancelPrepared (prepared) {
     const runId = prepared?.runId
-    if (typeof runId !== 'string' || typeof this.gateway.cancelPersonalContextSessionIngest !== 'function') return
-    try { await this.gateway.cancelPersonalContextSessionIngest({ runId }) } catch { /* best effort cleanup */ }
+    if (typeof runId !== 'string') return
+    const cancel = prepared?.recipeId === 'context.ingest.interaction' &&
+      typeof this.gateway.cancelPersonalContextInteractionIngest === 'function'
+      ? this.gateway.cancelPersonalContextInteractionIngest
+      : this.gateway.cancelPersonalContextSessionIngest
+    if (typeof cancel !== 'function') {
+      this.settleInteraction(runId, 'cancelled', false)
+      return null
+    }
+    try {
+      const result = await cancel.call(this.gateway, { runId })
+      if (result?.state === 'cancelled') this.settleInteraction(runId, 'cancelled', false)
+      return result
+    } catch {
+      this.settleInteraction(runId, 'cancelled', false)
+      return null
+    }
+  }
+
+  async recordInteractionSignal (request) {
+    if (!this.started || !this.policyReady || !this.executionAdapter ||
+        typeof this.executionAdapter.prepareInteractionIngest !== 'function') {
+      return { accepted: false, replayed: false }
+    }
+    if (!INTERACTION_SIGNAL_KINDS.has(request?.signalKind)) return { accepted: false, replayed: false }
+    if (!this.policyAllows(this.config.get())) return { accepted: false, replayed: false }
+    const generation = this.generation
+    const transient = interactionPayload(request.signalKind, request.transient)
+    const prepareTask = (async () => {
+      const prepareRequest = {
+        interactionId: request.interactionId,
+        signalKind: request.signalKind,
+        payloadDigest: request.payloadDigest || null
+      }
+      if (request.signalIdempotencyKey !== undefined) prepareRequest.signalIdempotencyKey = request.signalIdempotencyKey
+      const prepared = await this.runner.prepare({ sourceKind: 'interaction', ...prepareRequest })
+      const terminalState = ['succeeded', 'failed', 'cancelled'].includes(prepared?.state)
+      if (!this.isCurrent(generation) || !this.policyReady || !this.policyAllows(this.config.get())) {
+        await this.cancelPrepared({ ...prepared, recipeId: 'context.ingest.interaction' })
+        return { accepted: false, replayed: prepared?.replayed === true, prepared }
+      }
+      if (prepared?.replayed === true && terminalState) {
+        return {
+          accepted: true,
+          replayed: true,
+          prepared,
+          completed: true,
+          terminalReason: prepared.state
+        }
+      }
+      if (transient !== null && !this.interactionPayloads.has(prepared.runId) &&
+          this.interactionPayloads.size >= MAX_PENDING_INTERACTION_SIGNALS) {
+        await this.cancelPrepared({ ...prepared, recipeId: 'context.ingest.interaction' })
+        return { accepted: false, replayed: prepared?.replayed === true, prepared }
+      }
+      if (transient !== null) this.interactionPayloads.set(prepared.runId, transient)
+      let completion = null
+      if (request.awaitCompletion === true) {
+        completion = new Promise((resolve) => this.interactionWaiters.set(prepared.runId, { resolve, generation }))
+      }
+      if (!this.isCurrent(generation) || !this.policyReady || !this.policyAllows(this.config.get())) {
+        await this.cancelPrepared({ ...prepared, recipeId: 'context.ingest.interaction' })
+        return { accepted: false, replayed: prepared?.replayed === true, prepared }
+      }
+      if (!this.scheduler.started) this.scheduler.start()
+      if (!this.isCurrent(generation)) {
+        await this.cancelPrepared({ ...prepared, recipeId: 'context.ingest.interaction' })
+        return { accepted: false, replayed: prepared?.replayed === true, prepared }
+      }
+      this.scheduler.wake('interaction-signal')
+      return { accepted: true, replayed: prepared?.replayed === true, prepared, completion }
+    })()
+    this.pendingInteractionPrepares.add(prepareTask)
+    void prepareTask.then(
+      () => this.pendingInteractionPrepares.delete(prepareTask),
+      () => this.pendingInteractionPrepares.delete(prepareTask)
+    )
+    const preparedResult = await prepareTask
+    if (preparedResult.accepted !== true || request.awaitCompletion !== true || !preparedResult.completion) {
+      const { completion, ...result } = preparedResult
+      return result
+    }
+    const outcome = await preparedResult.completion
+    return {
+      accepted: true,
+      replayed: preparedResult.replayed,
+      prepared: preparedResult.prepared,
+      completed: outcome.completed === true,
+      terminalReason: outcome.terminalReason
+    }
   }
 
   start (recorder) {
@@ -186,10 +339,14 @@ class PersonalContextRuntime {
       this.unsubscribe = null
     }
     await this.scheduler.stop()
+    await Promise.allSettled([...this.pendingInteractionPrepares])
     const pendingPrepares = [...this.pendingReconciles]
       .filter((entry) => entry.prepareStarted && entry.promise)
       .map((entry) => entry.promise)
     await Promise.allSettled(pendingPrepares)
+    await this.invalidateInteractionPayloads()
+    for (const runId of [...this.interactionWaiters.keys()]) this.settleInteraction(runId, 'cancelled', false)
+    for (const runId of [...this.interactionPayloads.keys()]) this.interactionPayloads.delete(runId)
   }
 }
 

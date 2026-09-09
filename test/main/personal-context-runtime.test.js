@@ -117,8 +117,7 @@ test('SEM-F28/SEM-F30/SEM-T10/J22/J24: ready terminal notice prepares one sessio
     loop: {
       agentLoop: async (request) => {
         calls.push(['loop', request])
-        assert.ok(Array.isArray(request.tools), 'default runtime interaction adapter must expose audited tools')
-        await request.tools[0].execute({ schemaVersion: 1, aliasKeys: ['decision'] })
+        assert.equal(request.tools, undefined, 'background context ingestion must remain tool-free')
         return { text: JSON.stringify(output) }
       }
     },
@@ -133,8 +132,8 @@ test('SEM-F28/SEM-F30/SEM-T10/J22/J24: ready terminal notice prepares one sessio
   assert.equal(calls.filter(([name]) => name === 'prepare').length, 1)
   assert.equal(calls.some(([name]) => name === 'bind'), true)
   assert.equal(calls.some(([name]) => name === 'commit'), true, JSON.stringify(calls))
-  assert.equal(calls.filter(([name]) => name === 'tool:start').length, 1)
-  assert.equal(calls.filter(([name]) => name === 'tool:finish').length, 1)
+  assert.equal(calls.filter(([name]) => name === 'tool:start').length, 0)
+  assert.equal(calls.filter(([name]) => name === 'tool:finish').length, 0)
   await runtime.stop()
 })
 
@@ -228,6 +227,65 @@ test('SEM-F28/SEM-T04/J21: stopping after automatic prepare starts cancels its q
   await stopping
   assert.equal(cancelled, 1)
   assert.equal(runtime.scheduler.started, false)
+})
+
+test('SEM-F32/SEM-F35/SEM-T04/J21: stopping with a queued interaction signal cancels its skeleton and settles its waiter', async () => {
+  let cancelled = 0
+  const settings = {
+    agentEnabled: true,
+    automaticProcessingSince: 100,
+    memoryEnabled: true,
+    memoryProcessingSince: 100,
+    cloudDisclosureAccepted: false,
+    agentSettingsRevision: 0
+  }
+  const gateway = {
+    personalContextIngest: async () => ({}),
+    personalContextResolve: async () => ({}),
+    personalContextManage: async () => ({ revision: 0, totalCount: 0, hasMore: false, nextCursor: null, rows: [] }),
+    applyPersonalContextAutomaticPolicy: async () => ({ applied: true }),
+    preparePersonalContextInteractionIngest: async () => ({ runId: 'run.interaction.stop', recipeId: 'context.ingest.interaction', replayed: false }),
+    cancelPersonalContextInteractionIngest: async ({ runId }) => {
+      assert.equal(runId, 'run.interaction.stop')
+      cancelled += 1
+      return { runId, state: 'cancelled', replayed: false }
+    },
+    claimNextFormalAgentRun: async () => null,
+    nextFormalAgentRunAt: async () => null,
+    completeFormalAgentRun: async () => ({}),
+    failFormalAgentRun: async () => ({})
+  }
+  const runtime = new PersonalContextRuntime({
+    gateway,
+    config: { get: () => ({ ...settings }), updateAgentSettings: () => ({ ...settings }) },
+    executionAdapter: {
+      prepareSessionIngest: async () => ({ runId: 'run.session.placeholder' }),
+      commitSessionIngest: async () => ({ state: 'committed' }),
+      prepareInteractionIngest: async () => ({ runId: 'run.interaction.stop', recipeId: 'context.ingest.interaction', replayed: false })
+    },
+    modelAccess: { bind: async () => ({}) },
+    loop: { agentLoop: async () => ({ text: '{}' }) }
+  })
+  runtime.start({ onTerminalCommitted: () => () => {} })
+  for (let index = 0; index < 10 && !runtime.policyReady; index += 1) await nextTurn()
+  const recording = runtime.recordInteractionSignal({
+    interactionId: 'interaction.stop', signalKind: 'accept', payloadDigest: null,
+    signalIdempotencyKey: 'signal.stop',
+    transient: { prompt: null, editText: null, result: { schemaVersion: 1, answer: 'queued' } },
+    awaitCompletion: true
+  })
+  for (let index = 0; index < 10 && runtime.interactionPayloads.size === 0; index += 1) await nextTurn()
+  assert.equal(runtime.interactionPayloads.size, 1)
+  await runtime.stop()
+  const result = await recording
+  assert.equal(cancelled, 1)
+  assert.deepEqual(result, {
+    accepted: true, replayed: false, prepared: {
+      runId: 'run.interaction.stop', recipeId: 'context.ingest.interaction', replayed: false
+    }, completed: false, terminalReason: 'cancelled'
+  })
+  assert.equal(runtime.interactionPayloads.size, 0)
+  assert.equal(runtime.interactionWaiters.size, 0)
 })
 
 test('SEM-F28/SEM-T04/J21: settings refresh invalidates old terminal work but new terminal notices use the current generation', async () => {
@@ -339,7 +397,7 @@ test('SEM-F28/SEM-T04/J21: policy application failure is surfaced and stops the 
     onDiagnostic: (event) => { diagnostic = event }
   })
   runtime.start({ onTerminalCommitted: () => () => {} })
-  for (let index = 0; index < 10 && policyCalls < 1; index += 1) await nextTurn()
+  for (let index = 0; index < 10 && !runtime.policyReady; index += 1) await nextTurn()
   await assert.rejects(
     runtime.updateAgentSettings({
       expectedRevision: 0, agentEnabled: true, memoryEnabled: false, cloudDisclosureAccepted: false
@@ -350,4 +408,132 @@ test('SEM-F28/SEM-T04/J21: policy application failure is surfaced and stops the 
   assert.equal(runtime.scheduler.started, false)
   assert.deepEqual(diagnostic, { code: 'AGENT_SCHEDULER_FAILED' })
   await runtime.stop()
+})
+
+test('SEM-F32/SEM-F35/SEM-T04/J21: policy application failure cancels queued interaction signals and settles prompt waiters', async () => {
+  let policyCalls = 0
+  let cancelled = 0
+  const settings = {
+    agentEnabled: true,
+    automaticProcessingSince: 100,
+    memoryEnabled: true,
+    memoryProcessingSince: 100,
+    cloudDisclosureAccepted: false,
+    agentSettingsRevision: 0
+  }
+  const gateway = {
+    personalContextIngest: async () => ({}),
+    personalContextResolve: async () => ({}),
+    personalContextManage: async () => ({ revision: 0, totalCount: 0, hasMore: false, nextCursor: null, rows: [] }),
+    applyPersonalContextAutomaticPolicy: async () => {
+      policyCalls += 1
+      if (policyCalls > 1) throw new Error('policy store unavailable')
+      return { applied: true }
+    },
+    cancelPersonalContextInteractionIngest: async ({ runId }) => {
+      assert.equal(runId, 'run.interaction.policy-failure')
+      cancelled += 1
+      return { runId, state: 'cancelled', replayed: false }
+    },
+    claimNextFormalAgentRun: async () => null,
+    nextFormalAgentRunAt: async () => null,
+    completeFormalAgentRun: async () => ({}),
+    failFormalAgentRun: async () => ({})
+  }
+  const runtime = new PersonalContextRuntime({
+    gateway,
+    config: {
+      get: () => ({ ...settings }),
+      updateAgentSettings: (request) => {
+        settings.memoryEnabled = request.memoryEnabled
+        settings.memoryProcessingSince = request.memoryEnabled ? 100 : null
+        settings.agentSettingsRevision += 1
+        return { ...settings }
+      }
+    },
+    executionAdapter: {
+      prepareSessionIngest: async () => ({ runId: 'run.session.placeholder' }),
+      commitSessionIngest: async () => ({ state: 'committed' }),
+      prepareInteractionIngest: async () => ({ runId: 'run.interaction.policy-failure', recipeId: 'context.ingest.interaction', replayed: false })
+    },
+    modelAccess: { bind: async () => ({}) },
+    loop: { agentLoop: async () => ({ text: '{}' }) }
+  })
+  runtime.start({ onTerminalCommitted: () => () => {} })
+  for (let index = 0; index < 10 && !runtime.policyReady; index += 1) await nextTurn()
+  const recording = runtime.recordInteractionSignal({
+    interactionId: 'interaction.policy-failure', signalKind: 'prompt', payloadDigest: null,
+    signalIdempotencyKey: 'signal.policy-failure',
+    transient: { prompt: 'remember this', editText: null, result: null },
+    awaitCompletion: true
+  })
+  for (let index = 0; index < 10 && runtime.interactionPayloads.size === 0; index += 1) await nextTurn()
+  assert.equal(runtime.interactionPayloads.size, 1)
+  await assert.rejects(
+    runtime.updateAgentSettings({ expectedRevision: 0, agentEnabled: true, memoryEnabled: false, cloudDisclosureAccepted: false }),
+    (error) => error?.code === 'AGENT_CONTEXT_OPERATION_FAILED'
+  )
+  const result = await recording
+  assert.equal(cancelled, 1)
+  assert.equal(result.completed, false)
+  assert.equal(result.terminalReason, 'cancelled')
+  assert.equal(runtime.interactionPayloads.size, 0)
+  assert.equal(runtime.interactionWaiters.size, 0)
+  await runtime.stop()
+})
+
+test('SEM-F32/SEM-F35/SEM-T10/J21: explicit interaction signal is prepared only under the current automatic policy and wakes the scheduler', async () => {
+  const prepared = []
+  let claims = 0
+  let listener = null
+  const gateway = {
+    personalContextIngest: async () => ({}),
+    personalContextResolve: async () => ({}),
+    personalContextManage: async () => ({ revision: 0, totalCount: 0, hasMore: false, nextCursor: null, rows: [] }),
+    applyPersonalContextAutomaticPolicy: async () => ({ applied: true }),
+    claimNextFormalAgentRun: async () => { claims += 1; return null },
+    nextFormalAgentRunAt: async () => null
+  }
+  const settings = {
+    agentEnabled: true,
+    automaticProcessingSince: 100,
+    memoryEnabled: true,
+    memoryProcessingSince: 100,
+    cloudDisclosureAccepted: false,
+    agentSettingsRevision: 0
+  }
+  const runtime = new PersonalContextRuntime({
+    gateway,
+    config: { get: () => ({ ...settings }), updateAgentSettings: () => ({ ...settings }) },
+    executionAdapter: {
+      prepareSessionIngest: async () => ({ runId: 'run.session' }),
+      prepareInteractionIngest: async (request) => {
+        prepared.push(request)
+        return { runId: 'run.interaction', recipeId: 'context.ingest.interaction', replayed: prepared.length > 1 }
+      },
+      commitSessionIngest: async () => ({ state: 'committed' })
+    },
+    modelAccess: { bind: async () => ({}) },
+    loop: { agentLoop: async () => ({ text: '{}' }) }
+  })
+  runtime.start({ onTerminalCommitted: (callback) => { listener = callback; return () => { listener = null } } })
+  await nextTurn()
+  assert.deepEqual(await runtime.recordInteractionSignal({
+    interactionId: 'interaction.runtime', signalKind: 'accept', payloadDigest: null
+  }), {
+    accepted: true, replayed: false,
+    prepared: { runId: 'run.interaction', recipeId: 'context.ingest.interaction', replayed: false }
+  })
+  await nextTurn()
+  assert.deepEqual(prepared, [{ interactionId: 'interaction.runtime', signalKind: 'accept', payloadDigest: null }])
+  assert.equal(runtime.scheduler.started, true)
+  assert.equal(claims > 0, true)
+
+  settings.memoryEnabled = false
+  assert.deepEqual(await runtime.recordInteractionSignal({
+    interactionId: 'interaction.disabled', signalKind: 'remember', payloadDigest: null
+  }), { accepted: false, replayed: false })
+  assert.equal(prepared.length, 1)
+  await runtime.stop()
+  assert.equal(listener, null)
 })

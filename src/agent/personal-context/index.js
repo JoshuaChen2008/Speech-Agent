@@ -31,12 +31,21 @@ function createPersonalContextExecutionAdapter (options = {}) {
   }
   return Object.freeze({
     prepareSessionIngest: (request) => storage.preparePersonalContextSessionIngest(request),
+    prepareInteractionIngest: typeof storage.preparePersonalContextInteractionIngest === 'function'
+      ? (request) => storage.preparePersonalContextInteractionIngest(request)
+      : undefined,
     resolve: typeof storage.personalContextResolve === 'function'
       ? (request) => storage.personalContextResolve(request)
       : undefined,
     readSessionInput: (source) => storage.readPersonalContextSessionInput(source),
+    readInteractionInput: typeof storage.readPersonalContextInteractionInput === 'function'
+      ? (source, ephemeral) => storage.readPersonalContextInteractionInput(source, ephemeral)
+      : undefined,
     readToolContext: (request) => storage.readPersonalContextToolContext(request),
-    commitSessionIngest: (request) => storage.commitPersonalContextSessionIngest(request)
+    commitSessionIngest: (request) => storage.commitPersonalContextSessionIngest(request),
+    commitInteractionIngest: typeof storage.commitPersonalContextInteractionIngest === 'function'
+      ? (request) => storage.commitPersonalContextInteractionIngest(request)
+      : undefined
   })
 }
 

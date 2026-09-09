@@ -13,13 +13,15 @@ const IPC_CHANNELS = Object.freeze({
   getHistory: 'agent-run:get-history',
   getInteraction: 'agent-run:get-interaction',
   changed: 'agent-run:changed',
-  exportInteraction: 'agent-run:export-interaction'
+  exportInteraction: 'agent-run:export-interaction',
+  recordSignal: 'agent-run:record-signal'
 })
 const TERMINAL_STATES = Object.freeze(['pending', 'running', 'succeeded', 'failed', 'cancelling', 'cancelled'])
 const ROUTING_MODES = Object.freeze(['model', 'rules', 'preset'])
 const USAGE_STATES = Object.freeze(['known', 'unknown'])
 const ELIGIBILITY_STATES = Object.freeze(['ready', 'no_committed_transcript', 'outside_automatic_window', 'agent_disabled', 'provider_not_configured', 'cloud_disclosure_required', 'credential_unavailable', 'local_model_not_ready', 'session_not_terminal'])
 const SCOPE_KINDS = Object.freeze(['selection', 'session', 'date_range', 'project'])
+const SIGNAL_KINDS = Object.freeze(['prompt', 'edit', 'accept', 'reject', 'remember', 'forget'])
 const ERROR_CODES = Object.freeze({ unavailable: 'AGENT_RUN_UNAVAILABLE', invalid: 'AGENT_RUN_INVALID' })
 const RUN_ERROR_CODES = Object.freeze(['AGENT_RUN_UNAVAILABLE', 'AGENT_RUN_INVALID', 'AGENT_CANCELLED', 'AGENT_PROVIDER_AUTH_FAILED', 'AGENT_PROVIDER_RATE_LIMITED', 'AGENT_PROVIDER_UNAVAILABLE', 'AGENT_PROVIDER_TIMEOUT', 'AGENT_OUTPUT_INVALID', 'AGENT_PERMISSION_DENIED', 'AGENT_REQUEST_INVALID', 'AGENT_WORKER_EXITED', 'AGENT_INTERNAL_FAILURE', 'AGENT_BUDGET_EXCEEDED'])
 const ID = /^[a-z0-9][a-z0-9._:-]{0,159}$/
@@ -56,6 +58,27 @@ function assertCancelRequest (v) { exact(v, ['contract_id', 'contract_version', 
 function assertHistoryRequest (v) { exact(v, ['contract_id', 'contract_version', 'limit', 'cursor'], 'request'); header(v, 'request'); integer(v.limit, 'request.limit'); if (v.limit < 1 || v.limit > 100) fail('request.limit', 'out of range'); assertOpaqueCursor(v.cursor, 'request.cursor'); return v }
 function assertInteractionRequest (v) { exact(v, ['contract_id', 'contract_version', 'interaction_id'], 'request'); header(v, 'request'); id(v.interaction_id, 'request.interaction_id'); return v }
 function assertExportRequest (v) { exact(v, ['contract_id', 'contract_version', 'interaction_id'], 'request'); header(v, 'request'); id(v.interaction_id, 'request.interaction_id'); return v }
+function assertSignalPayload (signalKind, payload, p = 'request.payload') {
+  if (signalKind === 'edit') {
+    exact(payload, ['text'], p)
+    if (typeof payload.text !== 'string' || payload.text.length > 4096 || /[\u0000-\u001f\u007f]/u.test(payload.text)) fail(`${p}.text`, 'must be a bounded text value')
+    return payload
+  }
+  if (payload !== null) fail(p, 'must be null for this signal')
+  return payload
+}
+function assertRecordSignalRequest (v) {
+  exact(v, ['contract_id', 'contract_version', 'interaction_id', 'payload', 'result_digest', 'signal_idempotency_key', 'signal_kind'], 'request')
+  header(v, 'request')
+  id(v.interaction_id, 'request.interaction_id')
+  enumValue(v.signal_kind, SIGNAL_KINDS, 'request.signal_kind')
+  id(v.signal_idempotency_key, 'request.signal_idempotency_key')
+  if (v.result_digest !== null && (typeof v.result_digest !== 'string' || !/^[a-f0-9]{64}$/.test(v.result_digest))) fail('request.result_digest', 'must be null or a SHA-256 digest')
+  if (v.signal_kind === 'prompt' && v.result_digest !== null) fail('request.result_digest', 'prompt signal must not bind a result')
+  if (v.signal_kind !== 'prompt' && v.result_digest === null) fail('request.result_digest', 'signal must bind a result digest')
+  assertSignalPayload(v.signal_kind, v.payload)
+  return v
+}
 function assertSnapshot (v, p = 'snapshot') { exact(v, ['scope', 'eligibility', 'next_action', 'revision'], p); scope(v.scope, `${p}.scope`); enumValue(v.eligibility, ELIGIBILITY_STATES, `${p}.eligibility`); if (v.next_action !== null) fail(`${p}.next_action`, 'must be null until an exact action contract is signed'); integer(v.revision, `${p}.revision`); return v }
 function assertGetScopesResponse (v) {
   exact(v, ['contract_id', 'contract_version', 'default_scope', 'error', 'next_cursor', 'ok', 'revision', 'scopes'], 'response')
@@ -261,11 +284,19 @@ function assertExportResult (v, p = 'response.result') {
   assertFixturePrivacy(v.snapshot, `${p}.snapshot`)
   return v
 }
+function assertRecordSignalResult (v, p = 'response.result') {
+  exact(v, ['accepted', 'interaction_id', 'replayed', 'signal_kind'], p)
+  id(v.interaction_id, `${p}.interaction_id`)
+  enumValue(v.signal_kind, SIGNAL_KINDS, `${p}.signal_kind`)
+  if (typeof v.accepted !== 'boolean' || typeof v.replayed !== 'boolean') fail(p, 'accepted and replayed must be boolean')
+  return v
+}
 function assertSubmitResponse (v) { assertCommandEnvelope(v); if (v.ok && v.result !== null) assertSubmitResult(v.result); return v }
 function assertCancelResponse (v) { assertCommandEnvelope(v); if (v.ok && v.result !== null) assertCancelResult(v.result); return v }
 function assertHistoryResponse (v) { assertCommandEnvelope(v); if (v.ok) { if (v.result === null) fail('response.result', 'must be present'); assertHistoryResult(v.result) }; return v }
 function assertInteractionResponse (v) { assertCommandEnvelope(v); if (v.ok) { if (v.result === null) fail('response.result', 'must be present'); assertInteractionResult(v.result) }; return v }
 function assertExportResponse (v) { assertCommandEnvelope(v); if (v.ok) { if (v.result === null) fail('response.result', 'must be present'); assertExportResult(v.result) }; return v }
+function assertRecordSignalResponse (v) { assertCommandEnvelope(v); if (v.ok) { if (v.result === null) fail('response.result', 'must be present'); assertRecordSignalResult(v.result) }; return v }
 function assertCommandResponse (v, p = 'response') { assertCommandEnvelope(v, p); if (v.ok && v.result !== null) assertFixturePrivacy(v.result, `${p}.result`); return v }
 function assertGetEligibilityResponse (v) { exact(v, ['contract_id', 'contract_version', 'ok', 'error', 'snapshot'], 'response'); header(v, 'response'); if (typeof v.ok !== 'boolean') fail('response.ok', 'must be boolean'); if (v.ok) { if (v.error !== null) fail('response.error', 'must be null'); assertSnapshot(v.snapshot) } else { if (v.snapshot !== null) fail('response.snapshot', 'must be null'); plain(v.error, 'response.error'); exact(v.error, ['category', 'code', 'next_action'], 'response.error'); enumValue(v.error.code, Object.values(ERROR_CODES), 'response.error.code'); if (v.error.next_action !== null && typeof v.error.next_action !== 'string') fail('response.error.next_action', 'invalid') } return v }
 function assertChangedEvent (v) { exact(v, ['contract_id', 'contract_version', 'revision'], 'event'); header(v, 'event'); integer(v.revision, 'event.revision'); return v }
@@ -284,4 +315,4 @@ function assertFixturePrivacy (v, p = 'fixture') {
 }
 function isSupportedContract (idValue, version) { return idValue === CONTRACT_ID && version === CONTRACT_VERSION }
 
-module.exports = { CONTRACT_ID, CONTRACT_VERSION, ALLOWED_ROLES, IPC_CHANNELS, TERMINAL_STATES, ROUTING_MODES, USAGE_STATES, ELIGIBILITY_STATES, SCOPE_KINDS, ERROR_CODES, RUN_ERROR_CODES, assertGetScopesRequest, assertGetScopesResponse, assertGetEligibilityRequest, assertGetEligibilityResponse, assertSubmitRequest, assertCancelRequest, assertHistoryRequest, assertInteractionRequest, assertExportRequest, assertCommandResponse, assertSubmitResponse, assertCancelResponse, assertHistoryResponse, assertInteractionResponse, assertExportResponse, assertChangedEvent, assertFixturePrivacy, scope, assertScopeItem, isSupportedContract }
+module.exports = { CONTRACT_ID, CONTRACT_VERSION, ALLOWED_ROLES, IPC_CHANNELS, TERMINAL_STATES, ROUTING_MODES, USAGE_STATES, ELIGIBILITY_STATES, SCOPE_KINDS, SIGNAL_KINDS, ERROR_CODES, RUN_ERROR_CODES, assertGetScopesRequest, assertGetScopesResponse, assertGetEligibilityRequest, assertGetEligibilityResponse, assertSubmitRequest, assertCancelRequest, assertHistoryRequest, assertInteractionRequest, assertExportRequest, assertRecordSignalRequest, assertCommandResponse, assertSubmitResponse, assertCancelResponse, assertHistoryResponse, assertInteractionResponse, assertExportResponse, assertRecordSignalResponse, assertChangedEvent, assertFixturePrivacy, scope, assertScopeItem, isSupportedContract }

@@ -24,6 +24,7 @@ function registerAgentRunIpc ({ ipcMain, service, getRole = () => 'agent', autho
   invoke(CHANNELS.AGENT_RUN_GET_HISTORY, c.assertHistoryRequest, c.assertHistoryResponse, 'getHistory')
   invoke(CHANNELS.AGENT_RUN_GET_INTERACTION, c.assertInteractionRequest, c.assertInteractionResponse, 'getInteraction')
   invoke(CHANNELS.AGENT_RUN_EXPORT_INTERACTION, c.assertExportRequest, c.assertExportResponse, 'exportInteraction')
+  invoke(CHANNELS.AGENT_RUN_RECORD_SIGNAL, c.assertRecordSignalRequest, c.assertRecordSignalResponse, 'recordSignal')
   if (onChanged) onChanged((event, value) => {
     guard(event, CHANNELS.AGENT_RUN_CHANGED)
     return c.assertChangedEvent(value)

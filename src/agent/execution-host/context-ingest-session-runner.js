@@ -77,6 +77,10 @@ function promptForInput (input) {
       text: event.text
     }))
   }
+  if (input?.interactionId !== undefined) payload.interactionId = input.interactionId
+  if (input?.signalKind !== undefined) payload.signalKind = input.signalKind
+  if (input?.signalIdempotencyKey !== undefined) payload.signalIdempotencyKey = input.signalIdempotencyKey
+  if (input?.signal !== undefined) payload.signal = input.signal
   let prompt
   try { prompt = canonicalize(payload) } catch { throw codedError('AGENT_REQUEST_INVALID') }
   // AgentLoop's prompt contract is intentionally bounded in S3.  Do not
@@ -122,6 +126,10 @@ class ContextIngestSessionRunner {
     this.loopFactory = loopFactory
     this.resolveModel = typeof options.resolveModel === 'function' ? options.resolveModel : async (binding) => binding
     this.now = typeof options.now === 'function' ? options.now : Date.now
+    this.interactionPayloadProvider = typeof options.interactionPayloadProvider === 'function'
+      ? options.interactionPayloadProvider
+      : async () => null
+    this.onSettled = typeof options.onSettled === 'function' ? options.onSettled : async () => {}
     this.nextInteractionId = typeof options.nextInteractionId === 'function'
       ? options.nextInteractionId
       : (runId) => `interaction.${runId}`
@@ -129,6 +137,16 @@ class ContextIngestSessionRunner {
 
   async prepare (source) {
     if (!this.s3) throw new TypeError('S3 context ingest seams are unavailable')
+    if (source?.sourceKind === 'interaction') {
+      if (typeof this.personalContext.prepareInteractionIngest !== 'function') throw codedError('AGENT_REQUEST_INVALID')
+      const request = {
+        interactionId: source.interactionId,
+        signalKind: source.signalKind,
+        payloadDigest: source.payloadDigest || null
+      }
+      if (source.signalIdempotencyKey !== undefined) request.signalIdempotencyKey = source.signalIdempotencyKey
+      return this.personalContext.prepareInteractionIngest(request)
+    }
     return this.personalContext.prepareSessionIngest(source)
   }
 
@@ -151,6 +169,10 @@ class ContextIngestSessionRunner {
   }
 
   async toolsForRun (recipe, binding, interactionId, attemptIdentity, signal) {
+    // Interaction memory ingestion is intentionally tool-free.  The signal
+    // source is already frozen by storage and passive context lookup would
+    // turn a user action into an unbounded telemetry channel.
+    if (recipe.recipeId === 'context.ingest.interaction' || recipe.toolGrants.length === 0) return undefined
     if (typeof this.personalContext.readToolContext !== 'function' ||
         typeof this.interactions.startToolCall !== 'function' ||
         typeof this.interactions.finishToolCall !== 'function' ||
@@ -194,15 +216,18 @@ class ContextIngestSessionRunner {
 
   async runS3 (job) {
     exactObject(job, ['recipeId', 'source', 'attemptIdentity'], ['interactionId', 'requestedBy', 'signal', 'runId'])
-    if (job.recipeId !== 'context.ingest.session') throw codedError('AGENT_REQUEST_INVALID')
+    if (!['context.ingest.session', 'context.ingest.interaction'].includes(job.recipeId)) throw codedError('AGENT_REQUEST_INVALID')
     if (job.requestedBy !== undefined && job.requestedBy !== 'automatic') throw codedError('AGENT_REQUEST_INVALID')
+    if (job.recipeId === 'context.ingest.interaction' && job.source?.sourceKind !== 'interaction') throw codedError('AGENT_REQUEST_INVALID')
+    if (job.recipeId === 'context.ingest.session' && job.source?.sourceKind !== 'session') throw codedError('AGENT_REQUEST_INVALID')
     const attemptIdentity = job.attemptIdentity
     if (job.runId !== undefined && job.runId !== attemptIdentity.runId) throw codedError('AGENT_REQUEST_INVALID')
     const interactionId = job.interactionId || this.nextInteractionId(attemptIdentity.runId)
     const startedAt = this.now()
     let interactionCreated = false
+    let terminalReason = null
     try {
-      const recipe = getRecipe('context.ingest.session', '1')
+      const recipe = getRecipe(job.recipeId, '1')
       const binding = await this.modelAccess.bind({
         runId: attemptIdentity.runId,
         recipeId: recipe.recipeId,
@@ -216,9 +241,15 @@ class ContextIngestSessionRunner {
         promptDigest: null
       })
       interactionCreated = true
-      const input = typeof this.personalContext.readSessionInput === 'function'
-        ? await this.personalContext.readSessionInput(job.source)
-        : job.source
+      const input = job.recipeId === 'context.ingest.interaction'
+        ? (typeof this.personalContext.readInteractionInput === 'function'
+            ? await this.personalContext.readInteractionInput(
+                job.source, await this.interactionPayloadProvider(attemptIdentity.runId)
+              )
+            : job.source)
+        : (typeof this.personalContext.readSessionInput === 'function'
+            ? await this.personalContext.readSessionInput(job.source)
+            : job.source)
       const prompt = promptForInput(input)
       const resolvedModel = await this.resolveModel(binding)
       const tools = await this.toolsForRun(recipe, binding, interactionId, attemptIdentity, job.signal)
@@ -236,7 +267,12 @@ class ContextIngestSessionRunner {
       })
       const output = outputValue(result)
       validateRecipeOutput(recipe.recipeId, recipe.recipeVersion, output)
-      await this.personalContext.commitSessionIngest({ runId: attemptIdentity.runId, attemptIdentity, output })
+      if (job.recipeId === 'context.ingest.interaction') {
+        if (typeof this.personalContext.commitInteractionIngest !== 'function') throw codedError('AGENT_REQUEST_INVALID')
+        await this.personalContext.commitInteractionIngest({ runId: attemptIdentity.runId, attemptIdentity, output })
+      } else {
+        await this.personalContext.commitSessionIngest({ runId: attemptIdentity.runId, attemptIdentity, output })
+      }
       const durationMs = Math.max(0, this.now() - startedAt)
       const terminal = await this.interactions.terminalize({
         interactionId,
@@ -246,6 +282,7 @@ class ContextIngestSessionRunner {
         usage: usageValue(result?.usage, binding?.capabilities?.usageReporting),
         durationMs
       })
+      terminalReason = 'succeeded'
       return { ...terminal, state: 'succeeded', output }
     } catch (error) {
       const code = errorCode(error)
@@ -258,12 +295,18 @@ class ContextIngestSessionRunner {
               result: null, usage: null, durationMs
             })
           } catch { /* cancelRun may already have terminalized the row */ }
+          terminalReason = 'cancelled'
         }
         return null
       }
       if (TERMINAL_ERRORS.has(code)) {
-        if (interactionCreated) await this.terminalizeFailure(interactionId, code, durationMs)
-        else await this.failAttempt(attemptIdentity, code)
+        if (interactionCreated) {
+          await this.terminalizeFailure(interactionId, code, durationMs)
+          terminalReason = 'failed'
+        } else {
+          const settlement = await this.failAttempt(attemptIdentity, code)
+          if (settlement?.state === 'failed' && job.recipeId === 'context.ingest.interaction') terminalReason = 'failed'
+        }
         return null
       }
       const settlement = await this.failAttempt(attemptIdentity, code)
@@ -271,8 +314,15 @@ class ContextIngestSessionRunner {
       // Once S1 exhausts attempts, close the pending interaction as failed.
       if (settlement?.state === 'failed' && interactionCreated) {
         await this.terminalizeFailure(interactionId, code, durationMs)
+        terminalReason = 'failed'
+      } else if (settlement?.state === 'failed' && job.recipeId === 'context.ingest.interaction') {
+        terminalReason = 'failed'
       }
       return null
+    } finally {
+      if (terminalReason) {
+        try { await this.onSettled(attemptIdentity.runId, terminalReason, interactionId) } catch { /* observer isolation */ }
+      }
     }
   }
 

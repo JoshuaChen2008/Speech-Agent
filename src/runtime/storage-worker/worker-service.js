@@ -278,6 +278,22 @@ class StorageWorkerService {
       assertExactKeys(payload, ['request'])
       return this.requirePersonalContextStore().commitSessionIngest(payload.request)
     }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_PREPARE_INTERACTION_INGEST) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().prepareInteractionIngestRequest(payload.request)
+    }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_READ_INTERACTION_INPUT) {
+      assertExactKeys(payload, ['source', 'ephemeral'])
+      return this.requirePersonalContextStore().readInteractionInput(payload.source, payload.ephemeral)
+    }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_COMMIT_INTERACTION_INGEST) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().commitInteractionIngest(payload.request)
+    }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_CANCEL_INTERACTION_INGEST) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().cancelInteractionIngest(payload.request)
+    }
     if (operation === OPERATIONS.FORMAL_AGENT_CLAIM_RUN) {
       assertExactKeys(payload, ['request'])
       return this.requirePersonalContextStore().claimNextFormalRun(payload.request)

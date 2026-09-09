@@ -52,6 +52,13 @@ textarea { min-height: 96px; resize: vertical; padding: 10px; color: rgb(var(--f
 .result-card section { padding-top: 10px; }
 .result-card h2 { margin: 0 0 4px; font-size: 12px; }
 .result-card section p { margin: 0; white-space: pre-wrap; line-height: 1.5; font-size: 13px; }
+.signal-actions { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(var(--fg), .12); }
+.signal-actions h2 { margin-bottom: 8px; }
+.signal-actions label { display: block; margin-bottom: 5px; color: rgba(var(--fg), .68); font-size: 11px; }
+.signal-actions textarea { min-height: 68px; width: 100%; }
+.signal-buttons { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+.signal-buttons button { padding: 5px 9px; }
+.signal-status { margin-top: 7px !important; color: rgba(var(--fg), .68); font-size: 11px !important; }
 .result-card footer { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(var(--fg), .12); }
 .tool-audit { margin-top: 12px; border-top: 1px solid rgba(var(--fg), .12); padding-top: 10px; font-size: 12px; }
 .tool-audit summary { cursor: pointer; color: rgba(var(--fg), .68); }

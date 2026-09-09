@@ -31,5 +31,6 @@ contextBridge.exposeInMainWorld('agentApi', {
   cancel: (request) => invoke(CHANNELS.AGENT_RUN_CANCEL, c.assertCancelRequest, c.assertCancelResponse, request),
   getHistory: (request) => invoke(CHANNELS.AGENT_RUN_GET_HISTORY, c.assertHistoryRequest, c.assertHistoryResponse, request),
   getInteraction: (request) => invoke(CHANNELS.AGENT_RUN_GET_INTERACTION, c.assertInteractionRequest, c.assertInteractionResponse, request),
-  exportInteraction: (request) => invoke(CHANNELS.AGENT_RUN_EXPORT_INTERACTION, c.assertExportRequest, c.assertExportResponse, request)
+  exportInteraction: (request) => invoke(CHANNELS.AGENT_RUN_EXPORT_INTERACTION, c.assertExportRequest, c.assertExportResponse, request),
+  recordSignal: (request) => invoke(CHANNELS.AGENT_RUN_RECORD_SIGNAL, c.assertRecordSignalRequest, c.assertRecordSignalResponse, request)
 })

@@ -11,11 +11,13 @@ const MAX_ITEMS = 20
 const MAX_SCOPE_DIRECTORY_ITEMS = 50
 const MAX_SOURCES_PER_ITEM = 8
 const MAX_CANONICAL_BYTES = 65536
+const MAX_INTERACTION_TEXT_BYTES = 16384
 const ID_PATTERN = /^[a-z0-9][a-z0-9._:-]*$/
 const MEMORY_KINDS = new Set([
   'decision', 'conclusion', 'todo', 'term', 'preference', 'project_fact', 'experience'
 ])
 const SCOPE_KINDS = new Set(['global', 'session', 'topic', 'project'])
+const INTERACTION_SIGNAL_KINDS = new Set(['prompt', 'edit', 'accept', 'reject', 'remember', 'forget'])
 
 function fail (code) {
   throw new StorageError(code)
@@ -61,6 +63,62 @@ function automaticTaskPolicy (value) {
 function automaticTaskPolicyAllows (policy) {
   return Boolean(policy && policy.agentEnabled === true && policy.memoryEnabled === true &&
     policy.automaticProcessingSince !== null && policy.memoryProcessingSince !== null)
+}
+
+function interactionSignalRequest (value) {
+  assertExactKeys(value, ['interactionId', 'signalKind', 'payloadDigest', 'signalIdempotencyKey'], 'AGENT_REQUEST_INVALID')
+  identifier(value.interactionId)
+  identifier(value.signalIdempotencyKey)
+  if (!INTERACTION_SIGNAL_KINDS.has(value.signalKind)) fail('AGENT_REQUEST_INVALID')
+  if (value.payloadDigest !== null &&
+      (typeof value.payloadDigest !== 'string' || !/^[0-9a-f]{64}$/.test(value.payloadDigest))) {
+    fail('AGENT_REQUEST_INVALID')
+  }
+  if (value.signalKind === 'edit' && value.payloadDigest === null) fail('AGENT_REQUEST_INVALID')
+  if (value.signalKind !== 'edit' && value.payloadDigest !== null) fail('AGENT_REQUEST_INVALID')
+  return value
+}
+
+function interactionSignalText (value) {
+  boundedString(value, 1, 4096)
+  if (/[\u0000-\u001f\u007f]/u.test(value) || Buffer.byteLength(value, 'utf8') > MAX_INTERACTION_TEXT_BYTES) {
+    fail('AGENT_REQUEST_INVALID')
+  }
+  return value
+}
+
+function interactionSignalPayload (value, source) {
+  assertExactKeys(value, ['prompt', 'editText', 'result'], 'AGENT_REQUEST_INVALID')
+  const prompt = value.prompt === null ? null : interactionSignalText(value.prompt)
+  const editText = value.editText === null ? null : interactionSignalText(value.editText)
+  let result = value.result
+  if (result !== null) {
+    if (!isPlainObject(result)) fail('AGENT_REQUEST_INVALID')
+    let encoded
+    try { encoded = canonicalize(result) } catch { fail('AGENT_REQUEST_INVALID') }
+    if (Buffer.byteLength(encoded, 'utf8') > MAX_CANONICAL_BYTES) fail('AGENT_BUDGET_EXCEEDED')
+  }
+  if (source.signalKind === 'prompt') {
+    if (prompt === null || editText !== null) fail('AGENT_REQUEST_INVALID')
+    if (source.promptDigest === null || sha256Canonical(prompt) !== source.promptDigest) fail('AGENT_INPUT_CHANGED')
+    if (source.resultDigest === null) {
+      if (result !== null) fail('AGENT_REQUEST_INVALID')
+    } else {
+      if (result === null || sha256Canonical(result) !== source.resultDigest) fail('AGENT_INPUT_CHANGED')
+    }
+  } else {
+    if (prompt !== null || result === null || source.resultDigest === null || sha256Canonical(result) !== source.resultDigest) {
+      fail('AGENT_INPUT_CHANGED')
+    }
+    if (source.signalKind === 'edit') {
+      if (editText === null || source.payloadDigest === null || sha256Canonical({ text: editText }) !== source.payloadDigest) {
+        fail('AGENT_INPUT_CHANGED')
+      }
+    } else if (editText !== null || source.payloadDigest !== null) {
+      fail('AGENT_REQUEST_INVALID')
+    }
+  }
+  return { prompt, editText, result }
 }
 
 function normalizeSemanticKey (value) {
@@ -280,6 +338,81 @@ class PersonalContextStore {
     return this.sessionInput(source, { allowRefinedFallback: true })
   }
 
+  readInteractionInput (source, ephemeral) {
+    assertExactKeys(source, [
+      'sourceKind', 'interactionId', 'signalKind', 'payloadDigest', 'recipeId', 'recipeVersion',
+      'scopeKind', 'scopeReference', 'transcriptVersion', 'inputWatermark',
+      'inputDigest', 'sessionId', 'interactionInputDigest', 'promptDigest', 'resultDigest',
+      'signalIdempotencyKey'
+    ], 'AGENT_REQUEST_INVALID')
+    const signal = interactionSignalRequest({
+      interactionId: source.interactionId,
+      signalKind: source.signalKind,
+      payloadDigest: source.payloadDigest,
+      signalIdempotencyKey: source.signalIdempotencyKey
+    })
+    if (source.sourceKind !== 'interaction' || source.recipeId === 'intent.route' ||
+        source.recipeVersion !== '1' || source.scopeKind !== 'session' ||
+        typeof source.scopeReference !== 'string' || source.transcriptVersion !== 'raw') {
+      fail('AGENT_REQUEST_INVALID')
+    }
+    identifier(source.scopeReference)
+    if (source.sessionId !== source.scopeReference) fail('AGENT_REQUEST_INVALID')
+    safeInteger(source.inputWatermark, 1)
+    if (typeof source.interactionInputDigest !== 'string' || !/^[0-9a-f]{64}$/.test(source.interactionInputDigest) ||
+        (source.promptDigest !== null && (typeof source.promptDigest !== 'string' || !/^[0-9a-f]{64}$/.test(source.promptDigest))) ||
+        (source.resultDigest !== null && (typeof source.resultDigest !== 'string' || !/^[0-9a-f]{64}$/.test(source.resultDigest)))) {
+      fail('AGENT_REQUEST_INVALID')
+    }
+    const episode = this.database.prepare(`
+      SELECT episode.*, scope.session_id AS scope_session_id
+      FROM personal_context_episodes AS episode
+      JOIN personal_context_scopes AS scope ON scope.scope_id = episode.scope_id
+      WHERE episode.source_kind='interaction' AND episode.interaction_id=? AND episode.input_digest=?
+    `).get(signal.interactionId, source.inputDigest)
+    if (!episode) fail('AGENT_CONTEXT_NOT_FOUND')
+    if (episode.input_digest !== source.inputDigest) fail('AGENT_INPUT_CHANGED')
+    let summary
+    try { summary = JSON.parse(episode.summary_json) } catch { fail('STORAGE_COMMAND_FAILED') }
+    if (!isPlainObject(summary) || summary.signalKind !== signal.signalKind ||
+        summary.interactionId !== signal.interactionId ||
+        summary.signalIdempotencyKey !== signal.signalIdempotencyKey ||
+        summary.payloadDigest !== signal.payloadDigest ||
+        summary.recipeId !== source.recipeId || summary.recipeVersion !== source.recipeVersion ||
+        summary.scopeKind !== source.scopeKind || summary.scopeReference !== source.scopeReference ||
+        episode.scope_session_id !== source.sessionId || episode.transcript_version !== source.transcriptVersion ||
+        Number(episode.input_watermark) !== source.inputWatermark ||
+        episode.input_digest !== source.inputDigest ||
+        summary.interactionInputDigest !== source.interactionInputDigest ||
+        summary.promptDigest !== source.promptDigest || summary.resultDigest !== source.resultDigest) {
+      fail('AGENT_INPUT_CHANGED')
+    }
+    const signalPayload = interactionSignalPayload(ephemeral, {
+      signalKind: signal.signalKind,
+      payloadDigest: signal.payloadDigest,
+      promptDigest: summary.promptDigest,
+      resultDigest: summary.resultDigest
+    })
+    return {
+      sourceKind: 'interaction', interactionId: signal.interactionId, signalKind: signal.signalKind,
+      recipeId: episode.source_kind === 'interaction' ? summary.recipeId : source.recipeId,
+      recipeVersion: source.recipeVersion, scopeKind: 'session',
+      scopeReference: episode.scope_session_id, sessionId: episode.scope_session_id,
+      transcriptVersion: episode.transcript_version,
+      inputWatermark: Number(episode.input_watermark), inputDigest: episode.input_digest,
+      interactionInputDigest: summary.interactionInputDigest,
+      promptDigest: summary.promptDigest, resultDigest: summary.resultDigest,
+      payloadDigest: summary.payloadDigest, signalIdempotencyKey: summary.signalIdempotencyKey,
+      signal: {
+        signalKind: signal.signalKind,
+        prompt: signalPayload.prompt,
+        editText: signalPayload.editText,
+        result: signalPayload.result
+      },
+      events: []
+    }
+  }
+
   readToolContext (input) {
     assertExactKeys(input, ['runId'], 'AGENT_REQUEST_INVALID')
     const runId = identifier(input.runId)
@@ -411,6 +544,71 @@ class PersonalContextStore {
     return this.prepareSessionIngest(source)
   }
 
+  deriveInteractionSignalSource (request) {
+    const signal = interactionSignalRequest(request)
+    const interaction = this.database.prepare(`
+      SELECT * FROM formal_agent_interactions WHERE interaction_id = ?
+    `).get(signal.interactionId)
+    if (!interaction) fail('AGENT_INTERACTION_NOT_FOUND')
+    if (interaction.requested_by !== 'user' || interaction.recipe_id === 'intent.route') {
+      fail('AGENT_REQUEST_INVALID')
+    }
+    if (interaction.terminal_reason === null) fail('AGENT_INTERACTION_NOT_TERMINAL')
+    if (signal.signalKind !== 'prompt' && interaction.terminal_reason !== 'succeeded') {
+      fail('AGENT_INTERACTION_NOT_TERMINAL')
+    }
+    const run = this.database.prepare(`
+      SELECT scope_json, input_watermark_json FROM formal_agent_runs WHERE run_id = ?
+    `).get(interaction.run_id)
+    if (!run) fail('AGENT_CONTEXT_NOT_FOUND')
+    let scope
+    let watermark
+    try {
+      scope = JSON.parse(run.scope_json)
+      watermark = JSON.parse(run.input_watermark_json)
+    } catch { fail('STORAGE_COMMAND_FAILED') }
+    if (!isPlainObject(scope) || scope.kind !== 'session' || typeof scope.reference !== 'string') {
+      fail('AGENT_REQUEST_INVALID')
+    }
+    const sessionId = identifier(scope.reference)
+    if (!isPlainObject(watermark) || !Number.isSafeInteger(watermark.throughEventOrder) || watermark.throughEventOrder < 1) {
+      fail('AGENT_REQUEST_INVALID')
+    }
+    if (typeof interaction.input_digest !== 'string' || !/^[0-9a-f]{64}$/.test(interaction.input_digest)) {
+      fail('STORAGE_COMMAND_FAILED')
+    }
+    const session = this.database.prepare(`
+      SELECT started_at, ended_at, state FROM sessions WHERE session_id = ?
+    `).get(sessionId)
+    if (!session) fail('AGENT_SESSION_NOT_FOUND')
+    if (!['closed', 'interrupted'].includes(session.state) || session.ended_at === null) {
+      fail('AGENT_SESSION_NOT_TERMINAL')
+    }
+    return {
+      sourceKind: 'interaction',
+      interactionId: interaction.interaction_id,
+      signalKind: signal.signalKind,
+      payloadDigest: signal.payloadDigest,
+      signalIdempotencyKey: signal.signalIdempotencyKey,
+      recipeId: interaction.recipe_id,
+      recipeVersion: interaction.recipe_version,
+      scopeKind: 'session',
+      scopeReference: sessionId,
+      transcriptVersion: 'raw',
+      inputWatermark: Number(watermark.throughEventOrder),
+      interactionInputDigest: interaction.input_digest,
+      promptDigest: interaction.prompt_digest,
+      resultDigest: interaction.result_digest,
+      sessionId,
+      startedAt: Number(session.started_at),
+      endedAt: Number(session.ended_at)
+    }
+  }
+
+  prepareInteractionIngestRequest (request) {
+    return this.prepareInteractionIngest(this.deriveInteractionSignalSource(request))
+  }
+
   applyAutomaticTaskPolicy (request) {
     const policy = automaticTaskPolicy(request)
     const now = this.nowValue()
@@ -423,7 +621,7 @@ class PersonalContextStore {
       if (!allowed) {
         const queued = database.prepare(`
           SELECT run_id FROM formal_agent_runs
-          WHERE requested_by = 'automatic' AND recipe_id = 'context.ingest.session'
+          WHERE requested_by = 'automatic' AND recipe_id IN ('context.ingest.session', 'context.ingest.interaction')
             AND state IN ('queued', 'retry_wait')
         `).all()
         for (const row of queued) {
@@ -435,12 +633,15 @@ class PersonalContextStore {
             WHERE run_id = ? AND state IN ('queued', 'retry_wait')
           `).run(now, now, row.run_id)
           queuedCancelled += Number(changed.changes)
-          if (Number(changed.changes) === 1) this.removeSessionIngestSkeleton(row.run_id)
+          if (Number(changed.changes) === 1) {
+            const recipe = database.prepare('SELECT recipe_id FROM formal_agent_runs WHERE run_id=?').get(row.run_id)?.recipe_id
+            this.removeIngestSkeleton(row.run_id, recipe === 'context.ingest.interaction' ? 'interaction' : 'session')
+          }
         }
         const running = database.prepare(`
           UPDATE formal_agent_runs
           SET cancel_requested_at = COALESCE(cancel_requested_at, ?), updated_at = ?
-          WHERE requested_by = 'automatic' AND recipe_id = 'context.ingest.session'
+          WHERE requested_by = 'automatic' AND recipe_id IN ('context.ingest.session', 'context.ingest.interaction')
             AND state = 'running' AND cancel_requested_at IS NULL
         `).run(now, now)
         runningCancellationRequested = Number(running.changes)
@@ -461,7 +662,7 @@ class PersonalContextStore {
     const existing = database.prepare(`
       SELECT run_id, recipe_id, requested_by, state FROM formal_agent_runs WHERE run_id = ?
     `).get(request.runId)
-    if (!existing || existing.recipe_id !== 'context.ingest.session' || existing.requested_by !== 'automatic') {
+    if (!existing || !['context.ingest.session', 'context.ingest.interaction'].includes(existing.recipe_id) || existing.requested_by !== 'automatic') {
       fail('AGENT_RUN_NOT_FOUND')
     }
     if (existing.state === 'cancelled') return { runId: request.runId, state: 'cancelled', replayed: true }
@@ -495,13 +696,17 @@ class PersonalContextStore {
         }
         fail('AGENT_CONTEXT_OPERATION_FAILED')
       }
-      this.removeSessionIngestSkeleton(request.runId)
+      this.removeIngestSkeleton(request.runId, existing.recipe_id === 'context.ingest.interaction' ? 'interaction' : 'session')
       database.exec('COMMIT')
       return { runId: request.runId, state: 'cancelled', replayed: false }
     } catch (error) {
       rollbackQuietly(database)
       throw error
     }
+  }
+
+  cancelInteractionIngest (request) {
+    return this.cancelSessionIngest(request)
   }
 
   removeSessionIngestSkeleton (runId) {
@@ -517,6 +722,149 @@ class PersonalContextStore {
           AND NOT EXISTS (SELECT 1 FROM personal_context_episodes WHERE scope_id = ?)
           AND NOT EXISTS (SELECT 1 FROM personal_context_items WHERE scope_id = ?)
       `).run(episode.scope_id, episode.scope_id, episode.scope_id)
+    }
+  }
+
+  removeInteractionIngestSkeleton (runId) {
+    const episodes = this.database.prepare(`
+      SELECT episode_id, scope_id FROM personal_context_episodes
+      WHERE ingest_run_id = ? AND source_kind = 'interaction'
+    `).all(runId)
+    for (const episode of episodes) {
+      this.database.prepare('DELETE FROM personal_context_episodes WHERE episode_id = ?').run(episode.episode_id)
+      this.database.prepare(`
+        DELETE FROM personal_context_scopes
+        WHERE scope_id = ? AND kind = 'session' AND origin = 'automatic'
+          AND NOT EXISTS (SELECT 1 FROM personal_context_episodes WHERE scope_id = ?)
+          AND NOT EXISTS (SELECT 1 FROM personal_context_items WHERE scope_id = ?)
+      `).run(episode.scope_id, episode.scope_id, episode.scope_id)
+    }
+  }
+
+  removeIngestSkeleton (runId, sourceKind) {
+    if (sourceKind === 'interaction') return this.removeInteractionIngestSkeleton(runId)
+    return this.removeSessionIngestSkeleton(runId)
+  }
+
+  prepareInteractionIngest (source) {
+    if (!isPlainObject(source) || source.sourceKind !== 'interaction') fail('AGENT_REQUEST_INVALID')
+    const normalized = this.deriveInteractionSignalSource({
+      interactionId: source.interactionId,
+      signalKind: source.signalKind,
+      payloadDigest: source.payloadDigest || null,
+      signalIdempotencyKey: source.signalIdempotencyKey
+    })
+    const priorKeys = this.database.prepare(`
+      SELECT interaction_id, summary_json
+      FROM personal_context_episodes
+      WHERE source_kind = 'interaction' AND json_extract(summary_json, '$.signalIdempotencyKey') = ?
+    `).all(normalized.signalIdempotencyKey)
+    for (const row of priorKeys) {
+      let priorSummary
+      try { priorSummary = JSON.parse(row.summary_json) } catch { fail('STORAGE_COMMAND_FAILED') }
+      if (!isPlainObject(priorSummary) ||
+          priorSummary.interactionId !== normalized.interactionId ||
+          priorSummary.signalKind !== normalized.signalKind ||
+          priorSummary.payloadDigest !== normalized.payloadDigest ||
+          priorSummary.promptDigest !== normalized.promptDigest ||
+          priorSummary.resultDigest !== normalized.resultDigest ||
+          priorSummary.interactionInputDigest !== normalized.interactionInputDigest) {
+        fail('AGENT_REQUEST_INVALID')
+      }
+    }
+    const identity = {
+      recipeId: 'context.ingest.interaction', sourceKind: 'interaction',
+      interactionId: normalized.interactionId, signalKind: normalized.signalKind,
+      payloadDigest: normalized.payloadDigest,
+      signalIdempotencyKey: normalized.signalIdempotencyKey,
+      recipeSourceId: normalized.recipeId, recipeVersion: normalized.recipeVersion,
+      scopeKind: normalized.scopeKind, scopeReference: normalized.scopeReference,
+      transcriptVersion: normalized.transcriptVersion,
+      inputWatermark: normalized.inputWatermark,
+      interactionInputDigest: normalized.interactionInputDigest,
+      promptDigest: normalized.promptDigest, resultDigest: normalized.resultDigest
+    }
+    const dedupeKey = sha256Canonical(identity)
+    const requestDigest = sha256Canonical({ identity })
+    const runId = `run.${dedupeKey.slice(0, 48)}`
+    const episodeId = `episode.${dedupeKey.slice(0, 44)}`
+    const scopeId = `scope.${sha256Canonical({ kind: 'session', reference: normalized.scopeReference }).slice(0, 48)}`
+    const existing = this.database.prepare('SELECT * FROM formal_agent_runs WHERE dedupe_key=?').get(dedupeKey)
+    const existingEpisode = this.database.prepare(`
+      SELECT * FROM personal_context_episodes
+      WHERE source_kind='interaction' AND interaction_id=? AND input_digest=?
+    `).get(normalized.interactionId, dedupeKey)
+    if (existing) {
+      if (existing.request_digest !== requestDigest || existing.recipe_id !== 'context.ingest.interaction') fail('AGENT_REQUEST_INVALID')
+      if (existingEpisode) {
+        return {
+          runId: existing.run_id, recipeId: existing.recipe_id, recipeVersion: existing.recipe_version,
+          episodeId: existingEpisode.episode_id, state: existing.state,
+          source: normalized, replayed: true
+        }
+      }
+      if (!['queued', 'running', 'retry_wait'].includes(existing.state)) fail('AGENT_CONTEXT_OPERATION_FAILED')
+    }
+    const now = this.nowValue()
+    const episodeSummary = {
+      title: 'Interaction experience',
+      bullets: [`Signal: ${normalized.signalKind}`],
+      omissions: [], signalKind: normalized.signalKind,
+      interactionId: normalized.interactionId,
+      recipeId: normalized.recipeId, recipeVersion: normalized.recipeVersion,
+      interactionInputDigest: normalized.interactionInputDigest,
+      promptDigest: normalized.promptDigest, resultDigest: normalized.resultDigest,
+      payloadDigest: normalized.payloadDigest, signalIdempotencyKey: normalized.signalIdempotencyKey,
+      inputWatermark: normalized.inputWatermark,
+      scopeKind: normalized.scopeKind, scopeReference: normalized.scopeReference
+    }
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      this.database.prepare(`
+        INSERT OR IGNORE INTO personal_context_scopes(
+          scope_id, kind, canonical_key, label, session_id, origin, lifecycle, created_at, updated_at
+        ) VALUES (?, 'session', ?, 'Session', ?, 'automatic', 'active', ?, ?)
+      `).run(scopeId, `session:${normalized.scopeReference}`, normalized.scopeReference, now, now)
+      if (!existing) {
+        const personalContextRevision = this.contentRevision()
+        this.database.prepare(`
+          INSERT INTO formal_agent_runs(
+            run_id, dedupe_key, client_idempotency_key, request_digest, recipe_id, recipe_version,
+            scope_json, scope_digest, transcript_version, input_watermark_json, input_digest,
+            personal_context_revision, requested_by, state, attempt_count, max_attempts, next_attempt_at,
+            lease_owner, lease_expires_at, lease_renewed_from_expires_at, cancel_requested_at,
+            error_code, result_digest, result_summary_json, created_at, updated_at
+          ) VALUES (?, ?, NULL, ?, 'context.ingest.interaction', '1', ?, ?, ?, ?, ?, ?,
+            'automatic', 'queued', 0, 3, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)
+        `).run(
+          runId, dedupeKey, requestDigest,
+          canonicalize({ kind: 'interaction', reference: normalized.interactionId }),
+          sha256Canonical({ kind: 'interaction', reference: normalized.interactionId }), normalized.transcriptVersion,
+          canonicalize({ throughEventOrder: normalized.inputWatermark }), dedupeKey,
+          personalContextRevision, now, now, now
+        )
+      }
+      this.database.prepare(`
+        INSERT OR IGNORE INTO personal_context_episodes(
+          episode_id, source_kind, session_id, interaction_id, scope_id, transcript_version,
+          input_watermark, from_event_order, through_event_order, input_digest, summary_json,
+          occurred_from_offset_ms, occurred_through_offset_ms, ingest_run_id, lifecycle,
+          created_at, updated_at
+        ) VALUES (?, 'interaction', NULL, ?, ?, ?, ?, 1, ?, ?, ?, 0, ?, ?, 'active', ?, ?)
+      `).run(
+        episodeId, normalized.interactionId, scopeId, normalized.transcriptVersion,
+        normalized.inputWatermark, normalized.inputWatermark, dedupeKey, canonicalize(episodeSummary),
+        Math.max(0, normalized.endedAt - normalized.startedAt), existing?.run_id || runId, now, now
+      )
+      this.database.exec('COMMIT')
+      const row = this.database.prepare('SELECT * FROM formal_agent_runs WHERE dedupe_key=?').get(dedupeKey)
+      return {
+        runId: row.run_id, recipeId: row.recipe_id, recipeVersion: row.recipe_version,
+        episodeId, state: row.state, source: normalized, replayed: false
+      }
+    } catch (error) {
+      rollbackQuietly(this.database)
+      throw error
     }
   }
 
@@ -759,7 +1107,135 @@ class PersonalContextStore {
     }
   }
 
+  commitInteractionIngest (input) {
+    assertExactKeys(input, ['runId', 'attemptIdentity', 'output'], 'AGENT_REQUEST_INVALID')
+    const attempt = this.ingestAttempt(input.attemptIdentity)
+    identifier(input.runId)
+    if (attempt.runId !== input.runId) fail('AGENT_REQUEST_INVALID')
+    try { validateRecipeOutput('context.ingest.interaction', '1', input.output) } catch { fail('AGENT_OUTPUT_INVALID') }
+    const database = this.database
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const run = database.prepare('SELECT * FROM formal_agent_runs WHERE run_id=?').get(input.runId)
+      if (!run || run.recipe_id !== 'context.ingest.interaction') fail('AGENT_CONTEXT_NOT_FOUND')
+      const episode = database.prepare(`
+        SELECT * FROM personal_context_episodes WHERE ingest_run_id=? AND source_kind='interaction'
+      `).get(input.runId)
+      if (!episode) fail('AGENT_CONTEXT_OPERATION_FAILED')
+      if (run.state === 'succeeded') {
+        database.exec('COMMIT')
+        return { runId: input.runId, state: 'succeeded', replayed: true, episodeId: episode.episode_id }
+      }
+      if (run.state === 'cancelled' || run.state === 'failed') fail('AGENT_CONTEXT_OPERATION_FAILED')
+      if (run.state !== 'running' || Number(run.attempt_count) !== attempt.attempt ||
+          run.lease_owner !== attempt.owner || Number(run.lease_expires_at) !== attempt.leaseExpiresAt ||
+          run.cancel_requested_at !== null) fail('AGENT_CONTEXT_OPERATION_FAILED')
+      let storedSummary
+      try { storedSummary = JSON.parse(episode.summary_json) } catch { fail('STORAGE_COMMAND_FAILED') }
+      const signalRef = { interactionId: episode.interaction_id, signalKind: storedSummary.signalKind }
+      const validRef = (ref) => ref.interactionId === signalRef.interactionId && ref.signalKind === signalRef.signalKind
+      const output = input.output
+      for (const experience of output.experiences) if (!validRef(experience.evidence)) fail('AGENT_OUTPUT_INVALID')
+      for (const candidate of output.memoryCandidates) if (!validRef(candidate.evidence)) fail('AGENT_OUTPUT_INVALID')
+      const scope = database.prepare(`
+        SELECT scope_id, session_id FROM personal_context_scopes WHERE scope_id = ? AND kind='session'
+          AND origin='automatic' AND lifecycle='active'
+      `).get(episode.scope_id)
+      if (!scope || typeof scope.session_id !== 'string') fail('AGENT_OUTPUT_INVALID')
+      const now = this.nowValue()
+      let acceptedCandidateCount = 0
+      let discardedCandidateCount = 0
+      let revisionCount = 0
+      let evidenceCount = 0
+      const touched = new Set()
+      for (const candidate of output.memoryCandidates) {
+        if (candidate.salience === 'low' || (candidate.confidence === 'low' && candidate.kind !== 'preference')) {
+          discardedCandidateCount += 1
+          continue
+        }
+        const semanticKey = normalizeSemanticKey(candidate.content)
+        const targetScope = this.ingestScope(candidate, scope.session_id, now)
+        if (!targetScope) fail('AGENT_OUTPUT_INVALID')
+        const identityHash = sha256Canonical({ scopeId: targetScope.scope_id, kind: candidate.kind, semanticKey })
+        if (database.prepare('SELECT 1 FROM personal_context_suppressions WHERE identity_hash=? AND source_digest=?').get(identityHash, episode.input_digest)) {
+          discardedCandidateCount += 1
+          continue
+        }
+        const contentJson = canonicalize({ displayText: candidate.content })
+        let memory = database.prepare('SELECT * FROM personal_context_items WHERE scope_id=? AND kind=? AND semantic_key=?').get(targetScope.scope_id, candidate.kind, semanticKey)
+        if (memory && memory.origin === 'explicit' && memory.content_json !== contentJson) {
+          discardedCandidateCount += 1
+          continue
+        }
+        if (!memory) {
+          const memoryId = `memory.${sha256Canonical({ scopeId: targetScope.scope_id, kind: candidate.kind, semanticKey }).slice(0, 44)}`
+          database.prepare(`
+            INSERT INTO personal_context_items(
+              memory_id, scope_id, kind, semantic_key, content_json, origin,
+              confidence_band, salience_band, lifecycle, current_revision_id,
+              item_revision, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, 'inferred', ?, ?, 'active', NULL, 1, ?, ?)
+          `).run(memoryId, targetScope.scope_id, candidate.kind, semanticKey, contentJson, candidate.confidence, candidate.salience, now, now)
+          const revisionId = `revision.${sha256Canonical({ memoryId, itemRevision: 1 }).slice(0, 44)}`
+          database.prepare(`
+            INSERT INTO personal_context_revisions(
+              revision_id, memory_id, operation, content_json, previous_revision_id, run_id, created_at
+            ) VALUES (?, ?, 'create', ?, NULL, ?, ?)
+          `).run(revisionId, memoryId, contentJson, input.runId, now)
+          database.prepare('UPDATE personal_context_items SET current_revision_id=? WHERE memory_id=?').run(revisionId, memoryId)
+          memory = database.prepare('SELECT * FROM personal_context_items WHERE memory_id=?').get(memoryId)
+          revisionCount += 1
+        } else if (memory.content_json !== contentJson) {
+          const itemRevision = Number(memory.item_revision) + 1
+          const revisionId = `revision.${sha256Canonical({ memoryId: memory.memory_id, itemRevision, contentJson }).slice(0, 44)}`
+          database.prepare(`
+            INSERT INTO personal_context_revisions(
+              revision_id, memory_id, operation, content_json, previous_revision_id, run_id, created_at
+            ) VALUES (?, ?, 'merge', ?, ?, ?, ?)
+          `).run(revisionId, memory.memory_id, contentJson, memory.current_revision_id, input.runId, now)
+          database.prepare(`
+            UPDATE personal_context_items SET content_json=?, lifecycle='conflicted', current_revision_id=?,
+              item_revision=?, updated_at=? WHERE memory_id=?
+          `).run(contentJson, revisionId, itemRevision, now, memory.memory_id)
+          memory = database.prepare('SELECT * FROM personal_context_items WHERE memory_id=?').get(memory.memory_id)
+          revisionCount += 1
+        }
+        const inserted = database.prepare(`
+          INSERT INTO personal_context_evidence(
+            evidence_id, ingest_run_id, memory_id, source_kind, session_id, interaction_id,
+            transcript_version, input_watermark, from_event_order, through_event_order,
+            input_digest, recipe_id, recipe_version, created_at
+          ) VALUES (?, ?, ?, 'interaction', NULL, ?, ?, ?, 1, ?, ?, 'context.ingest.interaction', '1', ?)
+          ON CONFLICT DO NOTHING
+        `).run(
+          `evidence.${sha256Canonical({ runId: input.runId, memoryId: memory.memory_id, signalRef }).slice(0, 44)}`,
+          input.runId, memory.memory_id, episode.interaction_id, episode.transcript_version,
+          Number(episode.input_watermark), Number(episode.through_event_order), episode.input_digest, now
+        )
+        evidenceCount += Number(inserted.changes)
+        acceptedCandidateCount += 1
+        touched.add(memory.memory_id)
+      }
+      const bullets = output.experiences.slice(0, 8).map((experience) => experience.text)
+      const summary = {
+        ...storedSummary,
+        title: 'Interaction experience',
+        bullets: bullets.length > 0 ? bullets : [`Signal: ${storedSummary.signalKind}`],
+        omissions: []
+      }
+      database.prepare('UPDATE personal_context_episodes SET summary_json=?, updated_at=? WHERE episode_id=?').run(canonicalize(summary), now, episode.episode_id)
+      const result = { acceptedCandidateCount, discardedCandidateCount, memoryItemCount: touched.size, evidenceCount, revisionCount }
+      if (acceptedCandidateCount > 0 || bullets.length > 0) this.advanceRevision({ operation: 'interaction-ingest', runId: input.runId, episodeId: episode.episode_id })
+      database.exec('COMMIT')
+      return { runId: input.runId, state: 'committed', replayed: false, episodeId: episode.episode_id, ...result }
+    } catch (error) {
+      rollbackQuietly(database)
+      throw error
+    }
+  }
+
   ingest (source) {
+    if (source?.sourceKind === 'interaction') return this.ingestInteraction(source)
     const snapshot = this.sessionSnapshot(source)
     const identity = {
       recipeId: 'context.ingest.session',
@@ -838,6 +1314,33 @@ class PersonalContextStore {
       const revision = this.advanceRevision({ operation: 'ingest', runId, episodeId })
       this.database.exec('COMMIT')
       return { runId, replayed: false, episodeCount: 1, memoryCount: 0, revision }
+    } catch (error) {
+      rollbackQuietly(this.database)
+      throw error
+    }
+  }
+
+  ingestInteraction (source) {
+    const prepared = this.prepareInteractionIngest(source)
+    if (prepared.replayed) {
+      return { runId: prepared.runId, replayed: true, episodeCount: 1, memoryCount: 0, revision: this.contentRevision() }
+    }
+    const now = this.nowValue()
+    const summary = { episodeCount: 1, memoryCount: 0 }
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const run = this.database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get(prepared.runId)
+      if (!run || !['queued', 'running', 'retry_wait'].includes(run.state)) fail('AGENT_CONTEXT_OPERATION_FAILED')
+      this.database.prepare(`
+        UPDATE formal_agent_runs
+        SET state='succeeded', attempt_count=CASE WHEN attempt_count < 1 THEN 1 ELSE attempt_count END,
+          next_attempt_at=0, lease_owner=NULL, lease_expires_at=NULL,
+          error_code=NULL, result_digest=?, result_summary_json=?, updated_at=?
+        WHERE run_id=?
+      `).run(sha256Canonical(summary), canonicalize(summary), now, prepared.runId)
+      const revision = this.advanceRevision({ operation: 'interaction-ingest', runId: prepared.runId, episodeId: prepared.episodeId })
+      this.database.exec('COMMIT')
+      return { runId: prepared.runId, replayed: false, episodeCount: 1, memoryCount: 0, revision }
     } catch (error) {
       rollbackQuietly(this.database)
       throw error
@@ -1199,10 +1702,15 @@ class PersonalContextStore {
     if (request.scope.kind === 'session') {
       identifier(reference)
       episodeRows = this.database.prepare(`
-        SELECT * FROM personal_context_episodes
-        WHERE session_id = ? AND lifecycle = 'active'
+        SELECT episode.*, scope.session_id AS scope_session_id
+        FROM personal_context_episodes AS episode
+        JOIN personal_context_scopes AS scope ON scope.scope_id = episode.scope_id
+        WHERE episode.lifecycle = 'active' AND (
+          episode.session_id = ? OR
+          (episode.source_kind = 'interaction' AND scope.kind = 'session' AND scope.session_id = ?)
+        )
         ORDER BY updated_at DESC, episode_id ASC LIMIT ?
-      `).all(reference, MAX_ITEMS + 1)
+      `).all(reference, reference, MAX_ITEMS + 1)
       const session = this.database.prepare('SELECT state, ended_at FROM sessions WHERE session_id = ?').get(reference)
       if (session && (!['closed', 'interrupted'].includes(session.state) || session.ended_at === null)) {
         excludedScopes.push({ kind: 'session', reference, reason: 'session_not_terminal' })
@@ -1214,10 +1722,15 @@ class PersonalContextStore {
       const sessionId = identifier(reference.session_id)
       const throughEventOrder = safeInteger(reference.through_event_order, 1)
       episodeRows = this.database.prepare(`
-        SELECT * FROM personal_context_episodes
-        WHERE session_id = ? AND lifecycle = 'active' AND from_event_order <= ?
+        SELECT episode.*, scope.session_id AS scope_session_id
+        FROM personal_context_episodes AS episode
+        JOIN personal_context_scopes AS scope ON scope.scope_id = episode.scope_id
+        WHERE episode.lifecycle = 'active' AND episode.from_event_order <= ? AND (
+          episode.session_id = ? OR
+          (episode.source_kind = 'interaction' AND scope.kind = 'session' AND scope.session_id = ?)
+        )
         ORDER BY updated_at DESC, episode_id ASC LIMIT ?
-      `).all(sessionId, throughEventOrder, MAX_ITEMS + 1)
+      `).all(throughEventOrder, sessionId, sessionId, MAX_ITEMS + 1)
       const session = this.database.prepare('SELECT state, ended_at FROM sessions WHERE session_id = ?').get(sessionId)
       if (session && (!['closed', 'interrupted'].includes(session.state) || session.ended_at === null)) {
         excludedScopes.push({ kind: 'session', reference: sessionId, reason: 'session_not_terminal' })
@@ -1235,8 +1748,10 @@ class PersonalContextStore {
       const through = safeInteger(reference.through)
       if (through < from) fail('AGENT_REQUEST_INVALID')
       episodeRows = this.database.prepare(`
-        SELECT episode.* FROM personal_context_episodes AS episode
-        JOIN sessions AS session ON session.session_id = episode.session_id
+        SELECT episode.*, episode_scope.session_id AS scope_session_id
+        FROM personal_context_episodes AS episode
+        JOIN personal_context_scopes AS episode_scope ON episode_scope.scope_id = episode.scope_id
+        JOIN sessions AS session ON session.session_id = COALESCE(episode.session_id, episode_scope.session_id)
         WHERE episode.lifecycle = 'active' AND session.started_at <= ? AND session.ended_at >= ?
         ORDER BY episode.updated_at DESC, episode.episode_id ASC LIMIT ?
       `).all(through, from, MAX_ITEMS + 1)
@@ -1306,11 +1821,11 @@ class PersonalContextStore {
     }
     for (const row of episodeRows) {
       let episode = {
-        episodeId: row.episode_id, sessionId: row.session_id,
+        episodeId: row.episode_id, sessionId: row.session_id || row.scope_session_id,
         transcriptVersion: row.transcript_version, inputWatermark: Number(row.input_watermark),
         inputDigest: row.input_digest, summary: JSON.parse(row.summary_json)
       }
-      if (request.scope.kind === 'selection' && Number(row.through_event_order) > reference.through_event_order) {
+      if (request.scope.kind === 'selection' && row.source_kind === 'session' && Number(row.through_event_order) > reference.through_event_order) {
         const selectedRows = this.database.prepare(`
           SELECT segment.segment_id, first_event.event_order AS first_event_order,
             first_event.text AS raw_text, updated_event.event_order AS updated_event_order,
@@ -1410,11 +1925,18 @@ class PersonalContextStore {
   planSessionDeletion (sessionId) {
     identifier(sessionId)
     const episodeCount = Number(this.database.prepare(`
-      SELECT COUNT(*) AS count FROM personal_context_episodes WHERE session_id = ?
-    `).get(sessionId).count)
+      SELECT COUNT(*) AS count
+      FROM personal_context_episodes AS episode
+      LEFT JOIN personal_context_scopes AS scope ON scope.scope_id = episode.scope_id
+      WHERE episode.session_id = ? OR (episode.source_kind = 'interaction' AND scope.session_id = ?)
+    `).get(sessionId, sessionId).count)
     const evidenceCount = Number(this.database.prepare(`
-      SELECT COUNT(*) AS count FROM personal_context_evidence WHERE session_id = ?
-    `).get(sessionId).count)
+      SELECT COUNT(*) AS count
+      FROM personal_context_evidence AS evidence
+      LEFT JOIN personal_context_episodes AS episode ON episode.ingest_run_id = evidence.ingest_run_id
+      LEFT JOIN personal_context_scopes AS scope ON scope.scope_id = episode.scope_id
+      WHERE evidence.session_id = ? OR (evidence.source_kind = 'interaction' AND scope.session_id = ?)
+    `).get(sessionId, sessionId).count)
     const orphanItemIds = this.database.prepare(`
       SELECT DISTINCT item.memory_id
       FROM personal_context_items AS item
@@ -1440,8 +1962,21 @@ class PersonalContextStore {
         UPDATE personal_context_items SET lifecycle = 'inactive', updated_at = ? WHERE memory_id = ?
       `).run(now, memoryId)
     }
-    this.database.prepare('DELETE FROM personal_context_evidence WHERE session_id = ?').run(sessionId)
-    this.database.prepare('DELETE FROM personal_context_episodes WHERE session_id = ?').run(sessionId)
+    this.database.prepare(`
+      DELETE FROM personal_context_evidence
+      WHERE session_id = ? OR (source_kind = 'interaction' AND interaction_id IN (
+        SELECT episode.interaction_id
+        FROM personal_context_episodes AS episode
+        JOIN personal_context_scopes AS scope ON scope.scope_id = episode.scope_id
+        WHERE episode.source_kind = 'interaction' AND scope.session_id = ?
+      ))
+    `).run(sessionId, sessionId)
+    this.database.prepare(`
+      DELETE FROM personal_context_episodes
+      WHERE session_id = ? OR (source_kind = 'interaction' AND scope_id IN (
+        SELECT scope_id FROM personal_context_scopes WHERE kind = 'session' AND session_id = ?
+      ))
+    `).run(sessionId, sessionId)
     if (plan.episodeCount > 0 || plan.evidenceCount > 0 || plan.orphanItemIds.length > 0) {
       this.advanceRevision({
         operation: 'delete-session-context', sessionId,
@@ -1492,6 +2027,47 @@ class PersonalContextStore {
       const interaction = this.database.prepare(`
         SELECT interaction_id FROM formal_agent_interactions WHERE run_id = ?
       `).get(row.run_id)
+      if (row.recipe_id === 'context.ingest.interaction') {
+        const episode = this.database.prepare(`
+          SELECT episode.*, scope.session_id AS scope_session_id
+          FROM personal_context_episodes AS episode
+          JOIN personal_context_scopes AS scope ON scope.scope_id = episode.scope_id
+          WHERE episode.ingest_run_id = ? AND episode.source_kind = 'interaction'
+        `).get(row.run_id)
+        if (!episode) fail('STORAGE_COMMAND_FAILED')
+        let summary
+        try { summary = JSON.parse(episode.summary_json) } catch { fail('STORAGE_COMMAND_FAILED') }
+        return {
+          runId: row.run_id,
+          recipeId: row.recipe_id,
+          interactionId: interaction?.interaction_id || null,
+          requestedBy: row.requested_by,
+          source: {
+            sourceKind: 'interaction',
+            interactionId: episode.interaction_id,
+            signalKind: summary.signalKind,
+            payloadDigest: summary.payloadDigest || null,
+            signalIdempotencyKey: summary.signalIdempotencyKey,
+            recipeId: summary.recipeId,
+            recipeVersion: summary.recipeVersion,
+            scopeKind: 'session',
+            scopeReference: episode.scope_session_id,
+            inputDigest: episode.input_digest,
+            sessionId: episode.scope_session_id,
+            transcriptVersion: episode.transcript_version,
+            inputWatermark: Number(episode.input_watermark),
+            interactionInputDigest: summary.interactionInputDigest,
+            promptDigest: summary.promptDigest || null,
+            resultDigest: summary.resultDigest || null
+          },
+          attemptIdentity: {
+            runId: row.run_id,
+            attempt: Number(row.attempt_count),
+            owner: receipt.lease_owner,
+            leaseExpiresAt: Number(receipt.lease_expires_at)
+          }
+        }
+      }
       return {
         runId: row.run_id,
         recipeId: row.recipe_id,
@@ -1525,7 +2101,7 @@ class PersonalContextStore {
       const row = this.database.prepare(`
         SELECT * FROM formal_agent_runs
         WHERE requested_by = ? AND (
-          (? = 'automatic' AND recipe_id = 'context.ingest.session') OR
+          (? = 'automatic' AND recipe_id IN ('context.ingest.session', 'context.ingest.interaction')) OR
           (? = 'user' AND recipe_id IN ('summary.minutes', 'qa.answer'))
         ) AND (? = 1) AND (
           (state IN ('queued', 'retry_wait') AND next_attempt_at <= ? AND cancel_requested_at IS NULL) OR
@@ -1582,13 +2158,13 @@ class PersonalContextStore {
       SELECT MIN(ready_at) AS ready_at FROM (
         SELECT next_attempt_at AS ready_at FROM formal_agent_runs
           WHERE requested_by = ? AND (
-            (? = 'automatic' AND recipe_id = 'context.ingest.session') OR
+            (? = 'automatic' AND recipe_id IN ('context.ingest.session', 'context.ingest.interaction')) OR
             (? = 'user' AND recipe_id IN ('summary.minutes', 'qa.answer'))
           ) AND state IN ('queued', 'retry_wait') AND cancel_requested_at IS NULL
         UNION ALL
         SELECT lease_expires_at AS ready_at FROM formal_agent_runs
           WHERE requested_by = ? AND (
-            (? = 'automatic' AND recipe_id = 'context.ingest.session') OR
+            (? = 'automatic' AND recipe_id IN ('context.ingest.session', 'context.ingest.interaction')) OR
             (? = 'user' AND recipe_id IN ('summary.minutes', 'qa.answer'))
           ) AND state = 'running' AND cancel_requested_at IS NULL
       )

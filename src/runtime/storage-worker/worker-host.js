@@ -489,6 +489,22 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_COMMIT_SESSION_INGEST, { request })
   }
 
+  preparePersonalContextInteractionIngest (request) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_PREPARE_INTERACTION_INGEST, { request })
+  }
+
+  readPersonalContextInteractionInput (source, ephemeral = null) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_READ_INTERACTION_INPUT, { source, ephemeral })
+  }
+
+  commitPersonalContextInteractionIngest (request) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_COMMIT_INTERACTION_INGEST, { request })
+  }
+
+  cancelPersonalContextInteractionIngest (request) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_CANCEL_INTERACTION_INGEST, { request })
+  }
+
   claimNextFormalAgentRun (request) {
     return this.enqueue(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request })
   }

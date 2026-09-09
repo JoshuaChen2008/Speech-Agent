@@ -403,7 +403,6 @@ class AgentRunService {
       if (typeof runId !== 'string') return publicFailure()
       const run = await this.storage.cancelAgentRun({ runId })
       if (this.scheduler && typeof this.scheduler.cancel === 'function') this.scheduler.cancel(runId)
-      if (run?.state === 'cancelled' && this.promptStore) this.promptStore.delete(runId)
       if (run?.replayed !== true) this.emitChanged()
       return c.assertCancelResponse({ ...header(), ok: true, error: null, result: {
         interaction_id: request.interaction_id,

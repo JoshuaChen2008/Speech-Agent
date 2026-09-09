@@ -21,8 +21,8 @@ const RECIPE_IDS = Object.freeze([
 
 const RECIPE_DEFINITIONS = [
   ['intent.route', ['selection', 'session', 'date_range', 'project'], 'default', 1, [], 'IntentRouteV1', 'interaction', null],
-  ['context.ingest.session', ['session'], 'information_extraction', 3, ['search_context'], 'ContextIngestV1', 'context', null],
-  ['context.ingest.interaction', ['interaction'], 'information_extraction', 3, ['search_context'], 'ContextIngestV1', 'context', null],
+  ['context.ingest.session', ['session'], 'information_extraction', 3, [], 'ContextIngestV1', 'context', null],
+  ['context.ingest.interaction', ['interaction'], 'information_extraction', 3, [], 'ContextIngestV1', 'context', null],
   ['qa.answer', ['selection', 'session', 'date_range', 'project'], 'default', 3, ['search_context'], 'QaAnswerV1', 'interaction', null],
   ['extract.items', ['selection', 'session'], 'information_extraction', 3, ['search_context'], 'ExtractItemsV1', 'interaction', null],
   ['summary.minutes', ['session'], 'summary', 3, ['search_context'], 'SummaryMinutesV1', 'artifact', 'meeting-minutes'],

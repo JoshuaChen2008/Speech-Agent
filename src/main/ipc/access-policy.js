@@ -47,7 +47,8 @@ const ROLE_ACCESS = Object.freeze({
   [CHANNELS.AGENT_RUN_GET_HISTORY]: Object.freeze(['agent', 'history']),
   [CHANNELS.AGENT_RUN_GET_INTERACTION]: Object.freeze(['agent', 'history']),
   [CHANNELS.AGENT_RUN_CHANGED]: Object.freeze(['agent', 'history']),
-  [CHANNELS.AGENT_RUN_EXPORT_INTERACTION]: Object.freeze(['agent', 'history'])
+  [CHANNELS.AGENT_RUN_EXPORT_INTERACTION]: Object.freeze(['agent', 'history']),
+  [CHANNELS.AGENT_RUN_RECORD_SIGNAL]: Object.freeze(['agent'])
 })
 
 const RENDERER_CONFIG_KEYS = Object.freeze([

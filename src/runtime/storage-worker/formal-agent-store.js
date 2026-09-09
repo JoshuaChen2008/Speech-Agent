@@ -1673,6 +1673,7 @@ class FormalAgentStore {
       deletedOrphanMemoryCount: Number(row.deleted_orphan_memory_count),
       deletedInteractionCount: Number(row.deleted_interaction_count),
       deletedToolCallCount: Number(row.deleted_tool_call_count),
+      deletedReportPresentationCount: Number(row.deleted_report_presentation_count || 0),
       deletedEpisodeCount: Number(row.deleted_episode_count),
       deletedContextEvidenceCount: Number(row.deleted_context_evidence_count),
       deletedOrphanContextItemCount: Number(row.deleted_orphan_context_item_count),
@@ -1705,8 +1706,44 @@ class FormalAgentStore {
       const deletedArtifactCount = scalar('SELECT COUNT(*) AS count FROM agent_artifacts WHERE session_id = ?')
       const deletedDebugThreadCount = scalar('SELECT COUNT(*) AS count FROM agent_debug_threads WHERE selected_session_id = ?')
       const deletedMemoryEvidenceCount = scalar('SELECT COUNT(*) AS count FROM memory_evidence WHERE session_id = ?')
-      const deletedInteractionCount = 0
-      const deletedToolCallCount = 0
+      /* Formal v7 rows are linked to a session either directly through their
+         frozen session scope or through an interaction-signal episode whose
+         scope owns the session.  Gather both sets before context deletion so
+         the tombstone counts describe the rows actually removed. */
+      const formalRunIds = new Set()
+      for (const row of database.prepare('SELECT run_id, scope_json FROM formal_agent_runs').all()) {
+        let scope
+        try { scope = JSON.parse(row.scope_json) } catch { throw new StorageError('STORAGE_COMMAND_FAILED') }
+        if (scope?.kind === 'session' && scope.reference === sessionId) formalRunIds.add(row.run_id)
+      }
+      if (personalContextStore) {
+        for (const row of database.prepare(`
+          SELECT DISTINCT episode.ingest_run_id
+          FROM personal_context_episodes AS episode
+          JOIN personal_context_scopes AS scope ON scope.scope_id = episode.scope_id
+          WHERE episode.source_kind = 'interaction' AND scope.kind = 'session' AND scope.session_id = ?
+        `).all(sessionId)) formalRunIds.add(row.ingest_run_id)
+      }
+      const formalInteractionRows = []
+      for (const row of database.prepare('SELECT interaction_id, run_id, scope_json FROM formal_agent_interactions').all()) {
+        let scope
+        try { scope = JSON.parse(row.scope_json) } catch { throw new StorageError('STORAGE_COMMAND_FAILED') }
+        if (formalRunIds.has(row.run_id) || (scope?.kind === 'session' && scope.reference === sessionId)) {
+          formalInteractionRows.push(row)
+          formalRunIds.add(row.run_id)
+        }
+      }
+      const formalInteractionIds = formalInteractionRows.map((row) => row.interaction_id)
+      const deletedInteractionCount = formalInteractionIds.length
+      const deletedToolCallCount = formalInteractionIds.length === 0
+        ? 0
+        : Number(database.prepare(`
+          SELECT COUNT(*) AS count FROM formal_agent_tool_calls
+          WHERE interaction_id IN (${formalInteractionIds.map(() => '?').join(',')})
+        `).get(...formalInteractionIds).count)
+      const deletedReportPresentationCount = Number(database.prepare(
+        'SELECT COUNT(*) AS count FROM formal_agent_report_presentations WHERE session_id = ?'
+      ).get(sessionId).count)
       const contextDeletion = personalContextStore
         ? personalContextStore.planSessionDeletion(sessionId)
         : { episodeCount: 0, evidenceCount: 0, orphanItemIds: [] }
@@ -1734,20 +1771,44 @@ class FormalAgentStore {
           deleted_job_count, deleted_artifact_count, deleted_debug_thread_count,
           deleted_memory_evidence_count, deleted_orphan_memory_count,
           deleted_interaction_count, deleted_tool_call_count, deleted_episode_count,
-          deleted_context_evidence_count, deleted_orphan_context_item_count, deleted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          deleted_context_evidence_count, deleted_orphan_context_item_count,
+          deleted_report_presentation_count, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         sessionId, deletionIdempotencyKey, requestDigest,
         deletedJobCount, deletedArtifactCount, deletedDebugThreadCount,
         deletedMemoryEvidenceCount, deletedOrphanMemoryCount,
         deletedInteractionCount, deletedToolCallCount, deletedEpisodeCount,
-        deletedContextEvidenceCount, deletedOrphanContextItemCount, now
+        deletedContextEvidenceCount, deletedOrphanContextItemCount,
+        deletedReportPresentationCount, now
       )
       for (const row of orphanRows) {
         deleteMemoryGraph(database, row.memory_id)
       }
       database.prepare('DELETE FROM memory_evidence WHERE session_id = ?').run(sessionId)
       if (personalContextStore) personalContextStore.applySessionDeletion(sessionId, contextDeletion, now)
+      if (formalInteractionIds.length > 0) {
+        database.prepare(`
+          DELETE FROM formal_agent_tool_calls
+          WHERE interaction_id IN (${formalInteractionIds.map(() => '?').join(',')})
+        `).run(...formalInteractionIds)
+        database.prepare(`
+          DELETE FROM formal_agent_interactions
+          WHERE interaction_id IN (${formalInteractionIds.map(() => '?').join(',')})
+        `).run(...formalInteractionIds)
+      }
+      const formalRunIdList = [...formalRunIds]
+      if (formalRunIdList.length > 0) {
+        database.prepare(`
+          DELETE FROM formal_agent_run_claim_receipts
+          WHERE run_id IN (${formalRunIdList.map(() => '?').join(',')})
+        `).run(...formalRunIdList)
+        database.prepare(`
+          DELETE FROM formal_agent_runs
+          WHERE run_id IN (${formalRunIdList.map(() => '?').join(',')})
+        `).run(...formalRunIdList)
+      }
+      database.prepare('DELETE FROM formal_agent_report_presentations WHERE session_id = ?').run(sessionId)
       database.prepare('DELETE FROM memory_scopes WHERE session_id = ?').run(sessionId)
       database.prepare('DELETE FROM agent_debug_threads WHERE selected_session_id = ?').run(sessionId)
       database.prepare('DELETE FROM agent_jobs WHERE session_id = ?').run(sessionId)

@@ -27,7 +27,7 @@ const toolCall = {
   tool_name: 'read_sources'
 }
 test('S5-1 exact Agent run channels and fail-closed contracts', () => {
-  assert.deepEqual(c.IPC_CHANNELS, { getScopes:'agent-run:get-scopes', getEligibility:'agent-run:get-eligibility', submit:'agent-run:submit', cancel:'agent-run:cancel', getHistory:'agent-run:get-history', getInteraction:'agent-run:get-interaction', changed:'agent-run:changed', exportInteraction:'agent-run:export-interaction' })
+  assert.deepEqual(c.IPC_CHANNELS, { getScopes:'agent-run:get-scopes', getEligibility:'agent-run:get-eligibility', submit:'agent-run:submit', cancel:'agent-run:cancel', getHistory:'agent-run:get-history', getInteraction:'agent-run:get-interaction', changed:'agent-run:changed', exportInteraction:'agent-run:export-interaction', recordSignal:'agent-run:record-signal' })
   const scope = { kind:'session', reference:'session.demo' }
   assert.doesNotThrow(() => c.assertGetScopesRequest({ ...h, limit:50, cursor:null }))
   assert.throws(() => c.assertGetScopesRequest({ ...h, limit:51, cursor:null }), /range/)
@@ -37,6 +37,13 @@ test('S5-1 exact Agent run channels and fail-closed contracts', () => {
   assert.doesNotThrow(() => c.assertSubmitRequest({ ...h, scope, prompt:'minutes', client_idempotency_key:'client.demo' }))
   assert.throws(() => c.assertSubmitRequest({ ...h, scope, input:'x', prompt:'leak', client_idempotency_key:'client.demo' }), /exact keys/)
   assert.throws(() => c.assertExportRequest({ ...h, interaction_id:'interaction.demo', format:'markdown' }), /exact keys/)
+  assert.doesNotThrow(() => c.assertRecordSignalRequest({ ...h, interaction_id:'interaction.demo', payload:null, result_digest:'a'.repeat(64), signal_idempotency_key:'signal.demo', signal_kind:'accept' }))
+  assert.doesNotThrow(() => c.assertRecordSignalRequest({ ...h, interaction_id:'interaction.demo', payload:{ text:'修订后的内容' }, result_digest:'a'.repeat(64), signal_idempotency_key:'signal.edit.demo', signal_kind:'edit' }))
+  assert.throws(() => c.assertRecordSignalRequest({ ...h, interaction_id:'interaction.demo', payload:null, result_digest:'a'.repeat(64), signal_idempotency_key:'signal.demo', signal_kind:'scroll' }), /registered/)
+  assert.throws(() => c.assertRecordSignalRequest({ ...h, interaction_id:'interaction.demo', payload:null, result_digest:null, signal_idempotency_key:'signal.demo', signal_kind:'accept' }), /result digest/)
+  assert.throws(() => c.assertRecordSignalRequest({ ...h, interaction_id:'interaction.demo', payload:{ text:'x\u0000' }, result_digest:'a'.repeat(64), signal_idempotency_key:'signal.demo', signal_kind:'edit' }), /bounded text/)
+  assert.throws(() => c.assertRecordSignalRequest({ ...h, interaction_id:'interaction.demo', payload:null, result_digest:null, signal_idempotency_key:'signal.demo', signal_kind:'prompt', extra:'telemetry' }), /exact keys/)
+  assert.doesNotThrow(() => c.assertRecordSignalResponse({ ...h, ok:true, error:null, result:{ accepted:true, interaction_id:'interaction.demo', replayed:false, signal_kind:'accept' } }))
   assert.doesNotThrow(() => c.assertCommandResponse({ ...h, ok:true, error:null, result:{ input_token:1, output_token:2 } }))
   assert.throws(() => c.assertCommandResponse({ ...h, ok:true, error:null, result:{ token_value:'secret' } }), /forbidden/)
   assert.throws(() => c.assertExportResponse({ ...h, ok:true, error:null, result:{ bytes_sha256:'a'.repeat(64), interaction_id:'interaction.demo', schema_version:1, snapshot:{ result:{ local_path:'/tmp/agent.json' } } } }), /forbidden/)

@@ -4,7 +4,6 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const { ContextIngestSessionRunner } = require('../../src/agent/execution-host')
-const { deriveRecipeBudget } = require('../../src/agent/contracts/budget-axes')
 
 const source = Object.freeze({
   sourceKind: 'session', sessionId: 'session.runner', transcriptVersion: 'raw',
@@ -117,43 +116,22 @@ test('SEM-F28/SEM-F30/SEM-T04/J22/J24: refined request with incomplete coverage 
   assert.equal(input.transcriptVersion, 'raw')
 })
 
-test('SEM-F15/SEM-F28/SEM-F34/J22/J24: session ingest passes audited frozen-context tools to the unified loop', async () => {
-  const context = {
-    scope: {
-      registeredAliasKeys: ['decision'],
-      memoryRefs: [{ memoryId: 'memory.runner', revisionId: 'revision.runner' }],
-      sourceRefs: [{ sessionId: 'session.runner', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }]
-    },
-    entries: [{
-      aliasKey: 'decision', memoryRef: { memoryId: 'memory.runner', revisionId: 'revision.runner' },
-      kind: 'decision', displayText: 'Bounded decision.',
-      sourceRefs: [{ sessionId: 'session.runner', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }]
-    }],
-    sources: [{
-      sourceRef: { sessionId: 'session.runner', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 },
-      text: 'Bounded source.'
-    }]
-  }
-  const budget = deriveRecipeBudget({ maxInputTokens: 64000, maxOutputTokens: 4096 }, 'context.ingest.session', '1', 'automatic')
+test('SEM-F15/SEM-F28/SEM-F34/J21/J22/J24: background context ingestion is tool-free and passes only the frozen input to the unified loop', async () => {
   const { options, calls } = seams({
     personalContext: {
       prepareSessionIngest: async () => ({ runId: 'run.ingest', episodeId: 'episode.ingest' }),
       readSessionInput: async () => ({ ...source, events: [{ eventOrder: 1, segmentId: 'segment.1', text: 'boundary' }] }),
-      readToolContext: async (request) => { calls.push(['tool-context', request]); return context },
       commitSessionIngest: async (value) => { calls.push(['commit', value]); return { state: 'committed' } }
     },
-    modelAccess: { bind: async (value) => ({ ...value, budget, capabilities: { usageReporting: false } }) },
+    modelAccess: { bind: async (value) => ({ ...value, capabilities: { usageReporting: false } }) },
     interactions: {
       create: async (value) => { calls.push(['interaction:create', value]); return value },
       terminalize: async (value) => { calls.push(['interaction:terminalize', value]); return value },
-      startToolCall: async (value) => { calls.push(['tool:start', value]); return value },
-      finishToolCall: async (value) => { calls.push(['tool:finish', value]); return value }
     },
     loop: {
       agentLoop: async (value) => {
         calls.push(['loop', value])
-        const lookup = await value.tools[0].execute({ schemaVersion: 1, aliasKeys: ['decision'] })
-        assert.equal(lookup.matches[0].entries[0].displayText, 'Bounded decision.')
+        assert.equal(Object.hasOwn(value, 'tools'), false)
         return { text: JSON.stringify(output) }
       }
     }
@@ -165,7 +143,64 @@ test('SEM-F15/SEM-F28/SEM-F34/J22/J24: session ingest passes audited frozen-cont
     interactionId: 'interaction.ingest'
   })
   assert.equal(result.state, 'succeeded')
-  assert.equal(calls.find(([name]) => name === 'tool-context')[1].runId, 'run.ingest')
-  assert.equal(calls.filter(([name]) => name === 'tool:start').length, 1)
-  assert.equal(calls.filter(([name]) => name === 'tool:finish').length, 1)
+  assert.equal(calls.some(([name]) => name === 'tool-context'), false)
+  assert.equal(calls.some(([name]) => name === 'tool:start'), false)
+  assert.equal(calls.some(([name]) => name === 'tool:finish'), false)
+})
+
+test('SEM-F32/J21/J22/J24: interaction signal runner uses the same bounded loop with a frozen signal reference and no tools', async () => {
+  const interactionSource = {
+    sourceKind: 'interaction', interactionId: 'interaction.runner.signal', signalKind: 'remember', payloadDigest: null,
+    recipeId: 'qa.answer', recipeVersion: '1', scopeKind: 'session', scopeReference: 'session.runner', sessionId: 'session.runner',
+    transcriptVersion: 'raw', inputWatermark: 2, inputDigest: 'b'.repeat(64), interactionInputDigest: 'c'.repeat(64),
+    promptDigest: 'd'.repeat(64), resultDigest: 'e'.repeat(64)
+  }
+  const interactionOutput = {
+    schemaVersion: 1,
+    experiences: [{ kind: 'event', text: 'remembered', evidence: { interactionId: interactionSource.interactionId, signalKind: 'remember' }, confidence: 'high' }],
+    memoryCandidates: []
+  }
+  const transientResult = { schemaVersion: 1, answer: 'result content', sourceRefs: [], memoryRefs: [], unresolved: [] }
+  const { options, calls } = seams({
+    personalContext: {
+      prepareSessionIngest: async () => ({ runId: 'run.session.placeholder', episodeId: 'episode.session.placeholder' }),
+      prepareInteractionIngest: async (value) => { calls.push(['prepare-interaction', value]); return { runId: 'run.interaction.signal', episodeId: 'episode.interaction.signal' } },
+      readInteractionInput: async (value, ephemeral) => {
+        calls.push(['interaction-input', value, ephemeral])
+        return {
+          ...interactionSource,
+          events: [],
+          signal: { signalKind: value.signalKind, prompt: ephemeral.prompt, editText: ephemeral.editText, result: ephemeral.result }
+        }
+      },
+      commitSessionIngest: async () => ({ state: 'committed' }),
+      commitInteractionIngest: async (value) => { calls.push(['commit-interaction', value]); return { state: 'committed' } }
+    },
+    interactionPayloadProvider: async () => ({ prompt: null, editText: null, result: transientResult }),
+    onSettled: async (runId, reason, interactionId) => { calls.push(['settled', runId, reason, interactionId]) },
+    loop: { agentLoop: async (value) => { calls.push(['loop', value]); return { text: JSON.stringify(interactionOutput) } } }
+  })
+  const runner = new ContextIngestSessionRunner(options)
+  const prepared = await runner.prepare({ interactionId: interactionSource.interactionId, signalKind: 'remember', payloadDigest: null, sourceKind: 'interaction' })
+  assert.deepEqual(prepared, { runId: 'run.interaction.signal', episodeId: 'episode.interaction.signal' })
+  const result = await runner.run({
+    recipeId: 'context.ingest.interaction', source: interactionSource,
+    attemptIdentity: { runId: 'run.interaction.signal', attempt: 1, owner: 'runner', leaseExpiresAt: 1000 },
+    interactionId: 'interaction.ingest.signal'
+  })
+  assert.equal(result.state, 'succeeded')
+  assert.equal(calls.find(([name]) => name === 'loop')[1].recipeId, 'context.ingest.interaction')
+  assert.equal(Object.hasOwn(calls.find(([name]) => name === 'loop')[1], 'tools'), false)
+  assert.deepEqual(calls.find(([name]) => name === 'interaction-input')[1], interactionSource)
+  assert.deepEqual(calls.find(([name]) => name === 'interaction-input')[2], {
+    prompt: null, editText: null, result: transientResult
+  })
+  const loopPrompt = JSON.parse(calls.find(([name]) => name === 'loop')[1].prompt)
+  assert.deepEqual(loopPrompt.signal, {
+    signalKind: 'remember', prompt: null, editText: null, result: transientResult
+  })
+  assert.equal(calls.find(([name]) => name === 'commit-interaction')[1].output.experiences[0].evidence.signalKind, 'remember')
+  assert.deepEqual(calls.find(([name]) => name === 'settled').slice(1), [
+    'run.interaction.signal', 'succeeded', 'interaction.ingest.signal'
+  ])
 })

@@ -56,5 +56,6 @@ module.exports = Object.freeze({
   AGENT_RUN_GET_HISTORY: 'agent-run:get-history',
   AGENT_RUN_GET_INTERACTION: 'agent-run:get-interaction',
   AGENT_RUN_CHANGED: 'agent-run:changed',
-  AGENT_RUN_EXPORT_INTERACTION: 'agent-run:export-interaction'
+  AGENT_RUN_EXPORT_INTERACTION: 'agent-run:export-interaction',
+  AGENT_RUN_RECORD_SIGNAL: 'agent-run:record-signal'
 })

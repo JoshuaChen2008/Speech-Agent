@@ -241,7 +241,7 @@ class FormalAgentRunRunner {
       return null
     } finally {
       if (terminalReason) {
-        try { this.onSettled(job.attemptIdentity.runId, terminalReason) } catch { /* observer isolation */ }
+        try { await this.onSettled(job.attemptIdentity.runId, terminalReason, job.interactionId) } catch { /* observer isolation */ }
       }
     }
   }
