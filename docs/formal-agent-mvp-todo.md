@@ -6,7 +6,7 @@
 > `docs/semantic-contract.md`、`docs/testing-strategy.md` 与现有 ADR。
 > `src/agent-mvp` 是隔离开发入口，不计入正式 MVP 证据。
 
-> 2026-09-08 核对：当前工作树已有 Agent run contract/controller、preload 与窗口骨架；`src/main.js` 已接入 main-owned service、model-first route、user target scheduler 与真实 SQLite 执行边界，正式 renderer/export 仍是待收束项。以下复选框跟踪产品闭环，不表示对应目录完全没有代码。开发选测与阶段门禁统一见 `testing-strategy.md` §2.1，不要求每个小任务重复三条 lane。
+> 2026-09-09 核对：当前工作树已有正式 Agent Bar renderer、Agent run contract/controller、preload、main-owned service、model-first route、user target scheduler、交互历史与 canonical JSON 导出；正式工具条入口和 renderer → preload → Agent Loop → storage worker/SQLite 的联合证据仍待收束。以下复选框跟踪产品闭环，不表示对应目录完全没有代码。开发选测与阶段门禁统一见 `testing-strategy.md` §2.1，不要求每个小任务重复三条 lane。
 
 > 2026-09-08 S5 执行入口：具体 proposal/design/spec/tasks 见 [`openspec/changes/implement-agent-redesign-s5-minimal-chain/`](../openspec/changes/implement-agent-redesign-s5-minimal-chain/)。本文件只保留正式 MVP 的跨切片导航；S5 的可执行任务以该 change 为准，J21/J27/完整 J25 仍是后续门禁。
 
@@ -82,7 +82,7 @@ subscribeChanged(listener)
 - [x] 渲染 pending/running/succeeded/failed/cancelling/cancelled。（实现完成·尚未验收；取消等待 CommandResult，未知状态 fail closed。）
 - [x] 渲染概要、结论、待办、风险、来源引用和可操作错误。（实现完成·尚未验收；缺口与待确认字段也按受控结果投影，未展示内部 ID/reasoning。）
 - [x] reload 后先订阅 changed，再读取权威 snapshot/history。（实现完成·尚未验收；局部 UI 回归覆盖先订阅、历史与活动详情刷新。）
-- [ ] 在工具条加入正式 Agent 入口。
+- [ ] 在工具条加入正式 Agent 入口。（当前 main 已有 `agent` action 路由，toolbar renderer 尚未呈现入口；需补正式入口、打开/关闭行为和字幕系统独立性旅程。）
 
 ### P4：历史与导出（S5 change）
 
@@ -94,9 +94,9 @@ subscribeChanged(listener)
 
 ### P5：S5 子边界证据（不等同正式 MVP 联合验收）
 
-- [ ] J22：Agent Bar → `summary.minutes` → SQLite interaction → 结果与历史详情（局部实现完成·尚未验收；正式 Agent Bar renderer 已接通 exact facade 并有局部 UI 回归，真实 preload/SQLite 纪要纵切仍待补证）。
-- [ ] J24：取消、provider 不可用、重复停止、reload、字幕独立性（局部实现完成·尚未验收；renderer 已覆盖取消等待回执、changed reload 与状态投影，provider/字幕独立性和完整联合旅程仍待补证）。
-- [x] J26：成功、失败和取消交互的确定性 JSON 导出。（实现完成·尚未验收；真实 SQLite 成功重导出、取消零写入、digest/顺序/隐私负扫描已有，阶段联合证据仍待补齐。）
+- [ ] J22：Agent Bar → `summary.minutes` → SQLite interaction → 结果与历史详情（局部实现完成·尚未验收；正式 Agent Bar renderer、exact facade 与 main service 已接通，真实 Electron/preload/SQLite 纪要纵切仍待补证）。
+- [ ] J24：取消、provider 不可用、重复停止、reload、字幕独立性（局部实现完成·尚未验收；renderer 已覆盖取消等待回执、changed reload 与状态投影，工具条入口、provider/字幕独立性、storage replacement 和完整联合旅程仍待补证）。
+- [x] J26：成功、失败和取消交互的确定性 JSON 导出。（实现完成·尚未验收；`AgentInteractionExporter`、同一 `StorageGateway` 快照、取消零写入、digest/顺序/隐私负扫描已有，正式保存对话框联合证据与当前 revision 三条 lane 记录仍待补齐。）
 - [ ] J21：终态会话 → `context.ingest.session` → 经历/记忆候选与管理（局部实现完成·尚未验收；S3 摄取子边界有真实 SQLite 旅程，production main 自动摄取与完整 J21 证据仍是后续门禁）。
 - [ ] J27：正式入口与隔离入口的 userData/SQLite 边界（实现完成·尚未验收；require/打包守卫已有，隔离入口联合证据仍待补齐）。
 - [ ] `.artifacts/` 与 `docs/validation/` 通过 SEM-F14 负扫描。

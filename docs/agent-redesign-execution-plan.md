@@ -63,6 +63,8 @@ UX 设计稿、截图、fixture preview 或局部 renderer 回归都不晋级任
 
 ## 3. 现状基线与缺口
 
+以下“实施前事实”保留 2026-08-29 设计基线，不代表当前工作树；当前实现进度只读 §5 的最新日期记录。
+
 ### 3.1 启动与打包
 
 | 位置 | 实施前事实 | 目标 |
@@ -132,7 +134,7 @@ UX 设计稿、截图、fixture preview 或局部 renderer 回归都不晋级任
 | S5 | S5-Core 的新 `agent` 角色、preload/exact IPC 与 J26 导出；S5-UX 的 Agent Bar/settings/history renderer；S5-Integration 对 J21/J22/J24/J25/J26 的真实产品组合 |
 | S6 | J27 require 图、四棵旧树的打包排除、`src/agent/**` 正向存在与注入式反证 |
 
-所有切片都沿用同一条隐私负证据：`.artifacts/` 与 `docs/validation/` 的 JSON 不含字幕正文、本地绝对路径、设备名、绝对单调时刻或时钟偏移；现场音频、PCM、WAV 与音频路径零持久化。每个切片交接时三条 lane 必须全绿；局部 red 只存在于正在处理的单个 TDD 循环中。
+所有切片都沿用同一条隐私负证据：`.artifacts/` 与 `docs/validation/` 的 JSON 不含字幕正文、本地绝对路径、设备名、绝对单调时刻或时钟偏移；现场音频、PCM、WAV 与音频路径零持久化。开发交接按 testing-strategy.md §2.1 执行受影响验证；PR/合并与阶段联合验收执行一次全量门禁，可由当前 revision 的 CI 承担。局部 red 只存在于正在处理的单个 TDD 循环中。
 
 ### 阶段 B（S1）：个人上下文模块骨架
 
@@ -148,7 +150,7 @@ UX 设计稿、截图、fixture preview 或局部 renderer 回归都不晋级任
 8. ADR 0012 调度机制是**新实现**而非旧代码接线：新 `FormalAgentJobScheduler` 放在 `src/agent/execution-host/`，同一 logical claim attempt 复用冻结请求身份、不接管 receipt 返回的租约、`wakeEpoch` 推进、idle 前临界点复核、`start` 一次、`stop` 终态推进 generation。仓库当前没有该实现；旧 `FormalAgentRuntime`、旧 `AgentJobRunner` 与旧三任务 store 不得复用、改造或适配。
 9. 频道 `agent-context:get-overview`、`agent-context:manage`、`agent-context:changed`；角色 `settings`、`history`。`manage` 命令闭集含查看、修改、删除、休眠、记住、忘记，全部要 `expectedRevision`，失败零写入。
 10. 删除语义：删除会话级联删除其经历记录与上下文证据，仅由该会话支持的条目退出检索；删除单条条目是幂等事务（先写不含正文的 suppression，再物理移除条目/revision/evidence），重复用同一 deletion key 只重放计数。
-11. 门禁：`test:core` → `test:integration` → `test:evidence`，登记并阻断 J21 的 S1 子边界，同时证明字幕系统零回归（`open/append/close/history` 不加载新 store）。该子边界不提升完整 J21；S1 状态最多为「实现完成·尚未验收」。
+11. 阶段联合验收门禁：`test:core` → `test:integration` → `test:evidence`（日常按 testing-strategy.md §2.1 选测），登记并阻断 J21 的 S1 子边界，同时证明字幕系统零回归（`open/append/close/history` 不加载新 store）。该子边界不提升完整 J21；S1 状态最多为「实现完成·尚未验收」。
 
 ### 阶段 C（S2）：模型接入层
 
@@ -165,7 +167,7 @@ UX 设计稿、截图、fixture preview 或局部 renderer 回归都不晋级任
 9. 频道 `agent-model:get-catalog`、`agent-model:configure`、`agent-model:pull-remote-catalog`、`agent-model:changed`；角色只 `settings`。get-catalog 使用 exact `{ok,snapshot,error}` envelope，初始化降级唯一读取错误为 `MODEL_ACCESS_UNAVAILABLE`；snapshot revision 单调并显式标注 direct/fallback_default/unconfigured。
 10. 首次 v6 只播种 `deepseek-openai-template@1`：官方 origin 与 `/`、空 model/用途、凭据 absent；当前 alias 与四个布尔能力只作瞬时建议，两个 token 上限为 null，用户删除模板后不重建。向 UI/UX 签发上述状态、九命令、revision、credential scope、用途回落、六值 remote pull 和 token/cache fixture；全部 `previewOnly=true` 且不构成 J25 证据。
 11. 确定性替身：`fauxProvider()` 形状的第一方替身，只在测试构建可达，生产不可达并有断言。
-12. 门禁：三道全绿，登记并阻断 J25 的 S2 Core 子边界，字幕系统零回归。设置 renderer 尚未在 S5 汇合前，S2 状态最多为「实现完成·尚未验收」。
+12. 阶段联合验收门禁：三条 lane 返回 0（日常小改动按 testing-strategy.md §2.1 选测），登记并阻断 J25 的 S2 Core 子边界，字幕系统零回归。设置 renderer 尚未在 S5 汇合前，S2 状态最多为「实现完成·尚未验收」。
 
 ### 阶段 D（S3）：执行宿主与统一 recipe 执行路径
 
@@ -182,7 +184,7 @@ UX 设计稿、截图、fixture preview 或局部 renderer 回归都不晋级任
 9. 交互摄取：交互收束且交互记忆信号提取完成后触发 `context.ingest.interaction`；提示正文在此时删除，只留 digest。信号闭集只含用户提示、用户对结果的明确编辑、接受、拒绝、记住、忘记；点击、停留、滚动、浏览、焦点、复制、内部工具事件与未被采纳的模型输出不形成信号。
 10. 频道 `agent-run:get-eligibility`、`agent-run:submit`、`agent-run:cancel`、`agent-run:get-history`、`agent-run:get-interaction`、`agent-run:changed`；角色 `agent`（新增）与 `history`。资格按九值闭集固定顺序在 main 计算，renderer 不自行推断。
 11. 向 UI/UX 工作线签发范围、九值资格、pending/取消/失败/终态、最小交互历史、token/缓存未知等 fixture；不在 fixture 中保存金额、提示正文、内部思维过程或 provider 原始事件。
-12. 门禁：三道全绿，复用 J22 与 J24 的执行宿主 Core 子边界，不新增同义旅程，字幕系统零回归。`runtime-architecture.md` §11.2 仍不在本片开始前预写；待 S3/S4 真实运行时形成后一次性重写。
+12. 阶段联合验收门禁：三条 lane 返回 0（日常小改动按 testing-strategy.md §2.1 选测），复用 J22 与 J24 的执行宿主 Core 子边界，不新增同义旅程，字幕系统零回归。`runtime-architecture.md` §11.2 仍不在本片开始前预写；待 S3/S4 真实运行时形成后一次性重写。
 
 ### 阶段 E（S4）：受控只读工具与十轴预算执法
 
@@ -197,7 +199,7 @@ S4 可以先签发纯 `src/agent/contracts/` 的 exact validator、预算判断�
 5. Pi 接入面：实例级 `Models`（`createModels()`），按 `provider.id` 键入，`setProvider()` 按 id upsert，`getModel(providerId, modelId)`，`createProvider({...})`，`models.streamSimple.bind(models)` 注入 `@earendil-works/pi-agent-core`。禁用面：`providers/all` 的 `builtinModels()`、`/compat`、coding-agent 的 `ModelRuntime`/`ModelRegistry`/`models.json`/`auth.json`/OAuth/home-dir、`envApiKeyAuth()`、`prepareNextTurn` 的换模型路径、gateway routing 字段。MIT 许可声明必须保留。
 6. 「一次运行内模型固定」由不实现 `prepareNextTurn` / `prepareNextTurnWithContext` 换模型路径实现，并配一条断言运行中绑定不被改写的测试。恢复不使用 `agentLoopContinue()`：按 SEM-F28 保留旧 attempt 的工具调用记录后，在同一 `runId`、同一绑定、同一冻结输入下整体重跑并递增 attempt。
 7. 向 UI/UX 工作线签发 Agent Loop、预算耗尽、多 attempt、工具调用记录折叠/展开、工具失败和取消终态 fixture；工具正文只使用合成内容，fixture preview 不进入 `.artifacts/` 或 `docs/validation/`。
-8. 门禁：三道全绿，复用 J22 与 J24 的工具与预算 Core 子边界，不新增同义旅程，字幕系统零回归；本片收束时与 S3 一并重写 `runtime-architecture.md` §11.2。
+8. 阶段联合验收门禁：三条 lane 返回 0（日常小改动按 testing-strategy.md §2.1 选测），复用 J22 与 J24 的工具与预算 Core 子边界，不新增同义旅程，字幕系统零回归；本片收束时与 S3 一并重写 `runtime-architecture.md` §11.2。
 
 ### 阶段 F（S5）：Agent Bar 与单交互导出
 
@@ -223,7 +225,7 @@ S4 可以先签发纯 `src/agent/contracts/` 的 exact validator、预算判断�
 
 9. 由 Core owner 用真实 preload/exact IPC/个人上下文模块/Agent 模型接入层/执行宿主/storage worker/SQLite 替换 UI 预览 adapter；UI fixture 继续只服务视觉预览，不进入联合证据。
 10. settings renderer 闭合 J21 的管理 UI 与 J25 的多档案/四用途路径；Agent Bar/history renderer 闭合 J22/J24；保存对话框与同一 SQLite 快照闭合 J26。
-11. 门禁：三道全绿，J21/J22/J24/J25/J26 阻断，字幕系统零回归。任何单独的 S5-Core 或 S5-UX 结果最多写「实现完成·尚未验收」；只有 S5-Integration 的真实内部模块组合才可晋级对应旅程。
+11. 阶段联合验收门禁：三条 lane 返回 0（日常小改动按 testing-strategy.md §2.1 选测），J21/J22/J24/J25/J26 阻断，字幕系统零回归。任何单独的 S5-Core 或 S5-UX 结果最多写「实现完成·尚未验收」；只有 S5-Integration 的真实内部模块组合才可晋级对应旅程。
 
 ### 阶段 G（S6）：旧 Agent 锁定在启动路径之外
 
@@ -233,9 +235,37 @@ S4 可以先签发纯 `src/agent/contracts/` 的 exact validator、预算判断�
 2. `electron-builder.config.cjs` `files` 追加 `!src/agent-provider/**/*`、`!src/agent-runtime/**/*`；`scripts/verify-package-layout.js` 的前缀白名单同步扩到四棵树，并新增 `src/agent/**` 必须存在的正向断言；`test/validation/b5-packaging-contract.test.js` 同步。
 3. 断言产品 storage worker 仍选用 `FORMAL_AGENT_MIGRATIONS`、v3/v4 checksum 逐字节不变、字幕 `open/append/close/history` 不触发 `formal-agent-store` 加载（ADR 0015 第 11 项：这不是启动接线，不得在本片改动）。
 4. 断言隔离入口仍可经 `npm run start:agent-mvp` 手动启动，且其 userData 与正式 userData 不相交。
-5. 门禁：三道全绿，J27 阻断，字幕系统零回归。
+5. 阶段联合验收门禁：三条 lane 返回 0（日常小改动按 testing-strategy.md §2.1 选测），J27 阻断，字幕系统零回归。
 
 ## 5. 验收矩阵
+
+### 2026-09-08 代码核对（不晋级联合验收）
+
+S5 下一步执行以 [`openspec/changes/implement-agent-redesign-s5-minimal-chain/`](../openspec/changes/implement-agent-redesign-s5-minimal-chain/) 为唯一细项来源。该 change 只闭合 J22/J24/J26 的终态会话请求、结果、历史与导出子边界；J21 后台摄取、完整 J25 和 J27 隔离入口证据仍保留原有阻断条件。
+
+| 切片 | 当前证据与剩余边界 |
+|---|---|
+| S1/S2 | 个人上下文三接口、多档案模型接入、凭据槽、v5/v6、IPC/preload 与设置 renderer 已有实现；Core 状态为实现完成·尚未验收，完整 J21/J25 待 S5 汇合。 |
+| S3/S4 | `recipes.js` 已登记 11 项 recipe；统一 Loop、意图收敛、session 两段式摄取、v7 execution store、两项只读工具和审计/预算已有代码。已有局部联合测试；不把代码存在或旧 TODO 勾选数当成全部取消/恢复/摄取/预算场景的证明，完整 J22/J24 待执行与正式 UI 汇合。 |
+| S5 | 当前工作树已有 Agent run contract/controller、`agent` 角色、preload、窗口与 `src/agent/index.html` 骨架；S5-Core 已实现终态范围/资格投影、真实 StorageGateway 读取、分页和 changed revision 广播，状态为实现完成·尚未验收。submit/history/detail/export 的完整执行与 Agent Bar/SQLite 联合旅程仍缺；settings 的模型配置局部 renderer 不等同正式 Agent 旅程。 |
+| S6 | 四棵旧 Agent 树的 require 图和打包排除守卫已有实现；隔离入口与正式入口独立 userData/SQLite 的完整 J27 证据仍需补齐。 |
+
+### 2026-09-09 当前工作树补充核对（不晋级联合验收）
+
+本补充覆盖 2026-09-08 记录之后的当前工作树，旧记录保留为历史证据。S5 的实现已从窗口骨架推进到正式 Agent Bar renderer、main-owned `AgentRunService`、Agent Loop 执行接线、交互历史和单交互导出；以下仍只代表代码或局部旅程证据，不改变任何 J 旅程状态。
+
+| 切片 | 当前事实 | 仍缺的联合边界 |
+|---|---|---|
+| S5-Core | `src/agent/formal-run/agent-run-service.js` 已提供终态会话范围、资格、提交、取消、历史、详情、changed revision 与导出协调；`src/preload/agent.js` 和 `agent-run:*` exact IPC 已接线，生产 main 已组合 `StorageGateway`、模型接入层、意图收敛、统一 Agent Loop 与 user scheduler。 | 需要在正式 Electron renderer、preload、真实 storage worker/SQLite 和字幕停止路径之间完成同一条联合旅程，并补齐 provider/Schema/预算/replacement 失败矩阵。 |
+| S5-UX | `src/agent/**` 已是正式 Agent Bar renderer：先订阅 `agent-run:changed` 再读取范围与交互历史，支持纪要快捷操作、问答、取消、终态结果、来源引用、折叠工具调用记录和导出动作。 | 工具条尚未呈现打开正式 Agent Bar 的产品入口；局部 renderer 回归不能替代正式 preload/SQLite/Agent Loop 联合证据。 |
+| J26 导出 | `AgentInteractionExporter` 已从同一 `StorageGateway` 详情快照校验终态身份、digest、用量、相对时长和工具调用全序，再以 canonical JSON 原子写入；取消、失败、重复导出和隐私负路径已有定向覆盖。 | 仍需把保存对话框、正式 renderer 和当前 revision 的三条 lane 结果记录为 J26 联合证据。 |
+| J21/J25/J27 | S1/S2 Core 与 S6 require/打包守卫继续保留；J21 生产自动摄取、完整 J25 设置/模型比较、J27 隔离入口 userData/SQLite 仍未形成完整产品旅程。 | 这些阻断条件不因 S5 renderer、历史或导出代码存在而改变。 |
+
+当前细项以 [`openspec/changes/implement-agent-redesign-s5-minimal-chain/`](../openspec/changes/implement-agent-redesign-s5-minimal-chain/) 为准；该 change 的局部测试可能使用确定性 Agent 模型 provider 或故障注入 seam，不能把进程内 host 转发或替代适配器单独当成正式联合验收。当前仍须使用「实现完成·尚未验收」描述 S5 子边界。
+
+上述读取不含本轮产品全量测试。2026-08-31 文档基线为 core 785/785、integration 72/80；8 项失败涉及 Electron/utility/renderer 启动边界，根因分离前不统称环境问题。历史记录留档，不能作为当前工作树结果。正式 MVP 待办集中在 `formal-agent-mvp-todo.md`，小改动选测遵循 `testing-strategy.md` §2.1。
+
+### 目标验收矩阵
 
 | 切片 | 新 migration | 阻断旅程 | 正证据 | 负证据 |
 |---|---|---|---|---|
@@ -246,9 +276,9 @@ S4 可以先签发纯 `src/agent/contracts/` 的 exact validator、预算判断�
 | S5-Core / S5-UX / S5-Integration | 无 | J21、J22、J24、J25、J26 | 新 `agent` 角色、正式 renderer、默认零报告、偏好只影响以后会话、真实模块汇合与确定性重导出 | 不接旧 `agent-mvp`、无未读角标/系统通知/模态/抢焦点、导出不含提示与内部思维过程、重复通知不重复呈现同一 run |
 | S6 旧 Agent 锁定 | 无 | J27 | require 闭包守卫、四棵树打包排除、`src/agent/**` 正向存在 | 注入式反证必须变红、v3/v4 checksum 不变、隔离入口仍可手动启动 |
 
-每片都必须依次通过 `npm run test:core` → `npm run test:integration` → `npm run test:evidence`，并附字幕系统零回归证明。任一片不得因后续片未完成而提升状态。
+阶段联合验收要求完整三条 lane 与字幕系统独立性证据；日常小改动和交接按 `testing-strategy.md` §2.1 选测，不重复本地全量。后续切片缺失时不提升当前产品旅程状态。
 
-2026-08-30：S1 个人上下文模块与 S2 Agent 模型接入层 Core 子边界的状态均为「实现完成·尚未验收」。S2 已追加 v6，建立 main-owned 三接口、九命令、四用途、每档案 vault、不可变 binding、exact IPC/preload、token/cache 合同与 test-only `fauxProvider()`；DeepSeek 仍只是空 model 模板，零真实公网推理。最终 core 694/694、evidence 233/233；integration 的 S1/S2 联合测试自身返回 0，整条 lane 为 69/77，8 项失败均位于既有 Electron/utility 子进程旅程并伴随 Windows GPU `exit_code=-1073741515` 或子进程报告缺失；完整 `npm test` 因同一 integration 环境问题停止。此记录不升级完整 J21/J25；正式 settings renderer、Agent Bar、S3/S4、S5 历史/导出与真实公网能力仍未实现。
+历史基线（2026-08-30，非当前工作树结论）：S1 个人上下文模块与 S2 Agent 模型接入层 Core 子边界的状态均为「实现完成·尚未验收」。S2 已追加 v6，建立 main-owned 三接口、九命令、四用途、每档案 vault、不可变 binding、exact IPC/preload、token/cache 合同与 test-only `fauxProvider()`；DeepSeek 仍只是空 model 模板，零真实公网推理。最终 core 694/694、evidence 233/233；integration 的 S1/S2 联合测试自身返回 0，整条 lane 为 69/77，8 项失败均位于既有 Electron/utility 子进程旅程并伴随 Windows GPU `exit_code=-1073741515` 或子进程报告缺失；完整 `npm test` 因同一 integration 环境问题停止。此记录不升级完整 J21/J25；正式 settings renderer、Agent Bar、S3/S4、S5 历史/导出与真实公网能力仍未实现。
 
 ## 6. 风险与回退
 

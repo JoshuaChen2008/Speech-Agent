@@ -168,7 +168,8 @@ npm start
 npm run test:core         # 契约、主进程、运行时、存储和 UI
 npm run test:integration  # 跨模块用户旅程
 npm run test:evidence     # 门禁与结构化证据
-npm test                  # 依次跑完以上三条
+npm run test:focus -- test/ui/renderer-style-guard.test.js # 小改动按文件选测，不构建
+npm test                  # PR/阶段联合验收：构建一次，三条 lane 各运行一次
 
 npm run package:release   # 生成 Windows x64 安装器
 ```
@@ -188,7 +189,7 @@ npm run package:release   # 生成 Windows x64 安装器
 | 真实 `loopback` / `mic` 性能与两小时稳定性 | 实现完成·尚未验收 | revision `b96b8fe7…521f` 的 `loopback` 五轮结构/精修/自然退出/零损失证据闭合，但冻结 P95=1242ms，仍高于 `<1000 ms`，六段 trace 已重新开启 Gate 0B realtime 模型替换评估；该历史 Gate 0B summary 中三个新登记的官方在线中英候选均满足裸模型 RTF/首个临时字幕边界，但都未保住内容质量，因此保持 `evaluation-only`、尚未选定替代模型，当时的生产 manifest 未变。revision `82d56f64…7939` 的 75 秒 I3 `loopback` 资格取得 31 个首次稳定转写、29 个精修稿与 15/15 成立检查，但它是 `pass/partial`，不替代真人原生拖动、7,200 秒/3,000 段或物理麦克风五轮。详情见[验收导航](docs/validation/README.md)。 |
 | I4 非音频干净 Windows 子门禁 | 实现完成·尚未验收 | runner/verifier 已实现；需要无仓库、无 Node、无既有数据的标准用户机器复核真实 `userData` 与安装生命周期。 |
 | 完整 I4 干净机发布验收 | 实现完成·尚未验收 | `loopback`/`mic` 来源隔离 child、strict summary 与不含仓库/Node 的移交包入口已实现；尚无专用干净 Win11 三份 child 报告，SmartScreen 与真实来源旅程仍归此门禁。 |
-| Agent 系统 | 实现完成·尚未验收 | 个人上下文、模型接入层、统一执行路径与受控只读工具的 Core 子边界已实现；正式 Agent Bar 窗口、preload 与 exact IPC 尚未汇合，因此不构成 J21/J22/J24/J25/J26 的联合验收。全程不阻断字幕 MVP。 |
+| Agent 系统 | 实现完成·尚未验收 | 个人上下文、模型接入层、统一执行路径、受控只读工具、正式 Agent Bar renderer、exact preload/IPC、交互历史与单交互 canonical JSON 导出已有实现；工具条正式入口和真实 renderer → Agent Loop → storage worker/SQLite 联合旅程仍待收束，因此不构成 J21/J22/J24/J25/J26/J27 的联合验收。全程不阻断字幕 MVP。 |
 | 代码签名 | 已决定 | 内部 MVP 阶段暂缓，当前安装器不是公开签名版本。 |
 
 本轮按项目负责人要求取消声音测试，未执行采集、播放、WAV 推理或模型推理；因此 I2、I3 音频实机范围与完整 I4 保持实现完成·尚未验收，不以本轮 CI 结果替代。
