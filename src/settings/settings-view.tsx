@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import Icons from '../ui/shared/fluent-icons'
+import { AgentSettingsPane } from './agent-settings-pane'
 import { AgentModelPane } from './agent-model-pane'
 
 type Pane = 'display' | 'audio' | 'asr' | 'resources' | 'agentModel' | 'about'
@@ -254,7 +255,10 @@ export function SettingsView (): ReactElement {
           <div className="group refinement-preference"><div className="row"><div><div className="label">为未来新会话启用精修</div><div className="hint" id="refinementPreferenceState">{preferenceText}</div></div><label className="switch"><input id="refinementPreferenceToggle" type="checkbox" checked={cfg?.refinementEnabled === true} disabled={cfg == null || refinementBusy || preferencePending} aria-describedby="refinementPreferenceState" onChange={(event) => void setPreference(event.currentTarget.checked)} /><span>启用</span></label></div></div>
           <p className="note">这些资源只服务于本地字幕识别，不包含 Agent、翻译或大语言模型。核心字幕模型资源包包含临时字幕识别器、权威识别器与语音活动检测；临时字幕不会进入历史或导出。精修模型默认不下载；取消后保留合法已下载部分，只有明确点击“继续下载”才会续传。安装完成后仍需再次明确开启，且只影响未来新会话。</p></section>
         <section className={`pane${pane === 'agentModel' ? ' active' : ''}`} data-pane="agentModel">
-          {pane === 'agentModel' && <AgentModelPane shell={shell} />}
+          {pane === 'agentModel' && <>
+            <AgentSettingsPane shell={shell} config={cfg} onConfigRefresh={refreshConfig} />
+            <AgentModelPane shell={shell} />
+          </>}
         </section>
         <section className={`pane${pane === 'about' ? ' active' : ''}`} data-pane="about"><h1>关于</h1><p className="sub">Live Subtitle Agent · 骨架 v0.1.0</p><p className="note">本地两遍 ASR 已接入；模型缺失时保持不可用，不会伪造字幕。</p></section>
       </main></div>

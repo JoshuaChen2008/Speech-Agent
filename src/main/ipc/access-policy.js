@@ -36,6 +36,7 @@ const ROLE_ACCESS = Object.freeze({
   [CHANNELS.REFINEMENT_NOTICE_GET]: Object.freeze(['toolbar']),
   [CHANNELS.AGENT_CONTEXT_GET_OVERVIEW]: Object.freeze(['settings', 'history']),
   [CHANNELS.AGENT_CONTEXT_MANAGE]: Object.freeze(['settings', 'history']),
+  [CHANNELS.AGENT_SETTINGS_UPDATE]: Object.freeze(['settings']),
   [CHANNELS.AGENT_MODEL_GET_CATALOG]: Object.freeze(['settings']),
   [CHANNELS.AGENT_MODEL_CONFIGURE]: Object.freeze(['settings']),
   [CHANNELS.AGENT_MODEL_PULL_REMOTE_CATALOG]: Object.freeze(['settings']),

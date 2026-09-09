@@ -44,6 +44,7 @@ module.exports = Object.freeze({
   AGENT_CONTEXT_GET_OVERVIEW: 'agent-context:get-overview',
   AGENT_CONTEXT_MANAGE: 'agent-context:manage',
   AGENT_CONTEXT_CHANGED: 'agent-context:changed',
+  AGENT_SETTINGS_UPDATE: 'agent-settings:update',
   AGENT_MODEL_GET_CATALOG: 'agent-model:get-catalog',
   AGENT_MODEL_CONFIGURE: 'agent-model:configure',
   AGENT_MODEL_PULL_REMOTE_CATALOG: 'agent-model:pull-remote-catalog',

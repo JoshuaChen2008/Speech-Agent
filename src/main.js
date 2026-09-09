@@ -45,6 +45,8 @@ const {
   broadcastPersonalContextChanged,
   registerPersonalContextIpc
 } = require('./main/ipc/personal-context-ipc')
+const { registerAgentSettingsIpc } = require('./main/ipc/agent-settings-ipc')
+const { publicConfigPayload } = require('./main/config-public-projection')
 const {
   broadcastModelAccessChanged,
   registerModelAccessIpc
@@ -287,7 +289,7 @@ function preloadPath (role) {
 
 function payload () {
   return {
-    ...config.get(),
+    ...publicConfigPayload(config.get()),
     systemDark: nativeTheme.shouldUseDarkColors,
     refinementPreferenceFallback: refinementPreferenceFallbackNotice
   }
@@ -347,6 +349,13 @@ registerPersonalContextIpc({
   ipcMain,
   authorize: requireSender,
   getRuntime: () => personalContextRuntime
+})
+
+registerAgentSettingsIpc({
+  ipcMain,
+  authorize: requireSender,
+  getRuntime: () => personalContextRuntime,
+  onChanged: () => broadcastConfig()
 })
 
 registerModelAccessIpc({

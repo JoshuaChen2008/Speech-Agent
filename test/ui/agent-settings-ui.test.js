@@ -1,0 +1,98 @@
+'use strict'
+
+require('./dom-bootstrap')
+
+const assert = require('node:assert/strict')
+const path = require('node:path')
+const test = require('node:test')
+const React = require('react')
+const { act } = React
+const { createRoot } = require('react-dom/client')
+const { JSDOM } = require('jsdom')
+const { loadRendererModule } = require('./load-renderer-module')
+
+const root = path.resolve(__dirname, '..', '..')
+const header = { contract_id: 'speech-agent.agent-settings.ui', contract_version: '1.0.0' }
+
+async function flush () {
+  await act(async () => {
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+  })
+}
+
+function click (element) {
+  element.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+}
+
+async function createHarness (response) {
+  const { AgentSettingsPane } = await loadRendererModule(path.join(root, 'src', 'settings', 'agent-settings-pane.tsx'))
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://settings.test/' })
+  const previous = Object.fromEntries(['window', 'document', 'HTMLElement', 'Event', 'MouseEvent'].map((key) => [key, global[key]]))
+  Object.assign(global, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Event: dom.window.Event, MouseEvent: dom.window.MouseEvent })
+  global.IS_REACT_ACT_ENVIRONMENT = true
+  const calls = []
+  let refreshCount = 0
+  const shell = {
+    setAgentSettings: async (request) => { calls.push(request); return response },
+  }
+  const config = {
+    agentEnabled: false,
+    memoryEnabled: true,
+    cloudDisclosureAccepted: false,
+    agentSettingsRevision: 3
+  }
+  const reactRoot = createRoot(dom.window.document.getElementById('root'))
+  await act(async () => reactRoot.render(React.createElement(AgentSettingsPane, {
+    shell, config, onConfigRefresh: async () => { refreshCount += 1 }
+  })))
+  await flush()
+  return {
+    calls,
+    get refreshCount () { return refreshCount },
+    async dispose () {
+      await act(async () => reactRoot.unmount())
+      dom.window.close()
+      for (const [key, value] of Object.entries(previous)) value === undefined ? delete global[key] : (global[key] = value)
+      delete global.IS_REACT_ACT_ENVIRONMENT
+    }
+  }
+}
+
+test('SEM-F27/SEM-F30/J21: Agent settings surface exposes the three product controls and sends a bounded exact update', async (t) => {
+  const harness = await createHarness({
+    ...header,
+    ok: true,
+    settings: { agent_enabled: true, memory_enabled: true, cloud_disclosure_accepted: false, agent_settings_revision: 4 },
+    error: null
+  })
+  t.after(() => harness.dispose())
+  assert.match(document.body.textContent, /Agent 系统/)
+  assert.match(document.body.textContent, /个人记忆/)
+  assert.match(document.body.textContent, /云端模型披露/)
+  await act(async () => click(document.querySelector('input[aria-label="启用 Agent 系统"]')))
+  await flush()
+  assert.deepEqual(harness.calls, [{
+    ...header,
+    expected_revision: 3,
+    agent_enabled: true,
+    memory_enabled: true,
+    cloud_disclosure_accepted: false
+  }])
+  assert.equal(harness.refreshCount, 1)
+  assert.equal(document.body.textContent.includes('agent-settings:update'), false)
+})
+
+test('SEM-T04/J21: settings conflict is surfaced as an actionable message without exposing private failure details', async (t) => {
+  const harness = await createHarness({
+    ...header,
+    ok: false,
+    settings: null,
+    error: { code: 'AGENT_SETTINGS_REVISION_CONFLICT', next_action: 'reload' }
+  })
+  t.after(() => harness.dispose())
+  await act(async () => click(document.querySelector('input[aria-label="确认云端模型披露"]')))
+  await flush()
+  assert.match(document.body.textContent, /设置已在别处更新，请重新载入后再试/) 
+  assert.doesNotMatch(document.body.textContent, /stack|path|credential|prompt/i)
+})

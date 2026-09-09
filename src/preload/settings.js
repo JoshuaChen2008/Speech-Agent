@@ -20,6 +20,10 @@ const {
   assertPullRequest: assertModelPullRequest,
   assertPullResponse: assertModelPullResponse
 } = require('../agent/contracts/agent-model-ui')
+const {
+  assertUpdateRequest: assertAgentSettingsUpdateRequest,
+  assertUpdateResponse: assertAgentSettingsUpdateResponse
+} = require('../agent/contracts/agent-settings-ui')
 
 function onAgentContextChanged (callback) {
   if (typeof callback !== 'function') throw new TypeError('callback must be a function')
@@ -44,6 +48,10 @@ contextBridge.exposeInMainWorld('shell', {
   closeSettings: () => ipcRenderer.send(CHANNELS.SETTINGS_CLOSE),
   getConfig: () => ipcRenderer.invoke(CHANNELS.CONFIG_GET),
   setConfig: (patch) => ipcRenderer.invoke(CHANNELS.CONFIG_UPDATE, patch),
+  setAgentSettings: (request) => {
+    assertAgentSettingsUpdateRequest(request)
+    return ipcRenderer.invoke(CHANNELS.AGENT_SETTINGS_UPDATE, request).then((response) => assertAgentSettingsUpdateResponse(response))
+  },
   onConfig: (callback) => subscribe(CHANNELS.CONFIG_CHANGED, callback),
   selectPreset: (preset) => ipcRenderer.invoke(CHANNELS.PRESET_SELECT, String(preset || '')),
   getModelStatus: () => ipcRenderer.invoke(CHANNELS.MODEL_STATUS_GET),
