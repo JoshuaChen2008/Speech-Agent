@@ -8,7 +8,7 @@
 ## 1. 项目一句话
 
 Win11 本地实时字幕系统：Electron 多窗口 + sherpa-onnx 本地 ASR + SQLite 字幕历史。
-Agent 系统（摘要、增强文本）是**后置的可选系统**，尚未实现。
+Agent 系统是**后置的可选系统**：个人上下文、模型接入与执行宿主已有 Core 实现；正式 Agent Bar 产品链路尚未联合验收。当前切片事实见 `docs/agent-redesign-execution-plan.md` §5 的日期记录。
 **字幕系统必须能在 Agent 完全不存在时独立完整工作。**
 
 ---

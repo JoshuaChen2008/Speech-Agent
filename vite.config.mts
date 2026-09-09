@@ -34,7 +34,8 @@ export default defineConfig({
         caption: resolve(sourceRoot, 'caption/index.html'),
         toolbar: resolve(sourceRoot, 'toolbar/index.html'),
         settings: resolve(sourceRoot, 'settings/settings.html'),
-        history: resolve(sourceRoot, 'history/index.html')
+        history: resolve(sourceRoot, 'history/index.html'),
+        agent: resolve(sourceRoot, 'agent/index.html')
       },
       output: {
         entryFileNames: 'assets/[name]-[hash].js',

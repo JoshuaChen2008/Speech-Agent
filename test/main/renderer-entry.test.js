@@ -15,7 +15,14 @@ const {
 
 const ROOT = path.resolve(__dirname, '../..')
 
-test('SEM-F23/J18 production renderer roles resolve only inside the Vite build root', () => {
+test('SEM-F23/SEM-F31/J18 production renderer roles resolve only inside the Vite build root', () => {
+  assert.deepEqual(RENDERER_PAGES, {
+    caption: 'caption/index.html',
+    toolbar: 'toolbar/index.html',
+    settings: 'settings/settings.html',
+    history: 'history/index.html',
+    agent: 'agent/index.html'
+  })
   for (const [role, page] of Object.entries(RENDERER_PAGES)) {
     const target = resolveRendererTarget(role, {
       appRoot: ROOT,
@@ -87,7 +94,7 @@ test('SEM-F23/J18 renderer loader destroys a blank window when a production page
   assert.equal(destroyCount, 1)
 })
 
-test('SEM-F23/J18 Vite manifest binds all four production renderer entries', () => {
+test('SEM-F23/SEM-F31/J18 Vite manifest binds all five production renderer entries', () => {
   const manifestPath = path.join(ROOT, 'src', 'renderer-dist', 'manifest.json')
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
   for (const page of Object.values(RENDERER_PAGES)) {

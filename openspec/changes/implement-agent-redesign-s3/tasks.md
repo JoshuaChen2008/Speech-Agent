@@ -178,11 +178,11 @@
 
 ## 11. exact IPC、资格、preload 与 UI/UX fixture tracer bullets
 
-- [ ] 11.1 先写会红的 Agent run UI contract/version 测试，冻结六频道、request/result/event、终态/资格/routing/usage/cache 枚举与 unknown fail closed。
-- [ ] 11.2 在 `src/agent/contracts/` 签发版本化 exact contract 使 11.1 转绿；已签发版本目录只读。
+- [x] 11.1 先写会红的 Agent run UI contract/version 测试，冻结已登记频道、request/result/event、终态/资格/routing/usage/cache 枚举与 unknown fail closed。
+- [x] 11.2 在 `src/agent/contracts/` 签发版本化 exact contract 使 11.1 转绿；已签发版本目录只读。
 - [ ] 11.3 定向回归 extra/missing/unknown version/错误 cursor/非法 limit/内部字段/路径/凭据/金额泄漏。
-- [ ] 11.4 先写会红的 access policy 测试，`agent/history` 允许六频道，caption/toolbar/settings/unknown 在 controller 前拒绝。
-- [ ] 11.5 扩展 channels/access policy/main controller 与 agent/history preload facade，使 11.4 转绿；renderer 不取得 channel 名、store 或 provider。
+- [x] 11.4 先写会红的 access policy 测试，`agent/history` 允许已登记频道，caption/toolbar/settings/unknown 在 controller 前拒绝。
+- [x] 11.5 扩展 channels/access policy/main controller 与 agent/history preload facade，使 11.4 转绿；renderer 不取得 channel 名、store 或 provider。
 - [ ] 11.6 定向回归 webContents replacement、reload、旧 sender、changed unsubscribe 与 observer 抛错。
 - [ ] 11.7 先写会红的九值资格表与固定顺序：terminal→transcript→automatic window→disabled→provider→cloud disclosure/credential→local readiness→ready。
 - [ ] 11.8 实现 main-owned eligibility composer 使 11.7 转绿；用户请求只跳过 automatic window。

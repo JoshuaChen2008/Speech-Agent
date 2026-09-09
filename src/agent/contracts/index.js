@@ -3,6 +3,7 @@
 const agentToolTraceUi = require('./agent-tool-trace-ui')
 const agentRunEligibilityUi = require('./agent-run-eligibility-ui')
 const controlledTools = require('./controlled-tools')
+const agentRunUi = require('./agent-run-ui')
 
 module.exports = Object.freeze({
   ...require('./agent-context-ui'),
@@ -12,5 +13,6 @@ module.exports = Object.freeze({
   ...require('./recipes'),
   agentRunEligibilityUi,
   agentToolTraceUi,
+  agentRunUi,
   controlledTools
 })

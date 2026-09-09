@@ -8,7 +8,8 @@ const RENDERER_PAGES = Object.freeze({
   caption: 'caption/index.html',
   toolbar: 'toolbar/index.html',
   settings: 'settings/settings.html',
-  history: 'history/index.html'
+  history: 'history/index.html',
+  agent: 'agent/index.html'
 })
 
 function validateDevServerUrl (value) {

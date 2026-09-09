@@ -14,6 +14,8 @@ const {
   assertFixturePrivacy,
   assertGetEligibilityRequest,
   assertGetEligibilityResponse,
+  assertScope,
+  assertSnapshot,
   isSupportedContract
 } = require('../../src/agent/contracts/agent-run-eligibility-ui')
 
@@ -103,4 +105,14 @@ test('SEM-F14/SEM-F31/J22: Agent Bar eligibility fixtures reject prompt, credent
     { localPath: 'C:\\synthetic' },
     { rawError: 'TypeError: synthetic' }
   ]) assert.throws(() => assertFixturePrivacy(value), /forbidden/)
+})
+
+test('SEM-F16/SEM-F28/J22: legacy eligibility helpers remain projections of the signed Agent run contract', () => {
+  const scope = { kind: 'session', reference: 'session.compatibility-1' }
+  const snapshot = { scope, eligibility: 'ready', next_action: null, revision: 4 }
+
+  assert.equal(assertScope(scope), scope)
+  assert.equal(assertSnapshot(snapshot), snapshot)
+  assert.throws(() => assertScope({ ...scope, extra: true }), /exact keys/)
+  assert.throws(() => assertSnapshot({ ...snapshot, next_action: 'settings' }), /must be null/)
 })
