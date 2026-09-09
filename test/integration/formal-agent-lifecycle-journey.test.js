@@ -12,6 +12,7 @@ const {
   DEFAULT_AGENT_PROVIDER_CONFIG_CATALOG
 } = require('../../src/agent-provider/provider-bootstrap')
 const { CONFIG_SCHEMA_VERSION, ConfigStore } = require('../../src/main/services/config-store')
+const { HistoryService } = require('../../src/main/services/history-service')
 const { FormalAgentStore, makeUserRequestDigest } = require('../../src/runtime/storage-worker/formal-agent-store')
 const { OPERATIONS, PROTOCOL_VERSION, makeCaptionEventId, makeCloseSessionKey, makeOpenSessionKey } = require('../../src/runtime/storage-worker/protocol')
 const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
@@ -439,7 +440,7 @@ test('SEM-F28/SEM-T15 / D9/J24-B23/B26/B30 在配置校验前消费启动环境�
   assert.equal(Number(client.service.store.database.prepare('SELECT COUNT(*) AS count FROM agent_jobs').get().count), 3)
 })
 
-test('SEM-F28 / J24-B01/B26 preserves eligibility priority and subtitle independence', (t) => {
+test('SEM-F28 / J24-B01/B26 preserves eligibility priority and subtitle independence', async (t) => {
   const clock = { value: 10000 }
   const environment = journeyEnvironment(t)
   const client = environment.track(serviceFor(environment.databasePath, clock, { value: 0 }))
@@ -459,12 +460,20 @@ test('SEM-F28 / J24-B01/B26 preserves eligibility priority and subtitle independ
     sessionId: 'active-empty', requestedBy: 'automatic', eligibilityContext: cloudContext()
   }).eligibility, 'no_committed_transcript')
 
-  createSession(client, { sessionId: 'eligible-session', captions: ['synthetic eligibility transcript'] })
+  createSession(client, { sessionId: 'eligible-session', captions: ['synthetic eligibility transcript'], close: false })
   const evaluate = (context, requestedBy = 'automatic') => client.call(OPERATIONS.AGENT_EVALUATE_ELIGIBILITY, {
     sessionId: 'eligible-session', requestedBy, eligibilityContext: context
   }).eligibility
+  const disabledContext = cloudContext({ agentEnabled: false })
+  assert.equal(client.call(OPERATIONS.AGENT_APPLY_TASK_POLICY, { eligibilityContext: disabledContext }).queuedCancelled, 0)
+  client.call(
+    OPERATIONS.CLOSE_SESSION,
+    { sessionId: 'eligible-session', sourceId: 'loopback', endedAt: 200, state: 'closed' },
+    makeCloseSessionKey('eligible-session')
+  )
+  const disabledEligibility = evaluate(disabledContext)
+  assert.equal(disabledEligibility, 'agent_disabled')
   assert.equal(evaluate(cloudContext({ automaticProcessingSince: 201 })), 'outside_automatic_window')
-  assert.equal(evaluate(cloudContext({ agentEnabled: false })), 'agent_disabled')
   assert.equal(evaluate(cloudContext({ providerId: null, providerKind: null, model: null })), 'provider_not_configured')
   assert.equal(evaluate(cloudContext({ cloudDisclosureAccepted: false })), 'cloud_disclosure_required')
   assert.equal(evaluate(cloudContext({ credentialAvailable: false })), 'credential_unavailable')
@@ -473,7 +482,23 @@ test('SEM-F28 / J24-B01/B26 preserves eligibility priority and subtitle independ
   assert.equal(evaluate(cloudContext({ automaticProcessingSince: 201 }), 'user'), 'ready')
 
   assert.equal(client.service.store.database.prepare('SELECT COUNT(*) AS count FROM agent_jobs').get().count, 0)
-  assert.equal(client.call(OPERATIONS.GET_SESSION, { sessionId: 'eligible-session' }).segments.length, 1)
+  const subtitleGateway = {
+    listSessions: (request) => client.call(OPERATIONS.LIST_SESSIONS, request),
+    getSessionPage: (request) => client.call(OPERATIONS.GET_SESSION_PAGE, request),
+    getSessionTranscript: (sessionId) => client.call(OPERATIONS.GET_SESSION, { sessionId })
+  }
+  const exportPath = path.join(path.dirname(environment.databasePath), 'agent-disabled-subtitle.txt')
+  const history = new HistoryService({
+    gateway: subtitleGateway,
+    showSaveDialog: async () => ({ canceled: false, filePath: exportPath })
+  })
+  const subtitle = client.call(OPERATIONS.GET_SESSION, { sessionId: 'eligible-session' })
+  assert.equal(subtitle.session.state, 'closed')
+  assert.equal(subtitle.segments.length, 1)
+  assert.equal((await history.listSessions({ limit: 10, cursor: null })).items.some((item) => item.sessionId === 'eligible-session'), true)
+  assert.equal((await history.getSessionPage({ sessionId: 'eligible-session', limit: 10, cursor: null })).items.length, 1)
+  assert.equal((await history.exportSession({ sessionId: 'eligible-session', format: 'txt' })).status, 'saved')
+  assert.equal(fs.readFileSync(exportPath).length > 0, true)
 })
 
 test('SEM-F28 / J24-B04/B25/B13 reconciles three frozen independent jobs exactly once', (t) => {

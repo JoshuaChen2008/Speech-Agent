@@ -11,6 +11,7 @@ const { AgentInteractionExporter } = require('../../src/agent/formal-run/agent-i
 const { FormalAgentJobScheduler, FormalAgentRunRunner } = require('../../src/agent/execution-host')
 const { CredentialVault } = require('../../src/agent/model-access/credential-vault')
 const { ModelAccessRuntime } = require('../../src/agent/model-access/runtime')
+const { HistoryService } = require('../../src/main/services/history-service')
 const { SqliteSessionRecorder } = require('../../src/main/services/sqlite-session-recorder')
 const { StorageGateway } = require('../../src/main/services/storage-gateway')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
@@ -43,6 +44,7 @@ function hostFactory (service, databasePath) {
     async appendCaption (event) { return call(OPERATIONS.APPEND_CAPTION, { event }, makeCaptionEventId(event)) },
     async closeSession (value) { return call(OPERATIONS.CLOSE_SESSION, value, makeCloseSessionKey(value.sessionId)) },
     async listSessions (value) { return call(OPERATIONS.LIST_SESSIONS, value) },
+    async getSessionPage (value) { return call(OPERATIONS.GET_SESSION_PAGE, value) },
     async getSessionTranscript (value) { return call(OPERATIONS.GET_SESSION, { sessionId: value }) },
     async personalContextResolve (request) { return call(OPERATIONS.PERSONAL_CONTEXT_RESOLVE, { request }) },
     async derivePersonalContextSessionSource (request) { return call(OPERATIONS.PERSONAL_CONTEXT_DERIVE_SESSION_SOURCE, { request }) },
@@ -112,6 +114,9 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
           lateProviderStarted = true
           await new Promise((resolve) => { releaseLateProvider = resolve })
         }
+        if (typeof prompt === 'string' && prompt.includes('失败字幕独立')) {
+          return { text: JSON.stringify({ schemaVersion: 1 }) }
+        }
         if (recipe.recipeId === 'summary.minutes') {
           return { text: JSON.stringify({
             schemaVersion: 1,
@@ -170,6 +175,28 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
     })
   })
   scheduler.start()
+  const subtitleExportPaths = [
+    path.join(root, 'subtitle-cancelled.txt'),
+    path.join(root, 'subtitle-failed.txt')
+  ]
+  const historyService = new HistoryService({
+    gateway,
+    showSaveDialog: async () => ({ canceled: false, filePath: subtitleExportPaths.shift() })
+  })
+  async function recordSubtitleWhileAgentSettles (sessionId, text) {
+    const exportPath = subtitleExportPaths[0]
+    await recorder.openSession({ sessionId, sourceId: 'mic', refinementEnabled: false })
+    await recorder.acceptCaption({
+      schemaVersion: 1, sessionId, sourceId: 'mic', segmentId: `${sessionId}.segment`,
+      sequence: 1, revision: 1, kind: 'final', t0: 0, t1: 10, text, translation: null
+    })
+    await recorder.closeSession({ sessionId, sourceId: 'mic', state: 'closed' })
+    const page = await historyService.getSessionPage({ sessionId, limit: 10, cursor: null })
+    assert.equal(page.items.length, 1)
+    const exported = await historyService.exportSession({ sessionId, format: 'txt' })
+    assert.equal(exported.status, 'saved')
+    assert.equal(fs.readFileSync(exportPath).length > 0, true)
+  }
   t.after(async () => {
     await scheduler.stop()
     vault.close()
@@ -271,6 +298,7 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
   })
   assert.equal(cancelled.ok, true)
   assert.equal(cancelled.result.state, 'cancelling')
+  await recordSubtitleWhileAgentSettles('session.s5.cancelled.subtitle', '取消收束后字幕仍可停止并导出')
   releaseLateProvider({ text: JSON.stringify({
     schemaVersion: 1,
     answer: '迟到结果不得写入',
@@ -291,4 +319,25 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
   assert.equal(lateDetail.result.state, 'cancelled')
   assert.equal(lateDetail.result.result, null)
   assert.equal(database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get(lateSubmitted.result.run_id).state, 'cancelled')
+
+  const failedSubmitted = await agent.submit({
+    contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
+    scope: { kind: 'session', reference: 'session.s5.target' },
+    prompt: '请验证失败字幕独立', client_idempotency_key: 'client.s5.failed.subtitle'
+  })
+  assert.equal(failedSubmitted.ok, true)
+  for (let i = 0; i < 80; i++) {
+    const failedDetail = await agent.getInteraction({
+      contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0', interaction_id: failedSubmitted.result.interaction_id
+    })
+    if (failedDetail.ok && failedDetail.result.state === 'failed') break
+    await tick()
+  }
+  const failedDetail = await agent.getInteraction({
+    contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0', interaction_id: failedSubmitted.result.interaction_id
+  })
+  assert.equal(failedDetail.ok, true)
+  assert.equal(failedDetail.result.state, 'failed')
+  assert.equal(failedDetail.result.error_code, 'AGENT_OUTPUT_INVALID')
+  await recordSubtitleWhileAgentSettles('session.s5.failed.subtitle', '失败收束后字幕仍可停止并导出')
 })
