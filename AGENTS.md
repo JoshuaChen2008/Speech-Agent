@@ -68,14 +68,17 @@ PLAN 或 README 落后于语义合同时，以语义合同为准，并把差异�
 ## 5. 测试与运行
 
 ```bash
-npm run test:core         # contracts/main/runtime/storage/ui，最快，先跑这条
+npm run test:focus -- test/ui/renderer-style-guard.test.js # 小改动：指定受影响文件，不自动构建
+npm run test:core         # 扩大到 contracts/main/runtime/storage/ui
 npm run test:integration  # 跨模块确定性旅程
 npm run test:evidence     # gate/validation/证据回归（含约 7 秒 I3 预资格）
-npm test                  # 三条 lane 依次执行
+npm test                  # PR/阶段联合验收：统一构建一次，三条 lane 依次执行
 npm start                 # 受监督启动完整应用
 ```
 
-- **新增测试必须落在既有三个 lane 的目录内**（`test/{contracts,main,runtime,storage,ui,integration,gate-0b,gate-0c,validation}`）。新建其它目录会让 `test-lanes-contract.test.js` 直接变红，因为 lane 目录是硬编码的。
+- **开发默认按影响范围选测**，不要求每个小功能、提交或任务交接都本地执行 `npm test`。纯文档只核对术语、语义和链接；单模块运行定向测试及相关真实旅程；公共契约、共享存储、main/preload 或跨模块生命周期改动扩大到相关 lane。PR/合并与阶段联合验收由当前 revision 的完整 CI 或一次本地全量承担；没有新改动、失败或新风险，不重跑相同成功检查。详见 `docs/testing-strategy.md` §2.1。
+- `test:focus` 只接受明确的测试文件，不推导依赖。需要生产 renderer 的旅程先 `npm run verify:renderer`；涉及隔离入口再 `npm run build:agent-mvp`。报告写实际命令、结果与未验证范围，不把定向结果写成完整旅程验收。
+- **新增测试必须落在既有三个 lane 的目录内**（`test/{contracts,main,runtime,storage,ui,integration,gate-0b,gate-0c,validation}`）。其它目录由 `test-lanes-contract.test.js` 拒绝；lane 定义位于 `scripts/run-test-lanes.js`。
 - Windows 的 `tar.exe` 与 Electron 子进程在受限沙箱内可能被 `EPERM` 拒绝。**这是执行环境问题，不得计作产品断言失败或通过。**
 - 托管 CI 不证明真实声卡、物理麦克风、DWM 窗口行为、模型性能、交互安装或干净机（SEM-T03）。这些结论只能来自实机报告。
 
@@ -101,4 +104,4 @@ npm start                 # 受监督启动完整应用
 - [ ] 新增或变更的能力已在语义表与旅程矩阵登记
 - [ ] 没有新增音频产物、音频路径，也没有 SQLite/JSONL 双写
 - [ ] 失败路径至少覆盖一条（SEM-T04），核心能力 fail closed 或显式降级
-- [ ] `npm test` 三条 lane 全通过
+- [ ] 已按 `testing-strategy.md` §2.1 执行受影响验证；PR/联合验收另有当前 revision 的完整三条 lane 结果，小改动不强制本地全量

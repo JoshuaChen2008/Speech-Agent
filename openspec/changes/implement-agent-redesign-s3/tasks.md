@@ -1,5 +1,7 @@
 ## 1. 权威登记与实施基线
 
+> 2026-09-08：本清单是细项追踪，未勾选不等于代码不存在；当前切片代码事实见 `docs/agent-redesign-execution-plan.md` §5。第 13 节完整门禁用于 PR/阶段联合验收，可由当前 revision 的 CI 承担；日常小改动与交接按 `docs/testing-strategy.md` §2.1 定向验证，不要求每轮重跑三条 lane。
+
 - [ ] 1.1 完整重读 `AGENTS.md` 与 `CONTEXT.md`，逐字核对 SEM-F16/F28/F30-F35/T10/T15、2026-08-30 修订说明、ADR 0013-0018、J22/J24 S3 Core 子边界和本 change；记录术语缺口但不沿用冲突现状。
 - [ ] 1.2 记录实施前 branch/HEAD、`git status --short`、用户已有未提交/未跟踪文件、S1/S2 状态、当前 core/integration/evidence 返回码；后续只显式暂存 S3 路径。
 - [ ] 1.3 冻结并测试 v1-v6 migration SQL/checksum 基线，确认 S3 只能追加 v7，不能以格式化或重排改动旧字节。
@@ -213,10 +215,10 @@
 ## 13. 三条 lane、审阅、状态与提交
 
 - [ ] 13.1 运行全部受影响的定向 contracts/main/runtime/storage/ui/integration/validation 测试；交接前不得留下长期红测。
-- [ ] 13.2 运行 `npm run test:core`，记录实际返回码、计数与失败分类；不得只写“测试通过”。
-- [ ] 13.3 运行 `npm run test:integration`，确认新增 S3 联合测试本身返回 0；既有 Windows Electron GPU `exit_code=-1073741515` 与产品断言分开报告。
-- [ ] 13.4 运行 `npm run test:evidence`，确认 preview fixture 不进入证据目录、测试 lane 合法、生产旧 Agent/测试 provider 边界与隐私负扫描成立。
-- [ ] 13.5 运行完整 `npm test`；若 integration 环境失败使后续 lane 未执行，必须另行独立运行 evidence 并如实记录命令边界。
+- [ ] 13.2 从同一次全量运行记录 core 的实际返回码、计数与失败分类；不为了登记再次执行 `test:core`。
+- [ ] 13.3 从同一次全量运行记录 integration 结果，确认新增 S3 联合测试本身返回 0；Windows Electron GPU `exit_code=-1073741515` 与产品断言分开报告，不按症状直接认定环境根因。
+- [ ] 13.4 从同一次全量运行记录 evidence 结果，确认 preview fixture 不进入证据目录、测试 lane 合法、生产旧 Agent/测试 provider 边界与隐私负扫描成立；不重复执行成功 lane。
+- [ ] 13.5 PR/阶段联合验收运行一次完整 `npm test` 或引用当前 revision 的完整 CI，13.2–13.4 复用该结果；若 integration 失败使 evidence 未执行，只补独立 evidence 并记录命令边界。日常小任务只执行 §2.1 规定的受影响验证。
 - [ ] 13.6 使用 code review 复核 v1-v6 checksum、v7 四组、索引裁定、十一 recipe、统一 Loop、bind 常量、五类 fallback、取消/迟到、两段式摄取、usage null、comparison digest、删除/分页/IPC/隐私。
 - [ ] 13.7 复核所有需求/测试名/错误字段/报告文案与 `CONTEXT.md` 规范术语逐字对齐，不使用被禁说法或无修饰状态词。
 - [ ] 13.8 按实际证据更新执行计划与 testing strategy 的 S3 实施记录；S5-Integration 前最多写「实现完成·尚未验收」，不得晋级完整 J22/J24。

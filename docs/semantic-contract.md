@@ -159,6 +159,12 @@
 
 > 2026-08-07 当前确定性资格：revision `bbfd7041e5963e51942392323735298a7b81cb30` / run `31191838016` 已达到联合验收完成。core 422 tests=415 pass+7 expected model/Silero-asset skips、integration 29/29、evidence 204/204；总计 655 tests=648 pass+7 expected skips+0 fail。artifact ID `8999273285`、ZIP digest `5ce4070c…55af`、installer SHA `d77d16c0…060c`、产品载荷 SHA `e95fd87f…a35a`。schema-v4 产品壳及 packaged 首启/复启闭合三项核心 marker / 四项总资源；本轮未执行采集、播放、WAV 推理或模型推理，不改变 J15a/I2/I3/I4 实机边界。
 
+### SEM-T03/J9-CI 开发反馈频率修订（2026-09-08）
+
+已决定：日常小改动按影响范围执行定向测试；公共契约、共享存储、main/preload 或跨模块生命周期变化时扩大到相关 lane。纯文档不启动产品回归。PR/合并与阶段联合验收仍要求当前 revision 的完整三条 lane 和适用的 Windows 资格链，可由 CI 承担，本地不重复同一输入的成功运行；发布与实机门禁不变。测试选择、升级边界及重复测试承接登记见 `testing-strategy.md` §2.1。
+
+全量入口统一准备构建一次，各 lane 只执行一次；定向入口必须拒绝空选择或无效文件。CI 在 PR、main/tag push 和手动触发运行完整资格，取消同分支过期运行；功能分支 push 不再重复跑 PR 的全量任务。只有全部要求成立才生成 J9-CI 资格索引。允许移除只匹配文档词句/历史计数或 smoke 源码形状的冗余测试，保留真实用户旅程、严格报告与篡改拒绝、隐私和失败路径。此修订优先于旧计划中“每次小改动/交接必须本地三条 lane 全绿”的执行频率要求，不改变 SEM-T01/T02 的验收标准。
+
 ## 3. 变更维护规则
 
 1. 需求、实现或测试 PR 必须引用至少一个 `SEM-*`；没有适用项时先新增语义行。
