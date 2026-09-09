@@ -259,6 +259,8 @@ S3 的统一执行宿主 Core 子边界、S4 的 `read_sources` 与完整工具�
 
 > **2026-09-10 J25 正式设置链路证据（状态仍为实现完成·尚未验收）**：新增 `test/integration/agent-redesign-j25-formal-settings-journey.test.js` 与受控 Electron fixture，使用真实生产 `src/main.js`、settings/Agent Bar renderer、`src/preload/settings.js`、`src/preload/agent.js`、main-owned Model Access/Agent Loop、StorageGateway/SQLite 和 history renderer；先在正式 settings 入口提交连接、model、用途与凭据，再从 Agent Bar exact preload 提交请求，重载正式 Agent Bar history renderer 读取同一 SQLite 终态交互。仅 provider 网络使用 loopback 控制 seam，报告只保留布尔值与计数，明确 `publicProvider=false`、`systemCredential=false`；这条证据不替代真实公网 provider、系统凭据或实机比较。
 
+> **2026-09-10 J27 当前 revision 打包与三条 lane 证据（状态仍为实现完成·尚未验收）**：当前 revision `cfdc5e4` 在 Electron/utility 可运行环境下执行 `npm run test:core` 880/880、`npm run test:integration` 85/85、`npm run test:evidence` 229/229；受限沙箱中的 GPU 启动异常单独归为执行环境边界。`npm run package:smoke` 后的 layout verifier 为 pass（smoke 439 个 ASAR 条目、5 个 native binary），packaged product-shell fresh/restart 两轮均为 `pass` 且 exact supervised exit 为 `clean-exit`；`npm run package:release` 生成 x64 NSIS，release layout verifier 为 pass（435 个 ASAR 条目、5 个 native binary、installer 存在但未签名）。指标与哈希已写入 [`docs/validation/j27-current-revision-results.json`](validation/j27-current-revision-results.json)。该证据仍不构成干净机手动启动、真实公网 provider 或系统凭据边界验收，J27 与正式 MVP 总门槛保持未验收。
+
 设计稿、截图、fixture preview、Storybook 类预览、单独 renderer snapshot 或直接调用最终 exporter 均不构成确定性联合旅程。只有保留真实内部产品模块、仅替代已登记外部边界的 S5-Integration 结果才能晋级对应 J 旅程。
 
 新增功能必须在本表增加或更新场景；只有单元测试、没有对应用户旅程时，状态最多写“实现完成·尚未验收”。

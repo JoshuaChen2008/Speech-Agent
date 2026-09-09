@@ -292,6 +292,18 @@ S5 下一步执行以 [`openspec/changes/implement-agent-redesign-s5-minimal-cha
 白名单中的缺口。该证据把“正式设置→运行→历史”推进到实现完成·尚未验收，不改变真实公网、
 系统凭据、当前 revision 三条 lane、正式包、干净机或阶段联合验收门槛。
 
+### 2026-09-10 J27 当前 revision 打包与三条 lane 收束（仍为实现完成·尚未验收）
+
+当前 revision `cfdc5e4` 在 Electron/utility 可运行环境下的三条 lane 均返回 0：
+`npm run test:core` 为 880/880，`npm run test:integration` 为 85/85，
+`npm run test:evidence` 为 229/229。受限沙箱中出现的 Electron GPU 启动异常保留为执行环境边界，
+不改写可运行环境的完整 lane 结果。`npm run package:smoke` 后的 layout verifier 为 pass，
+smoke 包含 439 个 ASAR 条目和 5 个 native binary；packaged product-shell fresh/restart 两轮均为
+`pass`，exact supervised exit 均为 `clean-exit`。`npm run package:release` 生成 x64 NSIS，
+release layout verifier 为 pass，包含 435 个 ASAR 条目和 5 个 native binary，installer 存在但未签名。
+指标与哈希写入 [`docs/validation/j27-current-revision-results.json`](validation/j27-current-revision-results.json)。
+该记录仍明确缺少干净机手动启动、真实公网 provider 和系统凭据边界，因此 J27 与正式 MVP 总门槛不晋级。
+
 ### 目标验收矩阵
 
 | 切片 | 新 migration | 阻断旅程 | 正证据 | 负证据 |

@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "kind": "j27-current-revision-qualification",
+  "result": "pass",
+  "gateStatus": "partial",
+  "status": "实现完成·尚未验收",
+  "revision": "cfdc5e4b47ea76d069f476b8e92785bafb64f631",
+  "lanes": {
+    "core": { "tests": 880, "passed": 880, "failed": 0, "exitCode": 0 },
+    "integration": { "tests": 85, "passed": 85, "failed": 0, "exitCode": 0, "electronCapableEnvironment": true },
+    "evidence": { "tests": 229, "passed": 229, "failed": 0, "exitCode": 0 }
+  },
+  "isolation": {
+    "formalEntryAndIsolatedEntryUseDistinctUserDataAndSqlite": true,
+    "requireGraphExcludesLegacyAgentTrees": true,
+    "subtitleStorageRemainsIndependent": true
+  },
+  "smokePackage": {
+    "result": "pass",
+    "mainEntry": "scripts/product-shell-smoke.js",
+    "asarEntryCount": 439,
+    "nativeBinaryCount": 5,
+    "productPayloadFileCount": 271,
+    "productPayloadSha256": "5e25aac54400d89634273ec54f86f66c9120521f5196cdf76d9362ac917af190",
+    "appExecutableSha256": "d1922c0def74749cca369409f60c8b1a831dbeb1b1de6fda4e2b74d403b56e2d",
+    "appAsarSha256": "1146b4a69e5fa5deff7f94295bf143be5b6c4b9f343a6024662c061819a2f652",
+    "freshAndRestartCleanExit": true,
+    "nativeAddonAndStorageRoundTrip": true
+  },
+  "releasePackage": {
+    "result": "pass",
+    "mainEntry": "src/main.js",
+    "asarEntryCount": 435,
+    "nativeBinaryCount": 5,
+    "installerPresent": true,
+    "installerSigned": false,
+    "appExecutableSha256": "bb49e71ab40e6d1515f44a2d911bcfc269e41be51a93d7ca3fce3c03a008ca70",
+    "appAsarSha256": "39a42648424baa0595010bb13c5f6d3a351cc615f4aac4d50ebc6526266a1f16",
+    "installerSha256": "784b883e472cd6b552b8511d1ca1233529ec7abcfa03949217cbcfe516f269bf",
+    "packagedRunBindingSha256": "345282a08e8753bd9a1ecc9e35ca3cf413c5adfd4c6409cedeb3d881e36a3ae1",
+    "cleanMachineManualLaunch": false
+  },
+  "limitations": [
+    "not-clean-machine-i4",
+    "unsigned-installer",
+    "real-public-provider-not-run",
+    "system-credential-boundary-not-run"
+  ]
+}
