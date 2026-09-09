@@ -128,6 +128,24 @@ function publicUsage (usage) {
   }
 }
 
+function publicModel (model) {
+  if (!model || typeof model !== 'object' || Array.isArray(model) ||
+      typeof model.adapterId !== 'string' || typeof model.modelId !== 'string' ||
+      typeof model.profileId !== 'string' || !Number.isSafeInteger(model.profileRevision) ||
+      !['local', 'cloud'].includes(model.providerKind)) {
+    const error = new Error('model identity is unavailable')
+    error.code = 'AGENT_REQUEST_INVALID'
+    throw error
+  }
+  return {
+    adapter_id: model.adapterId,
+    model_id: model.modelId,
+    profile_id: model.profileId,
+    profile_revision: model.profileRevision,
+    provider_kind: model.providerKind
+  }
+}
+
 function publicInteractionId (value) {
   return typeof value === 'string' && value.length > 0 ? value : null
 }
@@ -428,6 +446,8 @@ class AgentRunService {
           duration_ms: item.durationMs,
           error_code: item.errorCode,
           interaction_id: item.interactionId,
+          comparison_group_id: item.comparisonGroupId,
+          model: publicModel(item.model),
           recipe_id: item.recipeId,
           recipe_version: item.recipeVersion,
           result: item.result,

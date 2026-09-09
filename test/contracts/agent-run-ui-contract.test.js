@@ -51,6 +51,19 @@ test('S5-1 exact Agent run channels and fail-closed contracts', () => {
   assert.throws(() => c.assertHistoryRequest({ ...h, limit:101, cursor:null }), /range/)
 })
 
+test('SEM-F31/SEM-F33/J25: history keeps frozen model identity and comparison group without prompt fields', () => {
+  const item = {
+    attempt_count: 1, comparison_group_id: 'c'.repeat(64), created_at: 1, duration_ms: 20,
+    error_code: null, interaction_id: 'interaction.history',
+    model: { adapter_id: 'openai-compatible', model_id: 'model.a', profile_id: 'profile.a', profile_revision: 2, provider_kind: 'cloud' },
+    recipe_id: 'qa.answer', recipe_version: '1', result: { answer: '摘要' }, result_digest: 'a'.repeat(64),
+    terminal_at: 2, terminal_reason: 'succeeded', usage: null, usage_state: 'unknown'
+  }
+  assert.doesNotThrow(() => c.assertHistoryResponse({ ...h, ok: true, error: null, result: { has_more: false, items: [item], next_cursor: null } }))
+  assert.throws(() => c.assertHistoryResponse({ ...h, ok: true, error: null, result: { has_more: false, items: [{ ...item, comparison_group_id: null }], next_cursor: null } }), /comparison_group_id/)
+  assert.throws(() => c.assertHistoryResponse({ ...h, ok: true, error: null, result: { has_more: false, items: [{ ...item, model: { ...item.model, credential: 'secret' } }], next_cursor: null } }), /exact keys/)
+})
+
 test('SEM-F34/J24: Agent interaction exposes complete bounded tool arguments and results only as an explicit detail record', () => {
   const result = {
     attempt_count: 1, created_at: 1, duration_ms: 12, error_code: null,

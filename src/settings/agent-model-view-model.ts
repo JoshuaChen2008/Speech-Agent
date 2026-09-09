@@ -164,13 +164,16 @@ export function capabilityFormToCapabilities (form: CapabilityForm): Capabilitie
 
 export function capabilitySummary (capabilities: CapabilitiesV1): string {
   const bool = (value: boolean, label: string): string => `${label}：${value ? '支持' : '不支持'}`
+  const usage = capabilities.usageReporting
+    ? '用量上报：支持'
+    : '用量上报：不支持（交互不会显示 token，也无法参与用量比较）'
   return [
     `输入上限 ${capabilities.maxInputTokens.toLocaleString('zh-CN')} token`,
     `输出上限 ${capabilities.maxOutputTokens.toLocaleString('zh-CN')} token`,
     bool(capabilities.supportsToolCalling, '工具调用'),
     bool(capabilities.supportsStructuredOutput, '结构化输出'),
     bool(capabilities.supportsStreaming, '流式输出'),
-    bool(capabilities.usageReporting, '用量上报')
+    usage
   ].join(' · ')
 }
 

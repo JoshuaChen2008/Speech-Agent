@@ -193,6 +193,24 @@ function rowToolCall (row, replayed = false) {
   return replayed ? { ...value, replayed: true } : value
 }
 
+function historyModelProjection (row) {
+  const model = {
+    adapterId: row.binding_adapter_id,
+    modelId: row.binding_model_id,
+    profileId: row.binding_profile_id,
+    profileRevision: Number(row.binding_profile_revision),
+    providerKind: row.binding_provider_kind
+  }
+  if (typeof model.adapterId !== 'string' || model.adapterId.length === 0 ||
+      typeof model.modelId !== 'string' || model.modelId.length === 0 ||
+      typeof model.profileId !== 'string' || model.profileId.length === 0 ||
+      !Number.isSafeInteger(model.profileRevision) || model.profileRevision < 1 ||
+      !['local', 'cloud'].includes(model.providerKind)) {
+    fail('STORAGE_COMMAND_FAILED')
+  }
+  return model
+}
+
 function historyProjection (row) {
   return {
     interactionId: row.interaction_id,
@@ -205,6 +223,7 @@ function historyProjection (row) {
     durationMs: Number(row.duration_ms),
     attemptCount: Number(row.attempt_count),
     comparisonGroupId: row.comparison_group_id,
+    model: historyModelProjection(row),
     result: row.result_json === null ? null : jsonObject(row.result_json),
     resultDigest: row.result_digest,
     createdAt: Number(row.created_at),
@@ -733,15 +752,23 @@ class AgentExecutionStore {
     const cursor = decodeCursor(input.cursor)
     const pageLimit = Math.min(limit, MAX_INTERACTION_PAGE)
     const params = []
-    let where = "terminal_at IS NOT NULL AND recipe_id <> 'intent.route'"
+    let where = "i.terminal_at IS NOT NULL AND i.recipe_id <> 'intent.route'"
     if (cursor) {
-      where += ' AND (terminal_at < ? OR (terminal_at = ? AND interaction_id > ?))'
+      where += ' AND (i.terminal_at < ? OR (i.terminal_at = ? AND i.interaction_id > ?))'
       params.push(cursor.terminalAt, cursor.terminalAt, cursor.interactionId)
     }
     params.push(pageLimit + 1)
     const rows = this.database.prepare(`
-      SELECT * FROM formal_agent_interactions WHERE ${where}
-      ORDER BY terminal_at DESC, interaction_id ASC LIMIT ?
+      SELECT i.*,
+        b.adapter_id AS binding_adapter_id,
+        b.model_id AS binding_model_id,
+        b.profile_id AS binding_profile_id,
+        b.profile_revision AS binding_profile_revision,
+        b.provider_kind AS binding_provider_kind
+      FROM formal_agent_interactions AS i
+      JOIN agent_model_run_bindings AS b ON b.run_id = i.run_id
+      WHERE ${where}
+      ORDER BY i.terminal_at DESC, i.interaction_id ASC LIMIT ?
     `).all(...params)
     const hasMore = rows.length > pageLimit
     const page = rows.slice(0, pageLimit)

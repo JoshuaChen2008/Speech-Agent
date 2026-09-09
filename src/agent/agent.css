@@ -27,6 +27,13 @@ button:disabled, textarea:disabled { cursor: default; opacity: .55; }
 .scope-card strong, .history-card strong { font-size: 12px; }
 .scope-card span, .history-card span { color: rgba(var(--fg), .68); font-size: 11px; }
 .history-card p { margin: 4px 0 0; color: rgba(var(--fg), .68); font-size: 11px; line-height: 1.35; }
+.comparison-card { margin-bottom: 12px; padding: 10px; border: 1px solid rgba(var(--fg), .12); border-radius: var(--radius-control); background: rgba(var(--fg), .04); }
+.comparison-card h2 { margin: 0; font-size: 12px; }
+.comparison-card p { margin: 4px 0 8px; color: rgba(var(--fg), .68); font-size: 11px; line-height: 1.35; }
+.comparison-card ul { display: flex; flex-direction: column; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.comparison-card li { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
+.comparison-card li strong { font-size: 11px; }
+.comparison-card li span { color: rgba(var(--fg), .68); line-height: 1.3; }
 .empty, .loading { color: rgba(var(--fg), .68); font-size: 12px; line-height: 1.5; }
 .error { margin: 0 0 10px; padding: 8px 10px; border: 1px solid var(--tone-danger); border-radius: 8px; color: var(--tone-danger); font-size: 12px; line-height: 1.4; }
 .selected-scope { display: flex; flex-direction: column; gap: 3px; padding-bottom: 4px; border-bottom: 1px solid rgba(var(--fg), .12); }

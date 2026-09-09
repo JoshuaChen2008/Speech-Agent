@@ -218,6 +218,15 @@ test('S5-UX/J25(S2 Core 子边界): supportsToolCalling=false 的模型使 Agent
   assert.match(defaultRow.textContent, /Agent Loop：未配置可用的模型/)
 })
 
+test('SEM-F33/J25: usageReporting=false explains unknown usage and comparison limitation', async () => {
+  const viewModel = await loadRendererModule(path.join(root, 'src', 'settings', 'agent-model-view-model.ts'))
+  const text = viewModel.capabilitySummary({
+    maxInputTokens: 1000, maxOutputTokens: 100, supportsToolCalling: true,
+    supportsStructuredOutput: true, supportsStreaming: true, usageReporting: false
+  })
+  assert.match(text, /用量上报：不支持（交互不会显示 token，也无法参与用量比较）/)
+})
+
 test('S5-UX/J25(S2 Core 子边界): session_only 凭据文案，且提交凭据后不残留明文', async (t) => {
   const harness = await createHarness({
     catalogResponses: [fixture(2)],

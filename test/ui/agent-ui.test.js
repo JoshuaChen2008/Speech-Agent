@@ -42,7 +42,7 @@ async function flush () {
 }
 function click (element) { element.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) }
 
-async function createHarness () {
+async function createHarness (options = {}) {
   const { AgentView } = await loadRendererModule(path.join(root, 'src', 'agent', 'agent-view.tsx'))
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://agent.test/' })
   const previous = Object.fromEntries(['window', 'document', 'HTMLElement', 'Event', 'MouseEvent'].map((key) => [key, global[key]]))
@@ -59,8 +59,10 @@ async function createHarness () {
   const detailDeferredById = new Map()
   const scope = { kind: 'session', reference: 'session.ui.1' }
   const scopeItem = { scope, display_name: 'loopback · 2026-09-08T10:00:00.000Z', started_at: '2026-09-08T09:59:00.000Z', ended_at: '2026-09-08T10:00:00.000Z', state: 'terminal' }
-  const historyItem = { attempt_count: 1, created_at: 1, duration_ms: 42, error_code: null, interaction_id: 'interaction.ui.1', recipe_id: 'qa.answer', recipe_version: '1', result: { answer: '历史结果摘要' }, result_digest: 'a'.repeat(64), terminal_at: 2, terminal_reason: 'succeeded', usage: null, usage_state: 'unknown' }
-  const historyItem2 = { attempt_count: 1, created_at: 2, duration_ms: 24, error_code: null, interaction_id: 'interaction.ui.2', recipe_id: 'summary.minutes', recipe_version: '1', result: { summary: '第二条历史结果' }, result_digest: 'b'.repeat(64), terminal_at: 3, terminal_reason: 'succeeded', usage: null, usage_state: 'unknown' }
+  const comparisonGroupId = 'c'.repeat(64)
+  const historyItem = { attempt_count: 1, comparison_group_id: comparisonGroupId, created_at: 1, duration_ms: 42, error_code: null, interaction_id: 'interaction.ui.1', model: { adapter_id: 'adapter.internal', model_id: 'model.internal', profile_id: 'profile.internal', profile_revision: 1, provider_kind: 'cloud' }, recipe_id: 'qa.answer', recipe_version: '1', result: { answer: '历史结果摘要' }, result_digest: 'a'.repeat(64), terminal_at: 2, terminal_reason: 'succeeded', usage: { input_tokens: 100, output_tokens: 20, usage_source: 'provider', cache_hit_input_tokens: 40, cache_miss_input_tokens: 60 }, usage_state: 'known' }
+  const historyItem2 = { attempt_count: 1, comparison_group_id: comparisonGroupId, created_at: 2, duration_ms: 24, error_code: null, interaction_id: 'interaction.ui.2', model: { adapter_id: 'adapter.internal', model_id: 'model.alt', profile_id: 'profile.alt', profile_revision: 2, provider_kind: 'cloud' }, recipe_id: 'summary.minutes', recipe_version: '1', result: { summary: '第二条历史结果' }, result_digest: 'b'.repeat(64), terminal_at: 3, terminal_reason: 'succeeded', usage: { input_tokens: 80, output_tokens: 10, usage_source: 'provider', cache_hit_input_tokens: null, cache_miss_input_tokens: null }, usage_state: 'known' }
+  const historyItems = options.historyItems || [historyItem, historyItem2]
   let currentDetail = { interaction_id: historyItem.interaction_id, run_id: 'run.ui.1', recipe_id: 'qa.answer', recipe_version: '1', routing_mode: 'model', state: 'running', terminal_reason: null, terminal_at: null, duration_ms: 42, created_at: 1, attempt_count: 1, error_code: null, result: { answer: '当前回答', sourceRefs: [] }, result_digest: null, source_refs: [], tool_calls: [toolCall], model: { adapter_id: 'adapter.internal', model_id: 'model.internal', profile_id: 'profile.internal', profile_revision: 1, provider_kind: 'cloud' }, usage: null, usage_state: 'unknown' }
   detailById.set(historyItem.interaction_id, currentDetail)
   detailById.set(historyItem2.interaction_id, { ...currentDetail, interaction_id: historyItem2.interaction_id, run_id: 'run.ui.2', state: 'succeeded', terminal_reason: 'succeeded', terminal_at: 3, result: { summary: '第二条历史结果' } })
@@ -69,7 +71,7 @@ async function createHarness () {
     dragStart () {}, dragEnd () {}, close () {}, onInteractionSync: () => () => {},
     subscribeChanged (callback) { changed.push(callback); calls.push('subscribe'); return () => {} },
     async getScopes (request) { calls.push(['scopes', request.cursor]); return { ok: true, scopes: request.cursor ? [] : [scopeItem], next_cursor: request.cursor ? null : 'scope.next', default_scope: request.cursor ? null : scope, revision: 1 } },
-    async getHistory (request) { calls.push(['history', request.cursor]); return { ok: true, result: { items: request.cursor ? [] : [historyItem, historyItem2], has_more: false, next_cursor: request.cursor ? null : 'history.next' } } },
+    async getHistory (request) { calls.push(['history', request.cursor]); return { ok: true, result: { items: request.cursor ? [] : historyItems, has_more: false, next_cursor: request.cursor ? null : 'history.next' } } },
     async getEligibility (request) { calls.push(['eligibility', request.scope.reference]); return { ok: true, snapshot: { scope: request.scope, eligibility: 'ready', next_action: null, revision: 1 } } },
     async submit (request) { submitRequests.push(request); return { ok: true, result: { eligibility: 'ready', interaction_id: 'interaction.ui.3', recipe_id: 'qa.answer', revision: 2, routing_mode: 'model', run_id: 'run.ui.3', state: 'pending' } } },
     async cancel (request) { cancelRequests.push(request); return { ok: true, result: { interaction_id: request.interaction_id, revision: 3, state: 'cancelling' } } },
@@ -133,6 +135,34 @@ test('S5-UX/J22: reload subscribes before reading, selects a terminal session, a
   assert.equal(document.querySelector('.run-card strong').textContent, '等待执行', 'submit ACK is pending until the authoritative detail is read')
   assert.equal(document.body.textContent.includes('interaction.ui.2'), false)
 })
+
+test('S5-UX/J25: history groups sibling interactions and exposes model, usage, cache rate, and relative duration', async (t) => {
+  const harness = await createHarness(); t.after(() => harness.dispose())
+
+  assert.match(document.querySelector('.history-list').textContent, /profile\.internal \/ model\.internal/)
+  assert.match(document.querySelector('.history-list').textContent, /profile\.alt \/ model\.alt/)
+  const comparison = document.querySelector('.comparison-card')
+  assert.ok(comparison)
+  assert.match(comparison.textContent, /同一范围与输入的不同模型结果/)
+  assert.match(comparison.textContent, /输入 100 · 输出 20 · 来源 provider · 缓存命中率 40\.0%/)
+  assert.match(comparison.textContent, /相对时长 1\.75×/)
+  assert.match(comparison.textContent, /缓存命中率未知/)
+})
+
+test('S5-UX/J25: history does not call repeated runs of one frozen model a model comparison', async (t) => {
+  const model = { adapter_id: 'adapter.internal', model_id: 'model.internal', profile_id: 'profile.internal', profile_revision: 3, provider_kind: 'cloud' }
+  const comparisonGroupId = 'd'.repeat(64)
+  const harness = await createHarness({ historyItems: [
+    { ...harnessHistoryItem('interaction.ui.same.1', 1), comparison_group_id: comparisonGroupId, model },
+    { ...harnessHistoryItem('interaction.ui.same.2', 2), comparison_group_id: comparisonGroupId, model }
+  ] }); t.after(() => harness.dispose())
+
+  assert.equal(document.querySelector('.comparison-card'), null)
+})
+
+function harnessHistoryItem (interactionId, createdAt) {
+  return { attempt_count: 1, created_at: createdAt, duration_ms: 24, error_code: null, interaction_id: interactionId, recipe_id: 'qa.answer', recipe_version: '1', result: { answer: '同模型结果' }, result_digest: String(createdAt).repeat(64), terminal_at: createdAt + 1, terminal_reason: 'succeeded', usage: null, usage_state: 'unknown' }
+}
 
 test('S5-UX/J24: changed reload refreshes the selected detail and cancellation waits for a command result', async (t) => {
   const harness = await createHarness(); t.after(() => harness.dispose())

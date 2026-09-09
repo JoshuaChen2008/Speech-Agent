@@ -122,6 +122,7 @@ function assertCommandEnvelope (v, p = 'response') {
 function assertPublicState (v, p) { enumValue(v, TERMINAL_STATES, p); return v }
 function assertRevision (v, p) { integer(v, p); return v }
 function assertNullableDigest (v, p) { if (v !== null && (typeof v !== 'string' || !/^[a-f0-9]{64}$/.test(v))) fail(p, 'must be null or a SHA-256 digest'); return v }
+function assertDigest (v, p) { if (typeof v !== 'string' || !/^[a-f0-9]{64}$/.test(v)) fail(p, 'must be a SHA-256 digest'); return v }
 function assertUsage (v, p) {
   if (v === null) return v
   exact(v, ['cache_hit_input_tokens', 'cache_miss_input_tokens', 'input_tokens', 'output_tokens', 'usage_source'], p)
@@ -140,10 +141,12 @@ function assertUsageState (v, p) { enumValue(v, USAGE_STATES, p); return v }
 function assertHistoryItem (v, p = 'history item') {
   exact(v, [
     'attempt_count', 'created_at', 'duration_ms', 'error_code', 'interaction_id',
-    'recipe_id', 'recipe_version', 'result', 'result_digest', 'terminal_at',
+    'comparison_group_id', 'model', 'recipe_id', 'recipe_version', 'result', 'result_digest', 'terminal_at',
     'terminal_reason', 'usage', 'usage_state'
   ], p)
   id(v.interaction_id, `${p}.interaction_id`)
+  assertDigest(v.comparison_group_id, `${p}.comparison_group_id`)
+  assertModelIdentity(v.model, `${p}.model`)
   id(v.recipe_id, `${p}.recipe_id`)
   id(v.recipe_version, `${p}.recipe_version`)
   enumValue(v.terminal_reason, ['succeeded', 'failed', 'cancelled'], `${p}.terminal_reason`)

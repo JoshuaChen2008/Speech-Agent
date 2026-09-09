@@ -78,9 +78,48 @@ function sourceCount (result: Dict | null): number {
   return Array.isArray(result?.source_refs) ? result.source_refs.length : 0
 }
 
+function modelLabel (model: Dict | null): string {
+  if (typeof model?.profile_id !== 'string' || typeof model?.model_id !== 'string' || !Number.isSafeInteger(model.profile_revision)) return '模型身份未知'
+  return `${model.profile_id} / ${model.model_id} · 配置修订 ${model.profile_revision}`
+}
+
+function modelIdentityKey (model: Dict | null): string | null {
+  if (typeof model?.adapter_id !== 'string' || typeof model?.profile_id !== 'string' || !Number.isSafeInteger(model.profile_revision) || typeof model?.model_id !== 'string' || typeof model?.provider_kind !== 'string') return null
+  return JSON.stringify([model.adapter_id, model.profile_id, model.profile_revision, model.model_id, model.provider_kind])
+}
+
+function cacheRateLabel (usage: Dict): string {
+  const hit = usage.cache_hit_input_tokens
+  const miss = usage.cache_miss_input_tokens
+  if (!Number.isSafeInteger(hit) || !Number.isSafeInteger(miss) || hit < 0 || miss < 0 || hit + miss <= 0) return '缓存命中率未知'
+  return `缓存命中率 ${(hit / (hit + miss) * 100).toFixed(1)}%`
+}
+
 function usageLabel (usage: Dict | null, usageState: string): string {
   if (usageState !== 'known' || !usage) return '用量未知'
-  return `输入 ${usage.input_tokens} · 输出 ${usage.output_tokens}`
+  return `输入 ${usage.input_tokens} · 输出 ${usage.output_tokens} · 来源 ${usage.usage_source} · ${cacheRateLabel(usage)}`
+}
+
+function comparisonGroups (history: Dict[]): Dict[][] {
+  const groups = new Map<string, Dict[]>()
+  for (const item of history) {
+    if (typeof item.comparison_group_id !== 'string') continue
+    const group = groups.get(item.comparison_group_id) || []
+    group.push(item)
+    groups.set(item.comparison_group_id, group)
+  }
+  return [...groups.values()].filter((group) => {
+    if (group.length < 2) return false
+    const identities = new Set(group.map((item) => modelIdentityKey(item.model)).filter((key): key is string => key !== null))
+    return identities.size > 1
+  })
+}
+
+function relativeDuration (group: Dict[], item: Dict): string {
+  const durations = group.map((entry) => entry.duration_ms).filter((value) => Number.isSafeInteger(value) && value > 0)
+  if (durations.length === 0 || !Number.isSafeInteger(item.duration_ms) || item.duration_ms <= 0) return '相对时长未知'
+  const fastest = Math.min(...durations)
+  return `相对时长 ${(item.duration_ms / fastest).toFixed(2)}×`
 }
 
 function makeIdempotencyKey (): string {
@@ -285,7 +324,7 @@ export function AgentView (): ReactElement {
     <main className="agent-layout">
       <aside className="scope-panel" aria-label="终态会话范围"><div className="panel-heading"><div><h1>终态会话</h1><p>{scopePending ? '正在读取…' : scopes.length ? `已显示 ${scopes.length} 个会话` : '暂无可用会话'}</p></div><button type="button" onClick={() => void load(true)} disabled={scopePending || historyPending}>刷新</button></div>{scopeError && <p className="error" role="alert">{scopeError}</p>}<div className="scope-list" role="list">{scopes.map((item) => <button type="button" role="listitem" className="scope-card" aria-current={item.scope.reference === selectedScope?.reference} key={item.scope.reference} onClick={() => setSelectedScope(item.scope)}><strong>{utcLabel(item.ended_at)}</strong><span>{item.display_name}</span></button>)}{!scopePending && scopes.length === 0 && !scopeError && <p className="empty">完成一场终态会话后，它会出现在这里。</p>}</div>{scopeCursor && <button className="more-button" type="button" onClick={() => void load(false, 'scopes')} disabled={scopePending}>加载更多</button>}</aside>
       <section className="request-panel" aria-label="Agent 请求"><div className="selected-scope">{selected ? <><span>当前范围</span><strong>{selected.display_name}</strong></> : <span>请选择一个终态会话</span>}</div><div className={`eligibility ${eligibility === 'ready' ? 'ready' : ''}`} role="status">{eligibility ? eligibilityLabel(eligibility) : (selected ? '正在读取资格…' : '选择范围后读取资格')}</div><label className="prompt-label" htmlFor="agentPrompt">会话问答</label><textarea id="agentPrompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="例如：这场会的关键决定是什么？" disabled={busy || eligibility !== 'ready'} /><div className="request-actions"><button type="button" className="primary" data-action="minutes" disabled={busy || eligibility !== 'ready'} onClick={() => void submit('请基于这场终态会话生成会后结构化纪要，包含概要、结论、待办和风险。', 'minutes')}>生成纪要</button><button type="button" data-action="qa" disabled={!canSubmit} onClick={() => void submit(prompt, 'qa')}>提交问答</button></div>{activeInteractionId && <div className="run-card" aria-label="当前交互状态"><div><span>当前交互</span><strong>{stateLabel(state)}</strong></div><button type="button" onClick={() => void cancel()} disabled={cancelPending || !['pending', 'running'].includes(state || '')}>{cancelPending ? '正在取消…' : '取消'}</button></div>}{detailError && <p className="error" role="alert">{detailError}</p>}{detailPending && <p className="loading">正在读取结果…</p>}{detail && <article className="result-card" aria-label="交互结果"><header><div><span>{recipeLabel(detail.recipe_id)}</span><strong>{stateLabel(detail.state)}</strong></div><small>{utcLabel(detail.terminal_at ? new Date(detail.terminal_at).toISOString() : null)} · {detail.duration_ms} ms · {usageLabel(detail.usage, detail.usage_state)}</small></header>{detail.result === null ? <p className="empty">该交互没有结果正文。</p> : resultSections(detail.result).map((section) => <section key={section.label}><h2>{section.label}</h2><p>{section.value}</p></section>)}{state === 'succeeded' && typeof detail.result_digest === 'string' && <section className="signal-actions" aria-label="交互反馈"><h2>交互反馈</h2><label htmlFor="agentEdit">编辑结果</label><textarea id="agentEdit" value={editText} onChange={(event) => setEditText(event.target.value)} placeholder="输入你确认的结果版本" disabled={busy} /><div className="signal-buttons"><button type="button" data-signal="edit" onClick={() => void recordSignal('edit', { text: editText.trim() })} disabled={signalPending || editText.trim().length === 0}>提交编辑</button><button type="button" data-signal="accept" onClick={() => void recordSignal('accept')} disabled={signalPending}>接受</button><button type="button" data-signal="reject" onClick={() => void recordSignal('reject')} disabled={signalPending}>拒绝</button><button type="button" data-signal="remember" onClick={() => void recordSignal('remember')} disabled={signalPending}>记住</button><button type="button" data-signal="forget" onClick={() => void recordSignal('forget')} disabled={signalPending}>忘记</button></div>{signalStatus && <p className="signal-status" role="status">{signalStatus}</p>}</section>}<footer><span>来源引用 {sourceCount(detail)} 条</span><span>{detail.model?.provider_kind === 'cloud' ? '云端模型' : '本地模型'} · 模型身份已冻结</span><button type="button" onClick={() => void exportInteraction()} disabled={exportPending || !['succeeded', 'failed', 'cancelled'].includes(state || '')}>{exportPending ? '正在导出…' : '导出交互 JSON'}</button></footer>{Array.isArray(detail.tool_calls) && detail.tool_calls.length > 0 && <details className="tool-audit"><summary>工具调用记录（{detail.tool_calls.length} 条）</summary><ol>{detail.tool_calls.map((call: Dict, index: number) => <li key={`${call.attempt}-${call.call_order}-${index}`}><div className="tool-call-heading"><span>{call.tool_name === 'search_context' ? '检索个人上下文' : call.tool_name === 'read_sources' ? '读取来源' : '受控工具'}</span><strong>{call.status === 'succeeded' ? '成功' : call.status === 'failed' ? '失败' : call.status === 'cancelled' ? '已取消' : '处理中'}</strong></div><details className="tool-call-detail"><summary>查看参数与返回</summary><div><span>参数</span><pre>{JSON.stringify(call.args, null, 2)}</pre></div><div><span>返回</span><pre>{call.result === null ? '无返回值' : JSON.stringify(call.result, null, 2)}</pre></div></details></li>)}</ol></details>}</article>}</section>
-      <aside className="history-panel" aria-label="Agent 交互历史"><div className="panel-heading"><div><h1>交互历史</h1><p>{historyPending ? '正在读取…' : `${history.length} 条终态交互`}</p></div></div>{historyError && <p className="error" role="alert">{historyError}</p>}<div className="history-list" role="list">{history.map((item) => <button type="button" role="listitem" className="history-card" aria-current={item.interaction_id === activeInteractionId} key={item.interaction_id} onClick={() => setActiveInteractionId(item.interaction_id)}><strong>{recipeLabel(item.recipe_id)}</strong><span>{utcLabel(item.terminal_at ? new Date(item.terminal_at).toISOString() : null)} · {stateLabel(item.terminal_reason)}</span><p>{resultPreview(item.result)}</p></button>)}{!historyPending && history.length === 0 && !historyError && <p className="empty">还没有终态 Agent 交互。</p>}</div>{historyCursor && <button className="more-button" type="button" onClick={() => void load(false, 'history')} disabled={historyPending}>加载更多</button>}</aside>
+      <aside className="history-panel" aria-label="Agent 交互历史"><div className="panel-heading"><div><h1>交互历史</h1><p>{historyPending ? '正在读取…' : `${history.length} 条终态交互`}</p></div></div>{historyError && <p className="error" role="alert">{historyError}</p>}{comparisonGroups(history).map((group) => <section className="comparison-card" aria-label="同一范围与输入的模型比较" key={group[0].comparison_group_id}><h2>模型比较</h2><p>同一范围与输入的不同模型结果</p><ul>{group.map((item) => <li key={item.interaction_id}><strong>{modelLabel(item.model)}</strong><span>{usageLabel(item.usage, item.usage_state)}</span><span>{relativeDuration(group, item)}</span></li>)}</ul></section>)}<div className="history-list" role="list">{history.map((item) => <button type="button" role="listitem" className="history-card" aria-current={item.interaction_id === activeInteractionId} key={item.interaction_id} onClick={() => setActiveInteractionId(item.interaction_id)}><strong>{recipeLabel(item.recipe_id)}</strong><span>{modelLabel(item.model)}</span><span>{utcLabel(item.terminal_at ? new Date(item.terminal_at).toISOString() : null)} · {stateLabel(item.terminal_reason)}</span><p>{resultPreview(item.result)}</p></button>)}{!historyPending && history.length === 0 && !historyError && <p className="empty">还没有终态 Agent 交互。</p>}</div>{historyCursor && <button className="more-button" type="button" onClick={() => void load(false, 'history')} disabled={historyPending}>加载更多</button>}</aside>
     </main>
   </div>
 }
