@@ -48,7 +48,8 @@
     history: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
     lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
     unlock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
-    close: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
+    close: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    agent: '<path d="M9 3h6"/><path d="M12 3v3"/><rect x="4" y="6" width="16" height="13" rx="3"/><path d="M8 12h.01"/><path d="M16 12h.01"/><path d="M8 16h8"/>'
   }
 
   const NAMES = Object.freeze(Object.keys(PATHS))

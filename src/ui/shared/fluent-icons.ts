@@ -1,4 +1,5 @@
 import alert from '@fluentui/svg-icons/icons/alert_20_regular.svg?raw'
+import agent from '@fluentui/svg-icons/icons/bot_20_regular.svg?raw'
 import arrowClockwise from '@fluentui/svg-icons/icons/arrow_clockwise_20_regular.svg?raw'
 import box from '@fluentui/svg-icons/icons/box_20_regular.svg?raw'
 import dismiss from '@fluentui/svg-icons/icons/dismiss_20_regular.svg?raw'
@@ -38,7 +39,8 @@ const ICONS: Readonly<Record<string, string>> = Object.freeze({
   lock: lockClosed,
   unlock: lockOpen,
   minimize,
-  close: dismiss
+  close: dismiss,
+  agent: agent
 })
 
 const NAMES = Object.freeze(Object.keys(ICONS))

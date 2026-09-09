@@ -153,6 +153,7 @@ const SUPPORTED: Record<string, () => unknown> = {
   retry: () => runCommand('retry'),
   'open-settings': () => bridge.action('settings'),
   'open-model-manager': () => bridge.action('open-model-manager'),
+  agent: () => bridge.action('agent'),
   history: () => bridge.action('history'),
   'dismiss-refinement-notice': () => bridge.action('dismiss-refinement-notice'),
   lock: () => bridge.lockToggle(),
@@ -306,6 +307,7 @@ function renderCommands (view: any): void {
 
 const WINDOW_CONTROLS = [
   { act: 'history', icon: 'history', label: '历史记录' },
+  { act: 'agent', icon: 'agent', label: 'Agent Bar' },
   { act: 'lock', icon: 'unlock', label: '锁定字幕', toggle: true },
   { act: 'settings', icon: 'settings', label: '设置' },
   { act: 'minimize', icon: 'minimize', label: '最小化' },

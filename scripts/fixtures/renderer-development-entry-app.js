@@ -31,7 +31,7 @@ const readinessExpressions = Object.freeze({
     window.Icons &&
     typeof window.Icons.iconMarkup === 'function' &&
     document.querySelectorAll('#commands button').length >= 1 &&
-    document.querySelectorAll('#windowControls button').length === 5
+    document.querySelectorAll('#windowControls button').length === 6
   )`
 })
 

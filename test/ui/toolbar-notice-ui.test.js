@@ -560,3 +560,17 @@ test('SEM-F24/J19: toolbar exposes an accessible Fluent minimize action', async 
   for (const callback of elements.get('toolbar').listeners.get('click')) callback({ target: minimize })
   assert.deepEqual(actions, ['minimize'])
 })
+
+test('SEM-F31/J22/J24: toolbar exposes one formal Agent Bar entry and preserves the existing action route', async () => {
+  const { actions, elements } = createHarness()
+  await flush()
+
+  const agent = elements.get('windowControls').children
+    .find((child) => child.dataset.act === 'agent')
+  assert.ok(agent)
+  assert.equal(agent.getAttribute('aria-label'), 'Agent Bar')
+  assert.equal(agent.title, 'Agent Bar')
+
+  for (const callback of elements.get('toolbar').listeners.get('click')) callback({ target: agent })
+  assert.deepEqual(actions, ['agent'])
+})

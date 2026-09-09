@@ -19,7 +19,7 @@ test('SEM-F23/J18: toolbar semantic icons resolve to pinned Fluent System Icons 
 
   const assetPaths = [...source.matchAll(/from '(@fluentui\/svg-icons\/icons\/[^']+\.svg\?raw)'/g)]
     .map((match) => match[1].replace('@fluentui/svg-icons/', '').replace('?raw', ''))
-  assert.equal(assetPaths.length, 19)
+  assert.equal(assetPaths.length, 20)
   for (const assetPath of assetPaths) {
     assert.equal(fs.existsSync(path.join(root, 'node_modules', '@fluentui', 'svg-icons', assetPath)), true,
       `${assetPath} must exist in the locked Fluent System Icons package`)
@@ -28,7 +28,7 @@ test('SEM-F23/J18: toolbar semantic icons resolve to pinned Fluent System Icons 
   for (const semanticName of [
     'ban', 'ready', 'spinner', 'wave', 'pause', 'stopping', 'recover', 'alert',
     'play', 'stop', 'retry', 'settings', 'model', 'permission', 'grip', 'history',
-    'lock', 'unlock', 'minimize', 'close'
+    'lock', 'unlock', 'minimize', 'close', 'agent'
   ]) {
     assert.match(source, new RegExp(`\\b${semanticName}(?:\\s*:|,)`))
   }
