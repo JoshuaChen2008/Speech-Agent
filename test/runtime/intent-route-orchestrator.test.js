@@ -2,6 +2,7 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const { sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
 
 const { IntentRouteOrchestrator } = require('../../src/agent/execution-host/intent-route-orchestrator')
 
@@ -113,4 +114,165 @@ test('SEM-F16/SEM-F28/J22: loopFactory is a supported production seam and stable
   const target = first.calls.find(([name, request]) => name === 'run.create' && request.recipeId === 'qa.answer')
   assert.equal(route[1].runId, `run.route.${base.clientIdempotencyKey}`)
   assert.equal(target[1].runId, `run.target.${base.clientIdempotencyKey}`)
+})
+
+test('SEM-F31/SEM-F32/J22/J24: model-first replay rejects a reused client key with a different prompt', async () => {
+  const runs = new Map()
+  const interactions = new Map()
+  const orchestrator = new IntentRouteOrchestrator({
+    runs: {
+      create: async (request) => {
+        const existing = runs.get(request.runId)
+        if (existing) return { ...existing, replayed: true }
+        const row = { runId: request.runId, recipeId: request.recipeId, state: 'queued' }
+        runs.set(request.runId, row)
+        return row
+      },
+      cancel: async () => ({ state: 'cancelled' }),
+      getInteraction: async ({ interactionId }) => ({ interaction: interactions.get(interactionId) || null })
+    },
+    modelAccess: { bind: async (request) => ({ runId: request.runId, modelId: 'model.test', capabilities: { usageReporting: false } }) },
+    interactions: {
+      create: async (request) => {
+        const existing = interactions.get(request.interactionId)
+        if (existing) return { ...existing, replayed: true }
+        const row = { ...request, terminalReason: null }
+        interactions.set(request.interactionId, row)
+        return row
+      },
+      terminalize: async (request) => {
+        const row = interactions.get(request.interactionId)
+        if (row) Object.assign(row, request)
+        return request
+      }
+    },
+    loop: { agentLoop: async () => ({ result: { recipeId: 'summary.minutes', confidence: 0.9 }, usage: null }) },
+    idFactory: (prefix, stableKey) => `${prefix}.${stableKey}`
+  })
+
+  const first = await orchestrator.submit(base)
+  assert.equal(first.recipeId, 'summary.minutes')
+  await assert.rejects(
+    () => orchestrator.submit({ ...base, prompt: '换一个问题' }),
+    (error) => error?.code === 'AGENT_REQUEST_INVALID'
+  )
+})
+
+test('SEM-F31/SEM-F32/J22: in-flight idempotency compares the frozen context identity as well as prompt', async () => {
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const harnessed = harness()
+  const orchestrator = new IntentRouteOrchestrator({
+    eligibility: async () => { await gate; return 'ready' },
+    runs: harnessed.orchestrator.runs,
+    modelAccess: harnessed.orchestrator.modelAccess,
+    interactions: harnessed.orchestrator.interactions,
+    loop: { agentLoop: async () => ({ result: { recipeId: 'summary.minutes', confidence: 0.9 }, usage: null }) },
+    idFactory: (prefix, key) => `${prefix}.${key || 'missing'}`
+  })
+  const first = orchestrator.submit(base)
+  await new Promise((resolve) => setImmediate(resolve))
+  const changedContext = { ...base, inputDigest: 'c'.repeat(64) }
+  await assert.rejects(
+    () => orchestrator.submit(changedContext),
+    (error) => error?.code === 'AGENT_REQUEST_INVALID'
+  )
+  release()
+  await first
+})
+
+test('SEM-F31/SEM-F32/J22: concurrent duplicate route submissions share one in-flight execution', async () => {
+  let releaseLoop
+  const loopGate = new Promise((resolve) => { releaseLoop = resolve })
+  let loopCalls = 0
+  const harnessed = harness()
+  const orchestrator = new IntentRouteOrchestrator({
+    eligibility: async () => 'ready',
+    runs: harnessed.orchestrator.runs,
+    modelAccess: harnessed.orchestrator.modelAccess,
+    interactions: harnessed.orchestrator.interactions,
+    loop: { agentLoop: async () => { loopCalls += 1; await loopGate; return { result: { recipeId: 'summary.minutes', confidence: 0.9 }, usage: null } } },
+    idFactory: (prefix, key) => `${prefix}.${key || 'missing'}`
+  })
+  const first = orchestrator.submit(base)
+  await new Promise((resolve) => setImmediate(resolve))
+  const second = orchestrator.submit(base)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(loopCalls, 1)
+  releaseLoop()
+  const [a, b] = await Promise.all([first, second])
+  assert.deepEqual(a, b)
+  assert.equal(harnessed.calls.filter(([name]) => name === 'loop').length, 0)
+  assert.equal(loopCalls, 1)
+})
+
+test('SEM-F31/SEM-F32/J22: persisted pending route is terminalized for recovery without a second model execution', async () => {
+  const runs = new Map([['run.route.client.route', { runId:'run.route.client.route', recipeId:'intent.route', state:'queued' }]])
+  const interactions = new Map([['interaction.route.client.route', {
+    interactionId:'interaction.route.client.route', promptDigest:sha256Canonical(base.prompt), terminalReason:null
+  }]])
+  const calls = []
+  const orchestrator = new IntentRouteOrchestrator({
+    runs: {
+      create: async (request) => { calls.push(['run.create', request]); return { ...runs.get(request.runId), replayed:true } },
+      cancel: async (request) => { calls.push(['run.cancel', request]); return { runId:request.runId, state:'cancelled' } },
+      getInteraction: async ({ interactionId }) => interactions.get(interactionId) || null
+    },
+    modelAccess: { bind: async (request) => { calls.push(['bind', request]); return {} } },
+    interactions: {
+      create: async () => { calls.push(['interaction.create']); return {} },
+      terminalize: async (request) => { calls.push(['interaction.terminalize', request]); return request }
+    },
+    loop: { agentLoop: async () => { calls.push(['loop']); return { result:{ recipeId:'summary.minutes', confidence:0.9 }, usage:null } } },
+    idFactory: (prefix, key) => `${prefix}.${key}`
+  })
+  const result = await orchestrator.submit(base)
+  assert.equal(result.recipeId, 'qa.answer')
+  assert.equal(calls.some(([name]) => name === 'loop'), false)
+  assert.equal(calls.some(([name, request]) => name === 'bind' && request?.recipeId === 'intent.route'), false)
+  assert.equal(calls.some(([name, request]) => name === 'interaction.terminalize' && request.errorCode === 'AGENT_WORKER_EXITED'), true)
+})
+
+test('SEM-F31/SEM-F32/J22: failed route recovery blocks target creation when terminalization is unconfirmed', async () => {
+  const calls = []
+  const orchestrator = new IntentRouteOrchestrator({
+    runs: {
+      create: async (request) => { calls.push(['run.create', request]); return { runId:request.runId, recipeId:'intent.route', state:'queued', replayed:true } },
+      cancel: async (request) => { calls.push(['run.cancel', request]); return { state:'cancelled' } },
+      getInteraction: async () => ({ terminalReason: null, promptDigest: sha256Canonical(base.prompt) })
+    },
+    modelAccess: { bind: async () => { calls.push(['bind']); return {} } },
+    interactions: {
+      create: async () => { calls.push(['interaction.create']); return {} },
+      terminalize: async () => { calls.push(['interaction.terminalize']); return null }
+    },
+    loop: { agentLoop: async () => { calls.push(['loop']); return { result:{ recipeId:'summary.minutes', confidence:0.9 }, usage:null } } },
+    idFactory: (prefix, key) => `${prefix}.${key}`
+  })
+  await assert.rejects(() => orchestrator.submit(base), (error) => error?.code === 'AGENT_RECOVERY_BLOCKED')
+  assert.equal(calls.some(([name]) => name === 'bind'), false)
+  assert.equal(calls.some(([name]) => name === 'interaction.create'), false)
+  assert.equal(calls.some(([name]) => name === 'loop'), false)
+})
+
+test('SEM-F31/SEM-F32/J22: replayed route recovery blocks target creation when cancellation is unconfirmed', async () => {
+  const calls = []
+  const orchestrator = new IntentRouteOrchestrator({
+    runs: {
+      create: async (request) => { calls.push(['run.create', request]); return { runId:request.runId, recipeId:'intent.route', state:'queued', replayed:true } },
+      cancel: async (request) => { calls.push(['run.cancel', request]); return null }
+    },
+    modelAccess: { bind: async () => { calls.push(['bind']); return {} } },
+    interactions: {
+      create: async () => { calls.push(['interaction.create']); return {} },
+      terminalize: async () => { calls.push(['interaction.terminalize']); return {} }
+    },
+    loop: { agentLoop: async () => { calls.push(['loop']); return { result:{ recipeId:'summary.minutes', confidence:0.9 }, usage:null } } },
+    idFactory: (prefix, key) => `${prefix}.${key}`
+  })
+  await assert.rejects(() => orchestrator.submit(base), (error) => error?.code === 'AGENT_RECOVERY_BLOCKED')
+  assert.equal(calls.filter(([name]) => name === 'run.create').length, 1)
+  assert.equal(calls.some(([name]) => name === 'bind'), false)
+  assert.equal(calls.some(([name]) => name === 'interaction.create'), false)
+  assert.equal(calls.some(([name]) => name === 'loop'), false)
 })

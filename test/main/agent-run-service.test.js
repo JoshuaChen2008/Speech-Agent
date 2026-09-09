@@ -101,6 +101,27 @@ test('S5-1 eligibility distinguishes terminal transcript and model readiness', a
   assert.equal(result.snapshot.next_action, null)
 })
 
+test('SEM-F33/J22/J24: eligibility projects unavailable provider facts without fabricating readiness', async () => {
+  const transcript = {
+    sessionId: 'session.provider-facts',
+    value: { session: { state: 'closed' }, segments: [{ segmentId: 'segment.1' }] }
+  }
+  for (const [readiness, expected] of [
+    ['credential_unavailable', 'credential_unavailable'],
+    ['provider_unavailable', 'provider_not_configured'],
+    [null, 'provider_not_configured']
+  ]) {
+    const service = new AgentRunService({
+      storage: storageWith([], transcript),
+      modelAccess: { catalog: async () => ({ ok: true, snapshot: { readinessByPurpose: { summary: { agentLoop: readiness } } } }) }
+    })
+    const result = await service.getEligibility(header({ scope: { kind: 'session', reference: 'session.provider-facts' } }))
+    assert.equal(result.ok, true)
+    assert.equal(result.snapshot.eligibility, expected)
+    assert.equal(result.snapshot.next_action, null)
+  }
+})
+
 test('S5-1/J22: unsupported non-session scopes fail closed before transcript or run creation', async () => {
   let transcriptReads = 0
   let runCreates = 0

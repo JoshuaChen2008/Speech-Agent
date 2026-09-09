@@ -158,6 +158,40 @@ test('SEM-F28/SEM-T04/J22/J24: scheduler stop aborts an active Agent attempt wit
   assert.equal(signal.aborted, true)
 })
 
+test('SEM-F28/SEM-T04/J22/J24: a replaced scheduler generation ignores a late Agent result', async () => {
+  let resolveClaim
+  let releaseRun
+  let runCount = 0
+  let signal
+  const scheduler = new FormalAgentJobScheduler({
+    storage: {
+      claimNextFormalAgentRun: async () => new Promise((resolve) => { resolveClaim = resolve }),
+      nextFormalAgentRunAt: async () => null
+    },
+    runner: {
+      run: async (job) => {
+        runCount += 1
+        signal = job.signal
+        await new Promise((resolve) => { releaseRun = resolve })
+      }
+    }
+  })
+  scheduler.start()
+  await settled()
+  resolveClaim({
+    runId: 'run.replaced', recipeId: 'qa.answer', requestedBy: 'user', source: {},
+    attemptIdentity: { runId: 'run.replaced', attempt: 1, owner: 'owner', leaseExpiresAt: 1 },
+    interactionId: 'interaction.replaced'
+  })
+  await settled()
+  await scheduler.stop()
+  assert.equal(signal.aborted, true)
+  releaseRun()
+  await settled()
+  assert.equal(runCount, 1)
+  assert.equal(scheduler.generation > 1, true)
+})
+
 test('SEM-F28/J22/J24: user scheduler scopes claims and wakeups to user recipes', async () => {
   const claims = []
   const nextRequests = []

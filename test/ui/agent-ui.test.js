@@ -14,6 +14,18 @@ const { loadRendererModule } = require('./load-renderer-module')
 
 const root = path.resolve(__dirname, '..', '..')
 const CONTRACT = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
+const { deriveToolResultMetadata } = require('../../src/agent/contracts/controlled-tools')
+const { sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
+const toolSourceRef = { sessionId:'session.ui', transcriptVersion:'raw', fromEventOrder:1, throughEventOrder:1 }
+const toolArgs = { schemaVersion:1, sourceRefs:[toolSourceRef] }
+const toolResult = { schemaVersion:1, sources:[{ sourceRef:toolSourceRef, text:'受控来源' }] }
+const toolMetadata = deriveToolResultMetadata('read_sources', toolArgs, toolResult)
+const toolCall = {
+  args: toolArgs, args_digest: sha256Canonical(toolArgs), attempt:1, call_id:'call.ui.1', call_order:1,
+  counts:{ resultBytes:toolMetadata.resultBytes, sourceTextBytes:toolMetadata.sourceTextBytes, sourceReferenceCount:toolMetadata.sourceReferenceCount },
+  ended_offset_ms:12, error_code:null, result:toolResult, result_digest:toolMetadata.resultDigest, schema_version:1,
+  source_refs:toolMetadata.sourceRefs, started_offset_ms:0, status:'succeeded', tool_name:'read_sources'
+}
 
 function source (relative) { return fs.readFileSync(path.join(root, relative), 'utf8') }
 function deferred () {
@@ -48,7 +60,7 @@ async function createHarness () {
   const scopeItem = { scope, display_name: 'loopback · 2026-09-08T10:00:00.000Z', started_at: '2026-09-08T09:59:00.000Z', ended_at: '2026-09-08T10:00:00.000Z', state: 'terminal' }
   const historyItem = { attempt_count: 1, created_at: 1, duration_ms: 42, error_code: null, interaction_id: 'interaction.ui.1', recipe_id: 'qa.answer', recipe_version: '1', result: { answer: '历史结果摘要' }, result_digest: 'a'.repeat(64), terminal_at: 2, terminal_reason: 'succeeded', usage: null, usage_state: 'unknown' }
   const historyItem2 = { attempt_count: 1, created_at: 2, duration_ms: 24, error_code: null, interaction_id: 'interaction.ui.2', recipe_id: 'summary.minutes', recipe_version: '1', result: { summary: '第二条历史结果' }, result_digest: 'b'.repeat(64), terminal_at: 3, terminal_reason: 'succeeded', usage: null, usage_state: 'unknown' }
-  let currentDetail = { interaction_id: historyItem.interaction_id, run_id: 'run.ui.1', recipe_id: 'qa.answer', recipe_version: '1', routing_mode: 'model', state: 'running', terminal_reason: null, terminal_at: null, duration_ms: 42, created_at: 1, attempt_count: 1, error_code: null, result: { answer: '当前回答', sourceRefs: [] }, result_digest: null, source_refs: [], tool_calls: [], model: { adapter_id: 'adapter.internal', model_id: 'model.internal', profile_id: 'profile.internal', profile_revision: 1, provider_kind: 'cloud' }, usage: null, usage_state: 'unknown' }
+  let currentDetail = { interaction_id: historyItem.interaction_id, run_id: 'run.ui.1', recipe_id: 'qa.answer', recipe_version: '1', routing_mode: 'model', state: 'running', terminal_reason: null, terminal_at: null, duration_ms: 42, created_at: 1, attempt_count: 1, error_code: null, result: { answer: '当前回答', sourceRefs: [] }, result_digest: null, source_refs: [], tool_calls: [toolCall], model: { adapter_id: 'adapter.internal', model_id: 'model.internal', profile_id: 'profile.internal', profile_revision: 1, provider_kind: 'cloud' }, usage: null, usage_state: 'unknown' }
   detailById.set(historyItem.interaction_id, currentDetail)
   detailById.set(historyItem2.interaction_id, { ...currentDetail, interaction_id: historyItem2.interaction_id, run_id: 'run.ui.2', state: 'succeeded', terminal_reason: 'succeeded', terminal_at: 3, result: { summary: '第二条历史结果' } })
   dom.window.ManualWindowDrag = { bindManualWindowDrag: () => ({ cancel () {} }), isInteractiveDragEvent: () => false }
@@ -132,6 +144,14 @@ test('S5-UX/J24: changed reload refreshes the selected detail and cancellation w
   assert.equal(harness.detailRequests.at(-1).interaction_id, 'interaction.ui.1')
 })
 
+test('S5-UX/J24: stale changed revisions do not trigger a second reload', async (t) => {
+  const harness = await createHarness(); t.after(() => harness.dispose())
+  const before = harness.calls.length
+  await act(async () => harness.changed[0]({ contract_id: CONTRACT.contract_id, contract_version: CONTRACT.contract_version, revision: 1 }))
+  await flush()
+  assert.equal(harness.calls.length, before)
+})
+
 test('S5-UX/J24: a late detail response cannot replace the newly selected interaction', async (t) => {
   const harness = await createHarness(); t.after(() => harness.dispose())
   const delayed = deferred()
@@ -169,4 +189,20 @@ test('S5-UX/J26: terminal detail exports by interaction ID and does not expose a
   assert.deepEqual(harness.exportRequests, [{ ...CONTRACT, interaction_id: 'interaction.ui.2' }])
   assert.equal(document.body.textContent.includes('已导出交互 JSON'), true)
   assert.equal(JSON.stringify(harness.exportRequests).includes('filePath'), false)
+})
+
+test('SEM-F34/J24: tool audit stays collapsed until expanded, then shows complete bounded arguments and results', async (t) => {
+  const harness = await createHarness(); t.after(() => harness.dispose())
+  await act(async () => click(document.querySelector('.history-card')))
+  await flush()
+  const audit = document.querySelector('.tool-audit')
+  assert.ok(audit)
+  assert.equal(audit.open, false)
+  const detail = audit.querySelector('.tool-call-detail')
+  assert.ok(detail)
+  assert.equal(detail.open, false)
+  audit.open = true
+  detail.open = true
+  assert.match(document.body.textContent, /"sourceRefs"/)
+  assert.match(document.body.textContent, /受控来源/)
 })

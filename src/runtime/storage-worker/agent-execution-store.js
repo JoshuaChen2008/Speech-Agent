@@ -168,6 +168,10 @@ function rowRun (row, replayed = false) {
 }
 
 function rowToolCall (row, replayed = false) {
+  const parsedCounts = jsonObject(row.counts_json)
+  const counts = Object.keys(parsedCounts).length === 0
+    ? { resultBytes: 0, sourceTextBytes: 0, sourceReferenceCount: 0 }
+    : parsedCounts
   const value = {
     callId: row.call_id,
     interactionId: row.interaction_id,
@@ -184,7 +188,7 @@ function rowToolCall (row, replayed = false) {
     result: row.result_json === null ? null : jsonObject(row.result_json),
     resultDigest: row.result_digest,
     sourceRefs: jsonObject(row.source_refs_json),
-    counts: jsonObject(row.counts_json)
+    counts
   }
   return replayed ? { ...value, replayed: true } : value
 }
@@ -589,7 +593,7 @@ class AgentExecutionStore {
           call_id, interaction_id, attempt, call_order, tool_name, schema_version,
           started_offset_ms, ended_offset_ms, status, error_code, args_json, args_digest,
           result_json, result_digest, source_refs_json, counts_json
-        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, NULL, NULL, '[]', '{}')
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, NULL, NULL, '[]', '{"resultBytes":0,"sourceTextBytes":0,"sourceReferenceCount":0}')
       `).run(callId, interactionId, input.attempt, input.callOrder, input.toolName,
         input.startedOffsetMs, endedOffset, status, errorCode, args.encoded, sha256Canonical(input.args))
       return rowToolCall(this.database.prepare('SELECT * FROM formal_agent_tool_calls WHERE call_id=?').get(callId))

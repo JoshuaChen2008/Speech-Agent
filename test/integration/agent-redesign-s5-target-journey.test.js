@@ -92,21 +92,42 @@ async function configureModel (modelAccess) {
 
 function tick () { return new Promise((resolve) => setImmediate(resolve)) }
 
-test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34/J22/J24: terminal session request reaches one user scheduler claim, model loop, SQLite result, history and detail', async (t) => {
+test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one user scheduler claim, model loop, SQLite result, history and detail', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 's5-target-journey-'))
   const databasePath = path.join(root, 'speech-agent.sqlite3')
   const service = new StorageWorkerService()
   const gateway = new StorageGateway({ databasePath, hostFactory: () => hostFactory(service, databasePath), maxRestarts: 0 })
   await gateway.start()
   const vault = createVault(path.join(root, 'vault'))
+  let lateProviderStarted = false
+  let releaseLateProvider = null
   const modelAccess = new ModelAccessRuntime({
     gateway,
     vault,
     adapter: {
-      async run ({ recipe, tools }) {
-        assert.equal(recipe.recipeId, 'qa.answer')
+      async run ({ recipe, tools, prompt }) {
         const context = await tools[0].execute({ schemaVersion: 1, aliasKeys: ['missing'] })
         assert.deepEqual(context.unmatchedAliasKeys, ['missing'])
+        if (typeof prompt === 'string' && prompt.includes('迟到取消')) {
+          lateProviderStarted = true
+          await new Promise((resolve) => { releaseLateProvider = resolve })
+        }
+        if (recipe.recipeId === 'summary.minutes') {
+          return { text: JSON.stringify({
+            schemaVersion: 1,
+            overview: '这是一次受控的会后结构化纪要。',
+            conclusions: [{
+              text: '形成一个受控结论。',
+              sourceRefs: [{ sessionId: 'session.s5.target', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }]
+            }],
+            todos: [{
+              text: '跟进一个受控事项。', ownerHint: null, dueHint: null,
+              sourceRefs: [{ sessionId: 'session.s5.target', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }]
+            }],
+            risks: []
+          }) }
+        }
+        assert.equal(recipe.recipeId, 'qa.answer')
         return { text: JSON.stringify({
           schemaVersion: 1,
           answer: '这是一次受控的会话回答。',
@@ -180,13 +201,42 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34/J22/J24: terminal session request 
   assert.equal(detail.result.usage_state, 'unknown')
   assert.equal(detail.result.tool_calls.length, 1)
   assert.equal(detail.result.tool_calls[0].status, 'succeeded')
+  assert.deepEqual(Object.keys(detail.result.tool_calls[0]).sort(), [
+    'args', 'args_digest', 'attempt', 'call_id', 'call_order', 'counts', 'ended_offset_ms',
+    'error_code', 'result', 'result_digest', 'schema_version', 'source_refs', 'started_offset_ms',
+    'status', 'tool_name'
+  ])
+  assert.equal(detail.result.tool_calls[0].args.schemaVersion, 1)
+  assert.equal(detail.result.tool_calls[0].result.schemaVersion, 1)
+
+  const minutesSubmitted = await agent.submit({
+    contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
+    scope: { kind: 'session', reference: 'session.s5.target' },
+    prompt: '请生成会后结构化纪要', client_idempotency_key: 'client.s5.minutes'
+  })
+  assert.equal(minutesSubmitted.ok, true)
+  assert.equal(minutesSubmitted.result.recipe_id, 'summary.minutes')
+  for (let i = 0; i < 80; i++) {
+    const minutesDetail = await agent.getInteraction({ contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0', interaction_id: minutesSubmitted.result.interaction_id })
+    if (minutesDetail.ok && minutesDetail.result.state === 'succeeded') break
+    await tick()
+  }
+  const minutesDetail = await agent.getInteraction({
+    contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0', interaction_id: minutesSubmitted.result.interaction_id
+  })
+  assert.equal(minutesDetail.ok, true)
+  assert.equal(minutesDetail.result.state, 'succeeded')
+  assert.equal(minutesDetail.result.recipe_id, 'summary.minutes')
+  assert.equal(minutesDetail.result.result.overview, '这是一次受控的会后结构化纪要。')
   const history = await agent.getHistory({ contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0', limit: 10, cursor: null })
   assert.equal(history.ok, true)
-  assert.equal(history.result.items.length, 1)
-  assert.equal(history.result.items[0].interaction_id, submitted.result.interaction_id)
+  assert.equal(history.result.items.length, 2)
+  assert.equal(history.result.items.some((item) => item.interaction_id === submitted.result.interaction_id), true)
+  assert.equal(history.result.items.some((item) => item.interaction_id === minutesSubmitted.result.interaction_id), true)
   const database = service.requireStore().database
   assert.equal(database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get(submitted.result.run_id).state, 'succeeded')
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM formal_agent_interactions WHERE run_id=? AND terminal_reason=\'succeeded\'').get(submitted.result.run_id).count, 1)
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM formal_agent_interactions WHERE run_id=? AND terminal_reason=\'succeeded\'').get(minutesSubmitted.result.run_id).count, 1)
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM formal_agent_tool_calls WHERE interaction_id=? AND status=\'succeeded\'').get(submitted.result.interaction_id).count, 1)
   const exported = await agent.exportInteraction({
     contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
@@ -204,4 +254,41 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34/J22/J24: terminal session request 
   assert.equal(replayedExport.ok, true)
   assert.deepEqual(secondBytes, firstBytes)
   assert.equal(replayedExport.result.bytes_sha256, exported.result.bytes_sha256)
+
+  const lateSubmitted = await agent.submit({
+    contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
+    scope: { kind: 'session', reference: 'session.s5.target' },
+    prompt: '请处理迟到取消', client_idempotency_key: 'client.s5.late'
+  })
+  assert.equal(lateSubmitted.ok, true)
+  assert.equal(lateSubmitted.result.state, 'pending')
+  for (let i = 0; i < 80 && !lateProviderStarted; i++) await tick()
+  assert.equal(lateProviderStarted, true)
+  assert.equal(typeof releaseLateProvider, 'function')
+  const cancelled = await agent.cancel({
+    contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
+    interaction_id: lateSubmitted.result.interaction_id
+  })
+  assert.equal(cancelled.ok, true)
+  assert.equal(cancelled.result.state, 'cancelling')
+  releaseLateProvider({ text: JSON.stringify({
+    schemaVersion: 1,
+    answer: '迟到结果不得写入',
+    sourceRefs: [{ sessionId: 'session.s5.target', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }],
+    memoryRefs: [], unresolved: []
+  }) })
+  for (let i = 0; i < 80; i++) {
+    const lateDetail = await agent.getInteraction({
+      contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0', interaction_id: lateSubmitted.result.interaction_id
+    })
+    if (lateDetail.ok && lateDetail.result.state === 'cancelled') break
+    await tick()
+  }
+  const lateDetail = await agent.getInteraction({
+    contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0', interaction_id: lateSubmitted.result.interaction_id
+  })
+  assert.equal(lateDetail.ok, true)
+  assert.equal(lateDetail.result.state, 'cancelled')
+  assert.equal(lateDetail.result.result, null)
+  assert.equal(database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get(lateSubmitted.result.run_id).state, 'cancelled')
 })

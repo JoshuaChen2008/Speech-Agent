@@ -479,9 +479,11 @@ class AgentRunService {
         terminal_at: item.terminalAt,
         terminal_reason: item.terminalReason,
         tool_calls: (detail.toolCalls || []).map((call) => ({
-          attempt: call.attempt, call_order: call.callOrder, counts: call.counts,
+          args: call.args, args_digest: call.argsDigest, attempt: call.attempt,
+          call_id: call.callId, call_order: call.callOrder, counts: call.counts,
           ended_offset_ms: call.endedOffsetMs, error_code: call.errorCode,
-          result_digest: call.resultDigest, source_refs: call.sourceRefs,
+          result: call.result, result_digest: call.resultDigest,
+          schema_version: call.schemaVersion, source_refs: call.sourceRefs,
           started_offset_ms: call.startedOffsetMs, status: call.status, tool_name: call.toolName
         })),
         usage: usage.usage,

@@ -69,6 +69,7 @@ class IntentRouteOrchestrator {
     this.allowedTargetRecipes = options.allowedTargetRecipes
       ? new Set(options.allowedTargetRecipes)
       : null
+    this.inflight = new Map()
   }
 
   nextId (prefix, stableKey = undefined) {
@@ -84,11 +85,33 @@ class IntentRouteOrchestrator {
     if (!input.inputWatermark || typeof input.inputWatermark !== 'object' || Array.isArray(input.inputWatermark)) throw invalid('inputWatermark is invalid')
     if (typeof input.inputDigest !== 'string' || !/^[a-f0-9]{64}$/.test(input.inputDigest)) throw invalid('inputDigest is invalid')
     if (typeof input.clientIdempotencyKey !== 'string' || input.clientIdempotencyKey.length < 1 || input.clientIdempotencyKey.length > 160) throw invalid('clientIdempotencyKey is invalid')
+    const requestDigest = sha256Canonical({
+      scope: routeInput.scope,
+      prompt: routeInput.prompt,
+      transcriptVersion: input.transcriptVersion,
+      inputWatermark: input.inputWatermark,
+      inputDigest: input.inputDigest
+    })
+    const previous = this.inflight.get(input.clientIdempotencyKey)
+    if (previous) {
+      if (previous.requestDigest !== requestDigest) throw invalid('client idempotency key was reused with a different request')
+      return previous.promise
+    }
+    const promise = this.submitOnce({ ...input, ...routeInput }, routeInput)
+    this.inflight.set(input.clientIdempotencyKey, { requestDigest, promise })
+    try {
+      return await promise
+    } finally {
+      if (this.inflight.get(input.clientIdempotencyKey)?.promise === promise) this.inflight.delete(input.clientIdempotencyKey)
+    }
+  }
+
+  async submitOnce (input, routeInput) {
     const eligibility = await this.eligibility(routeInput)
     if (eligibility !== 'ready') {
-      return this.createTarget({ ...input, ...routeInput }, deterministicRoute(routeInput).recipeId, 'rules', eligibility)
+      return this.createTarget(input, deterministicRoute(routeInput).recipeId, 'rules', eligibility)
     }
-    return this.runRoute({ ...input, ...routeInput })
+    return this.runRoute(input)
   }
 
   async runRoute (input) {
@@ -105,6 +128,10 @@ class IntentRouteOrchestrator {
       if (routeRun.replayed && typeof this.runs.getInteraction === 'function') {
         const existing = await this.runs.getInteraction({ interactionId: routeInteractionId })
         const interaction = existing?.interaction || existing
+        const previousPromptDigest = interaction?.promptDigest ?? interaction?.prompt_digest
+        if (previousPromptDigest !== undefined && previousPromptDigest !== promptDigest) {
+          throw invalid('client idempotency key was reused with a different prompt')
+        }
         if (interaction?.terminalReason === 'cancelled') {
           const cancelled = new Error('AGENT_CANCELLED')
           cancelled.code = 'AGENT_CANCELLED'
@@ -117,6 +144,28 @@ class IntentRouteOrchestrator {
         if (interaction?.terminalReason === 'failed') {
           return this.createTarget(input, deterministicRoute({ scope: input.scope, prompt: input.prompt }).recipeId, 'rules', 'ready')
         }
+        if (interaction?.terminalReason === undefined || interaction?.terminalReason === null) {
+          const terminalized = await this.interactions.terminalize({
+            interactionId: routeInteractionId, terminalReason: 'failed', errorCode: 'AGENT_WORKER_EXITED',
+            result: null, usage: null, durationMs: 0
+          }).catch(() => null)
+          const terminalReason = terminalized?.terminalReason ?? terminalized?.terminal_reason
+          if (terminalReason !== 'failed') {
+            const blocked = new Error('route recovery could not be terminalized')
+            blocked.code = 'AGENT_RECOVERY_BLOCKED'
+            throw blocked
+          }
+          return this.createTarget(input, deterministicRoute({ scope: input.scope, prompt: input.prompt }).recipeId, 'rules', 'ready')
+        }
+      }
+      if (routeRun.replayed) {
+        const cancelled = await this.runs.cancel({ runId: routeRun.runId }).catch(() => null)
+        if (!cancelled || !['cancelled', 'failed'].includes(cancelled.state)) {
+          const blocked = new Error('route recovery could not be cancelled')
+          blocked.code = 'AGENT_RECOVERY_BLOCKED'
+          throw blocked
+        }
+        return this.createTarget(input, deterministicRoute({ scope: input.scope, prompt: input.prompt }).recipeId, 'rules', 'ready')
       }
       const binding = await this.modelAccess.bind({ runId: routeRun.runId, recipeId: 'intent.route', recipeVersion: '1', executionForm: 'agent_loop' })
       await this.interactions.create({ runId: routeRun.runId, interactionId: routeInteractionId, routingMode: 'model', promptDigest })
@@ -149,6 +198,7 @@ class IntentRouteOrchestrator {
       })
       return this.createTarget(input, targetRecipe, 'model', 'ready')
     } catch (error) {
+      if (error?.code === 'AGENT_RECOVERY_BLOCKED') throw error
       const code = failureCode(error)
       if (interactionCreated) {
         await this.interactions.terminalize({
@@ -184,6 +234,14 @@ class IntentRouteOrchestrator {
       transcriptVersion: input.transcriptVersion, inputWatermark: input.inputWatermark,
       inputDigest: input.inputDigest, requestedBy: 'user', clientIdempotencyKey: input.clientIdempotencyKey
     })
+    if (run.replayed && typeof this.runs.getInteraction === 'function') {
+      const existing = await this.runs.getInteraction({ interactionId })
+      const interaction = existing?.interaction || existing
+      const previousPromptDigest = interaction?.promptDigest ?? interaction?.prompt_digest
+      if (previousPromptDigest !== undefined && previousPromptDigest !== sha256Canonical(input.prompt)) {
+        throw invalid('client idempotency key was reused with a different prompt')
+      }
+    }
     const binding = await this.modelAccess.bind({ runId: run.runId, recipeId, recipeVersion: '1', executionForm: 'agent_loop' })
     await this.interactions.create({ runId: run.runId, interactionId, routingMode, promptDigest: sha256Canonical(input.prompt) })
     return {

@@ -1,5 +1,7 @@
 'use strict'
 
+const { assertToolCallRecord, assertToolCallSequence } = require('./controlled-tools')
+
 const CONTRACT_ID = 'speech-agent.agent-run.ui'
 const CONTRACT_VERSION = '1.0.0'
 const ALLOWED_ROLES = Object.freeze(['agent', 'history'])
@@ -169,21 +171,34 @@ function assertModelIdentity (v, p) {
   return v
 }
 function assertToolCall (v, p) {
-  exact(v, ['attempt', 'call_order', 'counts', 'ended_offset_ms', 'error_code', 'result_digest', 'source_refs', 'started_offset_ms', 'status', 'tool_name'], p)
-  integer(v.attempt, `${p}.attempt`)
-  integer(v.call_order, `${p}.call_order`)
-  enumValue(v.tool_name, ['search_context', 'read_sources'], `${p}.tool_name`)
-  enumValue(v.status, ['started', 'succeeded', 'failed', 'cancelled'], `${p}.status`)
-  if (v.error_code !== null) {
-    enumValue(v.error_code, ['TOOL_ARGS_INVALID', 'TOOL_SCOPE_DENIED', 'TOOL_NOT_AVAILABLE_FOR_RECIPE', 'TOOL_BUDGET_EXCEEDED', 'TOOL_TIMEOUT', 'TOOL_CANCELLED', 'TOOL_INTERNAL_FAILURE'], `${p}.error_code`)
+  exact(v, [
+    'args', 'args_digest', 'attempt', 'call_id', 'call_order', 'counts',
+    'ended_offset_ms', 'error_code', 'result', 'result_digest',
+    'schema_version', 'source_refs', 'started_offset_ms', 'status', 'tool_name'
+  ], p)
+  try {
+    assertToolCallRecord({
+      callId: v.call_id,
+      attempt: v.attempt,
+      callOrder: v.call_order,
+      toolName: v.tool_name,
+      schemaVersion: v.schema_version,
+      startedOffsetMs: v.started_offset_ms,
+      endedOffsetMs: v.ended_offset_ms,
+      status: v.status,
+      errorCode: v.error_code,
+      args: v.args,
+      argsDigest: v.args_digest,
+      result: v.result,
+      resultDigest: v.result_digest,
+      sourceRefs: v.source_refs,
+      counts: v.counts
+    })
+  } catch (error) {
+    fail(p, error instanceof Error ? error.message : 'invalid ToolCallRecordV1')
   }
-  integer(v.started_offset_ms, `${p}.started_offset_ms`)
-  if (v.ended_offset_ms !== null) integer(v.ended_offset_ms, `${p}.ended_offset_ms`)
-  assertNullableDigest(v.result_digest, `${p}.result_digest`)
-  if (!v.counts || typeof v.counts !== 'object' || Array.isArray(v.counts)) fail(`${p}.counts`, 'must be an object')
-  if (!Array.isArray(v.source_refs) || v.source_refs.length > 8) fail(`${p}.source_refs`, 'must be an array')
-  assertFixturePrivacy(v.counts, `${p}.counts`)
-  assertFixturePrivacy(v.source_refs, `${p}.source_refs`)
+  assertFixturePrivacy(v.args, `${p}.args`)
+  if (v.result !== null) assertFixturePrivacy(v.result, `${p}.result`)
   return v
 }
 function assertInteractionResult (v, p = 'response.result') {
@@ -214,6 +229,27 @@ function assertInteractionResult (v, p = 'response.result') {
   assertFixturePrivacy(v.source_refs, `${p}.source_refs`)
   if (!Array.isArray(v.tool_calls) || v.tool_calls.length > 100) fail(`${p}.tool_calls`, 'must be an array')
   v.tool_calls.forEach((call, index) => assertToolCall(call, `${p}.tool_calls[${index}]`))
+  try {
+    assertToolCallSequence(v.tool_calls.map((call) => ({
+      callId: call.call_id,
+      attempt: call.attempt,
+      callOrder: call.call_order,
+      toolName: call.tool_name,
+      schemaVersion: call.schema_version,
+      startedOffsetMs: call.started_offset_ms,
+      endedOffsetMs: call.ended_offset_ms,
+      status: call.status,
+      errorCode: call.error_code,
+      args: call.args,
+      argsDigest: call.args_digest,
+      result: call.result,
+      resultDigest: call.result_digest,
+      sourceRefs: call.source_refs,
+      counts: call.counts
+    })))
+  } catch (error) {
+    fail(`${p}.tool_calls`, error instanceof Error ? error.message : 'invalid ToolCallSequenceV1')
+  }
   return v
 }
 function assertExportResult (v, p = 'response.result') {

@@ -56,7 +56,13 @@ textarea { min-height: 96px; resize: vertical; padding: 10px; color: rgb(var(--f
 .tool-audit { margin-top: 12px; border-top: 1px solid rgba(var(--fg), .12); padding-top: 10px; font-size: 12px; }
 .tool-audit summary { cursor: pointer; color: rgba(var(--fg), .68); }
 .tool-audit ol { margin: 8px 0 0; padding-left: 22px; }
-.tool-audit li { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; }
+.tool-audit li { padding: 5px 0; }
+.tool-call-heading { display: flex; justify-content: space-between; gap: 12px; }
+.tool-call-detail { margin-top: 4px; padding: 4px 0 2px; }
+.tool-call-detail summary { cursor: pointer; color: rgba(var(--fg), .68); font-size: 11px; }
+.tool-call-detail div { margin-top: 6px; }
+.tool-call-detail div > span { display: block; color: rgba(var(--fg), .68); font-size: 11px; }
+.tool-call-detail pre { max-height: 180px; margin: 3px 0 0; padding: 7px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 6px; background: rgba(var(--fg), .06); font: 11px/1.4 var(--font-mono, ui-monospace, monospace); }
 @media (max-width: 860px) { .agent-layout { grid-template-columns: 170px minmax(260px, 1fr); } .history-panel { grid-column: 1 / -1; max-height: 260px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; } }
 @media (forced-colors: active) { button:focus-visible, textarea:focus-visible { outline: 2px solid CanvasText; } .scope-card[aria-current='true'], .history-card[aria-current='true'] { border-color: Highlight; } }
