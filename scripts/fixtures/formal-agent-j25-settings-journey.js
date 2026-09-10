@@ -107,7 +107,7 @@ async function seedTerminalSession (userDataDir) {
 }
 
 function providerServer () {
-  const state = { requestCount: 0, modelIds: [], credentialObserved: false }
+  const state = { requestCount: 0, modelIds: [], credentialObserved: false, credentialExact: false }
   const server = http.createServer((request, response) => {
     const chunks = []
     request.on('data', (chunk) => chunks.push(chunk))
@@ -123,6 +123,7 @@ function providerServer () {
       if (typeof request.headers.authorization === 'string' && request.headers.authorization.length > 0) {
         state.credentialObserved = true
       }
+      if (request.headers.authorization === 'Bearer j25-local-provider-secret') state.credentialExact = true
       if (typeof body?.model === 'string') state.modelIds.push(body.model)
       const isRouteRequest = !Array.isArray(body?.tools) || body.tools.length === 0
       const content = isRouteRequest
@@ -167,7 +168,8 @@ async function configureThroughSettings (settings, port) {
       button.click()
     }
     const setInput = (input, value) => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+      const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+      const setter = Object.getOwnPropertyDescriptor(prototype, 'value').set
       setter.call(input, value)
       input.dispatchEvent(new Event('input', { bubbles: true }))
       input.dispatchEvent(new Event('change', { bubbles: true }))
@@ -177,9 +179,15 @@ async function configureThroughSettings (settings, port) {
       setter.call(element, value)
       element.dispatchEvent(new Event('change', { bubbles: true }))
     }
+    const setChecked = (input, checked) => {
+      if (input.checked !== checked) input.click()
+    }
 
     const nav = await waitFor(() => document.querySelector('[data-pane="agentModel"]'), 'agent model navigation')
     nav.click()
+    const agentToggle = await waitFor(() => document.querySelector('input[aria-label="启用 Agent 系统"]'), 'Agent system toggle')
+    setChecked(agentToggle, true)
+    await waitFor(() => document.querySelector('input[aria-label="启用 Agent 系统"]')?.checked === true, 'Agent system enabled')
     const card = await waitFor(() => document.querySelector('[data-profile-id="deepseek"]'), 'deepseek profile')
     clickText(card, '修改档案')
     await waitFor(() => card.querySelector('input[aria-label="服务器地址"]'), 'connection editor')
@@ -187,42 +195,70 @@ async function configureThroughSettings (settings, port) {
     clickText(card, '保存修改')
     await waitFor(() => [...card.querySelectorAll('button')].some((item) => item.textContent === '修改档案'), 'connection saved')
 
-    let catalog = await window.shell.getAgentModelCatalog({ contractId: 'agent-model-ui', contractVersion: '1.0.0' })
-    if (catalog.ok !== true) throw new Error('model catalog unavailable')
-    const configure = async (command) => {
-      const response = await window.shell.configureAgentModel({
-        contractId: 'agent-model-ui',
-        contractVersion: '1.0.0',
-        command: { ...command, expectedRevision: catalog.snapshot.revision }
-      })
-      if (response.ok !== true) throw new Error('model configuration failed: ' + response.error?.code)
-      catalog = await window.shell.getAgentModelCatalog({ contractId: 'agent-model-ui', contractVersion: '1.0.0' })
-      if (catalog.ok !== true) throw new Error('model catalog refresh failed')
+    clickText(card, '添加 model')
+    const modelId = await waitFor(() => card.querySelector('input[aria-label="model ID"]'), 'model form')
+    setInput(modelId, 'j25-local-model')
+    setInput(card.querySelector('input[aria-label="最大输入 token"]'), '64000')
+    setInput(card.querySelector('input[aria-label="最大输出 token"]'), '4096')
+    for (const label of ['工具调用', '结构化输出', '流式输出', '用量上报']) {
+      const group = await waitFor(() => card.querySelector('[aria-label="' + label + '"]'), label + ' capability group')
+      clickText(group, '支持')
+      await waitFor(() => card.querySelector('[aria-label="' + label + '"] button[aria-pressed="true"]'), label + ' capability selected')
     }
-    await configure({
-      type: 'addModel', profileId: 'deepseek', modelId: 'j25-local-model',
-      capabilities: {
-        maxInputTokens: 64000, maxOutputTokens: 4096,
-        supportsToolCalling: true, supportsStructuredOutput: true,
-        supportsStreaming: true, usageReporting: true
-      }
-    })
+    await waitFor(() => [...card.querySelectorAll('button')].some((item) => item.textContent === '保存 model' && !item.disabled), 'model form valid')
+    clickText(card, '保存 model')
     await waitFor(() => card.querySelector('[data-model-id="j25-local-model"]'), 'model saved')
 
-    await configure({ type: 'setCredential', profileId: 'deepseek', credential: 'j25-local-provider-secret' })
     const credential = card.querySelector('input[type="password"]')
+    setInput(credential, 'j25-local-provider-secret')
+    clickText(card, '设置新凭据')
     await waitFor(() => credential.value === '', 'credential cleared')
 
     const purpose = document.querySelector('[data-purpose="default"] select')
     await waitFor(() => purpose && [...purpose.options].some((option) => option.value === 'deepseek::j25-local-model'), 'purpose target')
-    await configure({ type: 'assignPurpose', purpose: 'default', target: { profileId: 'deepseek', modelId: 'j25-local-model' } })
+    select(purpose, 'deepseek::j25-local-model')
     await waitFor(() => document.querySelector('[data-purpose="default"]').textContent.includes('普通请求：配置充分'), 'purpose assigned')
+    const defaultReady = document.querySelector('[data-purpose="default"]').textContent.includes('普通请求：配置充分')
+
+    const contextNav = await waitFor(() => document.querySelector('[data-pane="agentContext"]'), 'personal context navigation')
+    contextNav.click()
+    const remember = await waitFor(() => document.querySelector('textarea[aria-label="记住个人记忆"]'), 'remember form')
+    setInput(remember, 'J25 formal settings memory')
+    clickText(document.querySelector('section[data-pane="agentContext"]'), '记住')
+    const memory = await waitFor(() => document.querySelector('[data-memory-id]'), 'remembered memory')
+    const memoryId = memory.getAttribute('data-memory-id')
+    const memoryLabel = memory.getAttribute('aria-label') || ''
+    const contextSection = () => document.querySelector('section[data-pane="agentContext"]')
+    const memoryRow = () => document.querySelector('[data-memory-id="' + memoryId + '"]')
+    const forgetButton = await waitFor(() => memoryRow()?.querySelector('button[aria-label^="忘记个人记忆："]'), 'forget action')
+    forgetButton.click()
+    const forgetDialog = await waitFor(() => contextSection()?.querySelector('[role="alertdialog"]'), 'forget confirmation')
+    clickText(forgetDialog, '确认')
+    await waitFor(() => {
+      const row = memoryRow()
+      if (!row) return false
+      const expand = row.querySelector('.agent-context-expand')
+      if (expand && expand.getAttribute('aria-expanded') !== 'true') expand.click()
+      return row.textContent.includes('已退出检索')
+    }, 'forgotten memory')
+    const deleteButton = await waitFor(() => memoryRow()?.querySelector('button[aria-label^="删除个人记忆："]'), 'delete action')
+    deleteButton.click()
+    const deleteDialog = await waitFor(() => contextSection()?.querySelector('[role="alertdialog"]'), 'delete confirmation')
+    clickText(deleteDialog, '确认')
+    await waitFor(() => memoryRow() === null, 'deleted memory')
+    nav.click()
+    await waitFor(() => document.querySelector('[data-pane="agentModel"]'), 'model pane after context management')
+    contextNav.click()
+    await waitFor(() => document.querySelector('textarea[aria-label="记住个人记忆"]'), 'context pane after context management')
 
     return {
       profileConnection: card.textContent.includes('https://127.0.0.1:${port}'),
       modelVisible: card.querySelector('[data-model-id="j25-local-model"]') !== null,
       credentialCleared: credential.value === '',
-      defaultReady: document.querySelector('[data-purpose="default"]').textContent.includes('普通请求：配置充分')
+      defaultReady,
+      agentEnabled: agentToggle.checked === true,
+      memoryManaged: memoryId !== null && memoryLabel.length > 0 && memoryRow() === null &&
+        document.querySelector('[data-memory-id="' + memoryId + '"]') === null
     }
   })()`)
 }
@@ -251,10 +287,32 @@ async function runAgentBar (toolbar) {
       await sleep(50)
     }
     const history = await window.agentApi.getHistory({ ...headers, limit: 50, cursor: null })
+    const signal = detail?.ok === true && detail.result.state === 'succeeded' && detail.result.result_digest
+      ? await window.agentApi.recordSignal({
+          ...headers,
+          interaction_id: submitted.result.interaction_id,
+          signal_kind: 'accept',
+          payload: null,
+          result_digest: detail.result.result_digest,
+          signal_idempotency_key: 'signal.j25.formal.accept'
+        })
+      : null
+    const signalReplay = signal?.ok === true
+      ? await window.agentApi.recordSignal({
+          ...headers,
+          interaction_id: submitted.result.interaction_id,
+          signal_kind: 'accept',
+          payload: null,
+          result_digest: detail.result.result_digest,
+          signal_idempotency_key: 'signal.j25.formal.accept'
+        })
+      : null
     return {
       succeeded: detail?.ok === true && detail.result.state === 'succeeded',
       historyVisible: history?.ok === true && history.result.items.some((item) => item.interaction_id === submitted.result.interaction_id),
-      modelVisible: detail?.result?.model?.model_id === 'j25-local-model'
+      modelVisible: detail?.result?.model?.model_id === 'j25-local-model',
+      signalAccepted: signal?.ok === true && signal.result?.accepted === true,
+      signalReplayed: signalReplay?.ok === true && signalReplay.result?.replayed === true
     }
   })()`)
   await agent.webContents.reload()
@@ -309,15 +367,21 @@ async function main () {
     const report = {
       schemaVersion: 1,
       result: settingsResult.profileConnection && settingsResult.modelVisible && settingsResult.credentialCleared &&
-        settingsResult.defaultReady && runResult.succeeded && runResult.historyVisible && runResult.modelVisible &&
-        runResult.promptAbsent && runResult.credentialAbsent && provider.state.requestCount === 1 &&
-        provider.state.credentialObserved && provider.state.modelIds.length === 1 && provider.state.modelIds[0] === 'j25-local-model',
+        settingsResult.defaultReady && settingsResult.agentEnabled && settingsResult.memoryManaged &&
+        runResult.succeeded && runResult.historyVisible && runResult.modelVisible && runResult.signalAccepted &&
+        runResult.signalReplayed && runResult.promptAbsent && runResult.credentialAbsent && provider.state.requestCount === 1 &&
+        provider.state.credentialObserved && provider.state.credentialExact && provider.state.modelIds.length === 1 && provider.state.modelIds[0] === 'j25-local-model',
       settingsPath: 'formal-settings-renderer-preload',
       runPath: 'formal-agent-bar-renderer-preload-main',
       historyPath: 'formal-agent-history-renderer-preload-main',
       providerRequestCount: provider.state.requestCount,
       providerCredentialObserved: provider.state.credentialObserved,
+      providerCredentialExact: provider.state.credentialExact,
       modelIdentityObserved: runResult.modelVisible,
+      agentEnabled: settingsResult.agentEnabled,
+      personalContextManaged: settingsResult.memoryManaged,
+      interactionSignalAccepted: runResult.signalAccepted,
+      interactionSignalReplayed: runResult.signalReplayed,
       transcriptAndPromptAbsentFromReport: true,
       publicProvider: false,
       systemCredential: false

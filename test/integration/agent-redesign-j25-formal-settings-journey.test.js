@@ -32,7 +32,7 @@ function waitForExit (child, timeoutMs) {
   })
 }
 
-test('SEM-F31/SEM-F33/SEM-F34/J25: formal settings → Agent Bar run → history uses one production IPC/SQLite path', { timeout: 90000 }, async () => {
+test('SEM-F31/SEM-F33/SEM-F34/J25: formal settings → context management → Agent Bar run → history uses one production IPC/SQLite path', { timeout: 90000 }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-j25-formal-settings-'))
   const userData = path.join(root, 'user-data')
   fs.mkdirSync(userData, { recursive: true })
@@ -58,7 +58,12 @@ test('SEM-F31/SEM-F33/SEM-F34/J25: formal settings → Agent Bar run → history
     assert.equal(report.historyPath, 'formal-agent-history-renderer-preload-main')
     assert.equal(report.providerRequestCount, 1)
     assert.equal(report.providerCredentialObserved, true)
+    assert.equal(report.providerCredentialExact, true)
     assert.equal(report.modelIdentityObserved, true)
+    assert.equal(report.agentEnabled, true)
+    assert.equal(report.personalContextManaged, true)
+    assert.equal(report.interactionSignalAccepted, true)
+    assert.equal(report.interactionSignalReplayed, true)
     assert.equal(report.transcriptAndPromptAbsentFromReport, true)
     assert.equal(report.publicProvider, false)
     assert.equal(report.systemCredential, false)

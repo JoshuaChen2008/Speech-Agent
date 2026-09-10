@@ -33,6 +33,7 @@ function hostFactory (service, databasePath) {
     async applyPersonalContextAutomaticPolicy (v) { return call(OPERATIONS.PERSONAL_CONTEXT_APPLY_AUTOMATIC_POLICY, { request: v }) },
     async cancelPersonalContextSessionIngest (v) { return call(OPERATIONS.PERSONAL_CONTEXT_CANCEL_SESSION_INGEST, { request: v }) },
     async readPersonalContextSessionInput (v) { return call(OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT, { source: v }) },
+    async readPersonalContextToolContext (v) { return call(OPERATIONS.PERSONAL_CONTEXT_READ_TOOL_CONTEXT, { request: v }) },
     async commitPersonalContextSessionIngest (v) { return call(OPERATIONS.PERSONAL_CONTEXT_COMMIT_SESSION_INGEST, { request: v }) },
     async claimNextFormalAgentRun (v) { return call(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request: v }) },
     async nextFormalAgentRunAt (v = {}) { return call(OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT, v) },
@@ -42,9 +43,9 @@ function hostFactory (service, databasePath) {
   }
 }
 
-function tick () { return new Promise((resolve) => setImmediate(resolve)) }
+function tick () { return new Promise((resolve) => setTimeout(resolve, 10)) }
 
-test('SEM-F28/SEM-F30/SEM-T10/SEM-T15/J22/J24: terminal session ingest uses real SQLite worker, lease claim and scheduler wake', async (t) => {
+test('SEM-F28/SEM-F30/SEM-T10/SEM-T15/J21/J22/J24: terminal session ingest uses real SQLite worker, lease claim and scheduler wake', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 's3-session-journey-'))
   const databasePath = path.join(root, 'speech-agent.sqlite3')
   const service = new StorageWorkerService()
@@ -59,11 +60,6 @@ test('SEM-F28/SEM-F30/SEM-T10/SEM-T15/J22/J24: terminal session ingest uses real
   const calls = []
   const runtime = new PersonalContextRuntime({
     gateway,
-    executionAdapter: {
-      prepareSessionIngest: (request) => gateway.preparePersonalContextSessionIngest(request),
-      readSessionInput: async (value) => ({ ...value, events: [{ eventOrder: 1, segmentId: 'segment.1', text: 'decision' }] }),
-      commitSessionIngest: (request) => gateway.commitPersonalContextSessionIngest(request)
-    },
     config: { get: () => config.get(), updateAgentSettings: (request) => config.updateAgentSettings(request) },
     modelAccess: { bind: async (request) => { calls.push(['bind', request]); return { capabilities: { usageReporting: false } } } },
     loop: { agentLoop: async () => { calls.push(['loop']); return { text: JSON.stringify({ schemaVersion: 1, experiences: [], memoryCandidates: [] }) } } },
@@ -80,11 +76,28 @@ test('SEM-F28/SEM-F30/SEM-T10/SEM-T15/J22/J24: terminal session ingest uses real
   await recorder.acceptCaption({ schemaVersion: 1, sessionId: 'session.s3.journey', sourceId: 'mic', segmentId: 'segment.1', sequence: 1, revision: 1, kind: 'final', t0: 0, t1: 1, text: 'decision', translation: null })
   await recorder.closeSession({ sessionId: 'session.s3.journey', sourceId: 'mic', state: 'closed' })
   recorder.notifyTerminalCommitted('session.s3.journey')
-  for (let i = 0; i < 20 && !calls.some(([name]) => name === 'loop'); i++) await tick()
+  for (let i = 0; i < 200 && !calls.some(([name]) => name === 'loop'); i++) await tick()
   assert.equal(calls.some(([name]) => name === 'bind'), true)
   assert.equal(calls.some(([name]) => name === 'loop'), true)
   const database = service.requireStore().database
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM formal_agent_runs').get().count, 1)
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM personal_context_episodes').get().count, 1)
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM personal_context_items').get().count, 0)
+  const episode = database.prepare(`
+    SELECT source_kind, session_id, interaction_id, transcript_version,
+      input_watermark, from_event_order, through_event_order, length(input_digest) AS input_digest_length,
+      lifecycle
+    FROM personal_context_episodes
+  `).get()
+  assert.deepEqual({ ...episode }, {
+    source_kind: 'session',
+    session_id: 'session.s3.journey',
+    interaction_id: null,
+    transcript_version: 'raw',
+    input_watermark: 1,
+    from_event_order: 1,
+    through_event_order: 1,
+    input_digest_length: 64,
+    lifecycle: 'active'
+  })
 })

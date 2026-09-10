@@ -315,6 +315,7 @@ class PersonalContextStore {
     const digestPayload = { sessionId, transcriptVersion, inputWatermark, events }
     if (sha256Canonical(digestPayload) !== source.inputDigest) fail('AGENT_INPUT_CHANGED')
     return {
+      sourceKind: 'session',
       sessionId,
       transcriptVersion,
       inputWatermark,
