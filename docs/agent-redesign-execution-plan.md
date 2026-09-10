@@ -292,9 +292,17 @@ S5 下一步执行以 [`openspec/changes/implement-agent-redesign-s5-minimal-cha
 白名单中的缺口。该证据把“正式设置→运行→历史”推进到实现完成·尚未验收，不改变真实公网、
 系统凭据、当前 revision 三条 lane、正式包、干净机或阶段联合验收门槛。
 
-### 2026-09-10 J27 当前 revision 打包与三条 lane 收束（仍为实现完成·尚未验收）
+### 2026-09-10 J21/J25 当前 revision 旅程收束（仍为实现完成·尚未验收）
 
-当前 revision `cfdc5e4` 在 Electron/utility 可运行环境下的三条 lane 均返回 0：
+`2cb663c` 补齐了两处此前阻断：正式 J25 fixture 现在从 settings renderer/preload 的真实表单提交 Agent 开关、连接、model 四组能力、凭据和默认用途，再从 Agent Bar 执行并读取 history；同一旅程还验证个人记忆的记住、忘记、删除和离开后重新挂载读取，以及交互信号 accept/replay。provider 仍是 loopback 控制 seam，报告只保留计数、布尔值和固定标签，不写 prompt、字幕正文、凭据或路径。
+
+J21 的真实自动摄取旅程改用默认生产 personal-context execution adapter，实际穿过 `SqliteSessionRecorder` 的终态通知、`PersonalContextRuntime`、`ContextIngestSessionRunner`、`StorageGateway`、`StorageWorkerService` 和 SQLite；修复了 SQLite 会话输入投影缺少 `sourceKind=session` 的 exact contract 缺口。旅程断言一次重复终态通知只保留一条运行和一条 active session episode，并核对 session/raw/watermark/事件范围/digest 长度等结构事实。`getAutomaticEligibility=ready` 只属于该确定性自动摄取外部资格 seam，资格优先级仍由既有矩阵测试承担。
+
+当前 revision 的验证记录：`npm run test:core` 为 880/880；受影响 focus 为 11/11；`npm run test:evidence` 在按 `TZ=UTC --segments 3600 --batch-size 100` 重建 tracked I3 非音频报告后为 229/229，报告保持 `result=pass`、`gateStatus=partial`，只含指标、布尔值和哈希。受限环境下 `npm run test:integration` 为 75/85，10 项失败均为 Electron GPU/utility/renderer 启动或进程边界（含 `GPU process isn't usable`、utility report 缺失和非零 child exit），不归因于本次 Agent 语义或 SQLite 断言；J21/J25 改动对应的单文件旅程已经单独通过。该记录仍不提升 J21/J25/J27 为联合验收完成，也不替代真实公网 provider、系统凭据、正式包干净机和适用实机证据。
+
+### 2026-09-10 J27 打包基线（`cfdc5e4`，仍为实现完成·尚未验收）
+
+此前打包基线 revision `cfdc5e4` 在 Electron/utility 可运行环境下的三条 lane 均返回 0：
 `npm run test:core` 为 880/880，`npm run test:integration` 为 85/85，
 `npm run test:evidence` 为 229/229。受限沙箱中出现的 Electron GPU 启动异常保留为执行环境边界，
 不改写可运行环境的完整 lane 结果。`npm run package:smoke` 后的 layout verifier 为 pass，
