@@ -263,6 +263,8 @@ S3 的统一执行宿主 Core 子边界、S4 的 `read_sources` 与完整工具�
 
 > **2026-09-10 J27 打包基线（`cfdc5e4`，状态仍为实现完成·尚未验收）**：此前基线在 Electron/utility 可运行环境下执行 `npm run test:core` 880/880、`npm run test:integration` 85/85、`npm run test:evidence` 229/229；受限沙箱中的 GPU 启动异常单独归为执行环境边界。`npm run package:smoke` 后的 layout verifier 为 pass（smoke 439 个 ASAR 条目、5 个 native binary），packaged product-shell fresh/restart 两轮均为 `pass` 且 exact supervised exit 为 `clean-exit`；`npm run package:release` 生成 x64 NSIS，release layout verifier 为 pass（435 个 ASAR 条目、5 个 native binary、installer 存在但未签名）。指标与哈希已写入 [`docs/validation/j27-current-revision-results.json`](validation/j27-current-revision-results.json)。本轮 `2cb663c` 未重复打包，因此该证据仍不构成当前 revision 的干净机手动启动、真实公网 provider 或系统凭据边界验收，J27 与正式 MVP 总门槛保持未验收。
 
+> **2026-09-11 J21/J22/J24/J26 行为修整场景登记（不改变旅程状态）**：正式 Agent Bar renderer 回归必须覆盖同一终态会话在首次读取、手动刷新与更高 `agent-run:changed` revision 后重新读取 Agent 处理资格，读取期间禁用提交，并拒绝旧范围/旧请求响应；范围目录与交互历史同时分页时各自完成、恢复 loading，全量刷新使两侧旧分页失效，追加范围按 `scope.kind + scope.reference`、追加历史按 `interaction_id` 去重。J21/J22/J24 的反馈场景覆盖同一交互刷新不清空编辑、跨交互草稿恢复、4096 字符与 20 条非空草稿上限、失败保留输入、同一轮双击单发送、未知回执后相同载荷复用幂等键、明确回执或载荷变化后换键，以及成功后再次主动提交使用新键。J24/J26 还覆盖取消、反馈、导出迟到回执不污染新选择，取消等待权威状态，导出取消零成功提示及固定中文错误/隐私文案。正式 Electron 旅程使用 production renderer/preload/main、个人上下文模块、Agent Loop、storage worker 与 SQLite，只控制外部 Agent 模型 provider，并通过正式 DOM 覆盖手动资格刷新、反馈提交和重新读取；报告只保留布尔值、计数和固定标签。上述均为本次实现与局部旅程目标，不推进完整三条 lane、正式包、干净机、真实公网 provider 或系统凭据验收。
+
 设计稿、截图、fixture preview、Storybook 类预览、单独 renderer snapshot 或直接调用最终 exporter 均不构成确定性联合旅程。只有保留真实内部产品模块、仅替代已登记外部边界的 S5-Integration 结果才能晋级对应 J 旅程。
 
 新增功能必须在本表增加或更新场景；只有单元测试、没有对应用户旅程时，状态最多写“实现完成·尚未验收”。

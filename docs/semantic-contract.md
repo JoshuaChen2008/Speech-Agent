@@ -194,3 +194,13 @@ S5 的范围目录合同固定为 `getScopes`：请求只含合同头、1–50 �
 ### 2026-09-10 当前 revision `2cb663c` 状态复核
 
 本段只更新当前状态，不改变冻结语义。J21 的真实自动摄取旅程现使用默认 production personal-context execution adapter，穿过 `SqliteSessionRecorder`、`PersonalContextRuntime`、`ContextIngestSessionRunner`、`StorageGateway`、`StorageWorkerService` 与 SQLite，并核对重复终态通知的单运行/单经历幂等结果；J25 的正式 settings → Agent Bar → history 旅程从 renderer/preload 表单提交开关、连接、model、凭据与用途，并覆盖个人记忆管理和 accept/replay。修复了会话快照返回缺少 `sourceKind=session` 的 exact contract 缺口。该状态仍为「实现完成·尚未验收」；受影响 focus 11/11、core 880/880、evidence 229/229，受限环境完整 integration 75/85 的 10 项启动/utility 边界失败不改写产品断言。真实公网 provider、系统凭据、干净机与适用实机边界仍未晋级。
+
+### 2026-09-11 最小 Agent MVP 现有链路修整登记
+
+本段按 SEM-T06 在实现前登记 SEM-F31/F32/F35 的既有产品边界修整，不新增 IPC、公共字段、数据库表、migration、资格值、recipe、范围类型或操作入口，也不改变任何验收状态。
+
+- **SEM-F31 / J22/J24**：Agent Bar 首次读取、用户手动刷新以及收到更高 `agent-run:changed` revision 时，必须重新读取当前终态会话的 Agent 处理资格，即使范围身份没有变化；读取期间提交保持禁用。范围目录、交互历史、资格和交互详情分别拒绝不再匹配当前读取目标的迟到响应，旧范围、旧交互或旧请求不得覆盖当前事实。范围与历史分页互不取消；全量刷新使两侧旧分页失效，追加范围按 `scope.kind + scope.reference`、追加历史按 `interaction_id` 去重。同一交互的后台详情刷新保留未提交反馈编辑，切换交互后取消、反馈和导出回执不得覆盖新选择的详情、输入或状态。
+- **SEM-F32 / J21/J22/J24**：反馈编辑草稿按正式 Agent 交互身份保存在 Agent 窗口内存，每条沿用 4096 字符上限，最多保留 20 条非空草稿；达到上限时明确拒绝额外草稿，不静默淘汰已有输入。提交与反馈必须在同一轮事件处理内拒绝重复调用。没有明确 CommandResult 的相同载荷只在用户再次点击时复用原幂等键，不自动重发；载荷变化或收到明确回执后结束该键生命周期。失败保留输入，成功提交只清除仍与本次发送快照一致的草稿。
+- **SEM-F35 / J26**：导出动作旁必须直接说明“导出内容可能包含字幕或个人上下文”。保存对话框取消只呈现取消事实，零成功提示；导出回执只归属发起导出的正式 Agent 交互，不得串入后来选择的交互。现有错误码与 `next_action` 仅映射为固定中文说明，renderer 不展示内部值、原始异常文字或由异常推断的新操作。
+
+选区、日期范围、项目范围、其他 recipe、自动纪要、意图改选、设置跳转与新的资格引导继续属于后续工作；资格 `next_action` 仍固定为 `null`。本修整完成后的最高记录仍为「实现完成·尚未验收」。
