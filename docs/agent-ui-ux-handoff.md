@@ -714,3 +714,17 @@ Agent Bar（agent 窗口）
 - 不构成 fixture preview：本节所有状态与文案均为设计裁决，不经生产 exact validator。
 - 不构成 J22/J24 证据，不提升 S3 或任何用户旅程状态。
 - `Renderer implementation`（UX-3）的前置条件尚未满足：`AUI-CR-010`–`019` 均为 `open`，`agent-run:*` 六频道 exact contract、`agent` 角色窗口/preload、正式 renderer 根路径均未登记或冻结；真实 preload/IPC/SQLite 汇合仍留给 S5-Integration。
+
+## 14. 2026-09-11 正式 renderer 现状校正与状态修整
+
+本节是对 §13 当时设计交付状态的现行校正；§13 保留为带日期的历史记录，不再代表当前实现状态。正式 `agent` 角色窗口、`speech-agent.agent-run.ui@1.0.0`、preload facade 与 Agent Bar renderer 已存在。当前最小产品范围仍只有终态会话，开放 recipe 仍只有会话问答与会后结构化纪要；选区/日期/项目范围、其他 recipe、自动纪要、意图改选、设置跳转与新的资格引导均未开放。
+
+现行 Agent Bar 保持原布局，并增加以下输入与状态保护：
+
+- 首次读取、用户手动刷新及更高 `agent-run:changed` revision 都重新读取当前终态会话资格；读取期间纪要与问答提交禁用，旧范围、旧请求响应不覆盖当前资格。
+- 范围目录与交互历史各自管理分页与 loading；全量刷新使两侧旧分页失效，追加页按正式身份去重。
+- 同一交互后台刷新保留编辑草稿；草稿按交互身份只存在窗口内存，每条最多 4096 字符，最多 20 条非空草稿，达到上限明确拒绝新增且不淘汰已有输入。
+- 取消、反馈和导出回执绑定发起交互；切换交互后不覆盖新选择的详情、输入或状态。提交与反馈在同一轮事件内拒绝重复调用，未知回执不自动重发，用户再次点击相同载荷才复用原幂等键。
+- 失败保留输入；Agent、工具错误码与下一动作映射为固定中文文案，不显示内部值或异常原文。导出动作旁固定显示“导出内容可能包含字幕或个人上下文”，保存对话框取消只显示取消事实。
+
+`AUI-CR-013`、`AUI-CR-017` 与 `AUI-CR-019` 已由正式 renderer 消费；`AUI-CR-010`、`014`、`015`、`016`、`020` 只关闭各自已实现子项，未实现部分继续 open；`AUI-CR-011`、`018` 继续 open，`AUI-CR-012` 的下一动作仍未签发且资格 `next_action` 固定为 `null`。正式 Electron 旅程已用 production renderer/preload/main、Personal Context、Agent Loop、storage worker 与 SQLite 覆盖手动资格刷新、刷新期间提交禁用、DOM 编辑反馈和详情重读，仅外部 provider 使用受控 loopback seam。该证据状态仍为「实现完成·尚未验收」。

@@ -579,6 +579,22 @@ test('SEM-F34/J24: tool audit stays collapsed until expanded, then shows complet
   assert.match(document.body.textContent, /受控来源/)
 })
 
+test('SEM-F35/J24: interaction and tool error codes render fixed Chinese explanations without internal values', async (t) => {
+  const harness = await createHarness(); t.after(() => harness.dispose())
+  harness.setDetail({
+    ...harness.historyItem,
+    interaction_id: 'interaction.ui.2', run_id: 'run.ui.2', routing_mode: 'model', state: 'failed', terminal_reason: 'failed',
+    error_code: 'AGENT_PROVIDER_TIMEOUT', result: null, result_digest: null, source_refs: [],
+    tool_calls: [{ ...toolCall, status: 'failed', error_code: 'TOOL_TIMEOUT', result: null, result_digest: null }]
+  })
+  await act(async () => click(document.querySelectorAll('.history-card')[1]))
+  await flush()
+  assert.match(document.body.textContent, /模型响应超时/)
+  assert.match(document.body.textContent, /工具调用超时/)
+  assert.equal(document.body.textContent.includes('AGENT_PROVIDER_TIMEOUT'), false)
+  assert.equal(document.body.textContent.includes('TOOL_TIMEOUT'), false)
+})
+
 test('SEM-F32/J21: terminal Agent results expose only explicit interaction signals', async (t) => {
   const harness = await createHarness(); t.after(() => harness.dispose())
   harness.setDetail({

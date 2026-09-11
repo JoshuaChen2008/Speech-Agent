@@ -2,17 +2,36 @@
 
 /*
  * Deterministic J25 product journey.  The production main/preload/renderers
- * remain the system under test; only the provider network seam is controlled
- * by a loopback HTTP responder.  The report deliberately contains no prompt,
+ * remain the system under test; only the provider network seam is substituted
+ * by a loopback HTTP responder.  The real eligibility IPC handler is counted
+ * and paused once to observe its pending UI without replacing its result.
+ * The report deliberately contains no prompt,
  * provider payload, credential, transcript text, or filesystem path.
  */
 
 const http = require('node:http')
 const fs = require('node:fs')
 const path = require('node:path')
-const { app, BrowserWindow } = require('electron')
+const { app, BrowserWindow, ipcMain } = require('electron')
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
+const eligibilityProbe = { count: 0, nextHold: null }
+const originalIpcHandle = ipcMain.handle.bind(ipcMain)
+ipcMain.handle = (channel, handler) => originalIpcHandle(channel, async (...args) => {
+  if (channel === 'agent-run:get-eligibility') {
+    eligibilityProbe.count += 1
+    const hold = eligibilityProbe.nextHold
+    eligibilityProbe.nextHold = null
+    if (hold) await hold.promise
+  }
+  return handler(...args)
+})
+
+function deferred () {
+  let resolve
+  const promise = new Promise((resolvePromise) => { resolve = resolvePromise })
+  return { promise, resolve }
+}
 
 function wait (milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -269,55 +288,103 @@ async function runAgentBar (toolbar) {
   await waitFor(async () => agent.webContents.executeJavaScript("document.readyState === 'complete'"), 'Agent Bar renderer')
   await waitFor(async () => agent.webContents.executeJavaScript("Boolean(document.querySelector('.scope-card'))"), 'terminal scope')
   await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '可以运行'"), 'provider eligibility')
+  const readsBeforeManualRefresh = eligibilityProbe.count
+  const eligibilityHold = deferred()
+  eligibilityProbe.nextHold = eligibilityHold
+  await agent.webContents.executeJavaScript("document.querySelector('.scope-panel .panel-heading button').click(); true")
+  await waitFor(() => eligibilityProbe.count > readsBeforeManualRefresh, 'manual eligibility refresh')
+  const submitDisabledDuringEligibilityRefresh = await agent.webContents.executeJavaScript("document.querySelector('[data-action=\"qa\"]')?.disabled === true && document.querySelector('[data-action=\"minutes\"]')?.disabled === true")
+  eligibilityHold.resolve()
+  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '可以运行'"), 'refreshed provider eligibility')
   const result = await agent.webContents.executeJavaScript(`(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const waitFor = async (probe, label) => {
+      for (let i = 0; i < 240; i += 1) {
+        const value = probe()
+        if (value) return value
+        await sleep(50)
+      }
+      throw new Error(label + ' timed out')
+    }
+    const setInput = (input, value) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+      setter.call(input, value)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    }
     const headers = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
-    const scopes = await window.agentApi.getScopes({ ...headers, limit: 50, cursor: null })
-    const scope = scopes.scopes?.[0]?.scope || scopes.default_scope
-    const submitted = await window.agentApi.submit({
-      ...headers,
-      scope,
-      prompt: '请回答这场会的重点',
-      client_idempotency_key: 'client.j25.formal.settings'
-    })
+    const prompt = document.querySelector('#agentPrompt')
+    setInput(prompt, '请回答这场会的重点')
+    document.querySelector('[data-action="qa"]').click()
+    await waitFor(() => document.querySelector('.run-card'), 'submitted interaction')
     let detail = null
+    let history = null
+    let interactionId = null
     for (let i = 0; i < 240; i += 1) {
-      detail = await window.agentApi.getInteraction({ ...headers, interaction_id: submitted.result.interaction_id })
+      history = await window.agentApi.getHistory({ ...headers, limit: 50, cursor: null })
+      interactionId = history?.ok === true ? history.result.items[0]?.interaction_id : null
+      if (!interactionId) { await sleep(50); continue }
+      detail = await window.agentApi.getInteraction({ ...headers, interaction_id: interactionId })
       if (detail.ok === true && ['succeeded', 'failed', 'cancelled'].includes(detail.result.state)) break
       await sleep(50)
     }
-    const history = await window.agentApi.getHistory({ ...headers, limit: 50, cursor: null })
-    const signal = detail?.ok === true && detail.result.state === 'succeeded' && detail.result.result_digest
-      ? await window.agentApi.recordSignal({
-          ...headers,
-          interaction_id: submitted.result.interaction_id,
-          signal_kind: 'accept',
-          payload: null,
-          result_digest: detail.result.result_digest,
-          signal_idempotency_key: 'signal.j25.formal.accept'
-        })
-      : null
-    const signalReplay = signal?.ok === true
-      ? await window.agentApi.recordSignal({
-          ...headers,
-          interaction_id: submitted.result.interaction_id,
-          signal_kind: 'accept',
-          payload: null,
-          result_digest: detail.result.result_digest,
-          signal_idempotency_key: 'signal.j25.formal.accept'
-        })
-      : null
     return {
       succeeded: detail?.ok === true && detail.result.state === 'succeeded',
-      historyVisible: history?.ok === true && history.result.items.some((item) => item.interaction_id === submitted.result.interaction_id),
+      historyVisible: history?.ok === true && history.result.items.some((item) => item.interaction_id === interactionId),
       modelVisible: detail?.result?.model?.model_id === 'j25-local-model',
-      signalAccepted: signal?.ok === true && signal.result?.accepted === true,
-      signalReplayed: signalReplay?.ok === true && signalReplay.result?.replayed === true
+      interactionId,
+      resultDigest: detail?.result?.result_digest || null
     }
   })()`)
   await agent.webContents.reload()
   await waitFor(async () => agent.webContents.executeJavaScript("document.readyState === 'complete'"), 'reloaded Agent Bar renderer')
   await waitFor(async () => agent.webContents.executeJavaScript("Boolean(document.querySelector('.history-card'))"), 'history renderer')
+  const feedback = await agent.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const waitFor = async (probe, label) => {
+      for (let i = 0; i < 240; i += 1) {
+        const value = probe()
+        if (value) return value
+        await sleep(50)
+      }
+      throw new Error(label + ' timed out')
+    }
+    const setInput = (input, value) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+      setter.call(input, value)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    const headers = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
+    const interactionId = ${JSON.stringify(result.interactionId)}
+    const resultDigest = ${JSON.stringify(result.resultDigest)}
+    document.querySelector('.history-card').click()
+    const editor = await waitFor(() => document.querySelector('#agentEdit'), 'edit feedback form')
+    setInput(editor, 'J25 renderer feedback')
+    document.querySelector('[data-signal="edit"]').click()
+    const feedbackSubmittedThroughRenderer = Boolean(await waitFor(() => document.querySelector('.signal-status')?.textContent.includes('已记录交互反馈'), 'renderer feedback receipt'))
+    const detailAfterFeedback = await window.agentApi.getInteraction({ ...headers, interaction_id: interactionId })
+    const signal = await window.agentApi.recordSignal({
+      ...headers, interaction_id: interactionId, signal_kind: 'accept', payload: null,
+      result_digest: resultDigest, signal_idempotency_key: 'signal.j25.formal.accept'
+    })
+    const signalReplay = signal?.ok === true ? await window.agentApi.recordSignal({
+      ...headers, interaction_id: interactionId, signal_kind: 'accept', payload: null,
+      result_digest: resultDigest, signal_idempotency_key: 'signal.j25.formal.accept'
+    }) : null
+    return {
+      signalAccepted: signal?.ok === true && signal.result?.accepted === true,
+      signalReplayed: signalReplay?.ok === true && signalReplay.result?.replayed === true,
+      feedbackSubmittedThroughRenderer,
+      detailRereadAfterFeedback: detailAfterFeedback?.ok === true &&
+        detailAfterFeedback.result.interaction_id === interactionId &&
+        detailAfterFeedback.result.state === 'succeeded' &&
+        detailAfterFeedback.result.result_digest === resultDigest
+    }
+  })()`)
+  await agent.webContents.reload()
+  await waitFor(async () => agent.webContents.executeJavaScript("document.readyState === 'complete'"), 'feedback-reloaded Agent Bar renderer')
+  await waitFor(async () => agent.webContents.executeJavaScript("Boolean(document.querySelector('.history-card'))"), 'feedback history renderer')
   const ui = await agent.webContents.executeJavaScript(`(() => {
     const visible = document.body.textContent
     return {
@@ -327,7 +394,14 @@ async function runAgentBar (toolbar) {
       credentialAbsent: !visible.includes('j25-local-provider-secret')
     }
   })()`)
-  return { ...result, ...ui }
+  return {
+    ...result,
+    ...feedback,
+    ...ui,
+    manualEligibilityRefresh: eligibilityProbe.count > readsBeforeManualRefresh,
+    submitDisabledDuringEligibilityRefresh,
+    eligibilityReadCount: eligibilityProbe.count
+  }
 }
 
 async function main () {
@@ -369,7 +443,9 @@ async function main () {
       result: settingsResult.profileConnection && settingsResult.modelVisible && settingsResult.credentialCleared &&
         settingsResult.defaultReady && settingsResult.agentEnabled && settingsResult.memoryManaged &&
         runResult.succeeded && runResult.historyVisible && runResult.modelVisible && runResult.signalAccepted &&
-        runResult.signalReplayed && runResult.promptAbsent && runResult.credentialAbsent && provider.state.requestCount === 1 &&
+        runResult.signalReplayed && runResult.manualEligibilityRefresh && runResult.submitDisabledDuringEligibilityRefresh &&
+        runResult.feedbackSubmittedThroughRenderer && runResult.detailRereadAfterFeedback &&
+        runResult.promptAbsent && runResult.credentialAbsent && provider.state.requestCount === 1 &&
         provider.state.credentialObserved && provider.state.credentialExact && provider.state.modelIds.length === 1 && provider.state.modelIds[0] === 'j25-local-model',
       settingsPath: 'formal-settings-renderer-preload',
       runPath: 'formal-agent-bar-renderer-preload-main',
@@ -382,6 +458,11 @@ async function main () {
       personalContextManaged: settingsResult.memoryManaged,
       interactionSignalAccepted: runResult.signalAccepted,
       interactionSignalReplayed: runResult.signalReplayed,
+      manualEligibilityRefresh: runResult.manualEligibilityRefresh,
+      submitDisabledDuringEligibilityRefresh: runResult.submitDisabledDuringEligibilityRefresh,
+      eligibilityReadCount: runResult.eligibilityReadCount,
+      feedbackSubmittedThroughRenderer: runResult.feedbackSubmittedThroughRenderer,
+      detailRereadAfterFeedback: runResult.detailRereadAfterFeedback,
       transcriptAndPromptAbsentFromReport: true,
       publicProvider: false,
       systemCredential: false

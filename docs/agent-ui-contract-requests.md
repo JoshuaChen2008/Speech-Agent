@@ -294,11 +294,11 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 - 建议的失败 fixture：Agent Bar 侧误把 `intent.route` 计入列表。
 - Core 判断：Agent Bar 直接以有界 `limit` 调用正式历史读取，使用服务签发的 keyset cursor 续读；storage 投影排除 `intent.route`。独立完整历史表面与 Agent Bar 小页的产品关系仍未签发。
 - exact contract：`src/agent/contracts/agent-run-ui.js` 的 `assertHistoryRequest()` 与 `assertHistoryResponse()`；`src/preload/agent.js` 的 `getHistory()`。
-- S5-Integration 证据：`src/agent/agent-view.tsx`、`test/ui/agent-ui.test.js` 与 `test/integration/agent-redesign-s5-target-journey.test.js` 已覆盖 Agent Bar 有界读取和续读；2026-09-11 登记的 `interaction_id` 追加去重仍待 renderer 修整，完整历史关系继续 open。
+- S5-Integration 证据：`src/agent/agent-view.tsx`、`test/ui/agent-ui.test.js` 与 `test/integration/agent-redesign-s5-target-journey.test.js` 已覆盖 Agent Bar 有界读取、续读与 `interaction_id` 追加去重；完整历史关系继续 open。
 
 ### AUI-CR-017 · 反馈动作的 exact 命令与幂等
 
-- 处理值：contract-ready（五个命令与正式 renderer 已 consumed；未知回执幂等键复用、同一轮重复保护与草稿边界待本次修整后收束）
+- 处理值：consumed
 - 提出面：agent
 - 用户意图：我想对一个结果说"记住这条"或"这不对"，并且重复点击不会重复生效。
 - 需要的事实或动作：编辑/接受/拒绝/记住/忘记五个反馈动作各自的 exact 命令载荷、CommandResult 形状、幂等键规则；"记住"是否复用 `AUI-CR-006` 已裁定的设置内结构化「记住」输入形式，还是 Agent Bar 场景有专属的结果绑定字段（例如绑定 `interactionId` 而非自由结构化条目）。
@@ -306,9 +306,9 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 - 受影响语义/旅程：SEM-F32 / SEM-F30 / J22 / J24
 - 建议的成功 fixture：五个动作各自的 pending → 成功回执；同一动作重复提交的幂等收束。
 - 建议的失败 fixture：对已终态交互重复编辑被拒；revision conflict 零写入。
-- Core 判断：五个动作共用正式交互绑定命令；`edit` 只携带有界文本，其余动作 payload 为 `null`，全部绑定 `interaction_id + result_digest + signal_idempotency_key`。这些命令已由正式 renderer 消费；未知回执时的键生命周期、同一轮重复保护与窗口内草稿边界仍待本次修整。
+- Core 判断：五个动作共用正式交互绑定命令；`edit` 只携带有界文本，其余动作 payload 为 `null`，全部绑定 `interaction_id + result_digest + signal_idempotency_key`。正式 renderer 在同一轮事件内拒绝重复调用；未知回执时，相同载荷只在用户再次点击后复用原键，载荷变化或明确回执结束该键生命周期。编辑草稿只存在窗口内存，按交互身份保留，4096 字符与 20 条非空草稿上限 fail closed。
 - exact contract：`src/agent/contracts/agent-run-ui.js` 的 `SIGNAL_KINDS`、`assertRecordSignalRequest()` 与 `assertRecordSignalResponse()`；`src/preload/agent.js` 的 `recordSignal()`。
-- S5-Integration 证据：`src/agent/agent-view.tsx`、`test/ui/agent-ui.test.js`、`test/main/agent-interaction-signal-service.test.js` 与正式 Electron settings → Agent Bar → history 旅程已覆盖命令、成功回执及 Core 幂等；2026-09-11 登记的 renderer 保护补齐后方可整体推进为 `consumed`。fixture preview 不构成 J21/J22/J24 证据。
+- S5-Integration 证据：`src/agent/agent-view.tsx` 与 `test/ui/agent-ui.test.js` 覆盖同步重复保护、未知回执键复用和草稿边界；`test/main/agent-interaction-signal-service.test.js` 覆盖 Core 幂等；正式 Electron settings → Agent Bar → history 旅程覆盖 DOM 编辑反馈、成功回执及详情重读。fixture preview 不构成 J21/J22/J24 证据。
 
 ### AUI-CR-018 · 报告自动呈现偏好的读写投影与呈现回执
 
@@ -326,7 +326,7 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 
 ### AUI-CR-019 ·`agent-run:changed` 的 revision 语义与未知值降级
 
-- 处理值：contract-ready（资格、历史与详情读取已由正式 renderer 消费；更高 revision 强制资格重读待本次修整后收束）
+- 处理值：consumed
 - 提出面：agent
 - 用户意图：Agent Bar 重新打开或联网抖动之后，我希望看到的是权威最新状态，而不是一个损坏或过期的画面。
 - 需要的事实或动作：`agent-run:changed` 的单调 revision 定义域（是否与 `agent-context:changed`/`agent-model:changed` 各自独立计数，还是共享）；`agent-run:get-eligibility`/`get-history`/`get-interaction` 在收到更高 revision 后各自的重读范围；未知 `terminal_reason`、未知 `routing_mode` 标签、未知 contract 版本时的降级粒度（整表面只读，还是可局部降级）。
@@ -336,11 +336,11 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 - 建议的失败 fixture：未知 contract 版本；额外未登记字段。
 - Core 判断：`agent-run:changed` 使用独立单调非负 revision；更高 revision 必须触发资格、范围、历史和当前详情的正式重读，旧 revision 与旧请求结果均被拒绝。未知 contract 版本、额外字段或未知枚举使对应表面 fail closed，不猜测渲染。
 - exact contract：`src/agent/contracts/agent-run-ui.js` 的 `assertChangedEvent()`、`assertGetEligibilityResponse()`、`assertHistoryResponse()` 与 `assertInteractionResponse()`；`src/preload/agent.js` 的订阅和读取 facade。
-- S5-Integration 证据：现有 `src/agent/agent-view.tsx`、`test/ui/agent-ui.test.js` 与正式 Electron Agent Bar 旅程已覆盖订阅、范围/历史/详情读取；更高 revision 后同范围资格重读及旧响应拒绝按 2026-09-11 场景登记补齐后方可推进为 `consumed`。fixture preview 不构成 J22/J24 证据。
+- S5-Integration 证据：`src/agent/agent-view.tsx` 与 `test/ui/agent-ui.test.js` 覆盖先订阅、首次/手动/更高 revision 资格重读、范围/历史/详情刷新及旧响应拒绝；正式 Electron settings → Agent Bar → history 旅程覆盖手动资格重读与读取期间提交禁用。fixture preview 不构成 J22/J24 证据。
 
 ### AUI-CR-020 · 工具调用审计与预算收束投影
 
-- 处理值：open（工具调用身份、状态、参数/返回与默认折叠详情已 consumed；工具失败原因和独立 `budgetState` 投影仍 open）
+- 处理值：open（工具调用身份、状态、参数/返回、固定失败原因与默认折叠详情已 consumed；独立 `budgetState` 投影仍 open）
 - 提出面：agent / history
 - 用户意图：我查看一条正式 Agent 交互时，想确认它是否使用了受控只读工具、每次调用的结果或失败原因，以及预算是否导致交互收束；默认不想被大段审计正文打断。
 - 需要的事实或动作：签发 `speech-agent.agent-tool-trace.ui@1.0.0` 的只读 `ToolTraceSnapshotV1`。其公开顶层恰含 `status`、`budgetState`、`attemptCount` 与按 `(attempt, callOrder)` 全序的 `toolCalls`；每一调用恰含工具名、状态、七值工具错误码（可空）、相对开始/结束时长、已校验的有界 `args/result`、`sourceRefs` 与 `{resultBytes, sourceTextBytes, sourceReferenceCount}`。`budgetState` 只允许 `within_budget/exhausted`，用以显示预算收束，不公开任何上限数值。调用正文必须由 renderer 默认折叠，并只在用户明确展开后显示。S4 contract 不向 renderer 公开 recipe ID、recipe 版本、`maxTurns`、`toolGrants`、`single_shot`、`agent_loop`、`execution_form`、`escalation_reason`、提示正文、内部思维过程、provider 原始事件、凭据或本地路径。
@@ -348,9 +348,9 @@ UI/UX 模型只从冻结 snapshot、CommandResult、事件和 fixture 取得事�
 - 受影响语义/旅程：SEM-F28 / SEM-F31 / SEM-F34 / SEM-T10 / J22 / J24
 - 建议的成功 fixture：一条 `search_context` 成功调用；一条 `read_sources` 成功调用；预算耗尽；两个 attempt 均保留且第二个 attempt 重新从 `callOrder=1` 开始；取消终态。所有正文使用合成内容并标记 preview-only。
 - 建议的失败 fixture：`TOOL_ARGS_INVALID`、`TOOL_SCOPE_DENIED`、`TOOL_NOT_AVAILABLE_FOR_RECIPE`、`TOOL_TIMEOUT`、未知工具名、未知状态或未知 contract 版本；后三类必须使整个详情只读不可用，不局部猜测渲染。
-- Core 判断：S5 已将 v7 interaction store 的完整 `tool_calls` 经 AgentRunService、exact IPC 与 preload 投影给正式 renderer；调用身份、状态、参数和返回由 renderer 默认折叠呈现。`tool_calls[].error_code` 与交互 `error_code` 尚未映射为用户可见失败原因；独立 `budgetState` 顶层投影也未进入公开合同，renderer 不据结果猜测预算状态。
+- Core 判断：S5 已将 v7 interaction store 的完整 `tool_calls` 经 AgentRunService、exact IPC 与 preload 投影给正式 renderer；调用身份、状态、参数和返回由 renderer 默认折叠呈现，`tool_calls[].error_code` 与交互 `error_code` 映射为固定中文失败原因，不展示内部值或原始异常。独立 `budgetState` 顶层投影未进入公开合同，renderer 不据结果猜测预算状态。
 - exact contract：`src/agent/contracts/agent-run-ui.js` 的 `assertToolCall()` 与 `assertInteractionResponse()`，以及 `src/agent/contracts/controlled-tools.js` 的工具名和工具错误码闭集；`src/agent/contracts/agent-tool-trace-ui.js` 的 `budgetState` 仍只属于 preview contract。
-- S5-Integration 证据：`src/agent/formal-run/agent-run-service.js`、`src/preload/agent.js`、`src/agent/agent-view.tsx`、`test/ui/agent-ui.test.js` 与 `test/integration/agent-redesign-s5-target-journey.test.js` 已覆盖真实 `tool_calls` 读取及折叠呈现；工具失败原因和独立 `budgetState` 继续 open，fixture 不构成 J22/J24 证据。
+- S5-Integration 证据：`src/agent/formal-run/agent-run-service.js`、`src/preload/agent.js`、`src/agent/agent-view.tsx`、`test/ui/agent-ui.test.js` 与 `test/integration/agent-redesign-s5-target-journey.test.js` 已覆盖真实 `tool_calls` 读取、固定失败原因及折叠呈现；独立 `budgetState` 继续 open，fixture 不构成 J22/J24 证据。
 
 ## 5. 关闭检查
 

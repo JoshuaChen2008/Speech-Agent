@@ -32,7 +32,7 @@ function waitForExit (child, timeoutMs) {
   })
 }
 
-test('SEM-F31/SEM-F33/SEM-F34/J25: formal settings → context management → Agent Bar run → history uses one production IPC/SQLite path', { timeout: 90000 }, async () => {
+test('SEM-F31/SEM-F32/SEM-F33/SEM-F34/J22/J24/J25: formal settings → context management → Agent Bar run/feedback/refresh → history uses one production IPC/SQLite path', { timeout: 90000 }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-j25-formal-settings-'))
   const userData = path.join(root, 'user-data')
   fs.mkdirSync(userData, { recursive: true })
@@ -50,7 +50,7 @@ test('SEM-F31/SEM-F33/SEM-F34/J25: formal settings → context management → Ag
     const result = await waitForExit(child, 75000)
     assert.deepEqual({ code: result.code, signal: result.signal }, { code: 0, signal: null }, result.stderr.slice(-4000))
     const reportLine = result.stdout.trim().split(/\r?\n/).find((line) => line.startsWith('{"schemaVersion":1'))
-    assert.ok(reportLine, `formal J25 report missing: ${result.stdout.slice(-1000)}`)
+    assert.ok(reportLine, `formal J25 report missing: ${result.stdout.slice(-1000)} ${result.stderr.slice(-4000)}`)
     const report = JSON.parse(reportLine)
     assert.equal(report.result, true, JSON.stringify(report))
     assert.equal(report.settingsPath, 'formal-settings-renderer-preload')
@@ -64,10 +64,15 @@ test('SEM-F31/SEM-F33/SEM-F34/J25: formal settings → context management → Ag
     assert.equal(report.personalContextManaged, true)
     assert.equal(report.interactionSignalAccepted, true)
     assert.equal(report.interactionSignalReplayed, true)
+    assert.equal(report.manualEligibilityRefresh, true)
+    assert.equal(report.submitDisabledDuringEligibilityRefresh, true)
+    assert.equal(report.eligibilityReadCount >= 2, true)
+    assert.equal(report.feedbackSubmittedThroughRenderer, true)
+    assert.equal(report.detailRereadAfterFeedback, true)
     assert.equal(report.transcriptAndPromptAbsentFromReport, true)
     assert.equal(report.publicProvider, false)
     assert.equal(report.systemCredential, false)
-    assert.equal(/j25-local-provider-secret|请回答这场会的重点|受控正式设置/.test(reportLine), false)
+    assert.equal(/j25-local-provider-secret|请回答这场会的重点|J25 renderer feedback|受控正式设置/.test(reportLine), false)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

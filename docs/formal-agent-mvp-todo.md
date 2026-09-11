@@ -38,6 +38,7 @@ cancel(request)
 getHistory(request)
 getInteraction(request)
 exportInteraction(request)
+recordSignal(request)
 subscribeChanged(listener)
 ```
 
@@ -82,6 +83,7 @@ subscribeChanged(listener)
 - [x] 渲染 pending/running/succeeded/failed/cancelling/cancelled。（实现完成·尚未验收；取消等待 CommandResult，未知状态 fail closed。）
 - [x] 渲染概要、结论、待办、风险、来源引用和可操作错误。（实现完成·尚未验收；缺口与待确认字段也按受控结果投影，未展示内部 ID/reasoning。）
 - [x] reload 后先订阅 changed，再读取权威 snapshot/history。（实现完成·尚未验收；局部 UI 回归覆盖先订阅、历史与活动详情刷新。）
+- [x] 修整资格、双列表分页、交互详情、反馈草稿与操作回执的窗口内状态一致性。（实现完成·尚未验收；首次/手动/更高 revision 资格重读、旧响应拒绝、分页独立 loading、按交互草稿与迟到回执隔离、同步重复保护及未知回执幂等键复用已有定向 renderer 回归。）
 - [x] 在工具条加入正式 Agent 入口。（实现完成·尚未验收；`agent` action 已接入工具条并由真实 Electron 旅程验证打开、复用、聚焦、关闭，字幕系统继续独立运行。）
 
 ### P4：历史与导出（S5 change）
@@ -98,7 +100,7 @@ subscribeChanged(listener)
 - [x] J24：取消、provider 不可用、重复停止、reload、字幕独立性（实现完成·尚未验收；真实 Electron 旅程在 provider 不可用检查前覆盖字幕启动/停止，随后验证 Agent 打开/聚焦/关闭不影响已停止会话的历史/文本导出；本地真实 SQLite 旅程覆盖取消/迟到结果，取消进入 `cancelling` 后及 Schema 失败收束为 `failed` 后分别由独立 recorder 读取字幕历史/文本导出；runtime/storage 与既有 utility-process 证据覆盖重复请求、预算/timeout/replacement 失败矩阵。以上为分层子边界证据，完整 J24 总门槛仍待正式 MVP 阶段验收。）
 - [x] J26：成功、失败和取消交互的确定性 JSON 导出。（实现完成·尚未验收；`AgentInteractionExporter`、同一 `StorageGateway` 快照、取消零写入、digest/顺序/隐私负扫描、真实 SQLite 重导出字节一致均有证据；系统保存对话框属于外部边界，正式 MVP 阶段门禁仍待统一记录。）
 - [ ] J21：终态会话 → `context.ingest.session` → 经历/记忆候选与管理（实现完成·尚未验收；真实 `SqliteSessionRecorder` 终态通知 → `PersonalContextRuntime` → `ContextIngestSessionRunner` → `StorageGateway`/SQLite worker 自动摄取已验证，重复终态通知保持单运行/单经历，正式设置中的个人上下文管理 UI、exact preload/IPC 与 UI 回归已接入；完整关闭/重新开启、suppression、冲突与正式入口组合仍待门禁记录）。
-- [ ] J25：正式设置 → Agent Bar 运行 → 交互历史（实现完成·尚未验收；受控 loopback provider 的真实 Electron 旅程已覆盖 settings renderer/preload 写入连接、model、用途与凭据，Agent Bar preload/main 执行，交互信号 accept/replay，个人记忆记住/忘记/删除和 remount 后读取，以及 SQLite 终态交互与 history renderer 重载；真实公网 provider、系统凭据边界和多模型比较实机证据仍待门禁记录）。
+- [ ] J25：正式设置 → Agent Bar 运行 → 交互历史（实现完成·尚未验收；受控 loopback provider 的真实 Electron 旅程已覆盖 settings renderer/preload 写入连接、model、用途与凭据，Agent Bar DOM 手动资格刷新、刷新期间提交禁用、问答与编辑反馈提交、正式详情重读，交互信号 accept/replay，个人记忆记住/忘记/删除和 remount 后读取，以及 SQLite 终态交互与 history renderer 重载；真实公网 provider、系统凭据边界和多模型比较实机证据仍待门禁记录）。
 - [ ] J27：正式入口与隔离入口的 userData/SQLite 边界（实现完成·尚未验收；此前打包基线 revision `cfdc5e4` 已有正式入口/隔离入口真实 userData/SQLite 旅程、require/打包守卫、core 880/880、Electron 可运行环境 integration 85/85、evidence 229/229、smoke/release layout 与 packaged fresh/restart 证据；本轮 `2cb663c` 未重复打包，NSIS 未签名且干净机手动启动仍待门禁记录，见 [`j27-current-revision-results.json`](validation/j27-current-revision-results.json)。）
 - [x] `.artifacts/` 与 `docs/validation/` 通过 SEM-F14 负扫描。（实现完成·尚未验收；`npm run test:evidence` 229/229，报告只保留指标、布尔值和哈希，未写入正文、现场音频或路径。）
 
@@ -108,6 +110,12 @@ J27 干净机手动启动与安装边界；J25 的真实公网 provider、系统
 
 以上清单只记录 S5 子切片的实现与证据，不得据此记录「联合验收完成」。正式 MVP
 仍须同时关闭 J21、J22、J24、J25、J26、J27；其中完整 J25 模型接入层仍是后续门禁。
+
+### 2026-09-11 Agent Bar 状态修整记录（仍为实现完成·尚未验收）
+
+本轮在不新增 IPC、公共字段、数据库表或 migration 的前提下，实施 SEM-F31/F32/F35 的窗口内状态修整：资格在首次读取、手动刷新和更高 `agent-run:changed` revision 后重读；范围与历史分页独立拒绝迟到响应并恢复 loading；详情刷新保留按交互身份保存的反馈草稿；取消、反馈和导出回执不污染后来选择的交互。提交与反馈在同一轮事件内拒绝重复调用，未知回执只在用户再次点击相同载荷时复用幂等键；固定中文错误文案不展示内部值或异常原文，导出旁显示“导出内容可能包含字幕或个人上下文”。
+
+正式 Electron J25 旅程继续使用 production renderer/preload/main、Personal Context、Agent Loop、storage worker 与 SQLite，仅控制外部 provider；新增的 DOM 路径覆盖手动资格刷新、刷新期间提交禁用、编辑反馈提交和正式详情重读。范围扩展、其他 recipe、自动纪要、意图改选、设置跳转和资格引导仍列为后续工作；本轮未执行完整三条 lane、正式包、干净机、真实公网 provider 或系统凭据验收。
 
 ## 5. 验收门槛
 

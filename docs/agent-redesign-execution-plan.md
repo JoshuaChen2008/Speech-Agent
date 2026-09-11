@@ -312,6 +312,14 @@ release layout verifier 为 pass，包含 435 个 ASAR 条目和 5 个 native bi
 指标与哈希写入 [`docs/validation/j27-current-revision-results.json`](validation/j27-current-revision-results.json)。
 该记录仍明确缺少干净机手动启动、真实公网 provider 和系统凭据边界，因此 J27 与正式 MVP 总门槛不晋级。
 
+### 2026-09-11 最小 Agent MVP 现有链路修整（仍为实现完成·尚未验收）
+
+本轮按 SEM-T06 先登记、再实现 SEM-F31/F32/F35 与 J21/J22/J24/J26 的既有链路修整，没有新增 IPC、公共字段、数据库表、migration、资格值、recipe、范围类型或操作入口。正式 Agent Bar 现在为资格、范围目录、交互历史与交互详情分别拒绝不再匹配当前读取目标的迟到响应；首次读取、手动刷新及更高 `agent-run:changed` revision 都会重读同一终态会话的资格，读取期间提交保持禁用。范围与历史分页各自管理 loading，全量刷新使两侧旧分页失效，追加范围按 `scope.kind + scope.reference`、追加历史按 `interaction_id` 去重。
+
+反馈编辑草稿按正式 Agent 交互身份保存在窗口内存，遵守 4096 字符与最多 20 条非空草稿边界；同一交互详情刷新不清空草稿，切换后迟到的取消、反馈和导出回执只更新原交互。提交与反馈在同一轮事件内拒绝重复调用；未知回执的相同载荷只在用户再次点击时复用原幂等键，载荷变化或明确回执结束该键生命周期。现有 Agent/工具错误码与下一动作使用固定中文映射，失败保留输入；导出取消不显示成功，按钮旁直接提示“导出内容可能包含字幕或个人上下文”。所有这些状态只存在窗口内存，不进入 SQLite、日志或报告。
+
+扩展后的 `test/integration/agent-redesign-j25-formal-settings-journey.test.js` 使用 production renderer/preload/main、Personal Context、Agent Loop、storage worker 与 SQLite，仅以 loopback provider 替代外部边界；正式 DOM 覆盖手动资格刷新、刷新期间提交禁用、问答提交、编辑反馈及详情重读。当前实际验证为 Agent UI、signal/main 与样式守卫合计 40/40，该正式 Electron 旅程和本地 SQLite S5 目标旅程各 1/1，以及 `typecheck:renderer`、`verify:renderer` 返回码 0。`agent-bar-ipc-journey` 在组合运行与单文件重跑时均于 Windows Electron/GPU 启动边界以 `exit_code=-1073741515` 在产品断言前退出，按已登记执行环境边界记录，不计为产品断言通过或失败。未执行完整 core/integration/evidence 三条 lane、正式打包、干净机、真实公网 provider 或系统凭据边界；范围扩展、其他 recipe、自动纪要、意图改选、设置跳转和资格引导继续作为后续工作，验收状态不变。
+
 ### 目标验收矩阵
 
 | 切片 | 新 migration | 阻断旅程 | 正证据 | 负证据 |
