@@ -326,6 +326,8 @@ release layout verifier 为 pass，包含 435 个 ASAR 条目和 5 个 native bi
 
 本轮正式 Electron 旅程为 1/1，受影响 focus 为 23/23；`npm run test:core` 保持 895/895，`npm run test:evidence` 为 229/229。J21/J25/J27 和正式 MVP 仍是「实现完成·尚未验收」；suppression 负矩阵、真实公网 provider、系统凭据、当前 revision 打包、干净机与适用实机证据仍未晋级。
 
+同一 revision 的 J27 机械验证已重建：`npm run package:smoke` 与 smoke layout verifier 为 pass（439 个 ASAR 条目、5 个 native binary），`npm run package:release` 生成 x64 NSIS installer；packaged product-shell 在 Electron GPU/utility 边界异常退出，未形成 fresh/restart 或 packaged run binding，因此 release layout 不能据此资格化。VMware inventory 检出 2 个条目但无运行机，启动克隆返回外部加密口令要求。当前 J27 报告只保留这些计数、固定阻断标签和哈希，状态不晋级。
+
 ### 目标验收矩阵
 
 | 切片 | 新 migration | 阻断旅程 | 正证据 | 负证据 |

@@ -101,7 +101,7 @@ subscribeChanged(listener)
 - [x] J26：成功、失败和取消交互的确定性 JSON 导出。（实现完成·尚未验收；`AgentInteractionExporter`、同一 `StorageGateway` 快照、取消零写入、digest/顺序/隐私负扫描、真实 SQLite 重导出字节一致均有证据；系统保存对话框属于外部边界，正式 MVP 阶段门禁仍待统一记录。）
 - [ ] J21：终态会话 → `context.ingest.session` → 经历/记忆候选与管理（实现完成·尚未验收；真实 `SqliteSessionRecorder` 终态通知 → `PersonalContextRuntime` → `ContextIngestSessionRunner` → `StorageGateway`/SQLite worker 自动摄取已验证，重复终态通知保持单运行/单经历，正式设置中的个人上下文管理 UI、exact preload/IPC 与 UI 回归已接入；个人记忆自动处理休眠/重新开启与旧 revision 冲突已纳入正式设置旅程，suppression、完整负矩阵与阶段门禁仍待记录）。
 - [ ] J25：正式设置 → Agent Bar 运行 → 交互历史（实现完成·尚未验收；受控 loopback provider 的真实 Electron 旅程已覆盖 settings renderer/preload 写入连接、model、用途与凭据，Agent Bar DOM 手动资格刷新、刷新期间提交禁用、问答与编辑反馈提交、正式详情重读，交互信号 accept/replay，个人记忆记住/忘记/删除、休眠/重新开启、旧 revision 冲突和 remount 后读取，以及 SQLite 终态交互与 history renderer 重载；真实公网 provider、系统凭据边界和多模型比较实机证据仍待门禁记录）。
-- [ ] J27：正式入口与隔离入口的 userData/SQLite 边界（实现完成·尚未验收；此前打包基线 revision `cfdc5e4` 已有正式入口/隔离入口真实 userData/SQLite 旅程、require/打包守卫、core 880/880、Electron 可运行环境 integration 85/85、evidence 229/229、smoke/release layout 与 packaged fresh/restart 证据；本轮 `2cb663c` 未重复打包，NSIS 未签名且干净机手动启动仍待门禁记录，见 [`j27-current-revision-results.json`](validation/j27-current-revision-results.json)。）
+- [ ] J27：正式入口与隔离入口的 userData/SQLite 边界（实现完成·尚未验收；当前 revision `4fe62f7` 已重建 x64 smoke/release 包，smoke layout 为 pass（439 个 ASAR 条目、5 个 native binary），release installer 已生成但 packaged product-shell 在 Electron GPU 边界退出，未形成当前 packaged run binding；当前 core 895/895、integration 75/85（10 项启动/utility/renderer 边界失败）、evidence 229/229。正式/隔离入口 userData/SQLite 旅程、release layout binding、NSIS 安装和干净机手动启动仍待门禁记录，见 [`j27-current-revision-results.json`](validation/j27-current-revision-results.json)。）
 - [x] `.artifacts/` 与 `docs/validation/` 通过 SEM-F14 负扫描。（实现完成·尚未验收；`npm run test:evidence` 229/229，报告只保留指标、布尔值和哈希，未写入正文、现场音频或路径。）
 
 后续门禁索引（本 S5 不实施）：J21 完整个人上下文管理 UI 与正式入口联合覆盖；
@@ -122,6 +122,8 @@ J27 干净机手动启动与安装边界；J25 的真实公网 provider、系统
 正式设置→个人上下文管理的真实 Electron 旅程继续使用 production renderer/preload/main、`PersonalContextController`、`ConfigStore`、`StorageGateway`/SQLite 与 Agent Bar；在记住/忘记/删除后新增关闭并重新开启“个人记忆自动处理”，随后以当前 revision 前一版请求验证 `AGENT_CONTEXT_REVISION_CONFLICT`，不产生 SQLite/ConfigStore 写入。fixture 报告只保留休眠、重新开启和冲突三个布尔值，不写正文、凭据、设备、路径或音频。
 
 本轮受影响 focus 为 23/23（正式 Electron 旅程 1/1），`npm run test:evidence` 为 229/229，`npm run test:core` 保持 895/895；这些证据仍记录为「实现完成·尚未验收」，不替代 suppression 负矩阵、真实公网 provider、系统凭据、正式包、干净机或适用实机边界。
+
+同一 revision 的 J27 机械记录已写入 [`j27-current-revision-results.json`](validation/j27-current-revision-results.json)：smoke layout verifier 为 pass，release x64 NSIS 已构建但因 packaged product-shell 的 Electron GPU/utility 边界未生成 binding；VMware inventory 有 2 个条目、当前无运行机，启动克隆需要外部加密口令。该记录只保留计数、布尔值、固定阻断标签和哈希，J27 仍为「实现完成·尚未验收」。
 
 ## 5. 验收门槛
 

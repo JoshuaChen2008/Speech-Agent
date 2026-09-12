@@ -267,6 +267,8 @@ S3 的统一执行宿主 Core 子边界、S4 的 `read_sources` 与完整工具�
 
 > **2026-09-12 J21/J25 个人上下文控制旅程证据（状态仍为实现完成·尚未验收）**：正式 settings 旅程在个人记忆记住/忘记/删除后，通过 production renderer/preload/main、`PersonalContextController`、`ConfigStore`、`StorageGateway`/SQLite 验证个人记忆自动处理的休眠与重新开启；再以当前 revision 前一版请求验证 `AGENT_CONTEXT_REVISION_CONFLICT`，确认冲突不产生 SQLite/ConfigStore 写入。报告只保留休眠、重新开启和冲突布尔值，不写正文、凭据、设备名、绝对路径或音频。正式 Electron 旅程 1/1，受影响 focus 23/23，`npm run test:core` 895/895，`npm run test:evidence` 229/229；suppression 负矩阵、真实公网 provider、系统凭据、正式包、干净机与适用实机证据仍待门禁。
 
+> **2026-09-12 J27 当前 revision 机械验证（状态仍为实现完成·尚未验收）**：`4fe62f7` 的 smoke 包 layout verifier 为 pass（439 个 ASAR 条目、5 个 native binary），release x64 NSIS 已生成；packaged product-shell 在 Electron GPU/utility 边界异常退出，未形成 fresh/restart 或 packaged run binding，故 release layout 不进入资格证据。当前三条 lane 为 core 895/895、integration 75/85（10 项 Electron GPU/utility/renderer 启动边界）、evidence 229/229。VMware inventory 有 2 个条目、当前无运行机，启动克隆需要外部加密口令。`j27-current-revision-results.json` 只记录计数、布尔值、固定阻断标签和哈希，不声称 userData/SQLite 隔离旅程、NSIS 安装、干净机、真实 provider 或系统凭据已验收。
+
 设计稿、截图、fixture preview、Storybook 类预览、单独 renderer snapshot 或直接调用最终 exporter 均不构成确定性联合旅程。只有保留真实内部产品模块、仅替代已登记外部边界的 S5-Integration 结果才能晋级对应 J 旅程。
 
 新增功能必须在本表增加或更新场景；只有单元测试、没有对应用户旅程时，状态最多写“实现完成·尚未验收”。

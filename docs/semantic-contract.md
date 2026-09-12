@@ -208,3 +208,5 @@ S5 的范围目录合同固定为 `getScopes`：请求只含合同头、1–50 �
 ### 2026-09-12 J21/J25 个人上下文控制旅程证据
 
 本段只更新当前状态，不改变 SEM-F26/SEM-F30/SEM-F31–F35 的冻结语义。正式 settings 旅程在记住/忘记/删除后，通过真实 renderer/preload/main/PersonalContextController/ConfigStore/StorageGateway/SQLite 路径验证个人记忆自动处理的休眠与重新开启；随后以旧 revision 请求确认 `AGENT_CONTEXT_REVISION_CONFLICT`，冲突不写 SQLite 或 ConfigStore。正式 Electron 旅程 1/1、受影响 focus 23/23、`npm run test:core` 895/895、`npm run test:evidence` 229/229；报告只增加布尔值，不含正文、凭据、设备、路径或音频。该状态仍为「实现完成·尚未验收」，不替代 suppression 负矩阵、真实公网 provider、系统凭据、正式包、干净机或适用实机证据。
+
+J27 当前 revision 的 smoke layout verifier 为 pass，release x64 NSIS 只记录构建产物；packaged product-shell 在 Electron GPU/utility 边界退出而未产生 packaged run binding，VMware 克隆启动也被外部加密口令阻断。该观察只更新证据状态，不改变 SEM-T03/SEM-T15 的门禁语义；J27 与正式 Agent 首版仍为「实现完成·尚未验收」。

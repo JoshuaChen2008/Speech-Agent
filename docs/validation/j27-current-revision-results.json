@@ -4,14 +4,14 @@
   "result": "pass",
   "gateStatus": "partial",
   "status": "实现完成·尚未验收",
-  "revision": "cfdc5e4b47ea76d069f476b8e92785bafb64f631",
+  "revision": "4fe62f738c98a4d7904165eb5729de7dfab04b4a",
   "lanes": {
-    "core": { "tests": 880, "passed": 880, "failed": 0, "exitCode": 0 },
-    "integration": { "tests": 85, "passed": 85, "failed": 0, "exitCode": 0, "electronCapableEnvironment": true },
+    "core": { "tests": 895, "passed": 895, "failed": 0, "exitCode": 0 },
+    "integration": { "tests": 85, "passed": 75, "failed": 10, "exitCode": 1, "electronCapableEnvironment": false },
     "evidence": { "tests": 229, "passed": 229, "failed": 0, "exitCode": 0 }
   },
   "isolation": {
-    "formalEntryAndIsolatedEntryUseDistinctUserDataAndSqlite": true,
+    "formalEntryAndIsolatedEntryUseDistinctUserDataAndSqlite": null,
     "requireGraphExcludesLegacyAgentTrees": true,
     "subtitleStorageRemainsIndependent": true
   },
@@ -21,29 +21,37 @@
     "asarEntryCount": 439,
     "nativeBinaryCount": 5,
     "productPayloadFileCount": 271,
-    "productPayloadSha256": "5e25aac54400d89634273ec54f86f66c9120521f5196cdf76d9362ac917af190",
-    "appExecutableSha256": "d1922c0def74749cca369409f60c8b1a831dbeb1b1de6fda4e2b74d403b56e2d",
-    "appAsarSha256": "1146b4a69e5fa5deff7f94295bf143be5b6c4b9f343a6024662c061819a2f652",
-    "freshAndRestartCleanExit": true,
-    "nativeAddonAndStorageRoundTrip": true
+    "productPayloadSha256": "c1177f8bb81d88305a59fe5d63a4bba06ce07a9fb4845a60b1177ae101cb81a3",
+    "appExecutableSha256": "086c33b84e0835693344b051e39521cf78c4201793913058ee4b2707b989170e",
+    "appAsarSha256": "e5911b596697f8951402d3e01d67a9572516f3deafc7904032f34a240c787fdf",
+    "freshAndRestartCleanExit": false,
+    "nativeAddonAndStorageRoundTrip": false
   },
   "releasePackage": {
-    "result": "pass",
+    "result": "partial",
     "mainEntry": "src/main.js",
     "asarEntryCount": 435,
     "nativeBinaryCount": 5,
     "installerPresent": true,
     "installerSigned": false,
-    "appExecutableSha256": "bb49e71ab40e6d1515f44a2d911bcfc269e41be51a93d7ca3fce3c03a008ca70",
-    "appAsarSha256": "39a42648424baa0595010bb13c5f6d3a351cc615f4aac4d50ebc6526266a1f16",
-    "installerSha256": "784b883e472cd6b552b8511d1ca1233529ec7abcfa03949217cbcfe516f269bf",
-    "packagedRunBindingSha256": "345282a08e8753bd9a1ecc9e35ca3cf413c5adfd4c6409cedeb3d881e36a3ae1",
+    "appExecutableSha256": "9c89131221c1f3958926e4cddf2515f5517a1d6b49ca7c5ab4d29d8f6a54c1a5",
+    "appAsarSha256": "532f58dfe365d3b03828f8aa6df4f3fced559cef6e2085dc18f45ff0a1e89926",
+    "installerSha256": "68027ad1283d2f5b0be66e7ca57b66d0f8f1ac7fb46160776239ac25f60c7814",
+    "packagedRunBindingSha256": null,
     "cleanMachineManualLaunch": false
   },
+  "vmware": {
+    "inventoryEntryCount": 2,
+    "runningVmCount": 0,
+    "startOutcome": "password-required"
+  },
   "limitations": [
+    "packaged-product-shell-gpu-boundary",
+    "release-layout-not-qualified-without-packaged-run-binding",
     "not-clean-machine-i4",
     "unsigned-installer",
     "real-public-provider-not-run",
-    "system-credential-boundary-not-run"
+    "system-credential-boundary-not-run",
+    "vmware-encrypted-vmx-password-required"
   ]
 }
