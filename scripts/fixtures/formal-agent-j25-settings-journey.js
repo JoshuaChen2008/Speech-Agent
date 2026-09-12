@@ -265,6 +265,35 @@ async function configureThroughSettings (settings, port) {
     const deleteDialog = await waitFor(() => contextSection()?.querySelector('[role="alertdialog"]'), 'delete confirmation')
     clickText(deleteDialog, '确认')
     await waitFor(() => memoryRow() === null, 'deleted memory')
+    const contextHeader = { contract_id: 'speech-agent.personal-context.ui', contract_version: '1.1.0' }
+    const processingToggle = await waitFor(() => document.querySelector('input[aria-label="个人记忆自动处理"]'), 'memory processing toggle')
+    processingToggle.click()
+    const suspendDialog = await waitFor(() => contextSection()?.querySelector('[role="alertdialog"]'), 'suspend confirmation')
+    clickText(suspendDialog, '确认')
+    await waitFor(() => document.querySelector('input[aria-label="个人记忆自动处理"]')?.checked === false, 'memory processing suspended')
+    const processingSuspended = document.querySelector('input[aria-label="个人记忆自动处理"]')?.checked === false &&
+      contextSection()?.textContent.includes('已休眠')
+    document.querySelector('input[aria-label="个人记忆自动处理"]')?.click()
+    const enableDialog = await waitFor(() => contextSection()?.querySelector('[role="alertdialog"]'), 're-enable confirmation')
+    clickText(enableDialog, '确认')
+    await waitFor(() => document.querySelector('input[aria-label="个人记忆自动处理"]')?.checked === true, 'memory processing re-enabled')
+    const processingReenabled = document.querySelector('input[aria-label="个人记忆自动处理"]')?.checked === true &&
+      contextSection()?.textContent.includes('处理中')
+    const overview = await window.shell.getAgentContextOverview(contextHeader)
+    const currentRevision = Number(overview?.snapshot?.revision)
+    const staleResponse = currentRevision > 0
+      ? await window.shell.manageAgentContext({
+          ...contextHeader,
+          request_id: 'context.j25.revision-conflict',
+          command: {
+            type: 'remember',
+            expected_revision: currentRevision - 1,
+            entry: { display_text: 'stale revision probe', kind: 'term', scope: { kind: 'global', reference: null } }
+          }
+        })
+      : null
+    const revisionConflict = currentRevision > 0 && staleResponse?.ok === false &&
+      staleResponse.error?.code === 'AGENT_CONTEXT_REVISION_CONFLICT'
     nav.click()
     await waitFor(() => document.querySelector('[data-pane="agentModel"]'), 'model pane after context management')
     contextNav.click()
@@ -277,7 +306,10 @@ async function configureThroughSettings (settings, port) {
       defaultReady,
       agentEnabled: agentToggle.checked === true,
       memoryManaged: memoryId !== null && memoryLabel.length > 0 && memoryRow() === null &&
-        document.querySelector('[data-memory-id="' + memoryId + '"]') === null
+        document.querySelector('[data-memory-id="' + memoryId + '"]') === null,
+      processingSuspended,
+      processingReenabled,
+      revisionConflict
     }
   })()`)
 }
@@ -442,6 +474,7 @@ async function main () {
       schemaVersion: 1,
       result: settingsResult.profileConnection && settingsResult.modelVisible && settingsResult.credentialCleared &&
         settingsResult.defaultReady && settingsResult.agentEnabled && settingsResult.memoryManaged &&
+        settingsResult.processingSuspended && settingsResult.processingReenabled && settingsResult.revisionConflict &&
         runResult.succeeded && runResult.historyVisible && runResult.modelVisible && runResult.signalAccepted &&
         runResult.signalReplayed && runResult.manualEligibilityRefresh && runResult.submitDisabledDuringEligibilityRefresh &&
         runResult.feedbackSubmittedThroughRenderer && runResult.detailRereadAfterFeedback &&
@@ -456,6 +489,9 @@ async function main () {
       modelIdentityObserved: runResult.modelVisible,
       agentEnabled: settingsResult.agentEnabled,
       personalContextManaged: settingsResult.memoryManaged,
+      processingSuspended: settingsResult.processingSuspended,
+      processingReenabled: settingsResult.processingReenabled,
+      personalContextRevisionConflict: settingsResult.revisionConflict,
       interactionSignalAccepted: runResult.signalAccepted,
       interactionSignalReplayed: runResult.signalReplayed,
       manualEligibilityRefresh: runResult.manualEligibilityRefresh,
