@@ -204,3 +204,7 @@ S5 的范围目录合同固定为 `getScopes`：请求只含合同头、1–50 �
 - **SEM-F35 / J26**：导出动作旁必须直接说明“导出内容可能包含字幕或个人上下文”。保存对话框取消只呈现取消事实，零成功提示；导出回执只归属发起导出的正式 Agent 交互，不得串入后来选择的交互。现有错误码与 `next_action` 仅映射为固定中文说明，renderer 不展示内部值、原始异常文字或由异常推断的新操作。
 
 选区、日期范围、项目范围、其他 recipe、自动纪要、意图改选、设置跳转与新的资格引导继续属于后续工作；资格 `next_action` 仍固定为 `null`。本修整完成后的最高记录仍为「实现完成·尚未验收」。
+
+### 2026-09-12 J21/J25 个人上下文控制旅程证据
+
+本段只更新当前状态，不改变 SEM-F26/SEM-F30/SEM-F31–F35 的冻结语义。正式 settings 旅程在记住/忘记/删除后，通过真实 renderer/preload/main/PersonalContextController/ConfigStore/StorageGateway/SQLite 路径验证个人记忆自动处理的休眠与重新开启；随后以旧 revision 请求确认 `AGENT_CONTEXT_REVISION_CONFLICT`，冲突不写 SQLite 或 ConfigStore。正式 Electron 旅程 1/1、受影响 focus 23/23、`npm run test:core` 895/895、`npm run test:evidence` 229/229；报告只增加布尔值，不含正文、凭据、设备、路径或音频。该状态仍为「实现完成·尚未验收」，不替代 suppression 负矩阵、真实公网 provider、系统凭据、正式包、干净机或适用实机证据。

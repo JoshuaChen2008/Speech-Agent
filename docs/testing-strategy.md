@@ -265,6 +265,8 @@ S3 的统一执行宿主 Core 子边界、S4 的 `read_sources` 与完整工具�
 
 > **2026-09-11 J21/J22/J24/J26 行为修整场景登记（不改变旅程状态）**：正式 Agent Bar renderer 回归必须覆盖同一终态会话在首次读取、手动刷新与更高 `agent-run:changed` revision 后重新读取 Agent 处理资格，读取期间禁用提交，并拒绝旧范围/旧请求响应；范围目录与交互历史同时分页时各自完成、恢复 loading，全量刷新使两侧旧分页失效，追加范围按 `scope.kind + scope.reference`、追加历史按 `interaction_id` 去重。J21/J22/J24 的反馈场景覆盖同一交互刷新不清空编辑、跨交互草稿恢复、4096 字符与 20 条非空草稿上限、失败保留输入、同一轮双击单发送、未知回执后相同载荷复用幂等键、明确回执或载荷变化后换键，以及成功后再次主动提交使用新键。J24/J26 还覆盖取消、反馈、导出迟到回执不污染新选择，取消等待权威状态，导出取消零成功提示及固定中文错误/隐私文案。正式 Electron 旅程使用 production renderer/preload/main、个人上下文模块、Agent Loop、storage worker 与 SQLite，只控制外部 Agent 模型 provider，并通过正式 DOM 覆盖手动资格刷新、反馈提交和重新读取；报告只保留布尔值、计数和固定标签。上述均为本次实现与局部旅程目标，不推进完整三条 lane、正式包、干净机、真实公网 provider 或系统凭据验收。
 
+> **2026-09-12 J21/J25 个人上下文控制旅程证据（状态仍为实现完成·尚未验收）**：正式 settings 旅程在个人记忆记住/忘记/删除后，通过 production renderer/preload/main、`PersonalContextController`、`ConfigStore`、`StorageGateway`/SQLite 验证个人记忆自动处理的休眠与重新开启；再以当前 revision 前一版请求验证 `AGENT_CONTEXT_REVISION_CONFLICT`，确认冲突不产生 SQLite/ConfigStore 写入。报告只保留休眠、重新开启和冲突布尔值，不写正文、凭据、设备名、绝对路径或音频。正式 Electron 旅程 1/1，受影响 focus 23/23，`npm run test:core` 895/895，`npm run test:evidence` 229/229；suppression 负矩阵、真实公网 provider、系统凭据、正式包、干净机与适用实机证据仍待门禁。
+
 设计稿、截图、fixture preview、Storybook 类预览、单独 renderer snapshot 或直接调用最终 exporter 均不构成确定性联合旅程。只有保留真实内部产品模块、仅替代已登记外部边界的 S5-Integration 结果才能晋级对应 J 旅程。
 
 新增功能必须在本表增加或更新场景；只有单元测试、没有对应用户旅程时，状态最多写“实现完成·尚未验收”。

@@ -320,6 +320,12 @@ release layout verifier 为 pass，包含 435 个 ASAR 条目和 5 个 native bi
 
 扩展后的 `test/integration/agent-redesign-j25-formal-settings-journey.test.js` 使用 production renderer/preload/main、Personal Context、Agent Loop、storage worker 与 SQLite，仅以 loopback provider 替代外部边界；正式 DOM 覆盖手动资格刷新、刷新期间提交禁用、问答提交、编辑反馈及详情重读。当前实际验证为 Agent UI、signal/main 与样式守卫合计 40/40，该正式 Electron 旅程和本地 SQLite S5 目标旅程各 1/1，以及 `typecheck:renderer`、`verify:renderer` 返回码 0。`agent-bar-ipc-journey` 在组合运行与单文件重跑时均于 Windows Electron/GPU 启动边界以 `exit_code=-1073741515` 在产品断言前退出，按已登记执行环境边界记录，不计为产品断言通过或失败。未执行完整 core/integration/evidence 三条 lane、正式打包、干净机、真实公网 provider 或系统凭据边界；范围扩展、其他 recipe、自动纪要、意图改选、设置跳转和资格引导继续作为后续工作，验收状态不变。
 
+### 2026-09-12 J21/J25 个人上下文控制旅程补齐（仍为实现完成·尚未验收）
+
+`3b83e35` 在既有正式设置旅程中补齐个人记忆自动处理的关闭/重新开启与旧 revision 冲突：DOM 操作经 exact settings preload、main IPC、`PersonalContextController`、`ConfigStore` 和 `StorageGateway`/SQLite，重新开启后重新读取权威快照；冲突请求以当前 revision 前一版提交并在 controller 层拒绝，保持零 SQLite/ConfigStore 写入。报告只保留三个布尔观察值，不含正文、凭据、设备名、绝对路径或音频。
+
+本轮正式 Electron 旅程为 1/1，受影响 focus 为 23/23；`npm run test:core` 保持 895/895，`npm run test:evidence` 为 229/229。J21/J25/J27 和正式 MVP 仍是「实现完成·尚未验收」；suppression 负矩阵、真实公网 provider、系统凭据、当前 revision 打包、干净机与适用实机证据仍未晋级。
+
 ### 目标验收矩阵
 
 | 切片 | 新 migration | 阻断旅程 | 正证据 | 负证据 |
