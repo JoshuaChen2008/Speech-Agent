@@ -133,10 +133,10 @@ test('SEM-F23/J18: source command exposes pending feedback and rolls back after 
   assert.equal(document.querySelector('[data-source="mic"]').disabled, false)
 })
 
-test('S5-UX/J21/J25: 设置导航新增个人上下文与 Agent 模型配置档案类别，既有文案与顺序不变', async (t) => {
+test('S5-UX/J21/J25: 设置导航新增个人上下文与 Agent 模型类别，既有文案与顺序不变', async (t) => {
   const harness = await createHarness(); t.after(() => harness.dispose())
   const labels = [...document.querySelectorAll('.nav-item')].map((item) => item.textContent)
-  assert.deepEqual(labels, ['显示与字幕', '音频源', '语音识别', '模型资源', '个人上下文', 'Agent 模型配置档案', '关于'])
+  assert.deepEqual(labels, ['显示与字幕', '音频源', '语音识别', '模型资源', '个人上下文', 'Agent 模型', '关于'])
   assert.equal(document.querySelector('.nav-item[data-pane="agentContext"]') !== null, true)
   assert.equal(document.querySelector('.nav-item[data-pane="agentModel"]') !== null, true)
 })

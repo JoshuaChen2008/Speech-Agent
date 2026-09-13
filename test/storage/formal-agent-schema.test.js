@@ -213,7 +213,7 @@ test('DB7 formal Agent constraints reject candidate task semantics and sensitive
   }
 })
 
-test('SEM-F28/SEM-F34/DB7/J22/J24: v7/v8 add interaction facts and the context snapshot revision', (t) => {
+test('SEM-F28/SEM-F34/DB7/J22/J24: v7/v8/v9 add interaction facts, context snapshot, and model strategy revision', (t) => {
   const databasePath = path.join(tempRoot(t), 'formal-v7-v8.sqlite3')
   const v6 = new SqliteSubtitleStore({
     databasePath,
@@ -227,8 +227,8 @@ test('SEM-F28/SEM-F34/DB7/J22/J24: v7/v8 add interaction facts and the context s
 
   const store = new SqliteSubtitleStore({ databasePath, now: () => 2000, migrations: FORMAL_AGENT_MIGRATIONS })
   try {
-    assert.equal(FORMAL_AGENT_SCHEMA_VERSION, 8)
-    assert.equal(Number(store.database.prepare('PRAGMA user_version').get().user_version), 8)
+    assert.equal(FORMAL_AGENT_SCHEMA_VERSION, 9)
+    assert.equal(Number(store.database.prepare('PRAGMA user_version').get().user_version), 9)
     assert.equal(store.database.prepare('SELECT COUNT(*) AS count FROM caption_events').get().count, before)
     assert.deepEqual(
       store.database.prepare('SELECT version, checksum FROM schema_migrations WHERE version <= 6 ORDER BY version').all(),

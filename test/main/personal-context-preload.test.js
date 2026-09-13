@@ -31,6 +31,8 @@ function loadPreload (role, options = {}) {
     if (specifier === '../main/ipc/channels') return CHANNELS
     if (specifier === '../agent/contracts/agent-context-ui') return require('../../src/agent/contracts/agent-context-ui')
     if (specifier === '../agent/contracts/agent-model-ui') return require('../../src/agent/contracts/agent-model-ui')
+    if (specifier === '../agent/contracts/agent-model-presets-ui') return require('../../src/agent/contracts/agent-model-presets-ui')
+    if (specifier === '../agent/contracts/agent-model-test-ui') return require('../../src/agent/contracts/agent-model-test-ui')
     if (specifier === '../agent/contracts/agent-settings-ui') return require('../../src/agent/contracts/agent-settings-ui')
     throw new Error(`unexpected preload dependency: ${specifier}`)
   }

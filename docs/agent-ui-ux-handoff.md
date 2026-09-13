@@ -126,7 +126,13 @@ fixture preview 只证明设计覆盖与渲染行为。它不证明模型、SQLi
 
 ### 5.2 设置：Agent 模型配置档案
 
+> 2026-09-13 展示增量状态：实现完成·尚未验收，执行范围扩展为首次配置向导、DeepSeek/OpenAI/通义千问（北京）版本化服务预设和用户明确触发的独立模型测试。独立 [spec](../openspec/changes/simplify-agent-model-settings/specs/agent-model-settings-guidance/spec.md)、[设计及文案映射](../openspec/changes/simplify-agent-model-settings/design.md)、[TODO](../openspec/changes/simplify-agent-model-settings/tasks.md) 将本节既有能力组织为“Agent 模型”页面，按服务连接、API 密钥、模型确认、测试与默认用途呈现，新建表单、专用用途及高级标识按需展开。展示别名不替换 CONTEXT 的规范定义，保留 SEM-F33 的空模型模板、独立命令回执、建议零写入和凭据边界；预设一次确认可写入产品维护的六字段应用上限，测试不写配置、正文、正式交互、个人上下文、历史或报告，通义千问预设只支持北京地域。本段记录本次增量边界，§12 历史实现记录不作为此增量证据。输入外观另见 [输入框规划](../openspec/changes/fix-settings-input-styles/proposal.md)。
+
 一个配置档案是一个受信任连接、一份独立凭据和一组 model。设置界面使用产品语言展示：
+
+模型设置增量的 UI contract 为 `agent-model-test-ui@1.0.0`：`testSavedModel` 请求恰为 `{contractId, contractVersion, profileId, modelId, expectedRevision, testId}`，`cancelSavedModel` 请求恰为 `{contractId, contractVersion, testId}`，响应恰为 `{contractId, contractVersion, testId, ok, status, nextAction}`。`status` 与 `nextAction` 使用 F36 的闭集及固定映射；窗口关闭、renderer 卸载和取消命令返回 `cancelled`，迟到 `testId` 结果丢弃，renderer 不能用取消回执覆盖先到达的 provider 终态。测试使用 live profile/model/strategy/vault 只发一次有界请求，不调用 `bind()`、不发 `changed`、不写任何配置或正文；正式调用/remote catalog 的 401/403 凭据失效不适用于独立测试的 `auth_failed`。预设 registry 的 `@1` identity 和 strategy 永久不可变；向导用保留的 `preset.<presetId>` 配置标识区分显式预设，整个 `preset.` 命名空间由存储边界保留，用户自定义配置即使复用同一服务商、连接和 model 也固定使用 `openai-compatible@1`；model row 与正式 binding 保存精确策略 identity。正式/目录鉴权失效清理同时匹配旧 credential slot 与 profile revision，不能清除用户后来设置的新 API 密钥。策略元数据通过追加 model-access migration 保存，既有 migration checksum 不改写。
+
+每个 `testId` 只允许一个终态，`ok` 必须与 `status === 'success'` 一致；未知或已终态 ID 的取消幂等返回 `cancelled`。请求开始和 provider 返回都复核 live revision，变化则丢弃响应并返回 `revision_conflict/reload`；cancel 与 provider 响应竞争时先收束者获胜。独立 channel 为 `agent-model:test-saved-model` 与 `agent-model:cancel-saved-model`，`testId` 只接受 1–64 个 ASCII 字母、数字、`. _ : -`。
 
 - 配置档案与模型列表。
 - 凭据存在性布尔与 Core 签发的 scope 枚举；至少覆盖 `safeStorage` 不可用时的 `session_only` 及重启后 `absent`。

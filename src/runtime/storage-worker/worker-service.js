@@ -27,26 +27,35 @@ class StorageWorkerService {
       try {
         return new SqliteSubtitleStore({ ...storeOptions, migrations: FORMAL_AGENT_MIGRATIONS })
       } catch (agentExecutionMigrationError) {
-        /* v8 is an optional formal-Agent context-snapshot boundary.  Keep a
-           valid v7 database usable for subtitles and model access when only
-           the newest migration fails; if v7 also fails, fall back one more
-           rung to the byte-stable v1-v5 catalog. Earlier checksum failures
-           remain fatal. */
+        /* v8/v9 are optional formal-Agent boundaries. Keep a valid v8
+           database usable for subtitles and mark model access unavailable
+           when the strategy metadata migration fails; if that cannot open,
+           fall back to v7 and then the byte-stable v1-v5 catalog. Earlier
+           checksum failures remain fatal. */
         try {
-          const fallbackV7 = new SqliteSubtitleStore({
+          const fallbackV8 = new SqliteSubtitleStore({
             ...storeOptions,
-            migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 7)
+            migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 8)
           })
-          fallbackV7.agentExecutionUnavailable = true
-          return fallbackV7
+          fallbackV8.modelAccessUnavailable = true
+          return fallbackV8
         } catch (modelAccessMigrationError) {
-          const fallbackV5 = new SqliteSubtitleStore({
-            ...storeOptions,
-            migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 5)
-          })
-          fallbackV5.modelAccessUnavailable = true
-          fallbackV5.agentExecutionUnavailable = true
-          return fallbackV5
+          try {
+            const fallbackV7 = new SqliteSubtitleStore({
+              ...storeOptions,
+              migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 7)
+            })
+            fallbackV7.agentExecutionUnavailable = true
+            return fallbackV7
+          } catch (formalMigrationError) {
+            const fallbackV5 = new SqliteSubtitleStore({
+              ...storeOptions,
+              migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 5)
+            })
+            fallbackV5.modelAccessUnavailable = true
+            fallbackV5.agentExecutionUnavailable = true
+            return fallbackV5
+          }
         }
       }
     })

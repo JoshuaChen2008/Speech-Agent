@@ -12,6 +12,9 @@ const {
 const { deriveBudget } = require('../../agent/contracts/budget-axes')
 const { getRecipe } = require('../../agent/contracts/recipes')
 const { canonicalizeConnection, providerKindForOrigin } = require('../../agent/model-access/connection')
+const {
+  DEFAULT_REQUEST_STRATEGY, presetForModel, presetForProfileId
+} = require('../../agent/model-access/preset-registry')
 
 class ModelAccessStoreError extends Error {
   constructor (code) {
@@ -40,9 +43,12 @@ class ModelAccessStore {
   internalCatalog () {
     const profiles = this.database.prepare('SELECT * FROM agent_model_profiles ORDER BY profile_id').all().map((profile) => ({
       ...profile,
-      models: this.database.prepare('SELECT model_id, capability_json FROM agent_model_profile_models WHERE profile_id = ? ORDER BY model_id').all(profile.profile_id).map((model) => ({
+      models: this.database.prepare('SELECT model_id, capability_json, preset_identity, request_strategy, strategy_version FROM agent_model_profile_models WHERE profile_id = ? ORDER BY model_id').all(profile.profile_id).map((model) => ({
         modelId: model.model_id,
-        capabilities: JSON.parse(model.capability_json)
+        capabilities: JSON.parse(model.capability_json),
+        preset_identity: model.preset_identity,
+        request_strategy: model.request_strategy,
+        strategy_version: Number(model.strategy_version)
       }))
     }))
     const assignments = Object.fromEntries(this.database.prepare('SELECT * FROM agent_model_purpose_assignments').all().map((row) => [row.purpose, row]))
@@ -70,6 +76,9 @@ class ModelAccessStore {
       if (command.type === 'createProfile') {
         if (profile) fail()
         const connection = canonicalizeConnection(command.httpsOrigin, command.basePath)
+        const preset = presetForProfileId(command.profileId)
+        if (command.profileId.startsWith('preset.') && !preset) fail()
+        if (preset && (command.label !== preset.providerLabel || connection.httpsOrigin !== preset.httpsOrigin || connection.basePath !== preset.basePath)) fail()
         const newSlot = slotId()
         this.database.prepare(`INSERT INTO agent_model_profiles(
           profile_id, profile_revision, label, template_id, adapter_id, api_style, https_origin,
@@ -84,6 +93,11 @@ class ModelAccessStore {
         this.database.prepare(`UPDATE agent_model_profiles SET label=?, https_origin=?, base_path=?,
           profile_revision=profile_revision+1, updated_at=? WHERE profile_id=?`)
           .run(command.label, connection.httpsOrigin, connection.basePath, now, command.profileId)
+        if (profile.https_origin !== connection.httpsOrigin || profile.base_path !== connection.basePath) {
+          this.database.prepare(`UPDATE agent_model_profile_models SET preset_identity=NULL,
+            request_strategy=?, strategy_version=1, updated_at=? WHERE profile_id=?`)
+            .run(DEFAULT_REQUEST_STRATEGY, now, command.profileId)
+        }
       } else if (command.type === 'deleteProfile') {
         if (!profile) fail()
         this.database.prepare('UPDATE agent_model_purpose_assignments SET profile_id=NULL, model_id=NULL, assigned_profile_revision=NULL, updated_at=? WHERE profile_id=?').run(now, command.profileId)
@@ -94,7 +108,19 @@ class ModelAccessStore {
         const encoded = canonicalize(assertCapabilities(command.capabilities))
         const existing = this.database.prepare('SELECT 1 FROM agent_model_profile_models WHERE profile_id=? AND model_id=?').get(command.profileId, command.modelId)
         if ((command.type === 'addModel') === !!existing) fail()
-        if (command.type === 'addModel') this.database.prepare('INSERT INTO agent_model_profile_models(profile_id,model_id,capability_json,created_at,updated_at) VALUES(?,?,?,?,?)').run(command.profileId, command.modelId, encoded, now, now)
+        if (command.type === 'addModel') {
+          const preset = presetForModel({
+            profileId: command.profileId,
+            httpsOrigin: profile.https_origin,
+            basePath: profile.base_path,
+            modelId: command.modelId
+          })
+          const presetIdentity = preset?.identity ?? null
+          const requestStrategy = preset?.strategy ?? DEFAULT_REQUEST_STRATEGY
+          this.database.prepare(`INSERT INTO agent_model_profile_models(
+            profile_id,model_id,capability_json,preset_identity,request_strategy,strategy_version,created_at,updated_at
+          ) VALUES(?,?,?,?,?,?,?,?)`).run(command.profileId, command.modelId, encoded, presetIdentity, requestStrategy, 1, now, now)
+        }
         else this.database.prepare('UPDATE agent_model_profile_models SET capability_json=?,updated_at=? WHERE profile_id=? AND model_id=?').run(encoded, now, command.profileId, command.modelId)
         this.database.prepare('UPDATE agent_model_profiles SET profile_revision=profile_revision+1,catalog_revision=catalog_revision+1,updated_at=? WHERE profile_id=?').run(now, command.profileId)
       } else if (command.type === 'removeModel') {
@@ -172,13 +198,14 @@ class ModelAccessStore {
       this.database.prepare(`INSERT INTO agent_model_run_bindings(
         run_id,execution_form,purpose,assignment_mode,profile_id,profile_revision,adapter_id,
         api_style,https_origin,base_path,model_id,capability_json,budget_json,provider_kind,
-        credential_slot_id,created_at
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        credential_slot_id,request_strategy,created_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
         request.runId, request.executionForm, resolved.purpose, resolved.assignmentMode,
         resolved.profile.profile_id, resolved.profile.profile_revision, resolved.profile.adapter_id,
         resolved.profile.api_style, resolved.profile.https_origin, resolved.profile.base_path,
         resolved.model.model_id, resolved.model.capability_json, canonicalize(budget),
-        providerKindForOrigin(resolved.profile.https_origin), resolved.profile.credential_slot_id, now
+        providerKindForOrigin(resolved.profile.https_origin), resolved.profile.credential_slot_id,
+        resolved.model.request_strategy || DEFAULT_REQUEST_STRATEGY, now
       )
       const row = this.database.prepare('SELECT * FROM agent_model_run_bindings WHERE run_id=?').get(request.runId)
       this.database.exec('COMMIT')
@@ -197,6 +224,7 @@ class ModelAccessStore {
       profileRevision: Number(row.profile_revision), adapterId: row.adapter_id,
       apiStyle: row.api_style, httpsOrigin: row.https_origin, basePath: row.base_path,
       modelId: row.model_id, capabilities: JSON.parse(row.capability_json),
+      requestStrategy: row.request_strategy || DEFAULT_REQUEST_STRATEGY,
       budget: JSON.parse(row.budget_json), providerKind: row.provider_kind,
       credentialSlotId: row.credential_slot_id, createdAt: Number(row.created_at)
     })

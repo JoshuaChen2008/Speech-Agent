@@ -7,11 +7,13 @@ const { canonicalizeConnection, joinEndpoint } = require('./connection')
 
 const MAX_CATALOG_RESPONSE_BYTES = 256 * 1024
 const MAX_COMPLETION_RESPONSE_BYTES = 512 * 1024
+const MAX_TEST_RESPONSE_BYTES = 64 * 1024
 const MAX_COMPLETION_REQUEST_BYTES = 512 * 1024
 const MAX_TOOL_MESSAGE_BYTES = TOOL_PAYLOAD_LIMITS.maxResultBytes
 const MAX_TOOL_ARGUMENT_BYTES = TOOL_PAYLOAD_LIMITS.maxArgsBytes
 const DEFAULT_TIMEOUT_MS = 30 * 1000
 const MAX_TIMEOUT_MS = 180 * 1000
+const REQUEST_STRATEGIES = new Set(['openai-compatible@1', 'deepseek-openai@1', 'qwen-beijing@1'])
 
 function codedError (code, retryable = undefined) {
   const error = new Error(code)
@@ -212,8 +214,11 @@ class OpenAiCompatibleAdapter {
     maxTurns = 1,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     signal,
-    shouldStopAfterTurn = null
+    shouldStopAfterTurn = null,
+    requestStrategy = 'openai-compatible@1',
+    testMode = false
   } = {}) {
+    if (!REQUEST_STRATEGIES.has(requestStrategy)) throw codedError('AGENT_REQUEST_INVALID')
     const endpointConnection = safeConnection(connection)
     const credentialBuffer = safeCredential(credential)
     const model = modelIdFor(resolvedModel)
@@ -253,9 +258,11 @@ class OpenAiCompatibleAdapter {
         messages,
         max_tokens: maxOutputTokens,
         ...(declarations.length > 0 ? { tools: declarations, tool_choice: 'auto' } : {}),
-        ...(resolvedModel?.capabilities?.supportsStructuredOutput === true
+        ...(testMode || resolvedModel?.capabilities?.supportsStructuredOutput === true
           ? { response_format: { type: 'json_object' } }
-          : {})
+          : {}),
+        ...(requestStrategy === 'deepseek-openai@1' ? { thinking: { type: 'disabled' } } : {}),
+        ...(requestStrategy === 'qwen-beijing@1' ? { enable_thinking: false } : {})
       }
       let requestBody
       try { requestBody = canonicalize(body) } catch { throw codedError('AGENT_REQUEST_INVALID') }
@@ -294,9 +301,9 @@ class OpenAiCompatibleAdapter {
           signal: requestSignal
         })
         const status = responseStatus(response)
-        if (status >= 300 && status < 400) throw codedError('AGENT_PROVIDER_UNAVAILABLE', true)
+        if (status >= 300 && status < 400) throw codedError(testMode ? 'REDIRECT_REJECTED' : 'AGENT_PROVIDER_UNAVAILABLE', true)
         if (!responseOk(response)) throw providerResponseError(status)
-        const payload = await boundedJson(response, MAX_COMPLETION_RESPONSE_BYTES, 'AGENT_OUTPUT_INVALID')
+        const payload = await boundedJson(response, testMode ? MAX_TEST_RESPONSE_BYTES : MAX_COMPLETION_RESPONSE_BYTES, 'AGENT_OUTPUT_INVALID')
         // The request deadline bounds fetch and response decoding. Tool calls
         // use their own bounded race against the same overall deadline.
         clearTimeout(timeoutHandle)
@@ -321,6 +328,13 @@ class OpenAiCompatibleAdapter {
           if (typeof message.content !== 'string' || message.content.length === 0 ||
               Buffer.byteLength(message.content, 'utf8') > MAX_COMPLETION_RESPONSE_BYTES) {
             throw codedError('AGENT_OUTPUT_INVALID')
+          }
+          if (testMode) {
+            try {
+              const testPayload = JSON.parse(message.content)
+              if (!testPayload || typeof testPayload !== 'object' || Array.isArray(testPayload) ||
+                  Object.keys(testPayload).length !== 1 || testPayload.ok !== true) throw new Error('test response')
+            } catch { throw codedError('AGENT_OUTPUT_INVALID') }
           }
           return {
             text: message.content,

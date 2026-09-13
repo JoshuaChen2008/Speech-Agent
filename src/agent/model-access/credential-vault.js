@@ -9,6 +9,19 @@ const GENERATION_PATTERN = /^generation\.[a-f0-9]{32}$/
 const OPERATION_PATTERN = /^operation\.[a-f0-9]{32}$/
 const JOURNAL_NAME = 'journal.v1.json'
 
+class CredentialUnavailableError extends Error {
+  constructor () {
+    super('credential unavailable')
+    this.name = 'CredentialUnavailableError'
+    this.code = 'AGENT_CREDENTIAL_UNAVAILABLE'
+    this.retryable = false
+  }
+}
+
+function credentialUnavailable () {
+  return new CredentialUnavailableError()
+}
+
 class CredentialVault {
   constructor (options = {}) {
     if (typeof options.directory !== 'string' || !path.isAbsolute(options.directory)) throw new TypeError('vault directory is required')
@@ -149,12 +162,17 @@ class CredentialVault {
   async borrow (slotId, persistence, generation, consume) {
     if (typeof consume !== 'function') throw new TypeError('credential consumer is required')
     let copy
-    const session = this.session.get(slotId)
-    if (session?.some((byte) => byte !== 0)) copy = Buffer.from(session)
-    else if (persistence === 'persistent' && generation) {
-      const encrypted = this.fs.readFileSync(this.file(slotId, generation))
-      copy = Buffer.from(this.safeStorage.decryptString(encrypted), 'utf8')
-    } else throw new Error('credential unavailable')
+    try {
+      const session = this.session.get(slotId)
+      if (session?.some((byte) => byte !== 0)) copy = Buffer.from(session)
+      else if (persistence === 'persistent' && generation) {
+        const encrypted = this.fs.readFileSync(this.file(slotId, generation))
+        copy = Buffer.from(this.safeStorage.decryptString(encrypted), 'utf8')
+      } else throw credentialUnavailable()
+    } catch (error) {
+      if (error instanceof CredentialUnavailableError) throw error
+      throw credentialUnavailable()
+    }
     try { return await consume(copy) } finally { copy.fill(0) }
   }
 
@@ -170,8 +188,9 @@ class CredentialVault {
         profile.credential_generation,
         consume
       )
-    } catch {
-      throw this.bindingAuthFailure()
+    } catch (error) {
+      if (error instanceof CredentialUnavailableError) throw this.bindingAuthFailure()
+      throw error
     }
   }
 

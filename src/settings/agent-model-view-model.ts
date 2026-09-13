@@ -9,6 +9,10 @@ export type CredentialScope = 'absent' | 'persistent' | 'session_only'
 export type RemoteStatus =
   | 'success' | 'revision_conflict' | 'invalid_request'
   | 'credential_unavailable' | 'redirect_rejected' | 'remote_unavailable'
+export type ModelTestStatus =
+  | 'success' | 'invalid_request' | 'revision_conflict' | 'credential_unavailable'
+  | 'auth_failed' | 'timeout' | 'rate_limited' | 'redirect_rejected'
+  | 'response_invalid' | 'remote_unavailable' | 'cancelled'
 
 export const MODEL_PURPOSES: readonly ModelPurpose[] = [
   'default', 'information_extraction', 'summary', 'analysis_planning'
@@ -30,22 +34,55 @@ export const ASSIGNMENT_LABELS: Record<AssignmentMode, string> = {
 export const READINESS_LABELS: Record<Readiness, string> = {
   ready: '配置充分',
   provider_not_configured: '未配置可用的模型',
-  credential_unavailable: '缺少凭据'
+  credential_unavailable: '缺少可用的 API 密钥'
 }
 
 export const CREDENTIAL_LABELS: Record<CredentialScope, string> = {
-  absent: '未设置凭据',
-  persistent: '已设置凭据（保存在本机）',
-  session_only: '已设置凭据（仅本次运行有效，重启后需重新设置）'
+  absent: '未设置 API 密钥',
+  persistent: '已设置 API 密钥（保存在本机）',
+  session_only: '已设置 API 密钥（仅本次运行有效，重启后需重新设置）'
 }
 
 export const REMOTE_STATUS_LABELS: Record<RemoteStatus, string> = {
   success: '已获取模型建议',
   revision_conflict: '配置已在别处更新，请重新载入后再试',
   invalid_request: '请求无效，未获取建议',
-  credential_unavailable: '缺少凭据，无法获取建议',
+  credential_unavailable: '缺少 API 密钥，无法获取建议',
   redirect_rejected: '服务器返回了不受信任的跳转，已拒绝',
   remote_unavailable: '暂时无法连接服务器'
+}
+
+export const MODEL_TEST_STATUS_LABELS: Record<ModelTestStatus, string> = {
+  success: '模型测试成功：本次协议响应有效',
+  invalid_request: '模型测试请求无效，请检查连接与模型名称',
+  revision_conflict: '配置已更新，请重新载入后再测试',
+  credential_unavailable: '未设置可用的 API 密钥',
+  auth_failed: 'API 密钥未被服务接受，请检查密钥后重试',
+  timeout: '服务响应超时，可以稍后重试',
+  rate_limited: '服务暂时限流，可以稍后重试',
+  redirect_rejected: '服务器跳转未被信任，已拒绝本次测试',
+  response_invalid: '服务返回格式无法识别，请检查模型名称或能力设置',
+  remote_unavailable: '暂时无法连接服务，可以稍后重试',
+  cancelled: '模型测试已取消'
+}
+
+export const MODEL_TEST_NEXT_ACTION_LABELS = {
+  none: '', reload: '重新载入配置', set_credential: '设置 API 密钥',
+  edit_connection: '检查连接与模型名称', check_model: '检查模型能力', retry: '重试测试'
+} as const
+
+export interface ModelPreset {
+  presetId: string
+  version: number
+  providerLabel: string
+  region: 'unspecified' | 'cn-beijing'
+  modelId: string
+  httpsOrigin: string
+  basePath: string
+  sourceSnapshotDate: string
+  helpId: string
+  strategyVersion: number
+  capabilities: CapabilitiesV1
 }
 
 export interface CapabilitiesV1 {

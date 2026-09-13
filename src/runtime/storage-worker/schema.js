@@ -1194,6 +1194,41 @@ CREATE INDEX formal_agent_runs_context_revision
   ON formal_agent_runs(personal_context_revision);
 `
 
+/* SEM-F36 / J25: v9 freezes the model request strategy and optional preset
+   identity at model creation time, then carries that strategy into immutable
+   formal run bindings.  This additive migration keeps v1-v8 checksums exact. */
+const MODEL_ACCESS_STRATEGY_SCHEMA_SQL = `
+ALTER TABLE agent_model_profile_models
+  ADD COLUMN preset_identity TEXT CHECK (preset_identity IS NULL OR preset_identity IN (
+    'deepseek-openai@1', 'openai-gpt-4.1-mini@1', 'qwen-beijing@1'
+  ));
+
+ALTER TABLE agent_model_profile_models
+  ADD COLUMN request_strategy TEXT NOT NULL DEFAULT 'openai-compatible@1' CHECK (request_strategy IN (
+    'openai-compatible@1', 'deepseek-openai@1', 'qwen-beijing@1'
+  ));
+
+ALTER TABLE agent_model_profile_models
+  ADD COLUMN strategy_version INTEGER NOT NULL DEFAULT 1 CHECK (strategy_version >= 1);
+
+ALTER TABLE agent_model_run_bindings
+  ADD COLUMN request_strategy TEXT NOT NULL DEFAULT 'openai-compatible@1' CHECK (request_strategy IN (
+    'openai-compatible@1', 'deepseek-openai@1', 'qwen-beijing@1'
+  ));
+
+CREATE TRIGGER agent_model_strategy_identity_exact
+BEFORE INSERT ON agent_model_profile_models
+WHEN (NEW.preset_identity IS NULL AND NEW.request_strategy <> 'openai-compatible@1') OR
+  (NEW.preset_identity = 'deepseek-openai@1' AND NEW.request_strategy <> 'deepseek-openai@1') OR
+  (NEW.preset_identity = 'openai-gpt-4.1-mini@1' AND NEW.request_strategy <> 'openai-compatible@1') OR
+  (NEW.preset_identity = 'qwen-beijing@1' AND NEW.request_strategy <> 'qwen-beijing@1') OR
+  (NEW.request_strategy IN ('openai-compatible@1', 'deepseek-openai@1', 'qwen-beijing@1') AND NEW.strategy_version <> 1)
+BEGIN
+  SELECT RAISE(ABORT, 'model request strategy identity mismatch');
+END;
+
+`
+
 function checksum (sql) {
   return crypto.createHash('sha256').update(sql, 'utf8').digest('hex')
 }
@@ -1247,6 +1282,11 @@ const FORMAL_AGENT_MIGRATIONS = Object.freeze([
     version: SUBTITLE_BASE_MIGRATIONS.length + 6,
     checksum: checksum(AGENT_CONTEXT_SNAPSHOT_SCHEMA_SQL),
     sql: AGENT_CONTEXT_SNAPSHOT_SCHEMA_SQL
+  }),
+  Object.freeze({
+    version: SUBTITLE_BASE_MIGRATIONS.length + 7,
+    checksum: checksum(MODEL_ACCESS_STRATEGY_SCHEMA_SQL),
+    sql: MODEL_ACCESS_STRATEGY_SCHEMA_SQL
   })
 ])
 
@@ -1261,6 +1301,7 @@ module.exports = {
   MODEL_ACCESS_SCHEMA_SQL,
   AGENT_EXECUTION_SCHEMA_SQL,
   AGENT_CONTEXT_SNAPSHOT_SCHEMA_SQL,
+  MODEL_ACCESS_STRATEGY_SCHEMA_SQL,
   SUBTITLE_BASE_MIGRATIONS,
   FORMAL_AGENT_MIGRATIONS,
   MIGRATIONS,

@@ -68,12 +68,12 @@ test('SEM-F33/J25: runtime configures credentials without sending plaintext to s
   assert.deepEqual(calls[1], { revision: 1 })
 })
 
-test('SEM-F33/J25: remote pull is transient, rejects redirect, and clears credential copies', async (t) => {
+test('SEM-F33/J25: remote pull is transient, rejects redirect, and invalidates only the rejected credential', async (t) => {
   const { instance } = vault(t, true)
   const slot = 'slot.0123456789abcdef0123456789abcdef'
   const state = instance.set(slot, 'catalog-secret')
   const internal = { revision: 4, profiles: [{
-    profile_id: 'deepseek', template_id: 'deepseek-openai-template@1',
+    profile_id: 'deepseek', profile_revision: 1, template_id: 'deepseek-openai-template@1',
     https_origin: 'https://api.deepseek.com', base_path: '/', credential_slot_id: slot,
     credential_persistence: 'persistent', credential_generation: state.generation
   }] }
@@ -95,13 +95,13 @@ test('SEM-F33/J25: remote pull is transient, rejects redirect, and clears creden
   assert.deepEqual(await redirect.pull({ profileId: 'deepseek', expectedRevision: 4 }), { status: 'redirect_rejected', suggestions: [] })
   let invalidated = null
   const auth = new RemoteModelCatalogPullController({
-    runtime: { configure: async (command) => { invalidated = command.profileId; return { ok: true, revision: 5, error: null } } },
+    runtime: { invalidateCredential: async (profileId, guard) => { invalidated = { profileId, guard }; return true } },
     gateway: { modelAccessCatalog: async () => internal },
     vault: instance,
     adapter: { listModels: async () => { const error = new Error(); error.code = 'AUTH_REJECTED'; throw error } }
   })
   assert.equal((await auth.pull({ profileId: 'deepseek', expectedRevision: 4 })).status, 'credential_unavailable')
-  assert.equal(invalidated, 'deepseek')
+  assert.deepEqual(invalidated, { profileId: 'deepseek', guard: { credentialSlotId: slot, profileRevision: 1 } })
 })
 
 test('SEM-F33/J25: OpenAI-compatible catalog uses the fixed safe-joined endpoint and rejects every redirect', async () => {
@@ -234,6 +234,93 @@ test('SEM-F33/J25: production loop adapter maps redirects, provider failures, ma
   controller.abort()
   const cancelled = new OpenAiCompatibleAdapter({ fetch: async () => { throw new Error('must not fetch') } })
   await assert.rejects(cancelled.run({ ...request, signal: controller.signal }), (error) => error.code === 'AGENT_CANCELLED')
+})
+
+test('SEM-F33/J25: formal auth rejection invalidates only the bound profile credential', async (t) => {
+  const { instance } = vault(t, true)
+  const slot = 'slot.0123456789abcdef0123456789abcdef'
+  const state = instance.set(slot, 'formal-auth-secret')
+  const internal = { revision: 6, profiles: [{
+    profile_id: 'profile.one', profile_revision: 1, credential_slot_id: slot, credential_persistence: 'persistent',
+    credential_generation: state.generation, https_origin: 'https://example.test', base_path: '/v1'
+  }] }
+  const configureCalls = []
+  const runtime = new ModelAccessRuntime({
+    vault: instance,
+    gateway: {
+      modelAccessCatalog: async () => internal,
+      modelAccessConfigure: async ({ command }) => { configureCalls.push(command); return { revision: 7 } }
+    },
+    adapter: { run: async () => { const error = new Error('rejected'); error.code = 'AGENT_PROVIDER_AUTH_FAILED'; throw error } }
+  })
+  await runtime.initialize()
+  await assert.rejects(runtime.runWithBinding({
+    runId: 'run.one', profileId: 'profile.one', credentialSlotId: slot,
+    profileRevision: 1,
+    httpsOrigin: 'https://example.test', basePath: '/v1', modelId: 'model.one'
+  }, { prompt: 'probe' }), (error) => error.code === 'AGENT_PROVIDER_AUTH_FAILED')
+  assert.deepEqual(configureCalls, [{ type: 'clearCredential', expectedRevision: 6, profileId: 'profile.one' }])
+  assert.deepEqual(instance.state(slot, 'persistent', state.generation), { present: false, scope: 'absent' })
+})
+
+test('SEM-F33/J25: delayed formal auth rejection does not clear a newer profile revision', async (t) => {
+  const { instance } = vault(t, true)
+  const slot = 'slot.0123456789abcdef0123456789abcdef'
+  const state = instance.set(slot, 'newer-secret')
+  const internal = { revision: 7, profiles: [{
+    profile_id: 'profile.one', profile_revision: 2, credential_slot_id: slot,
+    credential_persistence: 'persistent', credential_generation: state.generation,
+    https_origin: 'https://example.test', base_path: '/v1'
+  }] }
+  const configureCalls = []
+  const runtime = new ModelAccessRuntime({
+    vault: instance,
+    gateway: {
+      modelAccessCatalog: async () => internal,
+      modelAccessConfigure: async ({ command }) => { configureCalls.push(command); return { revision: 8 } }
+    },
+    adapter: { run: async () => { const error = new Error('rejected'); error.code = 'AGENT_PROVIDER_AUTH_FAILED'; throw error } }
+  })
+  await runtime.initialize()
+  await assert.rejects(runtime.runWithBinding({
+    runId: 'run.one', profileId: 'profile.one', credentialSlotId: slot,
+    profileRevision: 1, httpsOrigin: 'https://example.test', basePath: '/v1', modelId: 'model.one'
+  }, { prompt: 'probe' }), (error) => error.code === 'AGENT_PROVIDER_AUTH_FAILED')
+  assert.deepEqual(configureCalls, [])
+  assert.deepEqual(instance.state(slot, 'persistent', state.generation), { present: true, scope: 'persistent' })
+})
+
+test('SEM-F36/J25: test and preset strategies add only their fixed provider fields', async () => {
+  const bodies = []
+  const adapter = new OpenAiCompatibleAdapter({
+    fetch: async (_url, options) => {
+      bodies.push(JSON.parse(options.body))
+      return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }) }
+    }
+  })
+  const base = {
+    connection: { httpsOrigin: 'https://example.test', basePath: '/' },
+    credential: Buffer.from('secret'),
+    resolvedModel: { modelId: 'model.one', capabilities: { maxOutputTokens: 256, supportsToolCalling: false, supportsStructuredOutput: false, usageReporting: true } },
+    prompt: 'probe'
+  }
+  await adapter.run({ ...base, requestStrategy: 'deepseek-openai@1', testMode: true })
+  await adapter.run({ ...base, requestStrategy: 'qwen-beijing@1', testMode: true })
+  await adapter.run({ ...base, requestStrategy: 'openai-compatible@1', testMode: true })
+  await assert.rejects(adapter.run({ ...base, requestStrategy: 'unknown-provider@1', testMode: true }), (error) => error.code === 'AGENT_REQUEST_INVALID')
+  assert.deepEqual(bodies.map((body) => ({ thinking: body.thinking, enable_thinking: body.enable_thinking })), [
+    { thinking: { type: 'disabled' }, enable_thinking: undefined },
+    { thinking: undefined, enable_thinking: false },
+    { thinking: undefined, enable_thinking: undefined }
+  ])
+  const malformed = new OpenAiCompatibleAdapter({
+    fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ choices: [{ message: { content: '{"ok":false}' } }] }) })
+  })
+  await assert.rejects(malformed.run({ ...base, testMode: true }), (error) => error.code === 'AGENT_OUTPUT_INVALID')
+  const extra = new OpenAiCompatibleAdapter({
+    fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ choices: [{ message: { content: '{"ok":true,"extra":1}' } }] }) })
+  })
+  await assert.rejects(extra.run({ ...base, testMode: true }), (error) => error.code === 'AGENT_OUTPUT_INVALID')
 })
 
 test('SEM-F34/J24: production loop adapter bounds tool execution and propagates cancellation without waiting for a hanging tool', async () => {
@@ -503,4 +590,19 @@ test('SEM-F25/SEM-F33/J25: immutable binding borrows only its frozen slot identi
     assert.equal(error.retryable, false)
     return true
   })
+})
+
+test('SEM-F33/J25: binding preserves non-auth provider errors from credential consumption', async (t) => {
+  const { instance } = vault(t, true)
+  const slot = 'slot.0123456789abcdef0123456789abcdef'
+  const state = instance.set(slot, 'provider-secret')
+  const binding = { profileId: 'profile.one', credentialSlotId: slot }
+  const profiles = [{
+    profile_id: 'profile.one', credential_slot_id: slot,
+    credential_persistence: 'persistent', credential_generation: state.generation
+  }]
+  const expected = new Error('provider timed out')
+  expected.code = 'AGENT_PROVIDER_TIMEOUT'
+  await assert.rejects(instance.borrowForBinding(binding, profiles, async () => { throw expected }), (error) => error === expected)
+  assert.deepEqual(instance.state(slot, 'persistent', state.generation), { present: true, scope: 'persistent' })
 })

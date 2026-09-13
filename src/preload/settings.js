@@ -21,6 +21,19 @@ const {
   assertPullResponse: assertModelPullResponse
 } = require('../agent/contracts/agent-model-ui')
 const {
+  CONTRACT_ID: PRESETS_CONTRACT_ID,
+  CONTRACT_VERSION: PRESETS_CONTRACT_VERSION,
+  assertGetPresetsRequest,
+  assertGetPresetsResponse
+} = require('../agent/contracts/agent-model-presets-ui')
+const {
+  CONTRACT_ID: TEST_CONTRACT_ID,
+  CONTRACT_VERSION: TEST_CONTRACT_VERSION,
+  assertCancelRequest: assertModelTestCancelRequest,
+  assertTestRequest: assertModelTestRequest,
+  assertTestResponse: assertModelTestResponse
+} = require('../agent/contracts/agent-model-test-ui')
+const {
   assertUpdateRequest: assertAgentSettingsUpdateRequest,
   assertUpdateResponse: assertAgentSettingsUpdateResponse
 } = require('../agent/contracts/agent-settings-ui')
@@ -76,6 +89,11 @@ contextBridge.exposeInMainWorld('shell', {
     assertModelCatalogRequest(request)
     return ipcRenderer.invoke(CHANNELS.AGENT_MODEL_GET_CATALOG, request).then(assertModelCatalogResponse)
   },
+  getAgentModelPresets: () => {
+    const request = { contractId: PRESETS_CONTRACT_ID, contractVersion: PRESETS_CONTRACT_VERSION }
+    assertGetPresetsRequest(request)
+    return ipcRenderer.invoke(CHANNELS.AGENT_MODEL_GET_PRESETS, request).then((response) => assertGetPresetsResponse(response))
+  },
   configureAgentModel: (request) => {
     assertModelConfigureRequest(request)
     return ipcRenderer.invoke(CHANNELS.AGENT_MODEL_CONFIGURE, request).then(assertModelConfigureResponse)
@@ -83,6 +101,14 @@ contextBridge.exposeInMainWorld('shell', {
   pullAgentModelCatalog: (request) => {
     assertModelPullRequest(request)
     return ipcRenderer.invoke(CHANNELS.AGENT_MODEL_PULL_REMOTE_CATALOG, request).then(assertModelPullResponse)
+  },
+  testSavedAgentModel: (request) => {
+    assertModelTestRequest(request)
+    return ipcRenderer.invoke(CHANNELS.AGENT_MODEL_TEST_SAVED, request).then((response) => assertModelTestResponse(response))
+  },
+  cancelSavedAgentModel: (request) => {
+    assertModelTestCancelRequest(request)
+    return ipcRenderer.invoke(CHANNELS.AGENT_MODEL_CANCEL_TEST, request).then((response) => assertModelTestResponse(response))
   },
   onAgentModelChanged
 })

@@ -10,7 +10,7 @@ type Dict = Record<string, any>
 
 const PANES: ReadonlyArray<readonly [Pane, string]> = [
   ['display', '显示与字幕'], ['audio', '音频源'], ['asr', '语音识别'],
-  ['resources', '模型资源'], ['agentContext', '个人上下文'], ['agentModel', 'Agent 模型配置档案'], ['about', '关于']
+  ['resources', '模型资源'], ['agentContext', '个人上下文'], ['agentModel', 'Agent 模型'], ['about', '关于']
 ]
 const MODEL_STATES: readonly ModelState[] = ['missing', 'downloading', 'verifying', 'ready', 'error']
 const MODEL_LABEL: Record<ModelState, string> = {

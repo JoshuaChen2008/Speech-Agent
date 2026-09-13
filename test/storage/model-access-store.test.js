@@ -128,6 +128,60 @@ test('SEM-F33/J25: bind validates an existing v5 run and replays one immutable s
   assert.equal(subtitleStore.database.prepare("SELECT COUNT(*) AS count FROM agent_model_run_bindings WHERE run_id='run.bind.one'").get().count, 0)
 })
 
+test('SEM-F36/J25: preset strategy identity is persisted for matching preset profiles and custom tuples stay compatible', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  command(store, { type: 'createProfile', profileId: 'preset.deepseek-openai', label: 'DeepSeek', httpsOrigin: 'https://api.deepseek.com', basePath: '/' })
+  command(store, { type: 'addModel', profileId: 'preset.deepseek-openai', modelId: 'deepseek-v4-flash', capabilities })
+  command(store, { type: 'createProfile', profileId: 'custom.deepseek', label: 'Custom', httpsOrigin: 'https://api.deepseek.com', basePath: '/' })
+  command(store, { type: 'addModel', profileId: 'custom.deepseek', modelId: 'deepseek-v4-flash', capabilities })
+  command(store, { type: 'createProfile', profileId: 'deepseek-openai', label: 'Custom id', httpsOrigin: 'https://api.deepseek.com', basePath: '/' })
+  command(store, { type: 'addModel', profileId: 'deepseek-openai', modelId: 'deepseek-v4-flash', capabilities })
+  const catalog = store.internalCatalog()
+  const presetModel = catalog.profiles.find((profile) => profile.profile_id === 'preset.deepseek-openai').models[0]
+  const customModel = catalog.profiles.find((profile) => profile.profile_id === 'custom.deepseek').models[0]
+  const collidingCustomModel = catalog.profiles.find((profile) => profile.profile_id === 'deepseek-openai').models[0]
+  assert.equal(presetModel.preset_identity, 'deepseek-openai@1')
+  assert.equal(presetModel.request_strategy, 'deepseek-openai@1')
+  assert.equal(customModel.preset_identity, null)
+  assert.equal(customModel.request_strategy, 'openai-compatible@1')
+  assert.equal(collidingCustomModel.preset_identity, null)
+  assert.equal(collidingCustomModel.request_strategy, 'openai-compatible@1')
+  command(store, { type: 'updateProfile', profileId: 'preset.deepseek-openai', label: 'DeepSeek', httpsOrigin: 'https://other.example', basePath: '/v1' })
+  const changed = store.internalCatalog().profiles.find((profile) => profile.profile_id === 'preset.deepseek-openai').models[0]
+  assert.equal(changed.preset_identity, null)
+  assert.equal(changed.request_strategy, 'openai-compatible@1')
+  command(store, { type: 'createProfile', profileId: 'preset.openai-gpt-4.1-mini', label: 'OpenAI', httpsOrigin: 'https://api.openai.com', basePath: '/v1' })
+  command(store, { type: 'addModel', profileId: 'preset.openai-gpt-4.1-mini', modelId: 'gpt-4.1-mini-2025-04-14', capabilities })
+  const openaiModel = store.internalCatalog().profiles.find((profile) => profile.profile_id === 'preset.openai-gpt-4.1-mini').models[0]
+  assert.equal(openaiModel.preset_identity, 'openai-gpt-4.1-mini@1')
+  assert.equal(openaiModel.request_strategy, 'openai-compatible@1')
+  command(store, { type: 'createProfile', profileId: 'preset.qwen-beijing', label: '通义千问', httpsOrigin: 'https://dashscope.aliyuncs.com', basePath: '/compatible-mode/v1' })
+  command(store, { type: 'addModel', profileId: 'preset.qwen-beijing', modelId: 'qwen-plus', capabilities })
+  const qwenSlot = store.internalCatalog().profiles.find((profile) => profile.profile_id === 'preset.qwen-beijing').credential_slot_id
+  store.configure({ command: { type: 'setCredential', expectedRevision: store.revision(), profileId: 'preset.qwen-beijing' }, credentialState: { scope: 'persistent', generation: 'generation.0000000000000001' } })
+  command(store, { type: 'assignPurpose', purpose: 'default', target: { profileId: 'preset.qwen-beijing', modelId: 'qwen-plus' } })
+  insertRun(subtitleStore.database, 'run.qwen.strategy')
+  const binding = store.bind({ runId: 'run.qwen.strategy', recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'agent_loop' }, [qwenSlot])
+  assert.equal(binding.requestStrategy, 'qwen-beijing@1')
+  assert.equal(subtitleStore.database.prepare("SELECT request_strategy FROM agent_model_run_bindings WHERE run_id='run.qwen.strategy'").get().request_strategy, 'qwen-beijing@1')
+})
+
+test('SEM-F36/J25: reserved preset profile ids reject non-preset connection tuples', (t) => {
+  const { store } = fixture(t)
+  assert.throws(() => command(store, {
+    type: 'createProfile', profileId: 'preset.qwen-beijing', label: 'Custom',
+    httpsOrigin: 'https://example.test', basePath: '/v1'
+  }), (error) => error.code === 'MODEL_CONFIG_INVALID')
+})
+
+test('SEM-F36/J25: unknown preset profile ids remain reserved in the storage boundary', (t) => {
+  const { store } = fixture(t)
+  assert.throws(() => command(store, {
+    type: 'createProfile', profileId: 'preset.future-provider', label: 'Future',
+    httpsOrigin: 'https://example.test', basePath: '/v1'
+  }), (error) => error.code === 'MODEL_CONFIG_INVALID')
+})
+
 test('SEM-F33/J25: deleting a profile preserves binding identity and never reseeds the template', (t) => {
   const { subtitleStore, store } = fixture(t)
   const slot = addProfileModel(store)

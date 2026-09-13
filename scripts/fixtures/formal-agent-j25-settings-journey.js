@@ -207,30 +207,31 @@ async function configureThroughSettings (settings, port) {
     const agentToggle = await waitFor(() => document.querySelector('input[aria-label="启用 Agent 系统"]'), 'Agent system toggle')
     setChecked(agentToggle, true)
     await waitFor(() => document.querySelector('input[aria-label="启用 Agent 系统"]')?.checked === true, 'Agent system enabled')
-    const card = await waitFor(() => document.querySelector('[data-profile-id="deepseek"]'), 'deepseek profile')
-    clickText(card, '修改档案')
-    await waitFor(() => card.querySelector('input[aria-label="服务器地址"]'), 'connection editor')
-    setInput(card.querySelector('input[aria-label="服务器地址"]'), 'https://127.0.0.1:${port}')
-    clickText(card, '保存修改')
-    await waitFor(() => [...card.querySelectorAll('button')].some((item) => item.textContent === '修改档案'), 'connection saved')
+    const cardFor = () => document.querySelector('[data-profile-id="deepseek"]')
+    await waitFor(cardFor, 'deepseek profile')
+    clickText(cardFor(), '编辑连接')
+    await waitFor(() => cardFor()?.querySelector('input[aria-label="API 服务器地址"]'), 'connection editor')
+    setInput(cardFor().querySelector('input[aria-label="API 服务器地址"]'), 'https://127.0.0.1:${port}')
+    clickText(cardFor(), '保存修改')
+    await waitFor(() => [...cardFor().querySelectorAll('button')].some((item) => item.textContent === '编辑连接'), 'connection saved')
 
-    clickText(card, '添加 model')
-    const modelId = await waitFor(() => card.querySelector('input[aria-label="model ID"]'), 'model form')
+    clickText(cardFor(), '添加模型')
+    const modelId = await waitFor(() => cardFor()?.querySelector('input[aria-label="模型名称（Model ID）"]'), 'model form')
     setInput(modelId, 'j25-local-model')
-    setInput(card.querySelector('input[aria-label="最大输入 token"]'), '64000')
-    setInput(card.querySelector('input[aria-label="最大输出 token"]'), '4096')
+    setInput(cardFor().querySelector('input[aria-label="最大输入 token"]'), '64000')
+    setInput(cardFor().querySelector('input[aria-label="最大输出 token"]'), '4096')
     for (const label of ['工具调用', '结构化输出', '流式输出', '用量上报']) {
-      const group = await waitFor(() => card.querySelector('[aria-label="' + label + '"]'), label + ' capability group')
+      const group = await waitFor(() => cardFor()?.querySelector('[aria-label="' + label + '"]'), label + ' capability group')
       clickText(group, '支持')
-      await waitFor(() => card.querySelector('[aria-label="' + label + '"] button[aria-pressed="true"]'), label + ' capability selected')
+      await waitFor(() => cardFor()?.querySelector('[aria-label="' + label + '"] button[aria-pressed="true"]'), label + ' capability selected')
     }
-    await waitFor(() => [...card.querySelectorAll('button')].some((item) => item.textContent === '保存 model' && !item.disabled), 'model form valid')
-    clickText(card, '保存 model')
-    await waitFor(() => card.querySelector('[data-model-id="j25-local-model"]'), 'model saved')
+    await waitFor(() => [...cardFor().querySelectorAll('button')].some((item) => item.textContent === '保存模型' && !item.disabled), 'model form valid')
+    clickText(cardFor(), '保存模型')
+    await waitFor(() => cardFor()?.querySelector('[data-model-id="j25-local-model"]'), 'model saved')
 
-    const credential = card.querySelector('input[type="password"]')
+    const credential = cardFor().querySelector('input[type="password"]')
     setInput(credential, 'j25-local-provider-secret')
-    clickText(card, '设置新凭据')
+    clickText(cardFor(), '设置新的 API 密钥')
     await waitFor(() => credential.value === '', 'credential cleared')
 
     const purpose = document.querySelector('[data-purpose="default"] select')
@@ -296,13 +297,17 @@ async function configureThroughSettings (settings, port) {
       staleResponse.error?.code === 'AGENT_CONTEXT_REVISION_CONFLICT'
     nav.click()
     await waitFor(() => document.querySelector('[data-pane="agentModel"]'), 'model pane after context management')
+    await waitFor(cardFor, 'model profile after context management')
+    const profileConnection = cardFor()?.textContent.includes('https://127.0.0.1:${port}') === true
+    const modelVisible = cardFor()?.querySelector('[data-model-id="j25-local-model"]') !== null
+    const credentialCleared = credential.value === ''
     contextNav.click()
     await waitFor(() => document.querySelector('textarea[aria-label="记住个人记忆"]'), 'context pane after context management')
 
     return {
-      profileConnection: card.textContent.includes('https://127.0.0.1:${port}'),
-      modelVisible: card.querySelector('[data-model-id="j25-local-model"]') !== null,
-      credentialCleared: credential.value === '',
+      profileConnection,
+      modelVisible,
+      credentialCleared,
       defaultReady,
       agentEnabled: agentToggle.checked === true,
       memoryManaged: memoryId !== null && memoryLabel.length > 0 && memoryRow() === null &&

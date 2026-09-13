@@ -370,8 +370,37 @@ input[type="text"]:disabled, input[type="password"]:disabled, input[type="number
 }
 .agent-model-profile-card:last-child { border-bottom: 0; }
 .agent-model-profiles, .agent-model-new-profile, .agent-model-purposes { margin-top: 14px; }
+.agent-model-default-summary { margin-top: 14px; }
+.agent-model-default-summary > div + div { margin-top: 5px; }
+.agent-model-preset-launcher { margin-top: 14px; }
 .capability-row .seg { flex: none; }
 .purpose-row select { min-width: 220px; }
+.purpose-details { margin-top: 10px; }
+.purpose-details summary { padding: 8px 0; cursor: pointer; color: rgb(var(--text-accent)); font-size: var(--fs-label); }
+.agent-model-wizard { margin-top: 14px; padding: 18px 20px 20px; }
+.agent-model-wizard h2 { margin: 4px 0 6px; font-size: var(--fs-title); font-weight: var(--fw-bold); }
+.eyebrow { margin: 0; color: rgb(var(--text-accent)); font-size: var(--fs-hint); font-weight: var(--fw-medium); }
+.wizard-intro { display: block; margin: 0 0 16px; line-height: 1.5; }
+.wizard-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 0 0 16px; padding: 0; list-style: none; counter-reset: wizard-step; }
+.wizard-steps li { padding: 8px 6px; border-bottom: 2px solid rgba(var(--fg), 0.16); color: rgb(var(--fg)); font-size: var(--fs-hint); opacity: 0.55; }
+.wizard-steps li::before { counter-increment: wizard-step; content: counter(wizard-step) ' '; font-variant-numeric: tabular-nums; }
+.wizard-steps li.on { border-bottom-color: var(--accent-solid); color: rgb(var(--text-accent)); opacity: 1; font-weight: var(--fw-medium); }
+.wizard-steps li.done { border-bottom-color: var(--accent-solid); opacity: 0.8; }
+.preset-choice { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+.preset-choice .preset-card { min-height: 106px; padding: 13px; }
+.preset-choice .preset-card.on { border-color: var(--accent-solid); box-shadow: var(--shadow-pill); }
+.wizard-details { margin: 14px 0; padding-top: 2px; font-size: var(--fs-hint); line-height: 1.55; }
+.wizard-details summary, .agent-model-new-profile summary { cursor: pointer; color: rgb(var(--text-accent)); font-size: var(--fs-label); }
+.wizard-details p { margin: 8px 0 0; }
+.wizard-test-result { min-height: 28px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; font-size: var(--fs-label); }
+.wizard-exit { display: block; margin-top: 10px; }
+.model-test-control { display: inline-flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.test-result { color: var(--tone-danger); font-size: var(--fs-hint); }
+.test-result.success { color: rgb(var(--text-accent)); }
+.agent-model-new-profile { margin-top: 14px; }
+.agent-model-new-profile summary { padding: 12px 16px; border-radius: var(--radius-bar); background: rgba(var(--fg), 0.05); }
+.agent-model-new-profile[open] summary { border-radius: var(--radius-bar) var(--radius-bar) 0 0; }
+.agent-model-new-profile > .group { border-radius: 0 0 var(--radius-bar) var(--radius-bar); }
 
 /* --------------------------------------------------------------------------
    个人上下文：管理界面只消费有界 exact projection，不展示内部存储细节。
@@ -439,9 +468,17 @@ input[type="text"]:disabled, input[type="password"]:disabled, input[type="number
   .seg button.on { border: 2px solid Highlight; }
   .nav-item.active, .preset-card:hover { border: 1px solid Highlight; }
   input[type="text"], input[type="password"], input[type="number"], select, [role="alertdialog"] { border: 1px solid CanvasText; }
+  .wizard-steps li { border-bottom-color: CanvasText; }
+  .wizard-steps li.on, .wizard-steps li.done, .preset-choice .preset-card.on { border-color: Highlight; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .pane { animation: none; }
   .tb-close:active, .primary-btn:active, .secondary-btn:active, .preset-card:active { transform: none; }
+}
+
+@media (max-width: 760px) {
+  .preset-choice { grid-template-columns: 1fr; }
+  .wizard-steps { grid-template-columns: repeat(2, 1fr); }
+  .model-test-control { justify-content: flex-start; }
 }

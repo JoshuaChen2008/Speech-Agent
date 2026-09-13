@@ -18,19 +18,24 @@ function databasePath (t) {
   return path.join(directory, 'speech-agent.sqlite3')
 }
 
-test('SEM-F33/DB7/J25: formal v5 upgrades by appending byte-stable migrations v6 through v8', (t) => {
+test('SEM-F33/DB7/J25: formal v5 upgrades by appending byte-stable migrations v6 through v9', (t) => {
   const file = databasePath(t)
   const frozen = FORMAL_AGENT_MIGRATIONS.slice(0, 5).map(({ version, checksum, sql }) => ({ version, checksum, sql }))
   const v5 = new SqliteSubtitleStore({ databasePath: file, migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 5) })
   v5.close()
   const v6 = new SqliteSubtitleStore({ databasePath: file, migrations: FORMAL_AGENT_MIGRATIONS })
-  assert.equal(v6.database.prepare('PRAGMA user_version').get().user_version, 8)
+  assert.equal(v6.database.prepare('PRAGMA user_version').get().user_version, 9)
   assert.deepEqual(FORMAL_AGENT_MIGRATIONS.slice(0, 5).map(({ version, checksum, sql }) => ({ version, checksum, sql })), frozen)
   const tables = v6.database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'agent_model_%' ORDER BY name").all().map(({ name }) => name)
   assert.deepEqual(tables, [
     'agent_model_profile_models', 'agent_model_profiles',
     'agent_model_purpose_assignments', 'agent_model_run_bindings'
   ])
+  assert.deepEqual(v6.database.prepare('PRAGMA table_info(agent_model_profile_models)').all().map((row) => row.name), [
+    'profile_id', 'model_id', 'capability_json', 'created_at', 'updated_at',
+    'preset_identity', 'request_strategy', 'strategy_version'
+  ])
+  assert.equal(v6.database.prepare('PRAGMA table_info(agent_model_run_bindings)').all().at(-1).name, 'request_strategy')
   v6.close()
 })
 

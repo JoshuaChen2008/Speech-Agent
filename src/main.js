@@ -9,10 +9,17 @@ const {
   nativeTheme,
   powerMonitor,
   safeStorage,
-  screen
+  screen,
+  shell
 } = require('electron')
 const path = require('node:path')
 const crypto = require('node:crypto')
+
+const APPROVED_MODEL_HELP_URLS = new Set([
+  'https://platform.deepseek.com/api_keys',
+  'https://platform.openai.com/api-keys',
+  'https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key'
+])
 const config = require('./config')
 const CHANNELS = require('./main/ipc/channels')
 const {
@@ -115,7 +122,7 @@ for (const key of Object.keys(process.env)) {
 /** @type {OverlayStartupController | null} */ let overlayStartupController = null
 /** @type {RefinementFaultLog | null} */ let refinementFaultLog = null
 /** @type {null | { start: Function, stop: Function, getOverview: Function, manage: Function }} */ let personalContextRuntime = null
-/** @type {null | {catalog: Function, configure: Function, bind: Function}} */ let modelAccessRuntime = null
+/** @type {null | {catalog: Function, configure: Function, bind: Function, cancelAllModelTests?: Function, close?: Function}} */ let modelAccessRuntime = null
 /** @type {null | import('./agent/model-access/credential-vault').CredentialVault} */ let modelAccessVault = null
 /** @type {null | import('./agent/model-access/remote-catalog-controller').RemoteModelCatalogPullController} */ let remoteModelCatalogController = null
 /** @type {null | AgentRunService} */ let formalAgentService = null
@@ -406,6 +413,10 @@ registerAgentRunIpc({
   }
 })
 
+function cancelSettingsModelTests () {
+  try { modelAccessRuntime?.cancelAllModelTests?.() } catch {}
+}
+
 function registerWindowRole (win, role) {
   const senderId = win.webContents.id
   let navigationEpoch = 0
@@ -416,6 +427,7 @@ function registerWindowRole (win, role) {
     webContents: win.webContents
   })
   win.webContents.once('destroyed', () => {
+    if (role === 'settings') cancelSettingsModelTests()
     unregisterExitEvidence()
     windowRoles.delete(senderId)
     windowInteractionController.stopForSender(senderId)
@@ -430,6 +442,7 @@ function registerWindowRole (win, role) {
     console.error(`[electron.window] role=${role} event=unresponsive`)
   })
   win.webContents.on('render-process-gone', (_event, details) => {
+    if (role === 'settings') cancelSettingsModelTests()
     navigationEpoch += 1
     windowInteractionController.stopForSender(senderId)
     windowInteractionGenerationController.failClosedAfterRendererGone(role)
@@ -439,6 +452,7 @@ function registerWindowRole (win, role) {
   })
   win.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
     if (!isMainFrame || isInPlace) return
+    if (role === 'settings') cancelSettingsModelTests()
     navigationEpoch += 1
     windowInteractionController.stopForSender(senderId)
     windowInteractionGenerationController.suspendRoleForReload(role)
@@ -459,8 +473,13 @@ function registerWindowRole (win, role) {
   })
 }
 
-function hardenContents (win) {
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+function hardenContents (win, { openExternalUrls = null } = {}) {
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (openExternalUrls instanceof Set && openExternalUrls.has(url) && typeof shell?.openExternal === 'function') {
+      void shell.openExternal(url).catch(() => {})
+    }
+    return { action: 'deny' }
+  })
   win.webContents.on('will-navigate', (event) => event.preventDefault())
 }
 
@@ -667,13 +686,17 @@ function openSettingsWindow (initialPane = null) {
   registerWindowRole(settingsWin, 'settings')
   applicationWindowLifecycleController.bindAuxiliaryWindow(settingsWin, 'settings')
   windowLayerController.bindForegroundWindow(settingsWin, 'settings')
-  hardenContents(settingsWin)
+  hardenContents(settingsWin, { openExternalUrls: APPROVED_MODEL_HELP_URLS })
   settingsWin.webContents.on('console-message', (details) => console.log('[settings]', details.message))
   settingsWin.once('ready-to-show', () => {
     applicationWindowLifecycleController.showAuxiliaryWindow(settingsWin, 'settings')
     if (initialPane) send(settingsWin, CHANNELS.SETTINGS_NAVIGATE, initialPane)
   })
-  settingsWin.on('closed', () => { windowInteractionController.stopAll(); settingsWin = null })
+  settingsWin.on('closed', () => {
+    cancelSettingsModelTests()
+    windowInteractionController.stopAll()
+    settingsWin = null
+  })
   void loadRendererFailClosed(settingsWin, 'settings', { isPackaged: app.isPackaged })
     .catch((error) => logError('renderer.settings.load', error))
 }
@@ -1387,13 +1410,18 @@ function beginQuitBarrier (event) {
       formalAgentScheduler = null
     }
     formalAgentPrompts.clear()
+    let modelAccessClosed = false
     if (modelAccessRuntime) {
+      try {
+        modelAccessRuntime.close?.()
+        modelAccessClosed = true
+      } catch {}
       modelAccessRuntime = null
       remoteModelCatalogController = null
     }
     formalRouteOrchestrator = null
     formalAgentService = null
-    if (modelAccessVault) {
+    if (modelAccessVault && !modelAccessClosed) {
       try { modelAccessVault.close() } catch {}
       modelAccessVault = null
     }

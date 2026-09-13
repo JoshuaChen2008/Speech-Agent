@@ -28,7 +28,10 @@ function publicCatalog (internal, vault) {
     basePath: profile.base_path,
     templateId: profile.template_id,
     templateSuggestion: profile.template_id === 'deepseek-openai-template@1' ? DEEPSEEK_TEMPLATE_SUGGESTION : null,
-    models: profile.models,
+    models: profile.models.map((model) => ({
+      modelId: model.modelId,
+      capabilities: model.capabilities
+    })),
     credential: vault.state(profile.credential_slot_id, profile.credential_persistence, profile.credential_generation)
   }))
   const byId = new Map(internal.profiles.map((profile) => [profile.profile_id, profile]))

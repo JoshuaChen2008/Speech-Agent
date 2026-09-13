@@ -63,6 +63,26 @@ test('SEM-F00/SEM-F33/J25: model access initializes during bootstrap and is inde
   assert.doesNotMatch(notice, /CredentialVault|createModelAccess|RemoteModelCatalogPullController/)
 })
 
+test('SEM-F36/J25: settings model tests cancel on close, navigation, renderer unload and renderer crash', () => {
+  const source = fs.readFileSync(MAIN_PATH, 'utf8')
+  assert.match(source, /function cancelSettingsModelTests \(\)/)
+  assert.match(source, /role === 'settings'\) cancelSettingsModelTests\(\)/)
+  assert.match(source, /settingsWin\.on\('closed', \(\) => \{[\s\S]{0,100}cancelSettingsModelTests\(\)/)
+  assert.match(source, /did-start-navigation[\s\S]{0,180}role === 'settings'\) cancelSettingsModelTests\(\)/)
+  assert.match(source, /render-process-gone[\s\S]{0,180}role === 'settings'\) cancelSettingsModelTests\(\)/)
+})
+
+test('SEM-F36/J25: settings help links use an exact allowlist and system browser handoff', () => {
+  const source = fs.readFileSync(MAIN_PATH, 'utf8')
+  assert.match(source, /const APPROVED_MODEL_HELP_URLS = new Set\(\[/)
+  assert.match(source, /platform\.deepseek\.com\/api_keys/)
+  assert.match(source, /platform\.openai\.com\/api-keys/)
+  assert.match(source, /bailian\.console\.aliyun\.com\/cn-beijing\/model\/settings\/api-key/)
+  assert.match(source, /hardenContents\(settingsWin, \{ openExternalUrls: APPROVED_MODEL_HELP_URLS \}\)/)
+  assert.match(source, /shell\.openExternal\(url\)/)
+  assert.match(source, /return \{ action: 'deny' \}/)
+})
+
 test('quit and native-crash diagnostics are wired at the product composition root', () => {
   const source = fs.readFileSync(MAIN_PATH, 'utf8')
   const managerShutdown = source.indexOf('shutdownTasks.push(modelManager.shutdownWithin')

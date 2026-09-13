@@ -36,12 +36,13 @@ class RemoteModelCatalogPullController {
       return this.result('success', merged)
     } catch (error) {
       if (error?.code === 'REDIRECT_REJECTED') return this.result('redirect_rejected')
-      if (error?.code === 'AUTH_REJECTED') {
-        await this.runtime.configure({
-          type: 'clearCredential',
-          expectedRevision: internal.revision,
-          profileId: profile.profile_id
-        })
+      if (error?.code === 'AUTH_REJECTED' || error?.code === 'AGENT_PROVIDER_AUTH_FAILED') {
+        try {
+          await this.runtime.invalidateCredential(profile.profile_id, {
+            credentialSlotId: profile.credential_slot_id,
+            profileRevision: profile.profile_revision
+          })
+        } catch {}
         return this.result('credential_unavailable')
       }
       return this.result('remote_unavailable')
