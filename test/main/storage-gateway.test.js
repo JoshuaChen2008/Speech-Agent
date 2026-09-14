@@ -484,7 +484,7 @@ test('SEM-F00/SEM-F28 Agent business rejection is isolated from the subtitle dur
   const gateway = new StorageGateway({
     databasePath: DATABASE_PATH,
     hostFactory: () => hostWith({
-      async requestAgentJob (input) {
+      async createAgentRun (input) {
         await ready.promise
         log.push(['agent', input])
         throw new StorageError('AGENT_INPUT_CHANGED')
@@ -498,7 +498,7 @@ test('SEM-F00/SEM-F28 Agent business rejection is isolated from the subtitle dur
   t.after(() => gateway.terminate())
 
   const agentInput = { inputRef: { sessionId: 'terminal-a' }, taskKind: 'meeting-minutes' }
-  const requested = gateway.requestAgentJob(agentInput)
+  const requested = gateway.createAgentRun(agentInput)
   const opened = gateway.openSession({ sessionId: 'subtitle-b', sourceId: 'mic', startedAt: 2000 })
   const flushed = gateway.flush()
   agentInput.inputRef.sessionId = 'mutated'
@@ -554,6 +554,33 @@ test('SEM-F00/SEM-F30/J21 personal-context rejection is isolated and unknown tra
   assert.equal(gateway.faulted, false)
 })
 
+test('SEM-F00/J21 session ingest rejection is isolated from subtitle writes', async (t) => {
+  const log = []
+  const gateway = new StorageGateway({
+    databasePath: DATABASE_PATH,
+    hostFactory: () => hostWith({
+      async preparePersonalContextSessionIngest (input) { log.push(['prepare', input]); throw new StorageError('RETIREMENT_MIGRATION_FAILED') },
+      async readPersonalContextSessionInput (input) { log.push(['read', input]); throw new StorageError('RETIREMENT_MIGRATION_FAILED') },
+      async commitPersonalContextSessionIngest (input) { log.push(['commit', input]); throw new StorageError('RETIREMENT_MIGRATION_FAILED') },
+      async openSession (input) { log.push(['open', input]); return { status: 'committed' } }
+    })
+  })
+  t.after(() => gateway.terminate())
+
+  const requests = [
+    gateway.preparePersonalContextSessionIngest({ sessionId: 'session.ingest' }),
+    gateway.readPersonalContextSessionInput({ runId: 'run.ingest' }),
+    gateway.commitPersonalContextSessionIngest({ runId: 'run.ingest', output: {} })
+  ]
+  const opened = gateway.openSession({ sessionId: 'subtitle-after-ingest-rejection', sourceId: 'mic', startedAt: 1 })
+  for (const request of requests) {
+    await assert.rejects(request, (error) => error?.code === 'RETIREMENT_MIGRATION_FAILED')
+  }
+  assert.deepEqual(await opened, { status: 'committed' })
+  assert.deepEqual(log.map(([operation]) => operation), ['prepare', 'read', 'commit', 'open'])
+  assert.equal(gateway.faulted, false)
+})
+
 test('SEM-F28/SEM-F30/J21 scheduler storage operations preserve frozen identities and stay FIFO-isolated', async (t) => {
   const log = []
   const gateway = new StorageGateway({
@@ -580,22 +607,22 @@ test('SEM-F28/SEM-F30/J21 scheduler storage operations preserve frozen identitie
   assert.equal(gateway.faulted, false)
 })
 
-test('SEM-F28 / J24 gateway forwards formal result and deletion boundaries without widening payloads', async (t) => {
+test('SEM-F28 / J24 gateway forwards formal result and personal-context deletion without widening payloads', async (t) => {
   const log = []
   const gateway = new StorageGateway({
     databasePath: DATABASE_PATH,
     hostFactory: () => hostWith({
-      async commitAgentArtifact (input) {
+      async terminalizeAgentInteraction (input) {
         log.push(['artifact', input])
         return { artifactId: 'artifact-1' }
       },
-      async commitAgentMemoryCandidates (input) {
+      async completeFormalAgentRun (input) {
         log.push(['memory', input])
         return { state: 'succeeded' }
       },
-      async deleteAgentSessionData (input) {
+      async deletePersonalContextSessionData (input) {
         log.push(['delete', input])
-        return { deletedJobCount: 1 }
+        return { deletedJobCount: 0 }
       }
     })
   })
@@ -605,9 +632,9 @@ test('SEM-F28 / J24 gateway forwards formal result and deletion boundaries witho
   const memory = { runId: 'run-m', lease: { owner: 'worker', expiresAt: 2 }, candidates: [] }
   const deletion = { sessionId: 'session-a', deletionIdempotencyKey: 'delete-a' }
   const pending = [
-    gateway.commitAgentArtifact(artifact),
-    gateway.commitAgentMemoryCandidates(memory),
-    gateway.deleteAgentSessionData(deletion)
+    gateway.terminalizeAgentInteraction(artifact),
+    gateway.completeFormalAgentRun(memory),
+    gateway.deletePersonalContextSessionData(deletion)
   ]
   artifact.runId = 'mutated'
   memory.candidates.push({ forbidden: true })
@@ -615,7 +642,7 @@ test('SEM-F28 / J24 gateway forwards formal result and deletion boundaries witho
   assert.deepEqual(await Promise.all(pending), [
     { artifactId: 'artifact-1' },
     { state: 'succeeded' },
-    { deletedJobCount: 1 }
+    { deletedJobCount: 0 }
   ])
   assert.deepEqual(log, [
     ['artifact', { runId: 'run-a', lease: { owner: 'worker', expiresAt: 1 }, artifact: { type: 'meeting-minutes' } }],

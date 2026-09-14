@@ -47,7 +47,7 @@ test('migration checksum drift fails closed without applying another schema', (t
 
   assert.throws(
     () => openSubtitleDatabase(databasePath),
-    /checksum mismatch/
+    (error) => error?.code === 'SCHEMA_IDENTITY_INVALID'
   )
   const inspect = new DatabaseSync(databasePath)
   try {

@@ -8,6 +8,7 @@
  */
 
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
 const Module = require('node:module')
 const path = require('node:path')
 const test = require('node:test')
@@ -90,8 +91,8 @@ test('SEM-F29/J27: actual product entry require graph excludes every legacy Agen
     'the product entry must not synchronously reach any historical Agent implementation')
 
   for (const { prefix, entry } of LEGACY_COUNTERFACTUAL_ENTRIES) {
-    const counterfactualTrace = loadWithTrace(entry, createDormantElectron())
-    assert.equal([...counterfactualTrace].some((relative) => relative.startsWith(prefix)), true,
-      `the tracker must reject a counterfactual manual require from ${prefix}`)
+    assert.equal(fs.existsSync(entry), false)
+    assert.equal(isLegacyAgentPath(prefix + 'injected.js'), true)
+    assert.throws(() => require(entry), { code: 'MODULE_NOT_FOUND' })
   }
 })

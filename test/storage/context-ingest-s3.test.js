@@ -8,7 +8,7 @@ const path = require('node:path')
 
 const { AgentExecutionStore } = require('../../src/runtime/storage-worker/agent-execution-store')
 const { canonicalize, sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
-const { FormalAgentStore } = require('../../src/runtime/storage-worker/formal-agent-store')
+const { SessionDeletionStore } = require('../../src/runtime/storage-worker/session-deletion-store')
 const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
 const { PersonalContextStore } = require('../../src/runtime/storage-worker/personal-context-store')
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
@@ -246,19 +246,54 @@ test('SEM-F26/SEM-F32/J21: session deletion removes formal interactions, tool ca
     signalIdempotencyKey: 'signal.accept.delete'
   })
 
-  const formalStore = new FormalAgentStore({ subtitleStore, now: () => 3000 })
+  const interactionEpisode = subtitleStore.database.prepare(`
+    SELECT episode_id, ingest_run_id, scope_id
+    FROM personal_context_episodes
+    WHERE source_kind = 'interaction' AND interaction_id = ?
+  `).get('interaction.signal.delete')
+  subtitleStore.database.prepare(`
+    INSERT INTO personal_context_scopes(
+      scope_id, kind, canonical_key, label, session_id, origin, lifecycle, created_at, updated_at
+    ) VALUES (?, 'global', ?, 'interaction deletion fixture', NULL, 'automatic', 'active', 3000, 3000)
+  `).run('scope.interaction.delete', 'global:interaction-delete')
+  subtitleStore.database.prepare(`
+    INSERT INTO personal_context_items(
+      memory_id, scope_id, kind, semantic_key, content_json, origin,
+      confidence_band, salience_band, lifecycle, current_revision_id,
+      item_revision, created_at, updated_at
+    ) VALUES (?, ?, 'experience', 'interaction-only-memory', ?, 'inferred',
+      'high', 'high', 'active', NULL, 1, 3000, 3000)
+  `).run('memory.interaction.delete', 'scope.interaction.delete', JSON.stringify({ displayText: 'interaction-only' }))
+  subtitleStore.database.prepare(`
+    INSERT INTO personal_context_evidence(
+      evidence_id, ingest_run_id, memory_id, source_kind, session_id, interaction_id,
+      transcript_version, input_watermark, from_event_order, through_event_order,
+      input_digest, recipe_id, recipe_version, created_at
+    ) VALUES (?, ?, ?, 'interaction', NULL, ?, 'raw', 1, 1, 1, ?, 'context.ingest.interaction', '1', 3000)
+  `).run(
+    'evidence.interaction.delete', interactionEpisode.ingest_run_id,
+    'memory.interaction.delete', 'interaction.signal.delete', 'a'.repeat(64)
+  )
+
+  const formalStore = new SessionDeletionStore({ subtitleStore, personalContextStore: personalContext, now: () => 3000 })
   const deleted = formalStore.deleteSessionData({
     sessionId: 'session.signal.delete', deletionIdempotencyKey: 'delete.signal.1'
-  }, personalContext)
+  })
   assert.equal(deleted.deletedInteractionCount, 1)
   assert.equal(deleted.deletedToolCallCount, 1)
+  assert.equal(deleted.deletedContextEvidenceCount, 1)
+  assert.equal(deleted.deletedOrphanContextItemCount, 1)
+  assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM personal_context_evidence').get().count, 0)
+  assert.equal(subtitleStore.database.prepare(
+    "SELECT lifecycle FROM personal_context_items WHERE memory_id = 'memory.interaction.delete'"
+  ).get().lifecycle, 'inactive')
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_runs').get().count, 0)
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_interactions').get().count, 0)
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_tool_calls').get().count, 0)
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM personal_context_episodes').get().count, 0)
   assert.deepEqual(formalStore.deleteSessionData({
     sessionId: 'session.signal.delete', deletionIdempotencyKey: 'delete.signal.1'
-  }, personalContext), deleted)
+  }), deleted)
 })
 
 test('SEM-F14/SEM-F16/SEM-F35/J22/J24: session ingest commits candidates atomically and derives semantic_key in storage', (t) => {
@@ -274,8 +309,8 @@ test('SEM-F14/SEM-F16/SEM-F35/J22/J24: session ingest commits candidates atomica
   const item = subtitleStore.database.prepare('SELECT semantic_key, content_json FROM personal_context_items').get()
   assert.equal(item.semantic_key, 'ship the project')
   assert.equal(JSON.parse(item.content_json).displayText, '  Ship   the project  ')
-  assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM recognition_terms').get().count, 0)
-  assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM recognition_session_configs').get().count, 0)
+  assert.equal(subtitleStore.database.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE name='recognition_terms'").get().count, 0)
+  assert.equal(subtitleStore.database.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE name='recognition_session_configs'").get().count, 0)
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM personal_context_evidence').get().count, 1)
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM personal_context_episodes').get().count, 1)
   assert.equal(canonicalize(JSON.parse(subtitleStore.database.prepare('SELECT summary_json FROM personal_context_episodes').get().summary_json)).length < 8192, true)

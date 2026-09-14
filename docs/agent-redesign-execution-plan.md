@@ -1,5 +1,7 @@
 # Agent 重设计实现执行计划
 
+> **2026-09-14 退役切片说明：** 本文保留第三轮重设计的历史设计与日期记录；其中退役变更前关于旧源码树、旧 Agent 表和隔离入口的“保留/不删除”结论已由 [ADR 0019](adr/0019-complete-legacy-agent-retirement.md) supersede。当前实现只允许 `src/agent/**` formal Agent 主链路，正式 catalog 为 v10；旧对象的删除、备份、恢复与失败降级以 `openspec/changes/retire-legacy-agent/`、退役迁移和 ADR 0019 为准。本文旧路径和旧对象仅用于不可变历史追溯，不是当前实现入口。
+
 > 状态：已决定 · 2026-08-29
 > 权威要求：[SEM-F00](semantic-contract.md)、SEM-F15、SEM-F26、SEM-F28、SEM-F30、SEM-F31、SEM-F32、SEM-F33、SEM-F34、SEM-F35、SEM-T15
 > 用户旅程：[J3、J21、J22、J24、J25、J26、J27](testing-strategy.md)
@@ -327,6 +329,12 @@ release layout verifier 为 pass，包含 435 个 ASAR 条目和 5 个 native bi
 本轮正式 Electron 旅程为 1/1，受影响 focus 为 23/23；`npm run test:core` 保持 895/895，`npm run test:evidence` 为 229/229。J21/J25/J27 和正式 MVP 仍是「实现完成·尚未验收」；suppression 负矩阵、真实公网 provider、系统凭据、当前 revision 打包、干净机与适用实机证据仍未晋级。
 
 同一 revision 的 J27 机械验证已重建：`npm run package:smoke` 与 smoke layout verifier 为 pass（439 个 ASAR 条目、5 个 native binary），`npm run package:release` 生成 x64 NSIS installer；packaged product-shell 在 Electron GPU/utility 边界异常退出，未形成 fresh/restart 或 packaged run binding，因此 release layout 不能据此资格化。VMware inventory 检出 2 个条目但无运行机，启动克隆返回外部加密口令要求。当前 J27 报告只保留这些计数、固定阻断标签和哈希，状态不晋级。
+
+### 2026-09-14 旧 Agent 链路退役切片（仍为实现完成·尚未验收）
+
+`retire-legacy-agent` 追加 v10 退役迁移，先用 `VACUUM INTO` 创建并验证唯一的私有快照，再在外键开启的同一事务中删除 15 个旧对象、写 migration record 并提交版本；备份创建、验证或迁移失败均不删除旧对象。v1 备份失败时保留可读字幕历史、采集与导出，精修结果元数据降级为 `not_recorded`；v2+ 失败时保留字幕/精修写入但统一阻断 Agent、摄取与会话删除，重启后重新取得快照再试。现行 formal Agent、模型接入层、personal context、字幕历史与导出均走真实 SQLite worker；旧操作返回 `UNSUPPORTED_OPERATION`，旧树、旧专属脚本/测试已从工作树移除。
+
+本轮当前 revision 的验证：`npm run test:core` 为 908/908；按 `TZ=UTC --segments 3600 --batch-size 100` 重建 I3 非音频报告后 `npm run test:evidence` 为 229/229；完整 integration 为 48/51，剩余 3 条均为当前 Windows Electron GPU/加密环境导致的子进程边界失败，其余 Agent/SQLite 旅程通过。正式 renderer typecheck/build、`npm run package:smoke` 与 `npm run package:release` 均返回 0；packaged fresh/restart 在同一 GPU 环境提前退出，未形成可采纳证据。首个和第二个独立 Luna/max 只读复核及其修复复核作为交付门禁，未满足前状态保持「实现完成·尚未验收」。证据 JSON 只保留指标、布尔值和哈希，不写字幕正文、路径、设备、凭据或音频。
 
 ### 目标验收矩阵
 

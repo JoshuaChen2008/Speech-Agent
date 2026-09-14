@@ -221,6 +221,27 @@ function versionedSegment (row) {
 }
 
 function refinementMetadata (database, sessionId) {
+  const hasRefinementResults = hasRefinementResultsTable(database)
+  if (!hasRefinementResults) {
+    const row = database.prepare(`
+      SELECT COUNT(*) AS segment_count,
+             COALESCE(SUM(CASE WHEN EXISTS (
+               SELECT 1 FROM caption_events AS refined
+               WHERE refined.session_id = segments.session_id
+                 AND refined.source_id = segments.source_id
+                 AND refined.segment_id = segments.segment_id
+                 AND refined.kind = 'refined'
+             ) THEN 1 ELSE 0 END), 0) AS refined_segment_count
+      FROM segments WHERE session_id = ?
+    `).get(sessionId)
+    return {
+      segmentCount: Number(row.segment_count),
+      refinedSegmentCount: Number(row.refined_segment_count),
+      refinementResultStatus: 'not_recorded',
+      refinementEnabled: null,
+      refinementFaultCode: null
+    }
+  }
   const row = database.prepare(`
     SELECT rr.result_status, rr.refinement_enabled, rr.fault_code,
            COUNT(s.id) AS segment_count,
@@ -244,6 +265,12 @@ function refinementMetadata (database, sessionId) {
     refinementEnabled: row.refinement_enabled === null ? null : Boolean(row.refinement_enabled),
     refinementFaultCode: row.fault_code === null ? null : row.fault_code
   }
+}
+
+function hasRefinementResultsTable (database) {
+  return Boolean(database.prepare(
+    "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='refinement_session_results'"
+  ).get())
 }
 
 class SqliteSubtitleStore {
@@ -278,6 +305,7 @@ class SqliteSubtitleStore {
       ? false
       : refinementEnabledValue(input.refinementEnabled)
     const database = this.database
+    const hasRefinementResults = hasRefinementResultsTable(database)
     database.exec('BEGIN IMMEDIATE')
     try {
       const existing = database.prepare('SELECT * FROM sessions WHERE session_id = ?').get(sessionId)
@@ -285,13 +313,15 @@ class SqliteSubtitleStore {
         if (existing.source_id === sourceId && existing.mode === mode &&
             Number(existing.started_at) === startedAt && existing.ended_at === null &&
             existing.state === 'active') {
-          const existingResult = database.prepare(`
-            SELECT result_status, refinement_enabled
-            FROM refinement_session_results WHERE session_id = ?
-          `).get(sessionId)
-          if (!existingResult || existingResult.result_status !== 'known' ||
-              Boolean(existingResult.refinement_enabled) !== refinementEnabled) {
-            throw new StorageError('SESSION_CONFLICT')
+          if (hasRefinementResults) {
+            const existingResult = database.prepare(`
+              SELECT result_status, refinement_enabled
+              FROM refinement_session_results WHERE session_id = ?
+            `).get(sessionId)
+            if (!existingResult || existingResult.result_status !== 'known' ||
+                Boolean(existingResult.refinement_enabled) !== refinementEnabled) {
+              throw new StorageError('SESSION_CONFLICT')
+            }
           }
           database.exec('COMMIT')
           return { status: 'already_processed', sessionId, sourceId }
@@ -304,11 +334,13 @@ class SqliteSubtitleStore {
         INSERT INTO sessions(session_id, mode, source_id, started_at, ended_at, state)
         VALUES (?, ?, ?, ?, NULL, 'active')
       `).run(sessionId, mode, sourceId, startedAt)
-      database.prepare(`
-        INSERT INTO refinement_session_results(
-          session_id, result_status, refinement_enabled, fault_code, fault_stage, fault_at_ms
-        ) VALUES (?, 'known', ?, NULL, NULL, NULL)
-      `).run(sessionId, refinementEnabled ? 1 : 0)
+      if (hasRefinementResults) {
+        database.prepare(`
+          INSERT INTO refinement_session_results(
+            session_id, result_status, refinement_enabled, fault_code, fault_stage, fault_at_ms
+          ) VALUES (?, 'known', ?, NULL, NULL, NULL)
+        `).run(sessionId, refinementEnabled ? 1 : 0)
+      }
       database.exec('COMMIT')
       return { status: 'committed', sessionId, sourceId }
     } catch (error) {
@@ -346,17 +378,22 @@ class SqliteSubtitleStore {
         throw new StorageError('EVENT_IDENTITY_CONFLICT')
       }
 
-      const session = database.prepare(`
-        SELECT
-          sessions.source_id,
-          sessions.state,
-          refinement_session_results.result_status AS refinement_result_status,
-          refinement_session_results.refinement_enabled
-        FROM sessions
-        LEFT JOIN refinement_session_results
-          ON refinement_session_results.session_id = sessions.session_id
-        WHERE sessions.session_id = ?
-      `).get(event.sessionId)
+      const session = hasRefinementResultsTable(database)
+        ? database.prepare(`
+          SELECT
+            sessions.source_id,
+            sessions.state,
+            refinement_session_results.result_status AS refinement_result_status,
+            refinement_session_results.refinement_enabled
+          FROM sessions
+          LEFT JOIN refinement_session_results
+            ON refinement_session_results.session_id = sessions.session_id
+          WHERE sessions.session_id = ?
+        `).get(event.sessionId)
+        : database.prepare(`
+          SELECT source_id, state, NULL AS refinement_result_status, NULL AS refinement_enabled
+          FROM sessions WHERE session_id = ?
+        `).get(event.sessionId)
       if (!session) throw new StorageError('SESSION_NOT_FOUND')
       if (session.source_id !== event.sourceId) throw new StorageError('SESSION_CONFLICT')
       if (session.state !== 'active') throw new StorageError('SESSION_NOT_ACTIVE')
@@ -421,6 +458,13 @@ class SqliteSubtitleStore {
   recordRefinementFault (input) {
     this.assertOpen()
     const fault = refinementFault(input)
+    /* v1 databases can keep capturing and exporting subtitles after retirement
+       backup failure, but they have no refinement fact table. Treat this
+       optional metadata write as an acknowledged no-op so the Gateway FIFO
+       cannot be tripped by a refinement worker fault. */
+    if (!hasRefinementResultsTable(this.database)) {
+      return { status: 'not_recorded', sessionId: fault.sessionId, faultCode: fault.faultCode }
+    }
     const database = this.database
     database.exec('BEGIN IMMEDIATE')
     try {
@@ -590,11 +634,13 @@ class SqliteSubtitleStore {
         session.sessionId, MODE_BY_SOURCE[session.sourceId], session.sourceId,
         session.startedAt, session.endedAt, session.state
       )
-      database.prepare(`
-        INSERT INTO refinement_session_results(
-          session_id, result_status, refinement_enabled, fault_code, fault_stage, fault_at_ms
-        ) VALUES (?, 'not_recorded', NULL, NULL, NULL, NULL)
-      `).run(session.sessionId)
+      if (hasRefinementResultsTable(database)) {
+        database.prepare(`
+          INSERT INTO refinement_session_results(
+            session_id, result_status, refinement_enabled, fault_code, fault_stage, fault_at_ms
+          ) VALUES (?, 'not_recorded', NULL, NULL, NULL, NULL)
+        `).run(session.sessionId)
+      }
       this.inject('legacyAfterSession')
 
       const seenEventIds = new Set()

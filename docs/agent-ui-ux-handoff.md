@@ -52,7 +52,7 @@ Agent Bar（新 agent 窗口）
 └─ 单交互 JSON 导出
 ```
 
-`src/agent-mvp/**` 是隔离 Agent 内核开发入口，只保留 J23 的历史资格和手动启动能力。正式 UI 使用新 `agent` 窗口、新 preload、新 IPC 与新 `src/agent/**` 深模块；设计与 renderer 实现都不复用、改造或包装 `src/agent-mvp/**`。
+旧 Agent 树已按 ADR 0019 退役，只作为历史资格记录保留在版本历史中。正式 UI 使用 `agent` 窗口、正式 preload、正式 IPC 与 `src/agent/**` 深模块；设计与 renderer 实现不得复用、改造或包装旧树。
 
 旧 handoff 中以下方向已经失效：
 
@@ -114,6 +114,8 @@ fixture preview 只证明设计覆盖与渲染行为。它不证明模型、SQLi
 ## 5. 产品表面与状态要求
 
 ### 5.1 设置：个人上下文
+
+> 2026-09-13 用户体验规划：新增[我的记忆 spec](../openspec/changes/clarify-memory-and-session-summary/specs/personal-memory-overview/spec.md)与[会话总结 spec](../openspec/changes/clarify-memory-and-session-summary/specs/session-summary-experience/spec.md)。界面名称、提示、错误和无障碍标签以[设计文案映射](../openspec/changes/clarify-memory-and-session-summary/design.md)组织为“我的记忆”“记忆概览”“会话要点”“会话总结”，内部保留规范术语。SEM-F37/F38 已登记方向；具体建议待评审，没有实现证据。本增量的 minutes 信号排除和全局记忆参考政策限定后文通用描述；其它 recipe、模型设置与现有样式工作保持各自范围。
 
 必须区分两类事实：
 

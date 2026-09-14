@@ -77,7 +77,7 @@ npm start                 # 受监督启动完整应用
 ```
 
 - **开发默认按影响范围选测**，不要求每个小功能、提交或任务交接都本地执行 `npm test`。纯文档只核对术语、语义和链接；单模块运行定向测试及相关真实旅程；公共契约、共享存储、main/preload 或跨模块生命周期改动扩大到相关 lane。PR/合并与阶段联合验收由当前 revision 的完整 CI 或一次本地全量承担；没有新改动、失败或新风险，不重跑相同成功检查。详见 `docs/testing-strategy.md` §2.1。
-- `test:focus` 只接受明确的测试文件，不推导依赖。需要生产 renderer 的旅程先 `npm run verify:renderer`；涉及隔离入口再 `npm run build:agent-mvp`。报告写实际命令、结果与未验证范围，不把定向结果写成完整旅程验收。
+- `test:focus` 只接受明确的测试文件，不推导依赖。需要生产 renderer 的旅程先 `npm run verify:renderer`。报告写实际命令、结果与未验证范围，不把定向结果写成完整旅程验收。
 - **新增测试必须落在既有三个 lane 的目录内**（`test/{contracts,main,runtime,storage,ui,integration,gate-0b,gate-0c,validation}`）。其它目录由 `test-lanes-contract.test.js` 拒绝；lane 定义位于 `scripts/run-test-lanes.js`。
 - Windows 的 `tar.exe` 与 Electron 子进程在受限沙箱内可能被 `EPERM` 拒绝。**这是执行环境问题，不得计作产品断言失败或通过。**
 - 托管 CI 不证明真实声卡、物理麦克风、DWM 窗口行为、模型性能、交互安装或干净机（SEM-T03）。这些结论只能来自实机报告。

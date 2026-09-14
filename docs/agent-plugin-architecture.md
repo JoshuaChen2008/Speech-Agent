@@ -1,4 +1,6 @@
-# Agent 插件、个人记忆与 Provider 架构
+# Agent 插件、个人记忆与 Provider 架构（历史留档）
+
+> **2026-09-14 退役声明：本文只保留旧插件/隔离 Agent 设计的不可变历史记录。** 文中旧源码树、旧操作、旧表和旧插件宿主不属于当前产品链路；现行 formal Agent 以 `src/agent/**`、现行 contract 与 [ADR 0019](adr/0019-complete-legacy-agent-retirement.md) 为准。
 
 > **2026-08-29 取代声明：本文已整体失效，只作为旧 Agent 设计的历史留档。** 它的三个依据 ADR 已被取代——[ADR 0003](adr/0003-project-owned-agent-plugin-host.md) → [ADR 0013](adr/0013-agent-deep-modules-and-execution-host.md)（插件与端口机制改为两个深模块加一个执行宿主，`AgentPluginHost` 与 `MemoryReader` 取消），[ADR 0011](adr/0011-configured-agent-provider-bootstrap.md) → [ADR 0014](adr/0014-multi-profile-model-access-layer.md)（单一 DeepSeek 配置表与环境凭据改为多档案加按档案 `safeStorage`），[ADR 0007](adr/0007-isolated-agent-core-mvp.md) → [ADR 0015](adr/0015-retire-old-agent-implementation.md)（隔离入口从门禁降级为历史证据）。下文关于插件清单、八端口、三项自动任务与单一 provider 的内容**不得**再作为现行设计引用。现行口径见 `docs/semantic-contract.md` 的 SEM-F30/F33、上述三份新 ADR 与 [`agent-redesign-execution-plan.md`](agent-redesign-execution-plan.md)。
 

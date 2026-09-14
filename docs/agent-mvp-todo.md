@@ -1,4 +1,6 @@
-# 正式 Agent 首版 TODO 与组合验收矩阵
+# 正式 Agent 首版 TODO 与组合验收矩阵（历史留档）
+
+> **2026-09-14 退役声明：本文的任务矩阵属于旧 Agent 设计的不可变历史记录。** 旧源码树、旧操作和旧表已经按 [ADR 0019](adr/0019-complete-legacy-agent-retirement.md) 退役；当前任务不应从本文恢复任何实现入口或数据库写入。
 
 > **2026-08-29 取代声明：本文的 D 序列排期已整体失效，只作为旧 Agent 实现进度的历史留档。** 其权威依据 ADR 0003 / 0007 / 0011 已分别被 [ADR 0013](adr/0013-agent-deep-modules-and-execution-host.md) / [ADR 0015](adr/0015-retire-old-agent-implementation.md) / [ADR 0014](adr/0014-multi-profile-model-access-layer.md) 取代。已记录为完成的 D 项证据仍然真实，但不再计入新实现的验收——按 ADR 0015 第 7 项，旧门禁通过状态不得作为新能力的验收替代。新的切片顺序、旅程编号与证据要求见 [`agent-redesign-execution-plan.md`](agent-redesign-execution-plan.md)。
 

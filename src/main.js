@@ -1201,7 +1201,10 @@ async function bootstrapApplication () {
   const started = await applicationRuntime.start()
   if (quitRequested) return false
   coordinator = started.coordinator
+  const retirementFailure = applicationRuntime.gateway.getRetirementFailure?.() || null
+  if (retirementFailure) console.error(`[agent.retirement] ${retirementFailure}`)
   try {
+    if (retirementFailure) throw new Error('AGENT_RETIREMENT_PENDING')
     const { CredentialVault } = require('./agent/model-access/credential-vault')
     const { createModelAccess } = require('./agent/model-access')
     const { OpenAiCompatibleAdapter } = require('./agent/model-access/openai-compatible-adapter')
@@ -1229,6 +1232,7 @@ async function bootstrapApplication () {
     console.error('[agent.model-access] MODEL_ACCESS_UNAVAILABLE')
   }
   try {
+    if (retirementFailure) throw new Error('AGENT_RETIREMENT_PENDING')
     const { PersonalContextRuntime } = require('./agent/personal-context/runtime')
     const { evaluateAutomaticEligibility } = require('./agent/personal-context/automatic-eligibility')
     const { AgentLoopExecutor } = require('./agent/execution-host')
@@ -1265,6 +1269,7 @@ async function bootstrapApplication () {
     console.error('[agent.runtime] AGENT_CONTEXT_UNAVAILABLE')
   }
   try {
+    if (retirementFailure) throw new Error('AGENT_RETIREMENT_PENDING')
     const { AgentLoopExecutor, IntentRouteOrchestrator } = require('./agent/execution-host')
     if (!modelAccessRuntime || typeof modelAccessRuntime.createLoopAdapter !== 'function') {
       throw new Error('intent route model access is unavailable')
@@ -1295,6 +1300,7 @@ async function bootstrapApplication () {
     console.error(`[agent.route] ${error instanceof Error ? error.message : 'AGENT_ROUTE_UNAVAILABLE'}`)
   }
   try {
+    if (retirementFailure) throw new Error('AGENT_RETIREMENT_PENDING')
     formalAgentSignalService = new AgentInteractionSignalService({
       storage: applicationRuntime.gateway,
       personalContext: personalContextRuntime,
@@ -1305,6 +1311,7 @@ async function bootstrapApplication () {
     console.error(`[agent.signal] ${error instanceof Error ? error.message : 'AGENT_SIGNAL_UNAVAILABLE'}`)
   }
   try {
+    if (retirementFailure) throw new Error('AGENT_RETIREMENT_PENDING')
     const { FormalAgentRunRunner, FormalAgentJobScheduler } = require('./agent/execution-host')
     const executionAdapter = personalContextRuntime?.executionAdapter
     if (!executionAdapter || !modelAccessRuntime) throw new Error('formal Agent execution dependencies are unavailable')

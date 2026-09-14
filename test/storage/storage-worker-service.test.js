@@ -83,8 +83,8 @@ function legacyImport (overrides = {}) {
   }
 }
 
-function traceFormalAgentStoreLoads (operation) {
-  const target = require.resolve('../../src/runtime/storage-worker/formal-agent-store')
+function traceSessionDeletionStoreLoads (operation) {
+  const target = require.resolve('../../src/runtime/storage-worker/session-deletion-store')
   const originalLoad = Module._load
   const loads = []
   Module._load = function tracedLoad (request, parent, isMain) {
@@ -196,7 +196,7 @@ test('SEM-F00/J27: subtitle storage uses formal migrations without loading the h
     sessionId: opened.sessionId, sourceId: opened.sourceId, endedAt: 2000, state: 'closed'
   }
 
-  const historicalStoreLoads = traceFormalAgentStoreLoads(() => {
+  const historicalStoreLoads = traceSessionDeletionStoreLoads(() => {
     assert.equal(service.handle(request(OPERATIONS.INITIALIZE, { databasePath })).ok, true)
     assert.equal(service.handle(request(OPERATIONS.OPEN_SESSION, opened, {
       idempotencyKey: makeOpenSessionKey(opened.sessionId)
@@ -220,7 +220,7 @@ test('SEM-F00/J27: subtitle storage uses formal migrations without loading the h
   ).all().map(({ version, checksum }) => ({ version, checksum }))
   assert.deepEqual(migrationRows, FORMAL_AGENT_MIGRATIONS.map(({ version, checksum }) => ({ version, checksum })))
   assert.deepEqual(historicalStoreLoads, [])
-  assert.equal(service.agentStore, null)
+  assert.equal(Object.hasOwn(service, 'agentStore'), false)
   assert.equal(service.handle(request(OPERATIONS.SHUTDOWN)).ok, true)
 })
 

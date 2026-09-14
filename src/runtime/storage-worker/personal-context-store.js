@@ -1943,14 +1943,32 @@ class PersonalContextStore {
       FROM personal_context_items AS item
       JOIN personal_context_scopes AS scope ON scope.scope_id = item.scope_id
       LEFT JOIN personal_context_evidence AS own
-        ON own.memory_id = item.memory_id AND own.session_id = ?
+        ON own.memory_id = item.memory_id AND (
+          own.session_id = ? OR (own.source_kind = 'interaction' AND EXISTS (
+            SELECT 1
+            FROM personal_context_episodes AS own_episode
+            JOIN personal_context_scopes AS own_scope ON own_scope.scope_id = own_episode.scope_id
+            WHERE own_episode.source_kind = 'interaction'
+              AND own_episode.interaction_id = own.interaction_id
+              AND own_scope.session_id = ?
+          ))
+        )
       WHERE (scope.session_id = ? OR own.evidence_id IS NOT NULL) AND NOT EXISTS (
           SELECT 1 FROM personal_context_evidence AS other
           WHERE other.memory_id = item.memory_id
-            AND (other.session_id IS NULL OR other.session_id <> ?)
-      )
+            AND NOT (
+              other.session_id = ? OR (other.source_kind = 'interaction' AND EXISTS (
+                SELECT 1
+                FROM personal_context_episodes AS other_episode
+                JOIN personal_context_scopes AS other_scope ON other_scope.scope_id = other_episode.scope_id
+                WHERE other_episode.source_kind = 'interaction'
+                  AND other_episode.interaction_id = other.interaction_id
+                  AND other_scope.session_id = ?
+              ))
+            )
+       )
       ORDER BY item.memory_id
-    `).all(sessionId, sessionId, sessionId).map((row) => row.memory_id)
+    `).all(sessionId, sessionId, sessionId, sessionId, sessionId).map((row) => row.memory_id)
     return { episodeCount, evidenceCount, orphanItemIds }
   }
 
@@ -1988,10 +2006,6 @@ class PersonalContextStore {
     }
   }
 
-  deleteSessionData (input, legacyStore) {
-    if (!legacyStore || typeof legacyStore.deleteSessionData !== 'function') fail('STORAGE_COMMAND_FAILED')
-    return legacyStore.deleteSessionData(input, this)
-  }
 
   claimNextFormalRun (request) {
     if (!isPlainObject(request)) fail('AGENT_REQUEST_INVALID')

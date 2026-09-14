@@ -56,7 +56,7 @@
     "virtualDurationMs": 7200000
   },
   "gateStatus": "partial",
-  "generatedAt": "2026-09-12T11:09:30.792Z",
+  "generatedAt": "2026-09-14T15:54:44.621Z",
   "kind": "i3-nonaudio-soak",
   "limits": {
     "maxCpuPercent": 800,
@@ -70,24 +70,24 @@
   "metrics": {
     "captionEventCount": 4000,
     "checkpointedWalFrames": 0,
-    "cpuPercent": 8.814,
-    "cpuSystemMs": 313,
-    "cpuUserMs": 625,
+    "cpuPercent": 8.587,
+    "cpuSystemMs": 125,
+    "cpuUserMs": 656,
     "exportCount": 3,
     "historyDomMaxNodes": 50,
     "historyPageCount": 72,
-    "maxHeapUsedBytes": 91199808,
+    "maxHeapUsedBytes": 91261520,
     "maxQueueDepth": 112,
-    "maxRssBytes": 296603648,
+    "maxRssBytes": 325373952,
     "pageCount": 668,
     "pageQueryCount": 72,
-    "pageQueryP95Ms": 15.517,
+    "pageQueryP95Ms": 8.688,
     "recoveredRefinedSegmentCount": 400,
     "segmentCount": 3600,
     "walBytes": 4173592,
     "walFrames": 879,
     "journalMode": "wal",
-    "wallDurationMs": 10642.644
+    "wallDurationMs": 9094.98
   },
   "privacy": {
     "persistedAudio": false,
@@ -101,12 +101,12 @@
     "runnerSha256": "29be92da468463002dde768f201f24243b1621a0596c28ebdd582de530feb0e0",
     "sessionCoordinatorSha256": "85cd1190f2012e87d961d5af0f6ecbca74e93328ad0e472c6d13b275b6649189",
     "sqliteSessionRecorderSha256": "d9e467076b3893e88a18d99b100d5f550e4541947b6fd36195f3f130382484d2",
-    "sqliteSubtitleStoreSha256": "f7baad9291001b628787a06666375cc26497b125c41bb9ba54515d65c48ffee6",
+    "sqliteSubtitleStoreSha256": "61e63a53ac1e53d562d745417d17e54ae78724f13555f6b762cd544a0ede2f16",
     "strictEvidenceParserSha256": "5155fc8df5449133a8d9710a581fbd03bedfb44729da3c5d910a81df74b5e63e",
-    "storageGatewaySha256": "43f8b0e346b4e8e524b4c78d0091f70c5911de08b183ff005fd88631fd50fa7f",
-    "storageWorkerServiceSha256": "39b9542a9eb5c248357d64bbfd7b38fa1a7a46160661e836bef5f472223319a3",
+    "storageGatewaySha256": "e7c9ef8a279bbbe266384ec596d39a9652a71dfc98d07d3d57093353357aebdc",
+    "storageWorkerServiceSha256": "f443df4648fe6f23d60bcc2fe629c08236e758905a354e4cfa1bd190ec503518",
     "verifierSha256": "8014be2efdbd0d63a99a4de1a9f24ccb70eddcb158cc89b46d2d7bb731ed6ff1",
-    "productPayloadSha256": "c1177f8bb81d88305a59fe5d63a4bba06ce07a9fb4845a60b1177ae101cb81a3"
+    "productPayloadSha256": "2a9e8d68fce332627d2838756aaf9f4b1174c8b231d22d9ae74cb8487c50f1c8"
   },
   "result": "pass",
   "schemaVersion": 1

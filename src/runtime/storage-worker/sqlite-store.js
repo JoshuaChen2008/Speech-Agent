@@ -10,6 +10,8 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { DatabaseSync } = require('node:sqlite')
 const { MIGRATIONS, checksum } = require('./schema')
+const { StorageError } = require('./protocol')
+const { inspectVersion, createVerifiedBackup } = require('./migration-backup')
 
 const DEFAULT_BUSY_TIMEOUT_MS = 5000
 
@@ -34,7 +36,7 @@ function migrationCatalog (value) {
   return catalog
 }
 
-function applyMigrations (database, now = () => Date.now(), migrations = MIGRATIONS) {
+function applyMigrations (database, now = () => Date.now(), migrations = MIGRATIONS, hooks = {}) {
   const catalog = migrationCatalog(migrations)
   database.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -60,6 +62,8 @@ function applyMigrations (database, now = () => Date.now(), migrations = MIGRATI
     database.exec('BEGIN IMMEDIATE')
     try {
       database.exec(migration.sql)
+      if (migration.version === 10) hooks.migrate?.()
+      if (database.prepare('PRAGMA foreign_key_check').all().length !== 0) throw new Error('migration foreign key check failed')
       database.prepare(
         'INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (?, ?, ?)'
       ).run(migration.version, migration.checksum, now())
@@ -98,7 +102,20 @@ function openSubtitleDatabase (databasePath, options = {}) {
     database.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`)
     const journalMode = String(scalar(database, 'PRAGMA journal_mode = WAL')).toLowerCase()
     if (journalMode !== 'wal') throw new Error(`WAL unavailable (journal_mode=${journalMode})`)
-    applyMigrations(database, options.now, options.migrations)
+    const catalog = migrationCatalog(options.migrations)
+    const version = inspectVersion(database, catalog)
+    const retiring = catalog.some(m => m.version === 10) && version < 10
+    try {
+      if (retiring && version > 0) createVerifiedBackup(database, databasePath, catalog, options.retirementHooks)
+      applyMigrations(database, options.now, catalog, options.retirementHooks)
+    } catch (error) {
+      if (!retiring) throw error
+      const committedVersion = inspectVersion(database, catalog)
+      // A failed new database has no usable subtitle schema. Existing valid stores
+      // remain at their actual committed version, with no second migration attempt.
+      if (committedVersion < 1) throw error
+      database.retirementFailure = error instanceof StorageError ? error.code : 'RETIREMENT_MIGRATION_FAILED'
+    }
     if (Number(scalar(database, 'PRAGMA foreign_keys')) !== 1) {
       throw new Error('foreign_keys pragma is not enabled')
     }

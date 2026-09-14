@@ -242,6 +242,8 @@ class AgentRunService {
   async getScopes (request) {
     try {
       c.assertGetScopesRequest(request)
+      const retirement = this.storage.getRetirementFailure?.()
+      if (retirement) return c.assertGetScopesResponse({ ...header(), ok: false, error: { category: retirement, code: c.ERROR_CODES.unavailable, next_action: 'restart_application' }, scopes: [], next_cursor: null, default_scope: null, revision: this.revision })
       let cursor = decodeCursor(request.cursor)
       const items = []
       let nextCursor = null
@@ -293,6 +295,7 @@ class AgentRunService {
   async getEligibility (request) {
     try {
       c.assertGetEligibilityRequest(request)
+      if (this.storage.getRetirementFailure?.()) return publicEligibilityFailure('restart_application')
       if (!isSupportedExecutionScope(request.scope)) return publicEligibilityFailure('choose_supported_scope')
       const transcript = await this.storage.getSessionTranscript(request.scope.reference)
       const session = transcript?.session
@@ -318,7 +321,7 @@ class AgentRunService {
       if (!isSupportedExecutionScope(request.scope)) return publicFailure(c.ERROR_CODES.unavailable, 'choose_supported_scope')
       const eligibility = await this.getEligibility({ ...header(), scope: request.scope })
       if (!eligibility.ok || eligibility.snapshot?.eligibility !== 'ready') {
-        return publicFailure(c.ERROR_CODES.unavailable, 'retry')
+        return publicFailure(c.ERROR_CODES.unavailable, eligibility.error?.next_action || 'retry')
       }
       const route = deterministicRoute({ scope: request.scope, prompt: request.prompt })
       if (!['summary.minutes', 'qa.answer'].includes(route.recipeId)) {

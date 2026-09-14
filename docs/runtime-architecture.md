@@ -336,7 +336,9 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 - 已经持久化的云端首次稳定转写不可重开或替换；当前尚未产生首次 `final` 的段可以由本地链路重新形成唯一 `final`。降级后同一会话不自动切回云端。
 - 普通响应变慢、瞬时抖动或单次心跳延后只能形成指标，不能触发降级。连接存活阈值必须宽松、可测试，并与冻结字幕可见延迟指标分开。
 
-### 11.2 Agent 模型 provider、处理资格与资源仲裁
+### 11.2 Agent 模型 provider、处理资格与资源仲裁（历史设计留档）
+
+> **2026-09-14 退役说明：** 本节及其后续旧 Agent 运行时段落保留为不可变设计历史。文中旧 provider、旧任务、旧隔离入口和旧表名不再是当前实现入口；当前 Agent 主链路以 `src/agent/**`、现行 IPC/StorageGateway 和 formal SQLite v10 为准。旧对象的删除与失败降级以 [ADR 0019](adr/0019-complete-legacy-agent-retirement.md) 为准。
 
 > **2026-08-29 部分取代声明。** 本小节中与旧 provider 形状绑定的要点已由 [ADR 0014](adr/0014-multi-profile-model-access-layer.md) 取代：`AgentModelProviderRegistry` 的单一配置解析、写死 exact origin `https://api.deepseek.com`、启动期 `DEEPSEEK_API_KEY` 读取与「要求以新的启动环境重启应用」的恢复方式、以及 D9 的 `65536/16384/60000ms` 保守预算，全部替换为——多档案 OpenAI-compatible 接入层、按档案 exact HTTPS origin 加独立 `base_path`、按档案主进程 `safeStorage` 槽（凭据失效范围收窄为单个档案，恢复方式为用户重新输入）、以及由六字段能力推导的十轴运行预算。环境净化规则作为纯加固不变量保留，但不再有任何代码把环境读成凭据来源。`ModelGateway` 的运行冻结职责由模型运行绑定承担，见 [`data-architecture.md`](data-architecture.md)。
 >

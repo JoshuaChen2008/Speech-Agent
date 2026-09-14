@@ -46,7 +46,7 @@ test('CI full regression delegates to the complete test command without replayin
   const regression = workflow.indexOf('run: npm run test:ci')
 
   assert.equal(scripts['test:ci'], scripts.test)
-  assert.equal(scripts.pretest, 'npm run verify:renderer && npm run build:agent-mvp')
+  assert.equal(scripts.pretest, 'npm run verify:renderer')
   assert.equal(scripts['pretest:ci'], undefined)
   assert.equal(scripts['pretest:focus'], undefined)
   assert.equal(workflow.match(/run: npm run pretest\s/g)?.length, 1)

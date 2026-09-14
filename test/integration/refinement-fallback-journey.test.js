@@ -35,6 +35,8 @@ const {
 } = require('../../src/runtime/storage-worker/protocol')
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
+const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
+const { openSubtitleDatabase } = require('../../src/runtime/storage-worker/sqlite-store')
 
 function serviceBackedHost (service, databasePath) {
   let sequence = 0
@@ -68,9 +70,13 @@ function serviceBackedHost (service, databasePath) {
   }
 }
 
-function createGateway (databasePath) {
+function createGateway (databasePath, storeOptions = {}) {
   const service = new StorageWorkerService({
-    storeFactory: (options) => new SqliteSubtitleStore(options)
+    storeFactory: (options) => new SqliteSubtitleStore({
+      migrations: FORMAL_AGENT_MIGRATIONS,
+      ...options,
+      ...storeOptions
+    })
   })
   return new StorageGateway({
     databasePath,
@@ -78,6 +84,64 @@ function createGateway (databasePath) {
     hostFactory: () => serviceBackedHost(service, databasePath)
   })
 }
+
+test('J27 v1 retirement failure keeps Gateway and Coordinator writable after a refinement fault', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'speech-agent-j27-v1-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const databasePath = path.join(root, 'data', 'speech-agent.sqlite3')
+  const legacy = openSubtitleDatabase(databasePath, {
+    migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 1)
+  })
+  legacy.close()
+
+  const gateway = createGateway(databasePath, {
+    retirementHooks: { create () { throw new Error('backup unavailable') } }
+  })
+  const sessionId = 'j27-v1-coordinator'
+  const recorder = new SqliteSessionRecorder({ gateway, now: () => 100 })
+  const adapter = new FakeRuntimeAdapter({ autoEmit: false })
+  const runtime = resolveRuntimeOptions({ LIVE_SUBTITLE_DEV_MODEL: DEV_MODEL_VALUE })
+  const coordinator = new SessionCoordinator({
+    adapter,
+    persistenceSink: recorder,
+    runtimeOptions: { ...runtime, refinementAvailable: true },
+    configuration: {
+      onboardingCompleted: true,
+      onboardingPreset: 'dictation',
+      mic: true,
+      loopback: false,
+      refinementEnabled: true
+    },
+    idFactory: () => sessionId
+  })
+
+  assert.equal((await coordinator.command('start')).ok, true)
+  assert.equal(adapter.emitRefinementFault({
+    code: 'REFINE_WORKER_EXITED', stage: 'worker', faultAtMs: 10
+  }), true)
+  adapter.emitCaption(event(sessionId, 1, 1, 'final', '保留字幕'))
+  assert.equal((await coordinator.command('stop')).ok, true)
+  await coordinator.dispose()
+  await gateway.flush()
+
+  const page = await new HistoryService({
+    gateway,
+    showSaveDialog: async () => ({ canceled: true })
+  }).getSessionPage({
+    sessionId, limit: 50, cursor: null
+  })
+  assert.equal(page.items.length, 1)
+  assert.equal(page.items[0].text, '保留字幕')
+  assert.deepEqual(page.refinement, {
+    segmentCount: 1,
+    refinedSegmentCount: 0,
+    refinementResultStatus: 'not_recorded',
+    refinementEnabled: null,
+    refinementFaultCode: null
+  })
+  assert.equal(gateway.faulted, false)
+  await gateway.shutdown()
+})
 
 function event (sessionId, sequence, index, kind, text, revision = 1) {
   return {

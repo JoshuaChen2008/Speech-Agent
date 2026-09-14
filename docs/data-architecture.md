@@ -1,5 +1,7 @@
 # 字幕系统持久化与 Agent 派生数据架构
 
+> **2026-09-14 当前状态：** formal SQLite catalog 已追加 v10 退役迁移。v1–v9 SQL/checksum 作为历史兼容输入保留；v10 删除旧 Agent 与确认关键词的 15 个对象，当前写入只允许 formal Agent、model-access、personal-context 与字幕表。本文中标注“旧实现留存/目标”的旧表定义和候选 catalog 仅用于迁移审计，不是当前写入接口；备份、恢复、失败降级和精确退役清单以 [ADR 0019](adr/0019-complete-legacy-agent-retirement.md) 为准。
+
 > 状态：SQLite 字幕存储与 Agent 插件宿主语义已决定；DB0/DB1、Gateway 恢复、SQLite-only 生命周期、历史/导出、DB2/J10 与 J15b/J15c 文本版本结果已达到确定性联合验收完成（2026-08-02）。packaged Electron 已有旧 JSONL 首启迁移、同 `userData` 二次启动幂等、跨会话版本重置以及精修故障/覆盖复读证据；I3 非音频 3,600 段资源预资格为 `pass/partial`。真实两小时音频与干净机 I4 尚未达到实机验收完成；向量检索 Deferred
 >
 > 决策依据：[ADR 0001](adr/0001-sqlite-authoritative-event-store.md) / [ADR 0002](adr/0002-separate-subtitle-and-agent-systems.md) / [ADR 0003](adr/0003-project-owned-agent-plugin-host.md) / [ADR 0004](adr/0004-immutable-first-pass-and-optional-refinement.md) / [ADR 0008](adr/0008-terminal-session-agent-job-reconciliation.md)

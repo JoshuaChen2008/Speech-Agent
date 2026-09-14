@@ -14,7 +14,7 @@ const {
   normalizeSemanticKey
 } = require('../../src/runtime/storage-worker/personal-context-store')
 const { AgentExecutionStore } = require('../../src/runtime/storage-worker/agent-execution-store')
-const { FormalAgentStore } = require('../../src/runtime/storage-worker/formal-agent-store')
+const { SessionDeletionStore } = require('../../src/runtime/storage-worker/session-deletion-store')
 const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
 
@@ -516,10 +516,15 @@ test('SEM-F26/SEM-F30/J21: session deletion removes episodes and evidence while 
       source.inputWatermark, source.inputWatermark - 1, source.inputWatermark, source.inputDigest
     )
   }
-  const oldAgentStore = new FormalAgentStore({ subtitleStore, now: () => 2000 })
+  const deletionStore = new SessionDeletionStore({ subtitleStore, personalContextStore: store, now: () => 2000 })
   const input = { sessionId: 'session-delete-context', deletionIdempotencyKey: 'delete.session.context.1' }
-  const deleted = store.deleteSessionData(input, oldAgentStore)
-  const replay = store.deleteSessionData(input, oldAgentStore)
+  const deleted = deletionStore.deleteSessionData(input)
+  const replay = deletionStore.deleteSessionData(input)
+  assert.equal(deleted.deletedJobCount, 0)
+  assert.equal(deleted.deletedArtifactCount, 0)
+  assert.equal(deleted.deletedDebugThreadCount, 0)
+  assert.equal(deleted.deletedMemoryEvidenceCount, 0)
+  assert.equal(deleted.deletedOrphanMemoryCount, 0)
   assert.equal(deleted.deletedEpisodeCount, 1)
   assert.equal(deleted.deletedContextEvidenceCount, 1)
   assert.equal(deleted.deletedOrphanContextItemCount, 1)

@@ -4,7 +4,7 @@
 >
 > 本文只负责把正式 MVP 拆成可执行任务。语义权威仍是 `CONTEXT.md`、
 > `docs/semantic-contract.md`、`docs/testing-strategy.md` 与现有 ADR。
-> `src/agent-mvp` 是隔离开发入口，不计入正式 MVP 证据。
+> 旧隔离 Agent 树已按 [ADR 0019](adr/0019-complete-legacy-agent-retirement.md) 退役；本文只追踪现行 `src/agent/**` 正式链路，不把历史树计入证据。
 
 > 2026-09-12 核对（当前 revision `3b83e35`）：该 revision 已包含正式 Agent Bar renderer、工具条入口、Agent run contract/controller、preload、main-owned service、model-first route、user target scheduler、交互历史与 canonical JSON 导出；真实 Electron renderer → preload → main/Agent Loop → storage worker/SQLite → 字幕系统的 S5 子边界旅程、正式 settings → Agent Bar → history 旅程、终态会话自动摄取旅程和 packaged smoke/release layout 证据已经纳入。正式设置旅程又补齐个人记忆自动处理的休眠/重新开启与旧 revision 冲突断言；完整 J21/J25/J27 与正式 MVP 总门槛仍待后续收束。以下复选框跟踪产品闭环，不表示对应目录完全没有代码。开发选测与阶段门禁统一见 `testing-strategy.md` §2.1，不要求每个小任务重复三条 lane。
 

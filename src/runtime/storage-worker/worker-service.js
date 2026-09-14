@@ -24,50 +24,11 @@ const {
 class StorageWorkerService {
   constructor (options = {}) {
     this.storeFactory = options.storeFactory || ((storeOptions) => {
-      try {
-        return new SqliteSubtitleStore({ ...storeOptions, migrations: FORMAL_AGENT_MIGRATIONS })
-      } catch (agentExecutionMigrationError) {
-        /* v8/v9 are optional formal-Agent boundaries. Keep a valid v8
-           database usable for subtitles and mark model access unavailable
-           when the strategy metadata migration fails; if that cannot open,
-           fall back to v7 and then the byte-stable v1-v5 catalog. Earlier
-           checksum failures remain fatal. */
-        try {
-          const fallbackV8 = new SqliteSubtitleStore({
-            ...storeOptions,
-            migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 8)
-          })
-          fallbackV8.modelAccessUnavailable = true
-          return fallbackV8
-        } catch (modelAccessMigrationError) {
-          try {
-            const fallbackV7 = new SqliteSubtitleStore({
-              ...storeOptions,
-              migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 7)
-            })
-            fallbackV7.agentExecutionUnavailable = true
-            return fallbackV7
-          } catch (formalMigrationError) {
-            const fallbackV5 = new SqliteSubtitleStore({
-              ...storeOptions,
-              migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 5)
-            })
-            fallbackV5.modelAccessUnavailable = true
-            fallbackV5.agentExecutionUnavailable = true
-            return fallbackV5
-          }
-        }
-      }
+      return new SqliteSubtitleStore({ ...storeOptions, migrations: FORMAL_AGENT_MIGRATIONS })
     })
     this.agentExecutionStoreFactory = options.agentExecutionStoreFactory || ((subtitleStore) => {
       const { AgentExecutionStore } = require('./agent-execution-store')
       return new AgentExecutionStore({ subtitleStore })
-    })
-    this.agentStoreFactory = options.agentStoreFactory || ((subtitleStore) => {
-      /* 保持字幕系统对 Agent 运行时代码的物理惰性：只有正式 Agent 操作到达时
-         才加载生命周期实现；字幕 open/append/close/history 不依赖该模块。 */
-      const { FormalAgentStore } = require('./formal-agent-store')
-      return new FormalAgentStore({ subtitleStore })
     })
     this.personalContextStoreFactory = options.personalContextStoreFactory || ((subtitleStore) => {
       const { PersonalContextStore } = require('./personal-context-store')
@@ -78,7 +39,6 @@ class StorageWorkerService {
       return new ModelAccessStore({ subtitleStore })
     })
     this.store = null
-    this.agentStore = null
     this.agentExecutionStore = null
     this.personalContextStore = null
     this.modelAccessStore = null
@@ -90,19 +50,27 @@ class StorageWorkerService {
     return this.store
   }
 
-  requireAgentStore () {
+  requireDeletionStore () {
     const store = this.requireStore()
-    if (!this.agentStore) this.agentStore = this.agentStoreFactory(store)
-    return this.agentStore
+    this.assertAgentAvailable()
+    const { SessionDeletionStore } = require('./session-deletion-store')
+    return new SessionDeletionStore({ subtitleStore: store, personalContextStore: this.requirePersonalContextStore() })
+  }
+
+  assertAgentAvailable () {
+    const code = this.requireStore().database?.retirementFailure
+    if (code) throw new StorageError(code)
   }
 
   requirePersonalContextStore () {
+    this.assertAgentAvailable()
     const store = this.requireStore()
     if (!this.personalContextStore) this.personalContextStore = this.personalContextStoreFactory(store)
     return this.personalContextStore
   }
 
   requireAgentExecutionStore () {
+    this.assertAgentAvailable()
     const store = this.requireStore()
     if (store.agentExecutionUnavailable === true) throw new StorageError('AGENT_EXECUTION_UNAVAILABLE')
     if (!this.agentExecutionStore) this.agentExecutionStore = this.agentExecutionStoreFactory(store)
@@ -110,6 +78,7 @@ class StorageWorkerService {
   }
 
   requireModelAccessStore () {
+    this.assertAgentAvailable()
     const store = this.requireStore()
     if (store.modelAccessUnavailable === true) throw new StorageError('MODEL_ACCESS_UNAVAILABLE')
     if (!this.modelAccessStore) this.modelAccessStore = this.modelAccessStoreFactory(store)
@@ -128,7 +97,7 @@ class StorageWorkerService {
       assertExactKeys(payload, ['databasePath'])
       if (this.store) throw new StorageError('ALREADY_INITIALIZED')
       this.store = this.storeFactory({ databasePath: payload.databasePath })
-      return { initialized: true }
+      return { initialized: true, ...(this.store.database?.retirementFailure ? { retirementFailure: this.store.database.retirementFailure } : {}) }
     }
     if (operation === OPERATIONS.OPEN_SESSION) {
       assertExactKeys(payload, ['sessionId', 'sourceId', 'startedAt', 'refinementEnabled'])
@@ -175,74 +144,6 @@ class StorageWorkerService {
       assertExactKeys(payload, [])
       return this.requireStore().getStats()
     }
-    if (operation === OPERATIONS.AGENT_EVALUATE_ELIGIBILITY) {
-      assertExactKeys(payload, ['sessionId', 'requestedBy', 'eligibilityContext'])
-      return this.requireAgentStore().evaluateEligibility(payload)
-    }
-    if (operation === OPERATIONS.AGENT_RECONCILE_TERMINAL_SESSION) {
-      assertExactKeys(payload, ['sessionId', 'requestedBy', 'eligibilityContext'])
-      return this.requireAgentStore().reconcileTerminalSession(payload)
-    }
-    if (operation === OPERATIONS.AGENT_READ_INPUT_SNAPSHOT) {
-      assertExactKeys(payload, ['inputRef'])
-      return this.requireAgentStore().readInputSnapshot(payload)
-    }
-    if (operation === OPERATIONS.AGENT_REQUEST_JOB) {
-      assertExactKeys(payload, ['inputRef', 'taskKind', 'clientIdempotencyKey', 'requestDigest', 'eligibilityContext'])
-      return this.requireAgentStore().requestJob(payload)
-    }
-    if (operation === OPERATIONS.AGENT_CLAIM_NEXT_JOB) {
-      assertExactKeys(payload, ['claimIdempotencyKey', 'owner', 'leaseMs', 'localWorkAllowed', 'availableTaskKinds'])
-      return this.requireAgentStore().claimNextJob(payload)
-    }
-    if (operation === OPERATIONS.AGENT_RENEW_JOB_LEASE) {
-      assertExactKeys(payload, ['runId', 'lease', 'newExpiresAt'])
-      return this.requireAgentStore().renewJobLease(payload)
-    }
-    if (operation === OPERATIONS.AGENT_MARK_JOB_RETRY) {
-      assertExactKeys(payload, ['runId', 'lease', 'errorCode', 'nextAttemptAt'])
-      return this.requireAgentStore().markJobRetry(payload)
-    }
-    if (operation === OPERATIONS.AGENT_MARK_JOB_FAILED) {
-      assertExactKeys(payload, ['runId', 'lease', 'errorCode'])
-      return this.requireAgentStore().markJobFailed(payload)
-    }
-    if (operation === OPERATIONS.AGENT_REQUEST_CANCEL) {
-      assertExactKeys(payload, ['runId'])
-      return this.requireAgentStore().requestCancel(payload)
-    }
-    if (operation === OPERATIONS.AGENT_MARK_JOB_CANCELLED) {
-      assertExactKeys(payload, ['runId', 'lease'])
-      return this.requireAgentStore().markJobCancelled(payload)
-    }
-    if (operation === OPERATIONS.AGENT_COMMIT_ARTIFACT) {
-      assertExactKeys(payload, ['runId', 'lease', 'artifact'])
-      return this.requireAgentStore().commitArtifact(payload)
-    }
-    if (operation === OPERATIONS.AGENT_COMMIT_MEMORY_CANDIDATES) {
-      assertExactKeys(payload, ['runId', 'lease', 'candidates'])
-      return this.requireAgentStore().commitMemoryCandidates(payload)
-    }
-    if (operation === OPERATIONS.AGENT_READ_MEMORY_CONTEXT) {
-      assertExactKeys(payload, ['scopeRefs', 'kinds', 'semanticKeys', 'maxItems', 'maxSerializedBytes'])
-      return this.requireAgentStore().readMemoryContext(payload)
-    }
-    if (operation === OPERATIONS.AGENT_DELETE_MEMORY_ITEM) {
-      assertExactKeys(payload, ['memoryId', 'deletionIdempotencyKey'])
-      return this.requireAgentStore().deleteMemoryItem(payload)
-    }
-    if (operation === OPERATIONS.AGENT_APPLY_TASK_POLICY) {
-      assertExactKeys(payload, ['eligibilityContext'])
-      return this.requireAgentStore().applyTaskPolicy(payload)
-    }
-    if (operation === OPERATIONS.AGENT_GET_SESSION_DETAIL) {
-      assertExactKeys(payload, ['sessionId', 'eligibilityContext'])
-      return this.requireAgentStore().getSessionDetail(payload)
-    }
-    if (operation === OPERATIONS.AGENT_DELETE_SESSION_DATA) {
-      assertExactKeys(payload, ['sessionId', 'deletionIdempotencyKey'])
-      return this.requireAgentStore().deleteSessionData(payload)
-    }
     if (operation === OPERATIONS.PERSONAL_CONTEXT_INGEST) {
       assertExactKeys(payload, ['source'])
       return this.requirePersonalContextStore().ingest(payload.source)
@@ -257,7 +158,7 @@ class StorageWorkerService {
     }
     if (operation === OPERATIONS.PERSONAL_CONTEXT_DELETE_SESSION_DATA) {
       assertExactKeys(payload, ['sessionId', 'deletionIdempotencyKey'])
-      return this.requirePersonalContextStore().deleteSessionData(payload, this.requireAgentStore())
+      return this.requireDeletionStore().deleteSessionData(payload)
     }
     if (operation === OPERATIONS.PERSONAL_CONTEXT_PREPARE_SESSION_INGEST) {
       assertExactKeys(payload, ['request'])
@@ -380,7 +281,6 @@ class StorageWorkerService {
         this.store.close()
         this.store = null
       }
-      this.agentStore = null
       this.agentExecutionStore = null
       this.personalContextStore = null
       this.modelAccessStore = null

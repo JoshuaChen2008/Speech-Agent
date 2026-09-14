@@ -38,22 +38,6 @@ const READ_ONLY_OPERATIONS = new Set([
    只拒绝该请求，绝不能熔断字幕事实 FIFO。队满时这些低优先级请求也不占用
    为字幕 durable write 保留的溢出槽。未知传输结果仍以同一幂等身份重放。 */
 const ISOLATED_AGENT_OPERATIONS = new Set([
-  'evaluateAgentEligibility',
-  'reconcileTerminalAgentSession',
-  'readAgentInputSnapshot',
-  'requestAgentJob',
-  'claimNextAgentJob',
-  'renewAgentJobLease',
-  'markAgentJobRetry',
-  'markAgentJobFailed',
-  'requestAgentCancel',
-  'markAgentJobCancelled',
-  'commitAgentArtifact',
-  'commitAgentMemoryCandidates',
-  'readAgentMemoryContext',
-  'applyAgentTaskPolicy',
-  'getAgentSessionDetail',
-  'deleteAgentSessionData',
   'personalContextIngest',
   'personalContextResolve',
   'personalContextManage',
@@ -62,6 +46,9 @@ const ISOLATED_AGENT_OPERATIONS = new Set([
   'deletePersonalContextSessionData',
   'applyPersonalContextAutomaticPolicy',
   'cancelPersonalContextSessionIngest',
+  'preparePersonalContextSessionIngest',
+  'readPersonalContextSessionInput',
+  'commitPersonalContextSessionIngest',
   'preparePersonalContextInteractionIngest',
   'readPersonalContextInteractionInput',
   'commitPersonalContextInteractionIngest',
@@ -110,7 +97,6 @@ function retainedFailure (error) {
 }
 
 class StorageGateway {
-  #agentTaskPolicyHost
 
   constructor (options = {}) {
     if (typeof options.databasePath !== 'string' || !path.isAbsolute(options.databasePath)) {
@@ -143,7 +129,6 @@ class StorageGateway {
     if (options.onFatalError) this.hostOptions.onFatalError = options.onFatalError
     this.hostFactory = options.hostFactory || ((hostOptions) => new StorageWorkerHost(hostOptions))
     this.host = null
-    this.#agentTaskPolicyHost = null
     this.hostInvalid = false
     this.startPromise = null
     this.queue = []
@@ -169,7 +154,6 @@ class StorageGateway {
       throw new TypeError('hostFactory must return a StorageWorkerHost-compatible object')
     }
     this.host = candidate
-    this.#agentTaskPolicyHost = null
     this.hostInvalid = false
     try {
       await candidate.start()
@@ -354,80 +338,29 @@ class StorageGateway {
     return this.enqueue('listSessions', input)
   }
 
+  getRetirementFailure () {
+    return this.host?.retirementFailure || null
+  }
+
   getStats () {
     return this.enqueue('getStats', null)
   }
 
-  evaluateAgentEligibility (input) {
-    return this.enqueue('evaluateAgentEligibility', input)
-  }
 
-  reconcileTerminalAgentSession (input) {
-    return this.enqueue('reconcileTerminalAgentSession', input)
-  }
 
-  readAgentInputSnapshot (input) {
-    return this.enqueue('readAgentInputSnapshot', input)
-  }
 
-  requestAgentJob (input) {
-    return this.enqueue('requestAgentJob', input)
-  }
 
-  claimNextAgentJob (input) {
-    return this.enqueue('claimNextAgentJob', input)
-  }
 
-  renewAgentJobLease (input) {
-    return this.enqueue('renewAgentJobLease', input)
-  }
 
-  markAgentJobRetry (input) {
-    return this.enqueue('markAgentJobRetry', input)
-  }
 
-  markAgentJobFailed (input) {
-    return this.enqueue('markAgentJobFailed', input)
-  }
 
-  requestAgentCancel (input) {
-    return this.enqueue('requestAgentCancel', input)
-  }
 
-  markAgentJobCancelled (input) {
-    return this.enqueue('markAgentJobCancelled', input)
-  }
 
-  commitAgentArtifact (input) {
-    return this.enqueue('commitAgentArtifact', input)
-  }
 
-  commitAgentMemoryCandidates (input) {
-    return this.enqueue('commitAgentMemoryCandidates', input)
-  }
 
-  readAgentMemoryContext (input) {
-    return this.enqueue('readAgentMemoryContext', input)
-  }
 
-  applyAgentTaskPolicy (input) {
-    return this.enqueue('applyAgentTaskPolicy', input)
-  }
 
-  isAgentTaskPolicyReady () {
-    return this.host !== null &&
-      this.host === this.#agentTaskPolicyHost &&
-      this.hostInvalid === false &&
-      this.host.state === 'ready'
-  }
 
-  getAgentSessionDetail (input) {
-    return this.enqueue('getAgentSessionDetail', input)
-  }
-
-  deleteAgentSessionData (input) {
-    return this.enqueue('deleteAgentSessionData', input)
-  }
 
   personalContextIngest (source) {
     return this.enqueue('personalContextIngest', source)
@@ -569,22 +502,6 @@ class StorageGateway {
       case 'getSessionPage': return host.getSessionPage(item.payload)
       case 'listSessions': return host.listSessions(item.payload)
       case 'getStats': return host.getStats()
-      case 'evaluateAgentEligibility': return host.evaluateAgentEligibility(item.payload)
-      case 'reconcileTerminalAgentSession': return host.reconcileTerminalAgentSession(item.payload)
-      case 'readAgentInputSnapshot': return host.readAgentInputSnapshot(item.payload)
-      case 'requestAgentJob': return host.requestAgentJob(item.payload)
-      case 'claimNextAgentJob': return host.claimNextAgentJob(item.payload)
-      case 'renewAgentJobLease': return host.renewAgentJobLease(item.payload)
-      case 'markAgentJobRetry': return host.markAgentJobRetry(item.payload)
-      case 'markAgentJobFailed': return host.markAgentJobFailed(item.payload)
-      case 'requestAgentCancel': return host.requestAgentCancel(item.payload)
-      case 'markAgentJobCancelled': return host.markAgentJobCancelled(item.payload)
-      case 'commitAgentArtifact': return host.commitAgentArtifact(item.payload)
-      case 'commitAgentMemoryCandidates': return host.commitAgentMemoryCandidates(item.payload)
-      case 'readAgentMemoryContext': return host.readAgentMemoryContext(item.payload)
-      case 'applyAgentTaskPolicy': return host.applyAgentTaskPolicy(item.payload)
-      case 'getAgentSessionDetail': return host.getAgentSessionDetail(item.payload)
-      case 'deleteAgentSessionData': return host.deleteAgentSessionData(item.payload)
       case 'personalContextIngest': return host.personalContextIngest(item.payload)
       case 'personalContextResolve': return host.personalContextResolve(item.payload)
       case 'personalContextManage': return host.personalContextManage(item.payload)
@@ -661,14 +578,8 @@ class StorageGateway {
       try {
         await this.ensureHost()
         const activeHost = this.host
-        if (item.operation === 'reconcileTerminalAgentSession' && !this.isAgentTaskPolicyReady()) {
-          throw new StorageError('AGENT_REQUEST_INVALID')
-        }
         const result = await this.invoke(activeHost, item)
         if (this.stopped || this.queue[0] !== item) return
-        if (item.operation === 'applyAgentTaskPolicy' && this.host === activeHost) {
-          this.#agentTaskPolicyHost = activeHost
-        }
         const clonedResult = cloneForQueue(result)
         this.queue.shift()
         if (!item.reported) item.resolve(clonedResult)
@@ -743,7 +654,6 @@ class StorageGateway {
         await host.shutdown()
         if (this.host === host) this.host = null
       }
-      this.#agentTaskPolicyHost = null
       this.stopped = true
     })()
     try {
@@ -780,7 +690,6 @@ class StorageGateway {
       if (!terminationError && this.host === host) this.host = null
     }
     this.hostInvalid = false
-    this.#agentTaskPolicyHost = null
     const pending = this.queue.splice(0)
     for (const item of pending) item.reject(error)
     this.rejectFlushWaiters(terminationError || error)

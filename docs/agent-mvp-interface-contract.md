@@ -1,4 +1,6 @@
-# 正式 Agent 首版接口合同
+# 正式 Agent 首版接口合同（历史留档）
+
+> **2026-09-14 退役声明：本文只保留旧接口的不可变历史记录。** `src/agent-mvp/**`、旧 PluginHost/MemoryReader/provider 形状及旧 SQLite 表不再是当前接口；当前正式 Agent 以 `src/agent/**`、现行 contract 与 [ADR 0019](adr/0019-complete-legacy-agent-retirement.md) 为准。
 
 > **2026-08-29 取代声明：本文已整体失效，只作为旧 Agent 接口的历史留档。** 依据 ADR 0003 / 0007 / 0011 已分别被 [ADR 0013](adr/0013-agent-deep-modules-and-execution-host.md) / [ADR 0015](adr/0015-retire-old-agent-implementation.md) / [ADR 0014](adr/0014-multi-profile-model-access-layer.md) 取代。下文的 `AgentPluginHost` 端口、`MemoryReader`、单条目 provider 配置表与启动环境凭据协议**不得**再作为现行接口引用。新的三接口（个人上下文模块 `ingest`/`resolve`/`manage`、模型接入层 `catalog`/`configure`/`bind`、执行宿主 recipe 闭集）的精确 IPC 通道与载荷键见 [`agent-redesign-execution-plan.md`](agent-redesign-execution-plan.md)。
 

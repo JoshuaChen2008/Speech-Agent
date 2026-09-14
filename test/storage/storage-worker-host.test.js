@@ -234,23 +234,6 @@ test('synchronous postMessage failure cleans request listeners and invalidates t
 test('SEM-F28 formal Agent host methods preserve exact operation and payload identities', async () => {
   const { child, host } = await startReady()
   const cases = [
-    ['evaluateAgentEligibility', OPERATIONS.AGENT_EVALUATE_ELIGIBILITY, { sessionId: 's', requestedBy: 'user', eligibilityContext: {} }],
-    ['reconcileTerminalAgentSession', OPERATIONS.AGENT_RECONCILE_TERMINAL_SESSION, { sessionId: 's', requestedBy: 'automatic', eligibilityContext: {} }],
-    ['requestAgentJob', OPERATIONS.AGENT_REQUEST_JOB, { inputRef: {}, taskKind: 'meeting-minutes' }],
-    ['readAgentInputSnapshot', OPERATIONS.AGENT_READ_INPUT_SNAPSHOT, { inputRef: {} }],
-    ['claimNextAgentJob', OPERATIONS.AGENT_CLAIM_NEXT_JOB, { claimIdempotencyKey: 'claim', owner: 'worker', leaseMs: 1000, localWorkAllowed: false, availableTaskKinds: ['meeting-minutes'] }],
-    ['renewAgentJobLease', OPERATIONS.AGENT_RENEW_JOB_LEASE, { runId: 'run', lease: {}, newExpiresAt: 2000 }],
-    ['markAgentJobRetry', OPERATIONS.AGENT_MARK_JOB_RETRY, { runId: 'run', lease: {}, errorCode: 'AGENT_PROVIDER_TIMEOUT', nextAttemptAt: 1 }],
-    ['markAgentJobFailed', OPERATIONS.AGENT_MARK_JOB_FAILED, { runId: 'run', lease: {}, errorCode: 'AGENT_OUTPUT_INVALID' }],
-    ['requestAgentCancel', OPERATIONS.AGENT_REQUEST_CANCEL, { runId: 'run' }],
-    ['markAgentJobCancelled', OPERATIONS.AGENT_MARK_JOB_CANCELLED, { runId: 'run', lease: {} }],
-    ['commitAgentArtifact', OPERATIONS.AGENT_COMMIT_ARTIFACT, { runId: 'run', lease: {}, artifact: {} }],
-    ['commitAgentMemoryCandidates', OPERATIONS.AGENT_COMMIT_MEMORY_CANDIDATES, { runId: 'run', lease: {}, candidates: [] }],
-    ['readAgentMemoryContext', OPERATIONS.AGENT_READ_MEMORY_CONTEXT, { scopeRefs: [], kinds: [], semanticKeys: [], maxItems: 1, maxSerializedBytes: 256 }],
-    ['deleteAgentMemoryItem', OPERATIONS.AGENT_DELETE_MEMORY_ITEM, { memoryId: 'memory', deletionIdempotencyKey: 'delete-memory' }],
-    ['applyAgentTaskPolicy', OPERATIONS.AGENT_APPLY_TASK_POLICY, { eligibilityContext: {} }],
-    ['getAgentSessionDetail', OPERATIONS.AGENT_GET_SESSION_DETAIL, { sessionId: 's', eligibilityContext: {} }],
-    ['deleteAgentSessionData', OPERATIONS.AGENT_DELETE_SESSION_DATA, { sessionId: 's', deletionIdempotencyKey: 'delete' }],
     ['personalContextIngest', OPERATIONS.PERSONAL_CONTEXT_INGEST, { sourceKind: 'session', sessionId: 's' }],
     ['personalContextResolve', OPERATIONS.PERSONAL_CONTEXT_RESOLVE, { scope: { kind: 'session', reference: 's' } }],
     ['personalContextManage', OPERATIONS.PERSONAL_CONTEXT_MANAGE, { type: 'view' }],

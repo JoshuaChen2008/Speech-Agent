@@ -2,7 +2,7 @@
 
 > 状态：已决定 · 2026-08-29
 >
-> 适用范围：正式 Agent 的设置、字幕历史与 Agent Bar。隔离 Agent 内核开发入口 `src/agent-mvp/**` 不使用本台账。
+> 适用范围：正式 Agent 的设置、字幕历史与 Agent Bar。已退役的旧 Agent 树不使用本台账。
 >
 > 权威顺序：[`semantic-contract.md`](semantic-contract.md) → ADR 0013–0015 → [`agent-redesign-execution-plan.md`](agent-redesign-execution-plan.md) → [`testing-strategy.md`](testing-strategy.md) → 本台账。
 >

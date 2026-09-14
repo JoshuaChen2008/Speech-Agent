@@ -173,7 +173,7 @@ test('SEM-F00/SEM-F26/SEM-F28/SEM-F30/J21: S1 real subtitle commit reaches perso
   assert.equal(closeReceipt.state, 'closed')
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM formal_agent_runs').get().count, 0,
     'S2 absence must create no automatic run')
-  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM agent_artifacts').get().count, 0,
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM formal_agent_report_presentations').get().count, 0,
     'S2 absence must create no report')
 
   const source = frozenSource(database, 'session.s1.journey')
@@ -242,7 +242,7 @@ test('SEM-F00/SEM-F28/SEM-F30/SEM-T04/J21: S1 failure matrix preserves subtitle 
     assert.equal(history.items.length, 1)
     assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 1)
     assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_runs').get().count, 0)
-    assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM agent_artifacts').get().count, 0)
+    assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_report_presentations').get().count, 0)
   })
 
   await t.test('personal-context transaction rollback leaves no run or episode and a later caption session persists', async (t) => {
@@ -262,7 +262,7 @@ test('SEM-F00/SEM-F28/SEM-F30/SEM-T04/J21: S1 failure matrix preserves subtitle 
     assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM personal_context_episodes').get().count, 0)
     await commitTerminalSession(fixture.recorder, 'session.after-rollback')
     assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 2)
-    assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM agent_artifacts').get().count, 0)
+    assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_report_presentations').get().count, 0)
   })
 
   await t.test('duplicate terminal notifications and a lost ingest reply replay without automatic work', async (t) => {
@@ -274,7 +274,7 @@ test('SEM-F00/SEM-F28/SEM-F30/SEM-T04/J21: S1 failure matrix preserves subtitle 
     await nextTurn()
 
     assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_runs').get().count, 0)
-    assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM agent_artifacts').get().count, 0)
+    assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_report_presentations').get().count, 0)
     const source = frozenSource(fixture.database, 'session.replay')
     await fixture.runtime.module.ingest(source) // Simulates a committed reply that the caller did not receive.
     const replay = await fixture.runtime.module.ingest(source)
@@ -306,6 +306,6 @@ test('SEM-F00/SEM-F28/SEM-F30/SEM-T04/J21: S1 failure matrix preserves subtitle 
     await commitTerminalSession(fixture.recorder, 'session.after-observer-failure')
     assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 1)
     assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_runs').get().count, 0)
-    assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM agent_artifacts').get().count, 0)
+    assert.equal(fixture.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_report_presentations').get().count, 0)
   })
 })

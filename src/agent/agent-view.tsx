@@ -34,6 +34,7 @@ const ERROR_MESSAGES: Record<string, string> = Object.freeze({
 })
 
 const NEXT_ACTION_MESSAGES: Record<string, string> = Object.freeze({
+  restart_application: '数据库升级尚未成功，字幕仍可使用。请退出应用后重新启动以重试',
   correct_input: '请检查输入后重试',
   retry: '请稍后重试',
   choose_supported_scope: '请选择受支持的终态会话',
@@ -49,6 +50,7 @@ const NEXT_ACTION_MESSAGES: Record<string, string> = Object.freeze({
 class PublicResponseError extends Error {}
 
 function responseErrorMessage (response: Dict, fallback: string): string {
+  if (response?.error?.next_action === 'restart_application') return NEXT_ACTION_MESSAGES.restart_application
   return ERROR_MESSAGES[response?.error?.code] || NEXT_ACTION_MESSAGES[response?.error?.next_action] || fallback
 }
 
@@ -240,7 +242,7 @@ export function AgentView (): ReactElement {
     try {
       const value = await api.getScopes({ ...headers(), limit: SCOPE_LIMIT, cursor: reset ? null : scopeCursor })
       if (token !== scopeGeneration.current) return
-      if (value.ok !== true) throw new Error('范围列表暂时不可用')
+      if (value.ok !== true) throw new PublicResponseError(responseErrorMessage(value, '范围列表暂时不可用'))
       if (Number.isSafeInteger(value.revision)) acceptedRevision.current = Math.max(acceptedRevision.current, value.revision)
       const nextScopes = value.scopes as ScopeItem[]
       setScopes((current) => reset ? nextScopes : mergeByIdentity(current, nextScopes, (item) => scopeIdentity(item.scope)))
@@ -250,8 +252,8 @@ export function AgentView (): ReactElement {
         if (current && visible.some((item) => scopeIdentity(item.scope) === scopeIdentity(current))) return current
         return value.default_scope || nextScopes[0]?.scope || null
       })
-    } catch {
-      if (token === scopeGeneration.current) setScopeError('范围列表暂时不可用')
+    } catch (error) {
+      if (token === scopeGeneration.current) setScopeError(error instanceof PublicResponseError ? error.message : '范围列表暂时不可用')
     } finally {
       if (token === scopeGeneration.current) setScopePending(false)
     }
@@ -280,11 +282,11 @@ export function AgentView (): ReactElement {
     try {
       const response = await api.getEligibility({ ...headers(), scope })
       if (token !== eligibilityGeneration.current || scopeIdentity(selectedScopeRef.current) !== identity) return
-      if (response.ok !== true) throw new Error('资格快照暂时不可用')
+      if (response.ok !== true) throw new PublicResponseError(responseErrorMessage(response, '资格快照暂时不可用'))
       setEligibility(response.snapshot.eligibility); setStatus('')
-    } catch {
+    } catch (error) {
       if (token === eligibilityGeneration.current && scopeIdentity(selectedScopeRef.current) === identity) {
-        setEligibility(null); setStatus('资格快照暂时不可用')
+        setEligibility(null); setStatus(error instanceof PublicResponseError ? error.message : '资格快照暂时不可用')
       }
     }
   }, [api])

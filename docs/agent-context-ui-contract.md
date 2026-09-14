@@ -33,7 +33,7 @@
 | Core | 三个 IPC seam、角色权限、exact 校验、版本协商、revision、排序/分页、错误分类、幂等、隐私裁剪、存储与后台恢复 | renderer 的布局、视觉、文案层级、动效 |
 | UI/UX | loading/pending/empty/ready/unavailable/conflict 的呈现、焦点与可访问性、何时按合同发起重试或 reload | SQLite、自由查询、错误字符串解释、scheduler 状态推断、乐观成功、额外字段兼容 |
 
-本版本不实现 main handler、preload、SQLite 或 renderer。它只冻结 S5-Integration 将实现的边界。不得引用、包装或依赖 `src/agent-mvp/**`。
+本版本不实现 main handler、preload、SQLite 或 renderer。它只冻结 S5-Integration 将实现的边界。不得引用、包装或依赖已退役的旧 Agent 树；正式实现只允许走 `src/agent/**`。
 
 ## 3. 公共 IPC seam
 

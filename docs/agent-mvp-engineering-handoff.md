@@ -1,4 +1,6 @@
-# 正式 Agent MVP 工程交接
+# 正式 Agent MVP 工程交接（历史留档）
+
+> **2026-09-14 退役声明：本文是 `retire-legacy-agent` 变更前的工程交接快照，只保留为不可变历史审计材料。** 文中旧源码树、旧操作、旧表与旧测试均已从当前产品链路退役；不得据本文恢复入口、数据库写入或运行时依赖。当前正式 Agent 只使用 `src/agent/**` 与 formal SQLite 表，数据库退役、备份与恢复边界以 [ADR 0019](adr/0019-complete-legacy-agent-retirement.md) 为准。
 
 > 更新：2026-08-10  
 > 分支：`codex/b1-application-skeleton`  
