@@ -320,6 +320,66 @@ async function inspectInputAppearance (settings) {
   }
 }
 
+/* Native picker probe: this is a real BrowserWindow/input path, not a synthetic
+   change event.  A headless runner may be unable to expose the OS popup, so the
+   report keeps `opened` as an observation while still requiring Escape to retain
+   the value and emit no change event. */
+async function inspectNativePicker (settings) {
+  const wc = settings.webContents
+  const evaluate = (source) => wc.executeJavaScript(source)
+  await evaluate(`document.querySelector('.nav-item[data-pane="agentModel"]')?.click()`)
+  await waitFor(() => evaluate(`Boolean(document.querySelector('[data-purpose="default"] select'))`), 'native select picker target')
+  const before = await evaluate(`(() => {
+    const select = document.querySelector('[data-purpose="default"] select')
+    window.__nativeSelectChanges = 0
+    select.addEventListener('change', () => { window.__nativeSelectChanges += 1 }, { once: false })
+    select.focus()
+    const rect = select.getBoundingClientRect()
+    return {
+      value: select.value,
+      rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      supportsAppearance: CSS.supports('appearance', 'base-select'),
+      supportsPicker: CSS.supports('selector(::picker(select))')
+    }
+  })()`)
+  settings.show()
+  settings.focus()
+  wc.focus()
+  const point = {
+    x: Math.round(before.rect.x + before.rect.width / 2),
+    y: Math.round(before.rect.y + before.rect.height / 2)
+  }
+  wc.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 })
+  wc.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 })
+  await wait(150)
+  const opened = await evaluate(`(() => {
+    try { return document.querySelector('[data-purpose="default"] select').matches(':open') } catch { return false }
+  })()`)
+  if (opened) {
+    wc.sendInputEvent({ type: 'keyDown', keyCode: 'ARROWDOWN' })
+    wc.sendInputEvent({ type: 'keyUp', keyCode: 'ARROWDOWN' })
+    await wait(50)
+  }
+  wc.sendInputEvent({ type: 'keyDown', keyCode: 'ESC' })
+  wc.sendInputEvent({ type: 'keyUp', keyCode: 'ESC' })
+  await wait(150)
+  const after = await evaluate(`(() => {
+    const select = document.querySelector('[data-purpose="default"] select')
+    let open = false
+    try { open = select.matches(':open') } catch {}
+    return { open, value: select.value, changes: window.__nativeSelectChanges }
+  })()`)
+  return {
+    attempted: true,
+    opened,
+    supportsAppearance: before.supportsAppearance,
+    supportsPicker: before.supportsPicker,
+    cancelValuePreserved: after.value === before.value && after.open === false,
+    noChangeAfterCancel: after.changes === 0,
+    changeCount: after.changes
+  }
+}
+
 async function configureThroughSettings (settings, port) {
   return settings.webContents.executeJavaScript(`(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -412,8 +472,11 @@ async function configureThroughSettings (settings, port) {
     await waitFor(() => !cardFor()?.querySelector('input[aria-label="API 服务器地址"]'), 'connection editor closed')
 
     const purpose = document.querySelector('[data-purpose="default"] select')
-    const selectStyled = styled(purpose)
     await waitFor(() => purpose && [...purpose.options].some((option) => option.value === 'deepseek::j25-local-model'), 'purpose target')
+    let selectStyled = styled(purpose) && [...purpose.options].every((option) => {
+      const css = getComputedStyle(option)
+      return css.backgroundColor !== 'rgba(0, 0, 0, 0)' && css.color !== css.backgroundColor
+    })
     select(purpose, 'deepseek::j25-local-model')
     await waitFor(() => document.querySelector('[data-purpose="default"]').textContent.includes('普通请求：配置充分'), 'purpose assigned')
     const defaultReady = document.querySelector('[data-purpose="default"]').textContent.includes('普通请求：配置充分')
@@ -422,6 +485,12 @@ async function configureThroughSettings (settings, port) {
     contextNav.click()
     const remember = await waitFor(() => document.querySelector('textarea[aria-label="记住个人记忆"]'), 'remember form')
     const textareaStyled = styled(remember) && getComputedStyle(remember).resize === 'vertical' && parseFloat(getComputedStyle(remember).minHeight) >= 70
+    const contextSelects = [...document.querySelectorAll('.agent-context-form-row select')]
+    const contextSelectsStyled = contextSelects.length === 2 && contextSelects.every((element) => styled(element) && [...element.options].every((option) => {
+      const css = getComputedStyle(option)
+      return css.backgroundColor !== 'rgba(0, 0, 0, 0)' && css.color !== css.backgroundColor
+    }))
+    selectStyled = selectStyled && contextSelectsStyled
     setInput(remember, 'J25 formal settings memory')
     clickText(document.querySelector('section[data-pane="agentContext"]'), '记住')
     const memory = await waitFor(() => document.querySelector('[data-memory-id]'), 'remembered memory')
@@ -655,11 +724,13 @@ async function main () {
     const toolbar = await waitFor(() => windowFor('/toolbar/index.html'), 'toolbar window')
     await waitFor(async () => toolbar.webContents.executeJavaScript("document.readyState === 'complete'"), 'toolbar renderer')
     const settingsResult = await configureThroughSettings(settings, port)
+    const nativePicker = await inspectNativePicker(settings)
     const inputAppearance = await inspectInputAppearance(settings)
     const runResult = await runAgentBar(toolbar)
     const report = {
       schemaVersion: 1,
       result: Object.values(inputAppearance).every(Boolean) && Object.values(settingsResult.inputsStyled).every(Boolean) && settingsResult.inputFailureRecovered &&
+        nativePicker.opened && nativePicker.cancelValuePreserved && nativePicker.noChangeAfterCancel &&
         inputProbe.pending && inputProbe.rejected && inputProbe.invalidCommands === 1 &&
         settingsResult.profileConnection && settingsResult.modelVisible && settingsResult.credentialCleared &&
         settingsResult.defaultReady && settingsResult.agentEnabled && settingsResult.memoryManaged &&
@@ -671,6 +742,7 @@ async function main () {
         provider.state.credentialObserved && provider.state.credentialExact && provider.state.modelIds.length === 1 && provider.state.modelIds[0] === 'j25-local-model',
       settingsPath: 'formal-settings-renderer-preload',
       inputAppearance,
+      nativePicker,
       inputsStyled: settingsResult.inputsStyled,
       inputFailureRecovered: settingsResult.inputFailureRecovered,
       inputPendingObserved: inputProbe.pending,

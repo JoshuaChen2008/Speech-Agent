@@ -1,9 +1,9 @@
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 520px; min-height: 100vh; color: rgb(var(--fg)); background: var(--surface-settings); font-family: var(--font-ui); }
-button, textarea, select { font: inherit; }
+button, textarea { font: inherit; }
 button { color: inherit; border: 1px solid rgba(var(--fg), .14); background: rgba(var(--fg), .06); border-radius: var(--radius-control); cursor: pointer; }
 button:hover:not(:disabled) { background: rgba(var(--fg), .12); }
-button:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--text-accent); outline-offset: 2px; }
+button:focus-visible, textarea:focus-visible { outline: 2px solid var(--text-accent); outline-offset: 2px; }
 button:disabled, textarea:disabled { cursor: default; opacity: .55; }
 .agent-shell { min-height: 100vh; display: flex; flex-direction: column; }
 .agent-titlebar { min-height: 48px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--border-window-titlebar); background: var(--surface-window-titlebar); -webkit-app-region: drag; }
@@ -68,7 +68,7 @@ textarea { min-height: 96px; resize: vertical; padding: 10px; color: rgb(var(--f
 .signal-actions textarea { min-height: 68px; width: 100%; }
 .remember-flow { display: grid; gap: 6px; margin-top: 12px; padding: 10px; border: 1px solid rgba(var(--fg), .12); border-radius: var(--radius-control); background: rgba(var(--fg), .03); }
 .remember-flow textarea { min-height: 58px; }
-.remember-flow select { width: 100%; padding: 6px 8px; color: rgb(var(--fg)); border: 1px solid rgba(var(--fg), .14); border-radius: var(--radius-control); background: rgba(var(--fg), .06); }
+.remember-flow select { width: 100%; }
 .remember-flow button { justify-self: start; padding: 6px 10px; }
 .remember-hint { margin: 0 0 2px; color: rgba(var(--fg), .68); font-size: 11px; line-height: 1.4; }
 .signal-buttons { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
@@ -87,4 +87,4 @@ textarea { min-height: 96px; resize: vertical; padding: 10px; color: rgb(var(--f
 .tool-call-detail pre { max-height: 180px; margin: 3px 0 0; padding: 7px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 6px; background: rgba(var(--fg), .06); font: 11px/1.4 var(--font-mono, ui-monospace, monospace); }
 @media (max-width: 860px) { .agent-layout { grid-template-columns: 170px minmax(260px, 1fr); } .history-panel { grid-column: 1 / -1; max-height: 260px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; } }
-@media (forced-colors: active) { button:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid CanvasText; } .scope-card[aria-current='true'], .history-card[aria-current='true'] { border-color: Highlight; } }
+@media (forced-colors: active) { button:focus-visible, textarea:focus-visible { outline: 2px solid CanvasText; } .scope-card[aria-current='true'], .history-card[aria-current='true'] { border-color: Highlight; } }

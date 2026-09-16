@@ -39,6 +39,8 @@ S5-Integration 采用 main-owned `AgentRunService`。submit 的公开载荷只�
 
 > **2026-09-13 SEM-F23/J18 输入控件子边界（实现完成·尚未验收）**：正式 J25 设置旅程新增输入计算样式、首配向导、Tab 焦点、hover 几何、pending 与已配置凭据的非法连接失败恢复、专用颜色/滑块操作、主题及布局压力检查；真实首启选择解除遮罩后再操作表单。renderer 构建返回码 0，样式守卫与该旅程 focus 10/10，追加专用控件检查后正式旅程 1/1。高对比/reduced motion 为媒体模拟，1–2 倍为 renderer zoom，均不替代系统 DPI/人工观察或完整 J18/J25。无凭据档案失败回执的独立既有缺口及全部未验证范围见 [输入框 TODO](../openspec/changes/fix-settings-input-styles/tasks.md)。
 
+> **2026-09-16 SEM-F23/J18/J25 下拉选择列表增量（实现完成·尚未验收）**：`src/ui/shared/select.css` 是纳入 SEM-F23 的正式 renderer 与开发预览的唯一选择控件 owner，所有 HTML 入口在页面样式前加载它；样式守卫按 `src/**` 的 HTML/CSS/renderer 源码扫描，不按固定窗口名单。J25 真实设置旅程只把模型用途选择作为 J25 语义场景；个人记忆类型/范围只作为 J21/J22/J24 的视觉子场景。Agent 结果入口在对应生产 renderer 场景覆盖两个记忆选择框。展开、hover、滚动、选择后取消必须保持原值且零 change/IPC/交互记忆信号，明确点击“记住”才允许写入。真实 Electron 43.3.0 的生产设置窗旅程已实际打开 picker、发送方向键并以 Esc 取消，观察到 `opened=true`、原值保持且 `changeCount=0`；静态 guard 还覆盖四种主题/forced-colors/reduced-motion、长值、禁用/pending 和底部布局约束。只读取收起控件的 computed style 不构成 picker 证据；Windows 系统高对比、系统缩放和人工视觉观察仍未取得。若 Electron picker 能力不足，报告阻塞，不以自定义控件替换原生语义。
+
 新增或保留测试必须能指出它独立阻止的用户风险、`SEM-*` 要求和 `J* / DB* / I*` 旅程位置。若一个低层测试与更高层真实内部模块旅程验证相同输入、相同失败和相同可观察结果，且不能更早定位一个独立不变量，应合并或删除，不以测试数量、行覆盖率或固定实现形状作为保留理由。
 
 - core 只保留适合局部穷举的纯合同、不变量、canonicalization、状态转换和稳定错误映射；不得用源码正则、文档关键词、内部私有调用次序或大 snapshot 伪装产品行为。

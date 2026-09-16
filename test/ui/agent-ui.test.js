@@ -651,3 +651,31 @@ test('SEM-F32/J21: terminal Agent results expose only explicit interaction signa
   assert.equal(harness.signalRequests.every((request) => request.result_digest === 'b'.repeat(64)), true)
   assert.deepEqual(harness.signalRequests.map((request) => request.payload), [null, null, { text: '明确要保留的一条' }, null])
 })
+
+test('SEM-F23/J29: summary result memory selectors share native option semantics and have no side effects before explicit remember', async (t) => {
+  const harness = await createHarness(); t.after(() => harness.dispose())
+  const digest = 'e'.repeat(64)
+  harness.setDetail({
+    ...harness.historyItem,
+    interaction_id: 'interaction.ui.2', run_id: 'run.ui.2', recipe_id: 'summary.minutes', recipe_version: '1',
+    routing_mode: 'model', state: 'succeeded', terminal_reason: 'succeeded', terminal_at: 3,
+    result_digest: digest, result: { summary: '会话总结结果' }, source_refs: [], tool_calls: [],
+    model: { adapter_id: 'adapter.internal', model_id: 'model.internal', profile_id: 'profile.internal', profile_revision: 1, provider_kind: 'cloud' },
+    usage: null, usage_state: 'unknown'
+  })
+  await act(async () => click(document.querySelectorAll('.history-card')[1]))
+  await flush()
+
+  const selectors = [...document.querySelectorAll('.remember-flow select')]
+  assert.equal(selectors.length, 2)
+  assert.deepEqual([...selectors[0].options].map((option) => option.value), ['decision', 'conclusion', 'todo', 'term', 'preference', 'project_fact', 'experience'])
+  assert.deepEqual([...selectors[1].options].map((option) => option.value), ['global', 'session'])
+  await act(async () => {
+    selectors[0].value = 'term'
+    selectors[0].dispatchEvent(new window.Event('change', { bubbles: true }))
+    selectors[1].value = 'session'
+    selectors[1].dispatchEvent(new window.Event('change', { bubbles: true }))
+  })
+  assert.equal(harness.signalRequests.length, 0, '展开或选择本身不得产生交互记忆信号')
+  assert.equal(harness.submitRequests.length, 0, '展开或选择本身不得触发 Agent 请求')
+})

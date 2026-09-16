@@ -352,7 +352,7 @@ input[type="range"]::-webkit-slider-thumb {
 /* --------------------------------------------------------------------------
    Agent 模型配置档案
    -------------------------------------------------------------------------- */
-:is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], select, textarea) {
+:is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], textarea) {
   font: inherit;
   color: rgb(var(--fg));
   background: var(--surface-input);
@@ -363,7 +363,7 @@ input[type="range"]::-webkit-slider-thumb {
   min-width: 0;
   max-width: 100%;
 }
-:is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], select, textarea):not(:disabled):not([readonly]):hover {
+:is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], textarea):not(:disabled):not([readonly]):hover {
   border-color: var(--border-input-hover);
 }
 :is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], textarea)::placeholder {
@@ -374,13 +374,13 @@ input[type="range"]::-webkit-slider-thumb {
   background: var(--surface-input-readonly);
   border-style: dashed;
 }
-:is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], select, textarea):disabled {
+:is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], textarea):disabled {
   background: var(--surface-input-disabled);
   color: var(--text-input-disabled);
   opacity: 1;
   cursor: not-allowed;
 }
-:is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], select, textarea)[aria-invalid="true"] {
+:is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], textarea)[aria-invalid="true"] {
   border-color: var(--tone-danger);
 }
 textarea, .content textarea { min-height: 70px; padding: 8px 10px; resize: vertical; }
@@ -481,9 +481,9 @@ textarea, .content textarea { min-height: 70px; padding: 8px 10px; resize: verti
   .group, .seg, .resource-list, .model-progress, .secondary-btn { border: 1px solid CanvasText; }
   .seg button.on { border: 2px solid Highlight; }
   .nav-item.active, .preset-card:hover { border: 1px solid Highlight; }
-  :is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], select, textarea) { color: FieldText; }
-  :is(input, select, textarea):disabled { color: GrayText; }
-  :is(input, select, textarea)[aria-invalid="true"] { border-color: CanvasText; }
+  :is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], textarea) { color: FieldText; }
+  :is(input, textarea):disabled { color: GrayText; }
+  :is(input, textarea)[aria-invalid="true"] { border-color: CanvasText; }
   [role="alertdialog"] { border: 1px solid CanvasText; }
   .wizard-steps li { border-bottom-color: CanvasText; }
   .wizard-steps li.on, .wizard-steps li.done, .preset-choice .preset-card.on { border-color: Highlight; }

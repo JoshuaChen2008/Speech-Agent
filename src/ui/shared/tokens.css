@@ -121,6 +121,26 @@
   --text-input-placeholder: rgba(var(--fg), 0.65);
   --text-input-disabled: rgba(var(--fg), 0.65);
 
+  /* 原生下拉选择控件的收起/展开表面。选项列表是系统弹出层，
+     因此单独声明不透明表面与选项状态，避免深色窗口回落到白底浅字。 */
+  --surface-select-menu: var(--surface-settings);
+  --text-select-option: rgb(var(--fg));
+  --border-select-menu: rgba(var(--c-white), 0.24);
+  --surface-select-option-hover: rgba(var(--c-white), 0.12);
+  --surface-select-option-selected: rgba(var(--c-accent), 0.26);
+  --text-select-option-selected: rgb(var(--c-white));
+  --surface-select-option-disabled: rgba(var(--c-white), 0.05);
+  --text-select-option-disabled: rgba(var(--c-white), 0.52);
+  --shadow-select-menu: 0 8px 24px rgba(var(--c-black), 0.35);
+  --select-color-scheme: dark;
+  --select-control-min-height: 36px;
+  --select-control-padding-block: 6px;
+  --select-control-padding-inline: 10px;
+  --select-option-padding-block: 8px;
+  --select-option-padding-inline: 10px;
+  --select-option-min-height: 32px;
+  --select-picker-padding: 4px;
+
   /* 文字 */
 
   /* 字幕文字色与主题完全解耦，深色和浅色主题都不覆盖它。
@@ -171,6 +191,15 @@
      加回来会让浅色主题下的字幕重新跟着主题翻黑。 */
   --text-toolbar: rgba(var(--c-ink-text), 0.72);
   --text-toolbar-hover: rgb(var(--c-ink-text));
+
+  --border-select-menu: rgba(var(--c-black), 0.20);
+  --surface-select-option-hover: rgba(var(--c-black), 0.08);
+  --surface-select-option-selected: rgba(var(--c-accent-deep), 0.16);
+  --text-select-option-selected: rgb(var(--c-ink-text));
+  --surface-select-option-disabled: rgba(var(--c-black), 0.04);
+  --text-select-option-disabled: rgba(var(--c-slate-text), 0.55);
+  --shadow-select-menu: 0 8px 24px rgba(var(--c-black), 0.18);
+  --select-color-scheme: light;
 
   --tint-hover:  rgba(var(--c-black), 0.08);
   --tint-active: rgba(var(--c-black), 0.12);

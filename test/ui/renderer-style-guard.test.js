@@ -247,3 +247,94 @@ test('SEM-F23/J18: Agent Bar 设计基准与设置页共用同一套控件，不
     )
   }
 })
+
+test('SEM-F23/J18: 下拉选择列表由共享控件层统一提供主题与入口', () => {
+  const shared = 'src/ui/shared/select.css'
+  assert.ok(fs.existsSync(path.join(root, shared)), `${shared} 缺失`)
+  const css = stripComments(read(shared))
+  assert.match(css, /select\s*\{[^}]*color-scheme:\s*var\(--select-color-scheme\)/s)
+  assert.match(css, /select\s*\{[^}]*color:\s*var\(--text-select-option\)/s)
+  assert.match(css, /select\s*\{[^}]*background:\s*var\(--surface-input\)/s)
+  assert.match(css, /select\s*\{[^}]*border:\s*1px\s+solid\s+var\(--border-input\)/s)
+  assert.match(css, /select\s*\{[^}]*border-radius:\s*var\(--radius-control\)/s)
+  assert.match(css, /select\s*\{[^}]*padding:\s*var\(--select-control-padding-block\)\s+var\(--select-control-padding-inline\)/s)
+  assert.match(css, /select\s*\{[^}]*min-height:\s*var\(--select-control-min-height\)/s)
+  assert.match(css, /select\s+option\s*\{[^}]*color:\s*var\(--text-select-option\)/s)
+  assert.match(css, /select\s+option\s*\{[^}]*background:\s*var\(--surface-select-menu\)/s)
+  assert.match(css, /select\s+option\s*\{[^}]*padding:\s*var\(--select-option-padding-block\)\s+var\(--select-option-padding-inline\)/s)
+  assert.match(css, /select\s+option:hover[\s\S]*background:\s*var\(--surface-select-option-hover\)/s)
+  assert.match(css, /select\s+option:checked[\s\S]*color:\s*var\(--text-select-option-selected\)/s)
+  assert.match(css, /select\s+option:checked[\s\S]*background:\s*var\(--surface-select-option-selected\)/s)
+  assert.match(css, /select\s+option:disabled[\s\S]*color:\s*var\(--text-select-option-disabled\)/s)
+  assert.match(css, /select\s+option:disabled[\s\S]*background:\s*var\(--surface-select-option-disabled\)/s)
+  assert.match(css, /select::picker\(select\)[\s\S]*border:\s*1px\s+solid\s+var\(--border-select-menu\)/s)
+  assert.match(css, /select::picker\(select\)[\s\S]*box-shadow:\s*var\(--shadow-select-menu\)/s)
+  assert.match(css, /select::picker\(select\)[\s\S]*padding:\s*var\(--select-picker-padding\)/s)
+  assert.match(css, /select option:disabled[\s\S]*color:\s*GrayText/)
+  assert.match(css, /select\[aria-invalid="true"\][\s\S]*border-color:\s*CanvasText/)
+  assert.match(css, /select::picker\(select\)[\s\S]*color:\s*FieldText[\s\S]*background:\s*Field[\s\S]*border-color:\s*CanvasText[\s\S]*box-shadow:\s*none/)
+  assert.match(css, /select::picker-icon[\s\S]*color:\s*FieldText/)
+  assert.match(css, /@media \(forced-colors: active\)/)
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/)
+
+  const tokens = stripComments(read(TOKEN_TRUTH))
+  for (const token of [
+    '--surface-select-menu', '--text-select-option', '--surface-select-option-hover',
+    '--surface-select-option-selected', '--text-select-option-selected', '--select-color-scheme',
+    '--select-control-min-height',
+    '--select-control-padding-block', '--select-control-padding-inline',
+    '--select-option-padding-block', '--select-option-padding-inline',
+    '--select-option-min-height', '--select-picker-padding'
+  ]) assert.match(tokens, new RegExp(`${token}\\s*:`), `${token} 必须在共享 token 层定义`)
+
+  const htmlEntries = allFiles.filter((file) => file.endsWith('.html') && read(file).includes('tokens.css'))
+  assert.ok(htmlEntries.length > 0, 'renderer HTML 入口不存在')
+  for (const entry of htmlEntries) {
+    const links = [...read(entry).matchAll(/<link\b[^>]*href=["']([^"']+\.css)["'][^>]*>/gi)].map(([, href]) => href)
+    const tokenIndex = links.findIndex((href) => /(?:^|\/)tokens\.css$/.test(href))
+    const selectIndex = links.findIndex((href) => /(?:^|\/)select\.css$/.test(href))
+    const pageIndex = links.findIndex((href) => !/(?:^|\/)(?:tokens|phases|select)\.css$/.test(href))
+    assert.ok(selectIndex >= 0, `${entry} 必须引用共享选择控件样式`)
+    assert.ok(tokenIndex >= 0 && selectIndex > tokenIndex, `${entry} 必须先加载 tokens.css，再加载 select.css`)
+    assert.ok(pageIndex < 0 || selectIndex < pageIndex, `${entry} 必须在页面自身样式前加载 select.css`)
+  }
+
+  const selectSources = allFiles.filter((file) => (
+    /\.(?:html|tsx?|jsx?)$/.test(file) && /<select\b/.test(read(file))
+  ))
+  assert.ok(selectSources.length > 0, '没有发现原生 select 源码；扫描表达式可能失效')
+  const rendererRoot = (file) => {
+    const parts = file.split('/')
+    return parts[1] === 'ui' && parts[2] === 'preview'
+      ? 'src/ui/preview'
+      : parts.slice(0, 2).join('/')
+  }
+  for (const source of selectSources) {
+    const rootDirectory = rendererRoot(source)
+    const entries = allFiles.filter((file) => file.endsWith('.html') && file.startsWith(`${rootDirectory}/`))
+    assert.ok(
+      entries.some((entry) => /select\.css/.test(read(entry))),
+      `${source} 所属 renderer 必须从 HTML 入口加载共享选择控件样式`
+    )
+  }
+
+  /* 普通主题下 select/option 的外观只能由 shared/select.css 负责；局部文件可以保留布局宽度。
+     高对比系统色也必须经过共享 owner，避免某个 renderer 覆盖 picker 的文字/表面。 */
+  const visualProperty = /^(?:appearance|background(?:-.+)?|border(?:-.+)?|box-shadow|color(?:-.+)?|color-scheme|cursor|font(?:-.+)?|outline(?:-.+)?|padding(?:-.+)?|opacity|transition(?:-.+)?)$/
+  const cssRule = /([^{}]+)\{([^{}]*)\}/g
+  const rendererCss = allFiles.filter((file) => file.endsWith('.css') && file !== TOKEN_TRUTH && file !== shared)
+  for (const file of rendererCss) {
+    const local = stripComments(read(file))
+    for (const match of local.matchAll(cssRule)) {
+      const selector = match[1].trim()
+      if (!/\b(?:select|option)\b/.test(selector)) continue
+      const properties = [...match[2].matchAll(/([a-z-]+)\s*:/gi)].map(([, name]) => name.toLowerCase())
+      const duplicate = properties.filter((name) => visualProperty.test(name))
+      assert.deepEqual(
+        duplicate,
+        [],
+        `${file} 的 ${selector} 不得重新定义选择控件外观；布局规则可保留，外观必须进入 ${shared}`
+      )
+    }
+  }
+})

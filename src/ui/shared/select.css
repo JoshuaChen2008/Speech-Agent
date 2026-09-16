@@ -1,0 +1,146 @@
+/* ============================================================================
+   共享原生下拉选择控件
+   --------------------------------------------------------------------------
+   选择框与展开的 option 列表必须消费同一组 token。传统原生 picker 的圆角、
+   阴影与定位仍由 Electron/Windows 管理；这里至少固定不透明表面、文字和
+   选项状态，避免系统默认白底与浅字组合。
+   ============================================================================ */
+
+select {
+  color-scheme: var(--select-color-scheme);
+  color: var(--text-select-option);
+  background: var(--surface-input);
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-control);
+  padding: var(--select-control-padding-block) var(--select-control-padding-inline);
+  min-height: var(--select-control-min-height);
+  min-width: 0;
+  max-width: 100%;
+  font: inherit;
+}
+
+select:not(:disabled):hover {
+  border-color: var(--border-input-hover);
+}
+
+select:disabled {
+  color: var(--text-select-option-disabled);
+  background: var(--surface-input-disabled);
+  border-color: var(--border-input);
+  cursor: not-allowed;
+}
+
+select[aria-invalid="true"] {
+  border-color: var(--tone-danger);
+}
+
+select option {
+  color: var(--text-select-option);
+  background: var(--surface-select-menu);
+  padding: var(--select-option-padding-block) var(--select-option-padding-inline);
+  font: inherit;
+}
+
+select option:hover,
+select option:focus {
+  color: var(--text-select-option);
+  background: var(--surface-select-option-hover);
+}
+
+select option:checked {
+  color: var(--text-select-option-selected);
+  background: var(--surface-select-option-selected);
+}
+
+select option:disabled {
+  color: var(--text-select-option-disabled);
+  background: var(--surface-select-option-disabled);
+}
+
+/* Chromium builds with customizable select support expose the actual picker.
+   The fallback option rules above remain active on older Electron versions. */
+@supports (appearance: base-select) and selector(::picker(select)) {
+  select {
+    appearance: base-select;
+  }
+
+  select::picker(select) {
+    color-scheme: var(--select-color-scheme);
+    color: var(--text-select-option);
+    background: var(--surface-select-menu);
+    border: 1px solid var(--border-select-menu);
+    border-radius: var(--radius-control);
+    box-shadow: var(--shadow-select-menu);
+    padding: var(--select-picker-padding);
+  }
+
+  select::picker-icon {
+    color: var(--text-select-option);
+  }
+
+  select option {
+    min-height: var(--select-option-min-height);
+    border-radius: var(--radius-button);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  select {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  select {
+    color-scheme: normal;
+    color: FieldText;
+    background: Field;
+    border-color: CanvasText;
+  }
+
+  select:not(:disabled):hover,
+  select[aria-invalid="true"] {
+    border-color: CanvasText;
+  }
+
+  select:disabled {
+    color: GrayText;
+    background: Canvas;
+    border-color: CanvasText;
+  }
+
+  select option,
+  select option:hover,
+  select option:focus {
+    color: CanvasText;
+    background: Canvas;
+  }
+
+  select option:disabled,
+  select option:disabled:hover,
+  select option:disabled:focus {
+    color: GrayText;
+    background: Canvas;
+  }
+
+  select option:checked {
+    color: HighlightText;
+    background: Highlight;
+  }
+}
+
+@supports (appearance: base-select) and selector(::picker(select)) {
+  @media (forced-colors: active) {
+    select::picker(select) {
+      color-scheme: normal;
+      color: FieldText;
+      background: Field;
+      border-color: CanvasText;
+      box-shadow: none;
+    }
+
+    select::picker-icon {
+      color: FieldText;
+    }
+  }
+}

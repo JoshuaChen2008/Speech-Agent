@@ -47,15 +47,6 @@ h1 { font-size: var(--fs-title); font-weight: var(--fw-bold); margin: 0 0 6px; }
   font-size: var(--fs-hint);
   opacity: 0.8;
 }
-.ctl select {
-  font-family: inherit;
-  font-size: var(--fs-hint);
-  padding: 5px 8px;
-  border: 1px solid rgba(var(--fg), 0.2);
-  border-radius: var(--radius-button);
-  background: var(--page-panel);
-  color: rgb(var(--fg));
-}
 .ctl-check { cursor: pointer; }
 
 /* ---- 目录 ---- */

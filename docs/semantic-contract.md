@@ -239,3 +239,7 @@ SEM-F14/F30、SEM-T06/T08：依据 ADR 0019，旧源码与独立入口退出当�
 依据诊断记录 [`window-restore-input-diagnosis-2026-09-16.md`](validation/window-restore-input-diagnosis-2026-09-16.md)，为 SEM-F22/F24、J17/J19 登记一项实现约束：字幕窗仍保持 `focusable: false`，但其所属线程的原生输入边界必须保留恢复后 `WM_MOUSEACTIVATE` 产生的客户端主键按下；产品不能通过改变字幕窗可聚焦性、恢复 renderer 焦点、合成 DOM 事件或拖动重试来满足该要求。原生 subclass 只允许把目标字幕窗、`HTCLIENT`、`WM_LBUTTONDOWN` 且原处理返回 `MA_NOACTIVATEANDEAT` 的结果收窄为 `MA_NOACTIVATE`，其它窗口、消息和返回值必须原样传递。绑定建立失败时字幕窗保持隐藏，工具条继续提供“重试 / 退出”入口；原生绑定不进入 renderer、SQLite、日志或证据报告。确定性回归必须保留真实 BrowserWindow/main/preload/renderer 链路，实机恢复后的连续鼠标与 DWM 仍只由 I2 `dwm-drag` 验证；当前状态为实现完成·尚未验收。
 
 该增量的启动故障使用既有 overlay startup 故障类别中的 `overlay-startup-native-input-failed`，不扩展 SEM-T04 的窗口交互代次四码闭集；恢复期间不重建未失效的同一 HWND 绑定，窗口销毁时由关闭收尾释放 subclass。诊断接口（计数、窗口样式、返回值规范化与宿主探针）只供测试/探针使用，生产加载只依赖 attach/isAttached/detach。
+
+### 2026-09-16 下拉选择列表视觉一致性增量登记
+
+依据设置页与 Agent 结果页出现的展开列表浅色/浅字问题，为 SEM-F23/J18/J25 登记一项共享控件约束：纳入 SEM-F23 的正式 renderer 和开发预览中所有原生 `<select>` 必须同时提供可读的收起控件与展开选项列表。唯一 owner 是 `src/ui/shared/select.css`，由各 renderer HTML 在页面样式前加载；颜色、表面、边框、圆角、间距、悬停、键盘焦点、已选中和禁用状态统一消费共享 token。深色、浅色、自动主题和 Windows 系统高对比下都必须保持可读；系统高对比使用 `Canvas`/`Field`/`Highlight` 等系统色属于无障碍例外。模型用途控件的“未配置”“回落到默认”仍是可选项而非禁用项，其它 select 不套用该文案约束。不得改变现有选择值、业务事件、IPC、窗口几何或表单顺序，不得把选择列表改成第二套业务状态；展开、悬停、滚动、选择后取消不得产生 change、IPC 或交互记忆信号，只有现有明确提交动作才产生业务副作用。优先保留原生选择语义与键盘路径；若当前 Electron 的可定制 picker 无法满足展开列表的实际可读性，必须记录阻塞与证据，不在本增量内伪造自定义控件或扩大产品范围。代码与确定性回归已实现；当前状态为实现完成·尚未验收，Windows 系统高对比、系统缩放和人工视觉观察仍待实机证据。

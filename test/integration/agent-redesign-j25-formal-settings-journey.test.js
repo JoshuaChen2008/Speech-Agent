@@ -61,6 +61,12 @@ test('SEM-F23/SEM-T04/J18/SEM-F26/SEM-F30/SEM-F31/SEM-F32/SEM-F33/SEM-F34/J21/J2
     assert.deepEqual(report.inputsStyled, {
       textStyled: true, numberStyled: true, passwordStyled: true, selectStyled: true, textareaStyled: true
     })
+    assert.equal(report.nativePicker?.attempted, true)
+    assert.equal(report.nativePicker?.opened, true)
+    assert.equal(report.nativePicker?.cancelValuePreserved, true)
+    assert.equal(report.nativePicker?.noChangeAfterCancel, true)
+    assert.equal(Number.isInteger(report.nativePicker?.changeCount), true)
+    assert.equal(typeof report.nativePicker?.opened, 'boolean')
     assert.equal(report.inputFailureRecovered, true)
     assert.equal(report.inputPendingObserved, true)
     assert.equal(report.invalidInputCommandCount, 1)
