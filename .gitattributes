@@ -22,6 +22,10 @@ src/**/*.mts text eol=lf
 src/**/*.ts text eol=lf
 src/**/*.tsx text eol=lf
 
+# Native addons are built per Windows checkout and are never normalized as text.
+src/native/**/*.node binary
+native/**/*.node binary
+
 # Downloaded CI evidence recomputes these exact text provenance inputs
 # together with the product files above.
 scripts/caption-layout-smoke.js text eol=lf

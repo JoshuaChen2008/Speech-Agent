@@ -36,7 +36,7 @@ test('SEM-F24 / J19 activates from renderer load and exact geometry without read
   assert.deepEqual(calls, ['prepare', 'reachable', 'settled', 'active'])
 })
 
-test('SEM-F24 / SEM-T04 / J19 retries after timeout and rejects the old attempt late completion', async () => {
+test('SEM-F24 / J19 retries after timeout and rejects the old attempt late completion', async () => {
   const scheduled = []
   const attempts = []
   const calls = []
@@ -74,7 +74,7 @@ test('SEM-F24 / SEM-T04 / J19 retries after timeout and rejects the old attempt 
   assert.equal(calls.includes('overlay-startup-timeout'), true)
 })
 
-test('SEM-F24 / SEM-T04 / J19 keeps recovery explicit when geometry cannot settle', async () => {
+test('SEM-F24 / J19 keeps recovery explicit when geometry cannot settle', async () => {
   const calls = []
   const controller = new OverlayStartupController({
     loadRole: async () => {},
@@ -93,7 +93,7 @@ test('SEM-F24 / SEM-T04 / J19 keeps recovery explicit when geometry cannot settl
   assert.deepEqual(calls, ['reachable', 'overlay-startup-geometry-failed', 'exit'])
 })
 
-test('SEM-F24 / SEM-T04 / J19 exits when the recovery prompt itself fails', async () => {
+test('SEM-F24 / J19 exits when the recovery prompt itself fails', async () => {
   const calls = []
   const controller = new OverlayStartupController({
     loadRole: async () => {},
@@ -110,7 +110,7 @@ test('SEM-F24 / SEM-T04 / J19 exits when the recovery prompt itself fails', asyn
   assert.deepEqual(calls, ['exit'])
 })
 
-test('SEM-F24 / SEM-T04 / J19 maps renderer load rejection to explicit recovery', async () => {
+test('SEM-F24 / J19 maps renderer load rejection to explicit recovery', async () => {
   const calls = []
   const controller = new OverlayStartupController({
     loadRole: async (role) => {
@@ -127,4 +127,21 @@ test('SEM-F24 / SEM-T04 / J19 maps renderer load rejection to explicit recovery'
   controller.start()
   await new Promise((resolve) => setImmediate(resolve))
   assert.deepEqual(calls, ['overlay-startup-load-failed', 'exit'])
+})
+
+test('SEM-F24 / J19 keeps the toolbar reachable when native caption input preparation fails', async () => {
+  const calls = []
+  const controller = new OverlayStartupController({
+    loadRole: async () => { throw new Error('must not load after native preparation failure') },
+    prepareAttempt: () => false,
+    showReachableToolbar: () => calls.push('reachable'),
+    settleGeometry: async () => { throw new Error('must not settle after native preparation failure') },
+    activateOverlays: () => calls.push('active'),
+    promptRecovery: async (code) => { calls.push(code); return 'exit' },
+    exitApplication: () => calls.push('exit')
+  })
+
+  controller.start()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(calls, ['reachable', 'overlay-startup-native-input-failed', 'exit'])
 })

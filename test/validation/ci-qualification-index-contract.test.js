@@ -181,6 +181,7 @@ test('Windows CI installs and verifies the locked Electron runtime before every 
   assert.match(workflow, /"v\$packageVersion"/)
 
   for (const dependent of [
+    'scripts/caption-input-native-host-probe.js',
     'scripts/caption-layout-smoke.js',
     'scripts/db0-sqlite-smoke.js',
     'scripts/db1-storage-smoke.js',

@@ -1,6 +1,9 @@
 node_modules/
 dist/
 src/renderer-dist/
+native/caption-input/build/
+native/caption-input/*.node
+src/native/caption-input/*.node
 out/
 *.log
 .DS_Store

@@ -29,7 +29,8 @@ module.exports = {
     '!src/agent-runtime/**/*'
   ],
   asarUnpack: [
-    'node_modules/sherpa-onnx-win-x64/**/*'
+    'node_modules/sherpa-onnx-win-x64/**/*',
+    'src/native/caption-input/caption_input_native.node'
   ],
   win: {
     executableName: 'LiveSubtitle',

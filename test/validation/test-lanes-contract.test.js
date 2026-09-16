@@ -52,9 +52,15 @@ test('CI full regression delegates to the complete test command without replayin
   assert.equal(workflow.match(/run: npm run pretest\s/g)?.length, 1)
   assert.ok(workflow.indexOf('run: npm run pretest') < workflow.indexOf('scripts/caption-layout-smoke.js'))
   assert.doesNotMatch(workflow, /npm run verify:renderer|npm run package:(?:smoke|release)\s/)
+  const nativeBuild = workflow.indexOf('run: npm run build:native')
+  assert.ok(nativeBuild >= 0 && nativeBuild < workflow.indexOf('run: npm run pretest'),
+    'native addon must be built before Electron and package journeys')
+  const nativeProbe = workflow.indexOf('scripts/caption-input-native-host-probe.js')
+  assert.ok(nativeProbe > nativeBuild && nativeProbe < workflow.indexOf('run: npm run pretest'),
+    'native host boundary must be qualified after the addon build')
   for (const variant of ['smoke', 'release']) {
     assert.equal(scripts[`prepackage:${variant}:prepared`], undefined)
-    assert.equal(scripts[`prepackage:${variant}`], 'npm run verify:renderer')
+    assert.equal(scripts[`prepackage:${variant}`], 'npm run verify:renderer && npm run build:native')
     assert.match(workflow, new RegExp(`npm run package:${variant}:prepared`))
   }
   assert.doesNotMatch(scripts['test:ci'], /test:integration/)

@@ -54,6 +54,7 @@ const REQUIRED_NATIVE_FILES = Object.freeze([
   'sherpa-onnx-c-api.dll',
   'sherpa-onnx-cxx-api.dll'
 ])
+const CAPTION_INPUT_NATIVE_ENTRY = '/src/native/caption-input/caption_input_native.node'
 const SMOKE_SCRIPTS = Object.freeze([
   '/scripts/product-shell-smoke.js',
   '/scripts/model-ui-fixture-support.js',
@@ -186,7 +187,10 @@ function inspectPackageLayout (options) {
   const entries = asar.listPackage(asarPath).map((entry) => entry.replace(/\\/g, '/'))
   const productPayload = hashProductPayloadEntries(entries
     .filter((entry) => entry.startsWith('/src/'))
-    .filter((entry) => !asar.statFile(asarPath, entry.slice(1).replace(/\//g, path.sep)).files)
+    .filter((entry) => {
+      const stat = asar.statFile(asarPath, entry.slice(1).replace(/\//g, path.sep))
+      return !stat.files && stat.unpacked !== true
+    })
     .map((entry) => ({
       name: entry.slice(1),
       bytes: asar.extractFile(asarPath, entry.slice(1).replace(/\//g, path.sep))
@@ -233,6 +237,20 @@ function inspectPackageLayout (options) {
       throw new Error('a required native binary is not unpacked beside the addon')
     }
   }
+  const captionNativePath = path.join(
+    packageDir,
+    'resources',
+    'app.asar.unpacked',
+    'src',
+    'native',
+    'caption-input',
+    'caption_input_native.node'
+  )
+  if (!entries.includes(CAPTION_INPUT_NATIVE_ENTRY) ||
+      asar.statFile(asarPath, path.join('src', 'native', 'caption-input', 'caption_input_native.node')).unpacked !== true ||
+      !fs.statSync(captionNativePath, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error('caption input native addon is not unpacked beside the product sources')
+  }
 
   let installerSha256 = null
   let signingStatus = 'not-assessed'
@@ -273,7 +291,7 @@ function inspectPackageLayout (options) {
   }
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: 'packaged-layout-qualification',
     generatedAt: new Date().toISOString(),
     result: 'pass',
@@ -315,7 +333,8 @@ function inspectPackageLayout (options) {
     native: {
       requiredBinaryCount: REQUIRED_NATIVE_FILES.length,
       unpackedBinaryCount: REQUIRED_NATIVE_FILES.length,
-      allMarkedUnpacked: true
+      allMarkedUnpacked: true,
+      captionInputAddonUnpacked: true
     },
     evidenceBinding,
     limitations: options.variant === 'release'
@@ -325,7 +344,7 @@ function inspectPackageLayout (options) {
 }
 
 function validatePackageLayoutReport (report, expectedVariant) {
-  if (!report || report.schemaVersion !== 2 || report.kind !== 'packaged-layout-qualification' ||
+  if (!report || ![2, 3].includes(report.schemaVersion) || report.kind !== 'packaged-layout-qualification' ||
       report.result !== 'pass' || report.gateStatus !== 'packaged-ci-qualified' ||
       report.artifact?.variant !== expectedVariant || report.artifact?.arch !== 'x64' ||
       report.artifact?.appVersion !== '0.1.0' ||
@@ -349,7 +368,10 @@ function validatePackageLayoutReport (report, expectedVariant) {
       report.layout?.modelTensorsBundled !== false || report.layout?.audioPayloadsBundled !== false ||
       report.native?.requiredBinaryCount !== REQUIRED_NATIVE_FILES.length ||
       report.native?.unpackedBinaryCount !== REQUIRED_NATIVE_FILES.length ||
-      report.native?.allMarkedUnpacked !== true) {
+      report.native?.allMarkedUnpacked !== true ||
+      (report.schemaVersion >= 3 && report.native?.captionInputAddonUnpacked !== true) ||
+      (report.schemaVersion < 3 && report.native?.captionInputAddonUnpacked !== undefined &&
+       report.native.captionInputAddonUnpacked !== true)) {
     throw new Error('invalid packaged layout qualification report')
   }
   if (expectedVariant === 'release') {
@@ -404,6 +426,7 @@ if (require.main === module) {
 module.exports = {
   REQUIRED_ASAR_ENTRIES,
   REQUIRED_NATIVE_FILES,
+  CAPTION_INPUT_NATIVE_ENTRY,
   SMOKE_SCRIPTS,
   inspectPackageLayout,
   parseArguments,

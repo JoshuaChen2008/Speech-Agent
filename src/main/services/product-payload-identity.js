@@ -5,7 +5,9 @@
 /* Canonical identity for the complete runtime source payload inside app.asar.
    The smoke and release packages have different main entries, but both carry
    the same executable src/ tree. Electron Builder excludes build-only .d.ts
-   declarations, so the workspace collector mirrors that boundary. */
+   declarations and unpacked native addons, so the workspace collector mirrors
+   those boundaries. Native binary presence is qualified separately by the
+   package layout verifier. */
 
 const crypto = require('node:crypto')
 const fs = require('node:fs')
@@ -71,7 +73,7 @@ function collectProductPayloadEntries (root) {
         visit(target)
       } else if (entry.isFile()) {
         const relative = path.relative(resolvedRoot, target).replace(/\\/g, '/')
-        if (relative.endsWith('.d.ts')) continue
+        if (relative.endsWith('.d.ts') || relative.endsWith('.node')) continue
         if (DEVELOPMENT_ONLY_SRC_PREFIXES.some((prefix) => relative.startsWith(prefix))) continue
         entries.push({ name: `src/${relative}`, bytes: fs.readFileSync(target) })
       } else {

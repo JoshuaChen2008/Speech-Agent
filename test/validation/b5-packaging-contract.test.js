@@ -262,7 +262,10 @@ test('release package uses an explicit ASAR allowlist, hardened fuses and per-us
     '!src/agent-provider/**/*',
     '!src/agent-runtime/**/*'
   ])
-  assert.deepEqual(releaseConfig.asarUnpack, ['node_modules/sherpa-onnx-win-x64/**/*'])
+  assert.deepEqual(releaseConfig.asarUnpack, [
+    'node_modules/sherpa-onnx-win-x64/**/*',
+    'src/native/caption-input/caption_input_native.node'
+  ])
   assert.deepEqual(releaseConfig.electronFuses, {
     runAsNode: false,
     enableNodeOptionsEnvironmentVariable: false,
@@ -284,7 +287,8 @@ test('release package uses an explicit ASAR allowlist, hardened fuses and per-us
 
   const textExtensions = ['.css', '.html', '.js', '.json', '.md', '.mjs', '.ts', '.tsx']
   const productExtensions = [...new Set(collectProductPayloadEntries(path.join(ROOT, 'src'))
-    .map((entry) => path.extname(entry.name)))].sort()
+    .map((entry) => path.extname(entry.name))
+    .filter((extension) => extension !== '.node'))].sort()
   assert.deepEqual(productExtensions, textExtensions)
   const attributes = fs.readFileSync(path.join(ROOT, '.gitattributes'), 'utf8')
   for (const extension of textExtensions) {
@@ -292,6 +296,7 @@ test('release package uses an explicit ASAR allowlist, hardened fuses and per-us
     assert.match(attributes, new RegExp(`^src/\\*\\*\\/\\*${escaped} text eol=lf$`, 'm'),
       `complete product ${extension} payload must be pinned to LF checkout bytes`)
   }
+  assert.match(attributes, /^src\/native\/\*\*\/\*\.node binary$/m)
 })
 
 test('SEM-F18/SEM-F29/SEM-T12: product payload identity excludes build-only declarations and Agent development trees', (t) => {
@@ -407,6 +412,16 @@ test('layout report validator separates the release installer from the test pack
     limitations: ['test-only-main-entry', 'win-unpacked-not-nsis-installed', 'not-clean-machine-i4']
   }
   assert.equal(validatePackageLayoutReport(base, 'smoke'), base)
+  const current = {
+    ...base,
+    schemaVersion: 3,
+    native: { ...base.native, captionInputAddonUnpacked: true }
+  }
+  assert.equal(validatePackageLayoutReport(current, 'smoke'), current)
+  assert.throws(() => validatePackageLayoutReport({
+    ...current,
+    native: { ...base.native }
+  }, 'smoke'), /invalid packaged layout qualification report/)
   assert.throws(() => validatePackageLayoutReport({
     ...base,
     artifact: { ...base.artifact, variant: 'release', mainEntry: 'src/main.js' }

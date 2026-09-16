@@ -1811,9 +1811,18 @@ function packagedNativeLayout () {
     'sherpa-onnx-c-api.dll',
     'sherpa-onnx-cxx-api.dll'
   ]
+  const captionInputAddon = path.join(
+    process.resourcesPath,
+    'app.asar.unpacked',
+    'src',
+    'native',
+    'caption-input',
+    'caption_input_native.node'
+  )
   return {
     nativeBinaryCount: required.filter((name) => fs.existsSync(path.join(nativeRoot, name))).length,
-    requiredNativeBinaryCount: required.length
+    requiredNativeBinaryCount: required.length,
+    captionInputAddonPresent: fs.statSync(captionInputAddon, { throwIfNoEntry: false })?.isFile() === true
   }
 }
 
@@ -2161,7 +2170,8 @@ async function runRestartJourney () {
   const packagedDb0 = await runPackagedDb0Qualification()
   const nativeLayout = packagedNativeLayout()
   if (app.isPackaged && (!nativeLayout ||
-      nativeLayout.nativeBinaryCount !== nativeLayout.requiredNativeBinaryCount)) {
+      nativeLayout.nativeBinaryCount !== nativeLayout.requiredNativeBinaryCount ||
+      nativeLayout.captionInputAddonPresent !== true)) {
     throw new Error('packaged native binaries are not colocated in app.asar.unpacked')
   }
 
@@ -2462,7 +2472,8 @@ async function runJourney () {
   const packagedDb0 = await runPackagedDb0Qualification()
   const nativeLayout = packagedNativeLayout()
   if (app.isPackaged && (!nativeLayout ||
-      nativeLayout.nativeBinaryCount !== nativeLayout.requiredNativeBinaryCount)) {
+      nativeLayout.nativeBinaryCount !== nativeLayout.requiredNativeBinaryCount ||
+      nativeLayout.captionInputAddonPresent !== true)) {
     throw new Error('packaged native binaries are not colocated in app.asar.unpacked')
   }
   let settings = await waitFor(() => windowFor('/settings/settings.html'), 'settings renderer')

@@ -94,6 +94,10 @@ const {
   WindowInteractionGenerationController
 } = require('./main/window-interaction-generation-controller')
 const { CaptionNativeHitController } = require('./main/caption-native-hit-controller')
+const {
+  createBinding: createCaptionNativeInputBinding,
+  loadCaptionInputNative
+} = require('./main/caption-input-native')
 const { isInteractionReadyIntent } = require('./contracts/window-interaction')
 const { loadRenderer, loadRendererFailClosed } = require('./main/renderer-entry')
 const {
@@ -127,6 +131,8 @@ let agentRequestedSessionId = null
 /** @type {HistoryService | null} */ let historyService = null
 /** @type {PowerSessionGuard | null} */ let powerSessionGuard = null
 /** @type {OverlayStartupController | null} */ let overlayStartupController = null
+/** @type {null | { isAttached: Function, dispose: Function, matches: Function }} */ let captionNativeInputBinding = null
+/** @type {object | null} */ let captionNativeInputAddon = null
 /** @type {RefinementFaultLog | null} */ let refinementFaultLog = null
 /** @type {null | { start: Function, stop: Function, getOverview: Function, manage: Function }} */ let personalContextRuntime = null
 /** @type {null | {catalog: Function, configure: Function, bind: Function, cancelAllModelTests?: Function, close?: Function}} */ let modelAccessRuntime = null
@@ -548,6 +554,43 @@ function makeOverlay (role, width, height, x, y, focusable = true) {
   return win
 }
 
+function prepareCaptionNativeInput (win) {
+  if (process.platform !== 'win32') return true
+  if (!win || win.isDestroyed() || typeof win.getNativeWindowHandle !== 'function') {
+    throw new Error('caption native input window is unavailable')
+  }
+  const hwnd = win.getNativeWindowHandle()
+  if (captionNativeInputBinding?.isAttached() === true &&
+      typeof captionNativeInputBinding.matches === 'function' &&
+      captionNativeInputBinding.matches(hwnd)) return true
+  if (captionNativeInputBinding) {
+    try { captionNativeInputBinding.dispose() } catch {}
+    captionNativeInputBinding = null
+  }
+  if (!captionNativeInputAddon) {
+    captionNativeInputAddon = loadCaptionInputNative({
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath
+    })
+  }
+  captionNativeInputBinding = createCaptionNativeInputBinding(
+    captionNativeInputAddon,
+    hwnd
+  )
+  if (!captionNativeInputBinding.isAttached()) {
+    captionNativeInputBinding.dispose()
+    captionNativeInputBinding = null
+    throw new Error('caption native input binding is not attached')
+  }
+  return true
+}
+
+function disposeCaptionNativeInput () {
+  if (!captionNativeInputBinding) return
+  try { captionNativeInputBinding.dispose() } catch {}
+  captionNativeInputBinding = null
+}
+
 function clamp (value, min, max) {
   return Math.min(max, Math.max(min, Math.round(value)))
 }
@@ -634,6 +677,7 @@ function createWindows () {
         createdToolbar.setBackgroundColor('#202020')
         createdToolbar.setIgnoreMouseEvents(false)
       }
+      return prepareCaptionNativeInput(createdCaption)
     },
     showReachableToolbar: () => {
       if (!createdToolbar.isDestroyed()) createdToolbar.show()
@@ -656,6 +700,7 @@ function createWindows () {
 
   captionWin.on('closed', () => {
     captionNativeHitController.stop()
+    disposeCaptionNativeInput()
     windowInteractionController.stopAll()
     captionWin = null
   })
@@ -1508,6 +1553,7 @@ async function bootstrapApplication () {
 function cleanupUiRuntime () {
   globalShortcut.unregisterAll()
   windowInteractionController.stopAll()
+  disposeCaptionNativeInput()
   if (powerSessionGuard) {
     powerSessionGuard.stop()
     powerSessionGuard = null

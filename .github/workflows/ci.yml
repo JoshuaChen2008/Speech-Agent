@@ -82,6 +82,35 @@ jobs:
             throw "Electron runtime version does not match the locked package version"
           }
 
+      - name: Build caption input native addon
+        run: npm run build:native
+
+      - name: Qualify caption input native host boundary
+        shell: powershell
+        run: |
+          $probeDir = Join-Path $PWD '.artifacts/caption-input-native-ci'
+          New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
+          $probeStdout = Join-Path $probeDir 'stdout.log'
+          $probeStderr = Join-Path $probeDir 'stderr.log'
+          $probeElectron = Join-Path $PWD 'node_modules/electron/dist/electron.exe'
+          $probeProcess = Start-Process -FilePath $probeElectron `
+            -ArgumentList @('--no-sandbox','scripts/caption-input-native-host-probe.js') `
+            -WorkingDirectory $PWD `
+            -RedirectStandardOutput $probeStdout `
+            -RedirectStandardError $probeStderr `
+            -WindowStyle Hidden -Wait -PassThru
+          $probeOutput = Get-Content -Raw -ErrorAction SilentlyContinue $probeStdout
+          $probeOutput
+          $probeErrors = Get-Content -Raw -ErrorAction SilentlyContinue $probeStderr
+          if ($probeProcess.ExitCode -ne 0 -or $probeOutput -notmatch '"result":"pass"') {
+            $probeErrors
+            throw "Caption input native host probe failed with exit code $($probeProcess.ExitCode)"
+          }
+          if ($probeErrors -match 'GPU process|ContextResult::kFatalFailure|FATAL: GPU') {
+            $probeErrors
+            throw 'Caption input native host probe was masked by an Electron GPU failure'
+          }
+
       - name: Prepare renderer bundles once for this checkout
         run: npm run pretest
 

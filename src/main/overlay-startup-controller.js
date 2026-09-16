@@ -57,8 +57,17 @@ class OverlayStartupController {
     if (this.stopped) return false
     const attempt = ++this.attempt
     this.clearAttemptTimeout()
-    this.prepareAttempt()
+    let prepared = true
+    try {
+      prepared = this.prepareAttempt() !== false
+    } catch {
+      prepared = false
+    }
     this.showReachableToolbar()
+    if (!prepared) {
+      void this.fail(attempt, 'overlay-startup-native-input-failed')
+      return true
+    }
     this.timeoutHandle = this.scheduleTimeout(() => {
       void this.fail(attempt, 'overlay-startup-timeout')
     }, OVERLAY_STARTUP_TIMEOUT_MS)
