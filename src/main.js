@@ -53,6 +53,7 @@ const {
   registerPersonalContextIpc
 } = require('./main/ipc/personal-context-ipc')
 const { registerAgentSettingsIpc } = require('./main/ipc/agent-settings-ipc')
+const { registerSessionSummarySettingsIpc } = require('./main/ipc/session-summary-settings-ipc')
 const { publicConfigPayload } = require('./main/config-public-projection')
 const {
   broadcastModelAccessChanged,
@@ -116,6 +117,12 @@ for (const key of Object.keys(process.env)) {
 /** @type {BrowserWindow | null} */ let settingsWin = null
 /** @type {BrowserWindow | null} */ let historyWin = null
 /** @type {BrowserWindow | null} */ let agentWin = null
+let agentOpenRequestId = 0
+let agentOpenWaitingTimer = null
+let agentOpenFailed = false
+let agentOpenPhase = 'closed'
+let agentRendererReady = false
+let agentRequestedSessionId = null
 /** @type {SessionCoordinator | null} */ let coordinator = null
 /** @type {HistoryService | null} */ let historyService = null
 /** @type {PowerSessionGuard | null} */ let powerSessionGuard = null
@@ -320,7 +327,7 @@ function invalidateToolbarOverlap () {
 
 function broadcastConfig () {
   const value = payload()
-  for (const win of [captionWin, toolbarWin, settingsWin, historyWin]) send(win, CHANNELS.CONFIG_CHANGED, value)
+  for (const win of [captionWin, toolbarWin, settingsWin, historyWin, agentWin]) send(win, CHANNELS.CONFIG_CHANGED, value)
 }
 
 function diagnosticLabel (value, allowlist) {
@@ -340,7 +347,7 @@ function broadcastRefinementNotice (notice) {
 }
 
 function broadcastAgentContextChanged (event) {
-  broadcastPersonalContextChanged({ settings: settingsWin, history: historyWin }, event)
+  broadcastPersonalContextChanged({ settings: settingsWin, history: historyWin, agent: agentWin }, event)
 }
 
 function broadcastAgentModelChanged (event) {
@@ -364,6 +371,14 @@ registerAgentSettingsIpc({
   ipcMain,
   authorize: requireSender,
   getRuntime: () => personalContextRuntime,
+  onChanged: () => broadcastConfig()
+})
+
+registerSessionSummarySettingsIpc({
+  ipcMain,
+  authorize: requireSender,
+  getConfig: () => config.get(),
+  updateSummaryUseMemory: (request) => config.updateSummaryUseMemory(request),
   onChanged: () => broadcastConfig()
 })
 
@@ -446,6 +461,11 @@ function registerWindowRole (win, role) {
     navigationEpoch += 1
     windowInteractionController.stopForSender(senderId)
     windowInteractionGenerationController.failClosedAfterRendererGone(role)
+    if (role === 'agent') {
+      agentRendererReady = false
+      agentOpenFailed = true
+      publishAgentOpenStatus('failed')
+    }
     if (role === 'toolbar') invalidateToolbarOverlap()
     exitEvidence.recordRenderProcessGone(win.webContents, details)
     console.error(`[electron.renderer] role=${role} reason=${details.reason} exitCode=${details.exitCode}`)
@@ -456,6 +476,7 @@ function registerWindowRole (win, role) {
     navigationEpoch += 1
     windowInteractionController.stopForSender(senderId)
     windowInteractionGenerationController.suspendRoleForReload(role)
+    if (role === 'agent') agentRendererReady = false
     if (role === 'toolbar') invalidateToolbarOverlap()
   })
   win.webContents.on('preload-error', () => exitEvidence.recordPreloadError(win.webContents))
@@ -740,19 +761,98 @@ function openHistoryWindow () {
     .catch((error) => logError('renderer.history.load', error))
 }
 
-function openAgentWindow () {
-  if (agentWin && !agentWin.isDestroyed()) { agentWin.show(); agentWin.focus(); return }
-  agentWin = new BrowserWindow({
-    width: 720, height: 640, minWidth: 520, minHeight: 420,
-    titleBarStyle: 'hidden', backgroundMaterial: 'mica', backgroundColor: '#202020',
-    resizable: true, maximizable: true, minimizable: true, skipTaskbar: false, show: false,
-    webPreferences: { preload: preloadPath('agent'), contextIsolation: true, nodeIntegration: false, sandbox: false }
-  })
+function validAgentSessionReference (value) {
+  return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,160}$/.test(value) ? value : null
+}
+
+function publishAgentOpenStatus (phase) {
+  const messages = {
+    opening: '正在打开会话总结…',
+    ready: '会话总结已打开',
+    waiting: '打开时间较长，可重试',
+    failed: '暂时无法打开会话总结，请重试'
+  }
+  agentOpenPhase = phase
+  send(toolbarWin, CHANNELS.AGENT_OPEN_STATUS, { schemaVersion: 1, phase, message: messages[phase] || '' })
+}
+
+function requestAgentScope (sessionId) {
+  const reference = validAgentSessionReference(sessionId)
+  if (reference) send(agentWin, CHANNELS.AGENT_SCOPE_REQUESTED, { kind: 'session', reference })
+}
+
+function openAgentWindow ({ sessionId = null } = {}) {
+  const requestedSession = validAgentSessionReference(sessionId)
+  if (requestedSession) agentRequestedSessionId = requestedSession
+  if (agentWin && !agentWin.isDestroyed()) {
+    agentWin.show(); agentWin.focus()
+    requestAgentScope(agentRequestedSessionId)
+    if (agentOpenFailed || agentOpenPhase === 'waiting' || agentOpenPhase === 'failed') {
+      agentOpenFailed = false
+      agentRendererReady = false
+      publishAgentOpenStatus('opening')
+      void loadRendererFailClosed(agentWin, 'agent', { isPackaged: app.isPackaged })
+        .then(() => {
+          agentRendererReady = true
+          if (!agentWin.isDestroyed()) { agentWin.show(); agentWin.focus() }
+          publishAgentOpenStatus('ready')
+        })
+        .catch(() => { agentOpenFailed = true; publishAgentOpenStatus('failed') })
+    } else if (agentRendererReady) {
+      publishAgentOpenStatus('ready')
+    } else if (agentOpenPhase !== 'opening') {
+      publishAgentOpenStatus('opening')
+    }
+    return { ok: true, phase: agentOpenPhase, reused: true }
+  }
+  const requestId = ++agentOpenRequestId
+  if (requestedSession) agentRequestedSessionId = requestedSession
+  agentRendererReady = false
+  publishAgentOpenStatus('opening')
+  if (agentOpenWaitingTimer) clearTimeout(agentOpenWaitingTimer)
+  agentOpenWaitingTimer = setTimeout(() => {
+    if (requestId === agentOpenRequestId && agentWin && !agentWin.isDestroyed()) publishAgentOpenStatus('waiting')
+  }, 5000)
+  try {
+    agentWin = new BrowserWindow({
+      width: 720, height: 640, minWidth: 520, minHeight: 420,
+      titleBarStyle: 'hidden', backgroundMaterial: 'mica', backgroundColor: '#202020',
+      resizable: true, maximizable: true, minimizable: true, skipTaskbar: false, show: false,
+      webPreferences: { preload: preloadPath('agent'), contextIsolation: true, nodeIntegration: false, sandbox: false }
+    })
+  } catch (error) {
+    if (agentOpenWaitingTimer) { clearTimeout(agentOpenWaitingTimer); agentOpenWaitingTimer = null }
+    agentWin = null
+    agentOpenFailed = true
+    publishAgentOpenStatus('failed')
+    logError('window.agent.create', error)
+    return { ok: false, phase: 'failed', reused: false }
+  }
   registerWindowRole(agentWin, 'agent')
   hardenContents(agentWin)
-  agentWin.once('ready-to-show', () => { if (!agentWin.isDestroyed()) { agentWin.show(); agentWin.focus() } })
-  agentWin.on('closed', () => { agentWin = null })
-  void loadRendererFailClosed(agentWin, 'agent', { isPackaged: app.isPackaged }).catch((error) => logError('renderer.agent.load', error))
+  agentWin.webContents.once('did-finish-load', () => {
+    agentRendererReady = true
+    requestAgentScope(agentRequestedSessionId)
+  })
+  agentWin.once('ready-to-show', () => {
+    if (agentOpenWaitingTimer) { clearTimeout(agentOpenWaitingTimer); agentOpenWaitingTimer = null }
+    if (!agentWin.isDestroyed()) { agentWin.show(); agentWin.focus(); if (agentRendererReady) publishAgentOpenStatus('ready') }
+  })
+  agentWin.on('closed', () => {
+    if (agentOpenWaitingTimer) { clearTimeout(agentOpenWaitingTimer); agentOpenWaitingTimer = null }
+    agentWin = null
+    agentOpenFailed = false
+    agentOpenPhase = 'closed'
+    agentRendererReady = false
+  })
+  void loadRendererFailClosed(agentWin, 'agent', { isPackaged: app.isPackaged })
+    .catch((error) => {
+      agentOpenFailed = true
+      agentRendererReady = false
+      publishAgentOpenStatus('failed')
+      logError('renderer.agent.load', error)
+    })
+  return { ok: true, phase: 'opening', reused: false }
 }
 
 function persistCaptionBounds (bounds) {
@@ -1034,6 +1134,10 @@ ipcMain.on(CHANNELS.TOOLBAR_ACTION, (event, action) => {
   else if (action === 'minimize') applicationWindowLifecycleController.minimize()
   else if (action === 'close') app.quit()
 })
+ipcMain.handle(CHANNELS.AGENT_OPEN, (event) => {
+  requireSender(event, CHANNELS.AGENT_OPEN)
+  return openAgentWindow()
+})
 ipcMain.on(CHANNELS.SETTINGS_CLOSE, (event) => {
   const { win } = requireSender(event, CHANNELS.SETTINGS_CLOSE)
   win.close()
@@ -1042,9 +1146,18 @@ ipcMain.on(CHANNELS.HISTORY_CLOSE, (event) => {
   const { win } = requireSender(event, CHANNELS.HISTORY_CLOSE)
   win.close()
 })
+ipcMain.on(CHANNELS.HISTORY_SUMMARY, (event, sessionId) => {
+  requireSender(event, CHANNELS.HISTORY_SUMMARY)
+  const reference = validAgentSessionReference(sessionId)
+  if (reference) openAgentWindow({ sessionId: reference })
+})
 ipcMain.on(CHANNELS.AGENT_CLOSE, (event) => {
   const { win } = requireSender(event, CHANNELS.AGENT_CLOSE)
   win.close()
+})
+ipcMain.on(CHANNELS.AGENT_OPEN_SETTINGS, (event) => {
+  requireSender(event, CHANNELS.AGENT_OPEN_SETTINGS)
+  openSettingsWindow('agentModel')
 })
 ipcMain.handle(CHANNELS.CONFIG_GET, (event) => {
   requireSender(event, CHANNELS.CONFIG_GET)
@@ -1351,6 +1464,7 @@ async function bootstrapApplication () {
       scheduler: formalAgentScheduler,
       routeOrchestrator: formalRouteOrchestrator,
       promptStore: formalAgentPrompts,
+      getConfig: () => config.get(),
       exporter: new AgentInteractionExporter({
         storage: applicationRuntime.gateway,
         showSaveDialog: (ownerWindow, options) => ownerWindow

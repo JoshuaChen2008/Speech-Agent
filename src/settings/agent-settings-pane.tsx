@@ -6,6 +6,10 @@ const CONTRACT_HEADER = Object.freeze({
   contract_id: 'speech-agent.agent-settings.ui',
   contract_version: '1.0.0'
 })
+const SUMMARY_CONTRACT_HEADER = Object.freeze({
+  contract_id: 'speech-agent.session-summary-settings.ui',
+  contract_version: '1.0.0'
+})
 
 function settingErrorMessage (code: unknown): string {
   switch (code) {
@@ -50,9 +54,37 @@ export function AgentSettingsPane ({ shell, config, onConfigRefresh }: {
     }
   }
 
+  const updateSummaryMemory = async (enabled: boolean) => {
+    if (!config || pending || typeof shell.setSummaryMemoryPreference !== 'function') return
+    setPending(true)
+    setNotice('正在保存会话总结设置…')
+    try {
+      const response = await shell.setSummaryMemoryPreference({
+        ...SUMMARY_CONTRACT_HEADER,
+        expected_revision: config.agentSettingsRevision,
+        summary_use_memory: enabled === true
+      })
+      if (response?.ok !== true) {
+        setNotice(response?.error?.code === 'SESSION_SUMMARY_SETTINGS_REVISION_CONFLICT'
+          ? '设置已在别处更新，请重新载入后再试。'
+          : '会话总结设置未能保存，请稍后重试。')
+        await onConfigRefresh()
+        return
+      }
+      setNotice('')
+      await onConfigRefresh()
+    } catch {
+      setNotice('会话总结设置未能保存，请稍后重试。')
+      await onConfigRefresh()
+    } finally {
+      setPending(false)
+    }
+  }
+
   const agentEnabled = config?.agentEnabled === true
   const memoryEnabled = config?.memoryEnabled !== false
   const cloudDisclosureAccepted = config?.cloudDisclosureAccepted === true
+  const summaryUseMemory = config?.summaryUseMemory !== false
 
   return <section className="agent-settings" aria-labelledby="agentSettingsTitle">
     <h2 id="agentSettingsTitle">Agent 系统</h2>
@@ -64,6 +96,12 @@ export function AgentSettingsPane ({ shell, config, onConfigRefresh }: {
           <div className="hint">开启后才会创建后台 Agent 任务和正式 Agent 交互。</div></div>
         <label className="switch"><input type="checkbox" checked={agentEnabled} disabled={config == null || pending}
           aria-label="启用 Agent 系统" onChange={(event) => void update({ agent_enabled: event.currentTarget.checked })} /><span>{agentEnabled ? '已开启' : '已关闭'}</span></label>
+      </div>
+      <div className="row">
+        <div><div className="label">总结时参考记忆</div>
+          <div className="hint">生成总结时补充已记住的信息；关闭后仍可自动整理记忆，只使用本次会话。</div></div>
+        <label className="switch"><input type="checkbox" checked={summaryUseMemory} disabled={config == null || pending || typeof shell.setSummaryMemoryPreference !== 'function'}
+          aria-label="总结时参考记忆" onChange={(event) => void updateSummaryMemory(event.currentTarget.checked)} /><span>{summaryUseMemory ? '已开启' : '已关闭'}</span></label>
       </div>
       <div className="row">
         <div><div className="label">个人记忆</div>

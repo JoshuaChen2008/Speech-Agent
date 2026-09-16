@@ -4,7 +4,7 @@
 > Contract ID：`speech-agent.personal-context.ui`
 > Contract version：`1.1.0`
 
-本文是 `settings` / `history` renderer-facing contract 的权威说明。可执行 exact validator 位于 `src/agent/contracts/agent-context-ui.js`；脱敏 preview fixture 位于 `src/agent/contracts/fixtures/agent-context-ui/v1.1.0/`。若本文与可执行 validator 不一致，发布前必须停止签发并修正二者；不得由 UI 选择性兼容。`v1.0.0/` 保留为已签发历史 fixture，不再由当前生产 validator 接受。
+本文是 `agent` / `settings` / `history` renderer-facing contract 的权威说明。可执行 exact validator 位于 `src/agent/contracts/agent-context-ui.js`；脱敏 preview fixture 位于 `src/agent/contracts/fixtures/agent-context-ui/v1.1.0/`。若本文与可执行 validator 不一致，发布前必须停止签发并修正二者；不得由 UI 选择性兼容。`v1.0.0/` 保留为已签发历史 fixture，不再由当前生产 validator 接受。Agent Bar 在本轮接入同一合同，用于“记住其中一条”明确写入和个人上下文变更后的刷新。
 
 语义仍以 `semantic-contract.md`、ADR 0013–0015、S1 OpenSpec 与 `testing-strategy.md` J21 为上位权威。本文只冻结已有 S1 语义的 UI projection、IPC 边界和版本规则，不定义 S2–S6。
 
@@ -33,17 +33,17 @@
 | Core | 三个 IPC seam、角色权限、exact 校验、版本协商、revision、排序/分页、错误分类、幂等、隐私裁剪、存储与后台恢复 | renderer 的布局、视觉、文案层级、动效 |
 | UI/UX | loading/pending/empty/ready/unavailable/conflict 的呈现、焦点与可访问性、何时按合同发起重试或 reload | SQLite、自由查询、错误字符串解释、scheduler 状态推断、乐观成功、额外字段兼容 |
 
-本版本不实现 main handler、preload、SQLite 或 renderer。它只冻结 S5-Integration 将实现的边界。不得引用、包装或依赖已退役的旧 Agent 树；正式实现只允许走 `src/agent/**`。
+main handler、preload、SQLite 和 renderer 仍由各自模块持有；本文只冻结它们之间的 exact 边界。不得引用、包装或依赖已退役的旧 Agent 树；正式实现只允许走 `src/agent/**`。Agent Bar 的接线以 `src/preload/agent.js` 和 `src/agent/agent-view.tsx` 为当前实现。
 
 ## 3. 公共 IPC seam
 
 | seam | 形态 | 允许角色 | 用途 |
 |---|---|---|---|
-| `agent-context:get-overview` | invoke | `settings`, `history` | 读取计数、资格、个人记忆处理状态与权威 revision |
-| `agent-context:manage` | invoke | `settings`, `history` | 有界查看和六种管理命令 |
-| `agent-context:changed` | observer event | `settings`, `history` | 只通知更高权威 revision；接收方重新读取，不携带数据正文 |
+| `agent-context:get-overview` | invoke | `agent`, `settings`, `history` | 读取计数、资格、个人记忆处理状态与权威 revision |
+| `agent-context:manage` | invoke | `agent`, `settings`, `history` | 有界查看和六种管理命令；Agent 只提交用户明确选择的记忆 |
+| `agent-context:changed` | observer event | `agent`, `settings`, `history` | 只通知更高权威 revision；接收方重新读取，不携带数据正文 |
 
-`caption`、`toolbar` 和未知角色在进入个人上下文模块前拒绝。拒绝不得改变 projection、revision 或存储。
+`caption`、`toolbar` 和未知角色在进入个人上下文模块前拒绝。拒绝不得改变 projection、revision 或存储。Agent Bar 只拥有与设置页相同的合同方法，不取得 SQLite、自由查询或 IPC 原始句柄。
 
 现有 preload global 不改名；S5-Integration 必须在两个 global 上映射同一组方法，不能让 renderer 直接取得 `ipcRenderer`：
 
@@ -53,6 +53,7 @@
 | `settings` | `window.shell` | `manageAgentContext(request)` | invoke `agent-context:manage`，入参/出参见 §5–§6 |
 | `settings` | `window.shell` | `onAgentContextChanged(callback)` | subscribe `agent-context:changed`；callback 只接收 `ChangedEvent`；返回 unsubscribe function |
 | `history` | `window.historyApi` | 同上三个方法 | 同一频道与 exact payload；权限不扩大 |
+| `agent` | `window.agentApi` | `getAgentContextOverview(request)` / `manageAgentContext(request)` / `onAgentContextChanged(callback)` | 同一频道与 exact payload；只用于用户明确的“记住其中一条”和刷新，不改变总结读取政策 |
 
 角色由 main 根据 sender/window 身份判定，不作为 renderer 可填写字段进入生产 request。fixture 的 `caller_role` 只用于预览授权/拒绝场景。
 

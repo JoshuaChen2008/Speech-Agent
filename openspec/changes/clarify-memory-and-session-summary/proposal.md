@@ -1,0 +1,31 @@
+## Why
+
+用户需要系统从多次字幕会话中持续整理个人上下文，并能读到清楚、可纠正的记忆概览；目前条目列表不能表达这种综合理解。另一个独立需求是单次会话总结，现有“Agent Bar”名称无法说明用途，用户还反馈点击后没有可见反馈，其具体运行根因尚未诊断。
+
+## What Changes
+
+- 新增个人记忆综合视图，用户界面称“记忆概览”，从已授权的会话经历记录与个人记忆形成可追溯、可更新的有界投影；保留底层条目和来源查看。
+- 将正式 Agent Bar 的用户入口组织为“会话总结”，历史上下文内使用“总结此会话”，覆盖打开、加载、未配置、生成、取消和失败反馈；内部执行宿主与隔离入口边界不变。
+- 增加全局“总结时参考记忆”设置，与后台“自动整理记忆”分别控制；取值和实际读取范围在新运行创建时冻结。
+- **BREAKING**：单次总结的请求、生成结果、查看、复制以及普通结果编辑/接受/拒绝不自动进入交互记忆摄取；只有单独明确的记住/忘记动作进入既有管理边界。其它会话问答信号保留既有规则。
+- 两份 spec 共用用户文案、来源隔离和验收矩阵，先交付单次总结闭环，再交付跨会话记忆概览。
+- 会话总结记忆参考首次默认开启；生成前明确展示实际读取范围。本次改动实施前既有能力证据不晋级，预算等其它选择仍以 design.md 为准。
+
+## Capabilities
+
+### New Capabilities
+
+- `personal-memory-overview`: 后台异步整理、跨会话综合视图、来源与纠正、删除失效和恢复边界。
+- `session-summary-experience`: 面向普通用户的会话总结入口、全局记忆辅助偏好、无记忆读写隔离及可见反馈。
+
+### Modified Capabilities
+
+无既有主 spec（当前 `openspec/specs/` 为空）。本增量修订既有 SEM-F30/F31/F32/F34/F35 对应子边界，追加登记 SEM-F37/F38 与 J28/J29；不把未归档 change 当作主 spec 重写。
+
+## Impact
+
+- 规范与登记：CONTEXT.md、docs/semantic-contract.md、docs/testing-strategy.md、docs/agent-ui-ux-handoff.md。
+- 后续实现涉及正式 `src/agent/personal-context`、`execution-host`、`formal-run`、contracts、storage worker、ConfigStore、main/preload、settings、toolbar、history 与 agent renderer；不依赖 `src/agent-mvp` 等旧树。
+- 需要新增正式 SQLite migration、版本化合同与固定 recipe 登记；不得修改既有 migration checksum、增加向量数据库或第二条模型执行路径。
+- 不改变字幕采集、单路互斥、首次稳定转写及独立离线字幕能力；不保存现场音频。
+- 相关门禁：SEM-F14/F30–F35/F37/F38、SEM-T01–T06；J21/J22/J24/J26/J27/J28/J29。

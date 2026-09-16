@@ -16,8 +16,27 @@ const { app, BrowserWindow, ipcMain } = require('electron')
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
 const eligibilityProbe = { count: 0, nextHold: null }
+const inputProbe = { pending: false, rejected: false, invalidCommands: 0 }
 const originalIpcHandle = ipcMain.handle.bind(ipcMain)
 ipcMain.handle = (channel, handler) => originalIpcHandle(channel, async (...args) => {
+  // Pause the real command, inspect its renderer, then retain its real result.
+  if (channel === 'agent-model:configure' && args[1]?.command?.httpsOrigin === 'http://invalid.example') {
+    inputProbe.invalidCommands += 1
+    const contents = args[0].sender
+    await waitFor(() => contents.executeJavaScript(`(() => {
+      const field = document.querySelector('input[aria-label="API 服务器地址"]')
+      return field?.disabled === true
+    })()`), 'settings command pending')
+    inputProbe.pending = await contents.executeJavaScript(`(() => {
+      const field = document.querySelector('input[aria-label="API 服务器地址"]')
+      const save = [...field.closest('.group').querySelectorAll('button')].find(b => b.textContent === '保存修改')
+      save.click()
+      return save.disabled && getComputedStyle(field).opacity === '1'
+    })()`)
+    const result = await handler(...args)
+    inputProbe.rejected = result.ok === false
+    return result
+  }
   if (channel === 'agent-run:get-eligibility') {
     eligibilityProbe.count += 1
     const hold = eligibilityProbe.nextHold
@@ -170,6 +189,137 @@ function providerServer () {
   return { server, state }
 }
 
+// Computed renderer checks are deterministic evidence, not physical DPI/Mica observations.
+async function inspectInputAppearance (settings) {
+  const wc = settings.webContents
+  const evaluate = (source) => wc.executeJavaScript(source)
+  wc.debugger.attach('1.3')
+  try {
+    await evaluate(`document.querySelector('.nav-item[data-pane="agentModel"]').click()`)
+    await waitFor(() => evaluate(`Boolean(document.querySelector('input[aria-label="新服务名称"]'))`), 'new profile inputs')
+    await evaluate(`document.querySelector('.agent-model-new-profile > summary').click()`)
+    await waitFor(() => evaluate(`document.querySelector('input[aria-label="新服务名称"]').getBoundingClientRect().height > 0`), 'expanded input geometry')
+    const selector = 'input[aria-label="新服务名称"]'
+    const dimensions = () => evaluate(`(() => { const r = document.querySelector('${selector}').getBoundingClientRect(); return [r.width, r.height] })()`)
+    const before = await dimensions()
+    settings.show()
+    settings.focus()
+    wc.focus()
+    await waitFor(() => evaluate(`(() => { const e = document.querySelector('${selector}'); e.focus(); return document.activeElement === e })()`), 'input focus before Tab')
+    wc.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' })
+    wc.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' })
+    await waitFor(() => evaluate(`document.activeElement.getAttribute('aria-label') === '新服务 API 服务器地址'`), 'Tab reaches next input')
+    const keyboardFocus = await evaluate(`(() => {
+      const field = document.activeElement, css = getComputedStyle(field)
+      return field.getAttribute('aria-label') === '新服务 API 服务器地址' && field.matches(':focus-visible') &&
+        css.outlineStyle === 'solid' && parseFloat(css.outlineWidth) > 0
+    })()`)
+    const point = await evaluate(`(() => { const e = document.querySelector('${selector}'); e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect(); return { x: r.x + 10, y: r.y + 10 } })()`)
+    await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+    const after = await dimensions()
+    const stableGeometry = before.every((n, i) => n === after[i]) && await evaluate(`document.querySelector('${selector}').matches(':hover')`)
+    // Ordinary themes use the production preference buttons, not CSS attribute injection.
+    const themes = []
+    for (const theme of ['light', 'dark', 'auto']) {
+      await evaluate(`document.querySelector('.nav-item[data-pane="display"]').click()`)
+      await evaluate(`document.querySelector('[data-seg="theme"] [data-val="${theme}"]').click()`)
+      await evaluate(`document.querySelector('.nav-item[data-pane="agentModel"]').click()`)
+      await waitFor(() => evaluate(`Boolean(document.querySelector('${selector}'))`), 'theme profile remount')
+      const style = await evaluate(`(() => {
+        const e = document.querySelector('input[aria-label="新服务名称"]'), s = getComputedStyle(e)
+        return { background: s.backgroundColor, foreground: s.color, radius: s.borderRadius }
+      })()`)
+      themes.push(style)
+    }
+    const themeReadable = themes.every(s => s.background !== 'rgba(0, 0, 0, 0)' && s.radius === '8px') &&
+      themes[0].foreground !== themes[1].foreground
+    await evaluate(`document.querySelector('.nav-item[data-pane="agentModel"]').click(); document.querySelector('.agent-model-new-profile').open = true`)
+    const controlledStates = await evaluate(`(() => {
+      const e = document.querySelector('${selector}')
+      const normal = getComputedStyle(e)
+      const expected = [normal.backgroundColor, normal.fontFamily, normal.borderRadius].join('|')
+      const types = ['text', 'url', 'search', 'email'].every(type => {
+        e.type = type
+        const css = getComputedStyle(e)
+        return [css.backgroundColor, css.fontFamily, css.borderRadius].join('|') === expected
+      })
+      e.removeAttribute('type')
+      e.readOnly = true
+      const readonly = getComputedStyle(e).borderStyle === 'dashed' && !e.disabled
+      e.readOnly = false; e.setAttribute('aria-invalid', 'true')
+      const invalid = getComputedStyle(e).borderTopColor
+      e.removeAttribute('aria-invalid')
+      return types && readonly && invalid !== getComputedStyle(e).borderTopColor
+    })()`)
+    await wc.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'active' }, { name: 'prefers-reduced-motion', value: 'reduce' }] })
+    const systemPreferences = await evaluate(`(() => {
+      const s = getComputedStyle(document.querySelector('${selector}'))
+      return matchMedia('(forced-colors: active)').matches && s.borderTopStyle !== 'none' &&
+        s.color !== s.backgroundColor && getComputedStyle(document.querySelector('.pane.active')).animationName === 'none'
+    })()`)
+    await wc.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] })
+    let fits = true
+    for (const zoom of [1, 1.25, 1.5, 2]) {
+      wc.setZoomFactor(zoom)
+      fits = fits && await evaluate(`(() => {
+        const e = document.querySelector('${selector}')
+        const value = e.value; e.value = 'long-model-'.repeat(80)
+        const main = document.querySelector('.content'), r = e.getBoundingClientRect(), m = main.getBoundingClientRect()
+        const fits = r.width > 0 && r.height >= 36 && main.scrollWidth <= main.clientWidth + 1 && r.right <= m.right && r.left >= m.left
+        e.value = value
+        return fits
+      })()`)
+    }
+    wc.setZoomFactor(1)
+    await evaluate(`document.querySelector('.nav-item[data-pane="display"]').click()`)
+    await evaluate(`(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+      for (const [id, value] of [['opacity', '0.6'], ['barColor', '#123456']]) {
+        const e = document.getElementById(id)
+        setter.call(e, value); e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+    })()`)
+    await waitFor(() => evaluate(`document.getElementById('opacityVal').textContent === '0.60' && document.getElementById('barColorVal').textContent === '#123456'`), 'specialized controls preview')
+    const specialized = await evaluate(`(() => {
+      const color = document.querySelector('input[type="color"]'), range = document.querySelector('input[type="range"]')
+      const checkbox = document.querySelector('input[type="checkbox"]')
+      return getComputedStyle(color).height === '26px' && getComputedStyle(range).height === '4px' &&
+        getComputedStyle(checkbox).minHeight !== '36px'
+    })()`)
+    await evaluate(`document.getElementById('barColorReset').click()`)
+    await waitFor(() => evaluate(`document.getElementById('barColorVal').textContent === '跟随主题'`), 'color reset')
+    // Resume the real first-run wizard to inspect its password/model/number controls.
+    await evaluate(`document.querySelector('.nav-item[data-pane="agentModel"]').click()`)
+    await waitFor(() => evaluate(`Boolean(document.querySelector('.agent-model-preset-launcher'))`), 'wizard launcher')
+    await evaluate(`document.querySelector('.agent-model-preset-launcher').click()`)
+    await waitFor(() => evaluate(`Boolean(document.querySelector('[data-wizard-step="connection"]'))`), 'wizard connection')
+    await evaluate(`document.querySelector('[data-wizard-step="connection"] .primary-btn').click()`)
+    await waitFor(() => evaluate(`Boolean(document.querySelector('input[aria-label="首次配置 API 密钥"]'))`), 'wizard password')
+    const wizardPassword = await evaluate(`(() => {
+      const e = document.querySelector('input[aria-label="首次配置 API 密钥"]'), css = getComputedStyle(e)
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(e, 'j25-wizard-secret')
+      e.dispatchEvent(new Event('input', { bubbles: true }))
+      return parseFloat(css.minHeight) >= 36 && css.borderRadius === '8px'
+    })()`)
+    await waitFor(() => evaluate(`document.querySelector('[data-wizard-step="credential"] .primary-btn')?.disabled === false`), 'wizard credential editable')
+    await evaluate(`document.querySelector('[data-wizard-step="credential"] .primary-btn').click()`)
+    await waitFor(() => evaluate(`Boolean(document.querySelector('[data-wizard-step="model"] input[type="number"]'))`), 'wizard model')
+    const wizardInputs = wizardPassword && await evaluate(`(() => {
+      const fields = [...document.querySelectorAll('[data-wizard-step="model"] input')]
+      return fields.length >= 3 && fields.every(e => {
+        const css = getComputedStyle(e)
+        return parseFloat(css.minHeight) >= 36 && css.borderRadius === '8px' && css.fontFamily === getComputedStyle(document.body).fontFamily
+      })
+    })()`)
+    await evaluate(`document.querySelector('.wizard-exit').click()`)
+    return { keyboardFocus, stableGeometry, themeReadable, controlledStates, systemPreferences, fits, specialized, wizardInputs }
+  } finally {
+    wc.setZoomFactor(1)
+    await wc.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] })
+    wc.debugger.detach()
+  }
+}
+
 async function configureThroughSettings (settings, port) {
   return settings.webContents.executeJavaScript(`(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -202,6 +352,9 @@ async function configureThroughSettings (settings, port) {
       if (input.checked !== checked) input.click()
     }
 
+    await waitFor(() => document.querySelector('#onboarding'), 'settings onboarding')
+    if (!document.querySelector('#onboarding').hidden) document.querySelector('[data-preset="meeting"]').click()
+    await waitFor(() => document.querySelector('#onboarding').hidden, 'settings onboarding dismissed')
     const nav = await waitFor(() => document.querySelector('[data-pane="agentModel"]'), 'agent model navigation')
     nav.click()
     const agentToggle = await waitFor(() => document.querySelector('input[aria-label="启用 Agent 系统"]'), 'Agent system toggle')
@@ -211,7 +364,16 @@ async function configureThroughSettings (settings, port) {
     await waitFor(cardFor, 'deepseek profile')
     clickText(cardFor(), '编辑连接')
     await waitFor(() => cardFor()?.querySelector('input[aria-label="API 服务器地址"]'), 'connection editor')
+    const address = cardFor().querySelector('input[aria-label="API 服务器地址"]')
+    const styled = (element) => {
+      const css = getComputedStyle(element)
+      return css.fontFamily === getComputedStyle(document.body).fontFamily &&
+        css.borderRadius === getComputedStyle(document.documentElement).getPropertyValue('--radius-control').trim() &&
+        parseFloat(css.minHeight) >= 36 && css.backgroundColor !== 'rgba(0, 0, 0, 0)'
+    }
+    const textStyled = styled(address)
     setInput(cardFor().querySelector('input[aria-label="API 服务器地址"]'), 'https://127.0.0.1:${port}')
+    await sleep(0)
     clickText(cardFor(), '保存修改')
     await waitFor(() => [...cardFor().querySelectorAll('button')].some((item) => item.textContent === '编辑连接'), 'connection saved')
 
@@ -220,6 +382,7 @@ async function configureThroughSettings (settings, port) {
     setInput(modelId, 'j25-local-model')
     setInput(cardFor().querySelector('input[aria-label="最大输入 token"]'), '64000')
     setInput(cardFor().querySelector('input[aria-label="最大输出 token"]'), '4096')
+    const numberStyled = styled(cardFor().querySelector('input[type="number"]'))
     for (const label of ['工具调用', '结构化输出', '流式输出', '用量上报']) {
       const group = await waitFor(() => cardFor()?.querySelector('[aria-label="' + label + '"]'), label + ' capability group')
       clickText(group, '支持')
@@ -230,11 +393,26 @@ async function configureThroughSettings (settings, port) {
     await waitFor(() => cardFor()?.querySelector('[data-model-id="j25-local-model"]'), 'model saved')
 
     const credential = cardFor().querySelector('input[type="password"]')
+    const passwordStyled = styled(credential)
     setInput(credential, 'j25-local-provider-secret')
     clickText(cardFor(), '设置新的 API 密钥')
     await waitFor(() => credential.value === '', 'credential cleared')
 
+    // Exercise a configured connection failure; keep the real credential lifecycle intact.
+    clickText(cardFor(), '编辑连接')
+    const failingAddress = await waitFor(() => cardFor()?.querySelector('input[aria-label="API 服务器地址"]'), 'configured connection editor')
+    setInput(failingAddress, 'http://invalid.example')
+    await sleep(0)
+    clickText(cardFor(), '保存修改')
+    await waitFor(() => document.querySelector('section[data-pane="agentModel"] [role="alert"]') && !failingAddress.disabled, 'invalid connection restored')
+    const failedInputRetained = failingAddress.value === 'http://invalid.example'
+    const catalog = await window.shell.getAgentModelCatalog({ contractId: 'agent-model-ui', contractVersion: '1.0.0' })
+    const failedConfigUnchanged = catalog.ok === true && catalog.snapshot.profiles.find(p => p.profileId === 'deepseek').httpsOrigin === 'https://127.0.0.1:${port}'
+    clickText(failingAddress.closest('.group'), '取消')
+    await waitFor(() => !cardFor()?.querySelector('input[aria-label="API 服务器地址"]'), 'connection editor closed')
+
     const purpose = document.querySelector('[data-purpose="default"] select')
+    const selectStyled = styled(purpose)
     await waitFor(() => purpose && [...purpose.options].some((option) => option.value === 'deepseek::j25-local-model'), 'purpose target')
     select(purpose, 'deepseek::j25-local-model')
     await waitFor(() => document.querySelector('[data-purpose="default"]').textContent.includes('普通请求：配置充分'), 'purpose assigned')
@@ -243,6 +421,7 @@ async function configureThroughSettings (settings, port) {
     const contextNav = await waitFor(() => document.querySelector('[data-pane="agentContext"]'), 'personal context navigation')
     contextNav.click()
     const remember = await waitFor(() => document.querySelector('textarea[aria-label="记住个人记忆"]'), 'remember form')
+    const textareaStyled = styled(remember) && getComputedStyle(remember).resize === 'vertical' && parseFloat(getComputedStyle(remember).minHeight) >= 70
     setInput(remember, 'J25 formal settings memory')
     clickText(document.querySelector('section[data-pane="agentContext"]'), '记住')
     const memory = await waitFor(() => document.querySelector('[data-memory-id]'), 'remembered memory')
@@ -305,6 +484,8 @@ async function configureThroughSettings (settings, port) {
     await waitFor(() => document.querySelector('textarea[aria-label="记住个人记忆"]'), 'context pane after context management')
 
     return {
+      inputsStyled: { textStyled, numberStyled, passwordStyled, selectStyled, textareaStyled },
+      inputFailureRecovered: failedInputRetained && failedConfigUnchanged,
       profileConnection,
       modelVisible,
       credentialCleared,
@@ -320,11 +501,11 @@ async function configureThroughSettings (settings, port) {
 }
 
 async function runAgentBar (toolbar) {
-  await toolbar.webContents.executeJavaScript("window.shell.action('agent'); true")
+  await toolbar.webContents.executeJavaScript("window.shell.openAgent(); true")
   const agent = await waitFor(() => windowFor('/agent/index.html'), 'Agent Bar window')
   await waitFor(async () => agent.webContents.executeJavaScript("document.readyState === 'complete'"), 'Agent Bar renderer')
   await waitFor(async () => agent.webContents.executeJavaScript("Boolean(document.querySelector('.scope-card'))"), 'terminal scope')
-  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '可以运行'"), 'provider eligibility')
+  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '可以生成'"), 'provider eligibility')
   const readsBeforeManualRefresh = eligibilityProbe.count
   const eligibilityHold = deferred()
   eligibilityProbe.nextHold = eligibilityHold
@@ -332,7 +513,7 @@ async function runAgentBar (toolbar) {
   await waitFor(() => eligibilityProbe.count > readsBeforeManualRefresh, 'manual eligibility refresh')
   const submitDisabledDuringEligibilityRefresh = await agent.webContents.executeJavaScript("document.querySelector('[data-action=\"qa\"]')?.disabled === true && document.querySelector('[data-action=\"minutes\"]')?.disabled === true")
   eligibilityHold.resolve()
-  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '可以运行'"), 'refreshed provider eligibility')
+  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '可以生成'"), 'refreshed provider eligibility')
   const result = await agent.webContents.executeJavaScript(`(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
     const waitFor = async (probe, label) => {
@@ -474,10 +655,13 @@ async function main () {
     const toolbar = await waitFor(() => windowFor('/toolbar/index.html'), 'toolbar window')
     await waitFor(async () => toolbar.webContents.executeJavaScript("document.readyState === 'complete'"), 'toolbar renderer')
     const settingsResult = await configureThroughSettings(settings, port)
+    const inputAppearance = await inspectInputAppearance(settings)
     const runResult = await runAgentBar(toolbar)
     const report = {
       schemaVersion: 1,
-      result: settingsResult.profileConnection && settingsResult.modelVisible && settingsResult.credentialCleared &&
+      result: Object.values(inputAppearance).every(Boolean) && Object.values(settingsResult.inputsStyled).every(Boolean) && settingsResult.inputFailureRecovered &&
+        inputProbe.pending && inputProbe.rejected && inputProbe.invalidCommands === 1 &&
+        settingsResult.profileConnection && settingsResult.modelVisible && settingsResult.credentialCleared &&
         settingsResult.defaultReady && settingsResult.agentEnabled && settingsResult.memoryManaged &&
         settingsResult.processingSuspended && settingsResult.processingReenabled && settingsResult.revisionConflict &&
         runResult.succeeded && runResult.historyVisible && runResult.modelVisible && runResult.signalAccepted &&
@@ -486,6 +670,11 @@ async function main () {
         runResult.promptAbsent && runResult.credentialAbsent && provider.state.requestCount === 1 &&
         provider.state.credentialObserved && provider.state.credentialExact && provider.state.modelIds.length === 1 && provider.state.modelIds[0] === 'j25-local-model',
       settingsPath: 'formal-settings-renderer-preload',
+      inputAppearance,
+      inputsStyled: settingsResult.inputsStyled,
+      inputFailureRecovered: settingsResult.inputFailureRecovered,
+      inputPendingObserved: inputProbe.pending,
+      invalidInputCommandCount: inputProbe.invalidCommands,
       runPath: 'formal-agent-bar-renderer-preload-main',
       historyPath: 'formal-agent-history-renderer-preload-main',
       providerRequestCount: provider.state.requestCount,

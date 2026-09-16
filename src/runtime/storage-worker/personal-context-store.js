@@ -18,6 +18,7 @@ const MEMORY_KINDS = new Set([
 ])
 const SCOPE_KINDS = new Set(['global', 'session', 'topic', 'project'])
 const INTERACTION_SIGNAL_KINDS = new Set(['prompt', 'edit', 'accept', 'reject', 'remember', 'forget'])
+const SUMMARY_MEMORY_ERROR = 'AGENT_SUMMARY_MEMORY_READ_FAILED'
 
 function fail (code) {
   throw new StorageError(code)
@@ -74,8 +75,8 @@ function interactionSignalRequest (value) {
       (typeof value.payloadDigest !== 'string' || !/^[0-9a-f]{64}$/.test(value.payloadDigest))) {
     fail('AGENT_REQUEST_INVALID')
   }
-  if (value.signalKind === 'edit' && value.payloadDigest === null) fail('AGENT_REQUEST_INVALID')
-  if (value.signalKind !== 'edit' && value.payloadDigest !== null) fail('AGENT_REQUEST_INVALID')
+  if (['edit', 'remember'].includes(value.signalKind) && value.payloadDigest === null) fail('AGENT_REQUEST_INVALID')
+  if (!['edit', 'remember'].includes(value.signalKind) && value.payloadDigest !== null) fail('AGENT_REQUEST_INVALID')
   return value
 }
 
@@ -110,7 +111,7 @@ function interactionSignalPayload (value, source) {
     if (prompt !== null || result === null || source.resultDigest === null || sha256Canonical(result) !== source.resultDigest) {
       fail('AGENT_INPUT_CHANGED')
     }
-    if (source.signalKind === 'edit') {
+    if (source.signalKind === 'edit' || source.signalKind === 'remember') {
       if (editText === null || source.payloadDigest === null || sha256Canonical({ text: editText }) !== source.payloadDigest) {
         fail('AGENT_INPUT_CHANGED')
       }
@@ -419,7 +420,7 @@ class PersonalContextStore {
     const runId = identifier(input.runId)
     const run = this.database.prepare(`
       SELECT scope_json, transcript_version, input_watermark_json, input_digest,
-        requested_by, personal_context_revision
+        requested_by, personal_context_revision, recipe_id, summary_use_memory
       FROM formal_agent_runs WHERE run_id = ?
     `).get(runId)
     if (!run) fail('AGENT_RUN_NOT_FOUND')
@@ -436,8 +437,16 @@ class PersonalContextStore {
     }
     const personalContextRevision = Number(run.personal_context_revision)
     if (!Number.isSafeInteger(personalContextRevision) || personalContextRevision < 0) fail('STORAGE_COMMAND_FAILED')
-    if (run.requested_by === 'user' && personalContextRevision !== this.contentRevision()) {
+    const useMemory = run.recipe_id !== 'summary.minutes' || run.summary_use_memory === undefined || run.summary_use_memory !== 0
+    if (run.requested_by === 'user' && useMemory && personalContextRevision !== this.contentRevision()) {
       fail('AGENT_INPUT_CHANGED')
+    }
+    if (!useMemory) {
+      return {
+        scope: { registeredAliasKeys: [], memoryRefs: [], sourceRefs: [] },
+        entries: [],
+        sources: []
+      }
     }
     const items = this.database.prepare(`
       SELECT item.memory_id, item.current_revision_id, item.semantic_key, item.kind, item.content_json
@@ -1360,8 +1369,9 @@ class PersonalContextStore {
     }
     const scope = this.database.prepare(`
       SELECT scope_id FROM personal_context_scopes
-      WHERE scope_id = ? AND kind = ? AND origin = 'automatic' AND lifecycle = 'active'
-    `).get(entry.scopeReference, entry.scopeKind)
+      WHERE kind = ? AND origin = 'automatic' AND lifecycle = 'active'
+        AND (scope_id = ? OR session_id = ?)
+    `).get(entry.scopeKind, entry.scopeReference, entry.scopeReference)
     if (!scope) fail('AGENT_REQUEST_INVALID')
     return scope.scope_id
   }
@@ -2083,7 +2093,7 @@ class PersonalContextStore {
           }
         }
       }
-      return {
+      const result = {
         runId: row.run_id,
         recipeId: row.recipe_id,
         interactionId: interaction?.interaction_id || null,
@@ -2102,6 +2112,12 @@ class PersonalContextStore {
           leaseExpiresAt: Number(receipt.lease_expires_at)
         }
       }
+      if (row.recipe_id === 'summary.minutes') {
+        result.summaryUseMemory = row.summary_use_memory === undefined || row.summary_use_memory === null
+          ? true
+          : row.summary_use_memory !== 0
+      }
+      return result
     }
     this.database.exec('BEGIN IMMEDIATE')
     try {
@@ -2232,10 +2248,12 @@ class PersonalContextStore {
     const terminal = Number(row.attempt_count) >= Number(row.max_attempts)
     const now = this.nowValue()
     const nextAttemptAt = terminal ? now : now + 1000
+    const storedErrorCode = request.errorCode === SUMMARY_MEMORY_ERROR ? 'AGENT_INTERNAL_FAILURE' : request.errorCode
+    const summaryMemoryError = request.errorCode === SUMMARY_MEMORY_ERROR ? 1 : 0
     this.database.prepare(`
       UPDATE formal_agent_runs SET state = ?, next_attempt_at = ?, lease_owner = NULL,
-        lease_expires_at = NULL, error_code = ?, updated_at = ? WHERE run_id = ?
-    `).run(terminal ? 'failed' : 'retry_wait', nextAttemptAt, terminal ? request.errorCode : null, now, attempt.runId)
+        lease_expires_at = NULL, error_code = ?, summary_memory_error = ?, updated_at = ? WHERE run_id = ?
+    `).run(terminal ? 'failed' : 'retry_wait', nextAttemptAt, terminal ? storedErrorCode : null, terminal ? summaryMemoryError : 0, now, attempt.runId)
     return { runId: row.run_id, state: terminal ? 'failed' : 'retry_wait', nextAttemptAt }
   }
 }

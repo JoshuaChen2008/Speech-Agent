@@ -5,7 +5,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { DatabaseSync } = require('node:sqlite')
-const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
+const { FORMAL_AGENT_MIGRATIONS, FORMAL_AGENT_SCHEMA_VERSION } = require('../../src/runtime/storage-worker/schema')
 const { openSubtitleDatabase } = require('../../src/runtime/storage-worker/sqlite-store')
 const { createVerifiedBackup } = require('../../src/runtime/storage-worker/migration-backup')
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
@@ -144,7 +144,7 @@ test('J27 retirement clears cyclic memory, artifact self-reference, and keyword 
 })
 for (const version of [1,2,3,4,5,6,7,8,9]) test('J27 existing version '+version+' upgrades with one pre-migration snapshot', t => {
   const {dir,file}=fixture(t); old(file,version).close(); const db=current(file)
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version,10); db.close()
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version,FORMAL_AGENT_SCHEMA_VERSION); db.close()
   const backup=new DatabaseSync(path.join(dir,'migration-backups',fs.readdirSync(path.join(dir,'migration-backups'))[0]),{readOnly:true})
   assert.equal(backup.prepare('PRAGMA user_version').get().user_version,version); backup.close()
 })
@@ -229,8 +229,8 @@ test('J27 checksum corruption and higher schema versions fail closed before back
 
 test('J27 unknown higher schema versions fail closed before backup', t => {
  const {dir,file}=fixture(t); const db=old(file)
- db.prepare('INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (10, ?, 10)').run('0'.repeat(64))
- db.exec('PRAGMA user_version = 11'); db.close()
+ db.prepare('INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (?, ?, 10)').run(FORMAL_AGENT_SCHEMA_VERSION, '0'.repeat(64))
+ db.exec(`PRAGMA user_version = ${FORMAL_AGENT_SCHEMA_VERSION + 1}`); db.close()
  assert.throws(() => current(file), (error) => error?.code === 'SCHEMA_IDENTITY_INVALID')
  assert.ok(!fs.existsSync(path.join(dir,'migration-backups')))
 })

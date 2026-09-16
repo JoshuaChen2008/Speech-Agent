@@ -68,6 +68,25 @@ test('SEM-F32/J21: signal service binds terminal user interactions and projects 
   ])
 })
 
+test('SEM-F38/J29: summary prompt and ordinary feedback acknowledge without creating interaction memory work', async () => {
+  const calls = []
+  const summary = interaction({ recipeId: 'summary.minutes' })
+  const service = new AgentInteractionSignalService({
+    storage: { getAgentInteraction: async () => ({ interaction: summary }) },
+    personalContext: { recordInteractionSignal: async (value) => { calls.push(value); return { accepted: true } } }
+  })
+  assert.equal(await service.recordPromptSignal({ interactionId: summary.interactionId, prompt: 'bounded prompt' }), false)
+  for (const signalKind of ['edit', 'accept', 'reject']) {
+    const response = await service.recordSignal(request(signalKind, {
+      payload: signalKind === 'edit' ? { text: '更具体' } : null,
+      result_digest: resultDigest
+    }))
+    assert.equal(response.ok, true)
+    assert.equal(response.result.accepted, true)
+  }
+  assert.deepEqual(calls, [])
+})
+
 test('SEM-F32/J21/SEM-T04: stale, nonterminal and routed results fail closed without context writes', async () => {
   const calls = []
   let current = interaction()

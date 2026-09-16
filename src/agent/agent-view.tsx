@@ -9,11 +9,22 @@ const SCOPE_LIMIT = 50
 const HISTORY_LIMIT = 50
 const EDIT_LIMIT = 4096
 const DRAFT_LIMIT = 20
+const CONTEXT_CONTRACT = Object.freeze({ contract_id: 'speech-agent.personal-context.ui', contract_version: '1.1.0' })
+const MEMORY_KIND_LABELS: Record<string, string> = Object.freeze({
+  decision: '决定',
+  conclusion: '结论',
+  todo: '待办',
+  term: '术语',
+  preference: '偏好',
+  project_fact: '项目事实',
+  experience: '经历'
+})
+const MEMORY_KINDS = Object.freeze(Object.keys(MEMORY_KIND_LABELS))
 
 const ERROR_MESSAGES: Record<string, string> = Object.freeze({
-  AGENT_RUN_UNAVAILABLE: 'Agent 服务暂时不可用，请稍后重试',
+  AGENT_RUN_UNAVAILABLE: '会话总结暂时不可用，请稍后重试',
   AGENT_RUN_INVALID: '请求内容无效，请检查后重试',
-  AGENT_CANCELLED: '该交互已取消',
+  AGENT_CANCELLED: '这次请求已取消',
   AGENT_PROVIDER_AUTH_FAILED: '模型凭据不可用，请检查现有配置',
   AGENT_PROVIDER_RATE_LIMITED: '模型服务请求过多，请稍后重试',
   AGENT_PROVIDER_UNAVAILABLE: '模型服务暂时不可用，请稍后重试',
@@ -21,27 +32,28 @@ const ERROR_MESSAGES: Record<string, string> = Object.freeze({
   AGENT_OUTPUT_INVALID: '模型结果格式不可用，请再次尝试',
   AGENT_PERMISSION_DENIED: '当前请求没有所需权限',
   AGENT_REQUEST_INVALID: '请求内容无效，请检查后重试',
-  AGENT_WORKER_EXITED: 'Agent 运行异常，请稍后重试',
-  AGENT_INTERNAL_FAILURE: 'Agent 运行异常，请稍后重试',
+  AGENT_WORKER_EXITED: '处理异常，请稍后重试',
+  AGENT_INTERNAL_FAILURE: '处理异常，请稍后重试',
   AGENT_BUDGET_EXCEEDED: '本次处理已达到预算限制',
-  TOOL_ARGS_INVALID: '工具参数无效，本次调用未执行',
-  TOOL_SCOPE_DENIED: '工具不能读取当前范围',
-  TOOL_NOT_AVAILABLE_FOR_RECIPE: '当前处理类型不能使用该工具',
+  AGENT_SUMMARY_MEMORY_READ_FAILED: '暂时无法读取记忆；可以重试，或仅用本次会话生成',
+  TOOL_ARGS_INVALID: '读取请求无效，本次调用未执行',
+  TOOL_SCOPE_DENIED: '这次请求不能读取所选会话',
+  TOOL_NOT_AVAILABLE_FOR_RECIPE: '当前请求不能使用这个读取方式',
   TOOL_BUDGET_EXCEEDED: '本次工具调用已达到预算限制',
   TOOL_TIMEOUT: '工具调用超时',
   TOOL_CANCELLED: '工具调用已取消',
-  TOOL_INTERNAL_FAILURE: '工具调用失败，请稍后重试'
+  TOOL_INTERNAL_FAILURE: '读取失败，请稍后重试'
 })
 
 const NEXT_ACTION_MESSAGES: Record<string, string> = Object.freeze({
   restart_application: '数据库升级尚未成功，字幕仍可使用。请退出应用后重新启动以重试',
   correct_input: '请检查输入后重试',
   retry: '请稍后重试',
-  choose_supported_scope: '请选择受支持的终态会话',
-  choose_supported_recipe: '当前处理类型暂不支持',
+  choose_supported_scope: '请选择一场已结束的会话',
+  choose_supported_recipe: '当前请求暂不支持',
   settings: '请在设置中完成所需配置',
-  wait_for_terminal: '请等待会话进入终态',
-  choose_committed_session: '请选择包含已提交字幕的终态会话',
+  wait_for_terminal: '请等这场会话结束后再试',
+  choose_committed_session: '请选择包含已保存字幕的会话',
   export_cancelled: '已取消导出',
   refresh_result: '请刷新交互结果后重试',
   result_unavailable: '交互结果暂时不可用'
@@ -55,7 +67,7 @@ function responseErrorMessage (response: Dict, fallback: string): string {
 }
 
 function errorCodeLabel (code: unknown): string {
-  return typeof code === 'string' ? ERROR_MESSAGES[code] || 'Agent 运行失败，请稍后重试' : 'Agent 运行失败，请稍后重试'
+  return typeof code === 'string' ? ERROR_MESSAGES[code] || '会话总结生成失败，请稍后重试' : '会话总结生成失败，请稍后重试'
 }
 
 function unwrap<T = Dict> (response: Dict): T {
@@ -74,25 +86,25 @@ function utcLabel (value: string | null): string {
 }
 
 function stateLabel (state: string | null): string {
-  return ({ pending: '等待执行', running: '执行中', succeeded: '已生成结果', failed: '执行失败', cancelling: '正在取消', cancelled: '已取消' } as Dict)[state || ''] || '状态未知'
+  return ({ pending: '等待生成', running: '正在生成', succeeded: '已生成', failed: '生成失败', cancelling: '正在取消', cancelled: '已取消' } as Dict)[state || ''] || '状态未知'
 }
 
 function eligibilityLabel (value: string | null): string {
   return ({
-    ready: '可以运行',
-    no_committed_transcript: '该会话没有可用的已提交字幕',
-    outside_automatic_window: '该会话不在当前自动处理范围内',
-    agent_disabled: 'Agent 系统当前已关闭',
-    provider_not_configured: '尚未配置可用的 Agent 模型',
-    cloud_disclosure_required: '运行前需要确认云端披露',
-    credential_unavailable: '模型凭据当前不可用',
-    local_model_not_ready: '本地模型尚未就绪',
-    session_not_terminal: '会话尚未进入终态'
+    ready: '可以生成',
+    no_committed_transcript: '这场会没有已保存字幕',
+    outside_automatic_window: '这场会暂时不能处理',
+    agent_disabled: '请先在设置中启用 Agent',
+    provider_not_configured: '先设置模型，才能生成总结',
+    cloud_disclosure_required: '运行前需要确认云端模型说明',
+    credential_unavailable: '模型凭据不可用，请检查设置',
+    local_model_not_ready: '本地模型还没准备好',
+    session_not_terminal: '这场会还没结束'
   } as Dict)[value || ''] || '当前范围不可运行'
 }
 
 function recipeLabel (recipe: string | null): string {
-  return recipe === 'summary.minutes' ? '会后结构化纪要' : recipe === 'qa.answer' ? '会话问答' : '正式 Agent 交互'
+  return recipe === 'summary.minutes' ? '会话总结' : recipe === 'qa.answer' ? '会话问答' : '请求结果'
 }
 
 function formatValue (value: unknown): string {
@@ -102,19 +114,19 @@ function formatValue (value: unknown): string {
   return value === null || value === undefined ? '' : String(value)
 }
 
-function resultSections (result: unknown): Array<{ label: string, value: string }> {
+function resultSections (result: unknown, recipeId: string | null = null): Array<{ label: string, value: string }> {
   const source = result && typeof result === 'object' && !Array.isArray(result) ? result as Dict : {}
   const sections: Array<[string, string[]]> = [
-    ['概要', ['summary', 'overview', 'answer']],
-    ['结论', ['conclusions', 'conclusion']],
+    ['主要内容', ['summary', 'overview', 'answer']],
+    ['决定', ['conclusions', 'conclusion']],
     ['待办', ['action_items', 'actionItems', 'todos', 'todo']],
-    ['风险', ['risks', 'risk']],
-    ['缺口', ['gaps', 'unresolved']],
+    ['需要注意', ['risks', 'risk']],
+    ['未解决的问题', ['gaps', 'unresolved']],
     ['待确认', ['open_questions', 'openQuestions']]
   ]
   return sections.map(([label, keys]) => {
     const key = keys.find((candidate) => source[candidate] !== undefined)
-    return { label, value: key ? formatValue(source[key]) : '' }
+    return { label, value: key ? formatValue(source[key]) : recipeId === 'summary.minutes' ? '未提及' : '' }
   }).filter((item) => item.value.length > 0)
 }
 
@@ -125,6 +137,36 @@ function resultPreview (result: unknown): string {
 
 function sourceCount (result: Dict | null): number {
   return Array.isArray(result?.source_refs) ? result.source_refs.length : 0
+}
+
+function memoryReferenceCount (detail: Dict | null): number | null {
+  if (!detail || detail.recipe_id !== 'summary.minutes' || !Array.isArray(detail.tool_calls)) return null
+  const references = new Set<string>()
+  for (const call of detail.tool_calls) {
+    if (call?.tool_name !== 'search_context' || call?.status !== 'succeeded') continue
+    const matches = call.result?.matches
+    if (!Array.isArray(matches)) continue
+    for (const match of matches) {
+      for (const entry of Array.isArray(match?.entries) ? match.entries : []) {
+        const memory = entry?.memoryRef
+        if (typeof memory?.memoryId === 'string' && typeof memory?.revisionId === 'string') {
+          references.add(`${memory.memoryId}\u0000${memory.revisionId}`)
+        }
+      }
+    }
+  }
+  return references.size
+}
+
+function summaryMemoryLabel (detail: Dict | null): string | null {
+  if (!detail || detail.recipe_id !== 'summary.minutes') return null
+  if (detail.summary_use_memory === null || detail.summary_use_memory === undefined) return '记忆使用情况未知（旧结果）'
+  if (detail.summary_use_memory === false) return '本次未参考记忆'
+  const count = typeof detail.memory_reference_count === 'number'
+    ? detail.memory_reference_count
+    : memoryReferenceCount(detail)
+  if (count === 0) return '未找到相关记忆，仅依据本次会话'
+  return `已参考 ${count} 条记忆`
 }
 
 function modelLabel (model: Dict | null): string {
@@ -198,7 +240,9 @@ export function AgentView (): ReactElement {
   const historyGeneration = useRef(0)
   const eligibilityGeneration = useRef(0)
   const acceptedRevision = useRef(0)
+  const acceptedContextRevision = useRef(0)
   const detailGeneration = useRef(0)
+  const requestedScopeRef = useRef<ScopeItem['scope'] | null>(null)
   const activeInteractionRef = useRef<string | null>(null)
   const selectedScopeRef = useRef<ScopeItem['scope'] | null>(null)
   const draftsRef = useRef(new Map<string, string>())
@@ -235,6 +279,23 @@ export function AgentView (): ReactElement {
   const [signalPendingInteractionId, setSignalPendingInteractionId] = useState<string | null>(null)
   const [signalStatus, setSignalStatus] = useState('')
   const [editText, setEditText] = useState('')
+  const [rememberText, setRememberText] = useState('')
+  const [rememberKind, setRememberKind] = useState('experience')
+  const [rememberScope, setRememberScope] = useState<'global' | 'session'>('global')
+  const [rememberPending, setRememberPending] = useState(false)
+  const [summaryMemoryEnabled, setSummaryMemoryEnabled] = useState<boolean | null>(null)
+  const configRevisionRef = useRef(-1)
+
+  const applyConfig = useCallback((config: Dict) => {
+    const revision = Number(config?.agentSettingsRevision)
+    if (Number.isSafeInteger(revision) && revision < configRevisionRef.current) return
+    if (Number.isSafeInteger(revision)) configRevisionRef.current = revision
+    setSummaryMemoryEnabled(
+      config?.agentEnabled === true &&
+      config?.memoryEnabled === true &&
+      config?.summaryUseMemory !== false
+    )
+  }, [])
 
   const loadScopes = useCallback(async (reset: boolean) => {
     const token = ++scopeGeneration.current
@@ -249,6 +310,7 @@ export function AgentView (): ReactElement {
       setScopeCursor(value.next_cursor)
       setSelectedScope((current) => {
         const visible = reset ? nextScopes : mergeByIdentity(scopes, nextScopes, (item) => scopeIdentity(item.scope))
+        if (requestedScopeRef.current && visible.some((item) => scopeIdentity(item.scope) === scopeIdentity(requestedScopeRef.current))) return requestedScopeRef.current
         if (current && visible.some((item) => scopeIdentity(item.scope) === scopeIdentity(current))) return current
         return value.default_scope || nextScopes[0]?.scope || null
       })
@@ -321,6 +383,9 @@ export function AgentView (): ReactElement {
     setDetail(null)
     setDetailError('')
     setEditText(activeInteractionId ? draftsRef.current.get(activeInteractionId) || '' : '')
+    setRememberText('')
+    setRememberKind('experience')
+    setRememberScope('global')
     setSignalStatus(activeInteractionId ? signalStatusRef.current.get(activeInteractionId) || '' : '')
     if (activeInteractionId) setStatus(interactionStatusRef.current.get(activeInteractionId) || '')
   }, [activeInteractionId])
@@ -339,6 +404,47 @@ export function AgentView (): ReactElement {
   }, [])
 
   useEffect(() => {
+    if (typeof api.onAgentContextChanged !== 'function') return
+    const unsubscribe = api.onAgentContextChanged((event: Dict) => {
+      if (!Number.isSafeInteger(event?.revision) || event.revision <= acceptedContextRevision.current) return
+      acceptedContextRevision.current = event.revision
+      if (activeInteractionRef.current) void loadDetailRef.current(activeInteractionRef.current)
+    })
+    return () => { if (typeof unsubscribe === 'function') unsubscribe() }
+  }, [api])
+
+  useEffect(() => {
+    let active = true
+    const dispose = typeof api.onConfig === 'function'
+      ? api.onConfig((config: Dict) => {
+        if (!active) return
+        applyConfig(config)
+        refreshRef.current()
+      })
+      : null
+    if (typeof api.getConfig === 'function') {
+      Promise.resolve(api.getConfig()).then((config: Dict) => {
+        if (active) applyConfig(config)
+      }).catch(() => {
+        if (active && configRevisionRef.current < 0) setSummaryMemoryEnabled(null)
+      })
+    } else {
+      setSummaryMemoryEnabled(null)
+    }
+    return () => { active = false; if (typeof dispose === 'function') dispose() }
+  }, [api, applyConfig])
+
+  useEffect(() => {
+    if (typeof api.onRequestedScope !== 'function') return
+    const dispose = api.onRequestedScope((scope: ScopeItem['scope']) => {
+      requestedScopeRef.current = scope
+      setSelectedScope(scope)
+      setStatus('已选择这场会话')
+    })
+    return () => { if (typeof dispose === 'function') dispose() }
+  }, [api])
+
+  useEffect(() => {
     selectedScopeRef.current = selectedScope
     void loadEligibility(selectedScope)
   }, [loadEligibility, selectedScope])
@@ -353,13 +459,28 @@ export function AgentView (): ReactElement {
     return () => { if (typeof dispose === 'function') dispose(); controller.cancel?.() }
   }, [api])
 
-  const selected = useMemo(() => scopes.find((item) => item.scope.reference === selectedScope?.reference) || null, [scopes, selectedScope])
+  const selected = useMemo(() => {
+    const found = scopes.find((item) => item.scope.reference === selectedScope?.reference)
+    if (found) return found
+    if (selectedScope && requestedScopeRef.current && scopeIdentity(selectedScope) === scopeIdentity(requestedScopeRef.current)) {
+      return { scope: selectedScope, display_name: `已选择会话 · ${selectedScope.reference}`, started_at: null, ended_at: '', state: 'terminal' } as ScopeItem
+    }
+    return null
+  }, [scopes, selectedScope])
   const state: State | null = detail?.state || null
   const cancelPending = activeInteractionId !== null && cancelPendingInteractionId === activeInteractionId
   const exportPending = activeInteractionId !== null && exportPendingInteractionId === activeInteractionId
   const signalPending = activeInteractionId !== null && signalPendingInteractionId === activeInteractionId
-  const busy = submitPending || cancelPending || detailPending || exportPending || signalPending
+  const busy = submitPending || cancelPending || detailPending || exportPending || signalPending || rememberPending
   const canSubmit = eligibility === 'ready' && !busy && prompt.trim().length > 0 && selectedScope !== null
+  const canRegenerate = detail?.recipe_id === 'summary.minutes' && ['succeeded', 'failed', 'cancelled'].includes(state || '') && selectedScope !== null && !busy
+  const openSettings = () => {
+    if (typeof api.openSettings === 'function') api.openSettings()
+  }
+  const regenerate = (summaryUseMemory?: boolean) => {
+    if (!canRegenerate) return
+    void submit('请基于这场已结束的会话生成会话总结，包含主要内容、决定、待办和需要注意。', 'minutes', summaryUseMemory)
+  }
   const selectScope = (scope: ScopeItem['scope']) => {
     if (scopeIdentity(scope) !== scopeIdentity(selectedScopeRef.current)) pendingSubmitKeyRef.current = null
     setSelectedScope(scope)
@@ -401,18 +522,24 @@ export function AgentView (): ReactElement {
       setSignalStatus('')
     }
   }
-  const submit = async (value: string, recipe: 'minutes' | 'qa') => {
+  const updateRememberText = (value: string) => {
+    const boundedValue = value.slice(0, EDIT_LIMIT)
+    setRememberText(boundedValue)
+    if (value.length > EDIT_LIMIT) setSignalStatus('要记住的内容最多 4096 个字符')
+    else if (signalStatus === '要记住的内容最多 4096 个字符') setSignalStatus('')
+  }
+  const submit = async (value: string, recipe: 'minutes' | 'qa', summaryUseMemory?: boolean) => {
     if (!selectedScope || eligibility !== 'ready' || submitLockRef.current) return
     const normalized = value.trim()
     if (!normalized) return
-    const fingerprint = requestFingerprint({ scope: selectedScope, prompt: normalized })
+    const fingerprint = requestFingerprint({ scope: selectedScope, prompt: normalized, summary_use_memory: summaryUseMemory ?? null })
     const retained = pendingSubmitKeyRef.current
     const idempotencyKey = retained?.fingerprint === fingerprint ? retained.key : makeIdempotencyKey()
     pendingSubmitKeyRef.current = { fingerprint, key: idempotencyKey }
     submitLockRef.current = true
-    setSubmitPending(true); setStatus(recipe === 'minutes' ? '正在请求会后结构化纪要…' : '正在提交会话问答…'); setDetailError('')
+    setSubmitPending(true); setStatus(recipe === 'minutes' ? '正在生成会话总结…' : '正在提交会话问题…'); setDetailError('')
     try {
-      const response = await api.submit({ ...headers(), scope: selectedScope, prompt: normalized, client_idempotency_key: idempotencyKey })
+      const response = await api.submit({ ...headers(), scope: selectedScope, prompt: normalized, client_idempotency_key: idempotencyKey, ...(summaryUseMemory === undefined ? {} : { summary_use_memory: summaryUseMemory }) })
       if (pendingSubmitKeyRef.current?.key === idempotencyKey) pendingSubmitKeyRef.current = null
       const result = unwrap<Dict>(response)
       setActiveInteractionId(result.interaction_id); setStatus(result.state ? stateLabel(result.state) : '请求已提交')
@@ -425,7 +552,7 @@ export function AgentView (): ReactElement {
     if (!activeInteractionId || cancelLocksRef.current.has(activeInteractionId) || !['pending', 'running'].includes(state || '')) return
     const interactionId = activeInteractionId
     cancelLocksRef.current.add(interactionId)
-    setCancelPendingInteractionId(interactionId); setStatus('正在请求取消…')
+    setCancelPendingInteractionId(interactionId); setStatus('正在取消生成…')
     try {
       const result = unwrap<Dict>(await api.cancel({ ...headers(), interaction_id: interactionId }))
       const message = stateLabel(result.state)
@@ -451,7 +578,7 @@ export function AgentView (): ReactElement {
     if (!activeInteractionId || !detail || exportLocksRef.current.has(activeInteractionId) || !['succeeded', 'failed', 'cancelled'].includes(state || '')) return
     const interactionId = activeInteractionId
     exportLocksRef.current.add(interactionId)
-    setExportPendingInteractionId(interactionId); setStatus('正在准备导出交互 JSON…')
+    setExportPendingInteractionId(interactionId); setStatus('正在准备导出结果…')
     try {
       const response = await api.exportInteraction({ ...headers(), interaction_id: interactionId })
       if (response.ok !== true) {
@@ -478,6 +605,10 @@ export function AgentView (): ReactElement {
     if (!detail || state !== 'succeeded' || typeof detail.result_digest !== 'string' || signalLocksRef.current.has(detail.interaction_id)) return
     if (signalKind === 'edit' && (!payload || typeof payload.text !== 'string' || payload.text.trim().length === 0)) {
       setSignalStatus('请输入要提交的编辑内容')
+      return
+    }
+    if (signalKind === 'remember' && (!payload || typeof payload.text !== 'string' || payload.text.trim().length === 0)) {
+      setSignalStatus('请先写下要记住的一条内容')
       return
     }
     const interactionId = detail.interaction_id
@@ -519,12 +650,116 @@ export function AgentView (): ReactElement {
     }
   }
 
-  return <div className="agent-shell">
-    <header className="agent-titlebar" id="titlebar" ref={titlebar}><div><strong>Agent Bar</strong><span>围绕已提交字幕提出一次请求</span></div><div className="title-actions"><span className="status" role="status" aria-live="polite">{status}</span><button className="close-button" type="button" onClick={() => api.close?.()} aria-label="关闭 Agent Bar">关闭</button></div></header>
-    <main className="agent-layout">
-      <aside className="scope-panel" aria-label="终态会话范围"><div className="panel-heading"><div><h1>终态会话</h1><p>{scopePending ? '正在读取…' : scopes.length ? `已显示 ${scopes.length} 个会话` : '暂无可用会话'}</p></div><button type="button" onClick={refresh} disabled={scopePending || historyPending}>刷新</button></div>{scopeError && <p className="error" role="alert">{scopeError}</p>}<div className="scope-list" role="list">{scopes.map((item) => <button type="button" role="listitem" className="scope-card" aria-current={item.scope.reference === selectedScope?.reference} key={scopeIdentity(item.scope)} onClick={() => selectScope(item.scope)}><strong>{utcLabel(item.ended_at)}</strong><span>{item.display_name}</span></button>)}{!scopePending && scopes.length === 0 && !scopeError && <p className="empty">完成一场终态会话后，它会出现在这里。</p>}</div>{scopeCursor && <button className="more-button" type="button" onClick={() => void loadScopes(false)} disabled={scopePending}>加载更多</button>}</aside>
-      <section className="request-panel" aria-label="Agent 请求"><div className="selected-scope">{selected ? <><span>当前范围</span><strong>{selected.display_name}</strong></> : <span>请选择一个终态会话</span>}</div><div className={`eligibility ${eligibility === 'ready' ? 'ready' : ''}`} role="status">{eligibility ? eligibilityLabel(eligibility) : (selected ? '正在读取资格…' : '选择范围后读取资格')}</div><label className="prompt-label" htmlFor="agentPrompt">会话问答</label><textarea id="agentPrompt" value={prompt} onChange={(event) => updatePrompt(event.target.value)} placeholder="例如：这场会的关键决定是什么？" disabled={busy || eligibility !== 'ready'} /><div className="request-actions"><button type="button" className="primary" data-action="minutes" disabled={busy || eligibility !== 'ready'} onClick={() => void submit('请基于这场终态会话生成会后结构化纪要，包含概要、结论、待办和风险。', 'minutes')}>生成纪要</button><button type="button" data-action="qa" disabled={!canSubmit} onClick={() => void submit(prompt, 'qa')}>提交问答</button></div>{activeInteractionId && <div className="run-card" aria-label="当前交互状态"><div><span>当前交互</span><strong>{stateLabel(state)}</strong></div><button type="button" onClick={() => void cancel()} disabled={cancelPending || !['pending', 'running'].includes(state || '')}>{cancelPending ? '正在取消…' : '取消'}</button></div>}{detailError && <p className="error" role="alert">{detailError}</p>}{detailPending && <p className="loading">正在读取结果…</p>}{detail && <article className="result-card" aria-label="交互结果"><header><div><span>{recipeLabel(detail.recipe_id)}</span><strong>{stateLabel(detail.state)}</strong></div><small>{utcLabel(detail.terminal_at ? new Date(detail.terminal_at).toISOString() : null)} · {detail.duration_ms} ms · {usageLabel(detail.usage, detail.usage_state)}</small></header>{detail.state === 'failed' && <p className="error" role="alert">{errorCodeLabel(detail.error_code)}</p>}{detail.result === null ? <p className="empty">该交互没有结果正文。</p> : resultSections(detail.result).map((section) => <section key={section.label}><h2>{section.label}</h2><p>{section.value}</p></section>)}{state === 'succeeded' && typeof detail.result_digest === 'string' && <section className="signal-actions" aria-label="交互反馈"><h2>交互反馈</h2><label htmlFor="agentEdit">编辑结果</label><textarea id="agentEdit" value={editText} maxLength={EDIT_LIMIT} onChange={(event) => updateEditText(event.target.value)} placeholder="输入你确认的结果版本" disabled={busy} /><div className="signal-buttons"><button type="button" data-signal="edit" onClick={() => void recordSignal('edit', { text: editText.trim() })} disabled={signalPending || editText.trim().length === 0}>提交编辑</button><button type="button" data-signal="accept" onClick={() => void recordSignal('accept')} disabled={signalPending}>接受</button><button type="button" data-signal="reject" onClick={() => void recordSignal('reject')} disabled={signalPending}>拒绝</button><button type="button" data-signal="remember" onClick={() => void recordSignal('remember')} disabled={signalPending}>记住</button><button type="button" data-signal="forget" onClick={() => void recordSignal('forget')} disabled={signalPending}>忘记</button></div>{signalStatus && <p className="signal-status" role="status">{signalStatus}</p>}</section>}<footer><span>来源引用 {sourceCount(detail)} 条</span><span>{detail.model?.provider_kind === 'cloud' ? '云端模型' : '本地模型'} · 模型身份已冻结</span><span className="export-privacy">导出内容可能包含字幕或个人上下文</span><button type="button" onClick={() => void exportInteraction()} disabled={exportPending || !['succeeded', 'failed', 'cancelled'].includes(state || '')}>{exportPending ? '正在导出…' : '导出交互 JSON'}</button></footer>{Array.isArray(detail.tool_calls) && detail.tool_calls.length > 0 && <details className="tool-audit"><summary>工具调用记录（{detail.tool_calls.length} 条）</summary><ol>{detail.tool_calls.map((call: Dict, index: number) => <li key={`${call.attempt}-${call.call_order}-${index}`}><div className="tool-call-heading"><span>{call.tool_name === 'search_context' ? '检索个人上下文' : call.tool_name === 'read_sources' ? '读取来源' : '受控工具'}</span><strong>{call.status === 'succeeded' ? '成功' : call.status === 'failed' ? '失败' : call.status === 'cancelled' ? '已取消' : '处理中'}</strong>{call.status === 'failed' && <span>{errorCodeLabel(call.error_code)}</span>}</div><details className="tool-call-detail"><summary>查看参数与返回</summary><div><span>参数</span><pre>{JSON.stringify(call.args, null, 2)}</pre></div><div><span>返回</span><pre>{call.result === null ? '无返回值' : JSON.stringify(call.result, null, 2)}</pre></div></details></li>)}</ol></details>}</article>}</section>
-      <aside className="history-panel" aria-label="Agent 交互历史"><div className="panel-heading"><div><h1>交互历史</h1><p>{historyPending ? '正在读取…' : `${history.length} 条终态交互`}</p></div></div>{historyError && <p className="error" role="alert">{historyError}</p>}{comparisonGroups(history).map((group) => <section className="comparison-card" aria-label="同一范围与输入的模型比较" key={group[0].comparison_group_id}><h2>模型比较</h2><p>同一范围与输入的不同模型结果</p><ul>{group.map((item) => <li key={item.interaction_id}><strong>{modelLabel(item.model)}</strong><span>{usageLabel(item.usage, item.usage_state)}</span><span>{relativeDuration(group, item)}</span></li>)}</ul></section>)}<div className="history-list" role="list">{history.map((item) => <button type="button" role="listitem" className="history-card" aria-current={item.interaction_id === activeInteractionId} key={item.interaction_id} onClick={() => setActiveInteractionId(item.interaction_id)}><strong>{recipeLabel(item.recipe_id)}</strong><span>{modelLabel(item.model)}</span><span>{utcLabel(item.terminal_at ? new Date(item.terminal_at).toISOString() : null)} · {stateLabel(item.terminal_reason)}</span><p>{resultPreview(item.result)}</p></button>)}{!historyPending && history.length === 0 && !historyError && <p className="empty">还没有终态 Agent 交互。</p>}</div>{historyCursor && <button className="more-button" type="button" onClick={() => void loadHistory(false)} disabled={historyPending}>加载更多</button>}</aside>
-    </main>
-  </div>
+  const rememberExplicitly = async () => {
+    if (!detail || detail.recipe_id !== 'summary.minutes' || state !== 'succeeded' || typeof detail.result_digest !== 'string') return
+    const text = rememberText.trim()
+    if (text.length === 0) {
+      setSignalStatus('请先写下要记住的一条内容')
+      return
+    }
+    if (!MEMORY_KINDS.includes(rememberKind) || !['global', 'session'].includes(rememberScope)) {
+      setSignalStatus('请选择内容类型和保存范围')
+      return
+    }
+    if (rememberPending) return
+    setRememberPending(true)
+    try {
+      if (typeof api.getAgentContextOverview !== 'function' || typeof api.manageAgentContext !== 'function') {
+        await recordSignal('remember', { text })
+        return
+      }
+      setSignalStatus('正在保存这条记忆…')
+      const overview = await api.getAgentContextOverview({ ...CONTEXT_CONTRACT })
+      if (overview?.ok !== true || !Number.isSafeInteger(overview?.snapshot?.revision)) {
+        throw new PublicResponseError('记忆设置暂时不可用，请稍后重试')
+      }
+      const reference = rememberScope === 'global' ? null : selectedScope?.reference
+      if (rememberScope === 'session' && typeof reference !== 'string') {
+        setSignalStatus('请选择一场已结束的会话后再记住内容')
+        return
+      }
+      const response = await api.manageAgentContext({
+        ...CONTEXT_CONTRACT,
+        request_id: makeIdempotencyKey().replace(/^agent\.ui\./, 'agent.context.'),
+        command: {
+          type: 'remember',
+          expected_revision: overview.snapshot.revision,
+          entry: { display_text: text, kind: rememberKind, scope: { kind: rememberScope, reference } }
+        }
+      })
+      if (response?.ok !== true) {
+        const code = response?.error?.code
+        setSignalStatus(code === 'AGENT_CONTEXT_REVISION_CONFLICT'
+          ? '记忆刚刚发生变化，请重新载入后再试'
+          : code === 'AGENT_CONTEXT_REQUEST_INVALID'
+            ? '记忆内容或保存范围不符合要求，请检查后重试'
+            : '这条记忆暂时没有保存，请稍后重试')
+        return
+      }
+      setRememberText('')
+      setSignalStatus('已记住这条内容')
+    } catch (error) {
+      setSignalStatus(error instanceof PublicResponseError ? error.message : '这条记忆暂时没有保存，请稍后重试')
+    } finally {
+      setRememberPending(false)
+    }
+  }
+
+  const memoryLabel = summaryMemoryLabel(detail)
+  const summaryMemoryHint = summaryMemoryEnabled === true
+    ? '本次生成会参考相关记忆；会话问答会按记忆设置使用信息。'
+    : summaryMemoryEnabled === false
+      ? '本次生成只依据这场会话；会话问答会按记忆设置使用信息。'
+      : '生成时会按设置中的选择；关闭后只依据这场会话。会话问答会按记忆设置使用信息。'
+  return (
+    <div className="agent-shell">
+      <header className="agent-titlebar" id="titlebar" ref={titlebar}>
+        <div><strong>会话总结</strong><span>选择一场已结束的会话，生成一份清晰的会后总结</span></div>
+        <div className="title-actions"><span className="status" role="status" aria-live="polite">{status}</span><button className="close-button" type="button" onClick={() => api.close?.()} aria-label="关闭会话总结">关闭</button></div>
+      </header>
+      <main className="agent-layout">
+        <aside className="scope-panel" aria-label="已结束的会话列表">
+          <div className="panel-heading"><div><h1>已结束的会话</h1><p>{scopePending ? '正在读取会话…' : scopes.length ? `已显示 ${scopes.length} 个会话` : '暂无可用会话'}</p></div><button type="button" onClick={refresh} disabled={scopePending || historyPending}>刷新</button></div>
+          {scopeError && <p className="error" role="alert">{scopeError}</p>}
+          <div className="scope-list" role="list">
+            {scopes.map((item) => <button type="button" role="listitem" className="scope-card" aria-current={item.scope.reference === selectedScope?.reference} key={scopeIdentity(item.scope)} onClick={() => selectScope(item.scope)}><strong>{utcLabel(item.ended_at)}</strong><span>{item.display_name}</span></button>)}
+            {!scopePending && scopes.length === 0 && !scopeError && <p className="empty">还没有可总结的会话。如果正在监听，请先结束会话，再刷新这里。</p>}
+          </div>
+          {scopeCursor && <button className="more-button" type="button" onClick={() => void loadScopes(false)} disabled={scopePending}>加载更多</button>}
+        </aside>
+
+        <section className="request-panel" aria-label="生成会话总结">
+          <div className="selected-scope">{selected ? <><span>本次会话</span><strong>{selected.display_name}</strong></> : <span>请选择一场已结束的会话</span>}</div>
+          <div className={`eligibility ${eligibility === 'ready' ? 'ready' : ''}`} role="status">{eligibility ? eligibilityLabel(eligibility) : (selected ? '正在读取会话状态…' : '选择会话后读取状态')}</div>
+          {['provider_not_configured', 'credential_unavailable', 'agent_disabled'].includes(eligibility || '') && <button type="button" className="secondary" onClick={openSettings}>去设置</button>}
+          <p className="memory-policy-hint">{summaryMemoryHint}</p>
+          <label className="prompt-label" htmlFor="agentPrompt">针对这次会话提问</label>
+          <textarea id="agentPrompt" value={prompt} onChange={(event) => updatePrompt(event.target.value)} placeholder="例如：这场会最重要的决定是什么？" disabled={busy || eligibility !== 'ready'} />
+          <div className="request-actions"><button type="button" className="primary" data-action="minutes" disabled={busy || eligibility !== 'ready'} onClick={() => void submit('请基于这场已结束的会话生成会话总结，包含主要内容、决定、待办和需要注意。', 'minutes')}>生成总结</button><button type="button" data-action="qa" disabled={!canSubmit} onClick={() => void submit(prompt, 'qa')}>提交问题</button></div>
+          {activeInteractionId && <div className="run-card" aria-label="当前请求状态"><div><span>当前请求</span><strong>{stateLabel(state)}</strong></div><button type="button" onClick={() => void cancel()} disabled={cancelPending || !['pending', 'running'].includes(state || '')}>{cancelPending ? '正在取消…' : '取消生成'}</button></div>}
+          {detailError && <p className="error" role="alert">{detailError}</p>}
+          {detailPending && <p className="loading">正在读取结果…</p>}
+          {detail && <article className="result-card" aria-label="会话总结结果">
+            <header><div><span>{recipeLabel(detail.recipe_id)}</span><strong>{stateLabel(detail.state)}</strong></div><small>{utcLabel(detail.terminal_at ? new Date(detail.terminal_at).toISOString() : null)} · {detail.duration_ms} ms · {usageLabel(detail.usage, detail.usage_state)}</small></header>
+            {detail.state === 'failed' && <p className="error" role="alert">{errorCodeLabel(detail.error_code)}</p>}
+            {detail.state === 'failed' && detail.recipe_id === 'summary.minutes' && detail.error_code === 'AGENT_SUMMARY_MEMORY_READ_FAILED' && <p className="memory-read-recovery" role="status">可以先重试读取记忆；如果只想依据这场会话，选择“仅用本次会话生成”。</p>}
+            {detail.result === null
+              ? <p className="empty">{detail.state === 'failed' ? '这次总结没有生成，请重试。' : detail.state === 'cancelled' ? '这次生成已取消。' : '结果会在生成后显示。'}</p>
+              : resultSections(detail.result, detail.recipe_id).map((section) => <section key={section.label}><h2>{section.label}</h2><p>{section.value}</p></section>)}
+            {state === 'succeeded' && typeof detail.result_digest === 'string' && <section className="signal-actions" aria-label="这份结果需要调整吗"><h2>这份结果需要调整吗？</h2><label htmlFor="agentEdit">写下修改内容</label><textarea id="agentEdit" value={editText} maxLength={EDIT_LIMIT} onChange={(event) => updateEditText(event.target.value)} placeholder="例如：把第二项待办写得更具体" disabled={busy} /><div className="signal-buttons"><button type="button" data-signal="edit" onClick={() => void recordSignal('edit', { text: editText.trim() })} disabled={signalPending || editText.trim().length === 0}>提交修改</button><button type="button" data-signal="accept" onClick={() => void recordSignal('accept')} disabled={signalPending}>有帮助</button><button type="button" data-signal="reject" onClick={() => void recordSignal('reject')} disabled={signalPending}>不准确</button></div><div className="remember-flow"><p className="remember-hint">只保存你明确选中的一条内容；先写下原文，再选择类型和范围。</p><label htmlFor="agentRemember">要记住哪一条</label><textarea id="agentRemember" aria-label="要记住哪一条" value={rememberText} maxLength={EDIT_LIMIT} onChange={(event) => updateRememberText(event.target.value)} placeholder="例如：项目代号是北辰" disabled={busy} />{detail.recipe_id === 'summary.minutes' && <><label htmlFor="agentRememberKind">内容类型</label><select id="agentRememberKind" aria-label="内容类型" value={rememberKind} onChange={(event) => setRememberKind(event.target.value)} disabled={busy}>{MEMORY_KINDS.map((kind) => <option key={kind} value={kind}>{MEMORY_KIND_LABELS[kind]}</option>)}</select><label htmlFor="agentRememberScope">保存范围</label><select id="agentRememberScope" aria-label="保存范围" value={rememberScope} onChange={(event) => setRememberScope(event.target.value as 'global' | 'session')} disabled={busy}><option value="global">所有会话都可以使用</option><option value="session">仅这场会话</option></select></>}<button type="button" data-signal="remember" onClick={() => detail.recipe_id === 'summary.minutes' ? void rememberExplicitly() : void recordSignal('remember', { text: rememberText.trim() })} disabled={busy || rememberText.trim().length === 0}>{rememberPending ? '正在保存…' : '记住其中一条'}</button></div><button type="button" data-signal="forget" onClick={() => void recordSignal('forget')} disabled={signalPending}>不再使用</button>{signalStatus && <p className="signal-status" role="status">{signalStatus}</p>}</section>}
+            <footer><span>参考来源 {sourceCount(detail)} 条</span>{memoryLabel && <span>{memoryLabel}</span>}<span>{detail.model?.provider_kind === 'cloud' ? '云端模型' : '本地模型'} · 本次使用的模型已固定</span><span className="export-privacy">导出内容可能包含字幕或个人上下文</span>{canRegenerate && <button type="button" onClick={() => regenerate()}>重新生成</button>}{canRegenerate && detail.error_code === 'AGENT_SUMMARY_MEMORY_READ_FAILED' && <button type="button" onClick={() => regenerate(false)}>仅用本次会话生成</button>}<button type="button" onClick={() => void exportInteraction()} disabled={exportPending || !['succeeded', 'failed', 'cancelled'].includes(state || '')}>{exportPending ? '正在导出…' : '导出结果 JSON'}</button></footer>
+            {Array.isArray(detail.tool_calls) && detail.tool_calls.length > 0 && <details className="tool-audit"><summary>详细信息（{detail.tool_calls.length} 条读取记录）</summary><ol>{detail.tool_calls.map((call: Dict, index: number) => <li key={`${call.attempt}-${call.call_order}-${index}`}><div className="tool-call-heading"><span>{call.tool_name === 'search_context' ? '检索记忆' : call.tool_name === 'read_sources' ? '读取来源' : '受控读取'}</span><strong>{call.status === 'succeeded' ? '成功' : call.status === 'failed' ? '失败' : call.status === 'cancelled' ? '已取消' : '处理中'}</strong>{call.status === 'failed' && <span>{errorCodeLabel(call.error_code)}</span>}</div><details className="tool-call-detail"><summary>查看参数与返回</summary><div><span>参数</span><pre>{JSON.stringify(call.args, null, 2)}</pre></div><div><span>返回</span><pre>{call.result === null ? '无返回值' : JSON.stringify(call.result, null, 2)}</pre></div></details></li>)}</ol></details>}
+          </article>}
+        </section>
+
+        <aside className="history-panel" aria-label="会话总结记录">
+          <div className="panel-heading"><div><h1>总结记录</h1><p>{historyPending ? '正在读取…' : `${history.length} 条记录`}</p></div></div>
+          {historyError && <p className="error" role="alert">{historyError}</p>}
+          {comparisonGroups(history).map((group) => <section className="comparison-card" aria-label="同一会话与问题的模型比较" key={group[0].comparison_group_id}><h2>模型比较</h2><p>同一会话与问题的不同模型结果</p><ul>{group.map((item) => <li key={item.interaction_id}><strong>{modelLabel(item.model)}</strong><span>{usageLabel(item.usage, item.usage_state)}</span><span>{relativeDuration(group, item)}</span></li>)}</ul></section>)}
+          <div className="history-list" role="list">{history.map((item) => <button type="button" role="listitem" className="history-card" aria-current={item.interaction_id === activeInteractionId} key={item.interaction_id} onClick={() => setActiveInteractionId(item.interaction_id)}><strong>{recipeLabel(item.recipe_id)}</strong><span>{modelLabel(item.model)}</span><span>{utcLabel(item.terminal_at ? new Date(item.terminal_at).toISOString() : null)} · {stateLabel(item.terminal_reason)}</span><p>{resultPreview(item.result)}</p></button>)}{!historyPending && history.length === 0 && !historyError && <p className="empty">还没有生成过会话总结。</p>}</div>
+          {historyCursor && <button className="more-button" type="button" onClick={() => void loadHistory(false)} disabled={historyPending}>加载更多</button>}
+        </aside>
+      </main>
+    </div>
+  )
 }

@@ -23,7 +23,8 @@ test('SEM-F28/SEM-F30/J21: S1 freezes only its recipe, task errors, eligibility 
     'AGENT_REQUEST_INVALID',
     'AGENT_WORKER_EXITED',
     'AGENT_INTERNAL_FAILURE',
-    'AGENT_BUDGET_EXCEEDED'
+    'AGENT_BUDGET_EXCEEDED',
+    'AGENT_SUMMARY_MEMORY_READ_FAILED'
   ])
   assert.deepEqual(AGENT_PROCESSING_ELIGIBILITIES, [
     'ready',

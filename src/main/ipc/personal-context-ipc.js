@@ -62,7 +62,7 @@ function registerPersonalContextIpc (options = {}) {
 function broadcastPersonalContextChanged (windows, event) {
   let validated
   try { validated = assertChangedEvent(event) } catch { return false }
-  for (const win of [windows.settings, windows.history]) {
+  for (const win of [windows.settings, windows.history, windows.agent]) {
     if (win && !win.isDestroyed()) win.webContents.send(IPC_CHANNELS.changed, validated)
   }
   return true

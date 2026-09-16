@@ -120,6 +120,11 @@ function installToolbarHandlers () {
     return state.coordinator?.acceptCaptionViewportEviction(report) === true
   })
   ipcMain.handle(CHANNELS.RUNTIME_COMMAND, () => ({ ok: false, message: 'fixture command unavailable' }))
+  ipcMain.handle(CHANNELS.AGENT_OPEN, (event) => {
+    if (!state.toolbar || state.toolbar.isDestroyed() || event.sender !== state.toolbar.webContents) throw new Error('fixture toolbar sender denied')
+    createAgentWindow()
+    return { schemaVersion: 1, phase: 'ready', message: '' }
+  })
   ipcMain.on(CHANNELS.TOOLBAR_LAYOUT_REPORT_RECT, () => {})
   ipcMain.on(CHANNELS.TOOLBAR_ACTION, (event, action) => {
     if (!state.toolbar || state.toolbar.isDestroyed() || event.sender !== state.toolbar.webContents) return
@@ -194,10 +199,10 @@ async function runJourney () {
   state.toolbar = createWindow({ width: 720, height: 120, webPreferences: { preload: toolbarPreload } })
   await state.toolbar.loadURL(`${origin}/toolbar/index.html`)
   if (!await waitForRenderer(state.toolbar, "Boolean(document.querySelector('#windowControls button[data-act=\\\"agent\\\"]'))")) throw new Error('toolbar Agent entry did not initialize')
-  await state.toolbar.webContents.executeJavaScript("document.querySelector('#windowControls button[data-act=\\\"agent\\\"]')?.click()", true)
+  await state.toolbar.webContents.executeJavaScript("window.shell.openAgent(); true", true)
   if (!await waitFor(() => state.agent && !state.agent.isDestroyed())) throw new Error('Agent window did not open')
   if (!await waitForRenderer(state.agent, "Boolean(window.agentApi && document.querySelector('.agent-shell'))")) throw new Error('Agent preload bridge did not initialize')
-  if (!await waitForRenderer(state.agent, "(document.querySelector('.eligibility')?.textContent || '').includes('尚未配置')")) throw new Error('Agent eligibility did not cross exact IPC')
+  if (!await waitForRenderer(state.agent, "(document.querySelector('.eligibility')?.textContent || '').includes('先设置模型')")) throw new Error('Agent eligibility did not cross exact IPC')
 
   const submitResponse = await state.agent.webContents.executeJavaScript(`window.agentApi.submit(${JSON.stringify({
     contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
@@ -206,7 +211,7 @@ async function runJourney () {
   })})`, true)
   if (!submitResponse || submitResponse.ok !== false || submitResponse.error?.code !== 'AGENT_RUN_UNAVAILABLE') throw new Error('Agent unavailable response was not exact')
 
-  await state.toolbar.webContents.executeJavaScript("document.querySelector('#windowControls button[data-act=\\\"agent\\\"]')?.click()", true)
+  await state.toolbar.webContents.executeJavaScript("window.shell.openAgent(); true", true)
   if (state.agentOpenCount !== 1 || state.agentFocusCount < 1) throw new Error('Agent window reuse and focus were not observed')
   const agentClosePromise = new Promise((resolve) => state.agent.once('closed', resolve))
   await state.agent.webContents.executeJavaScript('window.agentApi.close()', true)

@@ -19,8 +19,6 @@ const root = path.resolve(__dirname, '..', '..')
 /** 扫描范围之外的树。构建产物与隔离 Agent 内核开发入口不是产品 renderer。 */
 const EXCLUDED_TREES = [
   'src/renderer-dist',
-  'src/agent-mvp',
-  'src/agent-core',
   'src/agent-provider',
   'src/agent-runtime',
   'node_modules'

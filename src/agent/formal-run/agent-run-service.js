@@ -73,7 +73,9 @@ function sessionScope (sessionId) {
 
 function sessionItem (item) {
   const scope = sessionScope(item.sessionId)
-  const label = `${item.mode || 'session'} · ${new Date(item.startedAt).toISOString()}`
+  const modeLabel = item.mode === 'meeting' ? '系统音频字幕' : item.mode === 'dictation' ? '麦克风听写' : '字幕会话'
+  const stateLabel = item.state === 'interrupted' ? ' · 会话中断，仅总结已保存内容' : ''
+  const label = `${modeLabel} · ${new Date(item.startedAt).toISOString()}${stateLabel}`
   return {
     scope,
     display_name: boundedText(label, item.sessionId),
@@ -146,6 +148,26 @@ function publicModel (model) {
   }
 }
 
+function memoryReferenceCount (toolCalls, recipeId) {
+  if (recipeId !== 'summary.minutes' || !Array.isArray(toolCalls)) return null
+  const refs = new Set()
+  for (const call of toolCalls) {
+    if (call?.toolName !== 'search_context' || call.status !== 'succeeded') continue
+    const matches = call.result?.matches
+    if (!Array.isArray(matches)) continue
+    for (const match of matches) {
+      if (!Array.isArray(match?.entries)) continue
+      for (const entry of match.entries) {
+        const memory = entry?.memoryRef
+        if (memory && typeof memory.memoryId === 'string' && typeof memory.revisionId === 'string') {
+          refs.add(`${memory.memoryId}:${memory.revisionId}`)
+        }
+      }
+    }
+  }
+  return refs.size
+}
+
 function publicInteractionId (value) {
   return typeof value === 'string' && value.length > 0 ? value : null
 }
@@ -215,6 +237,7 @@ class AgentRunService {
     this.routeOrchestrator = options.routeOrchestrator || null
     this.promptStore = options.promptStore instanceof Map ? options.promptStore : null
     this.exporter = options.exporter || null
+    this.getConfig = typeof options.getConfig === 'function' ? options.getConfig : null
     this.getOwnerWindow = typeof options.getOwnerWindow === 'function' ? options.getOwnerWindow : () => null
     this.now = typeof options.now === 'function' ? options.now : Date.now
     this.idFactory = typeof options.idFactory === 'function' ? options.idFactory : () => crypto.randomUUID()
@@ -297,6 +320,10 @@ class AgentRunService {
       c.assertGetEligibilityRequest(request)
       if (this.storage.getRetirementFailure?.()) return publicEligibilityFailure('restart_application')
       if (!isSupportedExecutionScope(request.scope)) return publicEligibilityFailure('choose_supported_scope')
+      if (this.getConfig) {
+        const settings = this.getConfig()
+        if (!settings || settings.agentEnabled !== true) return publicEligibility(request.scope, 'agent_disabled', this.revision)
+      }
       const transcript = await this.storage.getSessionTranscript(request.scope.reference)
       const session = transcript?.session
       if (!session || !isTerminal(session.state)) return publicEligibility(request.scope, 'session_not_terminal', this.revision)
@@ -327,6 +354,14 @@ class AgentRunService {
       if (!['summary.minutes', 'qa.answer'].includes(route.recipeId)) {
         return publicFailure(c.ERROR_CODES.unavailable, 'choose_supported_recipe')
       }
+      const settings = this.getConfig ? this.getConfig() : null
+      const globalSummaryUseMemory = route.recipeId === 'summary.minutes' &&
+        (!settings || (settings.agentEnabled === true && settings.memoryEnabled === true && settings.summaryUseMemory !== false))
+      /* A failed memory read may be retried once with an explicit, local
+         no-memory choice.  It never turns a globally disabled policy back on. */
+      const summaryUseMemory = route.recipeId === 'summary.minutes'
+        ? (request.summary_use_memory === false ? false : globalSummaryUseMemory)
+        : false
       const transcript = await this.storage.getSessionTranscript(request.scope.reference)
       const frozen = typeof this.storage.derivePersonalContextSessionSource === 'function'
         ? await this.storage.derivePersonalContextSessionSource({ sessionId: request.scope.reference, transcriptVersion: 'raw' })
@@ -343,7 +378,7 @@ class AgentRunService {
       if (this.routeOrchestrator && typeof this.routeOrchestrator.submit === 'function') {
         let routed
         try {
-          routed = await this.routeOrchestrator.submit({
+          const routeRequest = {
             scope: request.scope,
             prompt: request.prompt,
             transcriptVersion: frozen.transcriptVersion,
@@ -351,7 +386,9 @@ class AgentRunService {
             inputDigest: frozen.inputDigest,
             clientIdempotencyKey: request.client_idempotency_key,
             signal: null
-          })
+          }
+          if (route.recipeId === 'summary.minutes' && this.getConfig) routeRequest.summaryUseMemory = summaryUseMemory
+          routed = await this.routeOrchestrator.submit(routeRequest)
         } catch (error) {
           if (error?.code === 'AGENT_CANCELLED') return publicFailure(c.ERROR_CODES.unavailable, 'retry')
           if (error?.code === 'AGENT_REQUEST_INVALID') return invalid()
@@ -368,7 +405,7 @@ class AgentRunService {
         if (routed.replayed !== true) this.emitChanged()
         return projectSubmit(routed, routed.interactionId, routed.recipeId, routed.routingMode, this.revision)
       }
-      const run = await this.storage.createAgentRun({
+      const runRequest = {
         runId,
         recipeId: route.recipeId,
         recipeVersion: '1',
@@ -378,7 +415,9 @@ class AgentRunService {
         inputDigest: frozen.inputDigest,
         requestedBy: 'user',
         clientIdempotencyKey: request.client_idempotency_key
-      })
+      }
+      if (route.recipeId === 'summary.minutes' && this.getConfig) runRequest.summaryUseMemory = summaryUseMemory
+      const run = await this.storage.createAgentRun(runRequest)
       const promptDigest = sha256Canonical(request.prompt)
       if (run?.replayed && typeof this.storage.getAgentInteraction === 'function') {
         const existing = await this.storage.getAgentInteraction({ interactionId }).catch(() => null)
@@ -455,6 +494,8 @@ class AgentRunService {
           recipe_version: item.recipeVersion,
           result: item.result,
           result_digest: item.resultDigest,
+          summary_use_memory: item.recipeId === 'summary.minutes' ? (item.summaryUseMemory ?? null) : null,
+          memory_reference_count: item.recipeId === 'summary.minutes' ? (item.memoryReferenceCount ?? null) : null,
           terminal_at: item.terminalAt,
           terminal_reason: item.terminalReason,
           usage: usage.usage,
@@ -482,6 +523,7 @@ class AgentRunService {
           typeof binding.profileId !== 'string' || !Number.isSafeInteger(binding.profileRevision) ||
           !['local', 'cloud'].includes(binding.providerKind)) return publicFailure()
       const usage = publicUsage(item.usage)
+      const referenceCount = memoryReferenceCount(detail.toolCalls, item.recipeId)
       const state = publicState(detail.runState, item.terminalReason, detail.cancelRequested === true)
       const result = {
         attempt_count: item.attemptCount,
@@ -494,6 +536,8 @@ class AgentRunService {
         recipe_version: item.recipeVersion,
         result: item.result,
         result_digest: item.resultDigest,
+        summary_use_memory: item.recipeId === 'summary.minutes' ? (detail.summaryUseMemory ?? null) : null,
+        memory_reference_count: referenceCount,
         routing_mode: item.routingMode,
         run_id: item.runId,
         source_refs: (detail.toolCalls || []).flatMap((call) => Array.isArray(call.sourceRefs) ? call.sourceRefs : []),

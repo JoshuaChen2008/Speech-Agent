@@ -53,6 +53,8 @@ test('window roles cannot invoke one another privileged APIs', () => {
   assert.equal(isRoleAllowed(CHANNELS.TOOLBAR_LAYOUT_REPORT_RECT, 'history'), false)
   assert.equal(isRoleAllowed(CHANNELS.CONFIG_UPDATE, 'settings'), true)
   assert.equal(isRoleAllowed(CHANNELS.CONFIG_UPDATE, 'toolbar'), false)
+  assert.equal(isRoleAllowed(CHANNELS.CONFIG_GET, 'agent'), true)
+  assert.equal(isRoleAllowed(CHANNELS.CONFIG_UPDATE, 'agent'), false)
   assert.equal(isRoleAllowed(CHANNELS.MODEL_STATUS_GET, 'settings'), true)
   assert.equal(isRoleAllowed(CHANNELS.MODEL_INSTALL, 'settings'), true)
   assert.equal(isRoleAllowed(CHANNELS.MODEL_INSTALL_REFINEMENT, 'settings'), true)

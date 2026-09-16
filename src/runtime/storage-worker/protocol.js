@@ -87,6 +87,7 @@ const SAFE_ERROR_MESSAGES = Object.freeze({
   AGENT_INPUT_EMPTY: 'Agent input has no committed transcript.',
   AGENT_INPUT_VERSION_UNAVAILABLE: 'Agent input version is unavailable.',
   AGENT_INPUT_CHANGED: 'Agent input identity has changed.',
+  AGENT_SUMMARY_MEMORY_READ_FAILED: 'Summary memory could not be read.',
   AGENT_OUTPUT_INVALID: 'Agent output is invalid.',
   AGENT_RUN_NOT_FOUND: 'Agent run was not found.',
   AGENT_SESSION_DELETED: 'The session has been deleted.',

@@ -28,6 +28,17 @@ S5-Integration 采用 main-owned `AgentRunService`。submit 的公开载荷只�
 
 ## 2. 执行分层
 
+### 2026-09-13 两项功能的新增旅程矩阵（规划登记）
+
+| 旅程 | 用户路径与可观察结果 | 内部真实模块与失败边界 | 当前证据 |
+|---|---|---|---|
+| J28 | SEM-F37：多次合格终态会话 → 后台摄取 → 个人记忆综合视图 → “我的记忆”查看来源 → 明确纠正/忘记/删除 → 重建；补充显式日期范围历史整理的预览/提交/取消。 | 真实 recorder、个人上下文模块、scheduler、Agent Loop、storage worker/SQLite、settings renderer/preload/main；只替代 provider/网络等外部边界。覆盖重复事件/重启/旧 revision、冲突/到期未确认、覆盖省略、预算、休眠新边界、旧来源 suppression、删除后当前及上版失效、模型失败不恢复受撤销正文、无变更零模型调用、字幕独立性。 | 已决定（方向）；无本增量实现证据。J21 既有摄取证据不能替代综合视图旅程。 |
+| J29 | SEM-F38：工具条或字幕历史 → 明确会话与可见打开反馈 → 全局总结参考设置（首次缺失默认开启）→ 生成总结 → 结果/历史/导出；明确选定内容记住另行写入。 | 真实 toolbar/history/agent/settings renderer、preload、main 窗口、ConfigStore、AgentRunService、Personal Context、Loop、SQLite；只替代 provider/系统故障边界。覆盖窗口首开/重复点击/关闭重开/加载失败、监听中/空正文/缺模型、四种开关/重启/旧 revision、无记忆 payload 负证据、读取失败明确降级、summary.minutes 自动信号零写入、撤销与迟到输出、取消/重试、旧导出不变和失败后字幕新会话。 | 已决定；实现完成·尚未验收。新增 `session-summary-j29-memory-journey.test.js` 定向覆盖四种设置组合、真实 SQLite 冻结策略、provider 边界标记、引用计数与重启持久化；完整窗口/实机门禁仍待联合验收。 |
+
+实现顺序与逐片验证见[任务清单](../openspec/changes/clarify-memory-and-session-summary/tasks.md)，需求见[共同提案](../openspec/changes/clarify-memory-and-session-summary/proposal.md)。纯文档只核对术语/语义/链接；实现用既有 core/integration/evidence 目录，不新增测试 lane。真实公网、Windows 窗口焦点与内容质量另留实机证据；不因 OpenSpec 文件齐备晋级门禁。
+
+> **2026-09-13 SEM-F23/J18 输入控件子边界（实现完成·尚未验收）**：正式 J25 设置旅程新增输入计算样式、首配向导、Tab 焦点、hover 几何、pending 与已配置凭据的非法连接失败恢复、专用颜色/滑块操作、主题及布局压力检查；真实首启选择解除遮罩后再操作表单。renderer 构建返回码 0，样式守卫与该旅程 focus 10/10，追加专用控件检查后正式旅程 1/1。高对比/reduced motion 为媒体模拟，1–2 倍为 renderer zoom，均不替代系统 DPI/人工观察或完整 J18/J25。无凭据档案失败回执的独立既有缺口及全部未验证范围见 [输入框 TODO](../openspec/changes/fix-settings-input-styles/tasks.md)。
+
 新增或保留测试必须能指出它独立阻止的用户风险、`SEM-*` 要求和 `J* / DB* / I*` 旅程位置。若一个低层测试与更高层真实内部模块旅程验证相同输入、相同失败和相同可观察结果，且不能更早定位一个独立不变量，应合并或删除，不以测试数量、行覆盖率或固定实现形状作为保留理由。
 
 - core 只保留适合局部穷举的纯合同、不变量、canonicalization、状态转换和稳定错误映射；不得用源码正则、文档关键词、内部私有调用次序或大 snapshot 伪装产品行为。

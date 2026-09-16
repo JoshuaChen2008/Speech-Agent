@@ -4,6 +4,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const { ContextIngestSessionRunner } = require('../../src/agent/execution-host')
+const { sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
 
 const source = Object.freeze({
   sourceKind: 'session', sessionId: 'session.runner', transcriptVersion: 'raw',
@@ -150,7 +151,7 @@ test('SEM-F15/SEM-F28/SEM-F34/J21/J22/J24: background context ingestion is tool-
 
 test('SEM-F32/J21/J22/J24: interaction signal runner uses the same bounded loop with a frozen signal reference and no tools', async () => {
   const interactionSource = {
-    sourceKind: 'interaction', interactionId: 'interaction.runner.signal', signalKind: 'remember', payloadDigest: null,
+    sourceKind: 'interaction', interactionId: 'interaction.runner.signal', signalKind: 'remember', payloadDigest: sha256Canonical({ text: 'remembered' }),
     recipeId: 'qa.answer', recipeVersion: '1', scopeKind: 'session', scopeReference: 'session.runner', sessionId: 'session.runner',
     transcriptVersion: 'raw', inputWatermark: 2, inputDigest: 'b'.repeat(64), interactionInputDigest: 'c'.repeat(64),
     promptDigest: 'd'.repeat(64), resultDigest: 'e'.repeat(64)
@@ -176,12 +177,12 @@ test('SEM-F32/J21/J22/J24: interaction signal runner uses the same bounded loop 
       commitSessionIngest: async () => ({ state: 'committed' }),
       commitInteractionIngest: async (value) => { calls.push(['commit-interaction', value]); return { state: 'committed' } }
     },
-    interactionPayloadProvider: async () => ({ prompt: null, editText: null, result: transientResult }),
+    interactionPayloadProvider: async () => ({ prompt: null, editText: 'remembered', result: transientResult }),
     onSettled: async (runId, reason, interactionId) => { calls.push(['settled', runId, reason, interactionId]) },
     loop: { agentLoop: async (value) => { calls.push(['loop', value]); return { text: JSON.stringify(interactionOutput) } } }
   })
   const runner = new ContextIngestSessionRunner(options)
-  const prepared = await runner.prepare({ interactionId: interactionSource.interactionId, signalKind: 'remember', payloadDigest: null, sourceKind: 'interaction' })
+  const prepared = await runner.prepare({ interactionId: interactionSource.interactionId, signalKind: 'remember', payloadDigest: interactionSource.payloadDigest, sourceKind: 'interaction' })
   assert.deepEqual(prepared, { runId: 'run.interaction.signal', episodeId: 'episode.interaction.signal' })
   const result = await runner.run({
     recipeId: 'context.ingest.interaction', source: interactionSource,
@@ -193,11 +194,11 @@ test('SEM-F32/J21/J22/J24: interaction signal runner uses the same bounded loop 
   assert.equal(Object.hasOwn(calls.find(([name]) => name === 'loop')[1], 'tools'), false)
   assert.deepEqual(calls.find(([name]) => name === 'interaction-input')[1], interactionSource)
   assert.deepEqual(calls.find(([name]) => name === 'interaction-input')[2], {
-    prompt: null, editText: null, result: transientResult
+    prompt: null, editText: 'remembered', result: transientResult
   })
   const loopPrompt = JSON.parse(calls.find(([name]) => name === 'loop')[1].prompt)
   assert.deepEqual(loopPrompt.signal, {
-    signalKind: 'remember', prompt: null, editText: null, result: transientResult
+    signalKind: 'remember', prompt: null, editText: 'remembered', result: transientResult
   })
   assert.equal(calls.find(([name]) => name === 'commit-interaction')[1].output.experiences[0].evidence.signalKind, 'remember')
   assert.deepEqual(calls.find(([name]) => name === 'settled').slice(1), [

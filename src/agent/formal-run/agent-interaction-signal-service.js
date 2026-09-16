@@ -32,6 +32,8 @@ function terminal (item) {
   return item?.terminalReason === 'succeeded' || item?.terminalReason === 'failed' || item?.terminalReason === 'cancelled'
 }
 
+const SUMMARY_PASSIVE_SIGNALS = new Set(['prompt', 'edit', 'accept', 'reject'])
+
 class AgentInteractionSignalService {
   constructor (options = {}) {
     if (!options.storage || typeof options.storage.getAgentInteraction !== 'function') {
@@ -63,12 +65,24 @@ class AgentInteractionSignalService {
         if (item.terminalReason !== 'succeeded') return failure('invalid', 'result_unavailable')
         if (request.result_digest !== item.resultDigest) return failure('invalid', 'refresh_result')
       }
-      const payloadDigest = request.signal_kind === 'edit'
+      /* A summary is a read-only report.  Its prompt, result and ordinary
+         feedback are acknowledged by the UI but never create an automatic
+         context.ingest.interaction task.  Explicit remember/forget actions
+         remain on the governed signal path below. */
+      if (item.recipeId === 'summary.minutes' && SUMMARY_PASSIVE_SIGNALS.has(request.signal_kind)) {
+        return success({
+          accepted: true,
+          interaction_id: item.interactionId,
+          replayed: false,
+          signal_kind: request.signal_kind
+        })
+      }
+      const payloadDigest = ['edit', 'remember'].includes(request.signal_kind)
         ? sha256Canonical({ text: request.payload.text })
         : null
       const transient = {
         prompt: null,
-        editText: request.signal_kind === 'edit' ? request.payload.text : null,
+        editText: ['edit', 'remember'].includes(request.signal_kind) ? request.payload.text : null,
         result: item.result
       }
       const accepted = await this.personalContext.recordInteractionSignal({
@@ -103,6 +117,7 @@ class AgentInteractionSignalService {
       const item = publicInteraction(detail)
       if (!item || item.requestedBy !== 'user' || item.recipeId === 'intent.route' || !terminal(item)) return false
       runId = item.runId || item.run_id || detail?.runId || null
+      if (item.recipeId === 'summary.minutes') return false
       const storedPrompt = typeof prompt === 'string' ? prompt : (runId && this.promptStore ? this.promptStore.get(runId) : null)
       if (typeof storedPrompt !== 'string' || storedPrompt.length === 0) return false
       // The prompt remains in the bounded main-process map only until this

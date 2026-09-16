@@ -151,6 +151,76 @@ test('SEM-F15/SEM-F16/SEM-F34/J22: summary.minutes uses the same Agent Loop and 
   assert.deepEqual(terminal.result.conclusions[0].sourceRefs, [sourceRef])
 })
 
+test('SEM-F38/J29: summary.minutes with memory reference disabled never resolves or reads personal context', async () => {
+  const seen = []
+  const { runner, calls, sourceRef } = harness({
+    recipeId: 'summary.minutes',
+    adapterRun: async ({ prompt, tools }) => {
+      seen.push({ prompt, toolCount: tools.length })
+      const lookup = await tools[0].execute({ schemaVersion: 1, aliasKeys: ['memory-canary'] })
+      assert.deepEqual(lookup, { schemaVersion: 1, matches: [], unmatchedAliasKeys: ['memory-canary'] })
+      return {
+        text: JSON.stringify({
+          schemaVersion: 1,
+          overview: '只依据本次会话。',
+          conclusions: [{ text: '本次决定。', sourceRefs: [sourceRef] }],
+          todos: [],
+          risks: []
+        }),
+        usage: null
+      }
+    }
+  })
+  runner.personalContext.resolve = async () => { throw new Error('memory resolution must be skipped') }
+  runner.personalContext.readToolContext = async () => { throw new Error('memory read must be skipped') }
+  const result = await runner.run(job({ recipeId: 'summary.minutes', summaryUseMemory: false }))
+  assert.equal(result.terminalReason, 'succeeded')
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0].prompt.includes('memory-canary'), false)
+  assert.equal(seen[0].toolCount, 1)
+  assert.equal(calls.some(([kind]) => kind === 'resolve'), false)
+})
+
+test('SEM-F38/SEM-T04/J29: summary memory read failure is explicit and produces no provider result', async () => {
+  let providerCalls = 0
+  const { runner, calls } = harness({
+    recipeId: 'summary.minutes',
+    adapterRun: async () => { providerCalls += 1; throw new Error('provider must not run') }
+  })
+  runner.personalContext.readToolContext = async () => {
+    const error = new Error('changed')
+    error.code = 'AGENT_INPUT_CHANGED'
+    throw error
+  }
+  const result = await runner.run(job({ recipeId: 'summary.minutes', summaryUseMemory: true }))
+  assert.equal(result, null)
+  assert.equal(providerCalls, 0)
+  const terminal = calls.find(([kind]) => kind === 'terminalize')[1]
+  assert.equal(terminal.errorCode, 'AGENT_SUMMARY_MEMORY_READ_FAILED')
+  assert.equal(terminal.result, null)
+})
+
+test('SEM-F38/SEM-T04/J29: bounded memory read failures use the same explicit recovery code', async () => {
+  for (const code of ['AGENT_BUDGET_EXCEEDED', 'AGENT_REQUEST_INVALID']) {
+    let providerCalls = 0
+    const { runner, calls } = harness({
+      recipeId: 'summary.minutes',
+      adapterRun: async () => { providerCalls += 1; throw new Error('provider must not run') }
+    })
+    runner.personalContext.readToolContext = async () => {
+      const error = new Error(code)
+      error.code = code
+      throw error
+    }
+    const result = await runner.run(job({ recipeId: 'summary.minutes', summaryUseMemory: true }))
+    assert.equal(result, null)
+    assert.equal(providerCalls, 0)
+    const terminal = calls.find(([kind]) => kind === 'terminalize')[1]
+    assert.equal(terminal.errorCode, 'AGENT_SUMMARY_MEMORY_READ_FAILED')
+    assert.equal(terminal.result, null)
+  }
+})
+
 test('SEM-F28/SEM-F34/J22/J24: invalid output Schema terminalizes without a partial result', async () => {
   const { runner, calls } = harness({
     adapterRun: async () => ({ text: JSON.stringify({ schemaVersion: 1, answer: '缺少引用字段' }) })

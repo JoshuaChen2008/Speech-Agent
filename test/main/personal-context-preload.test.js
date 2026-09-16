@@ -34,6 +34,7 @@ function loadPreload (role, options = {}) {
     if (specifier === '../agent/contracts/agent-model-presets-ui') return require('../../src/agent/contracts/agent-model-presets-ui')
     if (specifier === '../agent/contracts/agent-model-test-ui') return require('../../src/agent/contracts/agent-model-test-ui')
     if (specifier === '../agent/contracts/agent-settings-ui') return require('../../src/agent/contracts/agent-settings-ui')
+    if (specifier === '../agent/contracts/session-summary-settings-ui') return require('../../src/agent/contracts/session-summary-settings-ui')
     throw new Error(`unexpected preload dependency: ${specifier}`)
   }
   vm.runInNewContext(`(function (require, module, exports) { ${source}\n})`, {})

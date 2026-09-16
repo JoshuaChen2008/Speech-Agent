@@ -13,7 +13,8 @@ const {
 } = require('../contracts/controlled-tools')
 const c = require('../contracts/agent-run-ui')
 
-const EXPORT_SCHEMA_VERSION = 1
+const EXPORT_SCHEMA_VERSION = 2
+const LEGACY_EXPORT_SCHEMA_VERSION = 1
 const IDENTIFIER = /^[a-z0-9][a-z0-9._:-]{0,159}$/
 const DIGEST = /^[a-f0-9]{64}$/
 const TOOL_NAMES = Object.freeze(['search_context', 'read_sources'])
@@ -56,6 +57,28 @@ function digest (value, label, nullable = false) {
 function nonNegativeInteger (value, label) {
   if (!Number.isSafeInteger(value) || value < 0) fail(`${label} is invalid`)
   return value
+}
+
+function nullableBoolean (value, label) {
+  if (value !== null && typeof value !== 'boolean') fail(`${label} is invalid`)
+  return value
+}
+
+function memoryReferenceCount (toolCalls, recipeId) {
+  if (recipeId !== 'summary.minutes') return null
+  const refs = new Set()
+  for (const call of toolCalls || []) {
+    if (call?.toolName !== 'search_context' || call.status !== 'succeeded') continue
+    for (const match of call.result?.matches || []) {
+      for (const entry of match?.entries || []) {
+        const ref = entry?.memoryRef
+        if (ref && typeof ref.memoryId === 'string' && typeof ref.revisionId === 'string') {
+          refs.add(`${ref.memoryId}:${ref.revisionId}`)
+        }
+      }
+    }
+  }
+  return refs.size
 }
 
 function boundedInteger (value, label, maximum) {
@@ -280,8 +303,13 @@ function buildExportSnapshot (detail, requestedInteractionId = null) {
     if (error?.code === 'AGENT_EXPORT_INVALID') throw error
     fail('tool call sequence is invalid')
   }
+  const frozenSummaryPolicy = item.recipeId === 'summary.minutes'
+    ? (detail.summaryUseMemory ?? item.summaryUseMemory ?? null)
+    : null
+  nullableBoolean(frozenSummaryPolicy, 'summaryUseMemory')
+  const summaryMemoryReferenceCount = memoryReferenceCount(rawCalls, item.recipeId)
   const snapshot = {
-    schema_version: EXPORT_SCHEMA_VERSION,
+    schema_version: frozenSummaryPolicy === null ? LEGACY_EXPORT_SCHEMA_VERSION : EXPORT_SCHEMA_VERSION,
     interaction_id: interactionId,
     run_id: item.runId,
     scope,
@@ -299,6 +327,10 @@ function buildExportSnapshot (detail, requestedInteractionId = null) {
     terminal_at: item.terminalAt,
     result,
     tool_calls: toolCalls
+  }
+  if (frozenSummaryPolicy !== null) {
+    snapshot.summary_use_memory = frozenSummaryPolicy
+    snapshot.memory_reference_count = summaryMemoryReferenceCount
   }
   try { assertExportPrivacy(snapshot) } catch { fail('snapshot violates privacy boundary') }
   return snapshot
@@ -359,7 +391,7 @@ class AgentInteractionExporter {
     return {
       bytes_sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
       interaction_id: interactionId,
-      schema_version: EXPORT_SCHEMA_VERSION,
+      schema_version: snapshot.schema_version,
       snapshot
     }
   }

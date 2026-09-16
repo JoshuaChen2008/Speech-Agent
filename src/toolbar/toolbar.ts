@@ -26,7 +26,7 @@ const bindManualWindowDrag = window.ManualWindowDrag?.bindManualWindowDrag || ((
 const bridge: any = window.shell || {
   mouseThrough () {}, dragStart () {}, dragEnd () {},
   lockToggle () {}, action () {},
-  onInteractionSync () {}, onLock () {}, onConfig () {}, onSnapshot () {}, onRefinementNotice () {},
+  onInteractionSync () {}, onLock () {}, onConfig () {}, onSnapshot () {}, onRefinementNotice () {}, onAgentOpenStatus () {},
   getToolbarLayoutContext () { return Promise.reject(new Error('no shell')) },
   reportToolbarLayout () {},
   command () { return Promise.reject(new Error('no shell')) },
@@ -61,6 +61,7 @@ let runtimeSnapshotAccepted = false
 let commandPending = false
 let commandFailure: any | null = null
 let refinementNotice: any | null = null
+let agentOpenStatus: any | null = null
 let toolbarLayoutGeneration = 0
 let toolbarLayoutObserver: ResizeObserver | null = null
 let toolbarLayoutMutationObserver: MutationObserver | null = null
@@ -153,7 +154,23 @@ const SUPPORTED: Record<string, () => unknown> = {
   retry: () => runCommand('retry'),
   'open-settings': () => bridge.action('settings'),
   'open-model-manager': () => bridge.action('open-model-manager'),
-  agent: () => bridge.action('agent'),
+  agent: () => {
+    if (typeof bridge.openAgent === 'function') {
+      void bridge.openAgent().catch(() => {
+        // The main process normally sends the failure phase itself.  Keep a
+        // local visible fallback for an IPC rejection before that status can
+        // arrive (for example while the window is being torn down).
+        agentOpenStatus = {
+          schemaVersion: 1,
+          phase: 'failed',
+          message: '暂时无法打开会话总结，请重试'
+        }
+        render()
+      })
+      return
+    }
+    bridge.action('agent')
+  },
   history: () => bridge.action('history'),
   'dismiss-refinement-notice': () => bridge.action('dismiss-refinement-notice'),
   lock: () => bridge.lockToggle(),
@@ -233,7 +250,24 @@ function renderStatus (view: any): void {
   statusHost.dataset.emphasis = view.status.emphasis
   statusHost.setAttribute('aria-label', view.status.ariaLabel)
 
-  if (refinementNotice) {
+  if (agentOpenStatus && ['opening', 'waiting', 'failed', 'ready'].includes(agentOpenStatus.phase)) {
+    const failed = agentOpenStatus.phase === 'failed'
+    statusHost.dataset.tone = failed ? 'danger' : 'accent'
+    statusHost.dataset.emphasis = 'attention'
+    statusHost.setAttribute('aria-label', agentOpenStatus.message)
+    const icon = iconEl(failed ? 'alert' : agentOpenStatus.phase === 'ready' ? 'agent' : 'spinner', 'status-icon')
+    if (!failed && agentOpenStatus.phase !== 'ready') icon.dataset.spin = 'cw'
+    statusHost.appendChild(icon)
+    const message = el('span', 'status-message', agentOpenStatus.message)
+    message.title = agentOpenStatus.message
+    statusHost.appendChild(message)
+    if (['waiting', 'failed'].includes(agentOpenStatus.phase)) {
+      statusHost.appendChild(commandButton({
+        act: 'agent', icon: 'agent', label: '重试', showLabel: true,
+        ariaLabel: '重试打开会话总结', disabled: false, reason: null
+      }, 'notice-history'))
+    }
+  } else if (refinementNotice) {
     statusHost.classList.add('refinement-notice')
     statusHost.dataset.tone = 'warn'
     statusHost.dataset.emphasis = 'attention'
@@ -307,7 +341,7 @@ function renderCommands (view: any): void {
 
 const WINDOW_CONTROLS = [
   { act: 'history', icon: 'history', label: '历史记录' },
-  { act: 'agent', icon: 'agent', label: 'Agent Bar' },
+  { act: 'agent', icon: 'agent', label: '会话总结' },
   { act: 'lock', icon: 'unlock', label: '锁定字幕', toggle: true },
   { act: 'settings', icon: 'settings', label: '设置' },
   { act: 'minimize', icon: 'minimize', label: '最小化' },
@@ -570,6 +604,22 @@ async function initRefinementNotice () {
   } catch { /* browser preview */ }
 }
 
+function acceptAgentOpenStatus (value: any): void {
+  if (!value || value.schemaVersion !== 1 || !['opening', 'ready', 'waiting', 'failed'].includes(value.phase) ||
+      typeof value.message !== 'string') return
+  agentOpenStatus = value
+  render()
+  if (value.phase === 'ready') {
+    setTimeout(() => {
+      if (agentOpenStatus === value) { agentOpenStatus = null; render() }
+    }, 1800)
+  }
+}
+
+function initAgentOpenStatus () {
+  if (typeof bridge.onAgentOpenStatus === 'function') bridge.onAgentOpenStatus(acceptAgentOpenStatus)
+}
+
 /** @param {any} c */
 function applyConfig (c: any): void {
   applyAppearance(document.documentElement, c)
@@ -584,6 +634,7 @@ initLock()
 initConfig()
 initRuntime()
 initRefinementNotice()
+initAgentOpenStatus()
 initToolbarLayout()
 
 })()

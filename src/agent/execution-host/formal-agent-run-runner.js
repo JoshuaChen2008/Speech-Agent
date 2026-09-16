@@ -15,7 +15,8 @@ const RETRYABLE_ERRORS = new Set([
   'AGENT_WORKER_EXITED', 'AGENT_INTERNAL_FAILURE'
 ])
 const TERMINAL_ERRORS = new Set([
-  'AGENT_OUTPUT_INVALID', 'AGENT_BUDGET_EXCEEDED', 'AGENT_PERMISSION_DENIED', 'AGENT_REQUEST_INVALID'
+  'AGENT_OUTPUT_INVALID', 'AGENT_BUDGET_EXCEEDED', 'AGENT_PERMISSION_DENIED', 'AGENT_REQUEST_INVALID',
+  'AGENT_SUMMARY_MEMORY_READ_FAILED'
 ])
 
 function codedError (code) {
@@ -90,6 +91,14 @@ function normalizedErrorCode (error) {
   return 'AGENT_INTERNAL_FAILURE'
 }
 
+function summaryMemoryReadError (error) {
+  return [
+    'AGENT_INPUT_CHANGED', 'AGENT_CONTEXT_NOT_FOUND', 'AGENT_RUN_NOT_FOUND',
+    'AGENT_SESSION_NOT_FOUND', 'AGENT_BUDGET_EXCEEDED', 'AGENT_REQUEST_INVALID',
+    'STORAGE_COMMAND_FAILED'
+  ].includes(error?.code)
+}
+
 class FormalAgentRunRunner {
   constructor (options = {}) {
     if (!options.storage || typeof options.storage.failFormalAgentRun !== 'function') {
@@ -126,8 +135,10 @@ class FormalAgentRunRunner {
     }
   }
 
-  async toolsForRun (recipe, binding, interactionId, attemptIdentity, signal) {
-    const context = await this.personalContext.readToolContext({ runId: attemptIdentity.runId })
+  async toolsForRun (recipe, binding, interactionId, attemptIdentity, signal, contextOverride = undefined) {
+    const context = contextOverride === undefined
+      ? await this.personalContext.readToolContext({ runId: attemptIdentity.runId })
+      : contextOverride
     const controlled = createControlledToolRuntime({ context, signal })
     const audited = createToolAuditRuntime({
       interactionId,
@@ -155,10 +166,11 @@ class FormalAgentRunRunner {
   }
 
   async run (job) {
-    exactObject(job, ['recipeId', 'source', 'attemptIdentity'], ['interactionId', 'requestedBy', 'signal', 'runId'])
+    exactObject(job, ['recipeId', 'source', 'attemptIdentity'], ['interactionId', 'requestedBy', 'signal', 'runId', 'summaryUseMemory'])
     if (!TARGET_RECIPES.has(job.recipeId) || job.requestedBy !== undefined && job.requestedBy !== 'user') {
       throw codedError('AGENT_REQUEST_INVALID')
     }
+    if (job.summaryUseMemory !== undefined && typeof job.summaryUseMemory !== 'boolean') throw codedError('AGENT_REQUEST_INVALID')
     if (job.runId !== undefined && job.runId !== job.attemptIdentity.runId) throw codedError('AGENT_REQUEST_INVALID')
     if (typeof job.interactionId !== 'string' || job.interactionId.length === 0) {
       await this.storage.failFormalAgentRun({ attemptIdentity: job.attemptIdentity, errorCode: 'AGENT_REQUEST_INVALID' })
@@ -178,16 +190,28 @@ class FormalAgentRunRunner {
         executionForm: 'agent_loop'
       })
       const input = await this.personalContext.readSessionInput(job.source)
+      const useMemory = job.recipeId !== 'summary.minutes' || job.summaryUseMemory !== false
 
-      if (this.resolveContext) {
-        await this.resolveContext({
-          scope: { kind: 'session', reference: input.sessionId },
-          semantic_keys: [],
-          aliases: []
-        })
-      }
       const prompt = promptForInput(input, userPrompt)
-      const tools = await this.toolsForRun(recipe, binding, job.interactionId, job.attemptIdentity, job.signal)
+      let tools
+      try {
+        if (this.resolveContext && useMemory) {
+          await this.resolveContext({
+            scope: { kind: 'session', reference: input.sessionId },
+            semantic_keys: [],
+            aliases: []
+          })
+        }
+        tools = await this.toolsForRun(
+          recipe, binding, job.interactionId, job.attemptIdentity, job.signal,
+          useMemory ? undefined : { scope: { registeredAliasKeys: [], memoryRefs: [], sourceRefs: [] }, entries: [], sources: [] }
+        )
+      } catch (error) {
+        if (job.recipeId === 'summary.minutes' && useMemory && summaryMemoryReadError(error)) {
+          throw codedError('AGENT_SUMMARY_MEMORY_READ_FAILED')
+        }
+        throw error
+      }
       const loop = await this.loopFactory(binding)
       if (!loop || typeof loop.agentLoop !== 'function') throw codedError('AGENT_INTERNAL_FAILURE')
       const result = await loop.agentLoop({
@@ -204,16 +228,24 @@ class FormalAgentRunRunner {
       const output = outputValue(result)
       validateRecipeOutput(recipe.recipeId, recipe.recipeVersion, output)
       if (job.signal?.aborted) throw codedError('AGENT_CANCELLED')
-      terminalReason = 'succeeded'
       const durationMs = Math.max(0, this.now() - startedAt)
-      return await this.interactions.terminalize({
-        interactionId: job.interactionId,
-        terminalReason,
-        errorCode: null,
-        result: output,
-        usage: usageValue(result?.usage, binding?.capabilities?.usageReporting),
-        durationMs
-      })
+      try {
+        const terminal = await this.interactions.terminalize({
+          interactionId: job.interactionId,
+          terminalReason: 'succeeded',
+          errorCode: null,
+          result: output,
+          usage: usageValue(result?.usage, binding?.capabilities?.usageReporting),
+          durationMs
+        })
+        terminalReason = 'succeeded'
+        return terminal
+      } catch (error) {
+        if (job.recipeId === 'summary.minutes' && useMemory && summaryMemoryReadError(error)) {
+          throw codedError('AGENT_SUMMARY_MEMORY_READ_FAILED')
+        }
+        throw error
+      }
     } catch (error) {
       const code = normalizedErrorCode(error)
       const durationMs = Math.max(0, this.now() - startedAt)

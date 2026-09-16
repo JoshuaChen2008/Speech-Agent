@@ -10,6 +10,7 @@ const { AgentExecutionStore } = require('../../src/runtime/storage-worker/agent-
 const { canonicalize, sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
 const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
+const { buildExportSnapshot } = require('../../src/agent/formal-run/agent-interaction-exporter')
 
 const providerUsage = {
   inputTokens: 10,
@@ -42,7 +43,8 @@ function insertRun (database, {
   state = 'running',
   usageReporting = true,
   supportsToolCalling = true,
-  scopeReference = `session.${runId}`
+  scopeReference = `session.${runId}`,
+  summaryUseMemory
 }) {
   const scope = { kind: 'session', reference: scopeReference }
   const inputWatermark = { throughEventOrder: 3 }
@@ -76,11 +78,12 @@ function insertRun (database, {
       run_id, execution_form, purpose, assignment_mode, profile_id, profile_revision,
       adapter_id, api_style, https_origin, base_path, model_id, capability_json,
       budget_json, provider_kind, credential_slot_id, created_at
-    ) VALUES (?, 'agent_loop', 'default', 'direct', 'profile.test', 1,
+    ) VALUES (?, 'agent_loop', ?, 'direct', 'profile.test', 1,
       'openai-compatible', 'chat-completions', 'https://provider.test', '/v1',
       'model.test', ?, ?, 'cloud', 'slot.test.00000001', 1)
   `).run(
     runId,
+    recipeId === 'summary.minutes' ? 'summary' : 'default',
     canonicalize({
       maxInputTokens: 64000,
       maxOutputTokens: 4096,
@@ -91,6 +94,9 @@ function insertRun (database, {
     }),
     canonicalize({ maxTurns: recipeId === 'report.analysis' ? 6 : 3 })
   )
+  if (recipeId === 'summary.minutes' && typeof summaryUseMemory === 'boolean') {
+    database.prepare('UPDATE formal_agent_runs SET summary_use_memory=? WHERE run_id=?').run(summaryUseMemory ? 1 : 0, runId)
+  }
 }
 
 function qaResult () {
@@ -158,6 +164,60 @@ test('SEM-F28/SEM-F33/J22: terminal success/cancel are atomic, usage is nullable
     interactionId: 'interaction.cancel', terminalReason: 'succeeded', errorCode: null,
     result: qaResult(), usage: null, durationMs: 1
   }), (error) => error.code === 'AGENT_INTERACTION_STATE_CONFLICT')
+})
+
+test('SEM-F38/SEM-T04/J29: summary memory revocation rejects late output and preserves an explicit failure projection', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  insertRun(subtitleStore.database, {
+    runId: 'run.summary-revoked', recipeId: 'summary.minutes', requestedBy: 'user', scopeReference: 'session.summary-revoked'
+  })
+  store.createInteraction({
+    runId: 'run.summary-revoked', interactionId: 'interaction.summary-revoked', routingMode: 'preset', promptDigest: 'a'.repeat(64)
+  })
+  subtitleStore.database.prepare('UPDATE personal_context_projection_state SET content_revision=1 WHERE singleton_key=1').run()
+  assert.throws(() => store.terminalizeInteraction({
+    interactionId: 'interaction.summary-revoked', terminalReason: 'succeeded', errorCode: null,
+    result: { schemaVersion: 1, summary: 'late', decisions: [], actionItems: [], risks: [], sourceRefs: [], memoryRefs: [] },
+    usage: null, durationMs: 2
+  }), (error) => error.code === 'AGENT_INPUT_CHANGED')
+  const failed = store.terminalizeInteraction({
+    interactionId: 'interaction.summary-revoked', terminalReason: 'failed',
+    errorCode: 'AGENT_SUMMARY_MEMORY_READ_FAILED', result: null, usage: null, durationMs: 3
+  })
+  assert.equal(failed.errorCode, 'AGENT_SUMMARY_MEMORY_READ_FAILED')
+  assert.equal(subtitleStore.database.prepare('SELECT error_code FROM formal_agent_interactions WHERE interaction_id=?').get('interaction.summary-revoked').error_code, 'AGENT_INTERNAL_FAILURE')
+  assert.equal(subtitleStore.database.prepare('SELECT summary_memory_error FROM formal_agent_interactions WHERE interaction_id=?').get('interaction.summary-revoked').summary_memory_error, 1)
+})
+
+test('SEM-F38/J29: frozen summary policy survives storage detail, history and versioned export', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  insertRun(subtitleStore.database, {
+    runId: 'run.summary.policy', recipeId: 'summary.minutes', summaryUseMemory: true,
+    scopeReference: 'session.summary-policy'
+  })
+  store.createInteraction({
+    runId: 'run.summary.policy', interactionId: 'interaction.summary.policy', routingMode: 'preset', promptDigest: 'a'.repeat(64)
+  })
+  const summaryResult = {
+    schemaVersion: 1,
+    overview: '受控总结。',
+    conclusions: [],
+    todos: [],
+    risks: []
+  }
+  store.terminalizeInteraction({
+    interactionId: 'interaction.summary.policy', terminalReason: 'succeeded', errorCode: null,
+    result: summaryResult, usage: null, durationMs: 4
+  })
+  const detail = store.getInteraction({ interactionId: 'interaction.summary.policy' })
+  assert.equal(detail.summaryUseMemory, true)
+  const page = store.listInteractions({ limit: 10, cursor: null })
+  assert.equal(page.items[0].summaryUseMemory, true)
+  assert.equal(page.items[0].memoryReferenceCount, 0)
+  const snapshot = buildExportSnapshot(detail, 'interaction.summary.policy')
+  assert.equal(snapshot.schema_version, 2)
+  assert.equal(snapshot.summary_use_memory, true)
+  assert.equal(snapshot.memory_reference_count, 0)
 })
 
 test('SEM-F28/SEM-F34/J22: tool calls enforce grants, exact state/error binding, byte budgets and attempt order', (t) => {

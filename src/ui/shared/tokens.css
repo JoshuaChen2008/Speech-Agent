@@ -112,6 +112,15 @@
   --border-window-titlebar: rgba(var(--c-white), 0.10);
   --fg: var(--c-fog);
 
+  /* 输入控件：随前景与窗口主题解析，禁用不降低整个控件透明度。 */
+  --surface-input: rgba(var(--fg), 0.06);
+  --surface-input-disabled: rgba(var(--fg), 0.03);
+  --surface-input-readonly: transparent;
+  --border-input: rgba(var(--fg), 0.30);
+  --border-input-hover: rgba(var(--fg), 0.50);
+  --text-input-placeholder: rgba(var(--fg), 0.65);
+  --text-input-disabled: rgba(var(--fg), 0.65);
+
   /* 文字 */
 
   /* 字幕文字色与主题完全解耦，深色和浅色主题都不覆盖它。
@@ -346,5 +355,12 @@
     --surface-window-titlebar: Canvas;
     --border-window-titlebar: CanvasText;
     --surface-settings: Canvas;
+    --surface-input: Field;
+    --surface-input-disabled: Canvas;
+    --surface-input-readonly: Canvas;
+    --border-input: CanvasText;
+    --border-input-hover: Highlight;
+    --text-input-placeholder: GrayText;
+    --text-input-disabled: GrayText;
   }
 }

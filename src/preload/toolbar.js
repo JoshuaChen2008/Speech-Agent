@@ -16,11 +16,13 @@ contextBridge.exposeInMainWorld('shell', {
   getToolbarLayoutContext: () => ipcRenderer.invoke(CHANNELS.TOOLBAR_LAYOUT_GET_CONTEXT),
   reportToolbarLayout: (report) => ipcRenderer.send(CHANNELS.TOOLBAR_LAYOUT_REPORT_RECT, report),
   action: (name) => ipcRenderer.send(CHANNELS.TOOLBAR_ACTION, String(name || '')),
+  openAgent: () => ipcRenderer.invoke(CHANNELS.AGENT_OPEN),
   getConfig: () => ipcRenderer.invoke(CHANNELS.CONFIG_GET),
   onConfig: (callback) => subscribe(CHANNELS.CONFIG_CHANGED, callback),
   getSnapshot: () => ipcRenderer.invoke(CHANNELS.RUNTIME_GET),
   onSnapshot: (callback) => subscribe(CHANNELS.RUNTIME_CHANGED, callback),
   getRefinementNotice: () => ipcRenderer.invoke(CHANNELS.REFINEMENT_NOTICE_GET),
   onRefinementNotice: (callback) => subscribe(CHANNELS.REFINEMENT_NOTICE_CHANGED, callback),
+  onAgentOpenStatus: (callback) => subscribe(CHANNELS.AGENT_OPEN_STATUS, callback),
   command: (name) => ipcRenderer.invoke(CHANNELS.RUNTIME_COMMAND, String(name || ''))
 })

@@ -140,6 +140,7 @@ html, body {
 /* 内容 */
 .content {
   flex: 1;
+  min-width: 0;
   padding: 8px 30px 30px;
   overflow-y: auto;
 }
@@ -351,19 +352,41 @@ input[type="range"]::-webkit-slider-thumb {
 /* --------------------------------------------------------------------------
    Agent 模型配置档案
    -------------------------------------------------------------------------- */
-input[type="text"], input[type="password"], input[type="number"], select {
+:is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], select, textarea) {
   font: inherit;
   color: rgb(var(--fg));
-  background: rgba(var(--fg), 0.06);
-  border: 1px solid rgba(var(--fg), 0.16);
+  background: var(--surface-input);
+  border: 1px solid var(--border-input);
   border-radius: var(--radius-control);
   padding: 6px 10px;
+  min-height: 36px;
   min-width: 0;
+  max-width: 100%;
 }
-input[type="text"]:disabled, input[type="password"]:disabled, input[type="number"]:disabled, select:disabled {
-  opacity: 0.5;
+:is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], select, textarea):not(:disabled):not([readonly]):hover {
+  border-color: var(--border-input-hover);
+}
+:is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], textarea)::placeholder {
+  color: var(--text-input-placeholder);
+  opacity: 1;
+}
+:is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], textarea)[readonly] {
+  background: var(--surface-input-readonly);
+  border-style: dashed;
+}
+:is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], select, textarea):disabled {
+  background: var(--surface-input-disabled);
+  color: var(--text-input-disabled);
+  opacity: 1;
   cursor: not-allowed;
 }
+:is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], select, textarea)[aria-invalid="true"] {
+  border-color: var(--tone-danger);
+}
+textarea, .content textarea { min-height: 70px; padding: 8px 10px; resize: vertical; }
+.row, .field, .agent-context-form-row, .resource-actions { flex-wrap: wrap; }
+.row > *, .field, .field > *, .agent-context-form-row > * { min-width: 0; max-width: 100%; }
+.row > div, .wizard-details, .agent-model-default-summary { overflow-wrap: anywhere; }
 .agent-model-profile-card {
   border-bottom: 1px solid rgba(var(--fg), 0.1);
   padding: 10px 0 18px;
@@ -374,7 +397,7 @@ input[type="text"]:disabled, input[type="password"]:disabled, input[type="number
 .agent-model-default-summary > div + div { margin-top: 5px; }
 .agent-model-preset-launcher { margin-top: 14px; }
 .capability-row .seg { flex: none; }
-.purpose-row select { min-width: 220px; }
+.purpose-row select { width: 220px; min-width: 0; }
 .purpose-details { margin-top: 10px; }
 .purpose-details summary { padding: 8px 0; cursor: pointer; color: rgb(var(--text-accent)); font-size: var(--fs-label); }
 .agent-model-wizard { margin-top: 14px; padding: 18px 20px 20px; }
@@ -428,15 +451,6 @@ input[type="text"]:disabled, input[type="password"]:disabled, input[type="number
 .agent-context-remember { padding: 4px 16px 14px; }
 .agent-context-remember textarea, .agent-context-item textarea {
   width: 100%;
-  min-height: 70px;
-  box-sizing: border-box;
-  resize: vertical;
-  font: inherit;
-  color: rgb(var(--fg));
-  background: rgba(var(--fg), 0.06);
-  border: 1px solid rgba(var(--fg), 0.16);
-  border-radius: var(--radius-control);
-  padding: 8px 10px;
 }
 .agent-context-form-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .agent-context-form-row select { flex: 1; }
@@ -467,7 +481,10 @@ input[type="text"]:disabled, input[type="password"]:disabled, input[type="number
   .group, .seg, .resource-list, .model-progress, .secondary-btn { border: 1px solid CanvasText; }
   .seg button.on { border: 2px solid Highlight; }
   .nav-item.active, .preset-card:hover { border: 1px solid Highlight; }
-  input[type="text"], input[type="password"], input[type="number"], select, [role="alertdialog"] { border: 1px solid CanvasText; }
+  :is(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="email"], select, textarea) { color: FieldText; }
+  :is(input, select, textarea):disabled { color: GrayText; }
+  :is(input, select, textarea)[aria-invalid="true"] { border-color: CanvasText; }
+  [role="alertdialog"] { border: 1px solid CanvasText; }
   .wizard-steps li { border-bottom-color: CanvasText; }
   .wizard-steps li.on, .wizard-steps li.done, .preset-choice .preset-card.on { border-color: Highlight; }
 }

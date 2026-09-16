@@ -6,13 +6,14 @@ const CONTRACT_ID = 'speech-agent.personal-context.ui'
 const CONTRACT_VERSION = '1.1.0'
 const MAX_SCOPE_DIRECTORY_ITEMS = 50
 
-const ALLOWED_ROLES = Object.freeze(['history', 'settings'])
+const ALLOWED_ROLES = Object.freeze(['agent', 'history', 'settings'])
 const IPC_CHANNELS = Object.freeze({
   changed: 'agent-context:changed',
   getOverview: 'agent-context:get-overview',
   manage: 'agent-context:manage'
 })
 const PRELOAD_GLOBALS = Object.freeze({
+  agent: 'agentApi',
   history: 'historyApi',
   settings: 'shell'
 })
@@ -88,7 +89,7 @@ const FIXTURE_SCENARIOS = Object.freeze([
   'unavailable',
   'validation_error'
 ])
-const CALLER_ROLES = Object.freeze(['caption', 'history', 'settings', 'toolbar', 'unknown'])
+const CALLER_ROLES = Object.freeze(['agent', 'caption', 'history', 'settings', 'toolbar', 'unknown'])
 const FORBIDDEN_PRIVACY_KEY = /(?:^|_)(?:api_?key|authorization|credential|password|secret|audio|pcm|wav|device|local_path|absolute_path|transcript_text|caption_text|monotonic|clock_offset|raw_error|stack|scheduler|wake_epoch|claim|lease|timer|generation)(?:_|$)/i
 const FORBIDDEN_PRIVACY_VALUE = /(?:bearer\s+[A-Za-z0-9._~+/-]+|[A-Za-z]:[\\/]|file:\/\/|\.wav(?:\b|$))/i
 const SYNTHETIC_FIXTURE_TIMESTAMP = /^2000-01-01T00:\d{2}:\d{2}\.000Z$/

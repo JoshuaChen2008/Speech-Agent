@@ -37,7 +37,7 @@ function interactionPayload (signalKind, value) {
     if (prompt === null || editText !== null) throw policyFailure()
   } else {
     if (prompt !== null || result === null) throw policyFailure()
-    if (signalKind === 'edit') {
+    if (signalKind === 'edit' || signalKind === 'remember') {
       if (editText === null) throw policyFailure()
     } else if (editText !== null) throw policyFailure()
   }

@@ -61,7 +61,8 @@ test('config updates reject unknown keys, invalid window bounds, and inconsisten
     { arbitrary: true },
     { schemaVersion: CONFIG_SCHEMA_VERSION },
     { agentEnabled: true },
-    { providerId: 'deepseek' }
+    { providerId: 'deepseek' },
+    { summaryUseMemory: false }
   ]) {
     assert.throws(() => validateConfigPatch(patch), /not allowed/)
   }
@@ -87,6 +88,23 @@ test('persisted config is atomically replaceable and reloadable', (t) => {
   assert.deepEqual(reloaded.load(), store.get())
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).schemaVersion, CONFIG_SCHEMA_VERSION)
   assert.deepEqual(fs.readdirSync(path.dirname(file)).sort(), ['config.json'])
+})
+
+test('SEM-F38/J29: summary memory preference defaults on, persists, and guards the shared revision', (t) => {
+  const { file, store } = makeStore(t)
+  store.load()
+  assert.equal(store.get().summaryUseMemory, true)
+  assert.equal(store.get().agentSettingsRevision, 0)
+  const updated = store.updateSummaryUseMemory({ expectedRevision: 0, summaryUseMemory: false })
+  assert.equal(updated.summaryUseMemory, false)
+  assert.equal(updated.agentSettingsRevision, 1)
+  assert.throws(
+    () => store.updateSummaryUseMemory({ expectedRevision: 0, summaryUseMemory: true }),
+    (error) => error?.code === 'SETTINGS_REVISION_CONFLICT'
+  )
+  const reloaded = new ConfigStore(file)
+  assert.equal(reloaded.load().summaryUseMemory, false)
+  assert.equal(reloaded.get().agentSettingsRevision, 1)
 })
 
 test('SEM-F22 / J19 normalizes the unmarked mixed-DPI risk geometry exactly once', (t) => {

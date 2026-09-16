@@ -32,7 +32,7 @@ function waitForExit (child, timeoutMs) {
   })
 }
 
-test('SEM-F26/SEM-F30/SEM-F31/SEM-F32/SEM-F33/SEM-F34/J21/J22/J24/J25: formal settings → context management → Agent Bar run/feedback/refresh → history uses one production IPC/SQLite path', { timeout: 90000 }, async () => {
+test('SEM-F23/SEM-T04/J18/SEM-F26/SEM-F30/SEM-F31/SEM-F32/SEM-F33/SEM-F34/J21/J22/J24/J25: formal settings appearance/failure → context management → Agent Bar run/feedback/refresh → history uses one production IPC/SQLite path', { timeout: 90000 }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-j25-formal-settings-'))
   const userData = path.join(root, 'user-data')
   fs.mkdirSync(userData, { recursive: true })
@@ -54,6 +54,16 @@ test('SEM-F26/SEM-F30/SEM-F31/SEM-F32/SEM-F33/SEM-F34/J21/J22/J24/J25: formal se
     const report = JSON.parse(reportLine)
     assert.equal(report.result, true, JSON.stringify(report))
     assert.equal(report.settingsPath, 'formal-settings-renderer-preload')
+    assert.deepEqual(report.inputAppearance, {
+      keyboardFocus: true, stableGeometry: true, themeReadable: true, controlledStates: true,
+      systemPreferences: true, fits: true, specialized: true, wizardInputs: true
+    })
+    assert.deepEqual(report.inputsStyled, {
+      textStyled: true, numberStyled: true, passwordStyled: true, selectStyled: true, textareaStyled: true
+    })
+    assert.equal(report.inputFailureRecovered, true)
+    assert.equal(report.inputPendingObserved, true)
+    assert.equal(report.invalidInputCommandCount, 1)
     assert.equal(report.runPath, 'formal-agent-bar-renderer-preload-main')
     assert.equal(report.historyPath, 'formal-agent-history-renderer-preload-main')
     assert.equal(report.providerRequestCount, 1)
@@ -75,7 +85,7 @@ test('SEM-F26/SEM-F30/SEM-F31/SEM-F32/SEM-F33/SEM-F34/J21/J22/J24/J25: formal se
     assert.equal(report.transcriptAndPromptAbsentFromReport, true)
     assert.equal(report.publicProvider, false)
     assert.equal(report.systemCredential, false)
-    assert.equal(/j25-local-provider-secret|请回答这场会的重点|J25 renderer feedback|受控正式设置/.test(reportLine), false)
+    assert.equal(/j25-local-provider-secret|j25-wizard-secret|请回答这场会的重点|J25 renderer feedback|受控正式设置/.test(reportLine), false)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

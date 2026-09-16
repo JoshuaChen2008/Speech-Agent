@@ -34,6 +34,10 @@ function updateAgentSettings (request) {
   return requireStore().updateAgentSettings(request)
 }
 
+function updateSummaryUseMemory (request) {
+  return requireStore().updateSummaryUseMemory(request)
+}
+
 function reconcileRefinementReadiness (refinementReady) {
   return requireStore().reconcileRefinementReadiness(refinementReady)
 }
@@ -51,5 +55,6 @@ module.exports = {
   reconcileRefinementReadiness,
   set,
   setRefinementPreference,
-  updateAgentSettings
+  updateAgentSettings,
+  updateSummaryUseMemory
 }

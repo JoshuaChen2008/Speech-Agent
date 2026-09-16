@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('historyApi', {
     format: String(format || ''),
     ...(version === undefined ? {} : { version: String(version) })
   }),
+  openSummary: (sessionId) => ipcRenderer.send(CHANNELS.HISTORY_SUMMARY, String(sessionId || '')),
   getAgentContextOverview: (request) => {
     assertGetOverviewRequest(request)
     return ipcRenderer.invoke(CHANNELS.AGENT_CONTEXT_GET_OVERVIEW, request).then((response) => assertGetOverviewResponse(response))

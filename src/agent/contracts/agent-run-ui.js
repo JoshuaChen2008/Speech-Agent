@@ -23,14 +23,23 @@ const ELIGIBILITY_STATES = Object.freeze(['ready', 'no_committed_transcript', 'o
 const SCOPE_KINDS = Object.freeze(['selection', 'session', 'date_range', 'project'])
 const SIGNAL_KINDS = Object.freeze(['prompt', 'edit', 'accept', 'reject', 'remember', 'forget'])
 const ERROR_CODES = Object.freeze({ unavailable: 'AGENT_RUN_UNAVAILABLE', invalid: 'AGENT_RUN_INVALID' })
-const RUN_ERROR_CODES = Object.freeze(['AGENT_RUN_UNAVAILABLE', 'AGENT_RUN_INVALID', 'AGENT_CANCELLED', 'AGENT_PROVIDER_AUTH_FAILED', 'AGENT_PROVIDER_RATE_LIMITED', 'AGENT_PROVIDER_UNAVAILABLE', 'AGENT_PROVIDER_TIMEOUT', 'AGENT_OUTPUT_INVALID', 'AGENT_PERMISSION_DENIED', 'AGENT_REQUEST_INVALID', 'AGENT_WORKER_EXITED', 'AGENT_INTERNAL_FAILURE', 'AGENT_BUDGET_EXCEEDED'])
+const RUN_ERROR_CODES = Object.freeze(['AGENT_RUN_UNAVAILABLE', 'AGENT_RUN_INVALID', 'AGENT_CANCELLED', 'AGENT_PROVIDER_AUTH_FAILED', 'AGENT_PROVIDER_RATE_LIMITED', 'AGENT_PROVIDER_UNAVAILABLE', 'AGENT_PROVIDER_TIMEOUT', 'AGENT_OUTPUT_INVALID', 'AGENT_PERMISSION_DENIED', 'AGENT_REQUEST_INVALID', 'AGENT_WORKER_EXITED', 'AGENT_INTERNAL_FAILURE', 'AGENT_BUDGET_EXCEEDED', 'AGENT_SUMMARY_MEMORY_READ_FAILED'])
 const ID = /^[a-z0-9][a-z0-9._:-]{0,159}$/
 const FORBIDDEN = new Set(['prompt', 'prompt_text', 'user_prompt', 'prompt_body', 'assistant', 'assistant_text', 'reasoning', 'internal_reasoning', 'provider_event', 'provider_events', 'provider_raw_event', 'raw_error', 'stack', 'credential', 'credentials', 'api_key', 'secret', 'password', 'audio', 'audio_file', 'audio_uri', 'pcm', 'wav', 'audio_path', 'path', 'local_path', 'absolute_path', 'target_path', 'save_target', 'device', 'device_name', 'device_id', 'clock_offset_ms', 'absolute_monotonic_ms', 'monotonic_timestamp', 'amount', 'amount_cents', 'price', 'price_amount', 'cost', 'cost_amount', 'currency', 'currency_code', 'pricing', 'api_token', 'access_token', 'refresh_token', 'token_value', 'transcript_text', 'caption_text'])
 const RFC3339_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/
 
 function fail (p, m) { throw new TypeError(`${p}: ${m}`) }
 function plain (v, p) { if (!v || typeof v !== 'object' || Array.isArray(v) || Object.getPrototypeOf(v) !== Object.prototype) fail(p, 'must be a plain object') }
-function exact (v, keys, p) { plain(v, p); const a = Object.keys(v).sort(); const e = [...keys].sort(); if (a.length !== e.length || a.some((x, i) => x !== e[i])) fail(p, 'must contain exact keys') }
+function exact (v, keys, p, optional = []) {
+  plain(v, p)
+  const actual = Object.keys(v).sort()
+  const required = [...keys].sort()
+  const allowed = new Set([...keys, ...optional])
+  if (actual.some((key) => !allowed.has(key)) || required.some((key) => !Object.hasOwn(v, key)) ||
+      actual.length !== keys.length + optional.filter((key) => Object.hasOwn(v, key)).length) {
+    fail(p, 'must contain exact keys')
+  }
+}
 function id (v, p) { if (typeof v !== 'string' || !ID.test(v)) fail(p, 'must be an identifier'); return v }
 function integer (v, p) { if (!Number.isSafeInteger(v) || v < 0) fail(p, 'must be a non-negative safe integer'); return v }
 function enumValue (v, allowed, p) { if (!allowed.includes(v)) fail(p, 'is not registered'); return v }
@@ -53,13 +62,13 @@ function assertScopeItem (v, p = 'scope') {
 }
 function assertGetEligibilityRequest (v) { exact(v, ['contract_id', 'contract_version', 'scope'], 'request'); header(v, 'request'); scope(v.scope); return v }
 function assertGetScopesRequest (v) { exact(v, ['contract_id', 'contract_version', 'cursor', 'limit'], 'request'); header(v, 'request'); integer(v.limit, 'request.limit'); if (v.limit < 1 || v.limit > 50) fail('request.limit', 'out of range'); assertOpaqueCursor(v.cursor, 'request.cursor'); return v }
-function assertSubmitRequest (v) { exact(v, ['client_idempotency_key', 'contract_id', 'contract_version', 'prompt', 'scope'], 'request'); header(v, 'request'); scope(v.scope); if (typeof v.prompt !== 'string' || v.prompt.length === 0 || v.prompt.length > 4096) fail('request.prompt', 'invalid'); id(v.client_idempotency_key, 'request.client_idempotency_key'); return v }
+function assertSubmitRequest (v) { exact(v, ['client_idempotency_key', 'contract_id', 'contract_version', 'prompt', 'scope'], 'request', ['summary_use_memory']); header(v, 'request'); scope(v.scope); if (typeof v.prompt !== 'string' || v.prompt.length === 0 || v.prompt.length > 4096) fail('request.prompt', 'invalid'); id(v.client_idempotency_key, 'request.client_idempotency_key'); if (Object.hasOwn(v, 'summary_use_memory') && typeof v.summary_use_memory !== 'boolean') fail('request.summary_use_memory', 'must be boolean'); return v }
 function assertCancelRequest (v) { exact(v, ['contract_id', 'contract_version', 'interaction_id'], 'request'); header(v, 'request'); id(v.interaction_id, 'request.interaction_id'); return v }
 function assertHistoryRequest (v) { exact(v, ['contract_id', 'contract_version', 'limit', 'cursor'], 'request'); header(v, 'request'); integer(v.limit, 'request.limit'); if (v.limit < 1 || v.limit > 100) fail('request.limit', 'out of range'); assertOpaqueCursor(v.cursor, 'request.cursor'); return v }
 function assertInteractionRequest (v) { exact(v, ['contract_id', 'contract_version', 'interaction_id'], 'request'); header(v, 'request'); id(v.interaction_id, 'request.interaction_id'); return v }
 function assertExportRequest (v) { exact(v, ['contract_id', 'contract_version', 'interaction_id'], 'request'); header(v, 'request'); id(v.interaction_id, 'request.interaction_id'); return v }
 function assertSignalPayload (signalKind, payload, p = 'request.payload') {
-  if (signalKind === 'edit') {
+  if (signalKind === 'edit' || signalKind === 'remember') {
     exact(payload, ['text'], p)
     if (typeof payload.text !== 'string' || payload.text.length > 4096 || /[\u0000-\u001f\u007f]/u.test(payload.text)) fail(`${p}.text`, 'must be a bounded text value')
     return payload
@@ -122,6 +131,8 @@ function assertCommandEnvelope (v, p = 'response') {
 function assertPublicState (v, p) { enumValue(v, TERMINAL_STATES, p); return v }
 function assertRevision (v, p) { integer(v, p); return v }
 function assertNullableDigest (v, p) { if (v !== null && (typeof v !== 'string' || !/^[a-f0-9]{64}$/.test(v))) fail(p, 'must be null or a SHA-256 digest'); return v }
+function assertNullableBoolean (v, p) { if (v !== null && typeof v !== 'boolean') fail(p, 'must be null or boolean'); return v }
+function assertNullableCount (v, p) { if (v !== null) integer(v, p); return v }
 function assertDigest (v, p) { if (typeof v !== 'string' || !/^[a-f0-9]{64}$/.test(v)) fail(p, 'must be a SHA-256 digest'); return v }
 function assertUsage (v, p) {
   if (v === null) return v
@@ -143,7 +154,7 @@ function assertHistoryItem (v, p = 'history item') {
     'attempt_count', 'created_at', 'duration_ms', 'error_code', 'interaction_id',
     'comparison_group_id', 'model', 'recipe_id', 'recipe_version', 'result', 'result_digest', 'terminal_at',
     'terminal_reason', 'usage', 'usage_state'
-  ], p)
+  ], p, ['summary_use_memory', 'memory_reference_count'])
   id(v.interaction_id, `${p}.interaction_id`)
   assertDigest(v.comparison_group_id, `${p}.comparison_group_id`)
   assertModelIdentity(v.model, `${p}.model`)
@@ -158,6 +169,8 @@ function assertHistoryItem (v, p = 'history item') {
   assertUsage(v.usage, `${p}.usage`)
   assertUsageState(v.usage_state, `${p}.usage_state`)
   assertNullableDigest(v.result_digest, `${p}.result_digest`)
+  if (Object.hasOwn(v, 'summary_use_memory')) assertNullableBoolean(v.summary_use_memory, `${p}.summary_use_memory`)
+  if (Object.hasOwn(v, 'memory_reference_count')) assertNullableCount(v.memory_reference_count, `${p}.memory_reference_count`)
   if (v.result !== null) assertFixturePrivacy(v.result, `${p}.result`)
   return v
 }
@@ -233,7 +246,7 @@ function assertInteractionResult (v, p = 'response.result') {
     'model', 'recipe_id', 'recipe_version', 'result', 'result_digest',
     'routing_mode', 'run_id', 'source_refs', 'state', 'terminal_at',
     'terminal_reason', 'tool_calls', 'usage', 'usage_state'
-  ], p)
+  ], p, ['summary_use_memory', 'memory_reference_count'])
   id(v.interaction_id, `${p}.interaction_id`)
   id(v.run_id, `${p}.run_id`)
   id(v.recipe_id, `${p}.recipe_id`)
@@ -250,6 +263,8 @@ function assertInteractionResult (v, p = 'response.result') {
   assertUsage(v.usage, `${p}.usage`)
   assertUsageState(v.usage_state, `${p}.usage_state`)
   assertNullableDigest(v.result_digest, `${p}.result_digest`)
+  if (Object.hasOwn(v, 'summary_use_memory')) assertNullableBoolean(v.summary_use_memory, `${p}.summary_use_memory`)
+  if (Object.hasOwn(v, 'memory_reference_count')) assertNullableCount(v.memory_reference_count, `${p}.memory_reference_count`)
   if (v.result !== null) assertFixturePrivacy(v.result, `${p}.result`)
   if (!Array.isArray(v.source_refs) || v.source_refs.length > 16) fail(`${p}.source_refs`, 'must be an array')
   assertFixturePrivacy(v.source_refs, `${p}.source_refs`)
@@ -281,7 +296,7 @@ function assertInteractionResult (v, p = 'response.result') {
 function assertExportResult (v, p = 'response.result') {
   exact(v, ['bytes_sha256', 'interaction_id', 'schema_version', 'snapshot'], p)
   id(v.interaction_id, `${p}.interaction_id`)
-  if (v.schema_version !== 1) fail(`${p}.schema_version`, 'must be 1')
+  if (![1, 2].includes(v.schema_version)) fail(`${p}.schema_version`, 'unsupported export schema')
   if (typeof v.bytes_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(v.bytes_sha256)) fail(`${p}.bytes_sha256`, 'must be a SHA-256 digest')
   if (!v.snapshot || typeof v.snapshot !== 'object' || Array.isArray(v.snapshot)) fail(`${p}.snapshot`, 'must be an object')
   assertFixturePrivacy(v.snapshot, `${p}.snapshot`)

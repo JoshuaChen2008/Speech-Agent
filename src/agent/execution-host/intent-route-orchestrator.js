@@ -19,11 +19,12 @@ function invalid (message) {
   return error
 }
 
-function exact (value, keys, label) {
+function exact (value, keys, label, optional = []) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid(`${label} must be an object`)
-  const expected = [...keys].sort()
+  const required = [...keys]
+  const expected = [...required, ...optional].sort()
   const actual = Object.keys(value).sort()
-  if (expected.length !== actual.length || expected.some((key, index) => key !== actual[index])) {
+  if (actual.some((key) => !expected.includes(key)) || required.some((key) => !Object.hasOwn(value, key))) {
     throw invalid(`${label} has non-exact keys`)
   }
 }
@@ -79,19 +80,24 @@ class IntentRouteOrchestrator {
   async submit (input) {
     exact(input, [
       'scope', 'prompt', 'transcriptVersion', 'inputWatermark', 'inputDigest', 'clientIdempotencyKey', 'signal'
-    ], 'intent submit')
+    ], 'intent submit', ['summaryUseMemory'])
+    if (Object.hasOwn(input, 'summaryUseMemory') && typeof input.summaryUseMemory !== 'boolean') {
+      throw invalid('summaryUseMemory is invalid')
+    }
     const routeInput = validateInput({ scope: input.scope, prompt: input.prompt })
     if (!['raw', 'refined'].includes(input.transcriptVersion)) throw invalid('transcriptVersion is invalid')
     if (!input.inputWatermark || typeof input.inputWatermark !== 'object' || Array.isArray(input.inputWatermark)) throw invalid('inputWatermark is invalid')
     if (typeof input.inputDigest !== 'string' || !/^[a-f0-9]{64}$/.test(input.inputDigest)) throw invalid('inputDigest is invalid')
     if (typeof input.clientIdempotencyKey !== 'string' || input.clientIdempotencyKey.length < 1 || input.clientIdempotencyKey.length > 160) throw invalid('clientIdempotencyKey is invalid')
-    const requestDigest = sha256Canonical({
+    const requestIdentity = {
       scope: routeInput.scope,
       prompt: routeInput.prompt,
       transcriptVersion: input.transcriptVersion,
       inputWatermark: input.inputWatermark,
       inputDigest: input.inputDigest
-    })
+    }
+    if (Object.hasOwn(input, 'summaryUseMemory')) requestIdentity.summaryUseMemory = input.summaryUseMemory
+    const requestDigest = sha256Canonical(requestIdentity)
     const previous = this.inflight.get(input.clientIdempotencyKey)
     if (previous) {
       if (previous.requestDigest !== requestDigest) throw invalid('client idempotency key was reused with a different request')
@@ -229,11 +235,15 @@ class IntentRouteOrchestrator {
     }
     const runId = this.nextId('run.target', input.clientIdempotencyKey)
     const interactionId = this.nextId('interaction.target', input.clientIdempotencyKey)
-    const run = await this.runs.create({
+    const runRequest = {
       runId, recipeId, recipeVersion: '1', scope: input.scope,
       transcriptVersion: input.transcriptVersion, inputWatermark: input.inputWatermark,
       inputDigest: input.inputDigest, requestedBy: 'user', clientIdempotencyKey: input.clientIdempotencyKey
-    })
+    }
+    if (recipeId === 'summary.minutes' && Object.hasOwn(input, 'summaryUseMemory')) {
+      runRequest.summaryUseMemory = input.summaryUseMemory
+    }
+    const run = await this.runs.create(runRequest)
     if (run.replayed && typeof this.runs.getInteraction === 'function') {
       const existing = await this.runs.getInteraction({ interactionId })
       const interaction = existing?.interaction || existing
@@ -260,7 +270,8 @@ class IntentRouteOrchestrator {
     exact(input, [
       'currentRunId', 'recipeId', 'scope', 'prompt', 'transcriptVersion',
       'inputWatermark', 'inputDigest', 'clientIdempotencyKey', 'signal'
-    ], 'intent reselect')
+    ], 'intent reselect', ['summaryUseMemory'])
+    if (Object.hasOwn(input, 'summaryUseMemory') && typeof input.summaryUseMemory !== 'boolean') throw invalid('summaryUseMemory is invalid')
     assertTargetRecipe(input.recipeId)
     await this.runs.cancel({ runId: input.currentRunId })
     const eligibility = await this.eligibility({ scope: input.scope, prompt: input.prompt })

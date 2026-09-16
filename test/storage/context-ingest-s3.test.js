@@ -124,7 +124,7 @@ test('SEM-F32/J21: interaction signal ingestion accepts the six explicit values,
     ['edit', sha256Canonical({ text: 'edited result' }), 'signal.edit.test'],
     ['accept', null, 'signal.accept.test'],
     ['reject', null, 'signal.reject.test'],
-    ['remember', null, 'signal.remember.test'],
+    ['remember', sha256Canonical({ text: 'remembered fact' }), 'signal.remember.test'],
     ['forget', null, 'signal.forget.test']
   ]
   const prepared = signals.map(([signalKind, payloadDigest]) => personalContext.prepareInteractionIngestRequest({

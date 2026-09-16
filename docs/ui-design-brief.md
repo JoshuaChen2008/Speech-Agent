@@ -147,6 +147,14 @@
 
 守卫只是静态样式边界：全绿不表示任何 renderer 已实现或已验收，真实 Mica、系统 DPI 与跨背景可读性仍然只能由 J15a/I2 的实机观察给出。
 
+### 2.6.1 设置输入控件增量规划（2026-09-13）
+
+状态：实现完成·尚未验收；设置输入样式及 J25 定向证据见输入框 TODO。关联 SEM-F23、J18/J25。
+
+设置页输入控件的匹配范围、主题表面、圆角、字体、间距、键盘焦点、禁用/只读与已有错误轮廓按独立 [输入框 spec](../openspec/changes/fix-settings-input-styles/specs/settings-input-appearance/spec.md)、[设计](../openspec/changes/fix-settings-input-styles/design.md) 和 [TODO](../openspec/changes/fix-settings-input-styles/tasks.md) 实施。已补齐无 type 的文本输入和通用输入状态，textarea 复用同源外观；本轮没有实机视觉证据。专用 color/range/开关不套通用输入外观，不改变命令、窗口几何或表单信息顺序。
+
+模型设置的文案和信息顺序属于另一份 [独立规划](../openspec/changes/simplify-agent-model-settings/proposal.md)，消费同一控件样式，分别登记与验收。建议先处理样式，再处理信息顺序；不能以其中一份的结果替代另一份 TODO。
+
 ### 2.7 Agent Bar 视觉设计基准页
 
 `src/ui/preview/agent-bar.html` 把 [`agent-ui-ux-handoff.md`](agent-ui-ux-handoff.md) §13.3 的状态矩阵与 §13.4 的文案渲染成可以直接看的画面，供 `UX-3` 接手模型对照风格，不必从七百行散文里复现视觉。

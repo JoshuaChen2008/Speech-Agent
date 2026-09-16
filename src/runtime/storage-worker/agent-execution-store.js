@@ -10,7 +10,6 @@ const { canonicalize, sha256Canonical } = require('./canonical-json')
 const { rollbackQuietly } = require('./sqlite-store')
 const {
   StorageError,
-  assertExactKeys,
   isPlainObject
 } = require('./protocol')
 const {
@@ -34,7 +33,8 @@ const TASK_ERROR_CODES = Object.freeze([
   'AGENT_REQUEST_INVALID',
   'AGENT_WORKER_EXITED',
   'AGENT_INTERNAL_FAILURE',
-  'AGENT_BUDGET_EXCEEDED'
+  'AGENT_BUDGET_EXCEEDED',
+  'AGENT_SUMMARY_MEMORY_READ_FAILED'
 ])
 
 const TOOL_ERROR_CODES = Object.freeze([
@@ -51,6 +51,7 @@ const TOOL_NAMES = Object.freeze(['search_context', 'read_sources'])
 const ROUTING_MODES = Object.freeze(['model', 'rules', 'preset'])
 const TERMINAL_REASONS = Object.freeze(['succeeded', 'failed', 'cancelled'])
 const TOOL_STATUSES = Object.freeze(['started', 'succeeded', 'failed', 'cancelled'])
+const SUMMARY_MEMORY_ERROR = 'AGENT_SUMMARY_MEMORY_READ_FAILED'
 const MAX_INTERACTION_PAGE = 100
 const MAX_SOURCE_REFS = 8
 const MAX_ARGS_BYTES = 8192
@@ -62,9 +63,16 @@ function fail (code) {
   throw new StorageError(code)
 }
 
-function exactObject (value, keys, code = 'AGENT_REQUEST_INVALID') {
-  assertExactKeys(value, keys, code)
-  if (!isPlainObject(value) || Object.keys(value).length !== keys.length) fail(code)
+function exactObject (value, keys, code = 'AGENT_REQUEST_INVALID', optional = []) {
+  if (Array.isArray(code)) {
+    optional = code
+    code = 'AGENT_REQUEST_INVALID'
+  }
+  if (!isPlainObject(value)) fail(code)
+  const allowed = new Set([...keys, ...optional])
+  const actual = Object.keys(value)
+  if (actual.some((key) => !allowed.has(key)) || keys.some((key) => !Object.hasOwn(value, key))) fail(code)
+  if (actual.length !== keys.length + optional.filter((key) => Object.hasOwn(value, key)).length) fail(code)
   return value
 }
 
@@ -104,6 +112,33 @@ function publicErrorCode (error, fallback = 'AGENT_REQUEST_INVALID') {
     : fallback
 }
 
+function visibleErrorCode (row) {
+  return row?.summary_memory_error === 1 ? SUMMARY_MEMORY_ERROR : row?.error_code
+}
+
+function memoryReferenceCountFromRows (rows, recipeId) {
+  if (recipeId !== 'summary.minutes') return null
+  const references = new Set()
+  for (const row of rows || []) {
+    if (row.tool_name !== 'search_context' || row.status !== 'succeeded' || row.result_json === null) continue
+    let result
+    try { result = JSON.parse(row.result_json) } catch { fail('STORAGE_COMMAND_FAILED') }
+    for (const match of result?.matches || []) {
+      for (const entry of match?.entries || []) {
+        const reference = entry?.memoryRef
+        if (reference && typeof reference.memoryId === 'string' && typeof reference.revisionId === 'string') {
+          references.add(`${reference.memoryId}\u0000${reference.revisionId}`)
+        }
+      }
+    }
+  }
+  return references.size
+}
+
+function storedErrorCode (code) {
+  return code === SUMMARY_MEMORY_ERROR ? 'AGENT_INTERNAL_FAILURE' : code
+}
+
 function runScope (row) {
   try { return JSON.parse(row.scope_json) } catch { fail('STORAGE_COMMAND_FAILED') }
 }
@@ -129,7 +164,7 @@ function rowInteraction (row, replayed = false) {
     inputDigest: row.input_digest,
     promptDigest: row.prompt_digest,
     terminalReason: row.terminal_reason,
-    errorCode: row.error_code,
+    errorCode: visibleErrorCode(row),
     usage,
     durationMs: Number(row.duration_ms),
     attemptCount: Number(row.attempt_count),
@@ -153,12 +188,15 @@ function rowRun (row, replayed = false) {
     inputWatermark: jsonObject(row.input_watermark_json),
     inputDigest: row.input_digest,
     requestedBy: row.requested_by,
+    summaryUseMemory: row.summary_use_memory === undefined || row.summary_use_memory === null
+      ? null
+      : row.summary_use_memory !== 0,
     state: row.state,
     attemptCount: Number(row.attempt_count),
     maxAttempts: Number(row.max_attempts),
     nextAttemptAt: Number(row.next_attempt_at),
     cancelRequested: row.cancel_requested_at !== null,
-    errorCode: row.error_code,
+    errorCode: visibleErrorCode(row),
     resultDigest: row.result_digest,
     resultSummary: row.result_summary_json === null ? null : jsonObject(row.result_summary_json),
     createdAt: Number(row.created_at),
@@ -218,7 +256,7 @@ function historyProjection (row) {
     recipeId: row.recipe_id,
     recipeVersion: row.recipe_version,
     terminalReason: row.terminal_reason,
-    errorCode: row.error_code,
+    errorCode: visibleErrorCode(row),
     usage: row.usage_json === null ? null : jsonObject(row.usage_json),
     durationMs: Number(row.duration_ms),
     attemptCount: Number(row.attempt_count),
@@ -226,6 +264,12 @@ function historyProjection (row) {
     model: historyModelProjection(row),
     result: row.result_json === null ? null : jsonObject(row.result_json),
     resultDigest: row.result_digest,
+    summaryUseMemory: row.summary_use_memory === undefined || row.summary_use_memory === null
+      ? null
+      : row.summary_use_memory !== 0,
+    memoryReferenceCount: row.recipe_id === 'summary.minutes'
+      ? (Number.isSafeInteger(row.memory_reference_count) ? row.memory_reference_count : null)
+      : null,
     createdAt: Number(row.created_at),
     terminalAt: Number(row.terminal_at)
   }
@@ -327,7 +371,7 @@ class AgentExecutionStore {
     exactObject(input, [
       'runId', 'recipeId', 'recipeVersion', 'scope', 'transcriptVersion',
       'inputWatermark', 'inputDigest', 'requestedBy', 'clientIdempotencyKey'
-    ])
+    ], ['summaryUseMemory'])
     const runId = identifier(input.runId)
     let recipe
     try { recipe = getRecipe(input.recipeId, input.recipeVersion) } catch { fail('AGENT_REQUEST_INVALID') }
@@ -339,8 +383,12 @@ class AgentExecutionStore {
     if (input.requestedBy !== 'automatic' && input.requestedBy !== 'user') fail('AGENT_REQUEST_INVALID')
     if (input.requestedBy === 'user') identifier(input.clientIdempotencyKey)
     else if (input.clientIdempotencyKey !== null) fail('AGENT_REQUEST_INVALID')
+    const summaryUseMemory = recipe.recipeId === 'summary.minutes'
+      ? (input.summaryUseMemory === undefined ? true : input.summaryUseMemory)
+      : null
+    if (recipe.recipeId === 'summary.minutes' && typeof summaryUseMemory !== 'boolean') fail('AGENT_REQUEST_INVALID')
     if (scope.kind === 'session' && !Object.hasOwn(inputWatermark, 'throughEventOrder')) fail('AGENT_REQUEST_INVALID')
-    const requestDigest = sha256Canonical({
+    const requestIdentity = {
       recipeId: recipe.recipeId,
       recipeVersion: recipe.recipeVersion,
       scope,
@@ -349,7 +397,11 @@ class AgentExecutionStore {
       inputDigest: input.inputDigest,
       requestedBy: input.requestedBy,
       clientIdempotencyKey: input.clientIdempotencyKey
-    })
+    }
+    /* Preserve replay identity for rows created before the summary policy was
+       added; only explicitly supplied policies become part of a new digest. */
+    if (recipe.recipeId === 'summary.minutes' && Object.hasOwn(input, 'summaryUseMemory')) requestIdentity.summaryUseMemory = summaryUseMemory
+    const requestDigest = sha256Canonical(requestIdentity)
     const dedupeKey = input.requestedBy === 'user'
       ? sha256Canonical({ requestedBy: 'user', clientIdempotencyKey: input.clientIdempotencyKey })
       : sha256Canonical({
@@ -387,17 +439,17 @@ class AgentExecutionStore {
         INSERT INTO formal_agent_runs(
           run_id, dedupe_key, client_idempotency_key, request_digest,
           recipe_id, recipe_version, scope_json, scope_digest, transcript_version,
-          input_watermark_json, input_digest, personal_context_revision, requested_by, state, attempt_count,
+        input_watermark_json, input_digest, personal_context_revision, summary_use_memory, requested_by, state, attempt_count,
           max_attempts, next_attempt_at, lease_owner, lease_expires_at,
           lease_renewed_from_expires_at, cancel_requested_at, error_code,
           result_digest, result_summary_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, 3, ?, NULL, NULL,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, 3, ?, NULL, NULL,
           NULL, NULL, NULL, NULL, NULL, ?, ?)
       `).run(
         runId, dedupeKey, input.clientIdempotencyKey, requestDigest,
         recipe.recipeId, recipe.recipeVersion, canonicalize(scope), scopeDigest,
         input.transcriptVersion, canonicalize(inputWatermark), input.inputDigest,
-        personalContextRevision, input.requestedBy, now, now, now
+        personalContextRevision, summaryUseMemory === null ? null : (summaryUseMemory ? 1 : 0), input.requestedBy, now, now, now
       )
       return rowRun(this.database.prepare('SELECT * FROM formal_agent_runs WHERE run_id=?').get(runId))
     })
@@ -519,6 +571,8 @@ class AgentExecutionStore {
       const run = this.runRow(row.run_id)
       this.guardTombstone(run)
       const binding = this.bindingForRun(run)
+      const storedError = storedErrorCode(input.errorCode)
+      const summaryMemoryError = input.errorCode === SUMMARY_MEMORY_ERROR ? 1 : 0
       if (row.terminal_reason === null && ['succeeded', 'failed', 'cancelled'].includes(run.state)) {
         fail('AGENT_INTERACTION_STATE_CONFLICT')
       }
@@ -528,6 +582,15 @@ class AgentExecutionStore {
            requested cancellation.  The cancellation fact is authoritative;
            do not allow that late result to rewrite the run into success. */
         if (run.cancel_requested_at !== null) fail('AGENT_INTERACTION_STATE_CONFLICT')
+        if (row.recipe_id === 'summary.minutes' && run.summary_use_memory !== 0) {
+          const currentRevision = Number(this.database.prepare(`
+            SELECT content_revision FROM personal_context_projection_state WHERE singleton_key = 1
+          `).get()?.content_revision)
+          if (!Number.isSafeInteger(currentRevision) || currentRevision < 0 ||
+              currentRevision !== Number(run.personal_context_revision)) {
+            fail('AGENT_INPUT_CHANGED')
+          }
+        }
         try { validateRecipeOutput(row.recipe_id, row.recipe_version, input.result) } catch (error) {
           if (error.code === 'AGENT_OUTPUT_INVALID') fail('AGENT_OUTPUT_INVALID')
           fail('AGENT_OUTPUT_INVALID')
@@ -536,7 +599,7 @@ class AgentExecutionStore {
         resultDigest = sha256Canonical(input.result)
       }
       if (row.terminal_reason !== null) {
-        const same = row.terminal_reason === terminalReason && row.error_code === input.errorCode &&
+        const same = row.terminal_reason === terminalReason && visibleErrorCode(row) === input.errorCode &&
           row.result_digest === resultDigest && row.usage_json === usageEncoded && Number(row.duration_ms) === input.durationMs
         if (!same) fail('AGENT_INTERACTION_STATE_CONFLICT')
         return rowInteraction(row, true)
@@ -545,29 +608,29 @@ class AgentExecutionStore {
       if (now < Number(row.created_at)) fail('STORAGE_COMMAND_FAILED')
       this.database.prepare(`
         UPDATE formal_agent_interactions
-        SET terminal_reason=?, error_code=?, usage_json=?, duration_ms=?, result_json=? ,
+        SET terminal_reason=?, error_code=?, summary_memory_error=?, usage_json=?, duration_ms=?, result_json=? ,
             result_digest=?, terminal_at=?
         WHERE interaction_id=? AND terminal_reason IS NULL
-      `).run(terminalReason, input.errorCode, usageEncoded, input.durationMs, resultEncoded, resultDigest, now, interactionId)
+      `).run(terminalReason, storedError, summaryMemoryError, usageEncoded, input.durationMs, resultEncoded, resultDigest, now, interactionId)
       const summary = terminalReason === 'succeeded'
         ? { interactionId, resultDigest }
         : null
       if (terminalReason === 'succeeded') {
         this.database.prepare(`
           UPDATE formal_agent_runs SET state='succeeded', lease_owner=NULL, lease_expires_at=NULL,
-            lease_renewed_from_expires_at=NULL, error_code=NULL, result_digest=?, result_summary_json=?, updated_at=?
+            lease_renewed_from_expires_at=NULL, error_code=NULL, summary_memory_error=0, result_digest=?, result_summary_json=?, updated_at=?
           WHERE run_id=? AND state NOT IN ('succeeded','failed','cancelled')
         `).run(sha256Canonical(summary), canonicalize(summary), now, row.run_id)
       } else if (terminalReason === 'failed') {
         this.database.prepare(`
           UPDATE formal_agent_runs SET state='failed', lease_owner=NULL, lease_expires_at=NULL,
-            lease_renewed_from_expires_at=NULL, error_code=?, result_digest=NULL, result_summary_json=NULL, updated_at=?
+            lease_renewed_from_expires_at=NULL, error_code=?, summary_memory_error=?, result_digest=NULL, result_summary_json=NULL, updated_at=?
           WHERE run_id=? AND state NOT IN ('succeeded','failed','cancelled')
-        `).run(input.errorCode, now, row.run_id)
+        `).run(storedError, summaryMemoryError, now, row.run_id)
       } else {
         this.database.prepare(`
           UPDATE formal_agent_runs SET state='cancelled', lease_owner=NULL, lease_expires_at=NULL,
-            lease_renewed_from_expires_at=NULL, error_code=NULL, result_digest=NULL, result_summary_json=NULL, updated_at=?
+            lease_renewed_from_expires_at=NULL, error_code=NULL, summary_memory_error=0, result_digest=NULL, result_summary_json=NULL, updated_at=?
           WHERE run_id=? AND state NOT IN ('succeeded','failed','cancelled')
         `).run(now, row.run_id)
       }
@@ -760,12 +823,14 @@ class AgentExecutionStore {
     params.push(pageLimit + 1)
     const rows = this.database.prepare(`
       SELECT i.*,
+        r.summary_use_memory AS summary_use_memory,
         b.adapter_id AS binding_adapter_id,
         b.model_id AS binding_model_id,
         b.profile_id AS binding_profile_id,
         b.profile_revision AS binding_profile_revision,
         b.provider_kind AS binding_provider_kind
       FROM formal_agent_interactions AS i
+      JOIN formal_agent_runs AS r ON r.run_id = i.run_id
       JOIN agent_model_run_bindings AS b ON b.run_id = i.run_id
       WHERE ${where}
       ORDER BY i.terminal_at DESC, i.interaction_id ASC LIMIT ?
@@ -776,7 +841,19 @@ class AgentExecutionStore {
     const nextCursor = hasMore && last
       ? encodeCursor({ terminalAt: Number(last.terminal_at), interactionId: last.interaction_id })
       : null
-    return { items: page.map(historyProjection), hasMore, nextCursor }
+    const items = page.map((row) => {
+      if (row.recipe_id !== 'summary.minutes') return historyProjection(row)
+      const calls = this.database.prepare(`
+        SELECT tool_name, status, result_json
+        FROM formal_agent_tool_calls
+        WHERE interaction_id=? ORDER BY attempt ASC, call_order ASC
+      `).all(row.interaction_id)
+      return historyProjection({
+        ...row,
+        memory_reference_count: memoryReferenceCountFromRows(calls, row.recipe_id)
+      })
+    })
+    return { items, hasMore, nextCursor }
   }
 
   getInteraction (input) {
@@ -792,6 +869,11 @@ class AgentExecutionStore {
     return {
       interaction: rowInteraction(row),
       runState: run.state,
+      summaryUseMemory: run.recipe_id === 'summary.minutes'
+        ? (run.summary_use_memory === undefined || run.summary_use_memory === null
+            ? null
+            : run.summary_use_memory !== 0)
+        : null,
       cancelRequested: run.cancel_requested_at !== null,
       binding: binding
         ? {

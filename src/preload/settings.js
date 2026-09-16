@@ -37,6 +37,10 @@ const {
   assertUpdateRequest: assertAgentSettingsUpdateRequest,
   assertUpdateResponse: assertAgentSettingsUpdateResponse
 } = require('../agent/contracts/agent-settings-ui')
+const {
+  assertUpdateRequest: assertSummarySettingsUpdateRequest,
+  assertUpdateResponse: assertSummarySettingsUpdateResponse
+} = require('../agent/contracts/session-summary-settings-ui')
 
 function onAgentContextChanged (callback) {
   if (typeof callback !== 'function') throw new TypeError('callback must be a function')
@@ -64,6 +68,10 @@ contextBridge.exposeInMainWorld('shell', {
   setAgentSettings: (request) => {
     assertAgentSettingsUpdateRequest(request)
     return ipcRenderer.invoke(CHANNELS.AGENT_SETTINGS_UPDATE, request).then((response) => assertAgentSettingsUpdateResponse(response))
+  },
+  setSummaryMemoryPreference: (request) => {
+    assertSummarySettingsUpdateRequest(request)
+    return ipcRenderer.invoke(CHANNELS.SESSION_SUMMARY_SETTINGS_UPDATE, request).then((response) => assertSummarySettingsUpdateResponse(response))
   },
   onConfig: (callback) => subscribe(CHANNELS.CONFIG_CHANGED, callback),
   selectPreset: (preset) => ipcRenderer.invoke(CHANNELS.PRESET_SELECT, String(preset || '')),

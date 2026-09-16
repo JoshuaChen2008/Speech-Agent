@@ -85,6 +85,7 @@ async function createHarness () {
   global.IS_REACT_ACT_ENVIRONMENT = true
   const pageRequests = []
   const exportRequests = []
+  const summaryRequests = []
   const sessions = [
     { sessionId: 'session-a', sourceId: 'mic', state: 'closed', startedAt: 1000, endedAt: 5000, segmentCount: 2 },
     { sessionId: 'session-b', sourceId: 'loopback', state: 'closed', startedAt: 10000, endedAt: 20000, segmentCount: 51 }
@@ -107,13 +108,14 @@ async function createHarness () {
     },
     exportSession (sessionId, format, version) {
       const request = deferred(); exportRequests.push({ format, request, sessionId, version }); return request.promise
-    }
+    },
+    openSummary (sessionId) { summaryRequests.push(sessionId) }
   }
   const reactRoot = createRoot(dom.window.document.getElementById('root'))
   await act(async () => { reactRoot.render(React.createElement(HistoryView)) })
   await flush()
   return {
-    dom, dragBindings, exportRequests, pageRequests, sessions,
+    dom, dragBindings, exportRequests, pageRequests, summaryRequests, sessions,
     async dispose () {
       await act(async () => reactRoot.unmount())
       dom.window.close()
@@ -141,6 +143,15 @@ test('SEM-F07/SEM-F11/J10: React history exposes bounded text review and version
   assert.match(view, /aria-posinset=/)
   assert.match(view, /aria-setsize=/)
   assert.doesNotMatch(`${html}\n${entry}\n${view}`, /<audio\b|audioPath|require\(['"](?:node:)?fs|require\(['"]electron/i)
+})
+
+test('SEM-F38/J29: history keeps the exact selected session when opening a summary', async (t) => {
+  const harness = await createHarness(); t.after(() => harness.dispose())
+  const button = document.querySelector('[data-summary-session-id="session-b"]')
+  assert.ok(button)
+  await act(async () => click(button))
+  assert.deepEqual(harness.summaryRequests, ['session-b'])
+  assert.equal(document.querySelector('[data-session-id="session-b"]').getAttribute('aria-current'), 'true')
 })
 
 test('SEM-F11/J10: React history rejects late page and export results while keeping one 50-row page', async (t) => {

@@ -87,6 +87,22 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .session-card strong { margin-bottom: 5px; font-size: var(--fs-body); font-weight: var(--fw-medium); }
 .session-card .summary { font-size: var(--fs-hint); opacity: 0.62; line-height: 1.45; }
 .session-card .state { margin-top: 4px; font-size: var(--fs-micro); opacity: 0.48; }
+.summary-action {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 0 10px 8px;
+  padding: 7px 10px;
+  border: 1px solid rgba(var(--fg), 0.18);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  font-size: var(--fs-hint);
+  cursor: pointer;
+}
+.summary-action:hover, .summary-action:focus-visible { background: rgba(var(--fg), 0.07); }
+.summary-action:focus-visible { outline: var(--focus-width) solid var(--focus-color); outline-offset: var(--focus-offset); }
 .load-more {
   margin: 0 12px 14px;
   padding: 8px;

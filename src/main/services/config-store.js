@@ -20,7 +20,8 @@ const AGENT_CONFIG_KEYS = Object.freeze([
   'memoryEnabled',
   'memoryProcessingSince',
   'cloudDisclosureAccepted',
-  'agentSettingsRevision'
+  'agentSettingsRevision',
+  'summaryUseMemory'
 ])
 
 const AGENT_SETTINGS_UPDATE_KEYS = Object.freeze([
@@ -29,6 +30,8 @@ const AGENT_SETTINGS_UPDATE_KEYS = Object.freeze([
   'memoryEnabled',
   'cloudDisclosureAccepted'
 ])
+
+const SUMMARY_SETTINGS_UPDATE_KEYS = Object.freeze(['expectedRevision', 'summaryUseMemory'])
 
 const DEFAULT_CONFIG = Object.freeze({
   schemaVersion: CONFIG_SCHEMA_VERSION,
@@ -56,6 +59,9 @@ const DEFAULT_CONFIG = Object.freeze({
   memoryProcessingSince: null,
   cloudDisclosureAccepted: false,
   agentSettingsRevision: 0,
+  // Summary memory reference is independent from automatic memory processing.
+  // Missing values in existing v2 configs migrate to the safe product default.
+  summaryUseMemory: true,
   // Gate 0D: fresh installs select neither source until the user chooses a preset.
   mic: false,
   loopback: false,
@@ -84,6 +90,7 @@ const FIELD_RULES = Object.freeze({
   memoryProcessingSince: isOptionalTimestamp,
   cloudDisclosureAccepted: (value) => typeof value === 'boolean',
   agentSettingsRevision: (value) => Number.isSafeInteger(value) && value >= 0,
+  summaryUseMemory: (value) => typeof value === 'boolean',
   mic: (value) => typeof value === 'boolean',
   loopback: (value) => typeof value === 'boolean',
   latency: (value) => [160, 480, 960].includes(value)
@@ -148,9 +155,10 @@ function validateConfigPatch (patch, label = 'config patch') {
 }
 
 function hasValidAgentSettings (input) {
+  const coreKeys = AGENT_CONFIG_KEYS.filter((key) => key !== 'summaryUseMemory')
   if (input.schemaVersion !== CONFIG_SCHEMA_VERSION ||
-      !AGENT_CONFIG_KEYS.every((key) => Object.hasOwn(input, key)) ||
-      !AGENT_CONFIG_KEYS.every((key) => FIELD_RULES[key](input[key]))) {
+      !coreKeys.every((key) => Object.hasOwn(input, key)) ||
+      !coreKeys.every((key) => FIELD_RULES[key](input[key]))) {
     return false
   }
   return (input.automaticProcessingSince !== null) === input.agentEnabled &&
@@ -184,7 +192,13 @@ function migrateConfig (input) {
   }
 
   if (hasValidAgentSettings(input)) {
-    for (const key of AGENT_CONFIG_KEYS) migrated[key] = input[key]
+    for (const key of AGENT_CONFIG_KEYS) {
+      if (key === 'summaryUseMemory') continue
+      migrated[key] = input[key]
+    }
+  }
+  if (Object.hasOwn(input, 'summaryUseMemory') && FIELD_RULES.summaryUseMemory(input.summaryUseMemory)) {
+    migrated.summaryUseMemory = input.summaryUseMemory
   }
 
   // Only a supported versioned, internally consistent completed choice may
@@ -240,7 +254,9 @@ class ConfigStore {
     this.state = migrateConfig(parsed)
     if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) &&
         (parsed.schemaVersion === LEGACY_CONFIG_SCHEMA_VERSION ||
-         parsed.windowGeometryRevision !== WINDOW_GEOMETRY_REVISION)) {
+         parsed.windowGeometryRevision !== WINDOW_GEOMETRY_REVISION ||
+         !Object.hasOwn(parsed, 'summaryUseMemory') ||
+         !FIELD_RULES.summaryUseMemory(parsed.summaryUseMemory))) {
       try {
         this.persist(this.state)
       } catch {
@@ -316,6 +332,34 @@ class ConfigStore {
     return this.get()
   }
 
+  updateSummaryUseMemory (request) {
+    const label = 'session summary settings update'
+    assertExactKeys(request, SUMMARY_SETTINGS_UPDATE_KEYS, label)
+    if (!Number.isSafeInteger(request.expectedRevision) || request.expectedRevision < 0) {
+      throw new TypeError(`${label}.expectedRevision has an invalid value`)
+    }
+    if (typeof request.summaryUseMemory !== 'boolean') {
+      throw new TypeError(`${label}.summaryUseMemory has an invalid value`)
+    }
+    if (request.expectedRevision !== this.state.agentSettingsRevision) {
+      throw new ConfigStoreError('SETTINGS_REVISION_CONFLICT')
+    }
+    const nextRevision = this.state.agentSettingsRevision + 1
+    if (!Number.isSafeInteger(nextRevision)) {
+      throw new RangeError('agent settings revision cannot be incremented safely')
+    }
+    const next = {
+      ...this.state,
+      schemaVersion: CONFIG_SCHEMA_VERSION,
+      summaryUseMemory: request.summaryUseMemory,
+      agentSettingsRevision: nextRevision
+    }
+    if (!hasValidAgentSettings(next)) throw new TypeError('normalized Agent settings are invalid')
+    this.persist(next)
+    this.state = next
+    return this.get()
+  }
+
   applyPreset (preset) {
     if (!ONBOARDING_PRESETS.includes(preset)) {
       throw new TypeError(`unknown onboarding preset: ${String(preset)}`)
@@ -379,6 +423,7 @@ module.exports = {
   CONFIG_SCHEMA_VERSION,
   DEFAULT_CONFIG,
   ONBOARDING_PRESETS,
+  SUMMARY_SETTINGS_UPDATE_KEYS,
   ConfigStoreError,
   ConfigStore,
   migrateConfig,

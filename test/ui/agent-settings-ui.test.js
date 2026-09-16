@@ -25,22 +25,34 @@ function click (element) {
   element.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 }
 
-async function createHarness (response) {
+async function createHarness (response, summaryResponse = null) {
   const { AgentSettingsPane } = await loadRendererModule(path.join(root, 'src', 'settings', 'agent-settings-pane.tsx'))
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://settings.test/' })
   const previous = Object.fromEntries(['window', 'document', 'HTMLElement', 'Event', 'MouseEvent'].map((key) => [key, global[key]]))
   Object.assign(global, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Event: dom.window.Event, MouseEvent: dom.window.MouseEvent })
   global.IS_REACT_ACT_ENVIRONMENT = true
   const calls = []
+  const summaryCalls = []
   let refreshCount = 0
   const shell = {
     setAgentSettings: async (request) => { calls.push(request); return response },
+    setSummaryMemoryPreference: async (request) => {
+      summaryCalls.push(request)
+      return summaryResponse || {
+        contract_id: 'speech-agent.session-summary-settings.ui',
+        contract_version: '1.0.0',
+        ok: true,
+        settings: { summary_use_memory: request.summary_use_memory, agent_settings_revision: request.expected_revision + 1 },
+        error: null
+      }
+    }
   }
   const config = {
     agentEnabled: false,
     memoryEnabled: true,
     cloudDisclosureAccepted: false,
-    agentSettingsRevision: 3
+    agentSettingsRevision: 3,
+    summaryUseMemory: true
   }
   const reactRoot = createRoot(dom.window.document.getElementById('root'))
   await act(async () => reactRoot.render(React.createElement(AgentSettingsPane, {
@@ -49,6 +61,7 @@ async function createHarness (response) {
   await flush()
   return {
     calls,
+    summaryCalls,
     get refreshCount () { return refreshCount },
     async dispose () {
       await act(async () => reactRoot.unmount())
@@ -95,4 +108,25 @@ test('SEM-T04/J21: settings conflict is surfaced as an actionable message withou
   await flush()
   assert.match(document.body.textContent, /设置已在别处更新，请重新载入后再试/) 
   assert.doesNotMatch(document.body.textContent, /stack|path|credential|prompt/i)
+})
+
+test('SEM-F38/J29: settings expose the beginner summary memory toggle through its exact contract', async (t) => {
+  const harness = await createHarness({
+    ...header,
+    ok: true,
+    settings: { agent_enabled: false, memory_enabled: true, cloud_disclosure_accepted: false, agent_settings_revision: 4 },
+    error: null
+  })
+  t.after(() => harness.dispose())
+  assert.match(document.body.textContent, /总结时参考记忆/)
+  assert.match(document.body.textContent, /关闭后仍可自动整理记忆，只使用本次会话/)
+  await act(async () => click(document.querySelector('input[aria-label="总结时参考记忆"]')))
+  await flush()
+  assert.deepEqual(harness.summaryCalls, [{
+    contract_id: 'speech-agent.session-summary-settings.ui',
+    contract_version: '1.0.0',
+    expected_revision: 3,
+    summary_use_memory: false
+  }])
+  assert.equal(harness.refreshCount, 1)
 })

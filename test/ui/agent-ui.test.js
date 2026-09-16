@@ -54,6 +54,7 @@ async function createHarness (options = {}) {
   Object.assign(global, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Event: dom.window.Event, MouseEvent: dom.window.MouseEvent })
   global.IS_REACT_ACT_ENVIRONMENT = true
   const changed = []
+  const configChanged = []
   const calls = []
   const submitRequests = []
   const cancelRequests = []
@@ -74,6 +75,8 @@ async function createHarness (options = {}) {
   dom.window.ManualWindowDrag = { bindManualWindowDrag: () => ({ cancel () {} }), isInteractiveDragEvent: () => false }
   dom.window.agentApi = {
     dragStart () {}, dragEnd () {}, close () {}, onInteractionSync: () => () => {},
+    getConfig: options.getConfig || (async () => ({ agentEnabled: true, memoryEnabled: true, summaryUseMemory: true })),
+    onConfig (callback) { configChanged.push(callback); calls.push('config'); return () => {} },
     subscribeChanged (callback) { changed.push(callback); calls.push('subscribe'); return () => {} },
     async getScopes (request) {
       calls.push(['scopes', request.cursor])
@@ -123,7 +126,7 @@ async function createHarness (options = {}) {
   await act(async () => reactRoot.render(React.createElement(AgentView)))
   await flush()
   return {
-    calls, changed, cancelRequests, detailRequests, dom, exportRequests, historyItem, scopeItem, signalRequests, submitRequests,
+    calls, changed, configChanged, cancelRequests, detailRequests, dom, exportRequests, historyItem, scopeItem, signalRequests, submitRequests,
     async dispose () {
       await act(async () => reactRoot.unmount())
       dom.window.close()
@@ -139,13 +142,44 @@ test('S5-UX/J22/J24: formal Agent renderer consumes the exact facade and keeps p
   assert.match(source('src/agent/index.html'), /src="\.\/entry\.tsx"/)
   assert.match(source('src/agent/entry.tsx'), /createRoot[\s\S]*AgentView/)
   const view = source('src/agent/agent-view.tsx')
-  for (const method of ['subscribeChanged', 'getScopes', 'getEligibility', 'submit', 'cancel', 'getHistory', 'getInteraction', 'exportInteraction', 'recordSignal']) assert.match(view, new RegExp(`api\\.${method}`))
-  assert.match(view, /生成纪要/)
-  assert.match(view, /工具调用记录/)
-  for (const signal of ['提交编辑', '接受', '拒绝', '记住', '忘记']) assert.match(view, new RegExp(signal))
+  for (const method of ['subscribeChanged', 'getConfig', 'onConfig', 'getScopes', 'getEligibility', 'submit', 'cancel', 'getHistory', 'getInteraction', 'exportInteraction', 'recordSignal']) assert.match(view, new RegExp(`api\\.${method}`))
+  assert.match(source('src/preload/agent.js'), /getConfig:\s*\(\)\s*=>\s*ipcRenderer\.invoke\(CHANNELS\.CONFIG_GET\)/)
+  assert.match(source('src/preload/agent.js'), /onConfig:\s*\(callback\)\s*=>\s*subscribe\(CHANNELS\.CONFIG_CHANGED, callback\)/)
+  assert.match(view, /生成总结/)
+  assert.match(view, /详细信息/)
+  for (const signal of ['提交修改', '有帮助', '不准确', '记住其中一条', '不再使用']) assert.match(view, new RegExp(signal))
   assert.match(view, /正在读取处理资格/)
   assert.doesNotMatch(view, /data-(?:scope|interaction)-id/)
   assert.doesNotMatch(`${source('src/agent/index.html')}\n${view}`, /<audio\b|reasoning|provider_event|apiKey|absolute_path/i)
+})
+
+test('SEM-F38/J29: beginner copy states the actual summary memory policy and keeps QA wording separate', async (t) => {
+  const withMemory = await createHarness({
+    getConfig: async () => ({ agentEnabled: true, memoryEnabled: true, summaryUseMemory: true })
+  })
+  assert.match(document.querySelector('.memory-policy-hint').textContent, /本次生成会参考相关记忆/)
+  assert.match(document.querySelector('.memory-policy-hint').textContent, /会话问答会按记忆设置使用信息/)
+  await withMemory.dispose()
+
+  const withoutMemory = await createHarness({
+    getConfig: async () => ({ agentEnabled: true, memoryEnabled: true, summaryUseMemory: false })
+  })
+  t.after(() => withoutMemory.dispose())
+  assert.match(document.querySelector('.memory-policy-hint').textContent, /本次生成只依据这场会话/)
+})
+
+test('SEM-F38/J29: an open Agent Bar refreshes summary policy copy after settings change', async (t) => {
+  const harness = await createHarness({
+    getConfig: async () => ({ agentEnabled: true, memoryEnabled: true, summaryUseMemory: true, agentSettingsRevision: 1 })
+  }); t.after(() => harness.dispose())
+  assert.equal(harness.configChanged.length, 1)
+  assert.match(document.querySelector('.memory-policy-hint').textContent, /本次生成会参考相关记忆/)
+  await act(async () => harness.configChanged[0]({ agentEnabled: true, memoryEnabled: true, summaryUseMemory: false, agentSettingsRevision: 2 }))
+  await flush()
+  assert.match(document.querySelector('.memory-policy-hint').textContent, /本次生成只依据这场会话/)
+  await act(async () => harness.configChanged[0]({ agentEnabled: false, memoryEnabled: true, summaryUseMemory: true, agentSettingsRevision: 3 }))
+  await flush()
+  assert.match(document.querySelector('.memory-policy-hint').textContent, /本次生成只依据这场会话/)
 })
 
 test('S5-UX/J22: reload subscribes before reading, selects a terminal session, and submits without optimistic success', async (t) => {
@@ -153,14 +187,14 @@ test('S5-UX/J22: reload subscribes before reading, selects a terminal session, a
   assert.equal(harness.calls[0], 'subscribe')
   assert.deepEqual(harness.calls.slice(1, 3).map((item) => item[0]), ['scopes', 'history'])
   assert.equal(document.querySelector('.scope-card').getAttribute('aria-current'), 'true')
-  assert.equal(document.querySelector('.eligibility').textContent, '可以运行')
+  assert.equal(document.querySelector('.eligibility').textContent, '可以生成')
 
   await act(async () => click(document.querySelector('[data-action="minutes"]')))
   await flush()
   assert.equal(harness.submitRequests.length, 1)
   assert.deepEqual(Object.keys(harness.submitRequests[0]).sort(), ['client_idempotency_key', 'contract_id', 'contract_version', 'prompt', 'scope'])
-  assert.match(harness.submitRequests[0].prompt, /会后结构化纪要/)
-  assert.equal(document.querySelector('.run-card strong').textContent, '等待执行', 'submit ACK is pending until the authoritative detail is read')
+  assert.match(harness.submitRequests[0].prompt, /会话总结/)
+  assert.equal(document.querySelector('.run-card strong').textContent, '等待生成', 'submit ACK is pending until the authoritative detail is read')
   assert.equal(document.body.textContent.includes('interaction.ui.2'), false)
 })
 
@@ -171,7 +205,7 @@ test('S5-UX/J25: history groups sibling interactions and exposes model, usage, c
   assert.match(document.querySelector('.history-list').textContent, /profile\.alt \/ model\.alt/)
   const comparison = document.querySelector('.comparison-card')
   assert.ok(comparison)
-  assert.match(comparison.textContent, /同一范围与输入的不同模型结果/)
+  assert.match(comparison.textContent, /同一会话与问题的不同模型结果/)
   assert.match(comparison.textContent, /输入 100 · 输出 20 · 来源 provider · 缓存命中率 40\.0%/)
   assert.match(comparison.textContent, /相对时长 1\.75×/)
   assert.match(comparison.textContent, /缓存命中率未知/)
@@ -196,11 +230,11 @@ test('S5-UX/J24: changed reload refreshes the selected detail and cancellation w
   const harness = await createHarness(); t.after(() => harness.dispose())
   await act(async () => click(document.querySelector('.history-card')))
   await flush()
-  assert.equal(document.querySelector('.run-card strong').textContent, '执行中')
+  assert.equal(document.querySelector('.run-card strong').textContent, '正在生成')
   await act(async () => click(document.querySelector('.run-card button')))
   await flush()
   assert.deepEqual(harness.cancelRequests[0], { ...CONTRACT, interaction_id: 'interaction.ui.1' })
-  assert.equal(document.querySelector('.run-card strong').textContent, '执行中')
+  assert.equal(document.querySelector('.run-card strong').textContent, '正在生成')
   harness.setDetail({ ...harness.historyItem, ...({ ...harness.historyItem, interaction_id: 'interaction.ui.1', run_id: 'run.ui.1', recipe_id: 'qa.answer', recipe_version: '1', routing_mode: 'model', state: 'cancelled', terminal_reason: 'cancelled', terminal_at: 3, duration_ms: 45, created_at: 1, attempt_count: 1, error_code: 'AGENT_CANCELLED', result: null, result_digest: null, source_refs: [], tool_calls: [], model: { adapter_id: 'adapter.internal', model_id: 'model.internal', profile_id: 'profile.internal', profile_revision: 1, provider_kind: 'cloud' }, usage: null, usage_state: 'unknown' }) })
   await act(async () => harness.changed[0]({ contract_id: CONTRACT.contract_id, contract_version: CONTRACT.contract_version, revision: 4 }))
   await flush()
@@ -227,10 +261,10 @@ test('S5-UX/J24: a late detail response cannot replace the newly selected intera
   assert.equal(document.querySelector('.loading').textContent, '正在读取结果…')
   await act(async () => click(cards[1]))
   await flush()
-  assert.equal(document.querySelector('.run-card strong').textContent, '已生成结果')
+  assert.equal(document.querySelector('.run-card strong').textContent, '已生成')
   delayed.resolve({ ok: true, result: { ...harness.historyItem, interaction_id: 'interaction.ui.1', state: 'succeeded', terminal_reason: 'succeeded', terminal_at: 4, result: { answer: '迟到结果' } } })
   await flush()
-  assert.equal(document.querySelector('.run-card strong').textContent, '已生成结果')
+  assert.equal(document.querySelector('.run-card strong').textContent, '已生成')
   assert.equal(document.body.textContent.includes('迟到结果'), false)
 })
 
@@ -283,10 +317,10 @@ test('SEM-F31/J22: an older eligibility response cannot replace a newer refresh 
   }); t.after(() => harness.dispose())
   await act(async () => click(document.querySelector('.scope-panel .panel-heading button')))
   await flush()
-  assert.equal(document.querySelector('.eligibility').textContent, '可以运行')
+  assert.equal(document.querySelector('.eligibility').textContent, '可以生成')
   oldRead.resolve({ ok: true, snapshot: { scope: { kind: 'session', reference: 'session.ui.1' }, eligibility: 'provider_not_configured', next_action: null, revision: 1 } })
   await flush()
-  assert.equal(document.querySelector('.eligibility').textContent, '可以运行')
+  assert.equal(document.querySelector('.eligibility').textContent, '可以生成')
 })
 
 test('SEM-F31/J22: scope and history pagination complete independently and deduplicate stable identities', async (t) => {
@@ -403,7 +437,7 @@ test('SEM-F31/J24/J26: late feedback and export receipts do not update a newly s
   await act(async () => click(document.querySelectorAll('.history-card')[1]))
   await flush()
   await act(async () => click(document.querySelector('[data-signal="accept"]')))
-  await act(async () => click([...document.querySelectorAll('button')].find((item) => item.textContent === '导出交互 JSON')))
+  await act(async () => click([...document.querySelectorAll('button')].find((item) => item.textContent === '导出结果 JSON')))
   await act(async () => click(document.querySelectorAll('.history-card')[0]))
   await flush()
   signal.resolve({ ok: true, error: null, result: { accepted: true, interaction_id: 'interaction.ui.2', replayed: false, signal_kind: 'accept' } })
@@ -422,7 +456,7 @@ test('SEM-F31/J24: a late cancellation receipt remains attached to its original 
   const harness = await createHarness({ cancel: async () => cancelled.promise }); t.after(() => harness.dispose())
   await act(async () => click(document.querySelectorAll('.history-card')[1]))
   await flush()
-  await act(async () => click([...document.querySelectorAll('button')].find((item) => item.textContent === '导出交互 JSON')))
+  await act(async () => click([...document.querySelectorAll('button')].find((item) => item.textContent === '导出结果 JSON')))
   await flush()
   assert.equal(document.querySelector('.status').textContent, '已导出交互 JSON')
   const secondDetail = deferred()
@@ -436,7 +470,7 @@ test('SEM-F31/J24: a late cancellation receipt remains attached to its original 
   await flush()
   secondDetail.resolve({ ok: true, result: { ...harness.historyItem, interaction_id: 'interaction.ui.2', run_id: 'run.ui.2', result_digest: 'b'.repeat(64), routing_mode: 'model', state: 'succeeded', terminal_reason: 'succeeded', source_refs: [], tool_calls: [] } })
   await flush()
-  assert.equal(document.querySelector('.run-card strong').textContent, '已生成结果')
+  assert.equal(document.querySelector('.run-card strong').textContent, '已生成')
   assert.equal(document.querySelector('.status').textContent, '已导出交互 JSON')
 })
 
@@ -544,7 +578,7 @@ test('SEM-F35/J22/J26: command errors and next actions use fixed Chinese copy, a
   await act(async () => click(document.querySelectorAll('.history-card')[1]))
   await flush()
   assert.match(document.querySelector('.export-privacy').textContent, /导出内容可能包含字幕或个人上下文/)
-  await act(async () => click([...document.querySelectorAll('button')].find((item) => item.textContent === '导出交互 JSON')))
+  await act(async () => click([...document.querySelectorAll('button')].find((item) => item.textContent === '导出结果 JSON')))
   await flush()
   assert.match(document.querySelector('.status').textContent, /已取消导出/)
   assert.equal(document.querySelector('.status').textContent.includes('已导出交互 JSON'), false)
@@ -554,7 +588,7 @@ test('S5-UX/J26: terminal detail exports by interaction ID and does not expose a
   const harness = await createHarness(); t.after(() => harness.dispose())
   await act(async () => click(document.querySelectorAll('.history-card')[1]))
   await flush()
-  const button = [...document.querySelectorAll('button')].find((item) => item.textContent === '导出交互 JSON')
+  const button = [...document.querySelectorAll('button')].find((item) => item.textContent === '导出结果 JSON')
   assert.ok(button)
   await act(async () => click(button))
   await flush()
@@ -608,11 +642,12 @@ test('SEM-F32/J21: terminal Agent results expose only explicit interaction signa
   await act(async () => click(document.querySelectorAll('.history-card')[1]))
   await flush()
   assert.equal(document.querySelectorAll('[data-signal]').length, 5)
+  await act(async () => input(document.querySelector('#agentRemember'), '明确要保留的一条'))
   for (const kind of ['accept', 'reject', 'remember', 'forget']) {
     await act(async () => click(document.querySelector(`[data-signal="${kind}"]`)))
     await flush()
   }
   assert.deepEqual(harness.signalRequests.map((request) => request.signal_kind), ['accept', 'reject', 'remember', 'forget'])
   assert.equal(harness.signalRequests.every((request) => request.result_digest === 'b'.repeat(64)), true)
-  assert.equal(harness.signalRequests.every((request) => request.payload === null), true)
+  assert.deepEqual(harness.signalRequests.map((request) => request.payload), [null, null, { text: '明确要保留的一条' }, null])
 })
