@@ -106,7 +106,7 @@ test('SEM-T04/J21: settings conflict is surfaced as an actionable message withou
   t.after(() => harness.dispose())
   await act(async () => click(document.querySelector('input[aria-label="确认云端模型披露"]')))
   await flush()
-  assert.match(document.body.textContent, /设置已在别处更新，请重新载入后再试/) 
+  assert.match(document.body.textContent, /设置已在别处更新，请重新载入后再试/)
   assert.doesNotMatch(document.body.textContent, /stack|path|credential|prompt/i)
 })
 

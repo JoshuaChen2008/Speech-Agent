@@ -87,7 +87,7 @@ test('SEM-F30/SEM-F32/J21: settings consumes the exact personal-context UI contr
   })
 
   assert.match(document.body.textContent, /个人记忆/)
-  assert.match(document.body.textContent, /项目沟通偏好先给结论/) 
+  assert.match(document.body.textContent, /项目沟通偏好先给结论/)
   assert.equal(calls[0].kind, 'overview')
   assert.equal(calls[1].request.command.type, 'view')
   assert.equal(calls[1].request.command.resource, 'personal_memories')
