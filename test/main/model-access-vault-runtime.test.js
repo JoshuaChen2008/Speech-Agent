@@ -468,6 +468,38 @@ test('SEM-F33/J25: setCredential rolls back the prepared generation when SQLite 
   await instance.borrow(slot, 'persistent', oldState.generation, async (copy) => assert.equal(copy.toString(), 'old-secret'))
 })
 
+test('SEM-F33/SEM-T04/J25: rejected non-credential configuration does not settle from an absent credential', async (t) => {
+  const { instance } = vault(t, true)
+  const slot = 'slot.0123456789abcdef0123456789abcdef'
+  const internal = { revision: 8, profiles: [{
+    profile_id: 'profile.one', profile_revision: 1, credential_slot_id: slot,
+    credential_persistence: 'absent', credential_generation: null,
+    https_origin: 'https://old.example', base_path: '/v1'
+  }] }
+  const changes = []
+  const runtime = new ModelAccessRuntime({
+    vault: instance,
+    gateway: {
+      modelAccessCatalog: async () => internal,
+      modelAccessConfigure: async () => { throw new Error('injected invalid connection') },
+      modelAccessBind: async () => ({})
+    },
+    onChanged: (event) => changes.push(event)
+  })
+
+  const result = await runtime.configure({
+    type: 'updateProfile', expectedRevision: 8, profileId: 'profile.one',
+    label: 'One', httpsOrigin: 'http://invalid.example', basePath: '/v1'
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'MODEL_CONFIG_INVALID')
+  assert.equal(changes.length, 0)
+  assert.equal(internal.revision, 8)
+  assert.equal(internal.profiles[0].https_origin, 'https://old.example')
+  assert.deepEqual(instance.state(slot, 'absent', null), { present: false, scope: 'absent' })
+})
+
 test('SEM-F33/J25: committed credential write survives a lost storage reply', async (t) => {
   const { instance, directory } = vault(t, true)
   const slot = 'slot.0123456789abcdef0123456789abcdef'
@@ -502,6 +534,89 @@ test('SEM-F33/J25: committed credential write survives a lost storage reply', as
   assert.equal(fs.existsSync(path.join(directory, 'journal.v1.json')), false)
   await instance.borrow(slot, 'persistent', internal.profiles[0].credential_generation,
     async (copy) => assert.equal(copy.toString(), 'committed-secret'))
+})
+
+test('SEM-F33/J25: committed session credential write survives a lost storage reply', async (t) => {
+  const { instance } = vault(t, false)
+  const slot = 'slot.0123456789abcdef0123456789abcdef'
+  let internal = { revision: 8, profiles: [{
+    profile_id: 'profile.one', credential_slot_id: slot,
+    credential_persistence: 'absent', credential_generation: null
+  }] }
+  const runtime = new ModelAccessRuntime({
+    vault: instance,
+    gateway: {
+      modelAccessCatalog: async () => internal,
+      modelAccessConfigure: async () => {
+        internal = { revision: 9, profiles: [{
+          profile_id: 'profile.one', credential_slot_id: slot,
+          credential_persistence: 'absent', credential_generation: null
+        }] }
+        throw new Error('reply lost after commit')
+      },
+      modelAccessBind: async () => ({})
+    }
+  })
+
+  const result = await runtime.configure({
+    type: 'setCredential', expectedRevision: 8, profileId: 'profile.one', credential: 'session-secret'
+  })
+  assert.deepEqual(result, { ok: true, revision: 9, error: null })
+  assert.deepEqual(instance.state(slot, 'absent', null), { present: true, scope: 'session_only' })
+})
+
+test('SEM-F33/J25: committed clearCredential survives a lost storage reply', async (t) => {
+  const { instance } = vault(t, true)
+  const oldSlot = 'slot.0123456789abcdef0123456789abcdef'
+  const newSlot = 'slot.abcdef0123456789abcdef0123456789'
+  const oldState = instance.set(oldSlot, 'old-secret')
+  let internal = { revision: 8, profiles: [{
+    profile_id: 'profile.one', credential_slot_id: oldSlot,
+    credential_persistence: 'persistent', credential_generation: oldState.generation
+  }] }
+  const runtime = new ModelAccessRuntime({
+    vault: instance,
+    gateway: {
+      modelAccessCatalog: async () => internal,
+      modelAccessConfigure: async () => {
+        internal = { revision: 9, profiles: [{
+          profile_id: 'profile.one', credential_slot_id: newSlot,
+          credential_persistence: 'absent', credential_generation: null
+        }] }
+        throw new Error('reply lost after commit')
+      },
+      modelAccessBind: async () => ({})
+    }
+  })
+
+  const result = await runtime.configure({ type: 'clearCredential', expectedRevision: 8, profileId: 'profile.one' })
+  assert.deepEqual(result, { ok: true, revision: 9, error: null })
+  assert.deepEqual(instance.state(oldSlot, 'persistent', oldState.generation), { present: false, scope: 'absent' })
+})
+
+test('SEM-F33/J25: committed deleteProfile survives a lost storage reply', async (t) => {
+  const { instance } = vault(t, true)
+  const slot = 'slot.0123456789abcdef0123456789abcdef'
+  const state = instance.set(slot, 'old-secret')
+  let internal = { revision: 8, profiles: [{
+    profile_id: 'profile.one', credential_slot_id: slot,
+    credential_persistence: 'persistent', credential_generation: state.generation
+  }] }
+  const runtime = new ModelAccessRuntime({
+    vault: instance,
+    gateway: {
+      modelAccessCatalog: async () => internal,
+      modelAccessConfigure: async () => {
+        internal = { revision: 9, profiles: [] }
+        throw new Error('reply lost after commit')
+      },
+      modelAccessBind: async () => ({})
+    }
+  })
+
+  const result = await runtime.configure({ type: 'deleteProfile', expectedRevision: 8, profileId: 'profile.one' })
+  assert.deepEqual(result, { ok: true, revision: 9, error: null })
+  assert.deepEqual(instance.state(slot, 'persistent', state.generation), { present: false, scope: 'absent' })
 })
 
 test('SEM-F33/J25: stale credential commands reject before any vault prepare', async (t) => {

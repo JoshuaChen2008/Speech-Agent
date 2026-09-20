@@ -234,6 +234,8 @@ J27 当前 revision 的 smoke layout verifier 为 pass，release x64 NSIS 只记
 
 SEM-F14/F30、SEM-T06/T08：依据 ADR 0019，旧源码与独立入口退出当前树，旧表由验证备份后的追加迁移删除；历史 SQL/checksum 与删除回执不变，新删除旧计数为零。失败明确禁用 Agent/自动摄取/会话删除，字幕采集、历史和导出继续；只在重启后重试。备份保留历史正文且仅显式清理/恢复。J27 改为唯一现行实现、旧操作拒绝、退役迁移及正式包验证。此修订取代本文此前旧表和隔离入口保留要求，用户已有记忆概览/会话总结规划保持原样。
 
+> **SEM-F33/J25 配置失败回执增量（2026-09-19）**：`configure()` 的不确定写入收敛必须按 exact 命令副作用分流。只有实际准备了对应凭据 vault token 的 `setCredential`、`clearCredential` 或 `deleteProfile` 才允许按凭据状态核对提交；普通档案、模型或用途配置失败不得因凭据 absent 被推断为成功，必须返回既有 `MODEL_CONFIG_INVALID` 或 `MODEL_CONFIG_REVISION_CONFLICT`，保持权威配置与 revision 不变。该增量纳入 J25 正式设置旅程的无凭据非法连接失败与输入保留场景，状态为实现完成·尚未验收。
+
 ### 2026-09-16 字幕恢复后原生按下连续性增量登记
 
 依据诊断记录 [`window-restore-input-diagnosis-2026-09-16.md`](validation/window-restore-input-diagnosis-2026-09-16.md)，为 SEM-F22/F24、J17/J19 登记一项实现约束：字幕窗仍保持 `focusable: false`，但其所属线程的原生输入边界必须保留恢复后 `WM_MOUSEACTIVATE` 产生的客户端主键按下；产品不能通过改变字幕窗可聚焦性、恢复 renderer 焦点、合成 DOM 事件或拖动重试来满足该要求。原生 subclass 只允许把目标字幕窗、`HTCLIENT`、`WM_LBUTTONDOWN` 且原处理返回 `MA_NOACTIVATEANDEAT` 的结果收窄为 `MA_NOACTIVATE`，其它窗口、消息和返回值必须原样传递。绑定建立失败时字幕窗保持隐藏，工具条继续提供“重试 / 退出”入口；原生绑定不进入 renderer、SQLite、日志或证据报告。确定性回归必须保留真实 BrowserWindow/main/preload/renderer 链路，实机恢复后的连续鼠标与 DWM 仍只由 I2 `dwm-drag` 验证；当前状态为实现完成·尚未验收。

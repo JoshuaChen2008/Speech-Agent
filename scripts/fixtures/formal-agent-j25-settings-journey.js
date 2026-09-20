@@ -16,7 +16,7 @@ const { app, BrowserWindow, ipcMain } = require('electron')
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
 const eligibilityProbe = { count: 0, nextHold: null }
-const inputProbe = { pending: false, rejected: false, invalidCommands: 0 }
+const inputProbe = { pending: false, rejected: false, failureCode: null, invalidCommands: 0 }
 const originalIpcHandle = ipcMain.handle.bind(ipcMain)
 ipcMain.handle = (channel, handler) => originalIpcHandle(channel, async (...args) => {
   // Pause the real command, inspect its renderer, then retain its real result.
@@ -35,6 +35,7 @@ ipcMain.handle = (channel, handler) => originalIpcHandle(channel, async (...args
     })()`)
     const result = await handler(...args)
     inputProbe.rejected = result.ok === false
+    inputProbe.failureCode = result.error?.code || null
     return result
   }
   if (channel === 'agent-run:get-eligibility') {
@@ -422,6 +423,36 @@ async function configureThroughSettings (settings, port) {
     await waitFor(() => document.querySelector('input[aria-label="启用 Agent 系统"]')?.checked === true, 'Agent system enabled')
     const cardFor = () => document.querySelector('[data-profile-id="deepseek"]')
     await waitFor(cardFor, 'deepseek profile')
+    let failedInputRetained = false
+    let failedConfigUnchanged = false
+    let uncredentialedFailureObserved = false
+    let failedRevisionUnchanged = false
+    let failedChangedNotBroadcast = false
+    const modelChangedRevisions = []
+    const unsubscribeModelChanged = window.shell.onAgentModelChanged((event) => {
+      modelChangedRevisions.push(event.revision)
+    })
+    clickText(cardFor(), '编辑连接')
+    const uncredentialedAddress = await waitFor(() => cardFor()?.querySelector('input[aria-label="API 服务器地址"]'), 'uncredentialed connection editor')
+    const beforeUncredentialedCatalog = await window.shell.getAgentModelCatalog({ contractId: 'agent-model-ui', contractVersion: '1.0.0' })
+    const beforeUncredentialedRevision = beforeUncredentialedCatalog.snapshot?.revision
+    const changedCountBeforeFailure = modelChangedRevisions.length
+    setInput(uncredentialedAddress, 'http://invalid.example')
+    await sleep(0)
+    clickText(cardFor(), '保存修改')
+    await waitFor(() => document.querySelector('section[data-pane="agentModel"] [role="alert"]') && !uncredentialedAddress.disabled, 'uncredentialed connection restored')
+    failedInputRetained = uncredentialedAddress.value === 'http://invalid.example'
+    const uncredentialedCatalog = await window.shell.getAgentModelCatalog({ contractId: 'agent-model-ui', contractVersion: '1.0.0' })
+    const uncredentialedProfile = uncredentialedCatalog.snapshot?.profiles?.find(p => p.profileId === 'deepseek')
+    uncredentialedFailureObserved = uncredentialedCatalog.ok === true &&
+      uncredentialedProfile?.credential?.present === false &&
+      uncredentialedProfile?.httpsOrigin === 'https://api.deepseek.com'
+    failedRevisionUnchanged = uncredentialedFailureObserved &&
+      uncredentialedCatalog.snapshot.revision === beforeUncredentialedRevision
+    failedChangedNotBroadcast = modelChangedRevisions.length === changedCountBeforeFailure
+    failedConfigUnchanged = uncredentialedFailureObserved && failedRevisionUnchanged && failedChangedNotBroadcast
+    clickText(uncredentialedAddress.closest('.group'), '取消')
+    await waitFor(() => !cardFor()?.querySelector('input[aria-label="API 服务器地址"]'), 'uncredentialed editor closed')
     clickText(cardFor(), '编辑连接')
     await waitFor(() => cardFor()?.querySelector('input[aria-label="API 服务器地址"]'), 'connection editor')
     const address = cardFor().querySelector('input[aria-label="API 服务器地址"]')
@@ -457,19 +488,6 @@ async function configureThroughSettings (settings, port) {
     setInput(credential, 'j25-local-provider-secret')
     clickText(cardFor(), '设置新的 API 密钥')
     await waitFor(() => credential.value === '', 'credential cleared')
-
-    // Exercise a configured connection failure; keep the real credential lifecycle intact.
-    clickText(cardFor(), '编辑连接')
-    const failingAddress = await waitFor(() => cardFor()?.querySelector('input[aria-label="API 服务器地址"]'), 'configured connection editor')
-    setInput(failingAddress, 'http://invalid.example')
-    await sleep(0)
-    clickText(cardFor(), '保存修改')
-    await waitFor(() => document.querySelector('section[data-pane="agentModel"] [role="alert"]') && !failingAddress.disabled, 'invalid connection restored')
-    const failedInputRetained = failingAddress.value === 'http://invalid.example'
-    const catalog = await window.shell.getAgentModelCatalog({ contractId: 'agent-model-ui', contractVersion: '1.0.0' })
-    const failedConfigUnchanged = catalog.ok === true && catalog.snapshot.profiles.find(p => p.profileId === 'deepseek').httpsOrigin === 'https://127.0.0.1:${port}'
-    clickText(failingAddress.closest('.group'), '取消')
-    await waitFor(() => !cardFor()?.querySelector('input[aria-label="API 服务器地址"]'), 'connection editor closed')
 
     const purpose = document.querySelector('[data-purpose="default"] select')
     await waitFor(() => purpose && [...purpose.options].some((option) => option.value === 'deepseek::j25-local-model'), 'purpose target')
@@ -551,10 +569,14 @@ async function configureThroughSettings (settings, port) {
     const credentialCleared = credential.value === ''
     contextNav.click()
     await waitFor(() => document.querySelector('textarea[aria-label="记住个人记忆"]'), 'context pane after context management')
+    unsubscribeModelChanged()
 
     return {
       inputsStyled: { textStyled, numberStyled, passwordStyled, selectStyled, textareaStyled },
       inputFailureRecovered: failedInputRetained && failedConfigUnchanged,
+      uncredentialedFailureObserved,
+      failedRevisionUnchanged,
+      failedChangedNotBroadcast,
       profileConnection,
       modelVisible,
       credentialCleared,
@@ -730,8 +752,10 @@ async function main () {
     const report = {
       schemaVersion: 1,
       result: Object.values(inputAppearance).every(Boolean) && Object.values(settingsResult.inputsStyled).every(Boolean) && settingsResult.inputFailureRecovered &&
+        settingsResult.uncredentialedFailureObserved &&
+        settingsResult.failedRevisionUnchanged && settingsResult.failedChangedNotBroadcast &&
         nativePicker.opened && nativePicker.cancelValuePreserved && nativePicker.noChangeAfterCancel &&
-        inputProbe.pending && inputProbe.rejected && inputProbe.invalidCommands === 1 &&
+        inputProbe.pending && inputProbe.rejected && inputProbe.failureCode === 'MODEL_CONFIG_INVALID' && inputProbe.invalidCommands === 1 &&
         settingsResult.profileConnection && settingsResult.modelVisible && settingsResult.credentialCleared &&
         settingsResult.defaultReady && settingsResult.agentEnabled && settingsResult.memoryManaged &&
         settingsResult.processingSuspended && settingsResult.processingReenabled && settingsResult.revisionConflict &&
@@ -745,7 +769,11 @@ async function main () {
       nativePicker,
       inputsStyled: settingsResult.inputsStyled,
       inputFailureRecovered: settingsResult.inputFailureRecovered,
+      uncredentialedFailureObserved: settingsResult.uncredentialedFailureObserved,
+      failedRevisionUnchanged: settingsResult.failedRevisionUnchanged,
+      failedChangedNotBroadcast: settingsResult.failedChangedNotBroadcast,
       inputPendingObserved: inputProbe.pending,
+      invalidInputFailureCode: inputProbe.failureCode,
       invalidInputCommandCount: inputProbe.invalidCommands,
       runPath: 'formal-agent-bar-renderer-preload-main',
       historyPath: 'formal-agent-history-renderer-preload-main',

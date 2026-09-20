@@ -46,15 +46,20 @@ class ModelAccessRuntime {
   async internal () { return this.gateway.modelAccessCatalog() }
 
   async settleUnknownCredentialWrite (command, token, operation) {
+    if (!token) return false
     let internal
     try { internal = await this.internal() } catch { return null }
+    const revisionAdvanced = Number.isSafeInteger(command.expectedRevision) &&
+      Number.isSafeInteger(internal.revision) && internal.revision > command.expectedRevision
     const profile = internal.profiles.find((item) => item.profile_id === command.profileId)
     const committed = operation === 'set'
-      ? Boolean(profile && profile.credential_persistence === token.state.scope &&
+      ? Boolean(revisionAdvanced && profile &&
+          profile.credential_persistence === (token.state.scope === 'session_only' ? 'absent' : token.state.scope) &&
           profile.credential_generation === token.state.generation)
       : command.type === 'deleteProfile'
-        ? !profile
-        : Boolean(profile && profile.credential_persistence === 'absent' && profile.credential_generation === null)
+        ? Boolean(revisionAdvanced && !profile)
+        : Boolean(revisionAdvanced && profile && profile.credential_slot_id !== token.slotId &&
+            profile.credential_persistence === 'absent' && profile.credential_generation === null)
     if (committed) {
       if (operation === 'set') this.vault.commitSet(token)
       else this.vault.commitClear(token)
@@ -203,6 +208,7 @@ class ModelAccessRuntime {
             result = await this.gateway.modelAccessConfigure({ command })
             this.vault.commitClear(clearToken)
           } catch (error) {
+            if (!clearToken) throw error
             const settled = await this.settleUnknownCredentialWrite(command, clearToken, 'clear')
             if (settled) result = settled
             else if (settled === false) throw error
