@@ -6,6 +6,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { validateGate0CMetricsReport } = require('./gate-0c/verify-report')
 const { parseStrictEvidenceJson } = require('./strict-evidence-json')
+const { PRODUCTION_MODEL_MANIFEST } = require('../src/main/services/model-manifest')
 
 const CORPUS_ID = 'zh-en-code-switch'
 const CORPUS_SHA256 = 'cf741c91fae04e20ae92193065a24248a1f6ecd20a179c3deaf3d69bc9a6febc'
@@ -55,6 +56,7 @@ const ROOT_KEYS = Object.freeze([
   'privacy',
   'limitations'
 ])
+const ROOT_KEYS_V6 = Object.freeze([...ROOT_KEYS, 'models'])
 
 const LATENCY_TRACE_KEYS = Object.freeze([
   'estimatedSpeechOnsetToVadStartFrameAudioHostReceiptMs',
@@ -192,6 +194,32 @@ function validateModel (model) {
   assert.equal(model.id, 'x-asr-160ms')
   assert.equal(model.profile, 'fast')
   assertPositiveInteger(model.numThreads, 'model.numThreads')
+}
+
+function validateModelReadiness (value, expectedId, label) {
+  assertExactKeys(value, ['artifactId', 'manifestSha256', 'markerSha256'], label)
+  assert.equal(value.artifactId, expectedId)
+  assertSha256(value.manifestSha256, `${label}.manifestSha256`)
+  assertSha256(value.markerSha256, `${label}.markerSha256`)
+  const artifact = PRODUCTION_MODEL_MANIFEST.artifacts.find((item) => item.id === expectedId)
+  assert.equal(value.manifestSha256, artifact.sha256, `${label}.manifestSha256 must match the approved manifest`)
+}
+
+function validateModels (models) {
+  assertExactKeys(models, ['draft', 'realtime', 'refinement', 'vad'], 'models')
+  const draft = models.draft
+  assertExactKeys(draft, ['artifactId', 'degraded', 'faultCount', 'faultStage', 'manifestSha256', 'markerSha256'], 'draft')
+  assert.equal(draft.artifactId, 'zipformer-bilingual-zh-en-2023-02-20')
+  assertSha256(draft.manifestSha256, 'draft.manifestSha256')
+  const artifact = PRODUCTION_MODEL_MANIFEST.artifacts.find((item) => item.id === draft.artifactId)
+  assert.equal(draft.manifestSha256, artifact.sha256, 'draft.manifestSha256 must match the approved manifest')
+  assertSha256(draft.markerSha256, 'draft.markerSha256')
+  assert.equal(draft.degraded, false)
+  assert.equal(draft.faultCount, 0)
+  assert.equal(draft.faultStage, null)
+  validateModelReadiness(models.realtime, 'x-asr-160ms', 'models.realtime')
+  validateModelReadiness(models.refinement, 'x-asr-offline', 'models.refinement')
+  validateModelReadiness(models.vad, 'silero-vad', 'models.vad')
 }
 
 function validateTrack (track) {
@@ -538,8 +566,8 @@ function validateTransport (transport) {
 
 function validateI2LiveReport (report, expectedSource = null) {
   assertSafeSerializedReport(report)
-  assertExactKeys(report, ROOT_KEYS, 'report')
-  assert.equal(report.schemaVersion, 5)
+  assert.ok([5, 6].includes(report.schemaVersion), 'I2 report schema must be 5 or 6')
+  assertExactKeys(report, report.schemaVersion === 6 ? ROOT_KEYS_V6 : ROOT_KEYS, 'report')
   assert.equal(report.kind, 'i2-live-caption-smoke')
   const reportExecutedAtEpoch = assertIsoTimestamp(report.executedAt, 'executedAt')
   validateEnvironment(report.environment)
@@ -553,6 +581,7 @@ function validateI2LiveReport (report, expectedSource = null) {
   assert.deepEqual(report.phases, ['starting', 'listening', 'stopping', 'idle'])
 
   validateModel(report.model)
+  if (report.schemaVersion === 6) validateModels(report.models)
   assert.equal(report.vad, 'silero')
   assert.equal(report.refinement, 'x-asr-offline')
   validateStimulusAndBinding(report, reportExecutedAtEpoch)
@@ -646,6 +675,7 @@ module.exports = {
   MIC_ACOUSTIC_LIMITATIONS,
   MIC_OPERATOR_LIMITATIONS,
   ROOT_KEYS,
+  ROOT_KEYS_V6,
   LATENCY_TRACE_KEYS,
   TRANSPORT_KEYS,
   ZERO_TRANSPORT_KEYS,

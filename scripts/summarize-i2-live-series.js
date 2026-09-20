@@ -123,6 +123,8 @@ function summarizeI2LiveSeries (inputs, exitEvidenceInputs, sourceId, minimumRun
   assert.equal(new Set(reports.map((run) => run.exitEvidenceSha256)).size, reports.length,
     'series child exit evidence must be byte-distinct')
   assert.equal(new Set(reports.map((run) => run.report.executedAt)).size, reports.length, 'series child timestamps must be distinct')
+  assert.equal(new Set(reports.map((run) => run.report.schemaVersion)).size, 1, 'series child schemas must match')
+  const twoStageEvidence = reports[0].report.schemaVersion === 6
   const runs = reports.map((run, index) => ({ ordinal: index + 1, ...run }))
   const values = (selector) => runs.map((run) => selector(run.report))
   const maxima = {
@@ -132,7 +134,7 @@ function summarizeI2LiveSeries (inputs, exitEvidenceInputs, sourceId, minimumRun
   for (const key of ZERO_TRANSPORT_KEYS) maxima[key] = Math.max(...values((report) => report.transport[key]))
 
   return {
-    schemaVersion: 6,
+    schemaVersion: twoStageEvidence ? 7 : 6,
     kind: 'i2-live-caption-series',
     generatedAt: new Date(Math.max(...values((report) => Date.parse(report.executedAt)))).toISOString(),
     sourceId,
@@ -140,7 +142,7 @@ function summarizeI2LiveSeries (inputs, exitEvidenceInputs, sourceId, minimumRun
     runCount: runs.length,
     criteria: {
       minimumRuns,
-      everyRunPassedSchema5: true,
+      [twoStageEvidence ? 'everyRunPassedSchema6' : 'everyRunPassedSchema5']: true,
       everyRunExitedZeroWithoutRunnerTermination: true,
       everyRunLossless: true,
       finalCerMax: 0.3,

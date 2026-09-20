@@ -36,7 +36,8 @@ const {
   selectClockCalibration,
   summarizeClockCalibration
 } = require('../src/runtime/clock-calibration')
-const { resolveApprovedRealtimeModel, resolveApprovedRefinementModel, resolveSileroVadModel } = require('../src/main/services/model-resolver')
+const { resolveApprovedDraftModel, resolveApprovedRealtimeModel, resolveApprovedRefinementModel, resolveSileroVadModel } = require('../src/main/services/model-resolver')
+const { PRODUCTION_MODEL_MANIFEST } = require('../src/main/services/model-manifest')
 const { characterErrorRate, percentile } = require('./gate-0b/metrics')
 const { validateGate0CMetricsReport } = require('./gate-0c/verify-report')
 const { parseStrictEvidenceJson } = require('./strict-evidence-json')
@@ -57,6 +58,8 @@ const CLOCK_CALIBRATION_MAX_AGE_MS = 30000
 const PLAYBACK_SCHEDULE_LEAD_MS = 500
 const REFINEMENT_OBSERVATION_TIMEOUT_MS = 15000
 const REFINEMENT_OBSERVATION_POLL_MS = 100
+const PROJECT_ROOT = path.resolve(__dirname, '..')
+const DEFAULT_MODEL_USER_DATA = path.join(PROJECT_ROOT, '.artifacts', 'model-install-live-20260731-3', 'user-data')
 const PROVISIONAL_DIAGNOSTIC_KEYS = Object.freeze([
   'provisionalCandidatesStarted',
   'provisionalFramesFed',
@@ -80,7 +83,8 @@ function parseArguments (argv) {
     source: null,
     listenSeconds: 12,
     micStimulus: 'operator',
-    physicalMicPreflight: null
+    physicalMicPreflight: null,
+    modelUserData: DEFAULT_MODEL_USER_DATA
   }
   let sourceSeen = false
   for (let index = 0; index < argv.length; index += 1) {
@@ -95,10 +99,13 @@ function parseArguments (argv) {
       options.micStimulus = value; index += 1
     } else if (argv[index] === '--physical-mic-preflight') {
       options.physicalMicPreflight = value; index += 1
+    } else if (argv[index] === '--model-user-data') {
+      options.modelUserData = value; index += 1
     } else throw new Error(`Unknown argument: ${argv[index]}`)
   }
   if (!['loopback', 'mic'].includes(options.source)) throw new Error('--source is required and must be loopback or mic')
   if (typeof options.report !== 'string' || options.report.trim().length === 0) throw new Error('--report must be a non-empty path')
+  if (typeof options.modelUserData !== 'string' || options.modelUserData.trim().length === 0) throw new Error('--model-user-data must be a non-empty path')
   if (!Number.isFinite(options.listenSeconds) || options.listenSeconds < 5 || options.listenSeconds > 60) {
     throw new Error('--listen-seconds must be between 5 and 60')
   }
@@ -113,6 +120,42 @@ function parseArguments (argv) {
     throw new Error('--physical-mic-preflight is required for acoustic-replay')
   }
   return options
+}
+
+function markerEvidence (directory, expectedId) {
+  const bytes = fs.readFileSync(path.join(directory, '.ready.json'))
+  const marker = parseStrictEvidenceJson(bytes, `${expectedId} ready marker`)
+  const artifact = PRODUCTION_MODEL_MANIFEST.artifacts.find((item) => item.id === expectedId)
+  if (!artifact || marker.artifactId !== expectedId || marker.manifestVersion !== PRODUCTION_MODEL_MANIFEST.version ||
+      marker.sha256 !== artifact.sha256 || marker.bytes !== artifact.bytes) throw new Error(`${expectedId} ready marker is invalid`)
+  return { artifactId: expectedId, markerSha256: crypto.createHash('sha256').update(bytes).digest('hex'), manifestSha256: artifact.sha256 }
+}
+
+function resolveAuditedModels (optionValue) {
+  const modelUserData = path.resolve(optionValue || DEFAULT_MODEL_USER_DATA)
+  const workspacePrefix = PROJECT_ROOT.trimEnd(path.sep) + path.sep
+  if (!(modelUserData + path.sep).startsWith(workspacePrefix)) throw new Error('--model-user-data must stay inside the project workspace')
+  const resolverOptions = { allowExternal: false, repoRoot: PROJECT_ROOT, userDataDir: modelUserData }
+  const model = resolveApprovedRealtimeModel(resolverOptions)
+  const draft = resolveApprovedDraftModel(resolverOptions)
+  const refinement = resolveApprovedRefinementModel(resolverOptions)
+  const vad = resolveSileroVadModel(resolverOptions)
+  if (!model) throw new Error('APPROVED_REALTIME_MODEL_MISSING')
+  if (!draft) throw new Error('APPROVED_DRAFT_MODEL_MISSING')
+  if (!refinement) throw new Error('APPROVED_REFINEMENT_MODEL_MISSING')
+  if (!vad) throw new Error('APPROVED_VAD_MODEL_MISSING')
+  return {
+    model,
+    draft,
+    refinement,
+    vad,
+    evidence: {
+      draft: markerEvidence(draft.modelDir, draft.id),
+      realtime: markerEvidence(model.modelDir, model.id),
+      refinement: markerEvidence(refinement.modelDir, refinement.id),
+      vad: markerEvidence(path.dirname(vad.modelPath), 'silero-vad')
+    }
+  }
 }
 
 function buildMicPromptNotice (listenSeconds) {
@@ -481,6 +524,7 @@ function buildReport ({
   sourceId,
   result,
   model,
+  models,
   vad,
   refinement,
   stimulus,
@@ -500,13 +544,14 @@ function buildReport ({
   const worker = diagnostics?.worker || {}
   const source = worker.sources?.[sourceId] || {}
   return {
-    schemaVersion: 5,
+    schemaVersion: models ? 6 : 5,
     kind: 'i2-live-caption-smoke',
     executedAt,
     environment,
     sourceId,
     result,
     model,
+    ...(models ? { models } : {}),
     vad,
     refinement,
     stimulus,
@@ -814,11 +859,11 @@ async function main () {
   const expect = (condition, label) => { if (!condition) failures.push(label) }
 
   try {
-    const model = resolveApprovedRealtimeModel({ userDataDir: app.getPath('userData') })
-    if (!model) throw new Error('approved realtime model not found on this machine')
-    const vadModel = resolveSileroVadModel({ userDataDir: app.getPath('userData') })
-    const refineModel = resolveApprovedRefinementModel({ userDataDir: app.getPath('userData') })
-    if (!refineModel) throw new Error('approved refinement model not found on this machine')
+    const auditedModels = resolveAuditedModels(options.modelUserData)
+    const model = auditedModels.model
+    const draftModel = auditedModels.draft
+    const vadModel = auditedModels.vad
+    const refineModel = auditedModels.refinement
     const wave = readPcm16MonoWav(WAV_PATH)
     const physicalPreflight = options.physicalMicPreflight
       ? readPhysicalMicPreflight(options.physicalMicPreflight)
@@ -833,6 +878,7 @@ async function main () {
         profileMap: { [model.profile]: model.id },
         micLabelSha256: physicalPreflight?.micLabelSha256 || null,
         recognizer: { kind: model.kind, modelDir: model.modelDir, numThreads: model.numThreads, modelType: model.modelType },
+        draftRecognizer: { kind: draftModel.kind, modelDir: draftModel.modelDir, numThreads: draftModel.numThreads, modelType: draftModel.modelType },
         vad: vadModel || undefined,
         refinement: refineModel
           ? { kind: refineModel.kind, modelDir: refineModel.modelDir, numThreads: refineModel.numThreads }
@@ -927,6 +973,7 @@ async function main () {
     const refinedHasPunctuation = refined.length > 0 ? /[，。,.？?！!]/.test(refinedTextForScoring) : null
     const peakRms = workers.at(-1)?.lastStats?.sources?.[options.source]?.peakRms ?? null
     const diagnostics = runtimeAdapter?.getLastRunDiagnostics() || null
+    if (diagnostics?.draftRecognizer?.degraded === true) failures.push('draft-recognizer-failed')
     const inputTrack = safeTrackEvidence(diagnostics, options.source)
     const resources = resourceSampler.stop()
     resourceSampler = null
@@ -1017,6 +1064,15 @@ async function main () {
       sourceId: options.source,
       result,
       model: { id: model.id, profile: model.profile, numThreads: model.numThreads },
+      models: {
+        ...auditedModels.evidence,
+        draft: {
+          ...auditedModels.evidence.draft,
+          degraded: diagnostics?.draftRecognizer?.degraded === true,
+          faultCount: diagnostics?.draftRecognizer?.faultCount ?? 0,
+          faultStage: diagnostics?.draftRecognizer?.faultStage ?? null
+        }
+      },
       vad: vadModel ? 'silero' : 'energy-fallback',
       refinement: refineModel ? refineModel.id : null,
       stimulus: options.source === 'loopback'
@@ -1094,6 +1150,7 @@ module.exports = {
   REFINEMENT_OBSERVATION_TIMEOUT_MS,
   readPhysicalMicPreflight,
   readPcm16MonoWav,
+  resolveAuditedModels,
   safeInputEvidence,
   safeTrackEvidence,
   startPreparedPlaybackAfterProbe,

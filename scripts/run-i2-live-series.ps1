@@ -9,6 +9,8 @@ param(
 
   [string]$OutputDirectory = '.artifacts/i2-live-series',
 
+  [string]$ModelUserData = '.artifacts\model-install-live-20260731-3\user-data',
+
   [string]$PhysicalMicPreflight
 )
 
@@ -56,7 +58,7 @@ for ($run = 1; $run -le $RunCount; $run += 1) {
     throw "I2 run $run output already exists; use a fresh output directory."
   }
   $logDirectory = Join-Path $resolvedOutput "$Source-$run-logs"
-  $entryArguments = @('--source', $Source, '--report', $reportPath)
+  $entryArguments = @('--source', $Source, '--report', $reportPath, '--model-user-data', $ModelUserData)
   if ($Source -eq 'mic') {
     $entryArguments += @('--mic-stimulus', 'acoustic-replay', '--physical-mic-preflight', $preflightPath)
   }

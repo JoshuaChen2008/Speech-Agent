@@ -309,6 +309,20 @@ function passingReport () {
   }
 }
 
+function upgradeToTwoStage (report) {
+  const draftArtifact = PRODUCTION_MODEL_MANIFEST.artifacts.find((artifact) => artifact.id === 'zipformer-bilingual-zh-en-2023-02-20')
+  report.schemaVersion = 2
+  report.model.draft = {
+    artifactId: draftArtifact.id,
+    manifestSha256: draftArtifact.sha256,
+    markerSha256: 'd'.repeat(64)
+  }
+  report.checks.draftRecognizerHealthy = true
+  report.transport.forcedCrashGeneration.draftRecognizerFaultCount = 0
+  report.transport.postRecoveryGeneration.draftRecognizerFaultCount = 0
+  return report
+}
+
 test('I3 live parser freezes acceptance at a true two-hour wall-clock duration', () => {
   assert.deepEqual(parseArguments([
     '--source', 'loopback', '--duration-seconds', String(DEFAULT_DURATION_SECONDS), '--report', 'report.json'
@@ -372,11 +386,13 @@ test('I3 只从工作区内受控模型就绪证明解析已批准资源，不�
 
   const models = resolveAuditedModels(fixtureRoot)
   assert.deepEqual(Object.fromEntries(Object.entries(models.evidence).map(([key, value]) => [key, value.artifactId])), {
+    draft: 'zipformer-bilingual-zh-en-2023-02-20',
     realtime: 'x-asr-160ms',
     refinement: 'x-asr-offline',
     vad: 'silero-vad'
   })
   assert.ok(models.model.modelDir.startsWith(fixtureRoot))
+  assert.ok(models.draft.modelDir.startsWith(fixtureRoot))
   assert.ok(models.refinement.modelDir.startsWith(fixtureRoot))
   assert.ok(models.vad.modelPath.startsWith(fixtureRoot))
   assert.throws(() => resolveAuditedModels(path.join(fixtureRoot, 'missing')), /APPROVED_REALTIME_MODEL_MISSING/)
@@ -392,7 +408,7 @@ test('I3 qualification parser freezes a real-audio seventy-five-second probe and
     '--mode', 'qualification', '--source', 'loopback', '--duration-seconds', '74', '--report', 'qualification.json'
   ]), /frozen at 75/)
 
-  const report = passingReport()
+  const report = upgradeToTwoStage(passingReport())
   report.kind = 'i3-live-audio-qualification'
   report.mode = 'qualification'
   report.gateStatus = 'partial'
@@ -401,6 +417,7 @@ test('I3 qualification parser freezes a real-audio seventy-five-second probe and
     audioArtifactsAbsent: true,
     captionsPersisted: true,
     controlledCycleBounded: true,
+    draftRecognizerHealthy: true,
     exportsComplete: true,
     historyPaginationComplete: true,
     noCapturePersisted: true,
@@ -439,6 +456,18 @@ test('I3 qualification parser freezes a real-audio seventy-five-second probe and
   report.window.nativeDragObserved = false
   assert.deepEqual(validateI3LiveAudioQualificationReport(report), report)
   assert.throws(() => validateI3LiveAudioReport(report), /only a passing I3 live audio acceptance report/)
+
+  const draftFault = structuredClone(report)
+  draftFault.transport.postRecoveryGeneration.draftRecognizerFaultCount = 1
+  assert.throws(() => validateI3LiveAudioQualificationReport(draftFault), /not loss-free: draftRecognizerFaultCount/)
+
+  const wrongDraft = structuredClone(report)
+  wrongDraft.model.draft.artifactId = 'x-asr-160ms'
+  assert.throws(() => validateI3LiveAudioQualificationReport(wrongDraft), /wrong artifact/)
+
+  const leakedDraftPath = structuredClone(report)
+  leakedDraftPath.model.draft.audioFilePath = 'C:\\private\\capture.wav'
+  assert.throws(() => validateI3LiveAudioQualificationReport(leakedDraftPath), /unexpected keys|absolute path/)
 
   const insufficientPreRecovery = structuredClone(report)
   insufficientPreRecovery.metrics.preRecoveryFinalSegments = MIN_QUALIFICATION_PRE_RECOVERY_FINAL_SEGMENTS - 1

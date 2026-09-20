@@ -7,6 +7,7 @@ const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 const { parseStrictEvidenceJson } = require('../../scripts/strict-evidence-json')
+const { PRODUCTION_MODEL_MANIFEST } = require('../../src/main/services/model-manifest')
 
 const EVIDENCE_ROOT = path.resolve(__dirname, '../../docs/validation/i2-live-v5')
 const B96_LOOPBACK_EVIDENCE_ROOT = path.resolve(__dirname, '../../docs/validation/i2-live-b96b8fe-loopback')
@@ -26,14 +27,25 @@ const {
   REFINEMENT_OBSERVATION_POLL_MS,
   REFINEMENT_OBSERVATION_TIMEOUT_MS,
   readPhysicalMicPreflight,
+  resolveAuditedModels,
   startPreparedPlaybackAfterProbe,
   waitForRefinementObservation
 } = require('../../scripts/i2-live-caption-smoke')
+
+test('SEM-F21/I2: live runner resolves the complete two-stage model bundle from an explicit root', () => {
+  assert.equal(typeof resolveAuditedModels, 'function')
+  const options = parseArguments([
+    '--source', 'loopback', '--report', '.artifacts/i2.json',
+    '--model-user-data', '.artifacts/model-install/user-data'
+  ])
+  assert.equal(options.modelUserData, '.artifacts/model-install/user-data')
+})
 const { validateGate0CMetricsReport } = require('../../scripts/gate-0c/verify-report')
 const {
   CORPUS_SHA256,
   REFERENCE_SHA256,
   ROOT_KEYS,
+  ROOT_KEYS_V6,
   ZERO_TRANSPORT_KEYS,
   validateI2LiveReportEvidence,
   validateI2LiveReport
@@ -55,6 +67,22 @@ const {
 
 function sha256 (bytes) {
   return crypto.createHash('sha256').update(bytes).digest('hex')
+}
+
+function createModelReadinessFixture (userDataDir) {
+  for (const artifact of PRODUCTION_MODEL_MANIFEST.artifacts) {
+    const directory = artifact.directoryName
+      ? path.join(userDataDir, 'models', artifact.id, artifact.directoryName)
+      : path.join(userDataDir, 'models', artifact.id)
+    fs.mkdirSync(directory, { recursive: true })
+    for (const name of artifact.requiredFiles) fs.writeFileSync(path.join(directory, name), '')
+    fs.writeFileSync(path.join(directory, '.ready.json'), JSON.stringify({
+      artifactId: artifact.id,
+      bytes: artifact.bytes,
+      manifestVersion: PRODUCTION_MODEL_MANIFEST.version,
+      sha256: artifact.sha256
+    }))
+  }
 }
 
 function readSourceEvidenceDirectory (directory, sourceId) {
@@ -274,6 +302,36 @@ test('ten tracked schema5 children and ten strict exit records exactly regenerat
   }
 })
 
+test('five two-stage schema6 children regenerate one strict schema7 loopback series', () => {
+  const historical = readSourceEvidenceDirectory(path.join(EVIDENCE_ROOT, 'loopback'), 'loopback')
+  const manifest = Object.fromEntries(PRODUCTION_MODEL_MANIFEST.artifacts.map((artifact) => [artifact.id, artifact.sha256]))
+  const inputs = historical.inputs.map((bytes, index) => {
+    const report = parseStrictEvidenceJson(bytes, `historical loopback ${index + 1}`)
+    report.schemaVersion = 6
+    report.models = {
+      draft: {
+        artifactId: 'zipformer-bilingual-zh-en-2023-02-20',
+        degraded: false,
+        faultCount: 0,
+        faultStage: null,
+        manifestSha256: manifest['zipformer-bilingual-zh-en-2023-02-20'],
+        markerSha256: String(index + 1).repeat(64)
+      },
+      realtime: { artifactId: 'x-asr-160ms', manifestSha256: manifest['x-asr-160ms'], markerSha256: 'a'.repeat(64) },
+      refinement: { artifactId: 'x-asr-offline', manifestSha256: manifest['x-asr-offline'], markerSha256: 'b'.repeat(64) },
+      vad: { artifactId: 'silero-vad', manifestSha256: manifest['silero-vad'], markerSha256: 'c'.repeat(64) }
+    }
+    return Buffer.from(`${JSON.stringify(report, null, 2)}\n`)
+  })
+  const exitEvidenceInputs = inputs.map((bytes) => Buffer.from(
+    serializeI2ExactChildExitEvidence(buildI2ExactChildExitEvidence(bytes, 'loopback'))
+  ))
+  const summary = summarizeI2LiveSeries(inputs, exitEvidenceInputs, 'loopback', 5)
+  assert.equal(summary.schemaVersion, 7)
+  assert.equal(summary.criteria.everyRunPassedSchema6, true)
+  assert.deepEqual(validateI2SeriesSummary(summary, 'loopback', { inputs, exitEvidenceInputs, minimumRuns: 5, gateReportBytes: null }), summary)
+})
+
 test('series reconstruction rejects byte, fixture, privacy, refinement and every loss-axis mutation', () => {
   const gateReportBytes = fs.readFileSync(GATE_REPORT_PATH)
   const loopback = sourceEvidence('loopback')
@@ -405,7 +463,7 @@ test('exact child exit evidence is closed, text-free, byte-bound, ordered and re
   }
 })
 
-test('I2 live runner requires exactly one explicit source and self-validates before writing pass', () => {
+test('I2 live runner requires exactly one explicit source and self-validates before writing pass', (t) => {
   assert.throws(() => parseArguments([]), /--source is required/)
   assert.equal(parseArguments(['--source', 'loopback']).source, 'loopback')
   assert.equal(parseArguments(['--source', 'mic', '--listen-seconds', '15']).source, 'mic')
@@ -441,7 +499,20 @@ test('I2 live runner requires exactly one explicit source and self-validates bef
     'the refinement observation deadline must use the Electron main monotonic clock')
   assert.match(source, /failures\.push\('refined-caption-missing'\)/,
     'a missing refinement must remain fail closed after the bounded observation window')
-  assert.match(source, /if \(!refineModel\) throw new Error\('approved refinement model not found on this machine'\)/,
+  const artifactRoot = path.resolve(__dirname, '../../.artifacts')
+  fs.mkdirSync(artifactRoot, { recursive: true })
+  const fixtureRoot = fs.mkdtempSync(path.join(artifactRoot, 'i2-model-readiness-fixture-'))
+  t.after(() => fs.rmSync(fixtureRoot, { recursive: true, force: true }))
+  createModelReadinessFixture(fixtureRoot)
+  const models = resolveAuditedModels(fixtureRoot)
+  assert.deepEqual(Object.fromEntries(Object.entries(models.evidence).map(([key, value]) => [key, value.artifactId])), {
+    draft: 'zipformer-bilingual-zh-en-2023-02-20',
+    realtime: 'x-asr-160ms',
+    refinement: 'x-asr-offline',
+    vad: 'silero-vad'
+  })
+  fs.rmSync(path.join(fixtureRoot, 'models', 'x-asr-offline'), { recursive: true, force: true })
+  assert.throws(() => resolveAuditedModels(fixtureRoot), /APPROVED_REFINEMENT_MODEL_MISSING/,
     'I2 evidence must fail closed before starting when the approved refinement model is absent')
   assert.equal((source.match(/refinementEnabled: true/g) || []).length, 2,
     'both source-specific I2 configurations must freeze refinement on')
@@ -682,7 +753,7 @@ test('a delayed timing probe arm must settle before controlled playback is sched
 })
 
 test('runner report builder emits the closed, text-free schema5 root shape', () => {
-  const report = buildReport({
+  const reportInput = {
     executedAt: '2026-07-31T00:00:00.000Z',
     environment: { electron: '43.2.0', node: '24.18.0' },
     sourceId: 'mic',
@@ -719,11 +790,47 @@ test('runner report builder emits the closed, text-free schema5 root shape', () 
       worker: { badSampleTypeFrames: 0, sources: { mic: { framesIngested: 2, sequenceGapCount: 0, missedFrames: 0 } } },
       droppedCaptionCount: 0
     }
-  })
+  }
+  const report = buildReport(reportInput)
   assert.deepEqual(Object.keys(report).sort(), [...ROOT_KEYS].sort())
   assert.equal(report.schemaVersion, 5)
   assert.equal(report.input.selection, 'system-default')
   assert.equal(report.input.matchedLabelHashCount, null)
   assert.equal(report.privacy.reportContainsTranscriptText, false)
   assert.doesNotMatch(JSON.stringify(report), /joined(?:Final|Refined)Text|captionArrivals|capturedPcmBase64|"text"\s*:/i)
+
+  const manifestSha = Object.fromEntries(PRODUCTION_MODEL_MANIFEST.artifacts.map((artifact) => [artifact.id, artifact.sha256]))
+  const twoStage = buildReport({
+    ...reportInput,
+    models: {
+      draft: {
+        artifactId: 'zipformer-bilingual-zh-en-2023-02-20',
+        degraded: false,
+        faultCount: 0,
+        faultStage: null,
+        manifestSha256: manifestSha['zipformer-bilingual-zh-en-2023-02-20'],
+        markerSha256: 'd'.repeat(64)
+      },
+      realtime: { artifactId: 'x-asr-160ms', manifestSha256: manifestSha['x-asr-160ms'], markerSha256: 'a'.repeat(64) },
+      refinement: { artifactId: 'x-asr-offline', manifestSha256: manifestSha['x-asr-offline'], markerSha256: 'b'.repeat(64) },
+      vad: { artifactId: 'silero-vad', manifestSha256: manifestSha['silero-vad'], markerSha256: 'c'.repeat(64) }
+    }
+  })
+  assert.deepEqual(Object.keys(twoStage).sort(), [...ROOT_KEYS_V6].sort())
+  assert.equal(twoStage.schemaVersion, 6)
+  assert.deepEqual(validateI2LiveReport(twoStage, 'mic'), twoStage)
+
+  const degraded = structuredClone(twoStage)
+  degraded.models.draft.degraded = true
+  degraded.models.draft.faultCount = 1
+  degraded.models.draft.faultStage = 'runtime'
+  assert.throws(() => validateI2LiveReport(degraded, 'mic'), /false/)
+
+  const wrongManifest = structuredClone(twoStage)
+  wrongManifest.models.draft.manifestSha256 = '0'.repeat(64)
+  assert.throws(() => validateI2LiveReport(wrongManifest, 'mic'), /approved manifest/)
+
+  const leaked = structuredClone(twoStage)
+  leaked.models.draft.audioFilePath = 'C:\\private\\capture.wav'
+  assert.throws(() => validateI2LiveReport(leaked, 'mic'), /missing or unknown fields|forbidden sensitive field/)
 })

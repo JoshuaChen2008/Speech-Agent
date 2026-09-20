@@ -16,6 +16,7 @@
     "test:core": "node --test --experimental-test-isolation=none \"test/contracts/**/*.test.js\" \"test/main/**/*.test.js\" \"test/runtime/**/*.test.js\" \"test/storage/**/*.test.js\" \"test/ui/**/*.test.js\"",
     "test:integration": "node --test --experimental-test-isolation=none \"test/integration/**/*.test.js\"",
     "test:evidence": "node --test --experimental-test-isolation=none \"test/gate-0b/**/*.test.js\" \"test/gate-0c/**/*.test.js\" \"test/validation/**/*.test.js\"",
+    "verify:unattended": "node scripts/unattended-qualification.js",
     "test:ci": "node scripts/run-test-lanes.js all",
     "pretest:core": "npm run verify:renderer",
     "pretest:integration": "npm run verify:renderer",

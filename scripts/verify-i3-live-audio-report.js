@@ -88,23 +88,25 @@ function validateTransportGeneration (value, label, options = {}) {
     'droppedFrames', 'ingestedFrames', 'lostInFlightFrames', 'missedFrames', 'portReplacements', 'sentFrames',
     'sequenceGapCount'
   ]
+  if (options.twoStage === true) keys.push('draftRecognizerFaultCount')
   exactKeys(value, keys, label)
   for (const key of keys) finiteNonNegative(value[key], `${label}.${key}`)
   const zeroRequired = options.allowForcedExitLoss === true
     ? ['badSampleTypeFrames', 'droppedCaptionCount', 'missedFrames', 'sequenceGapCount']
     : ['badSampleTypeFrames', 'droppedCaptionCount', 'droppedFrames', 'lostInFlightFrames', 'missedFrames', 'sequenceGapCount']
+  if (options.twoStage === true) zeroRequired.push('draftRecognizerFaultCount')
   for (const key of zeroRequired) {
     if (value[key] !== 0) throw new Error(`I3 live transport is not loss-free: ${key}`)
   }
 }
 
-function validateTransport (value) {
+function validateTransport (value, twoStage = false) {
   exactKeys(value, ['forcedCrashGeneration', 'postRecoveryGeneration'], 'transport')
   /* The first generation is force-killed by the test itself.  Its in-flight
      loss counters stay visible and may be nonzero; all other integrity axes
      still have to remain clean.  The recovered generation is fully strict. */
-  validateTransportGeneration(value.forcedCrashGeneration, 'transport.forcedCrashGeneration', { allowForcedExitLoss: true })
-  validateTransportGeneration(value.postRecoveryGeneration, 'transport.postRecoveryGeneration')
+  validateTransportGeneration(value.forcedCrashGeneration, 'transport.forcedCrashGeneration', { allowForcedExitLoss: true, twoStage })
+  validateTransportGeneration(value.postRecoveryGeneration, 'transport.postRecoveryGeneration', { twoStage })
 }
 
 function validateStimulus (stimulus) {
@@ -159,9 +161,10 @@ function assertPrivacyAndNoLeak (privacy, report) {
   }
 }
 
-function validateModelEvidence (model) {
-  exactKeys(model, ['realtime', 'refinement', 'vad'], 'model')
+function validateModelEvidence (model, twoStage = false) {
+  exactKeys(model, twoStage ? ['draft', 'realtime', 'refinement', 'vad'] : ['realtime', 'refinement', 'vad'], 'model')
   const expected = {
+    ...(twoStage ? { draft: 'zipformer-bilingual-zh-en-2023-02-20' } : {}),
     realtime: 'x-asr-160ms',
     refinement: 'x-asr-offline',
     vad: 'silero-vad'
@@ -187,7 +190,7 @@ function validateI3LiveAudioReport (report) {
     'boundaries', 'checks', 'crashRecovery', 'environment', 'exports', 'generatedAt', 'kind', 'limits',
     'metrics', 'mode', 'model', 'privacy', 'progress', 'provenance', 'result', 'schemaVersion', 'stimulus', 'transport', 'window'
   ], 'I3 live report')
-  if (report.schemaVersion !== 1) {
+  if (![1, 2].includes(report.schemaVersion)) {
     throw new Error('only a passing I3 live audio acceptance report is valid')
   }
   timestamp(report.generatedAt, 'generatedAt')
@@ -202,12 +205,14 @@ function validateI3LiveAudioReport (report) {
     throw new Error('I3 live report overclaims an audio acceptance boundary')
   }
 
-  exactKeys(report.checks, [
+  const acceptanceCheckKeys = [
     'actualWallClockTwoHours', 'audioArtifactsAbsent', 'captionsPersisted', 'exportsComplete',
     'historyPaginationComplete', 'nativeWindowDragObserved', 'noCapturePersisted', 'realBrowserWindowLongLived',
     'refinedObservedWhenEnabled', 'resourceBounds', 'sqliteIntegrity', 'storageRecoveryAfterForcedMainExit',
     'transportHealthy', 'workerCrashRecovered'
-  ], 'checks')
+  ]
+  if (report.schemaVersion === 2) acceptanceCheckKeys.push('draftRecognizerHealthy')
+  exactKeys(report.checks, acceptanceCheckKeys, 'checks')
   if (Object.values(report.checks).some((value) => value !== true)) throw new Error('I3 live report contains a failed acceptance check')
 
   exactKeys(report.crashRecovery, [
@@ -221,7 +226,7 @@ function validateI3LiveAudioReport (report) {
   exactKeys(report.environment, ['electron', 'node'], 'environment')
   nonEmptyVersion(report.environment.electron, 'environment.electron')
   nonEmptyVersion(report.environment.node, 'environment.node')
-  validateModelEvidence(report.model)
+  validateModelEvidence(report.model, report.schemaVersion === 2)
 
   exactKeys(report.limits, Object.keys(SOAK_LIMITS), 'limits')
   for (const [key, value] of Object.entries(SOAK_LIMITS)) {
@@ -262,7 +267,7 @@ function validateI3LiveAudioReport (report) {
   if (Object.values(report.exports).some((item) => item.recordCount !== report.metrics.finalSegments)) {
     throw new Error('I3 live exports do not preserve every final segment')
   }
-  validateTransport(report.transport)
+  validateTransport(report.transport, report.schemaVersion === 2)
   return report
 }
 
@@ -284,7 +289,7 @@ function validateI3LiveAudioQualificationReport (report) {
     'boundaries', 'checks', 'crashRecovery', 'environment', 'exports', 'gateStatus', 'generatedAt', 'kind', 'limits',
     'metrics', 'mode', 'model', 'privacy', 'progress', 'provenance', 'result', 'schemaVersion', 'stimulus', 'transport', 'window'
   ], 'I3 real-audio qualification report')
-  if (report.schemaVersion !== 1) throw new Error('I3 real-audio qualification schema is invalid')
+  if (![1, 2].includes(report.schemaVersion)) throw new Error('I3 real-audio qualification schema is invalid')
   timestamp(report.generatedAt, 'generatedAt')
   exactKeys(report.boundaries, [
     'actualElectronBrowserWindow', 'actualRealtimeAudioPipeline', 'actualSqliteStorage', 'controlledSpeakerPlayback',
@@ -301,6 +306,7 @@ function validateI3LiveAudioQualificationReport (report) {
     'realAudioDurationSeventyFiveSeconds', 'refinedObservedWhenEnabled',
     'resourceBounds', 'sqliteIntegrity', 'storageRecoveryAfterForcedMainExit', 'transportHealthy', 'workerCrashRecovered'
   ]
+  if (report.schemaVersion === 2) checkKeys.push('draftRecognizerHealthy')
   exactKeys(report.checks, checkKeys, 'qualification checks')
   if (Object.values(report.checks).some((value) => value !== true)) throw new Error('I3 real-audio qualification contains a failed check')
   exactKeys(report.limits, [
@@ -347,12 +353,12 @@ function validateI3LiveAudioQualificationReport (report) {
   exactKeys(report.environment, ['electron', 'node'], 'environment')
   nonEmptyVersion(report.environment.electron, 'environment.electron')
   nonEmptyVersion(report.environment.node, 'environment.node')
-  validateModelEvidence(report.model)
+  validateModelEvidence(report.model, report.schemaVersion === 2)
   validateExports(report.exports)
   if (Object.values(report.exports).some((item) => item.recordCount !== report.metrics.finalSegments)) {
     throw new Error('I3 real-audio qualification exports are incomplete')
   }
-  validateTransport(report.transport)
+  validateTransport(report.transport, report.schemaVersion === 2)
   validateStimulus(report.stimulus)
   validateProvenance(report.provenance)
   assertPrivacyAndNoLeak(report.privacy, report)

@@ -29,7 +29,7 @@ const { SubtitleApplicationRuntime } = require('../src/main/services/subtitle-ap
 const { HistoryService } = require('../src/main/services/history-service')
 const { StorageGateway } = require('../src/main/services/storage-gateway')
 const { RealtimeRuntimeAdapter } = require('../src/runtime/realtime-runtime-adapter')
-const { resolveApprovedRealtimeModel, resolveApprovedRefinementModel, resolveSileroVadModel } = require('../src/main/services/model-resolver')
+const { resolveApprovedDraftModel, resolveApprovedRealtimeModel, resolveApprovedRefinementModel, resolveSileroVadModel } = require('../src/main/services/model-resolver')
 const { PRODUCTION_MODEL_MANIFEST } = require('../src/main/services/model-manifest')
 const { validateGate0CMetricsReport } = require('./gate-0c/verify-report')
 const { parseStrictEvidenceJson } = require('./strict-evidence-json')
@@ -264,16 +264,20 @@ function resolveAuditedModels (optionValue) {
   const userDataDir = resolveWorkspacePath(optionValue || DEFAULT_MODEL_USER_DATA, '--model-user-data')
   const resolverOptions = { allowExternal: false, repoRoot: PROJECT_ROOT, userDataDir }
   const model = resolveApprovedRealtimeModel(resolverOptions)
+  const draft = resolveApprovedDraftModel(resolverOptions)
   const refinement = resolveApprovedRefinementModel(resolverOptions)
   const vad = resolveSileroVadModel(resolverOptions)
   if (!model) throw new Error('APPROVED_REALTIME_MODEL_MISSING')
+  if (!draft) throw new Error('APPROVED_DRAFT_MODEL_MISSING')
   if (!refinement) throw new Error('APPROVED_REFINEMENT_MODEL_MISSING')
   if (!vad) throw new Error('APPROVED_VAD_MODEL_MISSING')
   return {
     model,
+    draft,
     refinement,
     vad,
     evidence: {
+      draft: markerEvidence(draft.modelDir, draft.id),
       realtime: markerEvidence(model.modelDir, model.id),
       refinement: markerEvidence(refinement.modelDir, refinement.id),
       vad: markerEvidence(path.dirname(vad.modelPath), 'silero-vad')
@@ -581,6 +585,7 @@ function transportProjection (diagnostics, sourceId) {
     creditStalls: capture.creditStalls ?? null,
     droppedCaptionCount: diagnostics?.droppedCaptionCount ?? null,
     droppedFrames: capture.droppedFrames ?? null,
+    draftRecognizerFaultCount: diagnostics?.draftRecognizer?.faultCount ?? null,
     ingestedFrames: source.framesIngested ?? null,
     lostInFlightFrames: capture.lostInFlightFrames ?? null,
     missedFrames: source.missedFrames ?? null,
@@ -805,6 +810,7 @@ async function runRealAudioSoak (options) {
        `allowExternal:false` forbids a silent fallback to env/repo paths. */
     const auditedModels = resolveAuditedModels(options.modelUserData)
     const model = auditedModels.model
+    const draftModel = auditedModels.draft
     const vadModel = auditedModels.vad
     const refinementModel = auditedModels.refinement
     const preflight = options.source === 'mic' ? readPhysicalMicPreflight(options.physicalMicPreflight) : null
@@ -825,6 +831,7 @@ async function runRealAudioSoak (options) {
             micLabelSha256: preflight?.micLabelSha256 || null,
             profileMap: { [model.profile]: model.id },
             recognizer: { kind: model.kind, modelDir: model.modelDir, modelType: model.modelType, numThreads: model.numThreads },
+            draftRecognizer: { kind: draftModel.kind, modelDir: draftModel.modelDir, modelType: draftModel.modelType, numThreads: draftModel.numThreads },
             refinement: refinementModel
               ? { kind: refinementModel.kind, modelDir: refinementModel.modelDir, numThreads: refinementModel.numThreads }
               : undefined,
@@ -918,7 +925,13 @@ async function runRealAudioSoak (options) {
       userDataDir: path.join(artifactDirectory, 'user-data'),
       databasePath,
       coordinatorFactory: ({ persistenceSink }) => new SessionCoordinator({
-        adapterFactory: () => new RealtimeRuntimeAdapter({ profileMap: { [model.profile]: model.id } }),
+        adapterFactory: () => new RealtimeRuntimeAdapter({
+          profileMap: { [model.profile]: model.id },
+          recognizer: { kind: model.kind, modelDir: model.modelDir, modelType: model.modelType, numThreads: model.numThreads },
+          draftRecognizer: { kind: draftModel.kind, modelDir: draftModel.modelDir, modelType: draftModel.modelType, numThreads: draftModel.numThreads },
+          refinement: { kind: refinementModel.kind, modelDir: refinementModel.modelDir, numThreads: refinementModel.numThreads },
+          vad: vadModel
+        }),
         configuration: { onboardingCompleted: true, onboardingPreset: 'meeting', loopback: true, mic: false },
         idFactory: () => `i3-recovery-reader-${soakId}`,
         persistenceSink,
@@ -945,13 +958,14 @@ async function runRealAudioSoak (options) {
       forcedCrashGeneration: transportGenerations[0],
       postRecoveryGeneration: transportGenerations[1]
     }
-    const forcedCrashHealthyBeforeExit = ['badSampleTypeFrames', 'droppedCaptionCount', 'missedFrames', 'sequenceGapCount']
+    const forcedCrashHealthyBeforeExit = ['badSampleTypeFrames', 'draftRecognizerFaultCount', 'droppedCaptionCount', 'missedFrames', 'sequenceGapCount']
       .every((key) => transport.forcedCrashGeneration[key] === 0)
     const recoveredTransportHealthy = Object.values(transport.postRecoveryGeneration).every(Number.isFinite) &&
-      ['badSampleTypeFrames', 'droppedCaptionCount', 'droppedFrames', 'lostInFlightFrames', 'missedFrames', 'sequenceGapCount']
+      ['badSampleTypeFrames', 'draftRecognizerFaultCount', 'droppedCaptionCount', 'droppedFrames', 'lostInFlightFrames', 'missedFrames', 'sequenceGapCount']
         .every((key) => transport.postRecoveryGeneration[key] === 0)
     const acceptanceChecks = {
       audioArtifactsAbsent: audioFilesUnder(artifactDirectory).length === 0,
+      draftRecognizerHealthy: transportGenerations.every((entry) => entry.draftRecognizerFaultCount === 0),
       actualWallClockTwoHours: measuredListeningWallDurationMs >= MIN_ACCEPTANCE_WALL_DURATION_MS,
       captionsPersisted: sessionTranscript.segments.length >= requiredFinalSegments,
       exportsComplete: Object.values(history.exports).every((entry) => entry.bytes > 0 &&
@@ -1016,6 +1030,7 @@ async function runRealAudioSoak (options) {
         Math.floor(QUALIFICATION_DURATION_SECONDS * 1000 /
           (wave.cycleDurationMs + PLAYBACK_SCHEDULE_LEAD_MS)) >= MIN_QUALIFICATION_FINAL_SEGMENTS + 9,
       exportsComplete: acceptanceChecks.exportsComplete,
+      draftRecognizerHealthy: acceptanceChecks.draftRecognizerHealthy,
       historyPaginationComplete: acceptanceChecks.historyPaginationComplete,
       noCapturePersisted: acceptanceChecks.noCapturePersisted,
       postRecoveryFinalsPersisted: captions.postRecoveryFinals >= MIN_QUALIFICATION_POST_RECOVERY_FINAL_SEGMENTS,
@@ -1055,7 +1070,7 @@ async function runRealAudioSoak (options) {
       progress: { soakId, statusWindowDragRequired: true, workerCrashInjectionRequired: true },
       provenance: currentProvenance(),
       result: Object.values(acceptanceChecks).every((value) => value === true) ? 'pass' : 'fail',
-      schemaVersion: 1,
+      schemaVersion: 2,
       stimulus,
       transport,
       window: {
@@ -1101,7 +1116,7 @@ async function runRealAudioSoak (options) {
       progress: { soakId, statusWindowDragRequired: false, workerCrashInjectionRequired: true },
       provenance: currentProvenance(),
       result: Object.values(qualificationChecks).every((value) => value === true) ? 'pass' : 'fail',
-      schemaVersion: 1,
+      schemaVersion: 2,
       stimulus,
       transport,
       window: {
@@ -1188,6 +1203,7 @@ module.exports = {
   forceRealtimeWorkerCrashAndRetry,
   internalSeedArguments,
   parseArguments,
+  readI3ShortStimulus,
   resolveAuditedModels,
   sumTransport,
   transportProjection
