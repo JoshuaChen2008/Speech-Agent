@@ -51,9 +51,11 @@
     "vitest": "4.1.10"
   },
   "dependencies": {
+    "@alicloud/pop-core": "1.8.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "sherpa-onnx-node": "1.13.4",
-    "sherpa-onnx-win-x64": "1.13.4"
+    "sherpa-onnx-win-x64": "1.13.4",
+    "ws": "8.21.3"
   }
 }

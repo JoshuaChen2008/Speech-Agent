@@ -3,6 +3,7 @@
 // @ts-check
 
 const { randomUUID } = require('node:crypto')
+const { assertRecognitionBinding, assertRecognitionStatus, RECOGNITION_ERROR_CODES } = require('../../contracts/recognition')
 const {
   assertCaptionEvent,
   assertCaptionState,
@@ -94,6 +95,9 @@ class SessionCoordinator {
     this.idFactory = options.idFactory || (() => `session-${randomUUID()}`)
     this.transitionTimeoutMs = options.transitionTimeoutMs || DEFAULT_TRANSITION_TIMEOUT_MS
     this.configuration = this.validateConfiguration(options.configuration)
+    this.recognitionSettings = options.recognitionSettings || null
+    this.sessionRecognition = null
+    this.recognitionStatus = null
     this.snapshotListeners = new Set()
     this.captionListeners = new Set()
     this.captionStateListeners = new Set()
@@ -311,6 +315,17 @@ class SessionCoordinator {
       )
     }
 
+    try {
+      this.sessionRecognition = this.recognitionSettings ? assertRecognitionBinding(this.recognitionSettings.freeze()) : null
+    } catch {
+      return failure('NLS_CONFIGURATION_REQUIRED', '请先配置 NLS 凭据并确认音频上传说明', true, 'open-settings')
+    }
+    if (this.sessionRecognition?.strategy === 'cloud-primary' && typeof this.persistenceSink?.recordRecognitionStatus !== 'function') {
+      this.sessionRecognition = null
+      return failure('STORAGE_OPEN_FAILED', '字幕保存服务暂时不可用', true, 'retry')
+    }
+    this.recognitionStatus = this.sessionRecognition ? { resultStatus: 'known', binding: clone(this.sessionRecognition),
+      actualProvider: this.sessionRecognition.provider, fallbackCode: null, fallbackAtMs: null, faultCode: null, faultAtMs: null } : null
     this.busy = true
     let sessionId
     try {
@@ -321,7 +336,7 @@ class SessionCoordinator {
     }
     const transition = this.beginTransition('start')
     this.sessionSourceIds = this.selectedSourceIds()
-    this.sessionRefinementEnabled = this.configuration.refinementEnabled && this.runtimeOptions.refinementAvailable === true
+    this.sessionRefinementEnabled = this.configuration.refinementEnabled && this.runtimeOptions.refinementAvailable === true && this.sessionRecognition?.strategy !== 'cloud-primary'
     this.sourceSequences.clear()
     this.segmentRevisions.clear()
     this.segmentSources.clear()
@@ -336,6 +351,7 @@ class SessionCoordinator {
           await this.persistenceSink.openSession({
             sessionId,
             sourceId: this.sessionSourceIds[0],
+            ...(this.sessionRecognition ? { recognition: clone(this.sessionRecognition) } : {}),
             refinementEnabled: this.sessionRefinementEnabled
           })
         } catch (cause) {
@@ -354,6 +370,7 @@ class SessionCoordinator {
         sourceIds: [...this.sessionSourceIds],
         profile: this.runtimeOptions.modelOverride.profile,
         refinementEnabled: this.adapterRefinementEnabled(),
+        recognition: this.sessionRecognition,
         resume: this.captionCursor(),
         signal: transition.controller.signal
       })
@@ -377,6 +394,15 @@ class SessionCoordinator {
     const transition = this.beginTransition('pause')
     try {
       await this.invokeAdapter(transition, 'pause', { signal: transition.controller.signal })
+      if (this.sessionRecognition?.strategy === 'cloud-primary') {
+        try { await this.persistenceSink?.flush() } catch (cause) {
+          if (!this.isTransitionCurrent(transition)) return failure('COORDINATOR_CLOSED', '会话服务已关闭', false)
+          this.acceptPersistenceFault(cause)
+          const error = this.persistenceError('APPEND')
+          this.publish(this.buildSnapshot('error', this.snapshot.sessionId, 'error', error))
+          return failure(error.code, error.message, error.recoverable, error.nextAction)
+        }
+      }
       if (!this.isTransitionCurrent(transition)) return failure('COORDINATOR_CLOSED', '会话服务已关闭', false)
       this.publish(this.buildSnapshot('paused', this.snapshot.sessionId, 'paused', null))
       return success()
@@ -456,6 +482,7 @@ class SessionCoordinator {
         sourceIds: [...this.sessionSourceIds],
         profile: this.runtimeOptions.modelOverride.profile,
         refinementEnabled: this.adapterRefinementEnabled(),
+        recognition: this.sessionRecognition,
         resume: this.captionCursor(),
         signal: transition.controller.signal
       })
@@ -520,6 +547,7 @@ class SessionCoordinator {
           sourceIds: [...this.sessionSourceIds],
           profile: this.runtimeOptions.modelOverride.profile,
           refinementEnabled: this.adapterRefinementEnabled(),
+          recognition: this.sessionRecognition,
           resume: this.captionCursor(),
           signal: transition.controller.signal
         })
@@ -598,6 +626,8 @@ class SessionCoordinator {
   }
 
   completeStoppedSession () {
+    this.sessionRecognition = null
+    this.recognitionStatus = null
     this.persistenceFault = null
     this.sessionSourceIds = []
     this.sessionRefinementEnabled = false
@@ -610,6 +640,9 @@ class SessionCoordinator {
   }
 
   adapterError (operation, label, cause, transition = null) {
+    if (RECOGNITION_ERROR_CODES.includes(cause?.code)) {
+      return this.runtimeError(cause.code, `NLS ${label}失败，请检查凭据、项目和网络`, true)
+    }
     const timedOut = cause && cause.name === 'TransitionTimeoutError'
     const terminationFailed = cause?.code === 'UTILITY_TERMINATION_TIMEOUT'
     if ((timedOut || terminationFailed) && transition) this.quarantineAdapter(transition.adapter)
@@ -811,7 +844,23 @@ class SessionCoordinator {
     if (typeof adapter.onRefinementFault === 'function') {
       unsubscribers.push(adapter.onRefinementFault((event) => this.acceptRefinementFault(adapter, event)))
     }
+    if (typeof adapter.onRecognitionStatus === 'function') {
+      unsubscribers.push(adapter.onRecognitionStatus(value => this.acceptRecognitionStatus(adapter, value)))
+    }
     return () => { for (const unsubscribe of unsubscribers) unsubscribe() }
+  }
+
+  acceptRecognitionStatus (adapter, value) {
+    if (this.disposed || adapter !== this.adapter || !this.sessionRecognition || value?.sessionId !== this.snapshot.sessionId) return false
+    try { assertRecognitionStatus(value) } catch { return false }
+    const { sessionId, ...status } = value
+    this.recognitionStatus = { resultStatus: 'known', binding: clone(this.sessionRecognition), ...status }
+    try {
+      const write = this.persistenceSink?.recordRecognitionStatus?.(value)
+      if (write?.catch) write.catch(error => this.acceptPersistenceFault(error))
+    } catch (error) { this.acceptPersistenceFault(error) }
+    this.publish({ ...this.snapshot, recognition: clone(this.recognitionStatus) })
+    return true
   }
 
   acceptRefinementFault (adapter, event) {
@@ -1085,6 +1134,7 @@ class SessionCoordinator {
         : { state: 'missing', profile: null, progress: null },
       lastError
     }
+    if (sessionId && this.recognitionStatus) snapshot.recognition = clone(this.recognitionStatus)
     return assertRuntimeSnapshot(snapshot)
   }
 

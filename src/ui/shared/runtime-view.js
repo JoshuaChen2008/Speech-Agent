@@ -292,6 +292,11 @@
     if (!view) throw new TypeError('未知 phase: ' + String(snapshot.phase))
 
     const notice = buildNotice(snapshot)
+    const recognition = snapshot.recognition
+    const showRecognition = recognition?.binding?.strategy === 'cloud-primary' && ['listening', 'paused'].includes(snapshot.phase)
+    const recognitionMessage = showRecognition ? (recognition.actualProvider === 'nls' ? '云端识别' : '本地降级') : ''
+    const recognitionDetail = showRecognition && recognition.actualProvider === 'local'
+      ? '已按供应商时间戳交接；切点附近可能漏字或重复' : recognitionMessage
     const secondary = buildSecondary(snapshot)
     let nextAction = buildNextAction(snapshot)
     /* 次按钮里已经有「重试」时，下一步不再重复给一个重试入口 */
@@ -310,12 +315,12 @@
         tone: view.tone,
         detail: buildDetail(snapshot),
         /* quiet：只渲染图标。attention：额外渲染 message。 */
-        emphasis: ATTENTION_PHASES.indexOf(snapshot.phase) === -1 ? 'quiet' : 'attention',
+        emphasis: showRecognition || ATTENTION_PHASES.indexOf(snapshot.phase) !== -1 ? 'attention' : 'quiet',
         /* 需要用户看到的那一句。取自后端，不在这里编。 */
-        message: notice ? notice.message : '',
+        message: notice ? notice.message : recognitionMessage,
         /* 屏幕阅读器读到的完整状态。图标是装饰性的，语义全靠这一串，
            所以无论 quiet 还是 attention 都要完整。 */
-        ariaLabel: view.label + (buildDetail(snapshot) ? '，' + buildDetail(snapshot) : '')
+        ariaLabel: view.label + (buildDetail(snapshot) ? '，' + buildDetail(snapshot) : '') + (recognitionDetail ? '，' + recognitionDetail : '')
       },
       primary: buildPrimary(snapshot),
       secondary,

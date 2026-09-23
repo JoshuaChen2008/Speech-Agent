@@ -3,6 +3,7 @@
 // @ts-check
 
 const { PROFILES, assertCapabilities } = require('./capabilities')
+const { assertRecognitionMetadata } = require('./recognition')
 const {
   assertArray,
   assertBoolean,
@@ -146,6 +147,7 @@ function assertPhaseInvariants (snapshot, path) {
 }
 
 function assertRuntimeSnapshot (value, path = 'RuntimeSnapshot') {
+  if (value?.recognition !== undefined) assertRecognitionMetadata(value.recognition)
   assertSchemaVersion(value, path)
   assertInteger(value.revision, `${path}.revision`, { min: 0 })
   assertNullableString(value.sessionId, `${path}.sessionId`, { nonEmpty: true })

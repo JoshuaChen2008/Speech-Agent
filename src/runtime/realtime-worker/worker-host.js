@@ -11,6 +11,7 @@
 const path = require('node:path')
 const { performance } = require('node:perf_hooks')
 const { assertSingleSourceIds, isCaptionEvent } = require('../../contracts')
+const { RECOGNITION_ERROR_CODES } = require('../../contracts/recognition')
 const { MAIN_CLOCK_ID, selectClockCalibration } = require('../clock-calibration')
 
 const WORKER_PATH = path.join(__dirname, 'realtime-worker.js')
@@ -277,6 +278,16 @@ class RealtimeWorkerHost {
         else this.droppedCaptionCount += 1
         return
       }
+      if (message?.type === 'recognition-local-ready') {
+        this.emit(this.controlListeners, Object.freeze({ type: message.type }))
+        return
+      }
+      if (message?.type === 'recognition-fault') {
+        if (RECOGNITION_ERROR_CODES.includes(message.code)) {
+          this.emit(this.controlListeners, Object.freeze({ type: message.type, code: message.code }))
+        }
+        return
+      }
       if (message?.type === 'refinement-fault') {
         if (REFINEMENT_FAULT_CODES.has(message.code) && REFINEMENT_FAULT_STAGES.has(message.stage)) {
           this.emit(this.controlListeners, Object.freeze({
@@ -348,6 +359,11 @@ class RealtimeWorkerHost {
   attachPort (port) {
     if (!this.child) throw new Error('worker is not running')
     this.child.postMessage({ type: 'pcm-port' }, [port])
+  }
+
+  attachCloudPort (port) {
+    if (!this.child) throw new Error('worker is not running')
+    this.child.postMessage({ type: 'cloud-port' }, [port])
   }
 
   /** 把精修 MessagePortMain 转移给 worker（B3：与 refine worker 直连）。 */

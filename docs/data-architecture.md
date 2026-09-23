@@ -1,6 +1,6 @@
 # 字幕系统持久化与 Agent 派生数据架构
 
-> **2026-09-14 当前状态：** formal SQLite catalog 已追加 v10 退役迁移。v1–v9 SQL/checksum 作为历史兼容输入保留；v10 删除旧 Agent 与确认关键词的 15 个对象，当前写入只允许 formal Agent、model-access、personal-context 与字幕表。本文中标注“旧实现留存/目标”的旧表定义和候选 catalog 仅用于迁移审计，不是当前写入接口；备份、恢复、失败降级和精确退役清单以 [ADR 0019](adr/0019-complete-legacy-agent-retirement.md) 为准。
+> **2026-09-22 catalog 登记：** formal SQLite catalog 在 v10 退役迁移后已有 v11 会话总结记忆参考偏好与 v12 独立记忆读取错误字段，本轮按 ADR 0020 登记追加 v13 字幕识别会话元数据；登记不表示联合或实机验收。v1–v12 SQL/checksum 保持不变；v10 删除旧 Agent 与确认关键词的 15 个对象，当前写入只允许 formal Agent、model-access、personal-context 与字幕表。本文中标注“旧实现留存/目标”的旧表定义和候选 catalog 仅用于迁移审计，不是当前写入接口；备份、恢复、失败降级和精确退役清单以 [ADR 0019](adr/0019-complete-legacy-agent-retirement.md) 为准。
 
 > 状态：SQLite 字幕存储与 Agent 插件宿主语义已决定；DB0/DB1、Gateway 恢复、SQLite-only 生命周期、历史/导出、DB2/J10 与 J15b/J15c 文本版本结果已达到确定性联合验收完成（2026-08-02）。packaged Electron 已有旧 JSONL 首启迁移、同 `userData` 二次启动幂等、跨会话版本重置以及精修故障/覆盖复读证据；I3 非音频 3,600 段资源预资格为 `pass/partial`。真实两小时音频与干净机 I4 尚未达到实机验收完成；向量检索 Deferred
 >
@@ -261,3 +261,12 @@ B3.1 JSONL 是旧版过渡基线；默认组合根现已按下列顺序切到 SQ
 - 默认 `main.js` 通过 `SubtitleApplicationRuntime` 按 `worker ready → stale-active interrupted → JSONL migration → recorder/coordinator` 启动，只把 final/refined 写入 SQLite；退出先收束活动会话并等待存储 ACK，超时后只终止精确持有的 worker。
 - 产品生命周期联合 CI 围绕同一 userData 连续运行两次冷启动，验证旧档只读、SHA 幂等、mic/loopback XOR 新会话、partial 排除、首次 `final` 锚定、原始版/精修版分离、无 JSONL 双写/音频产物和零 active 遗留。
 - DB2/J10 与 J15b/J15c 文本存储路径已达到确定性联合验收完成：真实 packaged Electron 完成旧档 import/二次启动、BrowserWindow 历史读取、会话 A 原始版→精修版→跨页→精修导出、切换会话 B 自动恢复原始版→原始导出，并复读独立精修故障与整场覆盖。I3 非音频资源预资格也已有报告；I4 尚无专用干净机报告，真实两小时声源与完整 I4 尚未达到实机验收完成。
+
+## NLS 字幕识别会话元数据（2026-09-21，已决定）
+
+按 ADR 0020 在当前 catalog 后追加 migration，独立保存会话冻结策略、非敏感项目引用/参数摘要、用户声明模型说明、实际 provider、降级和故障相对时点。通过 StorageGateway 幂等写入，与会话关联删除；旧会话没有记录不推定为纯本地。不得复用已退役 recognition_*，不得修改历史 SQL/checksum。现场音频、AccessKey、Token、原始 provider JSON 与原始异常不入库。云端首期的 refinement_enabled 表示本会话实际冻结为关闭，单独保留全局精修偏好，不以故障冒充组合限制。
+
+- v13 只新增 `subtitle_recognition_sessions` STRICT 表，以 `session_id` 为唯一主键并外键关联 `sessions`，`ON DELETE CASCADE`；正常会话删除事务同时移除元数据，无独立识别删除入口。v13 失败回滚，既有 migration checksum 不匹配继续 fail closed。
+- `openSession.recognition` 可选；传入时在打开会话同一事务冻结 `binding_json`，exact 字段为 `strategy/provider/region/configRevision/projectRef/modelLabel/parameters`。纯本地对应 `local-only/local`、地域/项目/参数为空；云端对应 `cloud-primary/nls/cn-shanghai`，项目引用仅 AppKey 的 SHA-256，参数严格为 ADR 0020 的固定 NLS 参数。配置 revision 为非负整数，模型说明不超过 160 字符，不证明云端权重不可变。重放相同绑定幂等，修改冻结绑定报冲突。
+- `recordRecognitionStatus` 经 Recorder → Gateway → Host → WorkerService 的字幕持久化 FIFO 写入 `actual_provider/fallback_code/fallback_at_ms/fault_code/fault_at_ms`；exact 请求含 `sessionId` 及对应 camelCase 五个状态字段。错误只接受 `src/contracts/recognition.js` 的闭集，相对时点为非负毫秒；无错误时 code/time 均为空。幂等键从全部字段摘要派生，首次降级和首次故障保留，Retry 的空字段不得抹除。降级后拒绝恢复 NLS，纯本地不得登记云端降级。
+- 无元数据行的旧会话、旧 JSONL 导入及未提供绑定的兼容调用一律投影 `resultStatus='not_recorded'`，其它识别元数据均为空；不插入推测策略。已登记会话投影 `known`，历史详情与分页返回经 exact 校验的 `recognition`，正文仍只读取首次稳定转写与独立精修稿，不更改 txt/md/srt 内容。

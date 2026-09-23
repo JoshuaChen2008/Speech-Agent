@@ -30,6 +30,9 @@ const {
 const { resolveRuntimeOptions } = require('./main/runtime-options')
 const { FakeRuntimeAdapter } = require('./main/session/fake-runtime-adapter')
 const { RealtimeRuntimeAdapter } = require('./runtime/realtime-runtime-adapter')
+const { RecognitionSettings } = require('./main/recognition/recognition-settings')
+const { registerRecognitionIpc } = require('./main/ipc/recognition-ipc')
+let recognitionSettings = null
 const { SessionCoordinator, failure, success } = require('./main/session/session-coordinator')
 const {
   DEFAULT_MODEL_SHUTDOWN_TIMEOUT_MS,
@@ -379,6 +382,8 @@ registerAgentSettingsIpc({
   getRuntime: () => personalContextRuntime,
   onChanged: () => broadcastConfig()
 })
+
+registerRecognitionIpc({ ipcMain, authorize: requireSender, getSettings: () => recognitionSettings })
 
 registerSessionSummarySettingsIpc({
   ipcMain,
@@ -947,6 +952,7 @@ function createCoordinator (persistenceSink) {
   const managerReady = modelManager?.isCoreReady() === true
   const approvedRuntime = (!devOptions.modelOverride && !structuralRuntime && managerReady)
     ? createApprovedRuntimeDefinition({
+        recognitionSettings,
         userDataDir: app.getPath('userData'),
         allowExternal: allowsExternalModelResources(process.env, { packaged: app.isPackaged }),
         ...runtimeEvidenceOptions
@@ -969,6 +975,7 @@ function createCoordinator (persistenceSink) {
       : new FakeRuntimeAdapter()
   }
   const created = new SessionCoordinator({
+    recognitionSettings,
     adapterFactory,
     runtimeOptions,
     transitionTimeoutMs,
@@ -1060,6 +1067,7 @@ async function installModelResourceGroup (install) {
     const structuralRuntime = !app.isPackaged && process.env.LIVE_SUBTITLE_DEV_RUNTIME === 'structural'
     if (!devOptions.modelOverride && !structuralRuntime && modelManager.isCoreReady()) {
       activateApprovedRuntime({
+        recognitionSettings,
         coordinator,
         userDataDir: app.getPath('userData'),
         allowExternal: allowsExternalModelResources(process.env, { packaged: app.isPackaged }),
@@ -1333,6 +1341,8 @@ async function bootstrapApplication () {
   if (quitRequested) return false
   config.load()
   const userDataDir = app.getPath('userData')
+  recognitionSettings = new RecognitionSettings({ directory: path.join(userDataDir, 'recognition'), safeStorage,
+    isActive: () => coordinator?.getSnapshot().sessionId != null })
   refinementFaultLog = new RefinementFaultLog({
     directory: path.join(userDataDir, 'logs', 'refinement')
   })
@@ -1611,6 +1621,7 @@ function beginQuitBarrier (event) {
     }
     if (refinementFaultLog) shutdownTasks.push(refinementFaultLog.close())
     const settlements = await Promise.allSettled(shutdownTasks)
+    try { recognitionSettings?.close() } finally { recognitionSettings = null }
     const failed = settlements.find((result) => result.status === 'rejected')
     if (failed) throw failed.reason
   })().then(() => {

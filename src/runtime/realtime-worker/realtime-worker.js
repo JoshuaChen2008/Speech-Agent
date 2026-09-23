@@ -16,12 +16,15 @@ const {
 } = require('./worker-core')
 const { RefinementController } = require('./refinement-controller')
 const { performance } = require('node:perf_hooks')
+const { CloudAudioBuffer } = require('../recognition/cloud-audio-buffer')
 
 const UTILITY_CLOCK_ID = 'realtime-utility-performance-v1'
 
 const state = {
   port: null,
   core: null,
+  cloudAudio: null,
+  cloudPort: null,
   refine: null,
   config: {
     sessionId: null,
@@ -87,6 +90,10 @@ function publish (message) {
   try { process.parentPort.postMessage(message) } catch { /* parent gone */ }
 }
 
+function recognitionFault (code) {
+  publish({ type: 'recognition-fault', code })
+}
+
 function reportStats () {
   const timing = {}
   for (const [sourceId, values] of state.timing) timing[sourceId] = { ...values }
@@ -119,6 +126,13 @@ function onPortMessage (message) {
     return
   }
   if (message?.type === 'end') {
+    if (state.cloudAudio) {
+      void state.cloudAudio.end().then(() => {
+        state.endReceived = true
+        reportStats()
+      }).catch(() => state.cloudAudio.fail('RECOGNITION_FALLBACK_FAILED'))
+      return
+    }
     state.endReceived = true
     /* 停止路径：end 收束的段不再发起精修（响应必然晚于收尾，白解码；
        直接保持 final 并计入 skipped）；更早的在途请求作废——晚到响应因
@@ -177,13 +191,17 @@ function onPortMessage (message) {
   }
   let events
   try {
-    events = state.core.ingestFrame({
+    events = (state.cloudAudio || state.core).ingestFrame({
       sourceId,
       sequence: message.sequence,
       timestampSeconds: message.timestampSeconds,
       sampleCount: message.sampleCount,
       samples
     })
+  } catch (error) {
+    if (!state.cloudAudio) throw error
+    state.cloudAudio.fail('RECOGNITION_FALLBACK_FAILED')
+    events = []
   } finally {
     state.currentFrameTiming = null
   }
@@ -258,6 +276,8 @@ function shutdown () {
     try { port.close() } catch { /* already closed */ }
   }
   try { state.refine.dispose() } catch { /* best effort */ }
+  state.cloudAudio?.dispose()
+  try { state.cloudPort?.close() } catch {}
   try { if (state.core) state.core.dispose() } catch { /* best effort */ }
   state.core = null
   publish({ type: 'stopped' })
@@ -372,6 +392,14 @@ process.parentPort.on('message', (event) => {
         attempt: config.attempt,
         sequenceBases: config.sequenceBases
       })
+      if (message.cloudAudio === true) {
+        state.cloudAudio = new CloudAudioBuffer({
+          core: state.core,
+          send: (value) => { if (!state.cloudPort) throw new Error('cloud port unavailable'); state.cloudPort.postMessage(value) },
+          emit: (captionEvent) => publish({ type: 'caption', event: captionEvent }),
+          fault: recognitionFault
+        })
+      }
       publish({ type: 'configured' })
     } catch (error) {
       const code = error?.code === 'DRAFT_RECOGNIZER_START_FAILED' ? error.code : undefined
@@ -380,6 +408,23 @@ process.parentPort.on('message', (event) => {
         code,
         message: code ? 'draft recognizer failed to start' : String(error?.message || error).slice(0, 200)
       })
+    }
+  } else if (message?.type === 'cloud-port') {
+    if (event.ports?.[0] && state.cloudAudio) {
+      state.cloudPort = event.ports[0]
+      state.cloudPort.on('message', ({ data }) => {
+        try {
+          if (data?.type === 'ack') state.cloudAudio.acknowledge(data.id)
+          else if (data?.type === 'begin') state.cloudAudio.begin(data.sample)
+          else if (data?.type === 'commit') state.cloudAudio.commit(data.sample)
+          else if (data?.type === 'takeover') {
+            state.cloudAudio.takeover(data.sample)
+            // Same parent channel as local captions: confirmation precedes text.
+            if (!state.cloudAudio.failed) publish({ type: 'recognition-local-ready' })
+          }
+        } catch { state.cloudAudio.fail('RECOGNITION_FALLBACK_FAILED') }
+      })
+      state.cloudPort.start()
     }
   } else if (message?.type === 'pcm-port') {
     if (event.ports && event.ports[0]) attachPort(event.ports[0])

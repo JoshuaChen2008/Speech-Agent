@@ -242,9 +242,10 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; }
 }
-.detail-refinement {
+.detail-refinement, .detail-recognition {
   margin: 5px 0 0;
   color: var(--fg-muted);
   font-size: 12px;
   line-height: 1.45;
 }
+.detail-recognition p { margin: 0 0 4px; overflow-wrap: anywhere; }

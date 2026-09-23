@@ -6,6 +6,7 @@
    txt/md/srt 导出；数据库路径、SQL、任意目标路径和文件写能力都不跨 IPC。 */
 
 const fs = require('node:fs/promises')
+const { assertRecognitionMetadata, unknownRecognition } = require('../../contracts/recognition')
 const {
   exportMarkdown,
   exportSrt,
@@ -259,7 +260,12 @@ function refinementResult (value) {
 }
 
 function pageResult (value, request) {
-  exactObject(value, ['session', 'totalCount', 'refinement', 'items', 'nextCursor'], 'INVALID_HISTORY_DATA')
+  exactObject(value, ['session', 'totalCount', 'refinement', 'items', 'nextCursor',
+    ...(Object.hasOwn(value, 'recognition') ? ['recognition'] : [])], 'INVALID_HISTORY_DATA')
+  let recognition
+  try { recognition = structuredClone(assertRecognitionMetadata(value.recognition === undefined ? unknownRecognition() : value.recognition)) } catch {
+    throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
+  }
   const session = pageSession(value.session, request.sessionId)
   const refinement = refinementResult(value.refinement)
   const totalCount = safeInteger(value.totalCount, {
@@ -306,7 +312,7 @@ function pageResult (value, request) {
   if (refinement.segmentCount !== totalCount) {
     throw new HistoryError('INVALID_HISTORY_DATA', '历史记录数据无效')
   }
-  return { session, totalCount, refinement, items, nextCursor }
+  return { session, totalCount, refinement, recognition, items, nextCursor }
 }
 
 function formatValue (value) {

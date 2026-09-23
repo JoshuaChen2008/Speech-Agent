@@ -1,6 +1,9 @@
 'use strict'
 
 module.exports = Object.freeze({
+  RECOGNITION_GET: 'recognition:get',
+  RECOGNITION_UPDATE: 'recognition:update',
+  RECOGNITION_VERIFY: 'recognition:verify',
   MOUSE_THROUGH: 'window:mouse-through',
   DRAG_START: 'window:drag-start',
   DRAG_END: 'window:drag-end',

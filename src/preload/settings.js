@@ -4,6 +4,7 @@ const { contextBridge } = require('electron')
 const CHANNELS = require('../main/ipc/channels')
 const { createWindowInteractionBridge, ipcRenderer, subscribe } = require('./shared')
 const interaction = createWindowInteractionBridge('settings')
+const { assertUpdateRequest: assertRecognitionUpdateRequest, assertResponse: assertRecognitionResponse } = require('../contracts/recognition-settings')
 const {
   assertChangedEvent,
   assertGetOverviewRequest,
@@ -59,6 +60,12 @@ function onAgentModelChanged (callback) {
 }
 
 contextBridge.exposeInMainWorld('shell', {
+  getRecognitionSettings: () => ipcRenderer.invoke(CHANNELS.RECOGNITION_GET).then(response => assertRecognitionResponse(response)),
+  updateRecognitionSettings: request => {
+    assertRecognitionUpdateRequest(request)
+    return ipcRenderer.invoke(CHANNELS.RECOGNITION_UPDATE, request).then(response => assertRecognitionResponse(response))
+  },
+  verifyRecognitionCredentials: () => ipcRenderer.invoke(CHANNELS.RECOGNITION_VERIFY).then(response => assertRecognitionResponse(response, true)),
   dragStart: interaction.dragStart,
   dragEnd: interaction.dragEnd,
   onInteractionSync: interaction.onInteractionSync,

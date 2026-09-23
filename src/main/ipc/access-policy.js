@@ -4,6 +4,9 @@ const CHANNELS = require('./channels')
 
 const ROLES = Object.freeze(['caption', 'toolbar', 'settings', 'history', 'agent'])
 const ROLE_ACCESS = Object.freeze({
+  [CHANNELS.RECOGNITION_GET]: Object.freeze(['settings']),
+  [CHANNELS.RECOGNITION_UPDATE]: Object.freeze(['settings']),
+  [CHANNELS.RECOGNITION_VERIFY]: Object.freeze(['settings']),
   [CHANNELS.MOUSE_THROUGH]: Object.freeze(['caption', 'toolbar']),
   [CHANNELS.DRAG_START]: Object.freeze(['caption', 'toolbar', 'settings', 'history', 'agent']),
   [CHANNELS.DRAG_END]: Object.freeze(['caption', 'toolbar', 'settings', 'history', 'agent']),

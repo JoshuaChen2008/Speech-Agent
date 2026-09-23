@@ -8,6 +8,8 @@
    - Gateway 拥有唯一 FIFO，本类只维护一个会话的生命周期与重试语义。 */
 
 const { assertCaptionEvent } = require('../../contracts')
+const { isDeepStrictEqual } = require('node:util')
+const { assertRecognitionBinding, assertRecognitionStatus } = require('../../contracts/recognition')
 
 const PERSISTED_KINDS = Object.freeze(['final', 'refined'])
 const TERMINAL_STATES = Object.freeze(['closed', 'interrupted'])
@@ -84,6 +86,7 @@ class SqliteSessionRecorder {
   openSession (input) {
     const identity = assertSessionIdentity(input)
     const frozenRefinementEnabled = refinementEnabled(input?.refinementEnabled)
+    const recognition = input.recognition === undefined ? undefined : structuredClone(assertRecognitionBinding(input.recognition))
     if (this.active) {
       if (this.active.sessionId !== identity.sessionId || this.active.sourceId !== identity.sourceId) {
         throw new Error('another durable subtitle session is active')
@@ -91,12 +94,16 @@ class SqliteSessionRecorder {
       if (this.active.refinementEnabled !== frozenRefinementEnabled) {
         throw new Error('durable session refinement preference is already frozen')
       }
+      if (!isDeepStrictEqual(this.active.recognition, recognition)) {
+        throw new Error('durable session recognition strategy is already frozen')
+      }
       return this.active.openPromise || this.submitOpen(this.active)
     }
     const payload = {
       ...identity,
       startedAt: timestamp(this.now()),
-      refinementEnabled: frozenRefinementEnabled
+      refinementEnabled: frozenRefinementEnabled,
+      ...(recognition === undefined ? {} : { recognition })
     }
     const active = {
       ...payload,
@@ -118,7 +125,8 @@ class SqliteSessionRecorder {
         sessionId: active.sessionId,
         sourceId: active.sourceId,
         startedAt: active.startedAt,
-        refinementEnabled: active.refinementEnabled
+        refinementEnabled: active.refinementEnabled,
+        ...(active.recognition === undefined ? {} : { recognition: active.recognition })
       }))
       active.openQueued = true
     } catch (error) {
@@ -145,6 +153,14 @@ class SqliteSessionRecorder {
       return false
     }
     return this.track(this.gateway.appendCaption(structuredClone(event)))
+  }
+
+  recordRecognitionStatus (input) {
+    const status = assertRecognitionStatus(input)
+    if (!this.active || status.sessionId !== this.active.sessionId) {
+      throw new Error('durable session identity does not match')
+    }
+    return this.track(this.gateway.recordRecognitionStatus(structuredClone(status)))
   }
 
   recordRefinementFault (input) {

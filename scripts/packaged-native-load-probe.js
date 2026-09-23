@@ -3,7 +3,8 @@
 // @ts-check
 
 /* Test-only utility entry. It proves that JS in app.asar can load the sherpa
-   addon and the caption input N-API addon from their unpacked locations. Only
+   addon and the caption input N-API addon from their unpacked locations, plus
+   the NLS production dependencies (including their transitive imports). Only
    fixed booleans cross the port; native errors, paths and loader diagnostics
    are never persisted. */
 
@@ -12,6 +13,12 @@ let apiSurfaceReady = false
 try {
   const { loadCaptionInputNative } = require('../src/main/caption-input-native')
   const sherpa = require('sherpa-onnx-node')
+  // Loading constructors opens no connection and requires no credentials.
+  const WebSocket = require('ws')
+  const RPCClient = require('@alicloud/pop-core')
+  const recognitionDependenciesReady = typeof WebSocket === 'function' &&
+    typeof WebSocket.prototype.send === 'function' &&
+    typeof RPCClient === 'function' && typeof RPCClient.prototype.request === 'function'
   const sherpaLoaded = !!sherpa && typeof sherpa === 'object'
   const sherpaApiReady = sherpaLoaded &&
     typeof sherpa.OnlineRecognizer === 'function' &&
@@ -27,7 +34,7 @@ try {
     typeof captionAddon.isAttached === 'function' &&
     typeof captionAddon.detach === 'function'
   loaded = sherpaLoaded && captionLoaded
-  apiSurfaceReady = sherpaApiReady && captionApiReady
+  apiSurfaceReady = sherpaApiReady && captionApiReady && recognitionDependenciesReady
 } catch {
   loaded = false
   apiSurfaceReady = false

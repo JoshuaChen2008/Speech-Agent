@@ -47,6 +47,16 @@ const REQUIRED_ASAR_ENTRIES = Object.freeze([
   '/src/runtime/refine-worker/refine-worker.js',
   '/src/runtime/storage-worker/storage-worker.js'
 ])
+// Additional current-build requirements do not reinterpret historical report counts.
+const REQUIRED_NLS_ENTRIES = Object.freeze([
+  '/src/main/recognition/recognition-settings.js',
+  '/src/main/security/credential-vault.js',
+  '/src/runtime/recognition/nls-realtime-provider.js',
+  '/node_modules/ws/package.json',
+  '/node_modules/ws/index.js',
+  '/node_modules/@alicloud/pop-core/package.json',
+  '/node_modules/@alicloud/pop-core/index.js'
+])
 const REQUIRED_NATIVE_FILES = Object.freeze([
   'sherpa-onnx.node',
   'onnxruntime.dll',
@@ -203,8 +213,8 @@ function inspectPackageLayout (options) {
     throw new Error('packaged metadata has the wrong main entry or version')
   }
   const expected = options.variant === 'smoke'
-    ? [...REQUIRED_ASAR_ENTRIES, ...SMOKE_SCRIPTS]
-    : [...REQUIRED_ASAR_ENTRIES]
+    ? [...REQUIRED_ASAR_ENTRIES, ...REQUIRED_NLS_ENTRIES, ...SMOKE_SCRIPTS]
+    : [...REQUIRED_ASAR_ENTRIES, ...REQUIRED_NLS_ENTRIES]
   if (expected.some((entry) => !entries.includes(entry))) {
     throw new Error('packaged app.asar is missing a required product entry')
   }
@@ -425,6 +435,7 @@ if (require.main === module) {
 
 module.exports = {
   REQUIRED_ASAR_ENTRIES,
+  REQUIRED_NLS_ENTRIES,
   REQUIRED_NATIVE_FILES,
   CAPTION_INPUT_NATIVE_ENTRY,
   SMOKE_SCRIPTS,

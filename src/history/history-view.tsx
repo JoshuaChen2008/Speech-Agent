@@ -43,6 +43,26 @@ function refinementText (value: Dict | null): string {
   if (result === 'not_recorded') text = text ? `${text}；未记录精修运行状态` : '未记录精修运行状态'
   return text
 }
+const RECOGNITION_FAILURE_TEXT: Record<string, string> = {
+  NLS_AUTH_FAILED: '云端鉴权失败', NLS_PROJECT_INVALID: '云端项目配置无效',
+  NLS_CONNECTION_FAILED: '云端连接失败', NLS_CONNECTION_CLOSED: '云端连接断开',
+  NLS_SERVICE_FAILED: '云端服务异常', NLS_INVALID_RESPONSE: '云端响应无效',
+  NLS_HEARTBEAT_TIMEOUT: '云端连接存活检测超时', NLS_START_TIMEOUT: '云端启动超时',
+  NLS_STOP_TIMEOUT: '云端收尾超时', NLS_BUFFER_EXCEEDED: '云端待发音频超过上限',
+  NLS_CANCELLED: '云端识别已取消', RECOGNITION_BUFFER_LIMIT: '音频缓冲超过上限',
+  RECOGNITION_AUDIO_GAP: '音频交接范围缺失', RECOGNITION_FALLBACK_FAILED: '本地降级失败'
+}
+function RecognitionDetails ({ value }: { value: Dict | undefined }): ReactElement {
+  if (!value || value.resultStatus !== 'known') return <p className="detail-recognition" id="detailRecognition">未记录识别策略</p>
+  const cloud = value.binding.strategy === 'cloud-primary'
+  const reason = (code: string) => RECOGNITION_FAILURE_TEXT[code] || '识别异常'
+  return <div className="detail-recognition" id="detailRecognition" aria-label="会话识别状态">
+    <p>{cloud ? '云端主力识别与本地降级 · NLS 上海' : '纯本地权威识别'}；实际识别：{value.actualProvider === 'nls' ? 'NLS 云端' : cloud ? '本地降级' : '本地'}</p>
+    {cloud && <p>项目模型说明（用户填写）：{value.binding.modelLabel || '未填写'}。记录的是项目选择与请求参数，云端模型可能变化。</p>}
+    {value.fallbackCode && <p>本地降级 · 会话开始后 {clock(value.fallbackAtMs)} · {reason(value.fallbackCode)}；交接切点附近可能漏字或重复。</p>}
+    {value.faultCode && <p>识别故障 · 会话开始后 {clock(value.faultAtMs)} · {reason(value.faultCode)}；已提交的首次稳定转写保留。</p>}
+  </div>
+}
 function assertPage (value: Dict, sessionId: string): Dict {
   if (!value?.session || value.session.sessionId !== sessionId || !Array.isArray(value.items) || value.items.length > PAGE_SIZE ||
     !Number.isSafeInteger(value.totalCount) || value.totalCount < 0 || (value.nextCursor !== null &&
@@ -146,7 +166,7 @@ export function HistoryView (): ReactElement {
       <div className="session-list" id="sessionList" role="list">{sessions.length === 0 && !listPending ? <div className="session-list-item" role="listitem"><p className="list-message">还没有可复盘的字幕会话。完成一次监听后，它会自动出现在这里。</p></div> : sessions.map((item) => <div className="session-list-item" role="listitem" key={item.sessionId}><button className="session-card" data-session-id={item.sessionId} aria-current={item.sessionId === selected} onClick={() => selectSession(item.sessionId)}><strong>{date(item.startedAt)}</strong><span className="summary">{sourceLabel(item.sourceId)} · {durationText(item.startedAt, item.endedAt)}</span><span className="state">{stateLabel(item.state)} · {item.segmentCount} 条字幕</span></button><button className="summary-action" data-summary-session-id={item.sessionId} type="button" onClick={() => openSummary(item.sessionId)} aria-label={`总结此会话：${date(item.startedAt, true)}`}>总结此会话</button></div>)}</div>
       <button className="load-more" id="loadMore" hidden={nextCursor === null} disabled={listPending} onClick={() => void loadSessions(false)}>加载更多</button></aside>
       <section className="detail-panel" aria-label="字幕时间线"><div className="empty-state" id="emptyState" hidden={selected !== null}><h2>选择一条会话开始复盘</h2><p>这里只显示已经结束或被中断的字幕原文。临时字幕、译文和音频都不会进入历史。</p></div>
-        <div className="session-detail" id="sessionDetail" hidden={selected === null}><header className="detail-heading"><div><div className="eyebrow" id="detailSource">{selectedSession ? `${sourceLabel(selectedSession.sourceId)} · ${stateLabel(selectedSession.state)}` : ''}</div><h2 id="detailTitle">{selectedSession ? date(selectedSession.startedAt, true) : '字幕会话'}</h2><p id="detailMeta">{selectedSession ? `${durationText(selectedSession.startedAt, selectedSession.endedAt)} · ${page?.totalCount ?? selectedSession.segmentCount} 条已定稿字幕` : ''}</p><p className="detail-refinement" id="detailRefinement" role="status">{refinementText(refinement)}</p></div>
+        <div className="session-detail" id="sessionDetail" hidden={selected === null}><header className="detail-heading"><div><div className="eyebrow" id="detailSource">{selectedSession ? `${sourceLabel(selectedSession.sourceId)} · ${stateLabel(selectedSession.state)}` : ''}</div><h2 id="detailTitle">{selectedSession ? date(selectedSession.startedAt, true) : '字幕会话'}</h2><p id="detailMeta">{selectedSession ? `${durationText(selectedSession.startedAt, selectedSession.endedAt)} · ${page?.totalCount ?? selectedSession.segmentCount} 条已定稿字幕` : ''}</p>{page && <RecognitionDetails value={page.recognition} />}<p className="detail-refinement" id="detailRefinement" role="status">{refinementText(refinement)}</p></div>
           <div className="version-actions" role="radiogroup" aria-label="转写版本">{(['original', 'refined'] as Version[]).map((item) => <button key={item} data-version={item} role="radio" aria-checked={version === item} aria-disabled={controlsDisabled || (item === 'refined' && !canRefine)} disabled={controlsDisabled || (item === 'refined' && !canRefine)} onClick={() => { setVersion(item); setExportStatus('') }}>{item === 'original' ? '原始版' : '精修稿'}</button>)}</div>
           <div className="export-actions" aria-label="导出当前所选转写版本">{[['txt', 'TXT'], ['md', 'Markdown'], ['srt', 'SRT']].map(([format, label]) => <button key={format} data-export={format} disabled={controlsDisabled || (version === 'refined' && !canRefine)} onClick={() => void exportSelected(format)}>导出 {label}</button>)}</div></header>
           <div className="export-status" id="exportStatus" role="status" aria-live="polite">{exportStatus}</div>

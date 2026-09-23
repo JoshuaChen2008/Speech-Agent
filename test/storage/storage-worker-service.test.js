@@ -168,6 +168,8 @@ test('service composes protocol, real SQLite and subtitle semantics without SQL 
       startedAt: 1000, endedAt: 2000, state: 'closed'
     },
     totalCount: 1,
+    recognition: { resultStatus: 'not_recorded', binding: null, actualProvider: null,
+      fallbackCode: null, fallbackAtMs: null, faultCode: null, faultAtMs: null },
     refinement: {
       segmentCount: 1,
       refinedSegmentCount: 0,

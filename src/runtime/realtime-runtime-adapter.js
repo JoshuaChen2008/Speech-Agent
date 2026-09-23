@@ -7,7 +7,8 @@
    实现 B1 冻结的 adapter 接口（start/pause/resume/stop/dispose/onCaption，
    外加 §12.4 关闭后的可选 onError），组合：
      AudioHostController（隐藏采集窗）→ MessageChannelMain → RealtimeWorkerHost
-   PCM 不经过主进程；caption 从 worker 边界（已契约校验）直达 coordinator 的
+   本类的纯本地 PCM 不经过主进程；NLS 子类按 ADR 0020 有界转发。
+   caption 从 worker 边界（已契约校验）直达 coordinator 的
    acceptCaption 路径。
 
    recognizer profile 经 profileMap 显式映射，默认全部映射到 'null'（消费帧、
@@ -287,6 +288,7 @@ class RealtimeRuntimeAdapter {
       /* realtime 与 refine worker 并行配置（各自同步载模型，串行会翻倍
          start 时长）；精修配置失败只降级，不失败会话。 */
       const workerStart = session.worker.start({
+        ...this.workerConfiguration(context),
         sessionId: session.sessionId,
         sourceIds: session.sourceIds,
         recognizerProfile,
@@ -326,6 +328,8 @@ class RealtimeRuntimeAdapter {
         session.refineWorker = null
       }
 
+      await this.beforeCapture(session, context)
+      throwIfAborted(context.signal)
       const channel = new this.electron.MessageChannelMain()
       session.worker.attachPort(channel.port2)
       session.captureEvidence = await session.host.startCapture({
@@ -374,6 +378,10 @@ class RealtimeRuntimeAdapter {
     /* await ack：定稿先于 ack 交付；死 worker 抛错走迁移失败路径。 */
     await session.worker.pause()
   }
+
+  workerConfiguration () { return {} }
+  async beforeCapture () {}
+  async afterCaptureEnd () {}
 
   async resume (options = {}) {
     const session = this.requireSession()
@@ -460,7 +468,8 @@ class RealtimeRuntimeAdapter {
          信号（带上限）→ 再收拾 worker。 */
       const captureResult = await session.host.stopCapture()
       if (captureResult?.metrics) session.captureMetrics = captureResult.metrics
-      await session.worker.waitForEnd()
+      await session.worker.waitForEnd(this.endWaitTimeoutMs || 800)
+      await this.afterCaptureEnd(session, options)
     } finally {
       this.captureDiagnostics(session)
       await this.teardownSession(session, 'graceful')

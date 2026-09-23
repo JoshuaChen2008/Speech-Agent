@@ -56,7 +56,7 @@
     "virtualDurationMs": 7200000
   },
   "gateStatus": "partial",
-  "generatedAt": "2026-09-19T14:10:59.869Z",
+  "generatedAt": "2026-09-23T11:19:33.588Z",
   "kind": "i3-nonaudio-soak",
   "limits": {
     "maxCpuPercent": 800,
@@ -70,24 +70,24 @@
   "metrics": {
     "captionEventCount": 4000,
     "checkpointedWalFrames": 0,
-    "cpuPercent": 6.97,
-    "cpuSystemMs": 187,
-    "cpuUserMs": 562,
+    "cpuPercent": 14.38,
+    "cpuSystemMs": 219,
+    "cpuUserMs": 1375,
     "exportCount": 3,
     "historyDomMaxNodes": 50,
     "historyPageCount": 72,
-    "maxHeapUsedBytes": 92620720,
+    "maxHeapUsedBytes": 108022320,
     "maxQueueDepth": 112,
-    "maxRssBytes": 299814912,
+    "maxRssBytes": 241856512,
     "pageCount": 668,
     "pageQueryCount": 72,
-    "pageQueryP95Ms": 12.765,
+    "pageQueryP95Ms": 15.02,
     "recoveredRefinedSegmentCount": 400,
     "segmentCount": 3600,
     "walBytes": 4173592,
     "walFrames": 879,
     "journalMode": "wal",
-    "wallDurationMs": 10745.953
+    "wallDurationMs": 11084.975
   },
   "privacy": {
     "persistedAudio": false,
@@ -96,17 +96,17 @@
   },
   "provenance": {
     "historyReactEvidenceHarnessSha256": "a29213a875a6c267a5d9fc3dece9bc6f1e7c5d042745636a8d50f6a8dc373e33",
-    "historyRendererSha256": "e3f4fca9a5558c1959f0dde785854228eb2261dc379b19189c27b8e610936d18",
-    "historyServiceSha256": "beafb8d7590cf52d7eab29417cad34427857c1dbd537275aef64d47fef5a1584",
+    "historyRendererSha256": "56b75269c894024c2f076df53a2f32edb6ff0ac9239a66e79b6507916eaf5a89",
+    "historyServiceSha256": "b8031e1bfaa2bf5b9e92af9ead4363c4cbd42c1975dbc5063ee33479861090dd",
     "runnerSha256": "29be92da468463002dde768f201f24243b1621a0596c28ebdd582de530feb0e0",
-    "sessionCoordinatorSha256": "85cd1190f2012e87d961d5af0f6ecbca74e93328ad0e472c6d13b275b6649189",
-    "sqliteSessionRecorderSha256": "d9e467076b3893e88a18d99b100d5f550e4541947b6fd36195f3f130382484d2",
-    "sqliteSubtitleStoreSha256": "e12b9e4e95e6127bcee30861721bf5c52b433f5e432afbe9a5e39c29e2fdbc07",
+    "sessionCoordinatorSha256": "3942c9cbfecfe3a229b0199f825162d14aef01613f8b94fe4b117732c7c50104",
+    "sqliteSessionRecorderSha256": "e0427539de2aec7b55494ef8bcbe42990ff61e1bd2ac050ca8448d03526d50eb",
+    "sqliteSubtitleStoreSha256": "58e6353f757c5922676ddb38398dd0d93e04655d40ca31192b79c87543305d9c",
     "strictEvidenceParserSha256": "5155fc8df5449133a8d9710a581fbd03bedfb44729da3c5d910a81df74b5e63e",
-    "storageGatewaySha256": "e7c9ef8a279bbbe266384ec596d39a9652a71dfc98d07d3d57093353357aebdc",
-    "storageWorkerServiceSha256": "f443df4648fe6f23d60bcc2fe629c08236e758905a354e4cfa1bd190ec503518",
+    "storageGatewaySha256": "2ce19b924235cb1f1fc83536be43c0a43f71d6e5ef8e5fbcea7eef66e40f2a62",
+    "storageWorkerServiceSha256": "146f0ea3fdf7a3ba5405a2c71e9c8f0b14cc518c9b4bce5bb34c8707603a0744",
     "verifierSha256": "8014be2efdbd0d63a99a4de1a9f24ccb70eddcb158cc89b46d2d7bb731ed6ff1",
-    "productPayloadSha256": "d14ed7ef10a883daa87742a36be015bc6d04e5d657a54de9bd4cd3867b43eee1"
+    "productPayloadSha256": "2d9c2f07e70092314d182bafc04131255a21a52657e53ada77d88909e46471a5"
   },
   "result": "pass",
   "schemaVersion": 1

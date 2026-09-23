@@ -10,6 +10,7 @@ const {
   resolveSileroVadModel
 } = require('./model-resolver')
 const { RealtimeRuntimeAdapter } = require('../../runtime/realtime-runtime-adapter')
+const { RecognitionRuntimeAdapter } = require('../../runtime/recognition/recognition-runtime-adapter')
 
 const RUNTIME_TRANSITION_TIMEOUT_MS = 30000
 const EXTERNAL_MODEL_DEVELOPMENT_FLAG = 'LIVE_SUBTITLE_ALLOW_EXTERNAL_MODELS'
@@ -58,9 +59,10 @@ function createApprovedRuntimeDefinition (options = {}) {
   const vad = resolveSileroVadModel(candidateOptions)
   if (!draft || !realtime || !vad) return null
 
-  const Adapter = options.Adapter || RealtimeRuntimeAdapter
+  const Adapter = options.Adapter || (options.recognitionSettings ? RecognitionRuntimeAdapter : RealtimeRuntimeAdapter)
   if (typeof Adapter !== 'function') throw new TypeError('Adapter must be a constructor')
   const adapterFactory = () => new Adapter({
+    recognitionSettings: options.recognitionSettings,
     profileMap: { [realtime.profile]: realtime.id },
     recognizer: {
       kind: realtime.kind,

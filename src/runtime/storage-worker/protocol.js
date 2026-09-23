@@ -10,6 +10,7 @@ const OPERATIONS = Object.freeze({
   INITIALIZE: 'storage:initialize',
   OPEN_SESSION: 'session:open',
   RECORD_REFINEMENT_FAULT: 'refinement:record-fault',
+  RECORD_RECOGNITION_STATUS: 'recognition:record-status',
   APPEND_CAPTION: 'caption:append',
   CLOSE_SESSION: 'session:close',
   RECOVER_STALE_SESSIONS: 'session:recover-stale',
@@ -75,6 +76,8 @@ const SAFE_ERROR_MESSAGES = Object.freeze({
   REFINEMENT_RESULT_UNAVAILABLE: 'Refinement session result is unavailable.',
   REFINEMENT_RESULT_CONFLICT: 'Refinement session result conflicts with persisted data.',
   INVALID_REFINEMENT_FAULT: 'Refinement fault data is invalid.',
+  INVALID_RECOGNITION_STATUS: 'Recognition session data is invalid.',
+  RECOGNITION_RESULT_UNAVAILABLE: 'Recognition session result is unavailable.',
   INVALID_CAPTION: 'Caption data is invalid.',
   UNSUPPORTED_CAPTION_KIND: 'Only final and refined captions can be persisted.',
   REFINEMENT_DISABLED: 'Refined captions are disabled for this session.',
@@ -189,6 +192,11 @@ function makeLegacyImportKey (sourceSha256) {
   return `legacy-v1-${digestParts([sourceSha256])}`
 }
 
+function makeRecognitionStatusKey (input) {
+  return `recognition-status-v1-${digestParts([input?.sessionId, input?.actualProvider,
+    input?.fallbackCode, input?.fallbackAtMs, input?.faultCode, input?.faultAtMs])}`
+}
+
 function assertIdempotencyKey (actual, expected) {
   if (actual !== expected) throw new StorageError('IDEMPOTENCY_KEY_MISMATCH')
 }
@@ -216,5 +224,6 @@ module.exports = {
   makeLegacyImportKey,
   makeOpenSessionKey,
   makeRefinementFaultKey,
+  makeRecognitionStatusKey,
   publicError
 }

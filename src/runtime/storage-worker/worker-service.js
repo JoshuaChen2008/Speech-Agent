@@ -18,6 +18,7 @@ const {
   makeLegacyImportKey,
   makeOpenSessionKey,
   makeRefinementFaultKey,
+  makeRecognitionStatusKey,
   publicError
 } = require('./protocol')
 
@@ -100,9 +101,15 @@ class StorageWorkerService {
       return { initialized: true, ...(this.store.database?.retirementFailure ? { retirementFailure: this.store.database.retirementFailure } : {}) }
     }
     if (operation === OPERATIONS.OPEN_SESSION) {
-      assertExactKeys(payload, ['sessionId', 'sourceId', 'startedAt', 'refinementEnabled'])
+      assertExactKeys(payload, ['sessionId', 'sourceId', 'startedAt', 'refinementEnabled',
+        ...(Object.hasOwn(payload, 'recognition') ? ['recognition'] : [])])
       assertIdempotencyKey(idempotencyKey, makeOpenSessionKey(payload.sessionId))
       return this.requireStore().openSession(payload)
+    }
+    if (operation === OPERATIONS.RECORD_RECOGNITION_STATUS) {
+      assertExactKeys(payload, ['sessionId', 'actualProvider', 'fallbackCode', 'fallbackAtMs', 'faultCode', 'faultAtMs'])
+      assertIdempotencyKey(idempotencyKey, makeRecognitionStatusKey(payload))
+      return this.requireStore().recordRecognitionStatus(payload)
     }
     if (operation === OPERATIONS.RECORD_REFINEMENT_FAULT) {
       assertExactKeys(payload, ['sessionId', 'faultCode', 'faultAtMs'])

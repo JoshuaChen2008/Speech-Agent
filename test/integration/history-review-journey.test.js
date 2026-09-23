@@ -1,5 +1,7 @@
 'use strict'
 
+require('../ui/dom-bootstrap')
+
 /*
  * History review is composed from the production durability and session
  * layers.  The only seams here are Electron's utility process (the
@@ -32,6 +34,7 @@ const {
   StorageError,
   makeCaptionEventId,
   makeCloseSessionKey,
+  makeRecognitionStatusKey,
   makeOpenSessionKey
 } = require('../../src/runtime/storage-worker/protocol')
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
@@ -93,6 +96,9 @@ function serviceBackedHost (service, databasePath, operations) {
     },
     async closeSession (input) {
       return call(OPERATIONS.CLOSE_SESSION, input, makeCloseSessionKey(input.sessionId))
+    },
+    async recordRecognitionStatus (input) {
+      return call(OPERATIONS.RECORD_RECOGNITION_STATUS, input, makeRecognitionStatusKey(input))
     },
     async getSessionTranscript (sessionId) {
       return call(OPERATIONS.GET_SESSION, { sessionId })
@@ -440,7 +446,7 @@ test('CI journey: 205 refined captions page through the real durability stack wi
   do {
     const page = await history.getSessionPage({ sessionId, limit: 50, cursor })
     pageCount += 1
-    assert.deepEqual(Object.keys(page).sort(), ['items', 'nextCursor', 'refinement', 'session', 'totalCount'])
+    assert.deepEqual(Object.keys(page).sort(), ['items', 'nextCursor', 'recognition', 'refinement', 'session', 'totalCount'])
     assert.deepEqual(Object.keys(page.session).sort(), ['endedAt', 'mode', 'sessionId', 'sourceId', 'startedAt', 'state'])
     assert.equal(page.totalCount, 205)
     assert.deepEqual(page.refinement, {
@@ -603,6 +609,51 @@ async function createHistoryRenderer (history) {
     }
   }
 }
+
+test('SEM-F21/J20 history renders persisted NLS, fallback, failure and unknown strategy without changing original text', async t => {
+  const root = temporaryDirectory()
+  const databasePath = path.join(root, 'subtitle.sqlite3')
+  const service = new StorageWorkerService()
+  const gateway = new StorageGateway({ databasePath, hostFactory: () => serviceBackedHost(service, databasePath, []) })
+  const { NLS_PARAMETERS } = require('../../src/contracts/recognition')
+  const cloud = { strategy: 'cloud-primary', provider: 'nls', region: 'cn-shanghai', configRevision: 1,
+    projectRef: 'a'.repeat(64), modelLabel: '<b>项目模型说明</b>', parameters: NLS_PARAMETERS }
+  const local = { strategy: 'local-only', provider: 'local', region: null, configRevision: 0,
+    projectRef: null, modelLabel: '', parameters: null }
+  t.after(async () => { await gateway.shutdown(); fs.rmSync(root, { recursive: true, force: true }) })
+  for (const [index, sessionId] of ['cloud', 'fallback', 'local', 'unknown'].entries()) {
+    const binding = sessionId === 'unknown' ? {} : { recognition: sessionId === 'local' ? local : cloud }
+    await gateway.openSession({ sessionId, sourceId: 'mic', startedAt: 1000 + index * 10000, refinementEnabled: false, ...binding })
+    await gateway.appendCaption(caption(sessionId, 'mic', { text: '原始字幕保持不变' }))
+    if (sessionId === 'fallback') await gateway.recordRecognitionStatus({ sessionId, actualProvider: 'local',
+      fallbackCode: 'NLS_CONNECTION_CLOSED', fallbackAtMs: 1000, faultCode: 'NLS_STOP_TIMEOUT', faultAtMs: 3000 })
+    await gateway.closeSession({ sessionId, sourceId: 'mic', endedAt: 6000 + index * 10000, state: 'closed' })
+  }
+  const history = new HistoryService({ gateway, showSaveDialog: async () => ({ canceled: true }) })
+  const renderer = await createHistoryRenderer(history)
+  t.after(() => renderer.dispose())
+  const select = async sessionId => {
+    await act(async () => renderer.document.querySelector(`[data-session-id="${sessionId}"]`).click())
+    await settleHistoryRenderer()
+    assert.equal(renderer.document.querySelector('[data-version="original"]').getAttribute('aria-checked'), 'true')
+    assert.match(renderer.document.getElementById('timeline').textContent, /原始字幕保持不变/)
+    return renderer.document.getElementById('detailRecognition')
+  }
+  let detail = await select('cloud')
+  assert.match(detail.textContent, /NLS 上海；实际识别：NLS 云端/)
+  assert.match(detail.textContent, /项目模型说明（用户填写）：<b>项目模型说明<\/b>/)
+  assert.equal(detail.querySelector('b'), null, 'user-declared labels remain text')
+  assert.match(detail.textContent, /云端模型可能变化/)
+  detail = await select('fallback')
+  assert.match(detail.textContent, /实际识别：本地降级/)
+  assert.match(detail.textContent, /00:01 · 云端连接断开/)
+  assert.match(detail.textContent, /切点附近可能漏字或重复/)
+  assert.match(detail.textContent, /00:03 · 云端收尾超时/)
+  detail = await select('local')
+  assert.equal(detail.textContent, '纯本地权威识别；实际识别：本地')
+  detail = await select('unknown')
+  assert.equal(detail.textContent, '未记录识别策略')
+})
 
 test('CI journey: history renderer scopes version selection and export to the selected session', async (t) => {
   const root = temporaryDirectory()

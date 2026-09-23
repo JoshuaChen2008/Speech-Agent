@@ -349,7 +349,7 @@ test('history detail pages 205 same-timestamp segments without gaps, duplicates 
   do {
     const page = store.getSessionPage({ sessionId, limit: 50, cursor })
     pageCount += 1
-    assert.deepEqual(Object.keys(page).sort(), ['items', 'nextCursor', 'refinement', 'session', 'totalCount'])
+    assert.deepEqual(Object.keys(page).sort(), ['items', 'nextCursor', 'recognition', 'refinement', 'session', 'totalCount'])
     assert.deepEqual(page.session, {
       sessionId,
       mode: 'meeting',

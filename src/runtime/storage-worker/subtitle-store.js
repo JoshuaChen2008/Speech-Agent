@@ -6,6 +6,7 @@
    不能提供 SQL、数据库路径或 migration。 */
 
 const { assertCaptionEvent } = require('../../contracts')
+const { recognitionMetadata, openRecognition, recordRecognitionStatus } = require('./recognition-session-store')
 const { openSubtitleDatabase, rollbackQuietly, scalar } = require('./sqlite-store')
 const {
   LEGACY_IMPORT_KEYS,
@@ -292,7 +293,7 @@ class SqliteSubtitleStore {
   openSession (input) {
     this.assertOpen()
     if (!input || typeof input !== 'object' || Array.isArray(input) ||
-        Object.keys(input).some((key) => !['sessionId', 'sourceId', 'startedAt', 'refinementEnabled'].includes(key))) {
+        Object.keys(input).some((key) => !['sessionId', 'sourceId', 'startedAt', 'refinementEnabled', 'recognition'].includes(key))) {
       throw new StorageError('INVALID_SESSION')
     }
     const sessionId = sessionIdValue(input.sessionId)
@@ -304,6 +305,9 @@ class SqliteSubtitleStore {
     const refinementEnabled = input.refinementEnabled === undefined
       ? false
       : refinementEnabledValue(input.refinementEnabled)
+    if (input.recognition?.strategy === 'cloud-primary' && refinementEnabled) {
+      throw new StorageError('INVALID_SESSION')
+    }
     const database = this.database
     const hasRefinementResults = hasRefinementResultsTable(database)
     database.exec('BEGIN IMMEDIATE')
@@ -323,6 +327,7 @@ class SqliteSubtitleStore {
               throw new StorageError('SESSION_CONFLICT')
             }
           }
+          openRecognition(database, sessionId, input.recognition, true)
           database.exec('COMMIT')
           return { status: 'already_processed', sessionId, sourceId }
         }
@@ -341,10 +346,24 @@ class SqliteSubtitleStore {
           ) VALUES (?, 'known', ?, NULL, NULL, NULL)
         `).run(sessionId, refinementEnabled ? 1 : 0)
       }
+      openRecognition(database, sessionId, input.recognition, false)
       database.exec('COMMIT')
       return { status: 'committed', sessionId, sourceId }
     } catch (error) {
       rollbackQuietly(database)
+      throw error
+    }
+  }
+
+  recordRecognitionStatus (input) {
+    this.assertOpen()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const result = recordRecognitionStatus(this.database, input)
+      this.database.exec('COMMIT')
+      return result
+    } catch (error) {
+      rollbackQuietly(this.database)
       throw error
     }
   }
@@ -763,6 +782,7 @@ class SqliteSubtitleStore {
         state: session.state
       },
       refinement: refinementMetadata(this.database, sessionId),
+      recognition: recognitionMetadata(this.database, sessionId),
       segments
     }
   }
@@ -844,6 +864,7 @@ class SqliteSubtitleStore {
         'SELECT COUNT(*) AS count FROM segments WHERE session_id = ?'
       ).get(sessionId).count),
       refinement: refinementMetadata(this.database, sessionId),
+      recognition: recognitionMetadata(this.database, sessionId),
       items,
       nextCursor: hasMore
         ? { t0Ms: Number(last.origin_t0_ms), firstEventOrder: Number(last.first_event_order) }

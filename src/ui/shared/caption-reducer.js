@@ -128,6 +128,15 @@
     if (state.refinementSuppressed && event.kind === 'refined') return state
 
     let segment = findSegment(state, event.segmentId)
+    // A provider handoff may explicitly retire its current partial. This is
+    // display-only and never creates a stable transcript fact.
+    if (event.kind === 'partial' && event.text === '') {
+      if (segment?.kind === 'partial' && event.revision > segment.textRevision) {
+        state.segments = state.segments.filter(item => item !== segment)
+        state.evictedSegmentIds.add(event.segmentId)
+      }
+      return state
+    }
     if (!segment) {
       /* refined/translated 是对既有段的修订（basedOnRevision 必然指向更早的
          正文版本），不能开新段：目标段已被淘汰出窗口时直接忽略。主进程

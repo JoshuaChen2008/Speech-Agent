@@ -3,6 +3,7 @@ import Icons from '../ui/shared/fluent-icons'
 import { AgentSettingsPane } from './agent-settings-pane'
 import { AgentModelPane } from './agent-model-pane'
 import { AgentContextPane } from './agent-context-pane'
+import { RecognitionSettingsPane } from './recognition-settings-pane'
 
 type Pane = 'display' | 'audio' | 'asr' | 'resources' | 'agentContext' | 'agentModel' | 'about'
 type ModelState = 'missing' | 'downloading' | 'verifying' | 'ready' | 'error'
@@ -245,7 +246,7 @@ export function SettingsView (): ReactElement {
         <section className={`pane${pane === 'audio' ? ' active' : ''}`} data-pane="audio"><h1>音频源</h1><p className="sub">选择本次会话要监听的一路声音。</p><div className="group"><div className="row"><div><div className="label">监听模式</div><div className="hint source-hint">一次只监听一路；活动会话需停止后才能切换。</div></div>
           <div className="seg source-choice" id="audioSourceChoice" role="radiogroup" aria-label="监听模式">{[['loopback', 'meeting', '系统音频'], ['mic', 'dictation', '麦克风']].map(([source, preset, label]) => <button key={source} data-source={source} data-preset={preset} role="radio" aria-checked={cfg?.[source] === true} className={cfg?.[source] === true ? 'on' : ''} disabled={sessionActive || sourcePending} onClick={() => void choosePreset(preset, true)}>{label}</button>)}</div></div></div>
           <p className="note">两种来源均保留支持，但不会在同一会话中并发采集。系统音频不代表特定说话人。</p></section>
-        <section className={`pane${pane === 'asr' ? ' active' : ''}`} data-pane="asr"><h1>语音识别</h1><p className="sub">本地离线语音识别。</p><div className="group"><div className="row"><div className="label">字幕延迟</div>
+        <section className={`pane${pane === 'asr' ? ' active' : ''}`} data-pane="asr"><h1>语音识别</h1><p className="sub">选择未来新会话的识别策略。</p>{pane === 'asr' && <RecognitionSettingsPane shell={shell} active={sessionActive} />}<div className="group"><div className="row"><div className="label">本地字幕延迟</div>
           <Segmented name="latency" value={cfg?.latency} options={[[160, '极速'], [480, '均衡'], [960, '精准']]} disabled={(value) => !profiles.includes(({ 160: 'fast', 480: 'balanced', 960: 'accurate' } as Dict)[value])} onSelect={(value) => void savePatch({ latency: Number(value) })} /></div></div><p className="note" id="asrNote">{asrNote}</p></section>
         <section className={`pane${pane === 'resources' ? ' active' : ''}`} data-pane="resources"><h1>模型资源</h1><p className="sub">核心字幕模型资源包与可选精修模型资源分别管理。</p>
           <ModelSummary kind="core" group={core}><button className="primary-btn" id="modelInstallButton" disabled={coreDisabled} aria-busy={corePending || coreBusy} onClick={() => void install('core')}>{installLabel('core')}</button></ModelSummary>

@@ -148,7 +148,7 @@ test('revision 82d56f6 的 loopback 历史资格报告保持 partial 且不得�
   const report = parseStrictEvidenceJson(bytes, 'historical I3 qualification report')
   assert.throws(
     () => readAndValidateI3LiveAudioQualificationReport(reportPath),
-    /provenance drifted for modelManifestSha256/
+    /provenance drifted for [A-Za-z]+Sha256/
   )
   const structureOnlyProjection = structuredClone(report)
   structureOnlyProjection.provenance = currentProvenance()

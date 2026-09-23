@@ -29,6 +29,7 @@ function loadPreload (role, options = {}) {
       }
     }
     if (specifier === '../main/ipc/channels') return CHANNELS
+    if (specifier === '../contracts/recognition-settings') return require('../../src/contracts/recognition-settings')
     if (specifier === '../agent/contracts/agent-context-ui') return require('../../src/agent/contracts/agent-context-ui')
     if (specifier === '../agent/contracts/agent-model-ui') return require('../../src/agent/contracts/agent-model-ui')
     if (specifier === '../agent/contracts/agent-model-presets-ui') return require('../../src/agent/contracts/agent-model-presets-ui')

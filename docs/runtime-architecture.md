@@ -7,7 +7,7 @@
 
 ## 1. 架构目标
 
-- 高频 PCM 不经过主进程。
+- 纯本地路径的高频 PCM 不经过主进程；NLS 路径按 ADR 0020 由 worker 经有界端口交给 main 转发。
 - CPU 密集推理不在主进程或可见 renderer 中执行。
 - 主进程拥有应用状态，但不成为音频、ASR 或 DOM 实现的一部分。
 - 字幕、历史和导出使用同一份规范化 segment 状态；Agent 派生产物保留输入水位且不覆盖它。
@@ -199,7 +199,7 @@ audio-host AudioWorklet
           └─ realtime-asr-worker
 ```
 
-主进程不复制 PCM（帧不进主进程 JS 事件循环）。每个 source 队列必须有最大毫秒数；超过阈值时按明确策略丢弃最旧帧或进入 error，不能无限积压。
+纯本地路径的 PCM 不进入 main JS 事件循环。ADR 0020 的 NLS 路径由 worker 经有界 MessagePort 将 PCM 转交 main-owned 鉴权连接，这是唯一已登记例外。每个 source 队列必须有最大毫秒数；云端路径超限或丢帧主动释放采集并进入可重试 error，不得无限积压。
 
 B2.2 落地的流控协议（`src/runtime/audio-host/frame-flow.js` + `src/runtime/pcm-sink/pcm-sink.js`）：
 
@@ -256,7 +256,7 @@ realtime/refine worker
 
 - `appearancePreferences`：字号、主题、透明度、圆角、双语布局。
 - `capturePreferences`：首选音频源和设备。
-- `asrPreferences`：产品级 profile、语言/分段偏好，以及只在新会话开始时冻结的权威识别策略、非敏感识别 provider ID 和确认关键词范围选择。
+- `asrPreferences`：产品级 profile，以及只在新会话开始时冻结的权威识别策略和非敏感识别 provider 配置。个人上下文不影响 ASR（ADR 0017）。
 - `refinementPreferences`：一个不区分 `mic`/`loopback`、决定未来新会话是否启用精修的全局偏好；可持久化，但启动时必须以精修模型就绪证明校正。会话开始时复制到不可变的 session context；修改或关闭不能改变活动会话，也不能删除旧会话精修稿。运行中 worker 故障只写该会话的结果，不回写全局偏好；只有应用启动时发现模型缺失或损坏才把持久偏好与有效值一起明确回落为关闭。
 - 正式 Agent 设置沿用平面 `ConfigStore`，实现时把 schema v1 迁移到 v2 并增加 exact 平面字段 `agentEnabled`、`automaticProcessingSince`、`memoryEnabled`、`memoryProcessingSince`、`cloudDisclosureAccepted` 与 `agentSettingsRevision`；迁移必须保留现有字幕设置，非法 Agent 字段组合统一回落到 Agent 关闭、两个边界为 `null`、披露未确认。更新必须在同一次原子读改写中核对 `expectedRevision`、归一化六个字段并把 revision 恰好加一；冲突返回 `SETTINGS_REVISION_CONFLICT` 且零写入。Agent 模型 provider 非敏感参数不写入 ConfigStore，而由 main-only `AgentProviderConfigCatalog` 提供；ConfigStore 与 renderer patch 均不得包含 provider、URL、model 或 API key。
 - `effectiveRuntimeConfig`：后端根据 Capabilities 校验后的实际值，只读发布给 UI。
@@ -328,9 +328,9 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
          └─ 仅在明确故障后接收有界 PCM 并单向接管
 ```
 
-- `RecognitionSessionRouter` 只消费会话开始时冻结的策略、provider 能力、确认关键词集合版本和本地模型就绪证明；renderer 不能直接选择 adapter 或传 provider URL。
-- `RecognitionProviderRegistry` 只注册随产品发布的第一方适配器。所有适配器把流式结果归一为同一 Caption Event/会话身份语义，并以能力描述声明关键词、取消、连接存活检测和事件有序性；业务层不得按具体云服务名称分支。
-- 云端适配器必须声明并通过流式 `partial`、权威 `final`、取消、连接存活检测和有序事件能力探针。关键词提示是可选 capability；不支持时仍可识别，但必须向设置与会话诊断暴露“确认关键词未应用”。
+- `RecognitionSessionRouter` 只消费会话开始时冻结的策略、provider 能力和本地模型就绪证明；renderer 不能直接选择 adapter 或传 provider URL。
+- 随产品发布的第一方适配器将流式结果归一为同一 Caption Event/会话身份语义；不提供运行时插件发现和自定义协议。
+- 云端适配器必须验证流式 `partial`、唯一首次 `final`、取消、连接存活检测和有序事件。识别链路不存在个人记忆关键词输入、关键词 capability 或“关键词未应用”诊断。
 - 云端正常期间，本地两阶段识别链路不得持续解码。可以预载或保持资源句柄就绪，但不能用“兜底”名义继续消耗完整本地推理预算。
 - 当前段的 PCM 环形缓冲只覆盖明确、固定的最大时长。明确断开、稳定 provider 错误或连接存活检测失败时，router 原子关闭云端 generation、冻结故障边界，再把该缓冲交给新的本地 generation；旧 generation 的迟到事件必须按 generation、sequence 和 segment 身份拒绝。
 - 已经持久化的云端首次稳定转写不可重开或替换；当前尚未产生首次 `final` 的段可以由本地链路重新形成唯一 `final`。降级后同一会话不自动切回云端。
@@ -402,3 +402,7 @@ Agent MVP renderer
 该入口不得导入 `src/main.js`、`SessionCoordinator`、audio host、实时/精修 worker 或正式 renderer access policy。它只共享可复用的 contract、SQLite 基础设施和视觉 token；独立 data root 中的合成终态会话必须由真实 storage worker 写入，不能用 renderer 内 fixture 假装已提交事实。Agent utility process 与 storage utility process 分开，插件拿不到 SQLite 句柄；凭据由 Agent 主进程在每个 run 创建时解密后只以内存参数交给 `ModelGateway`。
 
 Agent MVP 全局只运行一个 Agent Loop，后台 Agent 任务 FIFO 排队。应用退出先停止接单，再有界取消当前 Loop、持久化任务状态、关闭 Agent utility process 和 storage utility process。正式字幕系统不观察该入口的启动、退出或故障。
+
+## 12. NLS 首期运行边界（2026-09-21，已决定）
+
+[ADR 0020](adr/0020-nls-realtime-recognition.md) 优先修订 §5/§7/§11：只有云端识别分支允许 worker 将有界 PCM 转交 main-owned 鉴权连接；main 不推理。云端分段、同会话单向降级、时间戳交接及限界错误均由该 ADR 定义。§7/§11 中确认关键词集合、关键词能力探针和“关键词未应用”已被 ADR 0017 取消，不得实现。纯本地高频路径和 SEM-F12 exact-child 生命周期继续保持。
