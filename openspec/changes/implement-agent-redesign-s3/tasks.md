@@ -1,3 +1,19 @@
+## 2026-09-21 状态核对（SEM-T01/T02/T05，J22/J24）
+
+本次只对齐文档，不重跑产品测试、不补造历史 red → green 过程、不提升验收状态。进度按[语义合同](../../../docs/semantic-contract.md)与[旅程矩阵及后续日期证据](../../../docs/testing-strategy.md)判断，不能用勾选比例估算。下表区分已有实现、局部证据与仍待核对的完整条款；旧条目中的“先写会红”属于实施过程，不能从当前代码反推该过程已执行。
+
+| 原任务范围 | 后续已有依据 | 本次对齐与未验证边界 |
+|---|---|---|
+| §3–4 v7 与 execution store | testing-strategy 的 S3/S4 Core 记录；[execution store](../../../src/runtime/storage-worker/agent-execution-store.js)及[存储回归](../../../test/storage/agent-execution-store.test.js) | 已有交互、工具审计、呈现 receipt 和 keyset 实现；原清单逐条 schema/字节/故障矩阵及历史红测未逐项复核，保留未勾选，不解释为整个存储层未实现。 |
+| §5 统一 Loop | [执行宿主](../../../src/agent/execution-host/agent-loop.js)、[局部回归](../../../test/runtime/agent-loop.test.js)；S3 Core 日期记录 | 5.12 改为实现项勾选，状态为实现完成·尚未验收；5.10 的统一 facade 已有实现，但本次未核实完整 Pi adapter 条款，保留未勾选，不据局部 adapter 回归宣称完整 Pi/正式 renderer 联合验收。 |
+| §6 模型优先与规则兜底 | [orchestrator](../../../src/agent/execution-host/intent-route-orchestrator.js)、[局部回归](../../../test/runtime/intent-route-orchestrator.test.js)、[真实 SQLite 路由旅程](../../../test/integration/agent-redesign-s3-route-journey.test.js)；S3/S5 日期记录 | 6.2/6.7/6.10/6.14 改为实现项勾选，状态为实现完成·尚未验收；改选已有 Core 实现，不表示正式 UI 已开放；其余精确矩阵不整体补勾。 |
+| §7–8 取消与摄取 | 2026-08-31 S3/S4 取消迟到结果拒绝记录；2026-09-09–12 J21/J25 自动摄取、正式交互信号和管理路径记录 | 已有实现及分层证据；完整取消/重试/replacement 组合、interaction 两阶段细项和 suppression 负矩阵仍须逐项对应，不把整节未勾选解释为零实现。 |
+| §9 用量与比较 | J25 的模型比较和正式设置日期记录 | 已有冻结模型身份、provider 用量及未知用量处理证据，不等于完整缓存/分组/产物矩阵、真实公网或系统凭据验收。 |
+| §10–12 呈现、IPC 与汇合 | S5 汇合边界与 2026-09-09 S5 记录；[正式 MVP 追踪](../../../docs/formal-agent-mvp-todo.md) | 正式 renderer/preload/main/SQLite、历史与导出已有子边界证据；自动呈现、十一 recipe 全覆盖和完整失败矩阵不能由 S5 最小链路代替。 |
+| §13 状态与门禁 | testing-strategy 已有 S3/S4/S5 日期记录 | 13.8 按既有记录勾选；旧提交、实施前基线、独立审阅、当前交付 revision 的全量与实机证据不能由本次文档核对补证。 |
+
+ADR 0019 已退役旧四棵 Agent 树与隔离入口；下文涉及旧树的历史任务只用于追溯，不能恢复其入口或写入。现行 J27 是旧链路退役，按[退役决定](../../../docs/adr/0019-complete-legacy-agent-retirement.md)与最新 J27 证据执行。
+
 ## 1. 权威登记与实施基线
 
 > 2026-09-08：本清单是细项追踪，未勾选不等于代码不存在；当前切片代码事实见 `docs/agent-redesign-execution-plan.md` §5。第 13 节完整门禁用于 PR/阶段联合验收，可由当前 revision 的 CI 承担；日常小改动与交接按 `docs/testing-strategy.md` §2.1 定向验证，不要求每轮重跑三条 lane。
@@ -89,28 +105,28 @@
 - [x] 5.7 先写会红的 capability 守卫：0 工具 recipe 可绑定 `supportsToolCalling=false`，非空 grants 必须为 true。
 - [x] 5.8 实现 bind/readiness 按 grants 校验并使 5.7 转绿；能力不足为配置问题而非 `AGENT_PROVIDER_UNAVAILABLE`。
 - [ ] 5.9 先写会红的执行宿主单入口测试，十一 recipe 都调用同一 Pi `agentLoop()` adapter，生产无第二 executor。
-- [ ] 5.10 实现 `src/agent/execution-host/` 统一 runner facade 与 Pi loop adapter，使 5.9 转绿。
+- [ ] 5.10 实现 `src/agent/execution-host/` 统一 runner facade 与 Pi loop adapter，使 5.9 转绿。（统一 facade 已有实现证据；完整 Pi adapter 条款与 5.9 历史红测过程本次未核实，见顶部 §5 对照。）
 - [ ] 5.11 先写会红的 `shouldStopAfterTurn` 矩阵，覆盖 1 轮绝不进第二轮、3/6 轮上限、自然早停与预算早停。
-- [ ] 5.12 实现 deterministic stop config 并使 5.11 转绿；不得实现 `prepareNextTurn` 或模型驱动续轮。
+- [x] 5.12 实现 deterministic stop config；不得实现 `prepareNextTurn` 或模型驱动续轮。（实现完成·尚未验收；顶部 §5 对照覆盖已有静态轮次/预算停止实现，5.11 的完整矩阵仍独立核对。）
 - [ ] 5.13 定向回归生产 module graph 不可达旧 PluginHost、single-shot executor、`agentLoopContinue()`、递归委派或动态工具注册。
 - [ ] 5.14 定向回归 Pi MIT 许可保留、utility 只取得调用级 binding/credential 副本且不取得 SQLite/配置文件路径。
 
 ## 6. 两层意图收敛 tracer bullets
 
 - [ ] 6.1 先写会红的 `intent.route` 正常路径：真实 run/bind/loop/interaction 后创建目标 run，目标写 `routing_mode='model'`。
-- [ ] 6.2 实现 route orchestrator 最小正常路径使 6.1 转绿；不得在 bind 前裸调用模型。
+- [x] 6.2 实现 route orchestrator 最小正常路径；不得在 bind 前裸调用模型。（实现完成·尚未验收；顶部 §6 对照含真实 SQLite 路由旅程，6.1 历史红测不补证。）
 - [ ] 6.3 定向回归 route 默认用途与目标用途不同、两 run 独立 usage/binding、route 不进用户历史列表。
 - [ ] 6.4 先写会红的五类兜底表：资格非 ready、`AGENT_PROVIDER_*`、output/budget、worker/internal、闭集外 recipe。
 - [ ] 6.5 实现固定 fallback classifier 使 6.4 转绿；不得按异常字符串、等待时长或 confidence 主观判断。
 - [ ] 6.6 先写会红的 deterministic rules 优先级表，输入只含冻结 scope kind 与受控关键词，全部不匹配为 `qa.answer`。
-- [ ] 6.7 实现规则模块并使 6.6 转绿；输出只能是其它十项登记 ID。
+- [x] 6.7 实现规则模块；输出只能是其它十项登记 ID。（实现完成·尚未验收；见顶部 §6 对照，6.6 的完整优先级矩阵保留单独核对。）
 - [ ] 6.8 定向回归规则路径目标 interaction 写 `rules`、收敛无失败态、provider 不可用时也有下一步。
 - [ ] 6.9 先写会红的 route 用户取消场景，取消不触发规则且不创建目标 run。
-- [ ] 6.10 实现取消短路使 6.9 转绿；低 confidence 合法结果继续采用 model。
+- [x] 6.10 实现取消短路；低 confidence 合法结果继续采用 model。（实现完成·尚未验收；见顶部 §6 对照与 orchestrator 局部取消回归，6.9 历史红测不补证。）
 - [ ] 6.11 先写会红的 preset 场景：两个 ingest 与自动 minutes 零 route run、目标写 `preset`。
 - [ ] 6.12 实现 preset create path 并使 6.11 转绿；自动路径运行数不得增加。
 - [ ] 6.13 先写会红的用户改选场景，原 run 请求取消并创建新 recipe/run/binding/version。
-- [ ] 6.14 实现 reselect orchestration 使 6.13 转绿；禁止原地改 recipe 或产物类型。
+- [x] 6.14 实现 reselect orchestration；禁止原地改 recipe 或产物类型。（实现完成·尚未验收；Core 取消旧 run 后创建新 run 已有局部回归，正式 UI 改选不在该证据内。）
 
 ## 7. 取消、迟到拒绝与恢复 tracer bullets
 
@@ -221,7 +237,7 @@
 - [ ] 13.5 PR/阶段联合验收运行一次完整 `npm test` 或引用当前 revision 的完整 CI，13.2–13.4 复用该结果；若 integration 失败使 evidence 未执行，只补独立 evidence 并记录命令边界。日常小任务只执行 §2.1 规定的受影响验证。
 - [ ] 13.6 使用 code review 复核 v1-v6 checksum、v7 四组、索引裁定、十一 recipe、统一 Loop、bind 常量、五类 fallback、取消/迟到、两段式摄取、usage null、comparison digest、删除/分页/IPC/隐私。
 - [ ] 13.7 复核所有需求/测试名/错误字段/报告文案与 `CONTEXT.md` 规范术语逐字对齐，不使用被禁说法或无修饰状态词。
-- [ ] 13.8 按实际证据更新执行计划与 testing strategy 的 S3 实施记录；S5-Integration 前最多写「实现完成·尚未验收」，不得晋级完整 J22/J24。
+- [x] 13.8 按实际证据更新执行计划与 testing strategy 的 S3 实施记录。（实现完成·尚未验收；2026-08-31 S3 Core 及后续 S5 日期记录已存在，不晋级完整 J22/J24，也不把旧 revision 的结果当作当前工作树结果。）
 - [ ] 13.9 向 UI/UX 工作线签发 Agent run contract、状态矩阵、fixture 清单、未知值 fail closed 与 renderer 开始门槛；明确 preview 不构成旅程证据。
 - [ ] 13.10 逐路径显式暂存 S3 实现/测试/文档，禁止 `git add .`；提交信息至少引用 SEM-F16 与 J22/J24。
 - [ ] 13.11 提交后再次核对用户原有未归属文件、旧 Agent 四树、字幕产品路径与 S1/S2 事实未被覆盖或误纳入提交。

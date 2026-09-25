@@ -1,5 +1,7 @@
 # Agent 重设计实现执行计划
 
+> **2026-09-21 阅读口径对齐**：本计划的旧基线和日期记录不代表当前工作树状态；进度以[语义合同](semantic-contract.md)与[最新旅程证据](testing-strategy.md)为准，不按 TODO 勾选数估算。2026-09-14 的 [ADR 0019](adr/0019-complete-legacy-agent-retirement.md) 已取代旧源码、旧表和隔离入口保留要求；下文历史记录中的隔离入口缺口不再是现行 J27 门禁。S3 已有实现与尚缺逐项证据见[细项状态核对](../openspec/changes/implement-agent-redesign-s3/tasks.md)，完整 J22/J24 状态不因本次文档核对晋级。
+
 > **2026-09-14 退役切片说明：** 本文保留第三轮重设计的历史设计与日期记录；其中退役变更前关于旧源码树、旧 Agent 表和隔离入口的“保留/不删除”结论已由 [ADR 0019](adr/0019-complete-legacy-agent-retirement.md) supersede。当前实现只允许 `src/agent/**` formal Agent 主链路，正式 catalog 为 v10；旧对象的删除、备份、恢复与失败降级以 `openspec/changes/retire-legacy-agent/`、退役迁移和 ADR 0019 为准。本文旧路径和旧对象仅用于不可变历史追溯，不是当前实现入口。
 
 > 状态：已决定 · 2026-08-29
@@ -229,7 +231,9 @@ S4 可以先签发纯 `src/agent/contracts/` 的 exact validator、预算判断�
 10. settings renderer 闭合 J21 的管理 UI 与 J25 的多档案/四用途路径；Agent Bar/history renderer 闭合 J22/J24；保存对话框与同一 SQLite 快照闭合 J26。
 11. 阶段联合验收门禁：三条 lane 返回 0（日常小改动按 testing-strategy.md §2.1 选测），J21/J22/J24/J25/J26 阻断，字幕系统零回归。任何单独的 S5-Core 或 S5-UX 结果最多写「实现完成·尚未验收」；只有 S5-Integration 的真实内部模块组合才可晋级对应旅程。
 
-### 阶段 G（S6）：旧 Agent 锁定在启动路径之外
+### 阶段 G（S6）：旧 Agent 锁定在启动路径之外（历史方案）
+
+> 本节原实施步骤已被 ADR 0019 与 §5 的 2026-09-14 退役切片取代，仅保留解释历史证据；现行任务是 J27 旧链路退役，不恢复隔离入口或旧表。
 
 **目标**：把「旧 Agent 不可达」从偶然状态变成被守住的契约。**无新 migration**，**无运行时行为变更**。
 
@@ -345,7 +349,7 @@ release layout verifier 为 pass，包含 435 个 ASAR 条目和 5 个 native bi
 | S3 执行宿主与统一执行路径 | v7 | J22/J24 执行宿主 Core 子边界 | 两层意图收敛（模型判定 + 规则兜底 + `routing_mode`）、十一 recipe 登记表（轮次上限/工具授权）快照进交互行、Schema 校验、取消为终态、两段式摄取、`ModelUsageV1` 与 renderer fixture | 无执行形态判定与 `escalation_reason`、中间 assistant 文本零持久化、提示正文终态后删除只留 digest、fixture 不含金额或提示正文、取消不补造结果 |
 | S4 受控只读工具与预算执法 | 无 | J22/J24 工具与预算 Core 子边界 | 工具全序与多 attempt 保留、三档轮次上限与工具授权按登记表执法、`maxResultBytes` 与字节子预算、十轴执法与 renderer fixture | 无写类工具、别名不退化为模糊搜索、工具授权为空的 recipe 留下空工具记录、fixture preview 不进入证据、运行中绑定不被改写 |
 | S5-Core / S5-UX / S5-Integration | 无 | J21、J22、J24、J25、J26 | 新 `agent` 角色、正式 renderer、默认零报告、偏好只影响以后会话、真实模块汇合与确定性重导出 | 不接旧 `agent-mvp`、无未读角标/系统通知/模态/抢焦点、导出不含提示与内部思维过程、重复通知不重复呈现同一 run |
-| S6 旧 Agent 锁定 | 无 | J27 | require 闭包守卫、四棵树打包排除、`src/agent/**` 正向存在 | 注入式反证必须变红、v3/v4 checksum 不变、隔离入口仍可手动启动 |
+| S6 旧 Agent 链路退役（ADR 0019） | v10 | J27 | 现行正式实现、迁移前验证快照、精确旧对象事务退役、正式包布局 | 旧路径不可达、旧操作拒绝、历史 SQL/checksum 不变、备份或迁移失败保留已提交版本并阻断 Agent/会话删除，字幕按版本独立降级；不再启动隔离入口 |
 
 阶段联合验收要求完整三条 lane 与字幕系统独立性证据；日常小改动和交接按 `testing-strategy.md` §2.1 选测，不重复本地全量。后续切片缺失时不提升当前产品旅程状态。
 
@@ -361,7 +365,7 @@ release layout verifier 为 pass，包含 435 个 ASAR 条目和 5 个 native bi
 | 阶段 A 被误做成批量红测 | J21–J27 骨架同时常红，或测试只断言“当前无实现” | 阶段 A 只分配责任；每片一个 tracer bullet 立即 red → green，旅程状态只由对应片的真实 `test:integration` + `test:evidence` 证据晋级 |
 | 十轴预算出现第二处字面量 | 有人在执行宿主里硬编码超时或字节上限 | 唯一定义点断言（阶段 A 第 3 条）；违反即红 |
 | S6 打包排除误伤新树 | 排除规则写成 `!src/agent*` 一类前缀 | 排除规则逐树精确列出，并配 `src/agent/**` 必须存在的正向断言 |
-| 隔离入口被顺手删掉 | 有人认为「废案就该删」 | ADR 0015 未选择项明确禁止；J27 断言其仍可手动启动 |
+| 退役旧链路被重新接回 | 沿用 ADR 0015 或旧 J27 双入口要求 | ADR 0019 已取代保留策略；按现行 J27 核对旧路径不可达、旧操作拒绝、验证备份与事务退役，不恢复隔离入口 |
 | 2026-08-09 UI handoff 被继续执行 | UI 模型恢复旧三任务、调试聊天、单一 provider 或修改 `src/agent-mvp/**` | 当前 [`agent-ui-ux-handoff.md`](agent-ui-ux-handoff.md) 明确替代旧版；正式 renderer 只消费 SEM-F30–F35 与新 contract fixture |
 | UI 与 Core contract 漂移 | renderer 自造字段、错误可重试性、成功状态或直接修改 preload/IPC | 所有缺口进入 [`agent-ui-contract-requests.md`](agent-ui-contract-requests.md)；Core 签发 exact contract 与 fixture 后 UI 再消费 |
 | Agent 失败反传字幕 | 新 store、新 utility 或新窗口异常导致字幕降级 | 每片的零回归证明；SEM-F00 是硬边界，违反即回退该片 |

@@ -6,6 +6,8 @@
 > `docs/semantic-contract.md`、`docs/testing-strategy.md` 与现有 ADR。
 > 旧隔离 Agent 树已按 [ADR 0019](adr/0019-complete-legacy-agent-retirement.md) 退役；本文只追踪现行 `src/agent/**` 正式链路，不把历史树计入证据。
 
+> **2026-09-21 状态对齐（SEM-T01/T02/T05，J21/J22/J24/J25/J26/J27）**：进度以[语义合同](semantic-contract.md)及[旅程矩阵与后续日期证据](testing-strategy.md)为准，不能按复选框数量估算。勾选只表示该条所注明的实现或子边界已有依据，不代表完整旅程验收；未勾选的总门禁也不表示尚无实现。下文日期记录只适用于各自 revision，不是本次工作树重新执行的结果。J27 自 2026-09-14 起采用旧链路退役口径，旧双入口 userData/SQLite 记录仅为历史证据，不能继续列为现行交付任务。S3 细项对照见[状态核对表](../openspec/changes/implement-agent-redesign-s3/tasks.md)。本次只核对文档，不提升任何产品验收状态。
+
 > 2026-09-12 核对（当前 revision `3b83e35`）：该 revision 已包含正式 Agent Bar renderer、工具条入口、Agent run contract/controller、preload、main-owned service、model-first route、user target scheduler、交互历史与 canonical JSON 导出；真实 Electron renderer → preload → main/Agent Loop → storage worker/SQLite → 字幕系统的 S5 子边界旅程、正式 settings → Agent Bar → history 旅程、终态会话自动摄取旅程和 packaged smoke/release layout 证据已经纳入。正式设置旅程又补齐个人记忆自动处理的休眠/重新开启与旧 revision 冲突断言；完整 J21/J25/J27 与正式 MVP 总门槛仍待后续收束。以下复选框跟踪产品闭环，不表示对应目录完全没有代码。开发选测与阶段门禁统一见 `testing-strategy.md` §2.1，不要求每个小任务重复三条 lane。
 
 > 2026-09-08 S5 执行入口：具体 proposal/design/spec/tasks 见 [`openspec/changes/implement-agent-redesign-s5-minimal-chain/`](../openspec/changes/implement-agent-redesign-s5-minimal-chain/)。本文件只保留正式 MVP 的跨切片导航；S5 的可执行任务以该 change 为准，J21/J27/完整 J25 仍是后续门禁。
@@ -101,11 +103,11 @@ subscribeChanged(listener)
 - [x] J26：成功、失败和取消交互的确定性 JSON 导出。（实现完成·尚未验收；`AgentInteractionExporter`、同一 `StorageGateway` 快照、取消零写入、digest/顺序/隐私负扫描、真实 SQLite 重导出字节一致均有证据；系统保存对话框属于外部边界，正式 MVP 阶段门禁仍待统一记录。）
 - [ ] J21：终态会话 → `context.ingest.session` → 经历/记忆候选与管理（实现完成·尚未验收；真实 `SqliteSessionRecorder` 终态通知 → `PersonalContextRuntime` → `ContextIngestSessionRunner` → `StorageGateway`/SQLite worker 自动摄取已验证，重复终态通知保持单运行/单经历，正式设置中的个人上下文管理 UI、exact preload/IPC 与 UI 回归已接入；个人记忆自动处理休眠/重新开启与旧 revision 冲突已纳入正式设置旅程，suppression、完整负矩阵与阶段门禁仍待记录）。
 - [ ] J25：正式设置 → Agent Bar 运行 → 交互历史（实现完成·尚未验收；受控 loopback provider 的真实 Electron 旅程已覆盖 settings renderer/preload 写入连接、model、用途与凭据，Agent Bar DOM 手动资格刷新、刷新期间提交禁用、问答与编辑反馈提交、正式详情重读，交互信号 accept/replay，个人记忆记住/忘记/删除、休眠/重新开启、旧 revision 冲突和 remount 后读取，以及 SQLite 终态交互与 history renderer 重载；真实公网 provider、系统凭据边界和多模型比较实机证据仍待门禁记录）。
-- [ ] J27：正式入口与隔离入口的 userData/SQLite 边界（实现完成·尚未验收；当前 revision `4fe62f7` 已重建 x64 smoke/release 包，smoke layout 为 pass（439 个 ASAR 条目、5 个 native binary），release installer 已生成但 packaged product-shell 在 Electron GPU 边界退出，未形成当前 packaged run binding；当前 core 895/895、integration 75/85（10 项启动/utility/renderer 边界失败）、evidence 229/229。正式/隔离入口 userData/SQLite 旅程、release layout binding、NSIS 安装和干净机手动启动仍待门禁记录，见 [`j27-current-revision-results.json`](validation/j27-current-revision-results.json)。）
+- [ ] J27：旧 Agent 链路退役（实现完成·尚未验收；依据 SEM-F14/F30、SEM-T06/T08 与 ADR 0019，验证唯一现行正式实现、旧路径不可达、旧操作拒绝、迁移前一致性快照及 v10 事务退役、失败时字幕独立降级与正式包布局。[旅程矩阵](testing-strategy.md)的 J27 行及“旧 Agent 完整退役”登记记录了退役存储 24/24、core 932/932、evidence 229/229 和 integration 50/53 的对应历史验证边界；不能把这些数字当作本次工作树结果。交付版本完整 lane、正式包及适用实机证据仍按最新记录判断，不再要求启动已退役隔离入口。）
 - [x] `.artifacts/` 与 `docs/validation/` 通过 SEM-F14 负扫描。（实现完成·尚未验收；`npm run test:evidence` 229/229，报告只保留指标、布尔值和哈希，未写入正文、现场音频或路径。）
 
 后续门禁索引（本 S5 不实施）：J21 完整个人上下文管理 UI 与正式入口联合覆盖；
-J27 干净机手动启动与安装边界；J25 的真实公网 provider、系统凭据边界与适用实机证据
+J27 退役迁移、正式包与适用安装/干净机边界；J25 的真实公网 provider、系统凭据边界与适用实机证据
 也继续由正式 MVP 总门槛追踪。
 
 以上清单只记录 S5 子切片的实现与证据，不得据此记录「联合验收完成」。正式 MVP
