@@ -16,7 +16,8 @@ test('SEM-F22/J17: toolbar reports only the existing toolbar contour after obtai
   const renderer = read('src/toolbar/toolbar.ts')
 
   assert.match(preload, /getToolbarLayoutContext: \(\) => ipcRenderer\.invoke\(CHANNELS\.TOOLBAR_LAYOUT_GET_CONTEXT\)/)
-  assert.match(preload, /reportToolbarLayout: \(report\) => ipcRenderer\.send\(CHANNELS\.TOOLBAR_LAYOUT_REPORT_RECT, report\)/)
+  // Exact payload, single send and unchanged exceptions are exercised by
+  // toolbar-layout-diagnostic-preload.test.js rather than arrow-function syntax.
   assert.match(renderer, /new ResizeObserver/)
   assert.match(renderer, /toolbar\.getBoundingClientRect\(\)/)
   assert.match(renderer, /bridge\.getToolbarLayoutContext\(\)/)

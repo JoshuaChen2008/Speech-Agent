@@ -69,6 +69,12 @@ let toolbarLayoutQueued = false
 let lastToolbarLayoutKey = ''
 let toolbarLayoutRetryTimer: ReturnType<typeof setTimeout> | null = null
 
+// Optional observation only: no extra scheduling, layout reads or IPC reports.
+function noteToolbarLayout (stage: string, generation = toolbarLayoutGeneration): void {
+  try { bridge.toolbarLayoutDiagnostic?.record(stage, generation) } catch { /* diagnostic isolation */ }
+}
+noteToolbarLayout('renderer-init')
+
 installSprite(document)
 grip.innerHTML = iconMarkup('grip')
 
@@ -77,10 +83,15 @@ grip.innerHTML = iconMarkup('grip')
 // generation 由主进程签发；reload 前后的 renderer 不能复用旧矩形。
 // ---------------------------------------------------------------------------
 function queueToolbarLayoutReport (force = false) {
-  if (toolbarLayoutQueued || toolbarLayoutGeneration <= 0) return
+  if (toolbarLayoutQueued || toolbarLayoutGeneration <= 0) {
+    noteToolbarLayout(toolbarLayoutQueued ? 'queue-pending' : 'queue-no-generation')
+    return
+  }
   toolbarLayoutQueued = true
+  noteToolbarLayout('queued')
   requestAnimationFrame(() => {
     toolbarLayoutQueued = false
+    noteToolbarLayout('raf-ran')
     const rect = toolbar.getBoundingClientRect()
     const report = {
       generation: toolbarLayoutGeneration,
@@ -92,7 +103,10 @@ function queueToolbarLayoutReport (force = false) {
       }
     }
     const key = JSON.stringify(report)
-    if (!force && key === lastToolbarLayoutKey) return
+    if (!force && key === lastToolbarLayoutKey) {
+      noteToolbarLayout('deduplicated')
+      return
+    }
     lastToolbarLayoutKey = key
     bridge.reportToolbarLayout(report)
   })
@@ -100,21 +114,34 @@ function queueToolbarLayoutReport (force = false) {
 
 async function initToolbarLayout () {
   if (typeof bridge.getToolbarLayoutContext !== 'function' ||
-      typeof bridge.reportToolbarLayout !== 'function') return
+      typeof bridge.reportToolbarLayout !== 'function') {
+    noteToolbarLayout('bridge-missing')
+    return
+  }
   try {
+    noteToolbarLayout('context-requested')
     const context = await bridge.getToolbarLayoutContext()
-    if (!context || !Number.isSafeInteger(context.generation) || context.generation <= 0) return
+    if (!context || !Number.isSafeInteger(context.generation) || context.generation <= 0) {
+      noteToolbarLayout('context-invalid')
+      return
+    }
     toolbarLayoutGeneration = context.generation
+    noteToolbarLayout('context-valid')
     /* 观察者已在命中测试一节建好（它同时给命中矩形标脏）。generation 到位前
        queueToolbarLayoutReport 自行短路，所以这里只补一次首报。 */
     queueToolbarLayoutReport()
     // 导航/reload 后的首帧可能早于最终样式与字体布局。主进程会对该帧
     // fail closed 到 fallback；稳定后强制补报一次，不能被 renderer 去重吞掉。
-    toolbarLayoutRetryTimer = setTimeout(() => queueToolbarLayoutReport(true), 100)
-  } catch { /* browser preview or a navigation already invalidated this renderer */ }
+    toolbarLayoutRetryTimer = setTimeout(() => {
+      noteToolbarLayout('retry-fired')
+      queueToolbarLayoutReport(true)
+    }, 100)
+    noteToolbarLayout('retry-scheduled')
+  } catch { noteToolbarLayout('context-failed') /* browser preview or invalidated navigation */ }
 }
 
 window.addEventListener('beforeunload', () => {
+  noteToolbarLayout('unload')
   if (toolbarLayoutObserver) toolbarLayoutObserver.disconnect()
   if (toolbarLayoutMutationObserver) toolbarLayoutMutationObserver.disconnect()
   if (toolbarLayoutRetryTimer) clearTimeout(toolbarLayoutRetryTimer)

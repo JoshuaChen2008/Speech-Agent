@@ -44,17 +44,22 @@ function cloneOverlap (overlap) {
   }
 }
 
-function projectToolbarReport (report, expectedGeneration) {
-  if (!isExactObject(report, ['generation', 'rect']) ||
-      report.generation !== expectedGeneration ||
-      !isGeneration(report.generation) ||
-      !isExactObject(report.rect, ['x', 'y', 'width', 'height'])) return null
+function projectToolbarReport (report, expectedGeneration, observeDecision) {
+  function observed (decision, value = null) {
+    // Diagnostics must not participate in accepting a report or change errors.
+    try { observeDecision?.(decision) } catch { /* diagnostic isolation */ }
+    return value
+  }
+  if (!isExactObject(report, ['generation', 'rect'])) return observed('report-shape')
+  if (!isGeneration(report.generation)) return observed('generation-invalid')
+  if (report.generation !== expectedGeneration) return observed('generation-mismatch')
+  if (!isExactObject(report.rect, ['x', 'y', 'width', 'height'])) return observed('rect-shape')
 
   const { x, y, width, height } = report.rect
-  if (![x, y, width, height].every(Number.isFinite) ||
-      x < 0 || y < 0 || width <= 0 || height <= 0 ||
+  if (![x, y, width, height].every(Number.isFinite)) return observed('rect-nonfinite')
+  if (x < 0 || y < 0 || width <= 0 || height <= 0 ||
       x + width > WINDOW_LAYOUT.toolbarViewportWidth ||
-      y + height > WINDOW_LAYOUT.toolbarViewportHeight) return null
+      y + height > WINDOW_LAYOUT.toolbarViewportHeight) return observed('rect-range')
 
   const left = Math.floor(x)
   const top = Math.floor(y)
@@ -73,9 +78,9 @@ function projectToolbarReport (report, expectedGeneration) {
   const clippedRight = Math.max(0, rawRight)
   const clippedWidth = roundedWidth - Math.max(0, -rawRight)
   const clippedHeight = roundedHeight - Math.max(0, -rawTop)
-  if (clippedWidth <= 0 || clippedHeight <= 0) return null
+  if (clippedWidth <= 0 || clippedHeight <= 0) return observed('projection-empty')
 
-  return {
+  return observed('accepted', {
     generation: report.generation,
     source: 'toolbar',
     rect: {
@@ -84,7 +89,7 @@ function projectToolbarReport (report, expectedGeneration) {
       width: clippedWidth,
       height: clippedHeight
     }
-  }
+  })
 }
 
 function dragBoundsAt (start, origin, point) {
@@ -175,8 +180,8 @@ class ToolbarLayoutState {
     return this.getOverlap()
   }
 
-  acceptReport (report) {
-    this.overlap = projectToolbarReport(report, this.generation) || fallbackOverlap(this.generation)
+  acceptReport (report, observeDecision) {
+    this.overlap = projectToolbarReport(report, this.generation, observeDecision) || fallbackOverlap(this.generation)
     return this.getOverlap()
   }
 }

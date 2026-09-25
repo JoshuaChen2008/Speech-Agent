@@ -4,8 +4,23 @@ const { contextBridge } = require('electron')
 const CHANNELS = require('../main/ipc/channels')
 const { createWindowInteractionBridge, ipcRenderer, subscribe } = require('./shared')
 const interaction = createWindowInteractionBridge('toolbar')
+const layoutDiagnostic = process.env.LIVE_SUBTITLE_TOOLBAR_LAYOUT_DIAGNOSTIC === '1'
+  ? (() => {
+      try {
+        const { createRecorder, RENDERER_STAGES } = require('./toolbar-layout-diagnostic')
+        return createRecorder(RENDERER_STAGES)
+      } catch { return null }
+    })()
+  : null
+function noteLayout (stage, generation) {
+  try { layoutDiagnostic?.record(stage, generation) } catch { /* diagnostic isolation */ }
+}
 
 contextBridge.exposeInMainWorld('shell', {
+  ...(layoutDiagnostic ? { toolbarLayoutDiagnostic: {
+    record: noteLayout,
+    snapshot: (cutoff, generation, notBefore) => layoutDiagnostic.snapshot(cutoff, generation, notBefore)
+  } } : {}),
   mouseThrough: interaction.mouseThrough,
   dragStart: interaction.dragStart,
   dragEnd: interaction.dragEnd,
@@ -14,7 +29,17 @@ contextBridge.exposeInMainWorld('shell', {
   getLock: () => ipcRenderer.invoke(CHANNELS.LOCK_GET),
   onLock: (callback) => subscribe(CHANNELS.LOCK_CHANGED, callback),
   getToolbarLayoutContext: () => ipcRenderer.invoke(CHANNELS.TOOLBAR_LAYOUT_GET_CONTEXT),
-  reportToolbarLayout: (report) => ipcRenderer.send(CHANNELS.TOOLBAR_LAYOUT_REPORT_RECT, report),
+  reportToolbarLayout: (report) => {
+    noteLayout('send-attempted', report?.generation)
+    try {
+      const result = ipcRenderer.send(CHANNELS.TOOLBAR_LAYOUT_REPORT_RECT, report)
+      noteLayout('sent', report?.generation)
+      return result
+    } catch (error) {
+      noteLayout('send-failed', report?.generation)
+      throw error
+    }
+  },
   action: (name) => ipcRenderer.send(CHANNELS.TOOLBAR_ACTION, String(name || '')),
   openAgent: () => ipcRenderer.invoke(CHANNELS.AGENT_OPEN),
   getConfig: () => ipcRenderer.invoke(CHANNELS.CONFIG_GET),

@@ -17,6 +17,7 @@ module.exports = {
   files: [
     ...base.files,
     'scripts/product-shell-smoke.js',
+    'scripts/toolbar-reload-diagnostic.js',
     'scripts/model-ui-fixture-support.js',
     'scripts/packaged-native-load-probe.js'
   ],

@@ -128,6 +128,10 @@ Hosted CI 不声称验证真实 WASAPI/回环、物理麦克风、DWM 窗口行�
 
 ## 3. 用户旅程矩阵
 
+| 本轮子边界 | 场景与证据 | 状态 |
+|---|---|---|
+| J17 工具条 reload 恢复诊断（2026-09-21，SEM-F22/F14/T03） | 保留真实 main、renderer、preload、IPC 和 BrowserWindow，覆盖 default、legacy-risk、current-risk 四窗配置。原 5 秒恢复等待结束后冻结诊断，最多额外等待 1 秒只读 renderer 快照；独立 `toolbar-reload-diagnostic.json` 不修改既有资格报告 schema。分别呈现初始化/上下文/rAF/补报/发送、main 到达/发送者校验/布局校验以及工具条布局代次是否匹配；覆盖证据缺失、128 条有界缓冲溢出、未知/敏感字段拒绝及诊断失败不掩盖旅程失败。定向分类测试不代替真实旅程。2026-09-25 当前候选 SHA `e4e0f26678910d75983bee8a3000b988ff24b30d8e2e0f4be70785a5da5214ac` 下，三种配置均通过真实 reload 旅程，`current-risk` 重复 3 次；每份诊断与产品载荷绑定且退出正常。旧候选的前置轮廓失败未在本轮复现，原远端 CI 超时根因仍未知。证据只适用于该候选和本地确定性环境，不提升 J17 实机 DWM/I2 状态。 | 实现完成·尚未验收 |
+
 > **J17 解锁字幕卡逐像素命中增量（2026-08-10）**：确定性层必须覆盖 Electron 未向不可聚焦、已穿透字幕 renderer 转发进入移动的故障边界：没有 renderer `mouseThrough(false)` 意图时，主进程仍按当前窗口交互代次、字幕 bounds、`20 DIP` 透明外边距与工具条有效 overlap rect 把可见字幕卡预先变为原生实心命中，使后续字幕拖动意图可以移动字幕窗与停靠工具条；透明外边距、工具条轮廓、锁定态、活动手势、`suspend`、renderer reload、同步失败与过期代次必须继续 fail closed。局部矩阵还要证明 bounds、overlap、锁定状态或窗口交互代次改变会使缓存失效，同一命中状态不会重复写原生 API，停止控制器后不遗留 timer。确定性层只证明主进程命中计算、窗口交互代次约束、原生 API 调用意图和真实内部模块协作；不可聚焦透明 HWND 的真实主键、DWM、DPI 与异缩放仍由 I2 `dwm-drag` schema-v6 观察。该增量为实现完成·尚未验收：core 局部矩阵、SEM-T04 负向边界、J17 联合旅程与 I2 runner 接线契约已覆盖；尚无绑定当前候选的 I2 `dwm-drag` schema-v6 实机报告。
 
 > **J17 全窗纯位移增量（2026-08-10）**：确定性联合旅程必须对字幕窗、工具条、设置窗与字幕历史分别模拟 Electron position-only 原生写入夹带陈旧 `width/height` 的边界；共享主进程拖动器每帧必须显式提交手势起点冻结的完整尺寸，普通拖动只改变 `x/y`，字幕窗与停靠工具条组合拖动也不得累计尺寸或停靠漂移。测试替身不得把 `setPosition()` 默认建模为必然保尺寸而掩盖 Win32 normal placement/DPI 回写；真实 DWM、系统缩放与异缩放双屏仍由 I2 `dwm-drag` schema-v6 观察。该增量为实现完成·尚未验收：J17 四角色联合旅程已注入 position-only 尺寸回写并证明普通拖动只改变 `x/y`、组合停靠不扩大；当前候选尚无 I2 `dwm-drag` schema-v6 实机报告。

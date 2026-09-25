@@ -22,6 +22,8 @@ const {
 } = require('../src/main/services/product-payload-identity')
 const windowLayoutContract = require('../src/main/window-layout-contract')
 const { ToolbarLayoutState } = windowLayoutContract
+const { installMainProbe, makeReport: makeReloadDiagnosticReport, readRendererSnapshot } = require('./toolbar-reload-diagnostic')
+let reloadDiagnostic = null
 const {
   WindowInteractionGenerationController
 } = require('../src/main/window-interaction-generation-controller')
@@ -152,10 +154,12 @@ function parseArguments (argv) {
     report: null,
     mode: 'fresh',
     windowGeometryProfile: 'default',
+    toolbarReloadDiagnostic: false,
     qualificationRunId: null,
     freshProductReportSha256: null
   }
   for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === '--toolbar-reload-diagnostic') { values.toolbarReloadDiagnostic = true; continue }
     const next = argv[index + 1]
     if (argv[index] === '--artifacts-root') { values.artifactsRoot = next; index += 1 } else if (argv[index] === '--work-dir') { values.workDir = next; index += 1 } else if (argv[index] === '--report') { values.report = next; index += 1 } else if (argv[index] === '--mode') { values.mode = next; index += 1 } else if (argv[index] === '--window-geometry-profile') { values.windowGeometryProfile = next; index += 1 } else if (argv[index] === '--qualification-run-id') { values.qualificationRunId = next; index += 1 } else if (argv[index] === '--fresh-product-report-sha256') { values.freshProductReportSha256 = next; index += 1 } else throw new Error(`unknown argument: ${argv[index]}`)
   }
@@ -199,6 +203,7 @@ function parseArguments (argv) {
     report,
     mode: values.mode,
     windowGeometryProfile: values.windowGeometryProfile,
+    toolbarReloadDiagnostic: values.toolbarReloadDiagnostic,
     qualificationRunId: values.qualificationRunId,
     freshProductReportSha256: values.freshProductReportSha256
   }
@@ -800,18 +805,54 @@ async function completeWindowInteractionLayoutProbe (toolbar, probe) {
 
   const generationBeforeReload = current.generation
   const beforeReload = toolbarLayoutProbe.length
-  toolbar.webContents.reload()
-  await waitFor(() => !toolbar.webContents.isLoading(), 'toolbar renderer reload')
-  const generationAfterReload = await waitFor(async () => {
-    const next = await rendererValue(toolbar, 'window.shell.getToolbarLayoutContext()')
-    return next.generation > generationBeforeReload ? next.generation : 0
-  }, 'toolbar reload generation')
-  await waitForLayoutProbe(beforeReload,
-    (entry) => entry.method === 'invalidate' && entry.source === 'fallback' && entry.generation === generationAfterReload,
-    'toolbar reload fallback')
-  await waitForLayoutProbe(beforeReload,
-    (entry) => entry.method === 'acceptReport' && entry.source === 'toolbar' && entry.generation === generationAfterReload,
-    'toolbar reload recovery')
+  let generationAfterReload = null
+  let reloadFailure = null
+  let reloadPhase = 'renderer-load'
+  const reloadStartedAt = Date.now()
+  reloadDiagnostic?.begin()
+  try {
+    toolbar.webContents.reload()
+    await waitFor(() => !toolbar.webContents.isLoading(), 'toolbar renderer reload')
+    reloadPhase = 'generation'
+    generationAfterReload = await waitFor(async () => {
+      const next = await rendererValue(toolbar, 'window.shell.getToolbarLayoutContext()')
+      return next.generation > generationBeforeReload ? next.generation : 0
+    }, 'toolbar reload generation')
+    reloadPhase = 'fallback'
+    await waitForLayoutProbe(beforeReload,
+      (entry) => entry.method === 'invalidate' && entry.source === 'fallback' && entry.generation === generationAfterReload,
+      'toolbar reload fallback')
+    reloadPhase = 'recovery'
+    await waitForLayoutProbe(beforeReload,
+      (entry) => entry.method === 'acceptReport' && entry.source === 'toolbar' && entry.generation === generationAfterReload,
+      'toolbar reload recovery')
+  } catch (error) {
+    reloadFailure = error
+    throw error
+  } finally {
+    if (reloadDiagnostic) {
+      try {
+        const cutoff = Date.now()
+        const main = reloadDiagnostic.freeze(cutoff, generationAfterReload)
+        const renderer = await readRendererSnapshot((at, generation) => rendererValue(toolbar,
+          `window.shell?.toolbarLayoutDiagnostic?.snapshot(${at}, ${generation}, ${reloadStartedAt}) ?? null`), cutoff, generationAfterReload)
+        const diagnostic = makeReloadDiagnosticReport({
+          profile: options.windowGeometryProfile,
+          productPayloadSha256: productPayloadIdentity.sha256,
+          outcome: reloadFailure ? 'failed' : 'recovered',
+          phase: reloadPhase,
+          main,
+          renderer
+        })
+        fs.writeFileSync(path.join(path.dirname(options.report), 'toolbar-reload-diagnostic.json'),
+          `${JSON.stringify(diagnostic, null, 2)}\n`, { flag: 'wx' })
+        if (!reloadFailure && renderer.status !== 'captured') throw new Error('diagnostic snapshot missing')
+      } catch {
+        console.error('[toolbar-reload-diagnostic] capture-or-write-failed')
+        if (!reloadFailure) throw new Error('toolbar reload diagnostic unavailable')
+      }
+    }
+  }
 
   const beforeStale = toolbarLayoutProbe.length
   await reportCurrentToolbarContour(toolbar, generationBeforeReload)
@@ -1713,6 +1754,10 @@ function inspectRawOriginalExportArtifact (filePath) {
 }
 
 const options = parseArguments(process.argv.slice(app.isPackaged ? 1 : 2))
+if (options.toolbarReloadDiagnostic) {
+  process.env.LIVE_SUBTITLE_TOOLBAR_LAYOUT_DIAGNOSTIC = '1'
+  reloadDiagnostic = installMainProbe(ipcMain, ToolbarLayoutState)
+}
 const productPayloadIdentity = computeProductPayloadIdentity()
 const userDataDir = path.join(options.workDir, 'user-data')
 const legacyDirectory = path.join(userDataDir, 'sessions')

@@ -330,6 +330,7 @@ test('test-only packaged journey preserves the production layout but cannot be m
   assert.deepEqual(smokeConfig.win.target, [{ target: 'dir', arch: ['x64'] }])
   assert.deepEqual(smokeConfig.files.filter((entry) => entry.startsWith('scripts/')), [
     'scripts/product-shell-smoke.js',
+    'scripts/toolbar-reload-diagnostic.js',
     'scripts/model-ui-fixture-support.js',
     'scripts/packaged-native-load-probe.js'
   ])

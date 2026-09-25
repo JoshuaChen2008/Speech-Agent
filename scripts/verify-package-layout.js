@@ -67,6 +67,7 @@ const REQUIRED_NATIVE_FILES = Object.freeze([
 const CAPTION_INPUT_NATIVE_ENTRY = '/src/native/caption-input/caption_input_native.node'
 const SMOKE_SCRIPTS = Object.freeze([
   '/scripts/product-shell-smoke.js',
+  '/scripts/toolbar-reload-diagnostic.js',
   '/scripts/model-ui-fixture-support.js',
   '/scripts/packaged-native-load-probe.js'
 ])

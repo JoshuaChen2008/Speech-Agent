@@ -215,6 +215,28 @@ test('SEM-F22/J17: main owns generation lifecycle and fixed role-scoped layout c
   assert.match(main, /CHANNELS\.CAPTION_LAYOUT_TOOLBAR_OVERLAP/)
 })
 
+test('SEM-F22/J17: optional diagnostic observes rejection branches without changing projection or fallback', () => {
+  const { ToolbarLayoutState } = require('../../src/main/window-layout-contract')
+  const rect = { x: 16, y: 16, width: 568, height: 40 }
+  for (const [report, decision] of [
+    [null, 'report-shape'],
+    [{ generation: 0, rect }, 'generation-invalid'],
+    [{ generation: '1', rect }, 'generation-invalid'],
+    [{ generation: 1.5, rect }, 'generation-invalid'],
+    [{ generation: 2, rect }, 'generation-mismatch'],
+    [{ generation: 1, rect: {} }, 'rect-shape'],
+    [{ generation: 1, rect: { ...rect, x: NaN } }, 'rect-nonfinite'],
+    [{ generation: 1, rect: { ...rect, width: 600 } }, 'rect-range'],
+    [{ generation: 1, rect }, 'accepted']
+  ]) {
+    const plain = new ToolbarLayoutState().acceptReport(report)
+    const observed = []
+    assert.deepEqual(new ToolbarLayoutState().acceptReport(report, (value) => observed.push(value)), plain)
+    assert.deepEqual(observed, [decision])
+    assert.deepEqual(new ToolbarLayoutState().acceptReport(report, () => { throw new Error('diagnostic failed') }), plain)
+  }
+})
+
 test('SEM-F22/J17: an unchanged system pointer preserves bounds and the first delta projects immediately', () => {
   const { dragBoundsAt } = require('../../src/main/window-layout-contract')
   const start = { x: 100, y: 70, width: 920, height: 190 }

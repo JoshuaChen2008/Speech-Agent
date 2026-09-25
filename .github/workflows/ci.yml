@@ -207,6 +207,7 @@ jobs:
             $profileRoot = ".artifacts/product-shell-ci-$profile"
             node scripts/run-supervised-electron.js `
               --entry scripts/product-shell-smoke.js `
+              --entry-arg --toolbar-reload-diagnostic `
               --entry-arg --work-dir `
               --entry-arg "$profileRoot/work" `
               --entry-arg --report `
@@ -215,8 +216,17 @@ jobs:
               --entry-arg $profile `
               --report "$profileRoot/exit-evidence.json" `
               --strict-report
-            if ($LASTEXITCODE -ne 0) {
-              throw "Supervised product-shell journey ($profile) failed with exit code $LASTEXITCODE"
+            $journeyExitCode = $LASTEXITCODE
+            $diagnosticExitCode = 1
+            if (Test-Path -LiteralPath "$profileRoot/toolbar-reload-diagnostic.json") {
+              node scripts/verify-toolbar-reload-diagnostic.js "$profileRoot/toolbar-reload-diagnostic.json"
+              $diagnosticExitCode = $LASTEXITCODE
+            }
+            if ($journeyExitCode -ne 0) {
+              throw "Supervised product-shell journey ($profile) failed with exit code $journeyExitCode"
+            }
+            if ($diagnosticExitCode -ne 0) {
+              throw "Toolbar reload diagnostic verification ($profile) failed with exit code $diagnosticExitCode"
             }
             node scripts/verify-product-shell-report.js "$profileRoot/report.json"
             if ($LASTEXITCODE -ne 0) {
