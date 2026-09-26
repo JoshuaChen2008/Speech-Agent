@@ -5,6 +5,14 @@
 - 当前基线边界：revision `bbfd7041e5963e51942392323735298a7b81cb30` / run `31191838016` 已达到联合验收完成；core 422 tests=415 pass+7 expected skips、integration 29/29、evidence 204/204，总计 655 tests=648 pass+7 expected skips+0 fail。schema-v4 packaged 首启/复启闭合三项核心 marker、四项总资源、独立精修资源与同一产品载荷；artifact ID `8999273285`、ZIP digest `5ce4070c…55af`、远端 installer SHA `d77d16c0…060c`、产品载荷 SHA `e95fd87f…a35a`
 - 发布边界：同一隔离 `userData` 的离线复启发生在测试 package；NSIS 卸载只验证隔离安装目录与无关 APPDATA 哨兵。正式 release 的 I4 非音频专用干净机尚未执行，因此尚未达到实机验收完成或发布验收完成
 
+## 2026-09-26 本机候选复核
+
+先执行 `npm run prepackage:release`，返回码为 0；随后以 electron-builder 26.15.3、Electron 43.3.0 构建 Windows x64 release NSIS。严格 release layout verifier 返回 `pass`：603 个 ASAR 条目、5 个必需原生二进制均符合布局要求；294 个产品载荷文件的 SHA-256 为 `e4e0f26678910d75983bee8a3000b988ff24b30d8e2e0f4be70785a5da5214ac`，与已有 packaged-run qualification binding 一致。该候选 installer SHA-256 为 `23c128a6302835b8fbbb0c139443dc7815e112e9fb49469843c4ad795d051e64`，签名状态为 `not-signed`。
+
+同一 installer 的 `qualify-nsis-lifecycle.js` 返回非零且没有生成资格报告。随后直接调用该候选生成的卸载程序 `/S` 返回码为 0，但隔离安装目录、应用 EXE 与卸载程序仍存在；无关 APPDATA 哨兵仅观察到仍存在，本轮没有报告哈希验证。安装目录移除条件未满足，NSIS 生命周期资格失败，具体原因未确定。此结果不能证明完整 B5，也不能作为 I4 handoff。
+
+本机没有专用干净 Win11 快照，未执行 I4 非音频、`loopback` 或 `mic` 子报告；候选未签名，也没有 SmartScreen 或公开分发证据。当前候选仍为「实现完成·尚未验收」，不得把布局校验单项提升为联合验收或发布验收。
+
 ## 历史精确本地候选
 
 `electron-builder 26.15.3` 以 Electron `43.2.0`、sherpa wrapper/platform
@@ -138,14 +146,14 @@ installer 字节；同轮索引绑定 installer SHA
 这条旅程使用受控小资源和 fake ASR，不访问物理声卡、不保存音频，也不冒充公网真实张量、
 I2、真实两小时 I3 或 I4。
 
-## NSIS 生命周期
+## 历史候选的 NSIS 生命周期
 
-精确候选被静默安装到项目 `.artifacts` 下预先校验的隔离目录；确认正式 exe 和候选生成的
-exact uninstaller 存在后，只调用该 uninstaller。安装与卸载均 exit 0，安装目录已移除。
-探针把 `APPDATA`/`LOCALAPPDATA` 指向 `.artifacts` 内隔离 profile，并在与应用无关的固定目录
-写入哨兵；卸载后该文件仍存在且 SHA-256 未变。这只证明候选 uninstaller 没有清扫整个隔离
-APPDATA。探针没有启动正式 release 应用、没有观察 Electron 实际 `userData` 路径，因此不能
-证明真实应用数据保留、真实首启或交互安装向导；这些仍归 I4。
+以下生命周期证据仅绑定历史 installer SHA-256
+`d862c5fca0e477abc2d636573e1dd41aef564ed0c82def3bd469966db7b0de10`，详见严格报告
+[`b5-nsis-lifecycle-results.json`](b5-nsis-lifecycle-results.json)：该候选静默安装与卸载均返回
+0，隔离安装目录已移除，无关 APPDATA 哨兵哈希未变。这只证明该历史候选的 NSIS 机械流程与
+无关哨兵检查；没有启动正式 release 应用，也没有观察 Electron 实际 `userData` 路径，因此不能
+证明真实应用数据保留、真实首启或交互安装向导，也不能外推到 2026-09-26 的当前候选；这些仍归 I4。
 
 ## 不得过度声明
 
