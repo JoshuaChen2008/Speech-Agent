@@ -25,6 +25,28 @@ function codedError (code) {
   return error
 }
 
+async function awaitWithCancellation (operation, signal) {
+  if (signal?.aborted) throw codedError('AGENT_CANCELLED')
+  const pending = Promise.resolve().then(() => {
+    if (signal?.aborted) throw codedError('AGENT_CANCELLED')
+    return operation()
+  })
+  pending.catch(() => {})
+  if (!signal) return pending
+  let removeAbortListener = null
+  let rejectCancelled
+  const cancelled = new Promise((resolve, reject) => { rejectCancelled = reject })
+  const abort = () => rejectCancelled(codedError('AGENT_CANCELLED'))
+  if (signal.aborted) abort()
+  else {
+    signal.addEventListener('abort', abort, { once: true })
+    removeAbortListener = () => signal.removeEventListener('abort', abort)
+  }
+  try { return await Promise.race([pending, cancelled]) } finally {
+    try { removeAbortListener?.() } catch {}
+  }
+}
+
 function exactObject (value, keys, optional = []) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw codedError('AGENT_REQUEST_INVALID')
   const allowed = new Set([...keys, ...optional])
@@ -144,7 +166,7 @@ class FormalAgentRunRunner {
 
   async toolsForRun (recipe, binding, interactionId, attemptIdentity, signal, contextOverride = undefined, onProgress = undefined) {
     const context = contextOverride === undefined
-      ? await this.personalContext.readToolContext({ runId: attemptIdentity.runId })
+      ? await awaitWithCancellation(() => this.personalContext.readToolContext({ runId: attemptIdentity.runId }, signal), signal)
       : contextOverride
     const controlled = createControlledToolRuntime({ context, signal })
     const audited = createToolAuditRuntime({
@@ -180,7 +202,7 @@ class FormalAgentRunRunner {
     if (['not_read', 'not_used', 'empty', 'referenced', 'failed', 'unknown'].includes(event.memoryState)) {
       update.memoryState = event.memoryState
     }
-    try { await this.onProgress(Object.freeze(update)) } catch { /* snapshot observers do not change Agent execution */ }
+    try { await awaitWithCancellation(() => this.onProgress(Object.freeze(update)), job.signal) } catch { /* snapshot observers do not change Agent execution */ }
   }
 
   async flushProgress (job) {
@@ -225,18 +247,18 @@ class FormalAgentRunRunner {
       const userPrompt = this.promptProvider(job.attemptIdentity.runId)
       if (typeof userPrompt !== 'string' || userPrompt.length === 0) throw codedError('AGENT_REQUEST_INVALID')
       if (job.signal?.aborted) throw codedError('AGENT_CANCELLED')
-      const binding = await this.modelAccess.bind({
+      const binding = await awaitWithCancellation(() => this.modelAccess.bind({
         runId: job.attemptIdentity.runId,
         recipeId: recipe.recipeId,
         recipeVersion: recipe.recipeVersion,
         executionForm: 'agent_loop'
-      })
+      }), job.signal)
       const useMemory = job.recipeId !== 'summary.minutes' || job.summaryUseMemory !== false
       await this.reportProgress(job, {
         phase: 'reading_context', activity: false,
         ...(job.recipeId === 'summary.minutes' && !useMemory ? { memoryState: 'not_used' } : {})
       })
-      const input = await this.personalContext.readSessionInput(job.source)
+      const input = await awaitWithCancellation(() => this.personalContext.readSessionInput(job.source, job.signal), job.signal)
 
       const prompt = promptForInput(input, userPrompt, recipe.recipeId, recipe.recipeVersion)
       let tools
@@ -256,7 +278,7 @@ class FormalAgentRunRunner {
         }
         throw error
       }
-      const loop = await this.loopFactory(binding)
+      const loop = await awaitWithCancellation(() => this.loopFactory(binding), job.signal)
       if (!loop || typeof loop.agentLoop !== 'function') throw codedError('AGENT_INTERNAL_FAILURE')
       const result = await loop.agentLoop({
         recipeId: recipe.recipeId,

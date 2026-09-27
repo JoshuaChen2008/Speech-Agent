@@ -43,6 +43,8 @@ class StorageWorkerService {
     this.agentExecutionStore = null
     this.personalContextStore = null
     this.modelAccessStore = null
+    this.activeSessionInputReads = new Map()
+    this.activeToolContextReads = new Map()
     this.shuttingDown = false
   }
 
@@ -185,11 +187,11 @@ class StorageWorkerService {
     }
     if (operation === OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT) {
       assertExactKeys(payload, ['source'])
-      return this.requirePersonalContextStore().readSessionInput(payload.source)
+      return this.readSessionInputRequest(request.requestId, payload.source)
     }
     if (operation === OPERATIONS.PERSONAL_CONTEXT_READ_TOOL_CONTEXT) {
       assertExactKeys(payload, ['request'])
-      return this.requirePersonalContextStore().readToolContext(payload.request)
+      return this.readToolContextRequest(request.requestId, payload.request)
     }
     if (operation === OPERATIONS.PERSONAL_CONTEXT_COMMIT_SESSION_INGEST) {
       assertExactKeys(payload, ['request'])
@@ -329,13 +331,23 @@ class StorageWorkerService {
       const request = assertRequestEnvelope(message)
       requestId = request.requestId
       const result = this.execute(request)
-      return {
+      const success = (value) => ({
         version: PROTOCOL_VERSION,
         type: 'storage:response',
         requestId,
         ok: true,
-        result
+        result: value
+      })
+      if (result && typeof result.then === 'function') {
+        return Promise.resolve(result).then(success, (error) => ({
+          version: PROTOCOL_VERSION,
+          type: 'storage:response',
+          requestId,
+          ok: false,
+          error: publicError(error)
+        }))
       }
+      return success(result)
     } catch (error) {
       return {
         version: PROTOCOL_VERSION,
@@ -344,6 +356,55 @@ class StorageWorkerService {
         ok: false,
         error: publicError(error)
       }
+    }
+  }
+
+  readSessionInputRequest (requestId, source) {
+    const personalContextStore = this.requirePersonalContextStore()
+    if (typeof personalContextStore.readSessionInputPaged !== 'function') {
+      return personalContextStore.readSessionInput(source)
+    }
+    const activeRead = { cancelled: false }
+    this.activeSessionInputReads.set(requestId, activeRead)
+    return Promise.resolve()
+      .then(() => personalContextStore.readSessionInputPaged(source, {
+        isCancelled: () => activeRead.cancelled
+      }))
+      .finally(() => {
+        if (this.activeSessionInputReads.get(requestId) === activeRead) {
+          this.activeSessionInputReads.delete(requestId)
+        }
+      })
+  }
+
+  readToolContextRequest (requestId, input) {
+    const personalContextStore = this.requirePersonalContextStore()
+    const activeRead = { cancelled: false }
+    this.activeToolContextReads.set(requestId, activeRead)
+    const read = typeof personalContextStore.readToolContextPaged === 'function'
+      ? personalContextStore.readToolContextPaged(input, { isCancelled: () => activeRead.cancelled })
+      : Promise.resolve().then(() => personalContextStore.readToolContext(input))
+    return Promise.resolve(read).finally(() => {
+      if (this.activeToolContextReads.get(requestId) === activeRead) {
+        this.activeToolContextReads.delete(requestId)
+      }
+    })
+  }
+
+  cancelPersonalContextReadControl (message) {
+    try {
+      assertExactKeys(message, ['version', 'type', 'requestId'], 'INVALID_REQUEST')
+      if (message.version !== PROTOCOL_VERSION || message.type !== 'storage:cancel-personal-context-read' ||
+          typeof message.requestId !== 'string' || message.requestId.length < 1 || message.requestId.length > 128) {
+        return false
+      }
+      const activeRead = this.activeSessionInputReads.get(message.requestId) ||
+        this.activeToolContextReads.get(message.requestId)
+      if (!activeRead) return false
+      activeRead.cancelled = true
+      return true
+    } catch {
+      return false
     }
   }
 }

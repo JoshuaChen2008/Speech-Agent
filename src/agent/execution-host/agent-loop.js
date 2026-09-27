@@ -15,6 +15,49 @@ function executionError (code) {
   return error
 }
 
+async function runAdapterBounded (adapter, request, parentSignal, timeoutMs) {
+  const controller = typeof AbortController === 'function' ? new AbortController() : null
+  let timeoutHandle = null
+  let removeAbortListener = null
+  let rejectControl
+  let controlSettled = false
+  const control = new Promise((resolve, reject) => { rejectControl = reject })
+  const settleControl = (error) => {
+    if (controlSettled) return
+    controlSettled = true
+    rejectControl(error)
+  }
+  const cancel = () => {
+    try { controller?.abort() } catch {}
+    settleControl(executionError('AGENT_CANCELLED'))
+  }
+  if (parentSignal?.aborted) cancel()
+  else if (parentSignal) {
+    parentSignal.addEventListener('abort', cancel, { once: true })
+    removeAbortListener = () => parentSignal.removeEventListener('abort', cancel)
+  }
+  if (Number.isSafeInteger(timeoutMs) && timeoutMs > 0) {
+    timeoutHandle = setTimeout(() => {
+      settleControl(executionError('AGENT_PROVIDER_TIMEOUT'))
+      try { controller?.abort() } catch {}
+    }, timeoutMs)
+  }
+
+  const provider = Promise.resolve().then(() => adapter.run({
+    ...request,
+    signal: controller?.signal || parentSignal
+  }))
+  // A provider may reject after cancellation or its host deadline. Keep that
+  // late rejection handled even though its result is no longer observable.
+  provider.catch(() => {})
+  try {
+    return await Promise.race([provider, control])
+  } finally {
+    if (timeoutHandle !== null) clearTimeout(timeoutHandle)
+    try { removeAbortListener?.() } catch {}
+  }
+}
+
 function shouldStopAfterTurn ({ maxTurns, turn, toolCalls = 0, maxToolCalls = Number.MAX_SAFE_INTEGER, budgetExceeded = false } = {}) {
   return budgetExceeded === true ||
     (Number.isSafeInteger(maxToolCalls) && toolCalls >= maxToolCalls) ||
@@ -80,17 +123,21 @@ class AgentLoopExecutor {
     const budget = input.budget && typeof input.budget === 'object' ? input.budget : {}
     const adapter = await this.resolveAdapter()
     const onProgress = typeof input.onProgress === 'function' ? input.onProgress : null
+    const timeoutMs = Number.isSafeInteger(input.timeoutMs) && input.timeoutMs > 0
+      ? input.timeoutMs
+      : Number.isSafeInteger(budget.maxWallClockMs) && budget.maxWallClockMs > 0
+        ? budget.maxWallClockMs
+        : null
     let result
     try {
-      result = await adapter.run({
+      result = await runAdapterBounded(adapter, {
         resolvedModel: input.resolvedModel,
         recipe,
         systemPrompt: '',
         prompt: input.prompt,
         tools: wrappedTools,
         maxTurns: recipe.maxTurns,
-        timeoutMs: Number.isSafeInteger(input.timeoutMs) && input.timeoutMs > 0 ? input.timeoutMs : budget.maxWallClockMs,
-        signal: input.signal,
+        timeoutMs,
         onProgress: onProgress
           ? (event) => {
               if (!event || typeof event !== 'object' || Array.isArray(event) ||
@@ -106,7 +153,7 @@ class AgentLoopExecutor {
           maxToolCalls: Number.isSafeInteger(budget.maxToolCalls) ? budget.maxToolCalls : Number.MAX_SAFE_INTEGER,
           budgetExceeded
         })
-      })
+      }, input.signal, timeoutMs)
     } catch (error) {
       if (input.signal?.aborted && error?.code !== 'AGENT_CANCELLED') throw executionError('AGENT_CANCELLED')
       throw error

@@ -6,7 +6,7 @@ const { sha256Canonical } = require('../../src/runtime/storage-worker/canonical-
 
 const { IntentRouteOrchestrator } = require('../../src/agent/execution-host/intent-route-orchestrator')
 
-function harness ({ eligibility = 'ready', loopResult = { recipeId: 'summary.minutes', confidence: 0.83 }, loopError = null } = {}) {
+function harness ({ eligibility = 'ready', loopResult = { recipeId: 'summary.minutes', confidence: 0.83 }, loopError = null, routeBudget = Object.freeze({ maxWallClockMs: 45000 }), bindOperation = null, routeRunReplayed = false, interactionReadOperation = null } = {}) {
   const calls = []
   let sequence = 0
   const runs = new Map()
@@ -16,9 +16,13 @@ function harness ({ eligibility = 'ready', loopResult = { recipeId: 'summary.min
     runs: {
       create: async (request) => {
         calls.push(['run.create', request])
-        const run = { runId: request.runId, recipeId: request.recipeId, state: 'queued' }
+        const run = { runId: request.runId, recipeId: request.recipeId, state: 'queued', ...(routeRunReplayed && request.recipeId === 'intent.route' ? { replayed: true } : {}) }
         runs.set(run.runId, run)
         return run
+      },
+      getInteraction: async (request) => {
+        calls.push(['run.getInteraction', request])
+        return interactionReadOperation ? interactionReadOperation(request) : null
       },
       cancel: async (request) => {
         calls.push(['run.cancel', request])
@@ -27,7 +31,12 @@ function harness ({ eligibility = 'ready', loopResult = { recipeId: 'summary.min
         return { ...run, state: 'cancelled' }
       }
     },
-    modelAccess: { bind: async (request) => { calls.push(['bind', request]); return { runId: request.runId, modelId: 'model.test', capabilities: { usageReporting: true } } } },
+    modelAccess: { bind: async (request) => {
+      calls.push(['bind', request])
+      return bindOperation
+        ? bindOperation(request)
+        : { runId: request.runId, modelId: 'model.test', budget: routeBudget, capabilities: { usageReporting: true } }
+    } },
     interactions: {
       create: async (request) => { calls.push(['interaction.create', request]); interactions.set(request.interactionId, request); return { interactionId: request.interactionId, terminalReason: null } },
       terminalize: async (request) => { calls.push(['interaction.terminalize', request]); return { interactionId: request.interactionId, terminalReason: request.terminalReason } }
@@ -53,7 +62,8 @@ const base = {
 }
 
 test('SEM-F16/SEM-F28/J22/J24: model-first route creates independent route and target runs', async () => {
-  const { orchestrator, calls } = harness()
+  const routeBudget = Object.freeze({ maxWallClockMs: 45000 })
+  const { orchestrator, calls } = harness({ routeBudget })
   const result = await orchestrator.submit(base)
   assert.equal(result.recipeId, 'summary.minutes')
   assert.equal(result.routingMode, 'model')
@@ -63,6 +73,74 @@ test('SEM-F16/SEM-F28/J22/J24: model-first route creates independent route and t
   const target = calls.find(([name, request]) => name === 'run.create' && request.recipeId === 'summary.minutes')
   assert.notEqual(route[1].runId, target[1].runId)
   assert.equal(calls.find(([name, request]) => name === 'interaction.create' && request.runId === target[1].runId)[1].routingMode, 'model')
+  assert.strictEqual(calls.find(([name]) => name === 'loop')[1].budget, routeBudget)
+})
+
+test('SEM-F38/SEM-F29/J30-CANCEL: cancellation during a non-cooperative route binding does not start the model or create a target', async () => {
+  let markBindStarted
+  const bindStarted = new Promise((resolve) => { markBindStarted = resolve })
+  const neverSettles = new Promise(() => {})
+  const controller = new AbortController()
+  const { orchestrator, calls } = harness({
+    bindOperation: () => {
+      markBindStarted()
+      return neverSettles
+    }
+  })
+  const pending = orchestrator.submit({ ...base, signal: controller.signal })
+  await bindStarted
+  controller.abort()
+  await assert.rejects(pending, (error) => error.code === 'AGENT_CANCELLED')
+  assert.equal(calls.filter(([name]) => name === 'loop').length, 0)
+  assert.deepEqual(calls.filter(([name]) => name === 'run.create').map(([, request]) => request.recipeId), ['intent.route'])
+  assert.equal(calls.some(([name]) => name === 'run.cancel'), true)
+})
+
+test('SEM-F38/SEM-F29/J30-CANCEL: cancellation during fixed-target binding also stops the created run', async () => {
+  let markBindStarted
+  const bindStarted = new Promise((resolve) => { markBindStarted = resolve })
+  const neverSettles = new Promise(() => {})
+  const controller = new AbortController()
+  const { orchestrator, calls } = harness({
+    bindOperation: () => {
+      markBindStarted()
+      return neverSettles
+    }
+  })
+  const pending = orchestrator.submitFixedTarget({
+    ...base,
+    requestId: 'request.fixed.cancel',
+    requestGeneration: 1,
+    summaryUseMemory: false,
+    signal: controller.signal
+  })
+  await bindStarted
+  controller.abort()
+  await assert.rejects(pending, (error) => error.code === 'AGENT_CANCELLED')
+  assert.deepEqual(calls.filter(([name]) => name === 'run.create').map(([, request]) => request.recipeId), ['summary.minutes'])
+  assert.equal(calls.some(([name]) => name === 'run.cancel'), true)
+  assert.equal(calls.filter(([name]) => name === 'interaction.create').length, 0)
+})
+
+test('SEM-F38/SEM-F29/J30-CANCEL: cancellation releases a replay while its existing interaction read is pending', async () => {
+  let markReadStarted
+  const readStarted = new Promise((resolve) => { markReadStarted = resolve })
+  const neverSettles = new Promise(() => {})
+  const controller = new AbortController()
+  const { orchestrator, calls } = harness({
+    routeRunReplayed: true,
+    interactionReadOperation: () => {
+      markReadStarted()
+      return neverSettles
+    }
+  })
+  const pending = orchestrator.submit({ ...base, signal: controller.signal })
+  await readStarted
+  controller.abort()
+  await assert.rejects(pending, (error) => error.code === 'AGENT_CANCELLED')
+  assert.equal(calls.filter(([name]) => name === 'run.create').length, 1)
+  assert.equal(calls.filter(([name]) => name === 'run.cancel').length, 1)
+  assert.equal(calls.filter(([name]) => name === 'loop').length, 0)
 })
 
 test('SEM-F38/J30-ACCEPT: fixed summary preset creates its linked target without model intent routing', async () => {

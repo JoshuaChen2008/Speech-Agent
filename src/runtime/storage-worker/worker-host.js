@@ -25,6 +25,10 @@ const {
 
 const WORKER_PATH = path.join(__dirname, 'storage-worker.js')
 const SERVICE_NAME = 'Speech Agent subtitle storage'
+const CANCELLABLE_PERSONAL_CONTEXT_READS = new Set([
+  OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT,
+  OPERATIONS.PERSONAL_CONTEXT_READ_TOOL_CONTEXT
+])
 
 class StorageTransportError extends Error {
   constructor (code, message, options = {}) {
@@ -249,19 +253,21 @@ class StorageWorkerHost {
     }
   }
 
-  enqueue (operation, payload, idempotencyKey) {
+  enqueue (operation, payload, idempotencyKey, options = {}) {
     if (this.closing) return Promise.reject(this.stateError('HOST_SHUTTING_DOWN'))
+    if (options.signal?.aborted) return Promise.reject(new StorageError('AGENT_CANCELLED'))
     const readiness = this.state === 'starting' ? this.startPromise : null
     const task = this.tail.then(async () => {
       if (readiness) await readiness
       if (!this.child || this.state !== 'ready') throw this.stateError()
-      return this.perform(operation, payload, idempotencyKey)
+      if (options.signal?.aborted) throw new StorageError('AGENT_CANCELLED')
+      return this.perform(operation, payload, idempotencyKey, options)
     })
     this.tail = task.catch(() => {})
     return task
   }
 
-  perform (operation, payload, idempotencyKey) {
+  perform (operation, payload, idempotencyKey, options = {}) {
     const child = this.child
     const allowed = child && (
       this.state === 'ready' ||
@@ -269,12 +275,16 @@ class StorageWorkerHost {
       (this.state === 'stopping' && operation === OPERATIONS.SHUTDOWN)
     )
     if (!allowed) return Promise.reject(this.stateError())
+    if (options.signal?.aborted) return Promise.reject(new StorageError('AGENT_CANCELLED'))
 
     const requestId = `storage-${this.generation}-${++this.counter}`
     return new Promise((resolve, reject) => {
       let settled = false
+      let cancellationSent = false
+      let requestSent = false
       const cleanup = () => {
         clearTimeout(timer)
+        options.signal?.removeEventListener('abort', onAbort)
         child.removeListener('message', onMessage)
         child.removeListener('exit', onExit)
       }
@@ -303,7 +313,9 @@ class StorageWorkerHost {
         }
         settled = true
         cleanup()
-        if (response.ok) resolve(response.result)
+        if (options.signal?.aborted && CANCELLABLE_PERSONAL_CONTEXT_READS.has(operation)) {
+          reject(new StorageError('AGENT_CANCELLED'))
+        } else if (response.ok) resolve(response.result)
         else reject(response.error)
       }
       const onExit = (code) => {
@@ -313,8 +325,39 @@ class StorageWorkerHost {
           { outcome: 'unknown' }
         ))
       }
+      const onAbort = () => {
+        if (settled || !CANCELLABLE_PERSONAL_CONTEXT_READS.has(operation)) return
+        if (!requestSent) {
+          settled = true
+          cleanup()
+          reject(new StorageError('AGENT_CANCELLED'))
+          return
+        }
+        if (cancellationSent) return
+        cancellationSent = true
+        try {
+          child.postMessage({
+            version: PROTOCOL_VERSION,
+            type: 'storage:cancel-personal-context-read',
+            requestId
+          })
+        } catch (cause) {
+          failTransport(new StorageTransportError(
+            'POST_MESSAGE_FAILED',
+            'Storage worker cancellation could not be sent.',
+            { outcome: 'unknown', cause }
+          ))
+        }
+      }
       child.on('message', onMessage)
       child.once('exit', onExit)
+      if (options.signal) {
+        options.signal.addEventListener('abort', onAbort, { once: true })
+        if (options.signal.aborted) {
+          onAbort()
+          return
+        }
+      }
       const request = {
         version: PROTOCOL_VERSION,
         type: 'storage:request',
@@ -324,6 +367,7 @@ class StorageWorkerHost {
       }
       if (idempotencyKey !== undefined) request.idempotencyKey = idempotencyKey
       try {
+        requestSent = true
         child.postMessage(request)
       } catch (cause) {
         failTransport(new StorageTransportError(
@@ -431,12 +475,12 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_DERIVE_SESSION_SOURCE, { request })
   }
 
-  readPersonalContextSessionInput (source) {
-    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT, { source })
+  readPersonalContextSessionInput (source, signal) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT, { source }, undefined, { signal })
   }
 
-  readPersonalContextToolContext (request) {
-    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_READ_TOOL_CONTEXT, { request })
+  readPersonalContextToolContext (request, signal) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_READ_TOOL_CONTEXT, { request }, undefined, { signal })
   }
 
   commitPersonalContextSessionIngest (request) {

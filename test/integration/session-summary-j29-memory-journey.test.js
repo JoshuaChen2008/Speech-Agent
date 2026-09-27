@@ -40,6 +40,12 @@ function serviceBackedHost (service, databasePath) {
       payload,
       ...(idempotencyKey ? { idempotencyKey } : {})
     })
+    if (response && typeof response.then === 'function') {
+      return response.then((resolved) => {
+        if (!resolved.ok) throw new StorageError(resolved.error.code)
+        return resolved.result
+      })
+    }
     if (!response.ok) throw new StorageError(response.error.code)
     return response.result
   }

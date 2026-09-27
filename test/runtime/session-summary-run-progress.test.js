@@ -80,7 +80,7 @@ function progressService (initialRow, clock, { cancelState = 'cancelled' } = {})
     monotonicNow: () => clock.value,
     onChanged: (event) => changed.push(event)
   })
-  return { service, updates, cancellations, changed, getRow: () => ({ ...row }) }
+  return { service, storage, updates, cancellations, changed, getRow: () => ({ ...row }) }
 }
 
 test('SEM-F38/J30-PROGRESS: snapshots advance elapsed time without inventing activity or revisions', async () => {
@@ -155,6 +155,36 @@ test('SEM-F38/J30-PROGRESS: cancellation freezes the current elapsed time in the
   assert.equal(cancellations[0].elapsedMs, 1250)
   assert.equal(cancelled.result.snapshot.state, 'cancelled')
   assert.equal(cancelled.result.snapshot.elapsed_ms, 1250)
+})
+
+test('SEM-F38/J30-CANCEL: scheduler abort precedes the persistent cancellation transaction', async () => {
+  let releaseCancellation
+  const cancellationGate = new Promise((resolve) => { releaseCancellation = resolve })
+  const order = []
+  const clock = { value: 0 }
+  const { service, storage } = progressService(snapshotRow({ targetRunId: 'run.current' }), clock)
+  const persistCancel = storage.cancelSessionSummaryRequest.bind(storage)
+  storage.cancelSessionSummaryRequest = async (input) => {
+    order.push('storage.cancel.begin')
+    await cancellationGate
+    return persistCancel(input)
+  }
+  service.scheduler = {
+    cancel (runId) { order.push(`scheduler.cancel:${runId}`) }
+  }
+  service.runRequests.set('run.current', { requestId: 'request.progress.one', generation: 1 })
+  service.runRequests.set('run.old-generation', { requestId: 'request.progress.one', generation: 0 })
+  service.runRequests.set('run.other-request', { requestId: 'request.other', generation: 1 })
+
+  const pending = service.cancel({
+    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+    request_id: 'request.progress.one', generation: 1
+  })
+  assert.deepEqual(order, ['scheduler.cancel:run.current', 'storage.cancel.begin'])
+  releaseCancellation()
+  const response = await pending
+  assert.equal(response.ok, true)
+  assert.equal(response.result.snapshot.state, 'cancelled')
 })
 
 test('SEM-F38/J30-PROGRESS: cancelling snapshots freeze elapsed and repeated cancellation replays the first value', async () => {

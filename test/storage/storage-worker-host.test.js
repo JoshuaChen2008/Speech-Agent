@@ -264,6 +264,54 @@ test('SEM-F28 formal Agent host methods preserve exact operation and payload ide
   }
 })
 
+test('SEM-F38/J30-CANCEL session input cancellation bypasses the storage request queue', async () => {
+  const { child, host } = await startReady()
+  const controller = new AbortController()
+  try {
+    const pending = host.readPersonalContextSessionInput({ sourceKind: 'session' }, controller.signal)
+    await nextTurn()
+    const request = requestFor(child, OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT)
+    assert.ok(request, 'the paginated session input read was sent')
+
+    controller.abort()
+    assert.deepEqual(child.messages.at(-1), {
+      version: PROTOCOL_VERSION,
+      type: 'storage:cancel-personal-context-read',
+      requestId: request.requestId
+    })
+    child.emit('message', errorResponse(request, 'AGENT_CANCELLED'))
+    await assert.rejects(pending, (error) => error instanceof StorageError && error.code === 'AGENT_CANCELLED')
+    assert.equal(host.state, 'ready', 'cancelling a read must not retire the storage worker')
+    assert.equal(child.killCount, 0)
+  } finally {
+    await terminateQuietly(host)
+  }
+})
+
+test('SEM-F38/J30-CANCEL personal context tool read cancellation bypasses the storage request queue', async () => {
+  const { child, host } = await startReady()
+  const controller = new AbortController()
+  try {
+    const pending = host.readPersonalContextToolContext({ runId: 'run.context-cancel' }, controller.signal)
+    await nextTurn()
+    const request = requestFor(child, OPERATIONS.PERSONAL_CONTEXT_READ_TOOL_CONTEXT)
+    assert.ok(request, 'the personal context tool read was sent')
+
+    controller.abort()
+    assert.deepEqual(child.messages.at(-1), {
+      version: PROTOCOL_VERSION,
+      type: 'storage:cancel-personal-context-read',
+      requestId: request.requestId
+    })
+    child.emit('message', errorResponse(request, 'AGENT_CANCELLED'))
+    await assert.rejects(pending, (error) => error instanceof StorageError && error.code === 'AGENT_CANCELLED')
+    assert.equal(host.state, 'ready', 'cancelling a read must not retire the storage worker')
+    assert.equal(child.killCount, 0)
+  } finally {
+    await terminateQuietly(host)
+  }
+})
+
 test('SEM-F28/SEM-F30/J21 formal Agent next-wake host request has an exact empty payload', async () => {
   const { child, host } = await startReady()
   try {

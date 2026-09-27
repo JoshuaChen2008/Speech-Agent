@@ -17,6 +17,12 @@ function hostFactory (service, databasePath) {
   let sequence = 0
   const call = (operation, payload, idempotencyKey) => {
     const response = service.handle({ version: PROTOCOL_VERSION, type: 'storage:request', requestId: `s3.${++sequence}`, operation, payload, ...(idempotencyKey ? { idempotencyKey } : {}) })
+    if (response && typeof response.then === 'function') {
+      return response.then((resolved) => {
+        if (!resolved.ok) throw new StorageError(resolved.error.code)
+        return resolved.result
+      })
+    }
     if (!response.ok) throw new StorageError(response.error.code)
     return response.result
   }

@@ -42,6 +42,39 @@ function failureCode (error) {
   return TASK_ERRORS.has(error?.code) ? error.code : 'AGENT_INTERNAL_FAILURE'
 }
 
+function cancelledError () {
+  const error = new Error('AGENT_CANCELLED')
+  error.code = 'AGENT_CANCELLED'
+  return error
+}
+
+async function awaitWithCancellation (operation, signal) {
+  if (signal?.aborted) throw cancelledError()
+  const pending = Promise.resolve().then(() => {
+    if (signal?.aborted) throw cancelledError()
+    return operation()
+  })
+  pending.catch(() => {})
+  if (!signal) return pending
+  let removeAbortListener = null
+  let rejectCancelled
+  const cancelled = new Promise((resolve, reject) => { rejectCancelled = reject })
+  const abort = () => rejectCancelled(cancelledError())
+  if (signal.aborted) abort()
+  else {
+    signal.addEventListener('abort', abort, { once: true })
+    removeAbortListener = () => signal.removeEventListener('abort', abort)
+  }
+  try { return await Promise.race([pending, cancelled]) } finally {
+    try { removeAbortListener?.() } catch {}
+  }
+}
+
+function cancelRunInBackground (runs, runId) {
+  if (typeof runId !== 'string' || runId.length === 0) return
+  try { Promise.resolve(runs.cancel({ runId })).catch(() => {}) } catch {}
+}
+
 function idValue (value, fallback) {
   if (typeof value === 'string' && value.length > 0 && value.length <= 160 && !/[\u0000-\u001f\u007f]/u.test(value)) return value
   return fallback
@@ -140,7 +173,8 @@ class IntentRouteOrchestrator {
   }
 
   async submitOnce (input, routeInput, permittedTargetRecipes = null) {
-    const eligibility = await this.eligibility(routeInput)
+    const eligibility = await awaitWithCancellation(() => this.eligibility(routeInput), input.signal)
+    if (input.signal?.aborted) throw cancelledError()
     if (eligibility !== 'ready') {
       return this.createTarget(input, deterministicRoute(routeInput).recipeId, 'rules', eligibility, permittedTargetRecipes)
     }
@@ -148,6 +182,7 @@ class IntentRouteOrchestrator {
   }
 
   async runRoute (input, permittedTargetRecipes = null) {
+    if (input.signal?.aborted) throw cancelledError()
     const promptDigest = sha256Canonical(input.prompt)
     const routeRunId = this.nextId('run.route', input.clientIdempotencyKey)
     const routeInteractionId = this.nextId('interaction.route', input.clientIdempotencyKey)
@@ -161,10 +196,14 @@ class IntentRouteOrchestrator {
       routeRunRequest.requestGeneration = input.requestGeneration
     }
     const routeRun = await this.runs.create(routeRunRequest)
+    if (input.signal?.aborted) {
+      cancelRunInBackground(this.runs, routeRun.runId)
+      throw cancelledError()
+    }
     let interactionCreated = false
     try {
       if (routeRun.replayed && typeof this.runs.getInteraction === 'function') {
-        const existing = await this.runs.getInteraction({ interactionId: routeInteractionId })
+        const existing = await awaitWithCancellation(() => this.runs.getInteraction({ interactionId: routeInteractionId }), input.signal)
         const interaction = existing?.interaction || existing
         const previousPromptDigest = interaction?.promptDigest ?? interaction?.prompt_digest
         if (previousPromptDigest !== undefined && previousPromptDigest !== promptDigest) {
@@ -197,7 +236,8 @@ class IntentRouteOrchestrator {
         }
       }
       if (routeRun.replayed) {
-        const cancelled = await this.runs.cancel({ runId: routeRun.runId }).catch(() => null)
+        const cancelled = await awaitWithCancellation(() => this.runs.cancel({ runId: routeRun.runId }), input.signal).catch(() => null)
+        if (input.signal?.aborted) throw cancelledError()
         if (!cancelled || !['cancelled', 'failed'].includes(cancelled.state)) {
           const blocked = new Error('route recovery could not be cancelled')
           blocked.code = 'AGENT_RECOVERY_BLOCKED'
@@ -205,19 +245,23 @@ class IntentRouteOrchestrator {
         }
         return this.createTarget(input, deterministicRoute({ scope: input.scope, prompt: input.prompt }).recipeId, 'rules', 'ready', permittedTargetRecipes)
       }
-      const binding = await this.modelAccess.bind({ runId: routeRun.runId, recipeId: 'intent.route', recipeVersion: '1', executionForm: 'agent_loop' })
-      await this.interactions.create({ runId: routeRun.runId, interactionId: routeInteractionId, routingMode: 'model', promptDigest })
+      const binding = await awaitWithCancellation(() => this.modelAccess.bind({ runId: routeRun.runId, recipeId: 'intent.route', recipeVersion: '1', executionForm: 'agent_loop' }), input.signal)
+      if (input.signal?.aborted) throw cancelledError()
+      await awaitWithCancellation(() => this.interactions.create({ runId: routeRun.runId, interactionId: routeInteractionId, routingMode: 'model', promptDigest }), input.signal)
       interactionCreated = true
-      const resolvedModel = await this.resolveModel(binding)
-      const loop = this.loopFactory ? await this.loopFactory(binding) : this.loop
+      if (input.signal?.aborted) throw cancelledError()
+      const resolvedModel = await awaitWithCancellation(() => this.resolveModel(binding), input.signal)
+      const loop = this.loopFactory ? await awaitWithCancellation(() => this.loopFactory(binding), input.signal) : this.loop
       if (!loop || typeof loop.agentLoop !== 'function') throw invalid('route loop is unavailable')
-      const result = await loop.agentLoop({
+      const result = await awaitWithCancellation(() => loop.agentLoop({
         recipeId: 'intent.route', recipeVersion: '1', prompt: input.prompt,
-        resolvedModel, signal: input.signal, usageReporting: binding?.capabilities?.usageReporting !== false,
+        resolvedModel, signal: input.signal, budget: binding?.budget,
+        usageReporting: binding?.capabilities?.usageReporting !== false,
         onProgress: typeof input.onProgress === 'function'
           ? (event) => input.onProgress(Object.freeze({ type: event.type, runId: routeRun.runId }))
           : undefined
-      })
+      }), input.signal)
+      if (input.signal?.aborted) throw cancelledError()
       const output = outputValue(result)
       let targetRecipe = null
       try {
@@ -240,7 +284,7 @@ class IntentRouteOrchestrator {
       return this.createTarget(input, targetRecipe, 'model', 'ready', permittedTargetRecipes)
     } catch (error) {
       if (error?.code === 'AGENT_RECOVERY_BLOCKED') throw error
-      const code = failureCode(error)
+      const code = input.signal?.aborted ? 'AGENT_CANCELLED' : failureCode(error)
       if (interactionCreated) {
         await this.interactions.terminalize({
           interactionId: routeInteractionId,
@@ -250,7 +294,7 @@ class IntentRouteOrchestrator {
         }).catch(() => {})
       }
       if (code === 'AGENT_CANCELLED') {
-        await this.runs.cancel({ runId: routeRun.runId }).catch(() => {})
+        cancelRunInBackground(this.runs, routeRun.runId)
         const cancelled = new Error('AGENT_CANCELLED')
         cancelled.code = 'AGENT_CANCELLED'
         throw cancelled
@@ -286,6 +330,7 @@ class IntentRouteOrchestrator {
   }
 
   async createTarget (input, recipeId, routingMode, eligibility = 'ready', permittedTargetRecipes = null) {
+    if (input.signal?.aborted) throw cancelledError()
     assertTargetRecipe(recipeId)
     if (eligibility !== 'ready') return { runId: null, interactionId: null, recipeId, routingMode, eligibility }
     const targetSet = permittedTargetRecipes || this.allowedTargetRecipes
@@ -310,25 +355,33 @@ class IntentRouteOrchestrator {
       runRequest.summaryUseMemory = input.summaryUseMemory
     }
     const run = await this.runs.create(runRequest)
-    if (run.replayed && typeof this.runs.getInteraction === 'function') {
-      const existing = await this.runs.getInteraction({ interactionId })
-      const interaction = existing?.interaction || existing
-      const previousPromptDigest = interaction?.promptDigest ?? interaction?.prompt_digest
-      if (previousPromptDigest !== undefined && previousPromptDigest !== sha256Canonical(input.prompt)) {
-        throw invalid('client idempotency key was reused with a different prompt')
+    try {
+      if (input.signal?.aborted) throw cancelledError()
+      if (run.replayed && typeof this.runs.getInteraction === 'function') {
+        const existing = await awaitWithCancellation(() => this.runs.getInteraction({ interactionId }), input.signal)
+        const interaction = existing?.interaction || existing
+        const previousPromptDigest = interaction?.promptDigest ?? interaction?.prompt_digest
+        if (previousPromptDigest !== undefined && previousPromptDigest !== sha256Canonical(input.prompt)) {
+          throw invalid('client idempotency key was reused with a different prompt')
+        }
       }
-    }
-    const binding = await this.modelAccess.bind({ runId: run.runId, recipeId, recipeVersion: '1', executionForm: 'agent_loop' })
-    await this.interactions.create({ runId: run.runId, interactionId, routingMode, promptDigest: sha256Canonical(input.prompt) })
-    return {
-      runId: run.runId,
-      interactionId,
-      recipeId,
-      routingMode,
-      eligibility: 'ready',
-      state: run.state,
-      replayed: run.replayed === true,
-      binding
+      const binding = await awaitWithCancellation(() => this.modelAccess.bind({ runId: run.runId, recipeId, recipeVersion: '1', executionForm: 'agent_loop' }), input.signal)
+      if (input.signal?.aborted) throw cancelledError()
+      await awaitWithCancellation(() => this.interactions.create({ runId: run.runId, interactionId, routingMode, promptDigest: sha256Canonical(input.prompt) }), input.signal)
+      if (input.signal?.aborted) throw cancelledError()
+      return {
+        runId: run.runId,
+        interactionId,
+        recipeId,
+        routingMode,
+        eligibility: 'ready',
+        state: run.state,
+        replayed: run.replayed === true,
+        binding
+      }
+    } catch (error) {
+      if (input.signal?.aborted || error?.code === 'AGENT_CANCELLED') cancelRunInBackground(this.runs, run.runId)
+      throw error
     }
   }
 

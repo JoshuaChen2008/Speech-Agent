@@ -205,8 +205,15 @@ class StorageGateway {
     for (const item of this.queue) {
       if (item.reported) continue
       item.reported = true
+      this.cleanupItem(item)
       item.reject(error)
     }
+  }
+
+  cleanupItem (item) {
+    if (!item?.signal || !item.abortListener) return
+    item.signal.removeEventListener('abort', item.abortListener)
+    item.abortListener = null
   }
 
   tripCircuit (error) {
@@ -249,8 +256,9 @@ class StorageGateway {
     throw this.fault
   }
 
-  enqueue (operation, value) {
+  enqueue (operation, value, options = {}) {
     if (!this.accepting || this.stopped) return Promise.reject(new StorageError('SHUTTING_DOWN'))
+    if (options.signal?.aborted) return Promise.reject(new StorageError('AGENT_CANCELLED'))
     const durableWrite = DURABLE_WRITE_OPERATIONS.has(operation)
     /* maxQueue 是开始 fail-closed 的高水位，不是丢字幕边界。字幕写命令可以
        占用一个受保护溢出槽，closeSession 另有一个终态槽；该调用同步报错，
@@ -280,6 +288,9 @@ class StorageGateway {
       sequence: ++this.nextSequence,
       operation,
       payload,
+      signal: options.signal || null,
+      abortListener: null,
+      started: false,
       promise,
       resolve: resolveItem,
       reject: rejectItem,
@@ -287,6 +298,18 @@ class StorageGateway {
       needsRecovery: false,
       lastError: null,
       reported: false
+    }
+    if (item.signal) {
+      item.abortListener = () => {
+        if (item.started) return
+        const index = this.queue.indexOf(item)
+        if (index < 0) return
+        this.queue.splice(index, 1)
+        this.cleanupItem(item)
+        if (!item.reported) item.reject(new StorageError('AGENT_CANCELLED'))
+      }
+      item.signal.addEventListener('abort', item.abortListener, { once: true })
+      if (item.signal.aborted) item.abortListener()
     }
     this.queue.push(item)
     const capacityTripped = durableWrite && this.queue.length > this.maxQueue
@@ -405,12 +428,12 @@ class StorageGateway {
     return this.enqueue('derivePersonalContextSessionSource', request)
   }
 
-  readPersonalContextSessionInput (source) {
-    return this.enqueue('readPersonalContextSessionInput', source)
+  readPersonalContextSessionInput (source, signal) {
+    return this.enqueue('readPersonalContextSessionInput', source, { signal })
   }
 
-  readPersonalContextToolContext (request) {
-    return this.enqueue('readPersonalContextToolContext', request)
+  readPersonalContextToolContext (request, signal) {
+    return this.enqueue('readPersonalContextToolContext', request, { signal })
   }
 
   commitPersonalContextSessionIngest (request) {
@@ -546,8 +569,8 @@ class StorageGateway {
       case 'applyPersonalContextAutomaticPolicy': return host.applyPersonalContextAutomaticPolicy(item.payload)
       case 'cancelPersonalContextSessionIngest': return host.cancelPersonalContextSessionIngest(item.payload)
       case 'derivePersonalContextSessionSource': return host.derivePersonalContextSessionSource(item.payload)
-      case 'readPersonalContextSessionInput': return host.readPersonalContextSessionInput(item.payload)
-      case 'readPersonalContextToolContext': return host.readPersonalContextToolContext(item.payload)
+      case 'readPersonalContextSessionInput': return host.readPersonalContextSessionInput(item.payload, item.signal)
+      case 'readPersonalContextToolContext': return host.readPersonalContextToolContext(item.payload, item.signal)
       case 'commitPersonalContextSessionIngest': return host.commitPersonalContextSessionIngest(item.payload)
       case 'preparePersonalContextInteractionIngest': return host.preparePersonalContextInteractionIngest(item.payload)
       case 'readPersonalContextInteractionInput': return host.readPersonalContextInteractionInput(item.payload.source, item.payload.ephemeral)
@@ -619,17 +642,27 @@ class StorageGateway {
 
       try {
         await this.ensureHost()
+        if (this.stopped || this.queue[0] !== item) return
+        if (item.signal?.aborted) {
+          this.queue.shift()
+          this.cleanupItem(item)
+          if (!item.reported) item.reject(new StorageError('AGENT_CANCELLED'))
+          continue
+        }
+        item.started = true
         const activeHost = this.host
         const result = await this.invoke(activeHost, item)
         if (this.stopped || this.queue[0] !== item) return
         const clonedResult = cloneForQueue(result)
         this.queue.shift()
+        this.cleanupItem(item)
         if (!item.reported) item.resolve(clonedResult)
       } catch (error) {
         if (this.stopped || this.queue[0] !== item) return
         if (!isTransportFailure(error)) {
           if (READ_ONLY_OPERATIONS.has(item.operation) || ISOLATED_AGENT_OPERATIONS.has(item.operation)) {
             this.queue.shift()
+            this.cleanupItem(item)
             if (!item.reported) item.reject(error)
             /* 查询的确定性业务拒绝只属于该查询 promise。flush 是持久化
                FIFO 的排空屏障；只读失败既没有未知写入结果，也不能把并发
@@ -733,7 +766,10 @@ class StorageGateway {
     }
     this.hostInvalid = false
     const pending = this.queue.splice(0)
-    for (const item of pending) item.reject(error)
+    for (const item of pending) {
+      this.cleanupItem(item)
+      item.reject(error)
+    }
     this.rejectFlushWaiters(terminationError || error)
     if (terminationError) throw terminationError
   }

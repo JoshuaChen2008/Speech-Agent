@@ -15,8 +15,12 @@ function post (message) {
 }
 
 process.parentPort.on('message', (event) => {
-  commandQueue = commandQueue.then(() => {
-    const response = service.handle(event.data)
+  if (event?.data?.type === 'storage:cancel-personal-context-read') {
+    service.cancelPersonalContextReadControl(event.data)
+    return
+  }
+  commandQueue = commandQueue.then(async () => {
+    const response = await service.handle(event.data)
     post(response)
     if (service.shuttingDown) setImmediate(() => process.exit(0))
   }).catch(() => {

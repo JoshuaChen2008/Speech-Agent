@@ -152,6 +152,13 @@ test('SEM-F28/SEM-F33/J22: terminal success/cancel are atomic, usage is nullable
     interactionId: 'interaction.success', terminalReason: 'failed', errorCode: 'AGENT_INTERNAL_FAILURE',
     result: null, usage: null, durationMs: 26
   }), (error) => error.code === 'AGENT_INTERACTION_STATE_CONFLICT')
+  const cancelRequested = store.cancelRun({ runId: 'run.cancel' })
+  assert.equal(cancelRequested.state, 'running')
+  assert.equal(cancelRequested.cancelRequested, true)
+  assert.throws(() => store.terminalizeInteraction({
+    interactionId: 'interaction.cancel', terminalReason: 'succeeded', errorCode: null,
+    result: qaResult(), usage: null, durationMs: 1
+  }), (error) => error.code === 'AGENT_INTERACTION_STATE_CONFLICT')
   const cancelled = store.terminalizeInteraction({
     interactionId: 'interaction.cancel', terminalReason: 'cancelled', errorCode: null,
     result: null, usage: null, durationMs: 0

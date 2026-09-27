@@ -279,19 +279,33 @@ class OpenAiCompatibleAdapter {
       let removeAbortListener = null
       let requestHeaders = null
       let responseReceived = false
+      let rejectRequestControl
+      let requestControlSettled = false
+      const requestControl = new Promise((resolve, reject) => { rejectRequestControl = reject })
+      const settleRequestControl = (error) => {
+        if (requestControlSettled) return
+        requestControlSettled = true
+        rejectRequestControl(error)
+      }
       const requestSignal = (() => {
-        if (typeof AbortController !== 'function') return signal
-        controller = new AbortController()
-        const abort = () => controller.abort()
+        if (typeof AbortController === 'function') controller = new AbortController()
+        const abort = () => {
+          try { controller?.abort() } catch {}
+          settleRequestControl(codedError('AGENT_CANCELLED', false))
+        }
         if (signal) {
-          if (signal.aborted) controller.abort()
+          if (signal.aborted) abort()
           else {
             signal.addEventListener('abort', abort, { once: true })
             removeAbortListener = () => signal.removeEventListener('abort', abort)
           }
         }
-        timeoutHandle = setTimeout(() => { timedOut = true; controller.abort() }, remaining)
-        return controller.signal
+        timeoutHandle = setTimeout(() => {
+          timedOut = true
+          try { controller?.abort() } catch {}
+          settleRequestControl(codedError('AGENT_PROVIDER_TIMEOUT', true))
+        }, remaining)
+        return controller?.signal || signal
       })()
       try {
         requestHeaders = {
@@ -313,13 +327,19 @@ class OpenAiCompatibleAdapter {
         } finally {
           notifyProgress(onProgress, { type: 'request_started', turn: requestTurn })
         }
-        const response = await responsePromise
-        responseReceived = true
-        notifyProgress(onProgress, { type: 'response_received', turn: requestTurn })
-        const status = responseStatus(response)
-        if (status >= 300 && status < 400) throw codedError(testMode ? 'REDIRECT_REJECTED' : 'AGENT_PROVIDER_UNAVAILABLE', true)
-        if (!responseOk(response)) throw providerResponseError(status)
-        const payload = await boundedJson(response, testMode ? MAX_TEST_RESPONSE_BYTES : MAX_COMPLETION_RESPONSE_BYTES, 'AGENT_OUTPUT_INVALID')
+        const responseProcessing = Promise.resolve(responsePromise).then(async (response) => {
+          responseReceived = true
+          notifyProgress(onProgress, { type: 'response_received', turn: requestTurn })
+          const status = responseStatus(response)
+          if (status >= 300 && status < 400) throw codedError(testMode ? 'REDIRECT_REJECTED' : 'AGENT_PROVIDER_UNAVAILABLE', true)
+          if (!responseOk(response)) throw providerResponseError(status)
+          const payload = await boundedJson(response, testMode ? MAX_TEST_RESPONSE_BYTES : MAX_COMPLETION_RESPONSE_BYTES, 'AGENT_OUTPUT_INVALID')
+          return { response, payload }
+        })
+        // A fetch or response body may ignore AbortSignal. The host deadline
+        // still releases this run, while this handler consumes a late reject.
+        responseProcessing.catch(() => {})
+        const { response, payload } = await Promise.race([responseProcessing, requestControl])
         // The request deadline bounds fetch and response decoding. Tool calls
         // use their own bounded race against the same overall deadline.
         clearTimeout(timeoutHandle)

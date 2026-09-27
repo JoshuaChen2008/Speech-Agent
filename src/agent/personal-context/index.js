@@ -37,11 +37,11 @@ function createPersonalContextExecutionAdapter (options = {}) {
     resolve: typeof storage.personalContextResolve === 'function'
       ? (request) => storage.personalContextResolve(request)
       : undefined,
-    readSessionInput: (source) => storage.readPersonalContextSessionInput(source),
+    readSessionInput: (source, signal) => storage.readPersonalContextSessionInput(source, signal),
     readInteractionInput: typeof storage.readPersonalContextInteractionInput === 'function'
       ? (source, ephemeral) => storage.readPersonalContextInteractionInput(source, ephemeral)
       : undefined,
-    readToolContext: (request) => storage.readPersonalContextToolContext(request),
+    readToolContext: (request, signal) => storage.readPersonalContextToolContext(request, signal),
     commitSessionIngest: (request) => storage.commitPersonalContextSessionIngest(request),
     commitInteractionIngest: typeof storage.commitPersonalContextInteractionIngest === 'function'
       ? (request) => storage.commitPersonalContextInteractionIngest(request)

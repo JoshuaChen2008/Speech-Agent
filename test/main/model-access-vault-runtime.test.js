@@ -244,6 +244,20 @@ test('SEM-F33/J25: production loop adapter maps redirects, provider failures, ma
   const cancelled = new OpenAiCompatibleAdapter({ fetch: async () => { throw new Error('must not fetch') } })
   await assert.rejects(cancelled.run({ ...request, signal: controller.signal }), (error) => error.code === 'AGENT_CANCELLED')
 
+  const neverSettles = new OpenAiCompatibleAdapter({ fetch: async () => new Promise(() => {}) })
+  await assert.rejects(neverSettles.run({ ...request, timeoutMs: 20 }), (error) => error.code === 'AGENT_PROVIDER_TIMEOUT')
+
+  const lateController = new AbortController()
+  let rejectLateFetch
+  const lateReject = new OpenAiCompatibleAdapter({
+    fetch: async () => new Promise((resolve, reject) => { rejectLateFetch = reject })
+  })
+  const latePending = lateReject.run({ ...request, signal: lateController.signal, timeoutMs: 1000 })
+  lateController.abort()
+  await assert.rejects(latePending, (error) => error.code === 'AGENT_CANCELLED')
+  rejectLateFetch(new Error('late fetch rejection'))
+  await new Promise((resolve) => setImmediate(resolve))
+
   const failedProgress = []
   const unavailable = new OpenAiCompatibleAdapter({ fetch: async () => { throw new Error('offline') } })
   await assert.rejects(unavailable.run({ ...request, onProgress: (event) => failedProgress.push(event) }),

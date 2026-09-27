@@ -1,5 +1,6 @@
 'use strict'
 
+const crypto = require('node:crypto')
 const { canonicalize, sha256Canonical } = require('./canonical-json')
 const { rollbackQuietly } = require('./sqlite-store')
 const { StorageError, assertExactKeys, isPlainObject } = require('./protocol')
@@ -19,6 +20,58 @@ const MEMORY_KINDS = new Set([
 const SCOPE_KINDS = new Set(['global', 'session', 'topic', 'project'])
 const INTERACTION_SIGNAL_KINDS = new Set(['prompt', 'edit', 'accept', 'reject', 'remember', 'forget'])
 const SUMMARY_MEMORY_ERROR = 'AGENT_SUMMARY_MEMORY_READ_FAILED'
+const SESSION_INPUT_PAGE_SIZE = 128
+
+const SESSION_INPUT_ROWS_SQL = `
+  SELECT
+    segment.segment_id,
+    segment.source_id,
+    segment.t0_ms,
+    segment.t1_ms,
+    first_event.event_order AS first_event_order,
+    first_event.text AS raw_text,
+    updated_event.event_order AS updated_event_order,
+    updated_event.kind AS updated_kind,
+    segment.text AS current_text,
+    (
+      SELECT refined.event_order FROM caption_events AS refined
+      WHERE refined.session_id = segment.session_id
+        AND refined.source_id = segment.source_id
+        AND refined.segment_id = segment.segment_id
+        AND refined.kind = 'refined'
+      ORDER BY refined.revision DESC, refined.event_order DESC LIMIT 1
+    ) AS refined_event_order,
+    (
+      SELECT refined.text FROM caption_events AS refined
+      WHERE refined.session_id = segment.session_id
+        AND refined.source_id = segment.source_id
+        AND refined.segment_id = segment.segment_id
+        AND refined.kind = 'refined'
+      ORDER BY refined.revision DESC, refined.event_order DESC LIMIT 1
+    ) AS refined_text,
+    (
+      SELECT refined.t0_ms FROM caption_events AS refined
+      WHERE refined.session_id = segment.session_id
+        AND refined.source_id = segment.source_id
+        AND refined.segment_id = segment.segment_id
+        AND refined.kind = 'refined'
+      ORDER BY refined.revision DESC, refined.event_order DESC LIMIT 1
+    ) AS refined_t0_ms,
+    (
+      SELECT refined.t1_ms FROM caption_events AS refined
+      WHERE refined.session_id = segment.session_id
+        AND refined.source_id = segment.source_id
+        AND refined.segment_id = segment.segment_id
+        AND refined.kind = 'refined'
+      ORDER BY refined.revision DESC, refined.event_order DESC LIMIT 1
+    ) AS refined_t1_ms
+  FROM segments AS segment
+  JOIN caption_events AS first_event ON first_event.event_order = segment.first_event_order
+  JOIN caption_events AS updated_event ON updated_event.event_order = segment.updated_event_order
+  WHERE segment.session_id = ? AND first_event.event_order > ?
+  ORDER BY first_event.event_order
+  LIMIT ?
+`
 
 function fail (code) {
   throw new StorageError(code)
@@ -236,67 +289,31 @@ class PersonalContextStore {
     return next
   }
 
-  sessionInput (source, { allowRefinedFallback = false } = {}) {
+  validateSessionInputSource (source) {
     assertExactKeys(source, ['sourceKind', 'sessionId', 'transcriptVersion', 'inputWatermark', 'inputDigest'], 'AGENT_REQUEST_INVALID')
     if (source.sourceKind !== 'session' || !['raw', 'refined'].includes(source.transcriptVersion)) fail('AGENT_REQUEST_INVALID')
     const sessionId = identifier(source.sessionId)
     const inputWatermark = safeInteger(source.inputWatermark, 1)
     if (typeof source.inputDigest !== 'string' || !/^[0-9a-f]{64}$/.test(source.inputDigest)) fail('AGENT_REQUEST_INVALID')
+    return { sessionId, inputWatermark }
+  }
+
+  getSessionInputSession (sessionId) {
     const session = this.database.prepare(`
       SELECT session_id, started_at, ended_at, state
       FROM sessions WHERE session_id = ?
     `).get(sessionId)
     if (!session) fail('AGENT_SESSION_NOT_FOUND')
     if (!['closed', 'interrupted'].includes(session.state) || session.ended_at === null) fail('AGENT_SESSION_NOT_TERMINAL')
-    const rows = this.database.prepare(`
-      SELECT
-        segment.segment_id,
-        segment.source_id,
-        segment.t0_ms,
-        segment.t1_ms,
-        first_event.event_order AS first_event_order,
-        first_event.text AS raw_text,
-        updated_event.event_order AS updated_event_order,
-        updated_event.kind AS updated_kind,
-        segment.text AS current_text,
-        (
-          SELECT refined.event_order FROM caption_events AS refined
-          WHERE refined.session_id = segment.session_id
-            AND refined.source_id = segment.source_id
-            AND refined.segment_id = segment.segment_id
-            AND refined.kind = 'refined'
-          ORDER BY refined.revision DESC, refined.event_order DESC LIMIT 1
-        ) AS refined_event_order,
-        (
-          SELECT refined.text FROM caption_events AS refined
-          WHERE refined.session_id = segment.session_id
-            AND refined.source_id = segment.source_id
-            AND refined.segment_id = segment.segment_id
-            AND refined.kind = 'refined'
-          ORDER BY refined.revision DESC, refined.event_order DESC LIMIT 1
-        ) AS refined_text,
-        (
-          SELECT refined.t0_ms FROM caption_events AS refined
-          WHERE refined.session_id = segment.session_id
-            AND refined.source_id = segment.source_id
-            AND refined.segment_id = segment.segment_id
-            AND refined.kind = 'refined'
-          ORDER BY refined.revision DESC, refined.event_order DESC LIMIT 1
-        ) AS refined_t0_ms,
-        (
-          SELECT refined.t1_ms FROM caption_events AS refined
-          WHERE refined.session_id = segment.session_id
-            AND refined.source_id = segment.source_id
-            AND refined.segment_id = segment.segment_id
-            AND refined.kind = 'refined'
-          ORDER BY refined.revision DESC, refined.event_order DESC LIMIT 1
-        ) AS refined_t1_ms
-      FROM segments AS segment
-      JOIN caption_events AS first_event ON first_event.event_order = segment.first_event_order
-      JOIN caption_events AS updated_event ON updated_event.event_order = segment.updated_event_order
-      WHERE segment.session_id = ?
-      ORDER BY first_event.event_order
-    `).all(sessionId)
+    return session
+  }
+
+  getSessionInputRows (sessionId, afterEventOrder = 0, limit = -1) {
+    return this.database.prepare(SESSION_INPUT_ROWS_SQL).all(sessionId, afterEventOrder, limit)
+  }
+
+  buildSessionInput (source, session, rows, { allowRefinedFallback = false } = {}) {
+    const { sessionId, inputWatermark } = this.validateSessionInputSource(source)
     if (rows.length === 0) fail('AGENT_INPUT_EMPTY')
     const refinedComplete = rows.every((row) => row.refined_event_order !== null)
     if (source.transcriptVersion === 'refined' && !refinedComplete && !allowRefinedFallback) {
@@ -311,10 +328,11 @@ class PersonalContextStore {
       segmentId: row.segment_id,
       text: transcriptVersion === 'refined' ? row.refined_text : row.raw_text
     }))
-    const selectedWatermark = Math.max(...events.map((event) => event.eventOrder))
+    const selectedWatermark = events.reduce((maximum, event) => Math.max(maximum, event.eventOrder), 0)
     if (inputWatermark !== selectedWatermark) fail('AGENT_INPUT_CHANGED')
     const digestPayload = { sessionId, transcriptVersion, inputWatermark, events }
     if (sha256Canonical(digestPayload) !== source.inputDigest) fail('AGENT_INPUT_CHANGED')
+    const fromEventOrder = events.reduce((minimum, event) => Math.min(minimum, event.eventOrder), Number.MAX_SAFE_INTEGER)
     return {
       sourceKind: 'session',
       sessionId,
@@ -323,11 +341,87 @@ class PersonalContextStore {
       inputDigest: source.inputDigest,
       startedAt: Number(session.started_at),
       endedAt: Number(session.ended_at),
-      fromEventOrder: Math.min(...events.map((event) => event.eventOrder)),
-      throughEventOrder: Math.max(...events.map((event) => event.eventOrder)),
+      fromEventOrder,
+      throughEventOrder: selectedWatermark,
       segmentCount: events.length,
       events: events.map((event) => ({ ...event }))
     }
+  }
+
+  async buildSessionInputPaged (source, session, rows, options = {}) {
+    const { sessionId, inputWatermark } = this.validateSessionInputSource(source)
+    const isCancelled = typeof options.isCancelled === 'function' ? options.isCancelled : () => false
+    const checkCancelled = () => {
+      if (isCancelled()) fail('AGENT_CANCELLED')
+    }
+    if (rows.length === 0) fail('AGENT_INPUT_EMPTY')
+    let refinedComplete = true
+    for (let index = 0; index < rows.length; index += 1) {
+      checkCancelled()
+      if (rows[index].refined_event_order === null) refinedComplete = false
+      if ((index + 1) % SESSION_INPUT_PAGE_SIZE === 0) {
+        await new Promise((resolve) => setImmediate(resolve))
+        checkCancelled()
+      }
+    }
+    if (source.transcriptVersion === 'refined' && !refinedComplete && !options.allowRefinedFallback) {
+      fail('AGENT_REFINED_INPUT_INCOMPLETE')
+    }
+    const transcriptVersion = source.transcriptVersion === 'refined' && refinedComplete ? 'refined' : 'raw'
+    const events = []
+    let selectedWatermark = 0
+    let fromEventOrder = Number.MAX_SAFE_INTEGER
+    for (let index = 0; index < rows.length; index += 1) {
+      checkCancelled()
+      const row = rows[index]
+      const event = {
+        eventOrder: Number(transcriptVersion === 'refined' ? row.refined_event_order : row.first_event_order),
+        segmentId: row.segment_id,
+        text: transcriptVersion === 'refined' ? row.refined_text : row.raw_text
+      }
+      selectedWatermark = Math.max(selectedWatermark, event.eventOrder)
+      fromEventOrder = Math.min(fromEventOrder, event.eventOrder)
+      events.push(event)
+      if ((index + 1) % SESSION_INPUT_PAGE_SIZE === 0) {
+        await new Promise((resolve) => setImmediate(resolve))
+        checkCancelled()
+      }
+    }
+    if (inputWatermark !== selectedWatermark) fail('AGENT_INPUT_CHANGED')
+
+    const hash = crypto.createHash('sha256')
+    hash.update('{"events":[')
+    for (let index = 0; index < events.length; index += 1) {
+      checkCancelled()
+      if (index > 0) hash.update(',')
+      hash.update(canonicalize(events[index]))
+      if ((index + 1) % SESSION_INPUT_PAGE_SIZE === 0) {
+        await new Promise((resolve) => setImmediate(resolve))
+        checkCancelled()
+      }
+    }
+    hash.update(`],"inputWatermark":${canonicalize(inputWatermark)},"sessionId":${canonicalize(sessionId)},"transcriptVersion":${canonicalize(transcriptVersion)}}`)
+    checkCancelled()
+    if (hash.digest('hex') !== source.inputDigest) fail('AGENT_INPUT_CHANGED')
+    return {
+      sourceKind: 'session',
+      sessionId,
+      transcriptVersion,
+      inputWatermark,
+      inputDigest: source.inputDigest,
+      startedAt: Number(session.started_at),
+      endedAt: Number(session.ended_at),
+      fromEventOrder,
+      throughEventOrder: selectedWatermark,
+      segmentCount: events.length,
+      events
+    }
+  }
+
+  sessionInput (source, options = {}) {
+    const { sessionId } = this.validateSessionInputSource(source)
+    const session = this.getSessionInputSession(sessionId)
+    return this.buildSessionInput(source, session, this.getSessionInputRows(sessionId), options)
   }
 
   sessionSnapshot (source, options = {}) {
@@ -338,6 +432,32 @@ class PersonalContextStore {
 
   readSessionInput (source) {
     return this.sessionInput(source, { allowRefinedFallback: true })
+  }
+
+  async readSessionInputPaged (source, options = {}) {
+    const { sessionId } = this.validateSessionInputSource(source)
+    const session = this.getSessionInputSession(sessionId)
+    const isCancelled = typeof options.isCancelled === 'function' ? options.isCancelled : () => false
+    const rows = []
+    let afterEventOrder = 0
+    const checkCancelled = () => {
+      if (isCancelled()) fail('AGENT_CANCELLED')
+    }
+
+    while (true) {
+      checkCancelled()
+      const page = this.getSessionInputRows(sessionId, afterEventOrder, SESSION_INPUT_PAGE_SIZE)
+      if (page.length === 0) break
+      rows.push(...page)
+      afterEventOrder = Number(page[page.length - 1].first_event_order)
+      await new Promise((resolve) => setImmediate(resolve))
+      checkCancelled()
+    }
+
+    return this.buildSessionInputPaged(source, session, rows, {
+      allowRefinedFallback: true,
+      isCancelled
+    })
   }
 
   readInteractionInput (source, ephemeral) {
@@ -415,7 +535,19 @@ class PersonalContextStore {
     }
   }
 
-  readToolContext (input) {
+  getToolContextSourceRows (sourceRef, kind, afterEventOrder, limit) {
+    return this.database.prepare(`
+      SELECT event_order, text FROM caption_events
+      WHERE session_id = ? AND kind = ? AND event_order >= ?
+        AND event_order > ? AND event_order <= ?
+      ORDER BY event_order ASC LIMIT ?
+    `).all(
+      sourceRef.sessionId, kind, sourceRef.fromEventOrder,
+      afterEventOrder, sourceRef.throughEventOrder, limit
+    )
+  }
+
+  *readToolContextSteps (input) {
     assertExactKeys(input, ['runId'], 'AGENT_REQUEST_INVALID')
     const runId = identifier(input.runId)
     const run = this.database.prepare(`
@@ -461,15 +593,23 @@ class PersonalContextStore {
 
     const sourceByKey = new Map()
     const entries = []
+    let sourceTextBytes = 0
+    let displayTextBytes = 0
     for (const item of items) {
-      if (typeof item.current_revision_id !== 'string') continue
+      if (typeof item.current_revision_id !== 'string') {
+        yield null
+        continue
+      }
       const evidenceRows = this.database.prepare(`
         SELECT session_id, transcript_version, from_event_order, through_event_order
         FROM personal_context_evidence
         WHERE memory_id = ? AND source_kind = 'session'
         ORDER BY created_at ASC, evidence_id ASC LIMIT ?
       `).all(item.memory_id, MAX_SOURCES_PER_ITEM + 1)
-      if (evidenceRows.length > MAX_SOURCES_PER_ITEM) continue
+      if (evidenceRows.length > MAX_SOURCES_PER_ITEM) {
+        yield null
+        continue
+      }
       const sourceRefs = []
       for (const evidence of evidenceRows) {
         const sourceRef = {
@@ -481,18 +621,32 @@ class PersonalContextStore {
         const key = canonicalize(sourceRef)
         if (!sourceByKey.has(key)) {
           const kind = sourceRef.transcriptVersion === 'raw' ? 'final' : 'refined'
-          const rows = this.database.prepare(`
-            SELECT text FROM caption_events
-            WHERE session_id = ? AND kind = ? AND event_order >= ? AND event_order <= ?
-            ORDER BY event_order ASC
-          `).all(sourceRef.sessionId, kind, sourceRef.fromEventOrder, sourceRef.throughEventOrder)
-          if (rows.length === 0) fail('AGENT_INPUT_CHANGED')
-          sourceByKey.set(key, { sourceRef, text: rows.map((row) => row.text).join(' ') })
+          let afterEventOrder = sourceRef.fromEventOrder - 1
+          const textParts = []
+          while (true) {
+            const rows = this.getToolContextSourceRows(
+              sourceRef, kind, afterEventOrder, SESSION_INPUT_PAGE_SIZE
+            )
+            if (rows.length === 0) break
+            for (const row of rows) {
+              sourceTextBytes += Buffer.byteLength(row.text, 'utf8') + (textParts.length > 0 ? 1 : 0)
+              if (sourceTextBytes > MAX_CANONICAL_BYTES) fail('AGENT_BUDGET_EXCEEDED')
+              textParts.push(row.text)
+              afterEventOrder = Number(row.event_order)
+              yield null
+            }
+            if (rows.length < SESSION_INPUT_PAGE_SIZE) break
+          }
+          if (textParts.length === 0) fail('AGENT_INPUT_CHANGED')
+          sourceByKey.set(key, { sourceRef, text: textParts.join(' ') })
         }
         sourceRefs.push(sourceRef)
+        yield null
       }
       let displayText
       try { displayText = JSON.parse(item.content_json).displayText } catch { fail('STORAGE_COMMAND_FAILED') }
+      displayTextBytes += Buffer.byteLength(displayText, 'utf8')
+      if (displayTextBytes > MAX_CANONICAL_BYTES) fail('AGENT_BUDGET_EXCEEDED')
       entries.push({
         aliasKey: item.semantic_key,
         memoryRef: { memoryId: item.memory_id, revisionId: item.current_revision_id },
@@ -500,6 +654,7 @@ class PersonalContextStore {
         displayText,
         sourceRefs
       })
+      yield null
     }
     const result = {
       scope: {
@@ -512,6 +667,39 @@ class PersonalContextStore {
     }
     if (Buffer.byteLength(canonicalize(result), 'utf8') > MAX_CANONICAL_BYTES) fail('AGENT_BUDGET_EXCEEDED')
     return result
+  }
+
+  readToolContext (input) {
+    const steps = this.readToolContextSteps(input)
+    let step = steps.next()
+    while (!step.done) step = steps.next()
+    return step.value
+  }
+
+  async readToolContextPaged (input, options = {}) {
+    const isCancelled = typeof options.isCancelled === 'function' ? options.isCancelled : () => false
+    const checkCancelled = () => {
+      if (isCancelled()) fail('AGENT_CANCELLED')
+    }
+    const steps = this.readToolContextSteps(input)
+    checkCancelled()
+    await new Promise((resolve) => setImmediate(resolve))
+    checkCancelled()
+    let batchSteps = 0
+    while (true) {
+      checkCancelled()
+      const step = steps.next()
+      if (step.done) {
+        checkCancelled()
+        return step.value
+      }
+      batchSteps += 1
+      if (batchSteps >= SESSION_INPUT_PAGE_SIZE) {
+        batchSteps = 0
+        await new Promise((resolve) => setImmediate(resolve))
+        checkCancelled()
+      }
+    }
   }
 
   deriveSessionSource (request) {

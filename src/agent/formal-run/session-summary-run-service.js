@@ -505,6 +505,7 @@ class SessionSummaryRunService {
       c.assertCancelRequest(request)
       const elapsedMs = this.elapsedForRequest(request.request_id, request.generation)
       this.controllers.get(request.request_id)?.abort()
+      this.cancelScheduledRuns(request.request_id, request.generation)
       const cancelRequest = {
         requestId: request.request_id,
         generation: request.generation
@@ -522,6 +523,14 @@ class SessionSummaryRunService {
     } catch (error) {
       const nextAction = error?.code === 'AGENT_CONTEXT_REVISION_CONFLICT' ? 'refresh_status' : 'verify_state'
       return c.assertCancelResponse(errorResponse(stableErrorCode(error), nextAction))
+    }
+  }
+
+  cancelScheduledRuns (requestId, generation) {
+    if (!this.scheduler || typeof this.scheduler.cancel !== 'function') return
+    for (const [runId, identity] of this.runRequests) {
+      if (identity.requestId !== requestId || identity.generation !== generation) continue
+      this.scheduler.cancel(runId)
     }
   }
 

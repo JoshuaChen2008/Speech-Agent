@@ -22,7 +22,7 @@ const capabilities = {
   usageReporting: true
 }
 
-function harness ({ adapterRun, failResult = { state: 'retry_wait' }, recipeId = 'qa.answer', toolContext = null } = {}) {
+function harness ({ adapterRun, failResult = { state: 'retry_wait' }, recipeId = 'qa.answer', toolContext = null, readSessionInput = null, readToolContext = null } = {}) {
   const sourceRef = { sessionId: 'session.runner', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 2 }
   const binding = {
     runId: 'run.user.runner', modelId: 'model.runner', profileId: 'profile.runner',
@@ -74,7 +74,9 @@ function harness ({ adapterRun, failResult = { state: 'retry_wait' }, recipeId =
       }
     },
     personalContext: {
-      async readSessionInput () {
+      async readSessionInput (source) {
+        calls.push(['input.read', source])
+        if (readSessionInput) return readSessionInput(source)
         return {
           sourceKind: 'session', sessionId: 'session.runner', transcriptVersion: 'raw',
           inputWatermark: 2, inputDigest: 'a'.repeat(64), fromEventOrder: 1, throughEventOrder: 2,
@@ -82,7 +84,9 @@ function harness ({ adapterRun, failResult = { state: 'retry_wait' }, recipeId =
         }
       },
       async resolve (request) { calls.push(['resolve', request]); return { eligibility: 'ready', episodes: [], personalMemories: [], omissions: [], excludedScopes: [], hasMore: false, revision: 0 } },
-      async readToolContext () {
+      async readToolContext (request, signal) {
+        calls.push(['context.read', request])
+        if (readToolContext) return readToolContext(request, signal)
         return toolContext || {
           scope: { registeredAliasKeys: [], memoryRefs: [], sourceRefs: [] },
           entries: [], sources: []
@@ -145,6 +149,56 @@ test('SEM-F28/SEM-T04/J22/J24: cancellation terminalizes without accepting a lat
   const terminal = calls.find(([kind]) => kind === 'terminalize')[1]
   assert.equal(terminal.terminalReason, 'cancelled')
   assert.equal(terminal.result, null)
+})
+
+test('SEM-F38/J30-CANCEL: cancellation during session input read releases the run before late input returns', async () => {
+  const inputReadStarted = deferred()
+  const inputRead = deferred()
+  const controller = new AbortController()
+  const { runner, calls } = harness({
+    readSessionInput: async () => {
+      inputReadStarted.resolve()
+      return inputRead.promise
+    }
+  })
+  const pending = runner.run(job({ signal: controller.signal }))
+  await inputReadStarted.promise
+  controller.abort()
+
+  const result = await pending
+  inputRead.resolve({})
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(result, null)
+  assert.equal(calls.some(([kind]) => kind === 'context.read'), false)
+  assert.equal(calls.some(([kind]) => kind === 'tool.start'), false)
+  assert.equal(calls.find(([kind]) => kind === 'terminalize')[1].terminalReason, 'cancelled')
+})
+
+test('SEM-F38/J30-CANCEL: cancellation reaches the personal context tool read', async () => {
+  const contextReadStarted = deferred()
+  const controller = new AbortController()
+  const { runner, calls } = harness({
+    recipeId: 'summary.minutes',
+    readToolContext: (request, signal) => {
+      contextReadStarted.resolve({ request, signal })
+      return new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          const error = new Error('cancelled')
+          error.code = 'AGENT_CANCELLED'
+          reject(error)
+        }, { once: true })
+      })
+    }
+  })
+  const pending = runner.run(job({ recipeId: 'summary.minutes', signal: controller.signal }))
+  const started = await contextReadStarted.promise
+  assert.deepEqual(started.request, { runId: 'run.user.runner' })
+  assert.strictEqual(started.signal, controller.signal)
+  controller.abort()
+
+  assert.equal(await pending, null)
+  assert.equal(calls.some(([kind]) => kind === 'tool.start'), false)
+  assert.equal(calls.find(([kind]) => kind === 'terminalize')[1].terminalReason, 'cancelled')
 })
 
 test('SEM-F15/SEM-F16/SEM-F34/J22: summary.minutes uses the same Agent Loop and exact output Schema', async () => {

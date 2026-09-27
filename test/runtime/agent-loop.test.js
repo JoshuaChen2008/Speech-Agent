@@ -86,8 +86,48 @@ test('SEM-F28/SEM-T10/J22: cancellation is propagated and no continuation API is
     recipeId: 'intent.route', recipeVersion: '1', prompt: 'route', signal: controller.signal,
     resolvedModel: { model: 'test', streamFn: async function * () {} }
   }), (error) => error.code === 'AGENT_CANCELLED')
-  assert.equal(seenSignal, controller.signal)
+  assert.notEqual(seenSignal, controller.signal)
+  assert.equal(seenSignal.aborted, true)
   assert.equal(Object.hasOwn(executor, 'agentLoopContinue'), false)
+})
+
+test('SEM-F38/J30-CANCEL: host deadline releases a provider that never settles and consumes its late rejection', async () => {
+  let rejectProvider
+  let providerSignal
+  const executor = new AgentLoopExecutor({
+    adapter: {
+      run: async ({ signal }) => {
+        providerSignal = signal
+        return new Promise((resolve, reject) => { rejectProvider = reject })
+      }
+    }
+  })
+  const startedAt = Date.now()
+  const pending = executor.agentLoop({
+    recipeId: 'qa.answer', recipeVersion: '1', prompt: 'answer', timeoutMs: 20,
+    resolvedModel: { model: 'test', streamFn: async function * () {} }
+  })
+  await assert.rejects(pending, (error) => error.code === 'AGENT_PROVIDER_TIMEOUT')
+  assert.ok(Date.now() - startedAt < 1000)
+  assert.equal(providerSignal.aborted, true)
+
+  rejectProvider(Object.assign(new Error('late provider rejection'), { code: 'AGENT_PROVIDER_UNAVAILABLE' }))
+  await new Promise((resolve) => setImmediate(resolve))
+})
+
+test('SEM-F38/J30-CANCEL: cancellation releases a never-settling provider before it responds to abort', async () => {
+  const controller = new AbortController()
+  let providerSignal
+  const executor = new AgentLoopExecutor({
+    adapter: { run: async ({ signal }) => { providerSignal = signal; return new Promise(() => {}) } }
+  })
+  const pending = executor.agentLoop({
+    recipeId: 'qa.answer', recipeVersion: '1', prompt: 'answer', signal: controller.signal,
+    resolvedModel: { model: 'test', streamFn: async function * () {} }
+  })
+  setTimeout(() => controller.abort(), 10)
+  await assert.rejects(pending, (error) => error.code === 'AGENT_CANCELLED')
+  assert.equal(providerSignal.aborted, true)
 })
 
 test('SEM-F28/SEM-T04/J22/J24: a provider success arriving after cancellation is rejected before interaction settlement', async () => {
