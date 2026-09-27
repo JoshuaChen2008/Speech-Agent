@@ -7,11 +7,11 @@ function failure (code) { return Object.assign(new Error(code), { code }) }
 function deferred () { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b }); promise.catch(() => {}); return { promise, resolve, reject } }
 
 class NlsRealtimeProvider {
-  constructor ({ token, appKey, onResult = () => {}, onFault = () => {}, WebSocket = require('ws'), timeoutMs = 10000, heartbeatMs = 10000, now = () => performance.now() } = {}) {
+  constructor ({ token, appKey, onResult = () => {}, onFault = () => {}, WebSocket = require('ws'), timeoutMs = 10000, heartbeatMs = 10000, now = () => performance.now(), setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
     if (typeof token !== 'string' || !token || /[\r\n]/.test(token) || typeof appKey !== 'string' || !appKey) throw failure('NLS_CONFIGURATION_REQUIRED')
-    Object.assign(this, { token, appKey, onResult, onFault, WebSocket, timeoutMs, heartbeatMs, now })
+    Object.assign(this, { token, appKey, onResult, onFault, WebSocket, timeoutMs, heartbeatMs, now, setTimer, clearTimer })
     this.taskId = crypto.randomBytes(16).toString('hex')
-    this.state = 'idle'; this.outstanding = 0; this.nextSendAt = 0; this.tail = Promise.resolve(); this.writes = new Set()
+    this.state = 'idle'; this.outstanding = 0; this.nextSendAt = null; this.tail = Promise.resolve(); this.writes = new Set()
   }
 
   open ({ signal } = {}) {
@@ -89,14 +89,22 @@ class NlsRealtimeProvider {
     this.writes.add(item)
     const send = async () => {
       if (!['active', 'finishing'].includes(this.state)) throw failure('NLS_CONNECTION_CLOSED')
-      const waitMs = Math.max(0, this.nextSendAt - this.now())
-      if (waitMs) await new Promise(resolve => { item.wake = resolve; item.timer = setTimeout(resolve, waitMs) })
+      const sendDeadline = this.nextSendAt === null ? this.now() : this.nextSendAt
+      const waitMs = Math.max(0, sendDeadline - this.now())
+      if (waitMs) await new Promise(resolve => { item.wake = resolve; item.timer = this.setTimer(resolve, waitMs) })
       if (!['active', 'finishing'].includes(this.state)) throw failure('NLS_CONNECTION_CLOSED')
-      this.nextSendAt = this.now() + copy.length / 32
+      const frameDurationMs = copy.length / 32
       await new Promise((resolve, reject) => {
         item.rejectSend = reject
         try { this.socket.send(copy, { binary: true }, error => error ? reject(failure('NLS_CONNECTION_FAILED')) : resolve()) } catch { reject(failure('NLS_CONNECTION_FAILED')) }
       })
+      const sentAt = this.now()
+      // Preserve the audio-time schedule across small timer delays. If the
+      // sender missed a complete frame interval, re-anchor once so queued
+      // audio does not escape as an unbounded catch-up burst.
+      this.nextSendAt = sentAt - sendDeadline >= frameDurationMs
+        ? sentAt + frameDurationMs
+        : sendDeadline + frameDurationMs
     }
     this.tail = this.tail.then(send).then(() => done.resolve(), error => { done.reject(error); this.fail(error.code || 'NLS_CONNECTION_FAILED') }).finally(() => { this.outstanding -= copy.length; copy.fill(0); this.writes.delete(item) })
     return done.promise
@@ -127,7 +135,7 @@ class NlsRealtimeProvider {
     this.state = 'failed'; this.cleanup()
     const error = failure(code)
     this.started?.reject(error); this.completed?.reject(error)
-    for (const item of this.writes) { clearTimeout(item.timer); item.wake?.(); item.rejectSend?.(error); item.done.reject(error) }
+    for (const item of this.writes) { this.clearTimer(item.timer); item.wake?.(); item.rejectSend?.(error); item.done.reject(error) }
     try { this.socket?.terminate() } catch {}
     if (previous === 'active') this.onFault(error)
   }

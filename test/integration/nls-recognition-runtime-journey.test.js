@@ -27,6 +27,32 @@ async function until (predicate) {
   while (!predicate()) { if (Date.now() > deadline) assert.fail('boundary did not settle'); await new Promise(resolve => setTimeout(resolve, 5)) }
 }
 
+function createJitteredClock () {
+  const state = { now: 0, timers: [] }
+  return {
+    now: () => state.now,
+    setTimer (callback, delay) {
+      const timer = { at: state.now + Math.max(0, delay) + 10, callback, cancelled: false }
+      state.timers.push(timer)
+      return timer
+    },
+    clearTimer (timer) { if (timer) timer.cancelled = true },
+    async advanceTo (target) {
+      for (;;) {
+        await turn()
+        const next = state.timers.filter(timer => !timer.cancelled)
+          .sort((left, right) => left.at - right.at)[0]
+        if (!next || next.at > target) break
+        next.cancelled = true
+        state.now = Math.max(state.now, next.at)
+        next.callback()
+      }
+      state.now = Math.max(state.now, target)
+      await turn()
+    }
+  }
+}
+
 function boundaries () {
   const sockets = []; const captures = []; const children = []
   let rejectOpen = false
@@ -126,7 +152,7 @@ function boundaries () {
     setStorageUnavailable: value => { storageUnavailable = value } }
 }
 
-async function fixture (t, sourceId = 'mic') {
+async function fixture (t, sourceId = 'mic', providerOptions = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nls-runtime-'))
   const b = boundaries()
   let coordinator
@@ -140,13 +166,39 @@ async function fixture (t, sourceId = 'mic') {
   gateway.hostFactory = options => new StorageWorkerHost({ ...options, electron: b.electron })
   const recorder = new SqliteSessionRecorder({ gateway })
   const adapter = new RecognitionRuntimeAdapter({ electron: b.electron, recognitionSettings: settings,
-    providerFactory: options => new NlsRealtimeProvider({ ...options, WebSocket: b.Socket, timeoutMs: 300 }) })
+    providerFactory: options => new NlsRealtimeProvider({ ...options, WebSocket: b.Socket, timeoutMs: 300, ...providerOptions }) })
   coordinator = new SessionCoordinator({ adapter, recognitionSettings: settings, persistenceSink: recorder,
     runtimeOptions: resolveRuntimeOptions({ LIVE_SUBTITLE_DEV_MODEL: DEV_MODEL_VALUE }),
     configuration: { onboardingCompleted: true, onboardingPreset: sourceId === 'mic' ? 'dictation' : 'meeting', mic: sourceId === 'mic', loopback: sourceId === 'loopback' } })
   t.after(async () => { await coordinator.dispose(); await gateway.shutdown(); settings.close(); fs.rmSync(directory, { recursive: true, force: true }) })
   return { ...b, coordinator, adapter, settings, gateway, history: new HistoryService({ gateway, showSaveDialog: async () => ({ canceled: true }) }) }
 }
+
+test('SEM-F12/F14/J20 100ms loopback PCM stays within the pending bound under repeated timer jitter', async t => {
+  const clock = createJitteredClock()
+  const f = await fixture(t, 'loopback', { now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer })
+  assert.equal((await f.coordinator.command('start')).ok, true)
+  const sessionId = f.coordinator.getSnapshot().sessionId
+
+  for (let sequence = 0; sequence < 450; sequence++) {
+    f.captures[0].feed()
+    await clock.advanceTo(sequence === 0 ? 0 : sequence * 100 - 10)
+    if (f.coordinator.getSnapshot().phase === 'error') break
+  }
+
+  if (f.coordinator.getSnapshot().phase === 'error') {
+    assert.equal(f.coordinator.getSnapshot().lastError.code, 'RECOGNITION_BUFFER_LIMIT')
+  }
+  assert.equal(f.coordinator.getSnapshot().phase, 'listening')
+  await clock.advanceTo(46000)
+  await until(() => f.sockets[0].bytes === 450 * 3200)
+  assert.equal(f.coordinator.getSnapshot().recognition.actualProvider, 'nls')
+  assert.equal((await f.coordinator.command('stop')).ok, true)
+  const page = await f.history.getSessionPage({ sessionId, limit: 20, cursor: null })
+  assert.equal(page.recognition.faultCode, null)
+  assert.equal(page.items.length, 1)
+  assert.equal(page.items[0].text, '首次稳定转写')
+})
 
 test('SEM-F12/J20 closed handoff port stops capture with a durable failure', async t => {
   const f = await fixture(t)

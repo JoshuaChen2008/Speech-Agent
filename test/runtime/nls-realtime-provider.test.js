@@ -70,6 +70,44 @@ test('SEM-F25 J20 stop timeout rejects without runtime fallback and releases que
   await assert.rejects(provider.finishInput(), { code: 'NLS_STOP_TIMEOUT' })
   assert.deepEqual(faults, [])
 })
+test('SEM-F12/J20 cumulative PCM pacing absorbs small timer jitter and reanchors after a long stall', async t => {
+  const clock = { now: 0, timers: [], sentAt: [] }
+  class TimedSocket extends Socket {
+    send (data, options, callback) {
+      if (Buffer.isBuffer(data)) clock.sentAt.push(clock.now)
+      super.send(data, options, callback)
+    }
+  }
+  const { provider } = await open(t, {
+    WebSocket: TimedSocket,
+    now: () => clock.now,
+    setTimer: (callback, delay) => {
+      const timer = { at: clock.now + delay + (clock.timers.length === 0 ? 350 : 10), callback }
+      clock.timers.push(timer)
+      return timer
+    },
+    clearTimer: timer => { if (timer) timer.cancelled = true }
+  })
+
+  await provider.writeAudio(new Uint8Array(3200))
+  const second = provider.writeAudio(new Uint8Array(3200))
+  const third = provider.writeAudio(new Uint8Array(3200))
+  await new Promise(setImmediate)
+  assert.equal(clock.timers[0].at, 450)
+
+  clock.now = clock.timers[0].at
+  clock.timers[0].callback()
+  await second
+  await new Promise(setImmediate)
+  assert.deepEqual(clock.sentAt, [0, 450])
+  assert.equal(clock.timers[1].at, 560)
+
+  clock.now = clock.timers[1].at
+  clock.timers[1].callback()
+  await third
+  assert.deepEqual(clock.sentAt, [0, 450, 560])
+})
+
 test('SEM-F25 J20 bounded queued PCM rejects overflow, while silence alone is not a fault', async t => {
   const { provider, socket, faults } = await open(t)
   const writes = Array.from({ length: 21 }, () => provider.writeAudio(new Uint8Array(3200)))

@@ -466,10 +466,12 @@ schema-v5 child 把冻结字幕可见延迟与诊断分段明确分离。唯一�
 
 恢复负向矩阵：损坏 settings/凭据 journal 后应用配置服务可构造且显示 loadError，恢复前 freeze 拒绝、用户明确保存纯本地后恢复，原损坏文件保留；持久凭据转进程内凭据的提交删除与失败回滚；启动前零 PCM；鉴权/项目/签名时钟分类及 SentenceEnd.status=0；保存失败后凭据输入已清空的明确提示。
 
-本登记更新既有 J20 的实施排期，仍不阻断 Agent，亦不恢复确认关键词。按 [ADR 0020](adr/0020-nls-realtime-recognition.md) 验证：设置上海单套 NLS 与音频上传披露 → main 安全凭据/CreateToken → 真实采集及有界 worker/main 音频传输 → NLS partial/唯一首次 final → 暂停收尾/恢复新任务或明确故障单向本地降级 → 停止排空 → SQLite、历史与导出。覆盖启动失败拒绝开始、Token 刷新竞态、重复/冲突/迟到结果、同会话时间映射、长静音、60 秒留存/2 秒待发超限停止、交接范围缺失、Retry 无自动切回、存储故障、退出和隐私负扫描。配置、provider adapter、router、coordinator、worker 核心、reducer、SQLite、历史与 IPC 用真实实现；替身仅位于声卡、云网络/provider、系统权限等不可确定外部边界。本地 recognizer 的真实张量资格仍由 I2/I3/I4 提供，不得把无模型结构模式冒充降级识别资格。
+本登记更新既有 J20 的实施排期，仍不阻断 Agent，亦不恢复确认关键词。按 [ADR 0020](adr/0020-nls-realtime-recognition.md) 验证：设置上海单套 NLS 与音频上传披露 → main 安全凭据/CreateToken → 真实采集及有界 worker/main 音频传输 → NLS partial/唯一首次 final → 暂停收尾/恢复新任务或明确故障单向本地降级 → 停止排空 → SQLite、历史与导出。覆盖启动失败拒绝开始、Token 刷新竞态、重复/冲突/迟到结果、同会话时间映射、长静音、60 秒留存/2 秒待发超限停止、100ms 连续 PCM 在定时器迟到时不累积待发量、长阻塞后不无界突发追赶、交接范围缺失、Retry 无自动切回、存储故障、退出和隐私负扫描。配置、provider adapter、router、coordinator、worker 核心、reducer、SQLite、历史与 IPC 用真实实现；替身仅位于声卡、云网络/provider、系统权限等不可确定外部边界。本地 recognizer 的真实张量资格仍由 I2/I3/I4 提供，不得把无模型结构模式冒充降级识别资格。
 
 关联 SEM-F01/F04/F06/F12/F14/F21/F25、DB1/J10/J12/J16；提交前当前 revision 的完整三条 lane，打包增加实际 NLS 依赖加载检查。公网 header 握手、项目效果、Token 跨期连接、mic/loopback 各五轮冻结字幕可见延迟、main 事件循环 P95 <50ms/P99 <100ms、两小时资源趋势与干净机仍另验，确定性层不晋级实机状态。
 
 J20 协议子矩阵还须明确断言：TranscriptionStarted 前零 PCM、StopTranscription 一次且等待 TranscriptionCompleted、就绪/停止各 10 秒超时、partial 不升格、连接/task_id 代次隔离，以及 Token/AccessKey/AppKey/原始响应不进入日志或证据。NLS 云端路径的 mic/loopback 各五轮 I2 不得复用纯本地 series；注入断连/服务错误后必须另走真实本地 recognizer 接管，结构 fixture 只证明编排，不冒充真实识别。
 
 2026-09-23 J20 实施更新：状态为**实现完成·尚未验收**；已有设置 renderer→preload→main 配置恢复、两来源独立云端暂停/恢复、停止持久化、断连接管、端口关闭、缺失持久化接口、采集缺口、存储失败及 Retry 的真实内部模块旅程。真实本地张量另有两切点诊断资格，不替代云端/物理来源验收。命令、计数、Luna/max 复核和边界见 [实施记录](validation/nls-implementation-2026-09-23.md)。
+
+2026-09-27 J20 发送节拍增量（SEM-F12/F14）：累计单调时钟期限在重复 10ms 定时迟到下持续传输 450 个 100ms loopback 帧，保持云端识别 provider 活跃，并经 SQLite 写入与字幕历史读取观察到首次稳定转写；旧算法同一确定性用例触发 `RECOGNITION_BUFFER_LIMIT`。provider 回归另覆盖 350ms 单次调度停顿后按新期限继续发送；既有用例守住两秒待发硬上限及失败释放。三个受影响文件定向验证 27/27；真实计时合成负载运行 44.908s 后仍无故障、450 帧均已发送，待发峰值 100ms。状态为**实现完成·尚未验收**；这不替代真实 NLS、公网、物理来源或 I2/I3/I4。
