@@ -177,6 +177,7 @@ test('SEM-F33/J25: production loop adapter uses the frozen endpoint, normalizes 
     }
   })
   const calls = []
+  const progress = []
   const result = await adapter.run({
     connection: { httpsOrigin: 'https://example.test:8443', basePath: '/v1' },
     credential: Buffer.from('bounded-secret'),
@@ -188,6 +189,7 @@ test('SEM-F33/J25: production loop adapter uses the frozen endpoint, normalizes 
       name: 'search_context',
       execute: async (args) => { calls.push(args); return { schemaVersion: 1, matches: [] } }
     }],
+    onProgress: (event) => progress.push(event),
     maxTurns: 3,
     timeoutMs: 1000,
     shouldStopAfterTurn: ({ turn }) => turn >= 3
@@ -206,6 +208,13 @@ test('SEM-F33/J25: production loop adapter uses the frozen endpoint, normalizes 
   assert.equal(requests[0].body.response_format.type, 'json_object')
   assert.equal(requests[1].body.messages.at(-1).role, 'tool')
   assert.equal(requests[1].body.messages.at(-1).tool_call_id, 'call-1')
+  assert.deepEqual(progress, [
+    { type: 'request_started', turn: 1 },
+    { type: 'response_received', turn: 1 },
+    { type: 'request_started', turn: 2 },
+    { type: 'response_received', turn: 2 }
+  ])
+  assert.equal(JSON.stringify(progress).includes('bounded-secret'), false)
 })
 
 test('SEM-F33/J25: production loop adapter maps redirects, provider failures, malformed output, cancellation, and bounded responses', async () => {
@@ -234,6 +243,15 @@ test('SEM-F33/J25: production loop adapter maps redirects, provider failures, ma
   controller.abort()
   const cancelled = new OpenAiCompatibleAdapter({ fetch: async () => { throw new Error('must not fetch') } })
   await assert.rejects(cancelled.run({ ...request, signal: controller.signal }), (error) => error.code === 'AGENT_CANCELLED')
+
+  const failedProgress = []
+  const unavailable = new OpenAiCompatibleAdapter({ fetch: async () => { throw new Error('offline') } })
+  await assert.rejects(unavailable.run({ ...request, onProgress: (event) => failedProgress.push(event) }),
+    (error) => error.code === 'AGENT_PROVIDER_UNAVAILABLE')
+  assert.deepEqual(failedProgress, [
+    { type: 'request_started', turn: 1 },
+    { type: 'request_failed', turn: 1 }
+  ])
 })
 
 test('SEM-F33/J25: formal auth rejection invalidates only the bound profile credential', async (t) => {
@@ -344,7 +362,13 @@ test('SEM-F34/J24: production loop adapter bounds tool execution and propagates 
     maxTurns: 2, timeoutMs: 100
   }
   const timeoutAdapter = new OpenAiCompatibleAdapter({ fetch: async () => toolResponse() })
-  await assert.rejects(timeoutAdapter.run(base), (error) => error.code === 'TOOL_TIMEOUT')
+  const toolTimeoutProgress = []
+  await assert.rejects(timeoutAdapter.run({ ...base, onProgress: (event) => toolTimeoutProgress.push(event) }),
+    (error) => error.code === 'TOOL_TIMEOUT')
+  assert.deepEqual(toolTimeoutProgress, [
+    { type: 'request_started', turn: 1 },
+    { type: 'response_received', turn: 1 }
+  ])
   const controller = new AbortController()
   const cancelAdapter = new OpenAiCompatibleAdapter({ fetch: async () => toolResponse() })
   const pending = cancelAdapter.run({ ...base, signal: controller.signal })

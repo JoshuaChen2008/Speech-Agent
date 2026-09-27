@@ -127,6 +127,25 @@ function summaryRunPhaseLabel (phase: unknown): string {
   } as Dict)[String(phase || '')] || '阶段暂未记录'
 }
 
+function summaryMemoryProgressLabel (state: unknown): string {
+  return ({
+    not_read: '尚未读取记忆',
+    not_used: '本次未读取记忆',
+    empty: '已查询记忆，未找到相关记忆',
+    referenced: '已查询到相关记忆',
+    failed: '读取记忆失败',
+    unknown: '记忆读取状态未知'
+  } as Dict)[String(state || '')] || '记忆读取状态未知'
+}
+
+function summaryActivityAgeLabel (value: unknown): string {
+  if (!Number.isSafeInteger(value) || Number(value) < 0) return '尚无实际活动记录'
+  const age = Number(value)
+  if (age < 1000) return '最近刚有实际活动'
+  const seconds = age < 10000 ? (age / 1000).toFixed(1) : String(Math.round(age / 1000))
+  return `最近实际活动 ${seconds} 秒前`
+}
+
 function summaryRunTerminal (snapshot: Dict | null): boolean {
   return !!snapshot && SUMMARY_RUN_TERMINAL_STATES.has(snapshot.state)
 }
@@ -1139,7 +1158,7 @@ export function AgentView (): ReactElement {
           <textarea id="agentPrompt" value={prompt} onChange={(event) => updatePrompt(event.target.value)} placeholder="例如：这场会最重要的决定是什么？" disabled={busy || eligibility !== 'ready'} />
           <div className="request-actions"><button type="button" className="primary" data-action="minutes" disabled={busy || eligibility !== 'ready'} onClick={() => void submit('请基于这场已结束的会话生成会话总结，包含主要内容、决定、待办和需要注意。', 'minutes')}>生成总结</button><button type="button" data-action="qa" disabled={!canSubmit} onClick={() => void submit(prompt, 'qa')}>提交问题</button></div>
           {unresolvedSubmission && <div className="run-card" aria-label="受理状态未确认"><div><span>当前请求</span><strong>受理状态暂时无法确认</strong><span>会话和请求内容已固定；重试会沿用同一请求。</span></div><button type="button" onClick={retryUnresolvedSubmission} disabled={submitPending}>重试原请求</button></div>}
-          {activeSummarySnapshot && <div className="run-card" aria-label="当前会话总结请求状态"><div><span>当前请求 · {summaryRunPhaseLabel(activeSummarySnapshot.phase)}</span><strong>{summarySnapshotStale ? '状态暂时无法确认' : summaryRunStateLabel(activeSummarySnapshot)}</strong>{summarySnapshotStale && <span className="stale-status" role="status">上次确认状态：{summaryRunStateLabel(activeSummarySnapshot)}；正在重新读取。</span>}<span>已用时 {activeSummarySnapshot.elapsed_ms} ms{activeSummarySnapshot.validated_chunk_count !== null ? ` · 已校验 ${activeSummarySnapshot.validated_chunk_count}/${activeSummarySnapshot.total_chunk_count} 个分块` : ''}</span>{summarySnapshotError && <span className="stale-status" role="status">{summarySnapshotError}</span>}</div><button type="button" onClick={() => void cancel()} disabled={cancelPending || summaryRunTerminal(activeSummarySnapshot) || summaryTargetTerminal}>{cancelPending ? '正在取消…' : '取消生成'}</button></div>}
+          {activeSummarySnapshot && <div className="run-card" aria-label="当前会话总结请求状态"><div><span>当前请求 · {summaryRunPhaseLabel(activeSummarySnapshot.phase)}</span><strong>{summarySnapshotStale ? '状态暂时无法确认' : summaryRunStateLabel(activeSummarySnapshot)}</strong>{summarySnapshotStale && <span className="stale-status" role="status">上次确认状态：{summaryRunStateLabel(activeSummarySnapshot)}；正在重新读取。</span>}<span>已用时 {activeSummarySnapshot.elapsed_ms} ms{activeSummarySnapshot.attempt > 0 ? ` · 第 ${activeSummarySnapshot.attempt} 次尝试` : ''}{activeSummarySnapshot.validated_chunk_count !== null ? ` · 已校验 ${activeSummarySnapshot.validated_chunk_count}/${activeSummarySnapshot.total_chunk_count} 个分块` : ''}</span><span>{summaryActivityAgeLabel(activeSummarySnapshot.last_activity_age_ms)} · {summaryMemoryProgressLabel(activeSummarySnapshot.memory_state)}</span>{summarySnapshotError && <span className="stale-status" role="status">{summarySnapshotError}</span>}</div><button type="button" onClick={() => void cancel()} disabled={cancelPending || activeSummarySnapshot.state === 'cancelling' || summaryRunTerminal(activeSummarySnapshot) || summaryTargetTerminal}>{cancelPending || activeSummarySnapshot.state === 'cancelling' ? '正在取消…' : '取消生成'}</button></div>}
           {!activeSummarySnapshot && activeInteractionId && <div className="run-card" aria-label="当前请求状态"><div><span>当前请求</span><strong>{detailStale && ['pending', 'running', 'cancelling'].includes(String(state || '')) ? '状态暂时无法确认' : stateLabel(state)}</strong>{detailStale && ['pending', 'running', 'cancelling'].includes(String(state || '')) && <span className="stale-status" role="status">上次确认状态：{stateLabel(state)}；正在重新读取。</span>}</div><button type="button" onClick={() => void cancel()} disabled={cancelPending || !['pending', 'running'].includes(state || '')}>{cancelPending ? '正在取消…' : '取消生成'}</button></div>}
           {detailError && <p className="error" role="alert">{detailError}</p>}
           {!detail && detailPending && <p className="loading">正在读取结果…</p>}

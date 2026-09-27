@@ -33,6 +33,11 @@ function responseStatus (response) {
   return Number.isSafeInteger(response?.status) ? response.status : 0
 }
 
+function notifyProgress (onProgress, event) {
+  if (typeof onProgress !== 'function') return
+  try { Promise.resolve(onProgress(Object.freeze(event))).catch(() => {}) } catch { /* progress observers are isolated from provider calls */ }
+}
+
 function responseOk (response) {
   const status = responseStatus(response)
   return response?.ok === true || (status >= 200 && status < 300)
@@ -214,6 +219,7 @@ class OpenAiCompatibleAdapter {
     maxTurns = 1,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     signal,
+    onProgress,
     shouldStopAfterTurn = null,
     requestStrategy = 'openai-compatible@1',
     testMode = false
@@ -272,6 +278,7 @@ class OpenAiCompatibleAdapter {
       let timeoutHandle
       let removeAbortListener = null
       let requestHeaders = null
+      let responseReceived = false
       const requestSignal = (() => {
         if (typeof AbortController !== 'function') return signal
         controller = new AbortController()
@@ -293,13 +300,22 @@ class OpenAiCompatibleAdapter {
           authorization: `Bearer ${credentialBuffer.toString('utf8')}`,
           'content-type': 'application/json'
         }
-        const response = await this.fetch(joinEndpoint(endpointConnection, '/chat/completions'), {
-          method: 'POST',
-          redirect: 'manual',
-          headers: requestHeaders,
-          body: requestBody,
-          signal: requestSignal
-        })
+        const requestTurn = turn + 1
+        let responsePromise
+        try {
+          responsePromise = this.fetch(joinEndpoint(endpointConnection, '/chat/completions'), {
+            method: 'POST',
+            redirect: 'manual',
+            headers: requestHeaders,
+            body: requestBody,
+            signal: requestSignal
+          })
+        } finally {
+          notifyProgress(onProgress, { type: 'request_started', turn: requestTurn })
+        }
+        const response = await responsePromise
+        responseReceived = true
+        notifyProgress(onProgress, { type: 'response_received', turn: requestTurn })
         const status = responseStatus(response)
         if (status >= 300 && status < 400) throw codedError(testMode ? 'REDIRECT_REJECTED' : 'AGENT_PROVIDER_UNAVAILABLE', true)
         if (!responseOk(response)) throw providerResponseError(status)
@@ -376,6 +392,7 @@ class OpenAiCompatibleAdapter {
           toolCalls += 1
         }
       } catch (error) {
+        if (!responseReceived) notifyProgress(onProgress, { type: 'request_failed', turn: turn + 1 })
         if (signal?.aborted) throw codedError('AGENT_CANCELLED', false)
         if (timedOut || error?.name === 'AbortError') throw codedError('AGENT_PROVIDER_TIMEOUT', true)
         if (error?.code) throw error

@@ -7,6 +7,12 @@ const { AgentLoopExecutor } = require('../../src/agent/execution-host/agent-loop
 const { FormalAgentRunRunner } = require('../../src/agent/execution-host/formal-agent-run-runner')
 const { deriveRecipeBudget } = require('../../src/agent/contracts/budget-axes')
 
+function deferred () {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
+}
+
 const capabilities = {
   maxInputTokens: 64000,
   maxOutputTokens: 4096,
@@ -107,12 +113,12 @@ function job (overrides = {}) {
   }
 }
 
-test('SEM-F15/SEM-F16/SEM-F28/SEM-F34/J22: user target runner resolves bounded context, uses one loop and terminalizes SQLite interaction facts', async () => {
+test('SEM-F15/SEM-F16/SEM-F28/SEM-F34/SEM-F38/J22/J29: user target runner uses bounded tool context without discarded memory pre-read', async () => {
   const { runner, calls, sourceRef } = harness()
   const result = await runner.run(job())
   assert.equal(result.terminalReason, 'succeeded')
   assert.equal(calls.filter(([kind]) => kind === 'bind').length, 1)
-  assert.equal(calls.filter(([kind]) => kind === 'resolve').length, 1)
+  assert.equal(calls.filter(([kind]) => kind === 'resolve').length, 0)
   assert.equal(calls.filter(([kind]) => kind === 'tool.start').length, 1)
   const terminal = calls.find(([kind]) => kind === 'terminalize')[1]
   assert.equal(terminal.terminalReason, 'succeeded')
@@ -149,6 +155,72 @@ test('SEM-F15/SEM-F16/SEM-F34/J22: summary.minutes uses the same Agent Loop and 
   assert.equal(terminal.terminalReason, 'succeeded')
   assert.equal(terminal.result.overview, '已整理会话重点。')
   assert.deepEqual(terminal.result.conclusions[0].sourceRefs, [sourceRef])
+})
+
+test('SEM-F38/J30-PROGRESS: runner reports actual provider and memory events without content', async () => {
+  const progress = []
+  const { runner, sourceRef } = harness({
+    recipeId: 'summary.minutes',
+    adapterRun: async ({ tools, onProgress }) => {
+      await onProgress({ type: 'request_started', turn: 1 })
+      const lookup = await tools[0].execute({ schemaVersion: 1, aliasKeys: ['none'] })
+      assert.equal(lookup.matches.length, 0)
+      await onProgress({ type: 'response_received', turn: 1 })
+      return {
+        text: JSON.stringify({
+          schemaVersion: 1,
+          overview: '只依据本次会话。',
+          conclusions: [{ text: '本次决定。', sourceRefs: [sourceRef] }],
+          todos: [],
+          risks: []
+        }),
+        usage: null
+      }
+    }
+  })
+  runner.onProgress = (event) => progress.push(event)
+  await runner.run(job({
+    recipeId: 'summary.minutes',
+    sessionSummaryRequest: { requestId: 'request.runner.progress', generation: 1 }
+  }))
+
+  assert.deepEqual(progress.map(({ phase, activity, memoryState }) => ({ phase, activity, memoryState })), [
+    { phase: 'preparing', activity: false, memoryState: undefined },
+    { phase: 'reading_context', activity: false, memoryState: undefined },
+    { phase: 'waiting_model', activity: true, memoryState: undefined },
+    { phase: 'reading_context', activity: true, memoryState: undefined },
+    { phase: 'reading_context', activity: true, memoryState: 'empty' },
+    { phase: 'waiting_model', activity: true, memoryState: undefined },
+    { phase: 'validating', activity: false, memoryState: undefined },
+    { phase: 'validating', activity: false, memoryState: undefined }
+  ])
+  assert.ok(progress.every((event) => event.runId === 'run.user.runner' && event.attempt === 1))
+  assert.equal(JSON.stringify(progress).includes('只依据本次会话'), false)
+  assert.equal(JSON.stringify(progress).includes('none'), false)
+})
+
+test('SEM-F38/J30-PROGRESS: reading_context is visible while session input is still being read', async () => {
+  const { runner } = harness()
+  const inputRead = deferred()
+  const inputReadStarted = deferred()
+  const originalReadSessionInput = runner.personalContext.readSessionInput
+  const progress = []
+  runner.onProgress = (event) => progress.push(event)
+  runner.personalContext.readSessionInput = () => {
+    inputReadStarted.resolve()
+    return inputRead.promise
+  }
+
+  const pending = runner.run(job({
+    sessionSummaryRequest: { requestId: 'request.runner.input-wait', generation: 1 }
+  }))
+  await inputReadStarted.promise
+  assert.deepEqual(progress.at(-1), {
+    requestId: 'request.runner.input-wait', generation: 1, runId: 'run.user.runner',
+    attempt: 1, phase: 'reading_context', activity: false
+  })
+  inputRead.resolve(await originalReadSessionInput())
+  await pending
 })
 
 test('SEM-F38/J29: summary.minutes with memory reference disabled never resolves or reads personal context', async () => {

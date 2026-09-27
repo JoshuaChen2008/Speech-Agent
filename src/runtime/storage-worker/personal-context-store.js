@@ -2112,6 +2112,17 @@ class PersonalContextStore {
           leaseExpiresAt: Number(receipt.lease_expires_at)
         }
       }
+      if (typeof row.session_summary_request_id === 'string') {
+        const summaryRequest = this.database.prepare(`
+          SELECT request_id,generation FROM formal_agent_requests WHERE request_id=?
+        `).get(row.session_summary_request_id)
+        if (summaryRequest) {
+          result.sessionSummaryRequest = {
+            requestId: summaryRequest.request_id,
+            generation: Number(summaryRequest.generation)
+          }
+        }
+      }
       if (row.recipe_id === 'summary.minutes') {
         result.summaryUseMemory = row.summary_use_memory === undefined || row.summary_use_memory === null
           ? true
@@ -2151,6 +2162,24 @@ class PersonalContextStore {
             lease_renewed_from_expires_at = NULL, next_attempt_at = ?, error_code = NULL, updated_at = ?
           WHERE run_id = ?
         `).run(attempt, request.owner, leaseExpiresAt, now, now, row.run_id)
+        if (typeof row.session_summary_request_id === 'string') {
+          const summaryRequest = this.database.prepare(`
+            SELECT summary_use_memory FROM formal_agent_requests WHERE request_id=?
+          `).get(row.session_summary_request_id)
+          if (summaryRequest) {
+            this.database.prepare(`
+              UPDATE formal_agent_requests SET state='running',phase='preparing',attempt=?,
+                validated_chunk_count=NULL,total_chunk_count=NULL,
+                memory_state=?,revision=revision+1,updated_at=?
+              WHERE request_id=? AND cancel_requested=0 AND state NOT IN ('succeeded','failed','cancelled')
+            `).run(
+              attempt,
+              summaryRequest.summary_use_memory === 0 ? 'not_used' : 'not_read',
+              now,
+              row.session_summary_request_id
+            )
+          }
+        }
       }
       this.database.prepare(`
         INSERT INTO formal_agent_run_claim_receipts(

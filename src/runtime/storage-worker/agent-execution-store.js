@@ -485,10 +485,10 @@ class AgentExecutionStore {
         const isRoute = recipe.recipeId === 'intent.route'
         const column = isRoute ? 'route_run_id' : 'target_run_id'
         const state = isRoute ? 'routing' : 'queued'
-        const phase = isRoute ? 'waiting_model' : 'accepted'
+        const phase = 'preparing'
         const linked = this.database.prepare(`
           UPDATE formal_agent_requests SET ${column}=?, state=?, phase=?, revision=revision+1,
-            last_activity_elapsed_ms=elapsed_ms, updated_at=?
+            updated_at=?
           WHERE request_id=? AND generation=? AND cancel_requested=0 AND ${column} IS NULL
         `).run(runId, state, phase, now, requestId, requestGeneration)
         if (Number(linked.changes) !== 1) fail('AGENT_INTERACTION_STATE_CONFLICT')
@@ -557,7 +557,7 @@ class AgentExecutionStore {
       revision: Number(row.revision),
       cancelRequested: row.cancel_requested !== 0,
       resumeRequired: row.resume_required !== 0,
-      attempt: targetRun ? Number(targetRun.attempt_count) : Number(row.attempt),
+      attempt: Number(row.attempt),
       elapsedMs: Number(row.elapsed_ms),
       lastActivityElapsedMs: Number(row.last_activity_elapsed_ms),
       validatedChunkCount: row.validated_chunk_count === null ? null : Number(row.validated_chunk_count),
@@ -700,17 +700,25 @@ class AgentExecutionStore {
   }
 
   cancelSessionSummaryRequest (input) {
-    exactObject(input, ['requestId', 'generation'])
+    exactObject(input, ['requestId', 'generation'], ['elapsedMs'])
     const requestId = identifier(input.requestId)
     boundedInteger(input.generation, 1, Number.MAX_SAFE_INTEGER)
+    if (input.elapsedMs !== undefined) nonNegativeInteger(input.elapsedMs)
     return this.transaction(() => {
-      const row = this.sessionSummaryRequestRow(requestId)
+      let row = this.sessionSummaryRequestRow(requestId)
       if (Number(row.generation) !== input.generation) fail('AGENT_CONTEXT_REVISION_CONFLICT')
       if (['succeeded', 'failed', 'cancelled'].includes(row.state)) return this.sessionSummaryRequestProjection(row, true)
-      const now = this.nowValue()
       const linkedRunId = row.target_run_id || row.route_run_id
       if (row.cancel_requested !== 0 && linkedRunId && ['queued', 'retry_wait', 'running'].includes(this.runRow(linkedRunId).state)) {
         return this.sessionSummaryRequestProjection(row, true)
+      }
+      const now = this.nowValue()
+      if (row.cancel_requested === 0 && input.elapsedMs !== undefined && input.elapsedMs > Number(row.elapsed_ms)) {
+        this.database.prepare(`
+          UPDATE formal_agent_requests SET elapsed_ms=?,revision=revision+1,updated_at=?
+          WHERE request_id=? AND generation=?
+        `).run(input.elapsedMs, now, requestId, input.generation)
+        row = this.sessionSummaryRequestRow(requestId)
       }
       if (!linkedRunId) {
         this.database.prepare(`
@@ -980,6 +988,12 @@ class AgentExecutionStore {
           WHERE run_id=? AND state NOT IN ('succeeded','failed','cancelled')
         `).run(now, row.run_id)
       }
+      const summaryRequestState = terminalReason === 'succeeded' ? 'succeeded' : terminalReason
+      const summaryRequestError = terminalReason === 'failed' ? input.errorCode : null
+      this.database.prepare(`
+        UPDATE formal_agent_requests SET state=?,phase='terminal',error_code=?,revision=revision+1,updated_at=?
+        WHERE target_run_id=? AND state NOT IN ('succeeded','failed','cancelled')
+      `).run(summaryRequestState, summaryRequestError, now, row.run_id)
       return rowInteraction(this.interactionRow(interactionId))
     })
   }

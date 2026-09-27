@@ -43,7 +43,7 @@ class AgentLoopExecutor {
 
   async agentLoop (input) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw executionError('AGENT_REQUEST_INVALID')
-    const allowedKeys = new Set(['recipeId', 'recipeVersion', 'prompt', 'resolvedModel', 'tools', 'signal', 'timeoutMs', 'budget', 'usageReporting'])
+    const allowedKeys = new Set(['recipeId', 'recipeVersion', 'prompt', 'resolvedModel', 'tools', 'signal', 'timeoutMs', 'budget', 'usageReporting', 'onProgress'])
     if (Object.keys(input).some((key) => !allowedKeys.has(key))) throw executionError('AGENT_REQUEST_INVALID')
     let recipe
     try { recipe = getRecipe(input.recipeId, input.recipeVersion) } catch { throw executionError('AGENT_REQUEST_INVALID') }
@@ -79,6 +79,7 @@ class AgentLoopExecutor {
     if (input.signal?.aborted) throw executionError('AGENT_CANCELLED')
     const budget = input.budget && typeof input.budget === 'object' ? input.budget : {}
     const adapter = await this.resolveAdapter()
+    const onProgress = typeof input.onProgress === 'function' ? input.onProgress : null
     let result
     try {
       result = await adapter.run({
@@ -90,6 +91,14 @@ class AgentLoopExecutor {
         maxTurns: recipe.maxTurns,
         timeoutMs: Number.isSafeInteger(input.timeoutMs) && input.timeoutMs > 0 ? input.timeoutMs : budget.maxWallClockMs,
         signal: input.signal,
+        onProgress: onProgress
+          ? (event) => {
+              if (!event || typeof event !== 'object' || Array.isArray(event) ||
+                  !['request_started', 'response_received', 'request_failed'].includes(event.type) ||
+                  !Number.isSafeInteger(event.turn) || event.turn < 1) return
+              try { return onProgress(Object.freeze({ type: event.type, turn: event.turn })) } catch { /* progress observers do not change model work */ }
+            }
+          : undefined,
         shouldStopAfterTurn: ({ turn, toolCalls = 0, budgetExceeded = false } = {}) => shouldStopAfterTurn({
           maxTurns: recipe.maxTurns,
           turn,

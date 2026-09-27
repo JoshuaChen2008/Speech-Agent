@@ -1517,6 +1517,7 @@ async function bootstrapApplication () {
       personalContext: executionAdapter,
       modelAccess: modelAccessRuntime,
       promptProvider: (runId) => formalAgentPrompts.get(runId) || null,
+      onProgress: (event) => sessionSummaryRunService?.recordProgress(event),
       onSettled: (runId, terminalReason, interactionId) => settleFormalAgentPrompt({
         promptStore: formalAgentPrompts,
         signalService: formalAgentSignalService,
@@ -1524,7 +1525,10 @@ async function bootstrapApplication () {
         terminalReason,
         interactionId
       }),
-      onChanged: () => formalAgentService?.emitChanged(),
+      onChanged: (event) => {
+        formalAgentService?.emitChanged()
+        if (event?.requestId) void sessionSummaryRunService?.notifyRunChanged(event)
+      },
       interactions: {
         terminalize: (request) => applicationRuntime.gateway.terminalizeAgentInteraction(request),
         startToolCall: (request) => applicationRuntime.gateway.startAgentToolCall(request),

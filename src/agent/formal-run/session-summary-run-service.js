@@ -1,5 +1,6 @@
 'use strict'
 
+const { performance } = require('node:perf_hooks')
 const { sha256Canonical } = require('../../runtime/storage-worker/canonical-json')
 const runContract = require('../contracts/agent-run-ui')
 const c = require('../contracts/session-summary-run-ui')
@@ -19,9 +20,9 @@ function errorResponse (code, nextAction = 'retry') {
   }
 }
 
-function publicSnapshot (row) {
-  const activityAge = row.elapsedMs > 0 && row.elapsedMs >= row.lastActivityElapsedMs
-    ? row.elapsedMs - row.lastActivityElapsedMs
+function publicSnapshot (row, elapsedMs = row.elapsedMs) {
+  const activityAge = row.lastActivityElapsedMs > 0 && elapsedMs >= row.lastActivityElapsedMs
+    ? elapsedMs - row.lastActivityElapsedMs
     : null
   return c.assertRequestSnapshot({
     request_id: row.requestId,
@@ -31,7 +32,7 @@ function publicSnapshot (row) {
     state: row.state,
     phase: row.phase,
     attempt: row.attempt,
-    elapsed_ms: row.elapsedMs,
+    elapsed_ms: elapsedMs,
     last_activity_age_ms: activityAge,
     validated_chunk_count: row.validatedChunkCount,
     total_chunk_count: row.totalChunkCount,
@@ -118,10 +119,13 @@ class SessionSummaryRunService {
     this.promptStore = options.promptStore instanceof Map ? options.promptStore : null
     this.defer = typeof options.defer === 'function' ? options.defer : (callback) => setImmediate(callback)
     this.onChanged = typeof options.onChanged === 'function' ? options.onChanged : () => {}
+    this.monotonicNow = typeof options.monotonicNow === 'function' ? options.monotonicNow : () => performance.now()
     this.listeners = new Set()
     this.controllers = new Map()
     this.dispatches = new Map()
     this.runRequests = new Map()
+    this.progressClocks = new Map()
+    this.progressQueues = new Map()
   }
 
   subscribeChanged (listener) {
@@ -150,6 +154,112 @@ class SessionSummaryRunService {
     const row = await this.readRow(requestId)
     this.emitChanged(row)
     return row
+  }
+
+  startClock (row) {
+    if (!row || TERMINAL_STATES.has(row.state)) return
+    const current = this.progressClocks.get(row.requestId)
+    if (current?.generation === row.generation) return
+    this.progressClocks.set(row.requestId, {
+      generation: row.generation,
+      baseElapsedMs: row.elapsedMs,
+      monotonicAt: this.monotonicNow()
+    })
+  }
+
+  elapsedFor (row) {
+    if (!row || TERMINAL_STATES.has(row.state) || row.state === 'cancelling') return row?.elapsedMs ?? 0
+    const clock = this.progressClocks.get(row.requestId)
+    if (!clock || clock.generation !== row.generation) return row.elapsedMs
+    return Math.max(row.elapsedMs, clock.baseElapsedMs + Math.max(0, Math.floor(this.monotonicNow() - clock.monotonicAt)))
+  }
+
+  elapsedForRequest (requestId, generation) {
+    const clock = this.progressClocks.get(requestId)
+    if (!clock || clock.generation !== generation) return null
+    return Math.max(clock.baseElapsedMs, clock.baseElapsedMs + Math.max(0, Math.floor(this.monotonicNow() - clock.monotonicAt)))
+  }
+
+  snapshotFor (row) {
+    return publicSnapshot(row, this.elapsedFor(row))
+  }
+
+  recordProgress (event) {
+    if (!event || typeof event !== 'object' || Array.isArray(event)) return Promise.resolve(null)
+    const allowed = new Set(['requestId', 'generation', 'runId', 'attempt', 'phase', 'state', 'activity', 'memoryState'])
+    const actual = Object.keys(event)
+    if (actual.some((key) => !allowed.has(key)) ||
+        typeof event.requestId !== 'string' || !Number.isSafeInteger(event.generation) || event.generation < 1 ||
+        !(event.runId === null || typeof event.runId === 'string') ||
+        !Number.isSafeInteger(event.attempt) || event.attempt < 0 ||
+        !c.PHASES.includes(event.phase) ||
+        event.state !== undefined && !c.STATES.includes(event.state) ||
+        event.activity !== undefined && typeof event.activity !== 'boolean' ||
+        event.memoryState !== undefined && !c.MEMORY_STATES.includes(event.memoryState)) return Promise.resolve(null)
+    const prior = this.progressQueues.get(event.requestId) || Promise.resolve()
+    const task = prior.catch(() => null).then(() => this.persistProgress(event))
+    this.progressQueues.set(event.requestId, task)
+    return task.finally(() => {
+      if (this.progressQueues.get(event.requestId) === task) this.progressQueues.delete(event.requestId)
+    })
+  }
+
+  async persistProgress (event) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      let row
+      try { row = await this.readRow(event.requestId) } catch { return null }
+      if (row.generation !== event.generation || row.cancelRequested || TERMINAL_STATES.has(row.state)) return null
+      if (event.runId !== null && event.runId !== row.routeRunId && event.runId !== row.targetRunId) return null
+      if (event.attempt < row.attempt) return null
+      this.startClock(row)
+      let elapsedMs = this.elapsedFor(row)
+      const newAttempt = event.attempt > row.attempt
+      let memoryState = event.memoryState
+      if (memoryState === undefined) {
+        memoryState = newAttempt
+          ? row.summaryUseMemory === false ? 'not_used' : 'not_read'
+          : row.memoryState
+      }
+      let lastActivityElapsedMs = row.lastActivityElapsedMs
+      if (event.activity === true) {
+        lastActivityElapsedMs = Math.max(1, elapsedMs)
+        elapsedMs = Math.max(elapsedMs, lastActivityElapsedMs)
+      }
+      const update = {
+        requestId: event.requestId,
+        generation: event.generation,
+        expectedRevision: row.revision,
+        phase: event.phase,
+        attempt: event.attempt,
+        elapsedMs,
+        lastActivityElapsedMs,
+        memoryState
+      }
+      if (event.state !== undefined) update.state = event.state
+      if (newAttempt) {
+        update.validatedChunkCount = null
+        update.totalChunkCount = null
+      }
+      try {
+        const updated = await this.storage.updateSessionSummaryRequest(update)
+        this.emitChanged(updated)
+        return updated
+      } catch (error) {
+        if (error?.code !== 'AGENT_CONTEXT_REVISION_CONFLICT') return null
+      }
+    }
+    return null
+  }
+
+  async notifyRunChanged (event) {
+    if (!event || typeof event.requestId !== 'string' || !Number.isSafeInteger(event.generation) ||
+        typeof event.runId !== 'string') return null
+    try {
+      const row = await this.readRow(event.requestId)
+      if (row.generation !== event.generation || (row.targetRunId !== event.runId && row.routeRunId !== event.runId)) return null
+      this.emitChanged(row)
+      return row
+    } catch { return null }
   }
 
   async accept (request) {
@@ -186,6 +296,7 @@ class SessionSummaryRunService {
         }
         const row = await this.readRow(identity.requestId)
         if (frozen && !row.cancelRequested && !TERMINAL_STATES.has(row.state)) {
+          this.startClock(row)
           this.scheduleDispatch({
             requestId: row.requestId,
             generation: row.generation,
@@ -200,7 +311,7 @@ class SessionSummaryRunService {
         this.emitChanged(row)
         return c.assertAcceptResponse({
           ...header(), ok: true, error: null,
-          result: { accepted: true, replayed: true, snapshot: publicSnapshot(row) }
+          result: { accepted: true, replayed: true, snapshot: this.snapshotFor(row) }
         })
       }
 
@@ -249,9 +360,10 @@ class SessionSummaryRunService {
         ...frozenIdentity
       })
       const row = await this.readRow(identity.requestId)
+      if (!row.cancelRequested && !TERMINAL_STATES.has(row.state)) this.startClock(row)
       const response = c.assertAcceptResponse({
         ...header(), ok: true, error: null,
-        result: { accepted: true, replayed: accepted.replayed === true, snapshot: publicSnapshot(row) }
+        result: { accepted: true, replayed: accepted.replayed === true, snapshot: this.snapshotFor(row) }
       })
       if (!row.cancelRequested && !TERMINAL_STATES.has(row.state)) {
         this.scheduleDispatch({
@@ -290,6 +402,15 @@ class SessionSummaryRunService {
     try {
       const current = await this.readRow(input.requestId)
       if (current.cancelRequested || TERMINAL_STATES.has(current.state)) return
+      await this.recordProgress({
+        requestId: input.requestId,
+        generation: input.generation,
+        runId: null,
+        attempt: 0,
+        phase: 'preparing',
+        state: input.action === 'question' ? 'routing' : 'preparing',
+        activity: false
+      })
       if (!this.routeOrchestrator) throw Object.assign(new Error('route unavailable'), { code: 'AGENT_RUN_UNAVAILABLE' })
       const routeInput = {
         scope: input.scope,
@@ -300,7 +421,15 @@ class SessionSummaryRunService {
         clientIdempotencyKey: input.clientIdempotencyKey,
         signal: controller.signal,
         requestId: input.requestId,
-        requestGeneration: input.generation
+        requestGeneration: input.generation,
+        ...(input.action === 'question' ? { onProgress: (event) => this.recordProgress({
+          requestId: input.requestId,
+          generation: input.generation,
+          runId: event?.runId ?? null,
+          attempt: 0,
+          phase: 'waiting_model',
+          activity: true
+        }) } : {})
       }
       const routed = input.action === 'summary'
         ? await this.routeOrchestrator.submitFixedTarget({ ...routeInput, summaryUseMemory: input.summaryUseMemory })
@@ -336,10 +465,20 @@ class SessionSummaryRunService {
         this.emitChanged(row)
         return
       }
+      await this.recordProgress({
+        requestId: input.requestId,
+        generation: input.generation,
+        runId: null,
+        attempt: row.attempt,
+        phase: c.PHASES.includes(row.phase) ? row.phase : 'preparing',
+        activity: false
+      })
+      const latest = await this.readRow(input.requestId)
+      if (latest.cancelRequested || TERMINAL_STATES.has(latest.state)) return
       await this.storage.updateSessionSummaryRequest({
         requestId: input.requestId,
         generation: input.generation,
-        expectedRevision: row.revision,
+        expectedRevision: latest.revision,
         state: 'failed',
         phase: 'terminal',
         errorCode: stableErrorCode(error)
@@ -354,7 +493,7 @@ class SessionSummaryRunService {
       const row = await this.readRow(request.request_id)
       return c.assertGetResponse({
         ...header(), ok: true, error: null,
-        result: { snapshot: publicSnapshot(row) }
+        result: { snapshot: this.snapshotFor(row) }
       })
     } catch (error) {
       return c.assertGetResponse(errorResponse(stableErrorCode(error), 'retry'))
@@ -364,18 +503,21 @@ class SessionSummaryRunService {
   async cancel (request) {
     try {
       c.assertCancelRequest(request)
+      const elapsedMs = this.elapsedForRequest(request.request_id, request.generation)
       this.controllers.get(request.request_id)?.abort()
-      const row = await this.storage.cancelSessionSummaryRequest({
+      const cancelRequest = {
         requestId: request.request_id,
         generation: request.generation
-      })
+      }
+      if (elapsedMs !== null) cancelRequest.elapsedMs = elapsedMs
+      const row = await this.storage.cancelSessionSummaryRequest(cancelRequest)
       const linkedRunId = row.targetRunId || row.routeRunId
       if (linkedRunId && this.scheduler && typeof this.scheduler.cancel === 'function') this.scheduler.cancel(linkedRunId)
       const latest = await this.readRow(request.request_id)
       this.emitChanged(latest)
       return c.assertCancelResponse({
         ...header(), ok: true, error: null,
-        result: { snapshot: publicSnapshot(latest) }
+        result: { snapshot: this.snapshotFor(latest) }
       })
     } catch (error) {
       const nextAction = error?.code === 'AGENT_CONTEXT_REVISION_CONFLICT' ? 'refresh_status' : 'verify_state'

@@ -7,6 +7,7 @@ const os = require('node:os')
 const path = require('node:path')
 
 const { AgentExecutionStore } = require('../../src/runtime/storage-worker/agent-execution-store')
+const { publicSnapshot } = require('../../src/agent/formal-run/session-summary-run-service')
 const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
 const { sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
@@ -84,9 +85,10 @@ test('SEM-F38/DB1/J30-CANCEL: request cancellation blocks a later target run', (
   const { store } = fixture(t)
   const accepted = acceptedRequest()
   store.acceptSessionSummaryRequest(accepted)
-  const cancelled = store.cancelSessionSummaryRequest({ requestId: accepted.requestId, generation: 1 })
+  const cancelled = store.cancelSessionSummaryRequest({ requestId: accepted.requestId, generation: 1, elapsedMs: 321 })
   assert.equal(cancelled.state, 'cancelled')
   assert.equal(cancelled.cancelRequested, true)
+  assert.equal(cancelled.elapsedMs, 321)
   assert.throws(() => store.createRun({
     runId: 'run.cancelled.request', recipeId: 'qa.answer', recipeVersion: '1',
     scope: { kind: 'session', reference: 'session.p1' }, transcriptVersion: 'raw',
@@ -108,6 +110,23 @@ test('SEM-F38/DB1/J30-PROGRESS: request revisions reject stale phase updates', (
     requestId: accepted.requestId, generation: 1, expectedRevision: 0,
     state: 'routing', phase: 'waiting_model'
   }), (error) => error.code === 'AGENT_CONTEXT_REVISION_CONFLICT')
+})
+
+test('SEM-F38/DB1/J30-PROGRESS: routing links begin in preparation without claiming activity', (t) => {
+  const { store } = fixture(t)
+  const accepted = acceptedRequest({ action: 'question', summaryUseMemory: null })
+  store.acceptSessionSummaryRequest(accepted)
+  store.createRun({
+    runId: 'run.request.route-progress', recipeId: 'intent.route', recipeVersion: '1',
+    scope: { kind: 'session', reference: accepted.sessionId }, transcriptVersion: 'raw',
+    inputWatermark: accepted.inputWatermark, inputDigest: accepted.inputDigest,
+    requestedBy: 'user', clientIdempotencyKey: 'request.route-progress', requestId: accepted.requestId,
+    requestGeneration: 1
+  })
+  const request = store.getSessionSummaryRequest({ requestId: accepted.requestId })
+  assert.equal(request.phase, 'preparing')
+  assert.equal(request.lastActivityElapsedMs, 0)
+  assert.equal(publicSnapshot(request).last_activity_age_ms, null)
 })
 
 test('SEM-F38/DB1/J30-ACCEPT: summary acceptance requires a frozen memory preference', (t) => {
@@ -175,11 +194,19 @@ test('SEM-F38/DB1/J30-CANCEL: repeated cancellation while a target is running re
     requestedBy: 'user', clientIdempotencyKey: 'request.running.key', requestId: accepted.requestId, requestGeneration: 1
   })
   subtitleStore.database.prepare("UPDATE formal_agent_runs SET state='running',attempt_count=1,lease_owner='worker.test',lease_expires_at=5000 WHERE run_id=?").run('run.running.request')
-  const first = store.cancelSessionSummaryRequest({ requestId: accepted.requestId, generation: 1 })
-  const replay = store.cancelSessionSummaryRequest({ requestId: accepted.requestId, generation: 1 })
+  const first = store.cancelSessionSummaryRequest({ requestId: accepted.requestId, generation: 1, elapsedMs: 321 })
+  const activeReplay = store.cancelSessionSummaryRequest({ requestId: accepted.requestId, generation: 1, elapsedMs: 999 })
   assert.equal(first.state, 'cancelling')
-  assert.equal(replay.revision, first.revision)
-  assert.equal(replay.replayed, true)
+  assert.equal(first.elapsedMs, 321)
+  assert.equal(activeReplay.revision, first.revision)
+  assert.equal(activeReplay.elapsedMs, 321)
+  assert.equal(activeReplay.replayed, true)
+
+  subtitleStore.database.prepare("UPDATE formal_agent_runs SET state='cancelled',lease_owner=NULL,lease_expires_at=NULL,updated_at=2001 WHERE run_id=?").run('run.running.request')
+  const terminalReplay = store.cancelSessionSummaryRequest({ requestId: accepted.requestId, generation: 1, elapsedMs: 1500 })
+  assert.equal(terminalReplay.state, 'cancelled')
+  assert.equal(terminalReplay.elapsedMs, 321)
+  assert.ok(terminalReplay.revision > first.revision)
   assert.equal(subtitleStore.database.prepare('SELECT cancel_requested_at FROM formal_agent_runs WHERE run_id=?').get('run.running.request').cancel_requested_at, 2000)
 })
 

@@ -55,6 +55,7 @@ class ToolAuditRuntime {
       ? options.cancelTimeout
       : (timer) => clearTimeout(timer)
     this.signal = options.signal || null
+    this.onProgress = typeof options.onProgress === 'function' ? options.onProgress : null
     this.startedAt = this.now()
     this.callOrder = 0
     this.activeToolCalls = 0
@@ -128,6 +129,7 @@ class ToolAuditRuntime {
     const startedOffsetMs = this.offset()
     const callId = `tool.${this.interactionId}.${this.attempt}.${callOrder}`
     this.activeToolCalls += 1
+    let toolStarted = false
     try {
       const before = this.budgetExceeded(callOrder, this.activeToolCalls, 0)
       await this.interactions.startToolCall({
@@ -138,10 +140,18 @@ class ToolAuditRuntime {
         await this.finishFailure(callId, startedOffsetMs, 'TOOL_BUDGET_EXCEEDED')
         throw toolError('TOOL_BUDGET_EXCEEDED')
       }
+      toolStarted = true
+      if (this.onProgress) await this.reportProgress({ type: 'tool_started', toolName: tool.name })
       const result = await this.executeWithinTimeout(tool, args)
       const metadata = deriveToolResultMetadata(tool.name, args, result)
       this.resultBytes += metadata.resultBytes
       this.sourceTextBytes += metadata.sourceTextBytes
+      const memoryState = tool.name === 'search_context'
+        ? result.matches.some((match) => match.entries.length > 0) ? 'referenced' : 'empty'
+        : undefined
+      if (this.onProgress) {
+        await this.reportProgress({ type: 'tool_result_received', toolName: tool.name, ...(memoryState ? { memoryState } : {}) })
+      }
       const after = this.budgetExceeded(callOrder, this.activeToolCalls, this.offset() - startedOffsetMs)
       if (after.exhausted) {
         this.resultBytes -= metadata.resultBytes
@@ -162,10 +172,26 @@ class ToolAuditRuntime {
     } catch (error) {
       const code = knownToolError(error)
       if (code !== 'TOOL_BUDGET_EXCEEDED') await this.finishFailure(callId, startedOffsetMs, code)
+      if (this.onProgress && toolStarted && code !== 'TOOL_BUDGET_EXCEEDED') {
+        await this.reportProgress({
+          type: 'tool_failed', toolName: tool.name,
+          ...(tool.name === 'search_context' ? { memoryState: 'failed' } : {})
+        })
+      }
       if (error?.code === code) throw error
       throw toolError(code)
     } finally {
       this.activeToolCalls -= 1
+    }
+  }
+
+  reportProgress (event) {
+    if (!this.onProgress) return null
+    try {
+      return Promise.resolve(this.onProgress(Object.freeze({ phase: 'reading_context', activity: true, ...event })))
+        .catch(() => {})
+    } catch { /* progress persistence cannot change tool execution */
+      return null
     }
   }
 

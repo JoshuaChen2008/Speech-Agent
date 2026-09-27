@@ -165,9 +165,10 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     gateway,
     vault,
     adapter: {
-      async run ({ recipe, signal }) {
+      async run ({ recipe, signal, onProgress }) {
         if (recipe.recipeId !== 'intent.route') throw new Error('unexpected target execution in acceptance journey')
         routeCalls += 1
+        await onProgress?.({ type: 'request_started', turn: 1 })
         if (routeBehavior === 'wait') {
           return new Promise((resolve, reject) => {
             const abort = () => {
@@ -179,6 +180,7 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
             signal?.addEventListener('abort', abort, { once: true })
           })
         }
+        await onProgress?.({ type: 'response_received', turn: 1 })
         return { text: JSON.stringify({ recipeId: 'qa.answer', confidence: 0.95 }), usage: null }
       }
     }
@@ -383,6 +385,15 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   assert.equal(uncertainCancelAccepted.ok, true)
   dispatchQueue.shift()()
   await waitFor(() => routeCalls === 2, 'question route before cancellation persistence failure')
+  const waitingRoute = await summaryApi.get({
+    contract_id: contract.CONTRACT_ID,
+    contract_version: contract.CONTRACT_VERSION,
+    request_id: uncertainCancelAccepted.result.snapshot.request_id
+  })
+  assert.equal(waitingRoute.result.snapshot.state, 'routing')
+  assert.equal(waitingRoute.result.snapshot.phase, 'waiting_model')
+  assert.equal(waitingRoute.result.snapshot.memory_state, 'not_read')
+  assert.equal(waitingRoute.result.snapshot.last_activity_age_ms !== null, true)
   failNextCancelWrite = true
   const cancelNotConfirmed = await summaryApi.cancel({
     contract_id: contract.CONTRACT_ID,

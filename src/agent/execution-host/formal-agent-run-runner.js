@@ -128,8 +128,9 @@ class FormalAgentRunRunner {
     this.promptProvider = typeof options.promptProvider === 'function' ? options.promptProvider : () => null
     this.onSettled = typeof options.onSettled === 'function' ? options.onSettled : () => {}
     this.onChanged = typeof options.onChanged === 'function' ? options.onChanged : () => {}
+    this.onProgress = typeof options.onProgress === 'function' ? options.onProgress : () => {}
     this.now = typeof options.now === 'function' ? options.now : Date.now
-    this.resolveContext = typeof this.personalContext.resolve === 'function' ? this.personalContext.resolve : null
+    this.progressPhases = new Map()
     if (typeof options.loopFactory === 'function') {
       this.loopFactory = options.loopFactory
     } else if (typeof this.modelAccess.createLoopAdapter === 'function') {
@@ -141,7 +142,7 @@ class FormalAgentRunRunner {
     }
   }
 
-  async toolsForRun (recipe, binding, interactionId, attemptIdentity, signal, contextOverride = undefined) {
+  async toolsForRun (recipe, binding, interactionId, attemptIdentity, signal, contextOverride = undefined, onProgress = undefined) {
     const context = contextOverride === undefined
       ? await this.personalContext.readToolContext({ runId: attemptIdentity.runId })
       : contextOverride
@@ -155,9 +156,38 @@ class FormalAgentRunRunner {
       budget: binding.budget,
       interactions: this.interactions,
       signal,
+      onProgress,
       now: this.now
     })
     return audited.tools()
+  }
+
+  async reportProgress (job, event = {}) {
+    const identity = job.sessionSummaryRequest
+    if (!identity) return
+    const phase = event.phase || (['request_started', 'response_received', 'request_failed'].includes(event.type) ? 'waiting_model' : null)
+    if (!phase) return
+    this.progressPhases.set(`${identity.requestId}:${identity.generation}`, phase)
+    const update = {
+      requestId: identity.requestId,
+      generation: identity.generation,
+      runId: job.attemptIdentity.runId,
+      attempt: job.attemptIdentity.attempt,
+      phase,
+      activity: event.activity === true || ['request_started', 'response_received', 'request_failed'].includes(event.type)
+    }
+    if (event.state === 'retry_wait') update.state = 'retry_wait'
+    if (['not_read', 'not_used', 'empty', 'referenced', 'failed', 'unknown'].includes(event.memoryState)) {
+      update.memoryState = event.memoryState
+    }
+    try { await this.onProgress(Object.freeze(update)) } catch { /* snapshot observers do not change Agent execution */ }
+  }
+
+  async flushProgress (job) {
+    const identity = job.sessionSummaryRequest
+    if (!identity) return
+    const phase = this.progressPhases.get(`${identity.requestId}:${identity.generation}`)
+    if (phase) await this.reportProgress(job, { phase, activity: false })
   }
 
   async terminalizeFailure (interactionId, code, durationMs) {
@@ -173,12 +203,16 @@ class FormalAgentRunRunner {
   }
 
   async run (job) {
-    exactObject(job, ['recipeId', 'source', 'attemptIdentity'], ['interactionId', 'requestedBy', 'signal', 'runId', 'summaryUseMemory'])
+    exactObject(job, ['recipeId', 'source', 'attemptIdentity'], ['interactionId', 'requestedBy', 'signal', 'runId', 'summaryUseMemory', 'sessionSummaryRequest'])
     if (!TARGET_RECIPES.has(job.recipeId) || job.requestedBy !== undefined && job.requestedBy !== 'user') {
       throw codedError('AGENT_REQUEST_INVALID')
     }
     if (job.summaryUseMemory !== undefined && typeof job.summaryUseMemory !== 'boolean') throw codedError('AGENT_REQUEST_INVALID')
     if (job.runId !== undefined && job.runId !== job.attemptIdentity.runId) throw codedError('AGENT_REQUEST_INVALID')
+    if (job.sessionSummaryRequest !== undefined && (!job.sessionSummaryRequest || typeof job.sessionSummaryRequest !== 'object' ||
+        Array.isArray(job.sessionSummaryRequest) || Object.keys(job.sessionSummaryRequest).sort().join(',') !== 'generation,requestId' ||
+        typeof job.sessionSummaryRequest.requestId !== 'string' || !Number.isSafeInteger(job.sessionSummaryRequest.generation) ||
+        job.sessionSummaryRequest.generation < 1)) throw codedError('AGENT_REQUEST_INVALID')
     if (typeof job.interactionId !== 'string' || job.interactionId.length === 0) {
       await this.storage.failFormalAgentRun({ attemptIdentity: job.attemptIdentity, errorCode: 'AGENT_REQUEST_INVALID' })
       return null
@@ -186,6 +220,7 @@ class FormalAgentRunRunner {
     const startedAt = this.now()
     let terminalReason = null
     try {
+      await this.reportProgress(job, { phase: 'preparing', activity: false })
       const recipe = getRecipe(job.recipeId, '1')
       const userPrompt = this.promptProvider(job.attemptIdentity.runId)
       if (typeof userPrompt !== 'string' || userPrompt.length === 0) throw codedError('AGENT_REQUEST_INVALID')
@@ -196,25 +231,27 @@ class FormalAgentRunRunner {
         recipeVersion: recipe.recipeVersion,
         executionForm: 'agent_loop'
       })
-      const input = await this.personalContext.readSessionInput(job.source)
       const useMemory = job.recipeId !== 'summary.minutes' || job.summaryUseMemory !== false
+      await this.reportProgress(job, {
+        phase: 'reading_context', activity: false,
+        ...(job.recipeId === 'summary.minutes' && !useMemory ? { memoryState: 'not_used' } : {})
+      })
+      const input = await this.personalContext.readSessionInput(job.source)
 
       const prompt = promptForInput(input, userPrompt, recipe.recipeId, recipe.recipeVersion)
       let tools
       try {
-        if (this.resolveContext && useMemory) {
-          await this.resolveContext({
-            scope: { kind: 'session', reference: input.sessionId },
-            semantic_keys: [],
-            aliases: []
-          })
-        }
         tools = await this.toolsForRun(
           recipe, binding, job.interactionId, job.attemptIdentity, job.signal,
-          useMemory ? undefined : { scope: { registeredAliasKeys: [], memoryRefs: [], sourceRefs: [] }, entries: [], sources: [] }
+          useMemory ? undefined : { scope: { registeredAliasKeys: [], memoryRefs: [], sourceRefs: [] }, entries: [], sources: [] },
+          (event) => this.reportProgress(job, {
+            ...event,
+            ...(job.recipeId === 'summary.minutes' && !useMemory ? { memoryState: 'not_used' } : {})
+          })
         )
       } catch (error) {
         if (job.recipeId === 'summary.minutes' && useMemory && summaryMemoryReadError(error)) {
+          await this.reportProgress(job, { phase: 'reading_context', activity: true, memoryState: 'failed' })
           throw codedError('AGENT_SUMMARY_MEMORY_READ_FAILED')
         }
         throw error
@@ -228,13 +265,16 @@ class FormalAgentRunRunner {
         resolvedModel: binding,
         tools,
         signal: job.signal,
+        onProgress: (event) => this.reportProgress(job, event),
         budget: binding.budget,
         usageReporting: binding?.capabilities?.usageReporting !== false
       })
       if (job.signal?.aborted) throw codedError('AGENT_CANCELLED')
+      await this.reportProgress(job, { phase: 'validating', activity: false })
       const output = outputValue(result)
       validateRecipeOutput(recipe.recipeId, recipe.recipeVersion, output)
       if (job.signal?.aborted) throw codedError('AGENT_CANCELLED')
+      await this.flushProgress(job)
       const durationMs = Math.max(0, this.now() - startedAt)
       try {
         const terminal = await this.interactions.terminalize({
@@ -257,6 +297,7 @@ class FormalAgentRunRunner {
       const code = normalizedErrorCode(error)
       const durationMs = Math.max(0, this.now() - startedAt)
       if (code === 'AGENT_CANCELLED') {
+        await this.flushProgress(job)
         try {
           await this.interactions.terminalize({
             interactionId: job.interactionId, terminalReason: 'cancelled',
@@ -265,6 +306,7 @@ class FormalAgentRunRunner {
           terminalReason = 'cancelled'
         } catch { /* cancelRun may have already terminalized the interaction */ }
       } else if (TERMINAL_ERRORS.has(code)) {
+        await this.flushProgress(job)
         if (await this.terminalizeFailure(job.interactionId, code, durationMs)) terminalReason = 'failed'
       } else {
         const settlement = await this.storage.failFormalAgentRun({
@@ -272,13 +314,20 @@ class FormalAgentRunRunner {
           errorCode: code
         }).catch(() => null)
         if (settlement?.state === 'failed') {
+          await this.flushProgress(job)
           if (await this.terminalizeFailure(job.interactionId, code, durationMs)) terminalReason = 'failed'
+        } else if (settlement?.state === 'retry_wait') {
+          await this.reportProgress(job, { phase: 'retry_wait', state: 'retry_wait', activity: false })
         }
       }
       return null
     } finally {
+      if (job.sessionSummaryRequest) this.progressPhases.delete(`${job.sessionSummaryRequest.requestId}:${job.sessionSummaryRequest.generation}`)
       if (terminalReason) {
-        try { this.onChanged({ runId: job.attemptIdentity.runId, interactionId: job.interactionId, terminalReason }) } catch { /* state notifications are observational */ }
+        try { this.onChanged({
+          runId: job.attemptIdentity.runId, interactionId: job.interactionId, terminalReason,
+          ...(job.sessionSummaryRequest ? { requestId: job.sessionSummaryRequest.requestId, generation: job.sessionSummaryRequest.generation } : {})
+        }) } catch { /* state notifications are observational */ }
         try { await this.onSettled(job.attemptIdentity.runId, terminalReason, job.interactionId) } catch { /* observer isolation */ }
       }
     }

@@ -85,7 +85,8 @@ class IntentRouteOrchestrator {
   async submit (input) {
     exact(input, [
       'scope', 'prompt', 'transcriptVersion', 'inputWatermark', 'inputDigest', 'clientIdempotencyKey', 'signal'
-    ], 'intent submit', ['summaryUseMemory', 'requestId', 'requestGeneration', 'permittedTargetRecipes'])
+    ], 'intent submit', ['summaryUseMemory', 'requestId', 'requestGeneration', 'permittedTargetRecipes', 'onProgress'])
+    if (Object.hasOwn(input, 'onProgress') && typeof input.onProgress !== 'function') throw invalid('onProgress is invalid')
     if (Object.hasOwn(input, 'summaryUseMemory') && typeof input.summaryUseMemory !== 'boolean') {
       throw invalid('summaryUseMemory is invalid')
     }
@@ -212,7 +213,10 @@ class IntentRouteOrchestrator {
       if (!loop || typeof loop.agentLoop !== 'function') throw invalid('route loop is unavailable')
       const result = await loop.agentLoop({
         recipeId: 'intent.route', recipeVersion: '1', prompt: input.prompt,
-        resolvedModel, signal: input.signal, usageReporting: binding?.capabilities?.usageReporting !== false
+        resolvedModel, signal: input.signal, usageReporting: binding?.capabilities?.usageReporting !== false,
+        onProgress: typeof input.onProgress === 'function'
+          ? (event) => input.onProgress(Object.freeze({ type: event.type, runId: routeRun.runId }))
+          : undefined
       })
       const output = outputValue(result)
       let targetRecipe = null

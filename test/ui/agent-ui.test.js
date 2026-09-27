@@ -840,6 +840,53 @@ test('SEM-F38/J30-PROGRESS: a recent authoritative snapshot remains the last kno
   assert.equal(document.querySelector('.run-card').textContent.includes('上次确认状态'), false)
 })
 
+test('SEM-F38/J30-PROGRESS: summary status separates attempts, actual activity and memory not used', async (t) => {
+  const harness = await createHarness(); t.after(() => harness.dispose())
+  await act(async () => click(document.querySelector('[data-action="minutes"]')))
+  await flush()
+  const [requestId, snapshot] = [...harness.summarySnapshots.entries()][0]
+  const progress = {
+    ...snapshot,
+    revision: snapshot.revision + 1,
+    state: 'running',
+    phase: 'preparing',
+    attempt: 2,
+    elapsed_ms: 1840,
+    last_activity_age_ms: null,
+    memory_state: 'not_used'
+  }
+  harness.summarySnapshots.set(requestId, progress)
+  await act(async () => harness.summaryChanged[0]({
+    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+    request_id: requestId, generation: progress.generation, revision: progress.revision
+  }))
+  await flush()
+
+  const card = document.querySelector('.run-card')
+  assert.match(card.textContent, /第 2 次尝试/)
+  assert.match(card.textContent, /尚无实际活动记录/)
+  assert.match(card.textContent, /本次未读取记忆/)
+
+  const found = { ...progress, revision: progress.revision + 1, memory_state: 'referenced' }
+  harness.summarySnapshots.set(requestId, found)
+  await act(async () => harness.summaryChanged[0]({
+    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+    request_id: requestId, generation: found.generation, revision: found.revision
+  }))
+  await flush()
+  assert.match(card.textContent, /已查询到相关记忆/)
+
+  const cancelling = { ...found, revision: found.revision + 1, state: 'cancelling', phase: 'cancelling' }
+  harness.summarySnapshots.set(requestId, cancelling)
+  await act(async () => harness.summaryChanged[0]({
+    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+    request_id: requestId, generation: cancelling.generation, revision: cancelling.revision
+  }))
+  await flush()
+  assert.equal(document.querySelector('.run-card button').disabled, true)
+  assert.equal(document.querySelector('.run-card button').textContent, '正在取消…')
+})
+
 test('SEM-F32/J21/J24: feedback blocks same-turn duplicates, reuses a key after unknown receipt, and only clears the submitted draft snapshot', async (t) => {
   const first = deferred()
   const second = deferred()
