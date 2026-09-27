@@ -34,7 +34,8 @@ const TASK_ERROR_CODES = Object.freeze([
   'AGENT_WORKER_EXITED',
   'AGENT_INTERNAL_FAILURE',
   'AGENT_BUDGET_EXCEEDED',
-  'AGENT_SUMMARY_MEMORY_READ_FAILED'
+  'AGENT_SUMMARY_MEMORY_READ_FAILED',
+  'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED'
 ])
 
 const TOOL_ERROR_CODES = Object.freeze([
@@ -52,6 +53,7 @@ const ROUTING_MODES = Object.freeze(['model', 'rules', 'preset'])
 const TERMINAL_REASONS = Object.freeze(['succeeded', 'failed', 'cancelled'])
 const TOOL_STATUSES = Object.freeze(['started', 'succeeded', 'failed', 'cancelled'])
 const SUMMARY_MEMORY_ERROR = 'AGENT_SUMMARY_MEMORY_READ_FAILED'
+const SUMMARY_INPUT_LIMIT_ERROR = 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED'
 const MAX_INTERACTION_PAGE = 100
 const MAX_SOURCE_REFS = 8
 const MAX_ARGS_BYTES = 8192
@@ -113,6 +115,7 @@ function publicErrorCode (error, fallback = 'AGENT_REQUEST_INVALID') {
 }
 
 function visibleErrorCode (row) {
+  if (row?.summary_input_limit_error === 1) return SUMMARY_INPUT_LIMIT_ERROR
   return row?.summary_memory_error === 1 ? SUMMARY_MEMORY_ERROR : row?.error_code
 }
 
@@ -136,7 +139,7 @@ function memoryReferenceCountFromRows (rows, recipeId) {
 }
 
 function storedErrorCode (code) {
-  return code === SUMMARY_MEMORY_ERROR ? 'AGENT_INTERNAL_FAILURE' : code
+  return code === SUMMARY_MEMORY_ERROR || code === SUMMARY_INPUT_LIMIT_ERROR ? 'AGENT_INTERNAL_FAILURE' : code
 }
 
 function runScope (row) {
@@ -606,31 +609,35 @@ class AgentExecutionStore {
       }
       const now = this.nowValue()
       if (now < Number(row.created_at)) fail('STORAGE_COMMAND_FAILED')
+      const summaryInputLimitError = input.errorCode === SUMMARY_INPUT_LIMIT_ERROR ? 1 : 0
       this.database.prepare(`
         UPDATE formal_agent_interactions
-        SET terminal_reason=?, error_code=?, summary_memory_error=?, usage_json=?, duration_ms=?, result_json=? ,
+        SET terminal_reason=?, error_code=?, summary_memory_error=?, summary_input_limit_error=?, usage_json=?, duration_ms=?, result_json=? ,
             result_digest=?, terminal_at=?
         WHERE interaction_id=? AND terminal_reason IS NULL
-      `).run(terminalReason, storedError, summaryMemoryError, usageEncoded, input.durationMs, resultEncoded, resultDigest, now, interactionId)
+      `).run(terminalReason, storedError, summaryMemoryError, summaryInputLimitError, usageEncoded, input.durationMs, resultEncoded, resultDigest, now, interactionId)
       const summary = terminalReason === 'succeeded'
         ? { interactionId, resultDigest }
         : null
       if (terminalReason === 'succeeded') {
         this.database.prepare(`
           UPDATE formal_agent_runs SET state='succeeded', lease_owner=NULL, lease_expires_at=NULL,
-            lease_renewed_from_expires_at=NULL, error_code=NULL, summary_memory_error=0, result_digest=?, result_summary_json=?, updated_at=?
+            lease_renewed_from_expires_at=NULL, error_code=NULL, summary_memory_error=0, summary_input_limit_error=0,
+            result_digest=?, result_summary_json=?, updated_at=?
           WHERE run_id=? AND state NOT IN ('succeeded','failed','cancelled')
         `).run(sha256Canonical(summary), canonicalize(summary), now, row.run_id)
       } else if (terminalReason === 'failed') {
         this.database.prepare(`
           UPDATE formal_agent_runs SET state='failed', lease_owner=NULL, lease_expires_at=NULL,
-            lease_renewed_from_expires_at=NULL, error_code=?, summary_memory_error=?, result_digest=NULL, result_summary_json=NULL, updated_at=?
+            lease_renewed_from_expires_at=NULL, error_code=?, summary_memory_error=?, summary_input_limit_error=?,
+            result_digest=NULL, result_summary_json=NULL, updated_at=?
           WHERE run_id=? AND state NOT IN ('succeeded','failed','cancelled')
-        `).run(storedError, summaryMemoryError, now, row.run_id)
+        `).run(storedError, summaryMemoryError, summaryInputLimitError, now, row.run_id)
       } else {
         this.database.prepare(`
           UPDATE formal_agent_runs SET state='cancelled', lease_owner=NULL, lease_expires_at=NULL,
-            lease_renewed_from_expires_at=NULL, error_code=NULL, summary_memory_error=0, result_digest=NULL, result_summary_json=NULL, updated_at=?
+            lease_renewed_from_expires_at=NULL, error_code=NULL, summary_memory_error=0, summary_input_limit_error=0,
+            result_digest=NULL, result_summary_json=NULL, updated_at=?
           WHERE run_id=? AND state NOT IN ('succeeded','failed','cancelled')
         `).run(now, row.run_id)
       }

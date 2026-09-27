@@ -17,6 +17,7 @@ const { app, BrowserWindow, ipcMain } = require('electron')
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
 const eligibilityProbe = { count: 0, nextHold: null }
 const inputProbe = { pending: false, rejected: false, failureCode: null, invalidCommands: 0 }
+const submitReceipts = []
 const originalIpcHandle = ipcMain.handle.bind(ipcMain)
 ipcMain.handle = (channel, handler) => originalIpcHandle(channel, async (...args) => {
   // Pause the real command, inspect its renderer, then retain its real result.
@@ -44,7 +45,11 @@ ipcMain.handle = (channel, handler) => originalIpcHandle(channel, async (...args
     eligibilityProbe.nextHold = null
     if (hold) await hold.promise
   }
-  return handler(...args)
+  const response = await handler(...args)
+  if (channel === 'agent-run:submit' && response?.ok === true && response.result) {
+    submitReceipts.push({ interactionId: response.result.interaction_id, recipeId: response.result.recipe_id })
+  }
+  return response
 })
 
 function deferred () {
@@ -142,11 +147,39 @@ async function seedTerminalSession (userDataDir) {
     endedAt: 1770000001000,
     state: 'closed'
   })
+  const capacitySessionId = 'session.j25.synthetic-capacity'
+  await gateway.openSession({
+    sessionId: capacitySessionId,
+    sourceId: 'mic',
+    startedAt: 1770000002000,
+    refinementEnabled: false
+  })
+  for (let sequence = 1; sequence <= 1589; sequence += 1) {
+    await gateway.appendCaption({
+      schemaVersion: 1,
+      sessionId: capacitySessionId,
+      sourceId: 'mic',
+      segmentId: `${capacitySessionId}.segment.${sequence}`,
+      sequence,
+      revision: 1,
+      kind: 'final',
+      t0: sequence * 10,
+      t1: sequence * 10 + 9,
+      text: '合成字幕内容用于容量边界验证。'.repeat(5),
+      translation: null
+    })
+  }
+  await gateway.closeSession({
+    sessionId: capacitySessionId,
+    sourceId: 'mic',
+    endedAt: 1770000003000,
+    state: 'closed'
+  })
   await gateway.shutdown()
 }
 
 function providerServer () {
-  const state = { requestCount: 0, modelIds: [], credentialObserved: false, credentialExact: false }
+  const state = { requestCount: 0, modelIds: [], requestShapes: [], credentialObserved: false, credentialExact: false }
   const server = http.createServer((request, response) => {
     const chunks = []
     request.on('data', (chunk) => chunks.push(chunk))
@@ -165,8 +198,19 @@ function providerServer () {
       if (request.headers.authorization === 'Bearer j25-local-provider-secret') state.credentialExact = true
       if (typeof body?.model === 'string') state.modelIds.push(body.model)
       const isRouteRequest = !Array.isArray(body?.tools) || body.tools.length === 0
+      const userMessage = Array.isArray(body?.messages)
+        ? body.messages.find((message) => message?.role === 'user')?.content
+        : null
+      const isSummaryRequest = isRouteRequest && typeof userMessage === 'string' && userMessage.includes('生成会话总结')
+      state.requestShapes.push({
+        toolCount: Array.isArray(body?.tools) ? body.tools.length : null,
+        messageCount: Array.isArray(body?.messages) ? body.messages.length : null,
+        summaryModelRequest: Array.isArray(body?.tools) && body.tools.length === 1 && typeof userMessage === 'string' && userMessage.includes('请基于这场已结束的会话生成会话总结'),
+        authorizationPresent: typeof request.headers.authorization === 'string' && request.headers.authorization.length > 0,
+        authorizationExact: request.headers.authorization === 'Bearer j25-local-provider-secret'
+      })
       const content = isRouteRequest
-        ? JSON.stringify({ recipeId: 'qa.answer', confidence: 0.9 })
+        ? JSON.stringify({ recipeId: isSummaryRequest ? 'summary.minutes' : 'qa.answer', confidence: 0.9 })
         : JSON.stringify({
             schemaVersion: 1,
             answer: '受控 provider 返回的正式 Agent 结果。',
@@ -591,12 +635,21 @@ async function configureThroughSettings (settings, port) {
   })()`)
 }
 
-async function runAgentBar (toolbar) {
+async function runAgentBar (toolbar, providerState) {
   await toolbar.webContents.executeJavaScript("window.shell.openAgent(); true")
   const agent = await waitFor(() => windowFor('/agent/index.html'), 'Agent Bar window')
   await waitFor(async () => agent.webContents.executeJavaScript("document.readyState === 'complete'"), 'Agent Bar renderer')
   await waitFor(async () => agent.webContents.executeJavaScript("Boolean(document.querySelector('.scope-card'))"), 'terminal scope')
-  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '可以生成'"), 'provider eligibility')
+  await agent.webContents.executeJavaScript(`(async () => {
+    const headers = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
+    const scopes = await window.agentApi.getScopes({ ...headers, limit: 50, cursor: null })
+    const scopeIndex = scopes?.ok === true ? scopes.scopes.findIndex((item) => item.scope.reference === 'session.j25.formal') : -1
+    const card = scopeIndex >= 0 ? document.querySelectorAll('.scope-card')[scopeIndex] : null
+    if (!card) throw new Error('formal session missing from renderer scope list')
+    card.click()
+    return true
+  })()`)
+  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '配置已就绪，提交后检查输入容量'"), 'provider eligibility')
   const readsBeforeManualRefresh = eligibilityProbe.count
   const eligibilityHold = deferred()
   eligibilityProbe.nextHold = eligibilityHold
@@ -604,47 +657,52 @@ async function runAgentBar (toolbar) {
   await waitFor(() => eligibilityProbe.count > readsBeforeManualRefresh, 'manual eligibility refresh')
   const submitDisabledDuringEligibilityRefresh = await agent.webContents.executeJavaScript("document.querySelector('[data-action=\"qa\"]')?.disabled === true && document.querySelector('[data-action=\"minutes\"]')?.disabled === true")
   eligibilityHold.resolve()
-  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '可以生成'"), 'refreshed provider eligibility')
-  const result = await agent.webContents.executeJavaScript(`(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    const waitFor = async (probe, label) => {
-      for (let i = 0; i < 240; i += 1) {
-        const value = probe()
-        if (value) return value
-        await sleep(50)
-      }
-      throw new Error(label + ' timed out')
-    }
+  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '配置已就绪，提交后检查输入容量'"), 'refreshed provider eligibility')
+  const providerShapeCountAtSubmit = providerState.requestShapes.length
+  const providerModelCountAtSubmit = providerState.modelIds.length
+  const qaSubmitCount = submitReceipts.length
+  await agent.webContents.executeJavaScript(`(() => {
     const setInput = (input, value) => {
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
       setter.call(input, value)
       input.dispatchEvent(new Event('input', { bubbles: true }))
       input.dispatchEvent(new Event('change', { bubbles: true }))
     }
-    const headers = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
     const prompt = document.querySelector('#agentPrompt')
     setInput(prompt, '请回答这场会的重点')
     document.querySelector('[data-action="qa"]').click()
-    await waitFor(() => document.querySelector('.run-card'), 'submitted interaction')
+    return true
+  })()`)
+  const qaReceipt = await waitFor(() => submitReceipts.slice(qaSubmitCount).find((receipt) => receipt.recipeId === 'qa.answer'), 'QA submit receipt')
+  const result = await agent.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const headers = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
     let detail = null
     let history = null
-    let interactionId = null
+    const interactionId = ${JSON.stringify(qaReceipt.interactionId)}
     for (let i = 0; i < 240; i += 1) {
       history = await window.agentApi.getHistory({ ...headers, limit: 50, cursor: null })
-      interactionId = history?.ok === true ? history.result.items[0]?.interaction_id : null
-      if (!interactionId) { await sleep(50); continue }
       detail = await window.agentApi.getInteraction({ ...headers, interaction_id: interactionId })
       if (detail.ok === true && ['succeeded', 'failed', 'cancelled'].includes(detail.result.state)) break
       await sleep(50)
     }
     return {
       succeeded: detail?.ok === true && detail.result.state === 'succeeded',
+      terminalState: detail?.ok === true ? detail.result.state : 'unavailable',
+      terminalErrorCode: detail?.ok === true ? detail.result.error_code : detail?.error?.code || 'unavailable',
       historyVisible: history?.ok === true && history.result.items.some((item) => item.interaction_id === interactionId),
+      historyItems: history?.ok === true ? history.result.items.map((item) => ({ interactionId: item.interaction_id, recipeId: item.recipe_id, state: item.terminal_reason, errorCode: item.error_code })) : [],
       modelVisible: detail?.result?.model?.model_id === 'j25-local-model',
+      routingMode: detail?.result?.routing_mode || null,
       interactionId,
       resultDigest: detail?.result?.result_digest || null
     }
   })()`)
+  const runProviderShapes = providerState.requestShapes.slice(providerShapeCountAtSubmit)
+  const runProviderModelIds = providerState.modelIds.slice(providerModelCountAtSubmit)
+  const runProviderCredentialObserved = runProviderShapes.some((shape) => shape.authorizationPresent)
+  const runProviderCredentialExact = runProviderShapes.some((shape) => shape.authorizationExact)
+  if (!result.succeeded) throw new Error(`production Agent Bar request ended ${result.terminalState}/${result.terminalErrorCode} ${JSON.stringify({ historyItems: result.historyItems, providerRequestCount: runProviderShapes.length, requestShapes: runProviderShapes })}`)
   await agent.webContents.reload()
   await waitFor(async () => agent.webContents.executeJavaScript("document.readyState === 'complete'"), 'reloaded Agent Bar renderer')
   await waitFor(async () => agent.webContents.executeJavaScript("Boolean(document.querySelector('.history-card'))"), 'history renderer')
@@ -667,8 +725,33 @@ async function runAgentBar (toolbar) {
     const headers = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
     const interactionId = ${JSON.stringify(result.interactionId)}
     const resultDigest = ${JSON.stringify(result.resultDigest)}
-    document.querySelector('.history-card').click()
-    const editor = await waitFor(() => document.querySelector('#agentEdit'), 'edit feedback form')
+    const exactDetail = await window.agentApi.getInteraction({ ...headers, interaction_id: interactionId })
+    const historySnapshot = await window.agentApi.getHistory({ ...headers, limit: 50, cursor: null })
+    const historyIndex = historySnapshot?.ok === true ? historySnapshot.result.items.findIndex((item) => item.interaction_id === interactionId) : -1
+    const expectedHistoryCard = historyIndex >= 0 ? document.querySelectorAll('.history-card')[historyIndex] : null
+    if (!expectedHistoryCard) throw new Error('expected interaction missing from rendered history ' + JSON.stringify({
+      historyCount: document.querySelectorAll('.history-card').length,
+      historyIds: historySnapshot?.ok === true ? historySnapshot.result.items.map((item) => item.interaction_id) : [],
+      requestedInteractionId: interactionId
+    }))
+    expectedHistoryCard.click()
+    let feedbackState = null
+    const editor = await waitFor(() => {
+      feedbackState = {
+        historyCount: document.querySelectorAll('.history-card').length,
+        runState: document.querySelector('.run-card strong')?.textContent || null,
+        detailState: document.querySelector('.result-card header strong')?.textContent || null,
+        detailError: document.querySelector('.result-card [role="alert"]')?.textContent || null,
+        detailVisible: Boolean(document.querySelector('.result-card')),
+        feedbackVisible: Boolean(document.querySelector('.signal-actions')),
+        selectedHistory: document.querySelector('.history-card[aria-current="true"]') !== null,
+        apiState: exactDetail?.ok === true ? exactDetail.result.state : 'unavailable',
+        apiErrorCode: exactDetail?.ok === true ? exactDetail.result.error_code : exactDetail?.error?.code || 'unavailable',
+        apiDigestMatches: exactDetail?.ok === true && exactDetail.result.result_digest === resultDigest,
+        historyContainsExpected: historySnapshot?.ok === true && historySnapshot.result.items.some((item) => item.interaction_id === interactionId)
+      }
+      return document.querySelector('#agentEdit')
+    }, 'edit feedback form').catch(() => { throw new Error('feedback state mismatch ' + JSON.stringify(feedbackState)) })
     setInput(editor, 'J25 renderer feedback')
     document.querySelector('[data-signal="edit"]').click()
     const feedbackSubmittedThroughRenderer = Boolean(await waitFor(() => document.querySelector('.signal-status')?.textContent.includes('已记录交互反馈'), 'renderer feedback receipt'))
@@ -703,10 +786,77 @@ async function runAgentBar (toolbar) {
       credentialAbsent: !visible.includes('j25-local-provider-secret')
     }
   })()`)
+  const providerShapeCountBeforeCapacity = providerState.requestShapes.length
+  const capacitySubmitCount = submitReceipts.length
+  await agent.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const waitFor = async (probe, label) => {
+      for (let i = 0; i < 240; i += 1) {
+        const value = probe()
+        if (value) return value
+        await sleep(50)
+      }
+      throw new Error(label + ' timed out')
+    }
+    const headers = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
+    const scopeSnapshot = await window.agentApi.getScopes({ ...headers, limit: 50, cursor: null })
+    const capacityIndex = scopeSnapshot?.ok === true ? scopeSnapshot.scopes.findIndex((item) => item.scope.reference === 'session.j25.synthetic-capacity') : -1
+    const capacityCard = capacityIndex >= 0 ? document.querySelectorAll('.scope-card')[capacityIndex] : null
+    if (!capacityCard) throw new Error('synthetic capacity session missing from renderer scope list')
+    capacityCard.click()
+    await waitFor(() => capacityCard.getAttribute('aria-current') === 'true', 'synthetic capacity scope selection')
+    await waitFor(() => document.querySelector('.eligibility')?.textContent === '配置已就绪，提交后检查输入容量', 'synthetic capacity eligibility')
+    document.querySelector('[data-action="minutes"]').click()
+    return true
+  })()`)
+  const capacityReceipt = await waitFor(() => submitReceipts.slice(capacitySubmitCount).find((receipt) => receipt.recipeId === 'summary.minutes'), 'over-limit summary submit receipt')
+  const capacityFeedback = await agent.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const waitFor = async (probe, label) => {
+      for (let i = 0; i < 240; i += 1) {
+        const value = probe()
+        if (value) return value
+        await sleep(50)
+      }
+      throw new Error(label + ' timed out')
+    }
+    const headers = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
+    const interactionId = ${JSON.stringify(capacityReceipt.interactionId)}
+    let detail = null
+    for (let i = 0; i < 240; i += 1) {
+      detail = await window.agentApi.getInteraction({ ...headers, interaction_id: interactionId })
+      if (detail?.ok === true && ['succeeded', 'failed', 'cancelled'].includes(detail.result.state)) break
+      await sleep(50)
+    }
+    await waitFor(() => {
+      const message = document.querySelector('.result-card [role="alert"]')?.textContent || ''
+      return message.includes('会话总结输入超过当前上限；总结模型尚未调用。')
+    }, 'capacity failure feedback in Agent Bar')
+    const alertText = document.querySelector('.result-card [role="alert"]')?.textContent || ''
+    const recoveryText = document.querySelector('.result-card .empty')?.textContent || ''
+    return {
+      failed: detail?.ok === true && detail.result.state === 'failed',
+      dedicatedError: detail?.ok === true && detail.result.error_code === 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED',
+      exactFeedback: alertText.includes('会话总结输入超过当前上限；总结模型尚未调用。'),
+      recoveryFeedback: recoveryText.includes('可缩短输入，或选择内容较少的会话后重试。'),
+      summaryToolCalls: detail?.ok === true ? detail.result.tool_calls.length : -1
+    }
+  })()`)
+  const capacityProviderShapes = providerState.requestShapes.slice(providerShapeCountBeforeCapacity)
   return {
     ...result,
     ...feedback,
     ...ui,
+    summaryCapacityFailed: capacityFeedback.failed && capacityFeedback.dedicatedError,
+    summaryCapacityErrorVisible: capacityFeedback.exactFeedback,
+    summaryCapacityRecoveryVisible: capacityFeedback.recoveryFeedback,
+    summaryCapacityToolCalls: capacityFeedback.summaryToolCalls,
+    summaryCapacityNoSummaryModelRequest: capacityProviderShapes.every((shape) => shape.summaryModelRequest !== true),
+    providerRequestCount: runProviderShapes.length,
+    providerRequestShapes: runProviderShapes.map((shape) => ({ toolCount: shape.toolCount, messageCount: shape.messageCount })),
+    providerCredentialObserved: runProviderCredentialObserved,
+    providerCredentialExact: runProviderCredentialExact,
+    providerModelIds: runProviderModelIds,
     manualEligibilityRefresh: eligibilityProbe.count > readsBeforeManualRefresh,
     submitDisabledDuringEligibilityRefresh,
     eligibilityReadCount: eligibilityProbe.count
@@ -748,7 +898,7 @@ async function main () {
     const settingsResult = await configureThroughSettings(settings, port)
     const nativePicker = await inspectNativePicker(settings)
     const inputAppearance = await inspectInputAppearance(settings)
-    const runResult = await runAgentBar(toolbar)
+    const runResult = await runAgentBar(toolbar, provider.state)
     const report = {
       schemaVersion: 1,
       result: Object.values(inputAppearance).every(Boolean) && Object.values(settingsResult.inputsStyled).every(Boolean) && settingsResult.inputFailureRecovered &&
@@ -762,8 +912,10 @@ async function main () {
         runResult.succeeded && runResult.historyVisible && runResult.modelVisible && runResult.signalAccepted &&
         runResult.signalReplayed && runResult.manualEligibilityRefresh && runResult.submitDisabledDuringEligibilityRefresh &&
         runResult.feedbackSubmittedThroughRenderer && runResult.detailRereadAfterFeedback &&
-        runResult.promptAbsent && runResult.credentialAbsent && provider.state.requestCount === 1 &&
-        provider.state.credentialObserved && provider.state.credentialExact && provider.state.modelIds.length === 1 && provider.state.modelIds[0] === 'j25-local-model',
+        runResult.summaryCapacityFailed && runResult.summaryCapacityErrorVisible && runResult.summaryCapacityRecoveryVisible &&
+        runResult.summaryCapacityToolCalls === 0 && runResult.summaryCapacityNoSummaryModelRequest &&
+        runResult.promptAbsent && runResult.credentialAbsent && runResult.providerRequestCount > 0 &&
+        runResult.providerCredentialObserved && runResult.providerCredentialExact && runResult.providerModelIds.length > 0 && runResult.providerModelIds.every((modelId) => modelId === 'j25-local-model'),
       settingsPath: 'formal-settings-renderer-preload',
       inputAppearance,
       nativePicker,
@@ -777,9 +929,11 @@ async function main () {
       invalidInputCommandCount: inputProbe.invalidCommands,
       runPath: 'formal-agent-bar-renderer-preload-main',
       historyPath: 'formal-agent-history-renderer-preload-main',
-      providerRequestCount: provider.state.requestCount,
-      providerCredentialObserved: provider.state.credentialObserved,
-      providerCredentialExact: provider.state.credentialExact,
+      routingMode: runResult.routingMode,
+      providerRequestCount: runResult.providerRequestCount,
+      providerRequestShapes: runResult.providerRequestShapes,
+      providerCredentialObserved: runResult.providerCredentialObserved,
+      providerCredentialExact: runResult.providerCredentialExact,
       modelIdentityObserved: runResult.modelVisible,
       agentEnabled: settingsResult.agentEnabled,
       personalContextManaged: settingsResult.memoryManaged,
@@ -788,6 +942,11 @@ async function main () {
       personalContextRevisionConflict: settingsResult.revisionConflict,
       interactionSignalAccepted: runResult.signalAccepted,
       interactionSignalReplayed: runResult.signalReplayed,
+      summaryCapacityFailed: runResult.summaryCapacityFailed,
+      summaryCapacityErrorVisible: runResult.summaryCapacityErrorVisible,
+      summaryCapacityRecoveryVisible: runResult.summaryCapacityRecoveryVisible,
+      summaryCapacityToolCalls: runResult.summaryCapacityToolCalls,
+      summaryCapacityNoSummaryModelRequest: runResult.summaryCapacityNoSummaryModelRequest,
       manualEligibilityRefresh: runResult.manualEligibilityRefresh,
       submitDisabledDuringEligibilityRefresh: runResult.submitDisabledDuringEligibilityRefresh,
       eligibilityReadCount: runResult.eligibilityReadCount,

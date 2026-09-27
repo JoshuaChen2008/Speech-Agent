@@ -7,7 +7,7 @@ const path = require('node:path')
 const test = require('node:test')
 
 const { AgentRunService } = require('../../src/agent/formal-run/agent-run-service')
-const { FormalAgentJobScheduler, FormalAgentRunRunner } = require('../../src/agent/execution-host')
+const { AgentLoopExecutor, FormalAgentJobScheduler, FormalAgentRunRunner, IntentRouteOrchestrator } = require('../../src/agent/execution-host')
 const { CredentialVault } = require('../../src/agent/model-access/credential-vault')
 const { ModelAccessRuntime } = require('../../src/agent/model-access/runtime')
 const { ConfigStore } = require('../../src/main/services/config-store')
@@ -17,6 +17,7 @@ const { StorageWorkerService } = require('../../src/runtime/storage-worker/worke
 const { OPERATIONS, PROTOCOL_VERSION, StorageError, makeCaptionEventId, makeCloseSessionKey, makeOpenSessionKey } = require('../../src/runtime/storage-worker/protocol')
 
 const CONTRACT = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
+const SUMMARY_PROMPT = '请基于这场已结束的会话生成会话总结，包含主要内容、决定、待办和需要注意。'
 const CAPABILITIES = Object.freeze({
   maxInputTokens: 64000,
   maxOutputTokens: 4096,
@@ -122,11 +123,17 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
   config.load()
   const vault = createVault(path.join(root, 'vault'))
   const memoryObservations = []
+  let routeCalls = 0
   const modelAccess = new ModelAccessRuntime({
     gateway,
     vault,
     adapter: {
       async run ({ recipe, tools }) {
+        if (recipe.recipeId === 'intent.route') {
+          routeCalls += 1
+          // An invalid provider output must fall back to the same summary intent.
+          return { text: routeCalls === 1 ? '{}' : JSON.stringify({ recipeId: 'summary.minutes', confidence: 1 }) }
+        }
         assert.equal(recipe.recipeId, 'summary.minutes')
         const lookup = await tools[0].execute({ schemaVersion: 1, aliasKeys: ['j29 provider marker'] })
         memoryObservations.push(lookup)
@@ -164,6 +171,7 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
   })
   assert.equal(remembered.revision, 1)
 
+  const promptStore = new Map()
   const runner = new FormalAgentRunRunner({
     storage: gateway,
     personalContext: {
@@ -172,7 +180,7 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
       readToolContext: (request) => gateway.readPersonalContextToolContext(request)
     },
     modelAccess,
-    promptProvider: () => '请生成会后结构化纪要',
+    promptProvider: (runId) => promptStore.get(runId),
     interactions: {
       terminalize: (request) => gateway.terminalizeAgentInteraction(request),
       startToolCall: (request) => gateway.startAgentToolCall(request),
@@ -185,7 +193,21 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
     modelAccess,
     scheduler,
     getConfig: () => config.get(),
-    promptStore: new Map()
+    promptStore,
+    routeOrchestrator: new IntentRouteOrchestrator({
+      runs: {
+        create: (request) => gateway.createAgentRun(request),
+        cancel: (request) => gateway.cancelAgentRun(request),
+        getInteraction: (request) => gateway.getAgentInteraction(request)
+      },
+      modelAccess,
+      interactions: {
+        create: (request) => gateway.createAgentInteraction(request),
+        terminalize: (request) => gateway.terminalizeAgentInteraction(request)
+      },
+      loopFactory: (binding) => new AgentLoopExecutor({ adapter: modelAccess.createLoopAdapter(binding) }),
+      allowedTargetRecipes: ['summary.minutes', 'qa.answer']
+    })
   })
   scheduler.start()
   t.after(async () => {
@@ -208,7 +230,7 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
   const submit = (key) => agent.submit({
     ...CONTRACT,
     scope: { kind: 'session', reference: 'session.j29.memory' },
-    prompt: '请生成会后结构化纪要',
+    prompt: SUMMARY_PROMPT,
     client_idempotency_key: key
   })
 
@@ -217,12 +239,16 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
   const disabled = await submit('j29.disabled')
   assert.equal(disabled.ok, false)
   assert.equal(disabled.error.next_action, 'retry')
+  assert.equal(routeCalls, 0)
 
   setAgent(true, false)
   setSummary(true)
   const paused = await submit('j29.paused')
   assert.equal(paused.ok, true)
+  assert.equal(paused.result.recipe_id, 'summary.minutes')
+  assert.equal(paused.result.routing_mode, 'rules')
   const pausedDetail = await waitForTerminal(agent, paused.result.interaction_id)
+  assert.equal(pausedDetail.result.state, 'succeeded')
   assert.equal(pausedDetail.result.summary_use_memory, false)
   assert.equal(pausedDetail.result.memory_reference_count, 0)
 
@@ -230,7 +256,9 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
   setSummary(false)
   const optedOut = await submit('j29.opted-out')
   assert.equal(optedOut.ok, true)
+  assert.equal(optedOut.result.routing_mode, 'model')
   const optedOutDetail = await waitForTerminal(agent, optedOut.result.interaction_id)
+  assert.equal(optedOutDetail.result.state, 'succeeded')
   assert.equal(optedOutDetail.result.summary_use_memory, false)
   assert.equal(optedOutDetail.result.memory_reference_count, 0)
 
@@ -238,10 +266,12 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
   const optedIn = await submit('j29.opted-in')
   assert.equal(optedIn.ok, true)
   const optedInDetail = await waitForTerminal(agent, optedIn.result.interaction_id)
+  assert.equal(optedInDetail.result.state, 'succeeded')
   assert.equal(optedInDetail.result.summary_use_memory, true)
   assert.equal(optedInDetail.result.memory_reference_count, 1)
 
   assert.equal(memoryObservations.length, 3)
+  assert.equal(routeCalls, 3)
   assert.equal(memoryObservations[0].matches.length, 0)
   assert.equal(memoryObservations[1].matches.length, 0)
   assert.equal(memoryObservations[2].matches.length, 1)

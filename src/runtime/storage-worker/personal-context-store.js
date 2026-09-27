@@ -2239,21 +2239,29 @@ class PersonalContextStore {
     assertExactKeys(request, ['attemptIdentity', 'errorCode'], 'AGENT_REQUEST_INVALID')
     const attempt = this.assertAttempt(request.attemptIdentity)
     const errors = new Set(FORMAL_AGENT_TASK_ERROR_CODES)
-    if (!errors.has(request.errorCode)) fail('AGENT_REQUEST_INVALID')
     const row = this.database.prepare('SELECT * FROM formal_agent_runs WHERE run_id = ?').get(attempt.runId)
+    const summaryInputLimitError = request.errorCode === 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED'
+    if (!errors.has(request.errorCode) && !summaryInputLimitError) fail('AGENT_REQUEST_INVALID')
+    if (summaryInputLimitError && row?.recipe_id !== 'summary.minutes') fail('AGENT_REQUEST_INVALID')
     if (!row || row.state !== 'running' || Number(row.attempt_count) !== attempt.attempt ||
         row.lease_owner !== attempt.owner || Number(row.lease_expires_at) !== attempt.leaseExpiresAt) {
       fail('AGENT_CONTEXT_OPERATION_FAILED')
     }
-    const terminal = Number(row.attempt_count) >= Number(row.max_attempts)
+    const terminal = summaryInputLimitError || Number(row.attempt_count) >= Number(row.max_attempts)
     const now = this.nowValue()
     const nextAttemptAt = terminal ? now : now + 1000
     const storedErrorCode = request.errorCode === SUMMARY_MEMORY_ERROR ? 'AGENT_INTERNAL_FAILURE' : request.errorCode
     const summaryMemoryError = request.errorCode === SUMMARY_MEMORY_ERROR ? 1 : 0
     this.database.prepare(`
       UPDATE formal_agent_runs SET state = ?, next_attempt_at = ?, lease_owner = NULL,
-        lease_expires_at = NULL, error_code = ?, summary_memory_error = ?, updated_at = ? WHERE run_id = ?
-    `).run(terminal ? 'failed' : 'retry_wait', nextAttemptAt, terminal ? storedErrorCode : null, terminal ? summaryMemoryError : 0, now, attempt.runId)
+        lease_expires_at = NULL, error_code = ?, summary_memory_error = ?, summary_input_limit_error = ?, updated_at = ? WHERE run_id = ?
+    `).run(
+      terminal ? 'failed' : 'retry_wait', nextAttemptAt,
+      terminal ? (summaryInputLimitError ? 'AGENT_INTERNAL_FAILURE' : storedErrorCode) : null,
+      terminal ? summaryMemoryError : 0,
+      terminal && summaryInputLimitError ? 1 : 0,
+      now, attempt.runId
+    )
     return { runId: row.run_id, state: terminal ? 'failed' : 'retry_wait', nextAttemptAt }
   }
 }

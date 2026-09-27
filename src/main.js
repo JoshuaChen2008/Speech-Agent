@@ -67,6 +67,7 @@ const agentRunUi = require('./agent/contracts/agent-run-ui')
 const { AgentRunService } = require('./agent/formal-run/agent-run-service')
 const { AgentInteractionSignalService } = require('./agent/formal-run/agent-interaction-signal-service')
 const { AgentInteractionExporter } = require('./agent/formal-run/agent-interaction-exporter')
+const { settleFormalAgentPrompt } = require('./agent/formal-run/settle-agent-prompt')
 const { sanitizedEnvironment } = require('./agent/model-access/environment')
 const { sha256Canonical } = require('./runtime/storage-worker/canonical-json')
 const { createMainEvidenceBridge } = require('./main/services/electron-exit-evidence')
@@ -1488,13 +1489,14 @@ async function bootstrapApplication () {
       personalContext: executionAdapter,
       modelAccess: modelAccessRuntime,
       promptProvider: (runId) => formalAgentPrompts.get(runId) || null,
-      onSettled: async (runId, terminalReason, interactionId) => {
-        if (terminalReason && interactionId && formalAgentSignalService) {
-          const prompt = formalAgentPrompts.get(runId)
-          await formalAgentSignalService.recordPromptSignal({ interactionId, prompt })
-        }
-        formalAgentPrompts.delete(runId)
-      },
+      onSettled: (runId, terminalReason, interactionId) => settleFormalAgentPrompt({
+        promptStore: formalAgentPrompts,
+        signalService: formalAgentSignalService,
+        runId,
+        terminalReason,
+        interactionId
+      }),
+      onChanged: () => formalAgentService?.emitChanged(),
       interactions: {
         terminalize: (request) => applicationRuntime.gateway.terminalizeAgentInteraction(request),
         startToolCall: (request) => applicationRuntime.gateway.startAgentToolCall(request),

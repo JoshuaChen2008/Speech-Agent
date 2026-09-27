@@ -16,7 +16,7 @@ const RETRYABLE_ERRORS = new Set([
 ])
 const TERMINAL_ERRORS = new Set([
   'AGENT_OUTPUT_INVALID', 'AGENT_BUDGET_EXCEEDED', 'AGENT_PERMISSION_DENIED', 'AGENT_REQUEST_INVALID',
-  'AGENT_SUMMARY_MEMORY_READ_FAILED'
+  'AGENT_SUMMARY_MEMORY_READ_FAILED', 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED'
 ])
 
 function codedError (code) {
@@ -57,7 +57,7 @@ function usageValue (value, enabled) {
   }
 }
 
-function promptForInput (input, userPrompt) {
+function promptForInput (input, userPrompt, recipeId = 'summary.minutes', recipeVersion = '1') {
   if (!input || typeof input !== 'object' || !Array.isArray(input.events) || typeof userPrompt !== 'string') {
     throw codedError('AGENT_REQUEST_INVALID')
   }
@@ -78,7 +78,12 @@ function promptForInput (input, userPrompt) {
   }
   let prompt
   try { prompt = canonicalize(payload) } catch { throw codedError('AGENT_REQUEST_INVALID') }
-  if (Buffer.byteLength(prompt, 'utf8') > 15000) throw codedError('AGENT_BUDGET_EXCEEDED')
+  if (Buffer.byteLength(prompt, 'utf8') > 15000) {
+    const code = recipeId === 'summary.minutes' && recipeVersion === '1'
+      ? 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED'
+      : 'AGENT_BUDGET_EXCEEDED'
+    throw codedError(code)
+  }
   return prompt
 }
 
@@ -122,6 +127,7 @@ class FormalAgentRunRunner {
     this.interactions = options.interactions
     this.promptProvider = typeof options.promptProvider === 'function' ? options.promptProvider : () => null
     this.onSettled = typeof options.onSettled === 'function' ? options.onSettled : () => {}
+    this.onChanged = typeof options.onChanged === 'function' ? options.onChanged : () => {}
     this.now = typeof options.now === 'function' ? options.now : Date.now
     this.resolveContext = typeof this.personalContext.resolve === 'function' ? this.personalContext.resolve : null
     if (typeof options.loopFactory === 'function') {
@@ -156,12 +162,13 @@ class FormalAgentRunRunner {
 
   async terminalizeFailure (interactionId, code, durationMs) {
     try {
-      return await this.interactions.terminalize({
+      await this.interactions.terminalize({
         interactionId, terminalReason: 'failed', errorCode: code,
         result: null, usage: null, durationMs
       })
+      return true
     } catch {
-      return null
+      return false
     }
   }
 
@@ -192,7 +199,7 @@ class FormalAgentRunRunner {
       const input = await this.personalContext.readSessionInput(job.source)
       const useMemory = job.recipeId !== 'summary.minutes' || job.summaryUseMemory !== false
 
-      const prompt = promptForInput(input, userPrompt)
+      const prompt = promptForInput(input, userPrompt, recipe.recipeId, recipe.recipeVersion)
       let tools
       try {
         if (this.resolveContext && useMemory) {
@@ -250,29 +257,28 @@ class FormalAgentRunRunner {
       const code = normalizedErrorCode(error)
       const durationMs = Math.max(0, this.now() - startedAt)
       if (code === 'AGENT_CANCELLED') {
-        terminalReason = 'cancelled'
         try {
           await this.interactions.terminalize({
             interactionId: job.interactionId, terminalReason: 'cancelled',
             errorCode: null, result: null, usage: null, durationMs
           })
+          terminalReason = 'cancelled'
         } catch { /* cancelRun may have already terminalized the interaction */ }
       } else if (TERMINAL_ERRORS.has(code)) {
-        terminalReason = 'failed'
-        await this.terminalizeFailure(job.interactionId, code, durationMs)
+        if (await this.terminalizeFailure(job.interactionId, code, durationMs)) terminalReason = 'failed'
       } else {
         const settlement = await this.storage.failFormalAgentRun({
           attemptIdentity: job.attemptIdentity,
           errorCode: code
         }).catch(() => null)
         if (settlement?.state === 'failed') {
-          terminalReason = 'failed'
-          await this.terminalizeFailure(job.interactionId, code, durationMs)
+          if (await this.terminalizeFailure(job.interactionId, code, durationMs)) terminalReason = 'failed'
         }
       }
       return null
     } finally {
       if (terminalReason) {
+        try { this.onChanged({ runId: job.attemptIdentity.runId, interactionId: job.interactionId, terminalReason }) } catch { /* state notifications are observational */ }
         try { await this.onSettled(job.attemptIdentity.runId, terminalReason, job.interactionId) } catch { /* observer isolation */ }
       }
     }

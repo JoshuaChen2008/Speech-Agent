@@ -103,11 +103,13 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
   const vault = createVault(path.join(root, 'vault'))
   let lateProviderStarted = false
   let releaseLateProvider = null
+  let providerCalls = 0
   const modelAccess = new ModelAccessRuntime({
     gateway,
     vault,
     adapter: {
       async run ({ recipe, tools, prompt }) {
+        providerCalls += 1
         const context = await tools[0].execute({ schemaVersion: 1, aliasKeys: ['missing'] })
         assert.deepEqual(context.unmatchedAliasKeys, ['missing'])
         if (typeof prompt === 'string' && prompt.includes('迟到取消')) {
@@ -145,6 +147,10 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
   await modelAccess.initialize()
   await configureModel(modelAccess)
   const recorder = new SqliteSessionRecorder({ gateway, now: () => 1000 })
+  const changedEvents = []
+  const terminalEvents = []
+  const terminalCommitReads = []
+  let agent
   const executionAdapter = {
     resolve: (request) => gateway.personalContextResolve(request),
     readSessionInput: (source) => gateway.readPersonalContextSessionInput(source),
@@ -156,7 +162,19 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
     personalContext: executionAdapter,
     modelAccess,
     promptProvider: (runId) => prompts.get(runId) || null,
-    onSettled: (runId) => prompts.delete(runId),
+    onSettled: (runId, terminalReason) => {
+      prompts.delete(runId)
+      if (terminalReason === 'failed') throw new Error('settlement observer failure')
+    },
+    onChanged: ({ runId, interactionId, terminalReason }) => {
+      const event = agent?.emitChanged()
+      terminalEvents.push({ runId, interactionId, terminalReason, revision: event?.revision })
+      terminalCommitReads.push(gateway.getAgentInteraction({ interactionId }).then((snapshot) => ({
+        runId,
+        runState: snapshot.runState,
+        terminalReason: snapshot.interaction?.terminalReason
+      })))
+    },
     interactions: {
       terminalize: (request) => gateway.terminalizeAgentInteraction(request),
       startToolCall: (request) => gateway.startAgentToolCall(request),
@@ -164,11 +182,12 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
     }
   })
   const scheduler = new FormalAgentJobScheduler({ storage: gateway, runner, requestedBy: 'user', owner: 'scheduler.user.s5' })
-  const agent = new AgentRunService({
+  agent = new AgentRunService({
     storage: gateway,
     modelAccess,
     scheduler,
     promptStore: prompts,
+    onChanged: (event) => changedEvents.push(event),
     exporter: new AgentInteractionExporter({
       storage: gateway,
       showSaveDialog: async () => ({ canceled: false, filePath: path.join(root, 'agent-interaction.json') })
@@ -210,6 +229,7 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
     sequence: 1, revision: 1, kind: 'final', t0: 0, t1: 10, text: '受控会话输入', translation: null
   })
   await recorder.closeSession({ sessionId: 'session.s5.target', sourceId: 'mic', state: 'closed' })
+  const changedBeforeSubmit = changedEvents.length
   const submitted = await agent.submit({
     contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
     scope: { kind: 'session', reference: 'session.s5.target' },
@@ -235,6 +255,13 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
   ])
   assert.equal(detail.result.tool_calls[0].args.schemaVersion, 1)
   assert.equal(detail.result.tool_calls[0].result.schemaVersion, 1)
+  assert.equal(changedEvents.length, changedBeforeSubmit + 2, 'submission and terminal commit each publish one changed event')
+  const successEvent = terminalEvents.find((event) => event.runId === submitted.result.run_id)
+  assert.equal(successEvent?.terminalReason, 'succeeded')
+  assert.ok(successEvent.revision > submitted.result.revision)
+  assert.equal(changedEvents.some((event) => event.revision === successEvent.revision), true)
+  const committedSuccess = await terminalCommitReads[terminalEvents.indexOf(successEvent)]
+  assert.deepEqual(committedSuccess, { runId: submitted.result.run_id, runState: 'succeeded', terminalReason: 'succeeded' })
 
   const minutesSubmitted = await agent.submit({
     contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
@@ -255,6 +282,18 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
   assert.equal(minutesDetail.result.state, 'succeeded')
   assert.equal(minutesDetail.result.recipe_id, 'summary.minutes')
   assert.equal(minutesDetail.result.result.overview, '这是一次受控的会后结构化纪要。')
+  const cancelAfterSuccess = await agent.cancel({
+    contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
+    interaction_id: minutesSubmitted.result.interaction_id
+  })
+  assert.equal(cancelAfterSuccess.ok, true)
+  assert.equal(cancelAfterSuccess.result.state, 'succeeded')
+  const stillSucceeded = await agent.getInteraction({
+    contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
+    interaction_id: minutesSubmitted.result.interaction_id
+  })
+  assert.equal(stillSucceeded.result.state, 'succeeded')
+  assert.equal(stillSucceeded.result.result.overview, '这是一次受控的会后结构化纪要。')
   const history = await agent.getHistory({ contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0', limit: 10, cursor: null })
   assert.equal(history.ok, true)
   assert.equal(history.result.items.length, 2)
@@ -339,5 +378,68 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
   assert.equal(failedDetail.ok, true)
   assert.equal(failedDetail.result.state, 'failed')
   assert.equal(failedDetail.result.error_code, 'AGENT_OUTPUT_INVALID')
+  const cancelAfterFailure = await agent.cancel({
+    contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
+    interaction_id: failedSubmitted.result.interaction_id
+  })
+  assert.equal(cancelAfterFailure.ok, true)
+  assert.equal(cancelAfterFailure.result.state, 'failed')
+  const stillFailed = await agent.getInteraction({
+    contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
+    interaction_id: failedSubmitted.result.interaction_id
+  })
+  assert.equal(stillFailed.result.state, 'failed')
+  assert.equal(stillFailed.result.error_code, 'AGENT_OUTPUT_INVALID')
   await recordSubtitleWhileAgentSettles('session.s5.failed.subtitle', '失败收束后字幕仍可停止并导出')
+
+  const largeSessionId = 'session.s5.synthetic-capacity'
+  await recorder.openSession({ sessionId: largeSessionId, sourceId: 'mic', refinementEnabled: false })
+  for (let index = 1; index <= 1589; index++) {
+    await recorder.acceptCaption({
+      schemaVersion: 1,
+      sessionId: largeSessionId,
+      sourceId: 'mic',
+      segmentId: `${largeSessionId}.segment.${index}`,
+      sequence: index,
+      revision: 1,
+      kind: 'final',
+      t0: index * 10,
+      t1: index * 10 + 9,
+      text: '合成字幕内容用于容量边界验证。'.repeat(5),
+      translation: null
+    })
+  }
+  await recorder.closeSession({ sessionId: largeSessionId, sourceId: 'mic', state: 'closed' })
+  const providerCallsBeforeCapacityCheck = providerCalls
+  const changedBeforeCapacitySubmit = changedEvents.length
+  const largeSubmitted = await agent.submit({
+    contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
+    scope: { kind: 'session', reference: largeSessionId },
+    prompt: '请生成会后结构化纪要', client_idempotency_key: 'client.s5.synthetic-capacity'
+  })
+  assert.equal(largeSubmitted.ok, true)
+  for (let i = 0; i < 80; i++) {
+    const largeDetail = await agent.getInteraction({
+      contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
+      interaction_id: largeSubmitted.result.interaction_id
+    })
+    if (largeDetail.ok && largeDetail.result.state === 'failed') break
+    await tick()
+  }
+  const largeDetail = await agent.getInteraction({
+    contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
+    interaction_id: largeSubmitted.result.interaction_id
+  })
+  assert.equal(largeDetail.ok, true)
+  assert.equal(largeDetail.result.state, 'failed')
+  assert.equal(largeDetail.result.error_code, 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED')
+  assert.equal(providerCalls, providerCallsBeforeCapacityCheck, 'over-limit input must fail before the summary model is called')
+  assert.equal(largeDetail.result.tool_calls.length, 0)
+  assert.equal(changedEvents.length, changedBeforeCapacitySubmit + 2, 'failed terminal commit publishes a change even when settlement observation throws')
+  const capacityEvent = terminalEvents.find((event) => event.runId === largeSubmitted.result.run_id)
+  assert.equal(capacityEvent?.terminalReason, 'failed')
+  assert.ok(capacityEvent.revision > largeSubmitted.result.revision)
+  assert.deepEqual(await terminalCommitReads[terminalEvents.indexOf(capacityEvent)], {
+    runId: largeSubmitted.result.run_id, runState: 'failed', terminalReason: 'failed'
+  })
 })

@@ -189,6 +189,26 @@ test('SEM-F38/SEM-T04/J29: summary memory revocation rejects late output and pre
   assert.equal(subtitleStore.database.prepare('SELECT summary_memory_error FROM formal_agent_interactions WHERE interaction_id=?').get('interaction.summary-revoked').summary_memory_error, 1)
 })
 
+test('SEM-F38/SEM-T04/J31-SIZE: legacy summary input-limit failure is distinct in durable run and interaction projections', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  insertRun(subtitleStore.database, {
+    runId: 'run.summary.input-limit', recipeId: 'summary.minutes', summaryUseMemory: true,
+    scopeReference: 'session.summary-input-limit'
+  })
+  store.createInteraction({
+    runId: 'run.summary.input-limit', interactionId: 'interaction.summary.input-limit', routingMode: 'preset', promptDigest: 'b'.repeat(64)
+  })
+  const failed = store.terminalizeInteraction({
+    interactionId: 'interaction.summary.input-limit', terminalReason: 'failed',
+    errorCode: 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED', result: null, usage: null, durationMs: 1
+  })
+  assert.equal(failed.errorCode, 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED')
+  assert.equal(store.getInteraction({ interactionId: 'interaction.summary.input-limit' }).interaction.errorCode, 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED')
+  assert.equal(store.listInteractions({ limit: 10, cursor: null }).items[0].errorCode, 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED')
+  assert.equal(subtitleStore.database.prepare('SELECT error_code, summary_input_limit_error FROM formal_agent_interactions WHERE interaction_id=?').get('interaction.summary.input-limit').error_code, 'AGENT_INTERNAL_FAILURE')
+  assert.equal(subtitleStore.database.prepare('SELECT error_code, summary_input_limit_error FROM formal_agent_runs WHERE run_id=?').get('run.summary.input-limit').summary_input_limit_error, 1)
+})
+
 test('SEM-F38/J29: frozen summary policy survives storage detail, history and versioned export', (t) => {
   const { subtitleStore, store } = fixture(t)
   insertRun(subtitleStore.database, {

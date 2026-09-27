@@ -298,3 +298,98 @@ test('S5-2 cancel and detail preserve running/cancelling state projections', asy
   assert.equal(replay.result.state, 'cancelled')
   assert.equal(replay.result.revision, revision)
 })
+
+test('SEM-F38/J30-CANCEL: a terminal race returns the committed state after re-reading SQLite facts', async () => {
+  const failedInteraction = {
+    interactionId: 'interaction.cancel-race', runId: 'run.cancel-race', recipeId: 'summary.minutes', recipeVersion: '1',
+    routingMode: 'rules', terminalReason: 'failed', errorCode: 'AGENT_BUDGET_EXCEEDED', usage: null, durationMs: 12,
+    attemptCount: 1, result: null, resultDigest: null, createdAt: 1, terminalAt: 13
+  }
+  let reads = 0
+  let cancelCalls = 0
+  const events = []
+  const storage = storageWith([])
+  storage.getAgentInteraction = async () => {
+    reads += 1
+    return {
+      runState: reads === 1 ? 'running' : 'failed', cancelRequested: false,
+      interaction: reads === 1 ? { ...failedInteraction, terminalReason: null, errorCode: null, terminalAt: null } : failedInteraction
+    }
+  }
+  storage.cancelAgentRun = async () => {
+    cancelCalls += 1
+    const error = new Error('AGENT_INTERACTION_STATE_CONFLICT')
+    error.code = 'AGENT_INTERACTION_STATE_CONFLICT'
+    throw error
+  }
+  const service = new AgentRunService({ storage, onChanged: (event) => events.push(event) })
+
+  const response = await service.cancel(header({ interaction_id: 'interaction.cancel-race' }))
+
+  assert.equal(response.ok, true)
+  assert.equal(response.result.state, 'failed')
+  assert.equal(reads, 2)
+  assert.equal(cancelCalls, 1)
+  assert.equal(events.length, 1, 'a resolved race should notify other open Agent windows to refresh')
+  assert.equal(response.result.revision, events[0].revision)
+})
+
+test('SEM-F38/J30-CANCEL: a terminal cancelled interaction is returned without another cancel write', async () => {
+  const storage = storageWith([])
+  let cancelCalls = 0
+  storage.getAgentInteraction = async () => ({
+    runState: 'cancelled', cancelRequested: true,
+    interaction: {
+      interactionId: 'interaction.cancelled', runId: 'run.cancelled', recipeId: 'summary.minutes', recipeVersion: '1',
+      routingMode: 'rules', terminalReason: 'cancelled', errorCode: null, usage: null, durationMs: 8,
+      attemptCount: 1, result: null, resultDigest: null, createdAt: 1, terminalAt: 9
+    }
+  })
+  storage.cancelAgentRun = async () => { cancelCalls += 1; throw new Error('must not overwrite a terminal cancellation') }
+  const events = []
+  const service = new AgentRunService({ storage, onChanged: (event) => events.push(event) })
+
+  const response = await service.cancel(header({ interaction_id: 'interaction.cancelled' }))
+
+  assert.equal(response.ok, true)
+  assert.equal(response.result.state, 'cancelled')
+  assert.equal(cancelCalls, 0)
+  assert.deepEqual(events, [])
+})
+
+test('SEM-F38/J30-CANCEL: failed terminal-race readback stays unavailable and emits no change', async () => {
+  let reads = 0
+  let schedulerCancels = 0
+  const events = []
+  const storage = storageWith([])
+  storage.getAgentInteraction = async () => {
+    reads += 1
+    if (reads > 1) throw new Error('storage unavailable')
+    return {
+      runState: 'running', cancelRequested: false,
+      interaction: {
+        interactionId: 'interaction.cancel-readback', runId: 'run.cancel-readback', recipeId: 'summary.minutes', recipeVersion: '1',
+        routingMode: 'rules', terminalReason: null, errorCode: null, usage: null, durationMs: 0,
+        attemptCount: 1, result: null, resultDigest: null, createdAt: 1, terminalAt: null
+      }
+    }
+  }
+  storage.cancelAgentRun = async () => {
+    const error = new Error('AGENT_INTERACTION_STATE_CONFLICT')
+    error.code = 'AGENT_INTERACTION_STATE_CONFLICT'
+    throw error
+  }
+  const service = new AgentRunService({
+    storage,
+    scheduler: { cancel () { schedulerCancels += 1 } },
+    onChanged: (event) => events.push(event)
+  })
+
+  const response = await service.cancel(header({ interaction_id: 'interaction.cancel-readback' }))
+
+  assert.equal(response.ok, false)
+  assert.equal(response.error.next_action, 'retry')
+  assert.equal(reads, 2)
+  assert.equal(schedulerCancels, 0)
+  assert.deepEqual(events, [])
+})

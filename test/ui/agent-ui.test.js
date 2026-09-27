@@ -11,6 +11,7 @@ const { act } = React
 const { createRoot } = require('react-dom/client')
 const { JSDOM } = require('jsdom')
 const { loadRendererModule } = require('./load-renderer-module')
+const { deterministicRoute } = require('../../src/agent/execution-host/intent-router')
 
 const root = path.resolve(__dirname, '..', '..')
 const CONTRACT = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
@@ -50,6 +51,16 @@ function input (element, value) {
 async function createHarness (options = {}) {
   const { AgentView } = await loadRendererModule(path.join(root, 'src', 'agent', 'agent-view.tsx'))
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://agent.test/' })
+  const intervals = new Map()
+  let nextIntervalId = 0
+  let visibilityState = 'visible'
+  Object.defineProperty(dom.window.document, 'visibilityState', { configurable: true, get: () => visibilityState })
+  dom.window.setInterval = (callback, milliseconds) => {
+    const id = ++nextIntervalId
+    intervals.set(id, { callback, milliseconds })
+    return id
+  }
+  dom.window.clearInterval = (id) => intervals.delete(id)
   const previous = Object.fromEntries(['window', 'document', 'HTMLElement', 'Event', 'MouseEvent'].map((key) => [key, global[key]]))
   Object.assign(global, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Event: dom.window.Event, MouseEvent: dom.window.MouseEvent })
   global.IS_REACT_ACT_ENVIRONMENT = true
@@ -127,6 +138,20 @@ async function createHarness (options = {}) {
   await flush()
   return {
     calls, changed, configChanged, cancelRequests, detailRequests, dom, exportRequests, historyItem, scopeItem, signalRequests, submitRequests,
+    activeIntervals: () => intervals.size,
+    async tickIntervals (milliseconds) {
+      const callbacks = [...intervals.values()].filter((interval) => interval.milliseconds === milliseconds).map((interval) => interval.callback)
+      await act(async () => {
+        for (const callback of callbacks) callback()
+        await new Promise((resolve) => setImmediate(resolve))
+        await new Promise((resolve) => setImmediate(resolve))
+      })
+    },
+    async setVisibility (value) {
+      visibilityState = value
+      await act(async () => dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange')))
+      await flush()
+    },
     async dispose () {
       await act(async () => reactRoot.unmount())
       dom.window.close()
@@ -182,20 +207,204 @@ test('SEM-F38/J29: an open Agent Bar refreshes summary policy copy after setting
   assert.match(document.querySelector('.memory-policy-hint').textContent, /本次生成只依据这场会话/)
 })
 
+test('SEM-F38/J30-CANCEL: an accepted pending receipt keeps cancellation available when the first detail read fails', async (t) => {
+  const harness = await createHarness({
+    getInteraction: async () => ({ ok: false, error: { category: 'unavailable', code: 'AGENT_RUN_UNAVAILABLE', next_action: 'retry' } })
+  }); t.after(() => harness.dispose())
+  await act(async () => click(document.querySelector('[data-action="minutes"]')))
+  await flush()
+  assert.equal(document.querySelector('.run-card strong').textContent, '等待生成')
+  assert.equal(document.querySelector('.run-card button').disabled, false)
+  await act(async () => click(document.querySelector('.run-card button')))
+  await flush()
+  assert.equal(harness.cancelRequests.length, 1)
+  assert.equal(harness.cancelRequests[0].interaction_id, 'interaction.ui.3')
+  assert.equal(document.querySelector('.run-card strong').textContent, '正在取消')
+})
+
+test('SEM-F38/J30-CANCEL: a terminal cancel receipt remains visible and stops polling when detail reads fail', async (t) => {
+  let detailReadCount = 0
+  const harness = await createHarness({
+    cancel: async (request) => ({ ok: true, result: { interaction_id: request.interaction_id, revision: 4, state: 'failed' } }),
+    getInteraction: async (request, { detailById }) => {
+      detailReadCount += 1
+      if (detailReadCount === 1) return { ok: true, result: detailById.get(request.interaction_id) }
+      return { ok: false, error: { category: 'unavailable', code: 'AGENT_UNAVAILABLE', next_action: 'retry' } }
+    }
+  }); t.after(() => harness.dispose())
+
+  await act(async () => click(document.querySelector('.history-card')))
+  await flush()
+  assert.equal(document.querySelector('.run-card strong').textContent, '正在生成')
+  assert.equal(harness.activeIntervals(), 1)
+
+  await act(async () => click(document.querySelector('.run-card button')))
+  await flush()
+  assert.equal(document.querySelector('.run-card strong').textContent, '生成失败')
+  assert.equal(document.querySelector('.run-card button').disabled, true)
+  assert.equal(document.querySelector('.result-card'), null, 'an old active detail is cleared until a terminal detail can be read')
+  assert.ok(document.querySelector('.request-panel [role="alert"]'), 'the detail read failure is visible')
+  assert.equal(document.body.textContent.includes('AGENT_UNAVAILABLE'), false)
+  assert.equal(document.body.textContent.includes('AGENT_PROVIDER_TIMEOUT'), false, 'do not infer a failure cause from the terminal state alone')
+  assert.equal(harness.activeIntervals(), 0, 'a terminal cancel receipt stops detail polling')
+})
+
+test('SEM-F38/J30-CANCEL: a stale running detail cannot replace a terminal cancel receipt', async (t) => {
+  let detailReadCount = 0
+  const harness = await createHarness({
+    cancel: async (request) => ({ ok: true, result: { interaction_id: request.interaction_id, revision: 4, state: 'cancelled' } }),
+    getInteraction: async (request, { detailById }) => {
+      detailReadCount += 1
+      return { ok: true, result: detailById.get(request.interaction_id) }
+    }
+  }); t.after(() => harness.dispose())
+
+  await act(async () => click(document.querySelector('.history-card')))
+  await flush()
+  await act(async () => click(document.querySelector('.run-card button')))
+  await flush()
+
+  assert.ok(detailReadCount >= 2, 'a post-cancel detail read was attempted')
+  assert.equal(document.querySelector('.run-card strong').textContent, '已取消')
+  assert.equal(document.querySelector('.run-card button').disabled, true)
+  assert.equal(document.querySelector('.result-card'), null)
+  assert.match(document.querySelector('.request-panel [role="alert"]').textContent, /交互详情暂时不可用/)
+  assert.equal(harness.activeIntervals(), 0)
+})
+
+test('SEM-F38/J30-STATE: a terminal history state stops polling when its first detail read fails', async (t) => {
+  const harness = await createHarness({
+    historyItems: [{ ...harnessHistoryItem('interaction.ui.terminal', 3), terminal_reason: 'failed', error_code: 'AGENT_PROVIDER_TIMEOUT' }],
+    getInteraction: async () => ({ ok: false, error: { category: 'unavailable', code: 'AGENT_UNAVAILABLE', next_action: 'retry' } })
+  }); t.after(() => harness.dispose())
+
+  await act(async () => click(document.querySelector('.history-card')))
+  await flush()
+  assert.equal(document.querySelector('.run-card strong').textContent, '生成失败')
+  assert.ok(document.querySelector('.request-panel [role="alert"]'))
+  assert.equal(harness.activeIntervals(), 0, 'known terminal history does not start a poll loop without a detail')
+})
+
 test('S5-UX/J22: reload subscribes before reading, selects a terminal session, and submits without optimistic success', async (t) => {
   const harness = await createHarness(); t.after(() => harness.dispose())
   assert.equal(harness.calls[0], 'subscribe')
   assert.deepEqual(harness.calls.slice(1, 3).map((item) => item[0]), ['scopes', 'history'])
   assert.equal(document.querySelector('.scope-card').getAttribute('aria-current'), 'true')
-  assert.equal(document.querySelector('.eligibility').textContent, '可以生成')
+  assert.equal(document.querySelector('.eligibility').textContent, '配置已就绪，提交后检查输入容量')
 
   await act(async () => click(document.querySelector('[data-action="minutes"]')))
   await flush()
   assert.equal(harness.submitRequests.length, 1)
   assert.deepEqual(Object.keys(harness.submitRequests[0]).sort(), ['client_idempotency_key', 'contract_id', 'contract_version', 'prompt', 'scope'])
   assert.match(harness.submitRequests[0].prompt, /会话总结/)
+  const { scope, prompt } = harness.submitRequests[0]
+  assert.equal(deterministicRoute({ scope, prompt }).recipeId, 'summary.minutes')
   assert.equal(document.querySelector('.run-card strong').textContent, '等待生成', 'submit ACK is pending until the authoritative detail is read')
   assert.equal(document.body.textContent.includes('interaction.ui.2'), false)
+})
+
+test('SEM-F38/J30-STATE/J31-SIZE: visible polling replaces stale running state with the terminal capacity failure', async (t) => {
+  const originalNow = Date.now
+  let now = 1000
+  Date.now = () => now
+  t.after(() => { Date.now = originalNow })
+  let unavailable = false
+  let latestDetail = null
+  const harness = await createHarness({
+    getInteraction: async (request, { detailById }) => {
+      if (unavailable) return { ok: false, error: { category: 'unavailable', code: 'AGENT_UNAVAILABLE', next_action: 'retry' } }
+      return { ok: true, result: latestDetail || detailById.get(request.interaction_id) }
+    }
+  })
+  t.after(() => harness.dispose())
+
+  await act(async () => click(document.querySelector('.history-card')))
+  await flush()
+  assert.equal(document.querySelector('.run-card strong').textContent, '正在生成')
+  assert.equal(harness.activeIntervals(), 1)
+  const beforePoll = harness.detailRequests.length
+
+  now = 12000
+  unavailable = true
+  await harness.tickIntervals(2000)
+  assert.equal(harness.detailRequests.length, beforePoll + 1)
+  assert.equal(document.querySelector('.run-card strong').textContent, '状态暂时无法确认')
+  assert.equal(document.querySelector('.stale-status').textContent, '上次确认状态：正在生成；正在重新读取。')
+  assert.equal(harness.activeIntervals(), 1)
+
+  latestDetail = {
+    ...harness.historyItem,
+    interaction_id: 'interaction.ui.1', run_id: 'run.ui.1', recipe_id: 'summary.minutes', recipe_version: '1',
+    state: 'failed', terminal_reason: 'failed', terminal_at: 4, duration_ms: 0,
+    error_code: 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED', result: null, result_digest: null, summary_use_memory: true,
+    memory_reference_count: 0, source_refs: [], tool_calls: []
+  }
+  unavailable = false
+  await harness.tickIntervals(2000)
+
+  assert.equal(document.querySelector('.run-card strong').textContent, '生成失败')
+  assert.equal(document.querySelector('.result-card header strong').textContent, '生成失败')
+  assert.equal(document.querySelector('.result-card small').textContent.includes('0 ms'), true)
+  assert.match(document.querySelector('.result-card [role="alert"]').textContent, /会话总结输入超过当前上限；总结模型尚未调用/)
+  assert.match(document.querySelector('.result-card .empty').textContent, /缩短输入，或选择内容较少的会话后重试/)
+  assert.match(document.querySelector('.result-card footer').textContent, /尚未读取记忆/)
+  assert.equal(document.querySelector('.run-card button').disabled, true)
+  assert.equal(harness.activeIntervals(), 0, 'terminal detail stops polling')
+})
+
+test('SEM-F38/J30-STATE: resuming a hidden window immediately rereads the selected interaction', async (t) => {
+  let latestDetail = null
+  const harness = await createHarness({
+    getInteraction: async (request, { detailById }) => ({ ok: true, result: latestDetail || detailById.get(request.interaction_id) })
+  }); t.after(() => harness.dispose())
+  await act(async () => click(document.querySelector('.history-card')))
+  await flush()
+  const beforeHide = harness.detailRequests.length
+  await harness.setVisibility('hidden')
+  assert.equal(harness.activeIntervals(), 0)
+  latestDetail = {
+    ...harness.historyItem,
+    interaction_id: 'interaction.ui.1', run_id: 'run.ui.1', recipe_id: 'qa.answer', recipe_version: '1',
+    state: 'failed', terminal_reason: 'failed', terminal_at: 4, error_code: 'AGENT_PROVIDER_TIMEOUT',
+    result: null, result_digest: null, source_refs: [], tool_calls: []
+  }
+  await harness.setVisibility('visible')
+  assert.equal(harness.detailRequests.length, beforeHide + 1)
+  assert.equal(document.querySelector('.run-card strong').textContent, '生成失败')
+  assert.equal(harness.activeIntervals(), 0)
+})
+
+test('SEM-F38/J29: successful memory retry keeps its references visible when another read failed', async (t) => {
+  const harness = await createHarness(); t.after(() => harness.dispose())
+  harness.setDetail({
+    ...harness.historyItem2, interaction_id: 'interaction.ui.2', run_id: 'run.ui.2', recipe_id: 'summary.minutes',
+    state: 'succeeded', terminal_reason: 'succeeded', summary_use_memory: true, memory_reference_count: 1,
+    tool_calls: [
+      { ...toolCall, tool_name: 'search_context', status: 'failed', error_code: 'TOOL_TIMEOUT', call_id: 'call.ui.failed' },
+      { ...toolCall, tool_name: 'search_context', status: 'succeeded', error_code: null, call_id: 'call.ui.succeeded' }
+    ]
+  })
+  await act(async () => click(document.querySelectorAll('.history-card')[1]))
+  await flush()
+  assert.match(document.querySelector('.result-card footer').textContent, /已参考 1 条记忆；另一次读取失败/)
+})
+
+test('SEM-F38/J31-SIZE: generic budget failures do not claim oversized transcript or zero model calls', async (t) => {
+  let latestDetail = null
+  const harness = await createHarness({
+    getInteraction: async (request, { detailById }) => ({ ok: true, result: latestDetail || detailById.get(request.interaction_id) })
+  }); t.after(() => harness.dispose())
+  await act(async () => click(document.querySelector('.history-card')))
+  await flush()
+  latestDetail = {
+    ...harness.historyItem, interaction_id: 'interaction.ui.1', run_id: 'run.ui.1', recipe_id: 'summary.minutes',
+    state: 'failed', terminal_reason: 'failed', terminal_at: 4, error_code: 'AGENT_BUDGET_EXCEEDED', result: null
+  }
+  await harness.tickIntervals(2000)
+  const message = document.querySelector('.result-card [role="alert"]').textContent
+  assert.match(message, /已达到预算限制/)
+  assert.equal(message.includes('总结模型尚未调用'), false)
+  assert.match(document.querySelector('.result-card .empty').textContent, /请重试/)
 })
 
 test('S5-UX/J25: history groups sibling interactions and exposes model, usage, cache rate, and relative duration', async (t) => {
@@ -317,10 +526,10 @@ test('SEM-F31/J22: an older eligibility response cannot replace a newer refresh 
   }); t.after(() => harness.dispose())
   await act(async () => click(document.querySelector('.scope-panel .panel-heading button')))
   await flush()
-  assert.equal(document.querySelector('.eligibility').textContent, '可以生成')
+  assert.equal(document.querySelector('.eligibility').textContent, '配置已就绪，提交后检查输入容量')
   oldRead.resolve({ ok: true, snapshot: { scope: { kind: 'session', reference: 'session.ui.1' }, eligibility: 'provider_not_configured', next_action: null, revision: 1 } })
   await flush()
-  assert.equal(document.querySelector('.eligibility').textContent, '可以生成')
+  assert.equal(document.querySelector('.eligibility').textContent, '配置已就绪，提交后检查输入容量')
 })
 
 test('SEM-F31/J22: scope and history pagination complete independently and deduplicate stable identities', async (t) => {
@@ -551,7 +760,15 @@ test('SEM-F32/J21: successful edit feedback clears the unchanged submitted draft
 })
 
 test('SEM-F32/J22: an explicit successful submit ends the idempotency-key lifecycle', async (t) => {
-  const harness = await createHarness(); t.after(() => harness.dispose())
+  const harness = await createHarness({
+    getInteraction: async (request, { detailById }) => ({
+      ok: true,
+      result: detailById.get(request.interaction_id) || {
+        ...detailById.get('interaction.ui.1'), interaction_id: request.interaction_id,
+        run_id: `run.${request.interaction_id}`, state: 'succeeded', terminal_reason: 'succeeded', terminal_at: 3
+      }
+    })
+  }); t.after(() => harness.dispose())
   const prompt = document.querySelector('#agentPrompt')
   await act(async () => input(prompt, '重复主动请求'))
   await act(async () => click(document.querySelector('[data-action="qa"]')))

@@ -62,6 +62,32 @@ test('DB1/J20 v13 rollback preserves v12 and old sessions remain explicitly unre
   assert.equal(store.database.prepare('SELECT count(*) AS n FROM subtitle_recognition_sessions').get().n, 0)
 })
 
+test('DB1/J30 v14 input-limit projection migration rolls back cleanly and preserves prior schema', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-input-migration-'))
+  const databasePath = path.join(directory, 'subtitle.sqlite3')
+  let store = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 13) })
+  t.after(() => { store.close(); fs.rmSync(directory, { recursive: true, force: true }) })
+  store.openSession({ sessionId: 'pre-v14', sourceId: 'mic', startedAt: 1 })
+  store.closeSession({ sessionId: 'pre-v14', sourceId: 'mic', endedAt: 2, state: 'closed' })
+  store.close()
+
+  const badSql = FORMAL_AGENT_MIGRATIONS[13].sql + '\nINVALID SQL;'
+  assert.throws(() => new SqliteSubtitleStore({ databasePath, migrations: [
+    ...FORMAL_AGENT_MIGRATIONS.slice(0, 13), { version: 14, sql: badSql, checksum: checksum(badSql) }
+  ] }))
+  store = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 13) })
+  assert.equal(store.database.prepare('PRAGMA user_version').get().user_version, 13)
+  assert.equal(store.database.prepare("SELECT count(*) AS n FROM pragma_table_info('formal_agent_runs') WHERE name='summary_input_limit_error'").get().n, 0)
+  assert.equal(store.getSessionTranscript({ sessionId: 'pre-v14' }).session.state, 'closed')
+  store.close()
+
+  store = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS })
+  assert.equal(store.database.prepare('PRAGMA user_version').get().user_version, 14)
+  assert.equal(store.database.prepare("SELECT count(*) AS n FROM pragma_table_info('formal_agent_runs') WHERE name='summary_input_limit_error'").get().n, 1)
+  assert.equal(store.database.prepare("SELECT count(*) AS n FROM pragma_table_info('formal_agent_interactions') WHERE name='summary_input_limit_error'").get().n, 1)
+  assert.equal(store.getSessionTranscript({ sessionId: 'pre-v14' }).session.state, 'closed')
+})
+
 test('SEM-F14/J20 rejects secret fields, malformed bindings and reverse fallback without partial writes', t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'recognition-validation-'))
   const store = new SqliteSubtitleStore({ databasePath: path.join(directory, 'subtitle.sqlite3'), migrations: FORMAL_AGENT_MIGRATIONS })

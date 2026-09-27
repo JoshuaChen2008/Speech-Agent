@@ -116,6 +116,14 @@ function publicState (value, terminalReason = null, cancelRequested = false) {
   return 'pending'
 }
 
+function terminalInteractionState (detail) {
+  const interaction = detail?.interaction || {}
+  const reason = interaction.terminalReason || interaction.terminal_reason
+  if (['succeeded', 'failed', 'cancelled'].includes(reason)) return reason
+  const runState = detail?.runState || detail?.state
+  return ['succeeded', 'failed', 'cancelled'].includes(runState) ? runState : null
+}
+
 function publicUsage (usage) {
   if (!usage) return { usage: null, usage_state: 'unknown' }
   return {
@@ -461,7 +469,29 @@ class AgentRunService {
       const detail = await this.storage.getAgentInteraction({ interactionId: request.interaction_id })
       const runId = detail?.interaction?.runId || detail?.interaction?.run_id || detail?.runId
       if (typeof runId !== 'string') return publicFailure()
-      const run = await this.storage.cancelAgentRun({ runId })
+      const settledState = terminalInteractionState(detail)
+      if (settledState) {
+        return c.assertCancelResponse({ ...header(), ok: true, error: null, result: {
+          interaction_id: request.interaction_id,
+          revision: this.revision,
+          state: settledState
+        } })
+      }
+      let run
+      try {
+        run = await this.storage.cancelAgentRun({ runId })
+      } catch (error) {
+        if (error?.code !== 'AGENT_INTERACTION_STATE_CONFLICT') throw error
+        const latest = await this.storage.getAgentInteraction({ interactionId: request.interaction_id })
+        const latestState = terminalInteractionState(latest)
+        if (!latestState) throw error
+        this.emitChanged()
+        return c.assertCancelResponse({ ...header(), ok: true, error: null, result: {
+          interaction_id: request.interaction_id,
+          revision: this.revision,
+          state: latestState
+        } })
+      }
       if (this.scheduler && typeof this.scheduler.cancel === 'function') this.scheduler.cancel(runId)
       if (run?.replayed !== true) this.emitChanged()
       return c.assertCancelResponse({ ...header(), ok: true, error: null, result: {

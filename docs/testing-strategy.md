@@ -28,6 +28,31 @@ S5-Integration 采用 main-owned `AgentRunService`。submit 的公开载荷只�
 
 ## 2. 执行分层
 
+### 2026-09-27 会话总结运行与长输入旅程（P0 局部实现证据）
+
+P0 为**实现完成·尚未验收**；P1/P2 仍为已决定，未实施。以下记录 P0 子集证据，不沿用 J29 路由修复或旧 PluginHost 资格宣称 J30/J31 全面验收。数值唯一权威见[语义合同增量](semantic-contract.md#会话总结运行与长输入增量2026-09-27)，实施顺序见[任务表](../openspec/changes/fix-session-summary-lifecycle-and-long-input/tasks.md)。以下为 J30/J31 子项，不新增 test lane。
+
+| 旅程/子项 | 用户路径与可观察结果 | 必须真实的内部边界与失败矩阵 | 当前证据 |
+|---|---|---|---|
+| J30-STATE | 提交→快速失败→通知丢失→详情校准→准确失败；刷新/恢复/重载一致 | main/service/runner/SQLite/renderer/preload；旧revision/目标迟到、读取故障、新鲜度、草稿保留 | P0 子集实现完成·尚未验收：S5 SQLite 终态通知和 J25 生产 renderer 容量失败；J30 全矩阵未验收 |
+| J30-ACCEPT | 模型路由前可取消；明确总结零模型判定；未知回执同键不重复 | exact IPC、受理、真实路由器、SQLite；路由慢/取消/迟到/兜底、重复点击、删除旧键 | 已决定 |
+| J30-CANCEL | pending/running或旧快照终态取消→权威终态 | 真实事务竞争、service/scheduler/adapter/UI；provider不理abort、工具慢、成功/失败先提交、取消落库失败、登记期限 | P0 子集实现完成·尚未验收：AgentRunService 冲突回读、S5 真实 SQLite 终态竞争及 UI 详情读取失败；全链取消期限未验收 |
+| J30-PROGRESS | 真实阶段、等待、块数、attempt、实际记忆事实 | 真实阶段发射/快照/UI；无首响应、工具等待、退避、重跑进度重置、usage未知 | 已决定 |
+| J30-RECOVERY | 长请求续租→失租/退出→重开→明确继续或已取消 | 真实scheduler/lease/storage/main；旧owner/attempt回写、固定提示重建、自由问题提示缺失、剩余预算 | 已决定 |
+| J30-DIAG | 活动/失败/取消→诊断→导出或取消保存 | 真实诊断服务/schema/main save adapter/滚动文件；不可写、容量/年龄清理、开始无结束事件、异常脱敏 | 已决定；J12为必要子门禁 |
+| J30-INDEPENDENCE | 总结等待/不合作取消/日志故障期间启动停止字幕→历史/导出 | 真实SessionCoordinator、recorder、storage worker、SQLite、history；只替代声卡/provider/网络/系统边界 | 已决定 |
+| J31-SIZE | >15KB旧规模及4h/5h/6h输入→预检→执行或明确超界；旧版输入预检使用专用稳定错误码并证明零模型调用 | 真planner/能力绑定/runner/Loop/adapter；原文/序列/段数各减一/等于/加一、能力不足、配置竞态、transport上限 | 旧版预检子集实现完成·尚未验收：1589 段合成 SQLite 样本得到专用错误；S5 证明总结模型调用数不增加，J25 证明 renderer 错误/恢复文案及零工具调用；长输入未实现 |
+| J31-COVERAGE | 分页冻结raw→分块→完整范围证明 | 真适配器/SQLite/planner；Unicode/JSON转义/超长段/精修覆盖/分页删除变更、无缺口无重叠 | 已决定 |
+| J31-MERGE | 多层归并→一份纪要→来源和语义核查 | 真Loop/归并/schema/提交；中段失败、输出超限、两个结果装不下、末段修订前段、否定/待办、零部分产物 | 已决定；质量和覆盖分别断言 |
+| J31-BUDGET | 多节点/attempt共享预算→触线收束 | 真版本化预算/绑定；逐轴边界、usage缺失、旧attempt消耗、运行中改模型 | 已决定 |
+| J31-RESOURCE | 上沿输入下UI/字幕响应、取消、释放缓冲 | 真分页/序列化/调度；缓冲峰值、取消耗时、main事件循环影响；文本容量不替代采集长稳 | 已决定 |
+| J31-RECOVERY | 中断后同run/绑定新attempt整次重跑 | 真SQLite/计划digest/剩余预算；中间正文零持久、取消不复活、来源撤销、删除 | 已决定 |
+| J31-COMPAT | 既有库升级→旧结果/绑定/导出→新v2总结 | 真追加迁移、v1/v2 validator/导出/原始历史；旧SQL/checksum及导出字节不变、删除级联、其它recipe预算不变 | 已决定 |
+
+容量样本使用固定种子合成文本，不复制用户会话。模型替身只证明编排/覆盖，不能用预设答案宣称真实模型内容质量。实机五小时采集、真实模型质量/公网取消、窗口操作、正式包和适用I2/I3/I4分别留证；确定性时间偏移不构成五小时长稳。新增测试仅落既有core/integration/evidence目录，按§2.1选择验证范围。
+
+2026-09-27 P0 本地验证：`npm run test:core` 为 986 项通过；`node --test test/ui/agent-ui.test.js` 为 37 项通过；`npm run verify:renderer`、J25 Electron/SQLite 旅程及 S5 SQLite 旅程通过。`npm run test:integration` 中 67 项有 64 项通过、3 项因本机 Electron GPU 子进程不可用而失败；相关 J25、S5、J29 旅程通过，因此完整 integration lane 仍未验收。未验证范围还包括 P1 运行控制/诊断、P2 长输入、真实模型质量、公网取消和实机运行。
+
 ### 2026-09-13 两项功能的新增旅程矩阵（规划登记）
 
 | 旅程 | 用户路径与可观察结果 | 内部真实模块与失败边界 | 当前证据 |
@@ -36,6 +61,14 @@ S5-Integration 采用 main-owned `AgentRunService`。submit 的公开载荷只�
 | J29 | SEM-F38：工具条或字幕历史 → 明确会话与可见打开反馈 → 全局总结参考设置（首次缺失默认开启）→ 生成总结 → 结果/历史/导出；明确选定内容记住另行写入。 | 真实 toolbar/history/agent/settings renderer、preload、main 窗口、ConfigStore、AgentRunService、Personal Context、Loop、SQLite；只替代 provider/系统故障边界。覆盖窗口首开/重复点击/关闭重开/加载失败、监听中/空正文/缺模型、四种开关/重启/旧 revision、无记忆 payload 负证据、读取失败明确降级、summary.minutes 自动信号零写入、撤销与迟到输出、取消/重试、旧导出不变和失败后字幕新会话。 | 已决定；实现完成·尚未验收。新增 `session-summary-j29-memory-journey.test.js` 定向覆盖四种设置组合、真实 SQLite 冻结策略、provider 边界标记、引用计数与重启持久化；完整窗口/实机门禁仍待联合验收。 |
 
 实现顺序与逐片验证见[任务清单](../openspec/changes/clarify-memory-and-session-summary/tasks.md)，需求见[共同提案](../openspec/changes/clarify-memory-and-session-summary/proposal.md)。纯文档只核对术语/语义/链接；实现用既有 core/integration/evidence 目录，不新增测试 lane。真实公网、Windows 窗口焦点与内容质量另留实机证据；不因 OpenSpec 文件齐备晋级门禁。
+
+2026-09-27 SEM-F38/J29 回归登记（已决定）：使用“生成总结”按钮实际提示词覆盖总结与待办关键词冲突；renderer 点击请求校验真实规则分类，既有 J29 旅程接入真实意图路由器，使用与主进程相同的执行宿主入口导出，验证模型路由及路由输出失败后的规则兜底均生成 `summary.minutes` 终态结果、保持记忆政策与历史投影。单独信息提取与非会话范围继续由既有路由测试守护。真实公网与运行中应用重启后验证另验。
+
+本增量状态：实现完成·尚未验收。红测先确认按钮原文被拒绝，接入执行宿主入口后再确认缺少导出导致模型路由退回规则；修复后以下命令返回 0：
+
+- `npm run test:focus -- test/runtime/intent-router.test.js test/integration/session-summary-j29-memory-journey.test.js test/integration/agent-redesign-s3-route-journey.test.js test/ui/agent-ui.test.js`：33/33。
+- `npm run test:focus -- test/runtime/intent-route-orchestrator.test.js test/runtime/formal-agent-run-runner.test.js test/runtime/formal-agent-job-scheduler.test.js test/main/agent-run-service.test.js`：42/42。
+- `npm run typecheck:renderer`：返回码 0。未执行完整三条 lane、真实公网 provider 或运行中应用的实机验证，不提升完整 J29 验收状态。
 
 ### 2026-09-20 I2/I3 无人值守资格子边界
 

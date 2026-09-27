@@ -1,0 +1,30 @@
+## Why
+
+2026-09-27 的只读诊断确认：一场包含 1,589 个字幕段的会话，拼装请求为 173,827 字节，超过 runner 的 15,000 字节限制，45 ms 后已经失败，Agent Bar 仍显示“正在生成”。取消终态任务又被映射为泛化错误，用户无法判断进展或取得诊断。用户要求覆盖 4–5 小时会议，因此需要同时修正运行闭环和长输入规划。
+
+## What Changes
+
+- 后台状态提交后发布变更；活动详情周期校准，手动刷新、重载和窗口恢复读取权威状态；取消遇到终态返回该终态。
+- 从请求受理起提供取消能力、阶段、相对耗时、最近活动及可解释的预算失败；状态未知与仍在运行分别表达。
+- 将长会话容量与单次模型请求预算分开；按冻结输入完整分块、确定性归并、原子提交，覆盖 4–5 小时且不截断正文。
+- 新增 `summary.minutes@2` 的版本化输入计划和运行预算；保留旧版本绑定、历史及导出字节承诺。每次模型调用仍经过同一 Agent Loop，工具授权不在运行期改变。
+- 提供有界、本地、无正文的运行诊断及主动导出；不记录模型中间文本、不上传日志、不持久化分块正文。
+- 扩充 SEM-F38，并登记 SEM-F39/F40、J30/J31；维护 CONTEXT 术语和 AGENTS 路由，供其它任务按需读取。
+
+## Capabilities
+
+### New Capabilities
+
+- `session-summary-run-lifecycle`: 受理、状态同步、真实阶段、取消、恢复和终态一致性。
+- `session-summary-long-input`: 4–5 小时场景、输入计划、分块归并、版本化预算和完整覆盖。
+- `agent-run-diagnostics`: 无正文诊断、保留策略、运行中导出和隐私边界。
+
+### Modified Capabilities
+
+当前 `openspec/specs/` 没有已归档能力。上述能力作为新增 delta，与在途 `clarify-memory-and-session-summary/specs/session-summary-experience/spec.md` 互补；既有记忆政策、正文边界、来源撤销和导出承诺继续适用，不复制或重置该变更的任务状态。
+
+## Impact
+
+涉及 Agent Bar/preload/exact IPC、main 组合根、AgentRunService、scheduler/runner/Agent Loop、个人上下文分页读取、模型接入预算、storage worker/SQLite 追加迁移、诊断与导出。没有新 provider 或框架依赖，不改变字幕采集、ASR 或字幕事实。
+
+本次仅实施 P0，状态为「实现完成·尚未验收」；J30/J31 全矩阵、P1 运行控制与诊断、P2 长输入仍为「已决定」。现有本地证据及未验证范围见 [测试策略](../../../docs/testing-strategy.md)。本次不表示支持 4–5 小时长输入或 J29/J30/J31 联合验收成立。数值是本产品拟实施的容量与时限，不是对任意云端模型质量、响应时间或无限输入的承诺。权威要求见 [语义合同](../../../docs/semantic-contract.md)，方案与任务见本目录 design.md 和 tasks.md。
