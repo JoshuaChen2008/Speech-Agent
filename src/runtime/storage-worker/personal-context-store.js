@@ -2329,7 +2329,13 @@ class PersonalContextStore {
         WHERE requested_by = ? AND (
           (? = 'automatic' AND recipe_id IN ('context.ingest.session', 'context.ingest.interaction')) OR
           (? = 'user' AND recipe_id IN ('summary.minutes', 'qa.answer'))
-        ) AND (? = 1) AND (
+        ) AND (? = 1) AND attempt_count < max_attempts AND COALESCE(resume_required,0)=0 AND (
+          session_summary_request_id IS NULL OR NOT EXISTS (
+            SELECT 1 FROM formal_agent_requests AS summary_request
+            WHERE summary_request.request_id=formal_agent_runs.session_summary_request_id
+              AND summary_request.resume_required=1
+          )
+        ) AND (
           (state IN ('queued', 'retry_wait') AND next_attempt_at <= ? AND cancel_requested_at IS NULL) OR
           (state = 'running' AND lease_expires_at <= ? AND cancel_requested_at IS NULL)
         )
@@ -2401,13 +2407,18 @@ class PersonalContextStore {
     const row = this.database.prepare(`
       SELECT MIN(ready_at) AS ready_at FROM (
         SELECT next_attempt_at AS ready_at FROM formal_agent_runs
-          WHERE requested_by = ? AND (
+          WHERE requested_by = ? AND attempt_count < max_attempts AND COALESCE(resume_required,0)=0 AND (
             (? = 'automatic' AND recipe_id IN ('context.ingest.session', 'context.ingest.interaction')) OR
             (? = 'user' AND recipe_id IN ('summary.minutes', 'qa.answer'))
-          ) AND state IN ('queued', 'retry_wait') AND cancel_requested_at IS NULL
+          ) AND state IN ('queued', 'retry_wait') AND cancel_requested_at IS NULL AND
+            (session_summary_request_id IS NULL OR NOT EXISTS (
+              SELECT 1 FROM formal_agent_requests AS summary_request
+              WHERE summary_request.request_id=formal_agent_runs.session_summary_request_id
+                AND summary_request.resume_required=1
+            ))
         UNION ALL
         SELECT lease_expires_at AS ready_at FROM formal_agent_runs
-          WHERE requested_by = ? AND (
+          WHERE requested_by = ? AND attempt_count < max_attempts AND COALESCE(resume_required,0)=0 AND (
             (? = 'automatic' AND recipe_id IN ('context.ingest.session', 'context.ingest.interaction')) OR
             (? = 'user' AND recipe_id IN ('summary.minutes', 'qa.answer'))
           ) AND state = 'running' AND cancel_requested_at IS NULL

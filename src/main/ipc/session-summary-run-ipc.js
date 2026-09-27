@@ -38,6 +38,8 @@ function registerSessionSummaryRunIpc ({ ipcMain, service, getRole = () => 'agen
   invoke(CHANNELS.SESSION_SUMMARY_RUN_ACCEPT, c.assertAcceptRequest, c.assertAcceptResponse, 'accept')
   invoke(CHANNELS.SESSION_SUMMARY_RUN_GET, c.assertControlRequest, c.assertGetResponse, 'get')
   invoke(CHANNELS.SESSION_SUMMARY_RUN_CANCEL, c.assertCancelRequest, c.assertCancelResponse, 'cancel')
+  invoke(CHANNELS.SESSION_SUMMARY_RUN_RESUME, c.assertResumeRequest, c.assertResumeResponse, 'resume')
+  invoke(CHANNELS.SESSION_SUMMARY_RUN_LIST_RECOVERABLE, c.assertListRecoverableRequest, c.assertListRecoverableResponse, 'listRecoverable')
   return Object.freeze({ channels: c.IPC_CHANNELS })
 }
 

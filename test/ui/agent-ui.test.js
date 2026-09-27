@@ -67,10 +67,13 @@ async function createHarness (options = {}) {
   const configChanged = []
   const summaryChanged = []
   const calls = []
+  let closeRequests = 0
   const submitRequests = []
   const summarySnapshots = new Map()
   const summarySnapshotByKey = new Map()
   const summaryCancelRequests = []
+  const resumeRequests = []
+  let recoverableSummaryQueries = 0
   let summaryRequestSequence = 0
   const cancelRequests = []
   const exportRequests = []
@@ -89,7 +92,7 @@ async function createHarness (options = {}) {
   detailById.set(historyItem2.interaction_id, { ...currentDetail, interaction_id: historyItem2.interaction_id, run_id: 'run.ui.2', state: 'succeeded', terminal_reason: 'succeeded', terminal_at: 3, result: { summary: '第二条历史结果' } })
   dom.window.ManualWindowDrag = { bindManualWindowDrag: () => ({ cancel () {} }), isInteractiveDragEvent: () => false }
   dom.window.agentApi = {
-    dragStart () {}, dragEnd () {}, close () {}, onInteractionSync: () => () => {},
+    dragStart () {}, dragEnd () {}, close () { closeRequests += 1 }, onInteractionSync: () => () => {},
     getConfig: options.getConfig || (async () => ({ agentEnabled: true, memoryEnabled: true, summaryUseMemory: true })),
     onConfig (callback) { configChanged.push(callback); calls.push('config'); return () => {} },
     subscribeChanged (callback) { changed.push(callback); calls.push('subscribe'); return () => {} },
@@ -130,6 +133,11 @@ async function createHarness (options = {}) {
         }
         summarySnapshotByKey.set(request.client_request_key, snapshot)
         summarySnapshots.set(id, snapshot)
+        if (request.resubmits_request_id && Array.isArray(options.recoverableSummaryRuns)) {
+          options.recoverableSummaryRuns = options.recoverableSummaryRuns.filter(
+            (item) => item.snapshot.request_id !== request.resubmits_request_id
+          )
+        }
         const event = { contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0', request_id: id, generation: 1, revision: 0 }
         for (const listener of summaryChanged) listener(event)
       }
@@ -147,6 +155,29 @@ async function createHarness (options = {}) {
       const cancelled = { ...snapshot, revision: snapshot.revision + 1, state: 'cancelling', phase: 'cancelling', cancel_requested: true }
       summarySnapshots.set(request.request_id, cancelled)
       return { ok: true, result: { snapshot: cancelled } }
+    },
+    async listRecoverableSessionSummaryRuns (request) {
+      recoverableSummaryQueries += 1
+      if (options.listRecoverableSessionSummaryRuns) return options.listRecoverableSessionSummaryRuns(request)
+      const requests = options.recoverableSummaryRuns || []
+      for (const item of requests) summarySnapshots.set(item.snapshot.request_id, item.snapshot)
+      return { ok: true, error: null, result: { requests } }
+    },
+    async resumeSessionSummaryRun (request) {
+      resumeRequests.push(request)
+      if (options.resumeSessionSummaryRun) return options.resumeSessionSummaryRun(request)
+      const prior = (options.recoverableSummaryRuns || []).find((item) => item.snapshot.request_id === request.request_id)?.snapshot
+      const resumed = {
+        ...(prior || summarySnapshots.get(request.request_id)),
+        generation: request.generation + 1,
+        revision: request.expected_revision + 1,
+        state: 'queued', phase: 'accepted', resume_required: false
+      }
+      summarySnapshots.set(request.request_id, resumed)
+      if (Array.isArray(options.recoverableSummaryRuns)) {
+        options.recoverableSummaryRuns = options.recoverableSummaryRuns.filter((item) => item.snapshot.request_id !== request.request_id)
+      }
+      return { ok: true, error: null, result: { snapshot: resumed } }
     },
     async cancel (request) {
       cancelRequests.push(request)
@@ -176,7 +207,8 @@ async function createHarness (options = {}) {
   await act(async () => reactRoot.render(React.createElement(AgentView)))
   await flush()
   return {
-    calls, changed, configChanged, cancelRequests, detailRequests, dom, exportRequests, historyItem, scopeItem, signalRequests, submitRequests, summaryCancelRequests, summaryChanged, summarySnapshots,
+    calls, changed, configChanged, cancelRequests, detailRequests, dom, exportRequests, historyItem, scopeItem, signalRequests, submitRequests, summaryCancelRequests, summaryChanged, summarySnapshots, resumeRequests, closeRequests: () => closeRequests,
+    recoverableSummaryQueries: () => recoverableSummaryQueries,
     activeIntervals: () => intervals.size,
     async tickIntervals (milliseconds) {
       const callbacks = [...intervals.values()].filter((interval) => interval.milliseconds === milliseconds).map((interval) => interval.callback)
@@ -206,7 +238,7 @@ test('S5-UX/J22/J24: formal Agent renderer consumes the exact facade and keeps p
   assert.match(source('src/agent/index.html'), /src="\.\/entry\.tsx"/)
   assert.match(source('src/agent/entry.tsx'), /createRoot[\s\S]*AgentView/)
   const view = source('src/agent/agent-view.tsx')
-  for (const method of ['subscribeChanged', 'getConfig', 'onConfig', 'getScopes', 'getEligibility', 'acceptSessionSummaryRun', 'getSessionSummaryRun', 'cancelSessionSummaryRun', 'onSessionSummaryRunChanged', 'cancel', 'getHistory', 'getInteraction', 'exportInteraction', 'recordSignal']) assert.match(view, new RegExp(`api\\.${method}`))
+  for (const method of ['subscribeChanged', 'getConfig', 'onConfig', 'getScopes', 'getEligibility', 'acceptSessionSummaryRun', 'getSessionSummaryRun', 'cancelSessionSummaryRun', 'resumeSessionSummaryRun', 'listRecoverableSessionSummaryRuns', 'onSessionSummaryRunChanged', 'cancel', 'getHistory', 'getInteraction', 'exportInteraction', 'recordSignal']) assert.match(view, new RegExp(`api\\.${method}`))
   assert.match(source('src/preload/agent.js'), /getConfig:\s*\(\)\s*=>\s*ipcRenderer\.invoke\(CHANNELS\.CONFIG_GET\)/)
   assert.match(source('src/preload/agent.js'), /onConfig:\s*\(callback\)\s*=>\s*subscribe\(CHANNELS\.CONFIG_CHANGED, callback\)/)
   assert.match(view, /生成总结/)
@@ -230,6 +262,65 @@ test('SEM-F38/J29: beginner copy states the actual summary memory policy and kee
   })
   t.after(() => withoutMemory.dispose())
   assert.match(document.querySelector('.memory-policy-hint').textContent, /本次生成只依据这场会话/)
+})
+
+test('SEM-F38/SEM-T04/J30-RECOVERY: reopening shows a frozen summary scope and only continues after an explicit click', async (t) => {
+  const scope = { kind: 'session', reference: 'session.ui.recovered' }
+  const snapshot = {
+    request_id: 'request.ui.recovered', generation: 1, revision: 4, action: 'summary',
+    state: 'retry_wait', phase: 'retry_wait', attempt: 2, elapsed_ms: 1200,
+    last_activity_age_ms: null, validated_chunk_count: null, total_chunk_count: null,
+    memory_state: 'unknown', error_code: null, budget: null, freshness: 'fresh',
+    cancel_requested: false, resume_required: true, diagnostics_available: false,
+    route_run_id: null, target_run_id: 'run.ui.recovered', interaction_id: 'interaction.ui.recovered',
+    recipe_id: 'summary.minutes', routing_mode: 'preset'
+  }
+  const harness = await createHarness({ recoverableSummaryRuns: [{ scope, snapshot }] })
+  t.after(() => harness.dispose())
+  assert.equal(harness.recoverableSummaryQueries() >= 1, true)
+  assert.match(document.querySelector('.recoverable-runs').textContent, /需要处理的请求/)
+  assert.match(document.querySelector('.recoverable-runs').textContent, /继续生成/)
+  assert.equal(harness.resumeRequests.length, 0)
+
+  await act(async () => click([...document.querySelectorAll('.recoverable-runs button')].find((button) => button.textContent === '继续生成')))
+  await flush()
+  assert.equal(harness.resumeRequests.length, 1)
+  assert.deepEqual(JSON.parse(JSON.stringify(harness.resumeRequests[0])), {
+    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+    request_id: 'request.ui.recovered', generation: 1, expected_revision: 4
+  })
+  assert.equal(document.querySelector('[aria-label="当前会话总结请求状态"] strong').textContent, '等待处理')
+  assert.equal(document.querySelector('.recoverable-runs'), null)
+  await act(async () => click(document.querySelector('[aria-label="关闭会话总结"]')))
+  assert.equal(harness.closeRequests(), 1)
+  assert.equal(harness.summaryCancelRequests.length, 0)
+})
+
+test('SEM-F38/SEM-T04/J30-RECOVERY: a lost question is left empty and can be submitted again', async (t) => {
+  const scope = { kind: 'session', reference: 'session.ui.question-recovered' }
+  const snapshot = {
+    request_id: 'request.ui.question-recovered', generation: 1, revision: 3, action: 'question',
+    state: 'failed', phase: 'terminal', attempt: 1, elapsed_ms: 800,
+    last_activity_age_ms: null, validated_chunk_count: null, total_chunk_count: null,
+    memory_state: 'not_read', error_code: 'AGENT_REQUEST_INVALID', budget: null, freshness: 'fresh',
+    cancel_requested: false, resume_required: true, diagnostics_available: false,
+    route_run_id: null, target_run_id: null, interaction_id: null, recipe_id: null, routing_mode: null
+  }
+  const harness = await createHarness({ recoverableSummaryRuns: [{ scope, snapshot }] })
+  t.after(() => harness.dispose())
+  const prompt = document.querySelector('#agentPrompt')
+  assert.equal(prompt.value, '')
+  assert.equal(prompt.disabled, false)
+  assert.equal([...document.querySelectorAll('.scope-card')].every((button) => button.disabled), true)
+  assert.match(document.body.textContent, /问题内容未保留/)
+  await act(async () => input(prompt, '请重新说明主要决定'))
+  await act(async () => click(document.querySelector('[data-action="qa"]')))
+  await flush()
+  assert.equal(harness.submitRequests.at(-1).action, 'question')
+  assert.equal(harness.submitRequests.at(-1).prompt, '请重新说明主要决定')
+  assert.equal(harness.submitRequests.at(-1).resubmits_request_id, 'request.ui.question-recovered')
+  assert.notEqual(harness.submitRequests.at(-1).client_request_key, 'request.ui.question-recovered')
+  assert.equal(document.querySelector('.recoverable-runs'), null)
 })
 
 test('SEM-F38/J29: an open Agent Bar refreshes summary policy copy after settings change', async (t) => {

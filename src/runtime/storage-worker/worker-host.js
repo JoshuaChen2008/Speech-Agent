@@ -606,6 +606,14 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.SUMMARY_REQUEST_RESUME, { request })
   }
 
+  failUnrecoverableSessionSummaryRequest (request) {
+    return this.enqueue(OPERATIONS.SUMMARY_REQUEST_FAIL_UNRECOVERABLE, { request })
+  }
+
+  recoverSessionSummaryRequests () {
+    return this.enqueue(OPERATIONS.SUMMARY_REQUEST_RECOVER, {})
+  }
+
   listRecoverableSessionSummaryRequests () {
     return this.enqueue(OPERATIONS.SUMMARY_REQUEST_LIST_RECOVERABLE, {})
   }

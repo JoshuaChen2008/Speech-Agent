@@ -35,7 +35,16 @@ function loadAgentPreload () {
       return {
         createWindowInteractionBridge: () => ({ dragStart: () => {}, dragEnd: () => {}, onInteractionSync: () => () => {} }),
         ipcRenderer: {
-          invoke: async (channel, request) => { calls.push({ channel, request }); return response },
+          invoke: async (channel, request) => {
+            calls.push({ channel, request })
+            if (channel === CHANNELS.SESSION_SUMMARY_RUN_LIST_RECOVERABLE) {
+              return { ...response, result: { requests: [] } }
+            }
+            if (channel === CHANNELS.SESSION_SUMMARY_RUN_RESUME) {
+              return { ...response, result: { snapshot: { ...snapshot, generation: 2, revision: 1, state: 'accepted' } } }
+            }
+            return response
+          },
           on: (channel, callback) => listeners.set(channel, callback),
           removeListener: (channel, callback) => { if (listeners.get(channel) === callback) listeners.delete(channel) },
           send: () => {}
@@ -67,6 +76,17 @@ test('SEM-F38/J30-ACCEPT: agent preload validates and forwards summary request c
   assert.equal(accepted.ok, true)
   assert.equal(calls[0].channel, CHANNELS.SESSION_SUMMARY_RUN_ACCEPT)
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0].request)), request)
+  const listed = await api.listRecoverableSessionSummaryRuns({
+    contract_id: contract.CONTRACT_ID, contract_version: contract.CONTRACT_VERSION
+  })
+  assert.deepEqual(JSON.parse(JSON.stringify(listed.result)), { requests: [] })
+  const resumed = await api.resumeSessionSummaryRun({
+    contract_id: contract.CONTRACT_ID, contract_version: contract.CONTRACT_VERSION,
+    request_id: 'request.summary.preload', generation: 1, expected_revision: 0
+  })
+  assert.equal(resumed.result.snapshot.generation, 2)
+  assert.equal(calls[1].channel, CHANNELS.SESSION_SUMMARY_RUN_LIST_RECOVERABLE)
+  assert.equal(calls[2].channel, CHANNELS.SESSION_SUMMARY_RUN_RESUME)
   assert.throws(() => api.getSessionSummaryRun({
     contract_id: contract.CONTRACT_ID,
     contract_version: contract.CONTRACT_VERSION,

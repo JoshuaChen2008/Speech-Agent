@@ -11,6 +11,7 @@ const { canonicalize, sha256Canonical } = require('../../src/runtime/storage-wor
 const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
 const { buildExportSnapshot } = require('../../src/agent/formal-run/agent-interaction-exporter')
+const { SUMMARY_PROMPT } = require('../../src/agent/formal-run/session-summary-run-service')
 
 const providerUsage = {
   inputTokens: 10,
@@ -45,7 +46,8 @@ function insertRun (database, {
   usageReporting = true,
   supportsToolCalling = true,
   scopeReference = `session.${runId}`,
-  summaryUseMemory
+  summaryUseMemory,
+  sessionSummaryRequestId = null
 }) {
   const scope = { kind: 'session', reference: scopeReference }
   const inputWatermark = { throughEventOrder: 3 }
@@ -74,6 +76,10 @@ function insertRun (database, {
     state === 'running' ? 'worker' : null,
     state === 'running' ? 5000 : null
   )
+  if (sessionSummaryRequestId !== null) {
+    database.prepare('UPDATE formal_agent_runs SET session_summary_request_id=? WHERE run_id=?')
+      .run(sessionSummaryRequestId, runId)
+  }
   database.prepare(`
     INSERT INTO agent_model_run_bindings(
       run_id, execution_form, purpose, assignment_mode, profile_id, profile_revision,
@@ -98,6 +104,31 @@ function insertRun (database, {
   if (recipeId === 'summary.minutes' && typeof summaryUseMemory === 'boolean') {
     database.prepare('UPDATE formal_agent_runs SET summary_use_memory=? WHERE run_id=?').run(summaryUseMemory ? 1 : 0, runId)
   }
+}
+
+function acceptSummaryRequest (store, { requestId, sessionId, action = 'summary', summaryUseMemory = true, resubmitsRequestId }) {
+  const scope = { kind: 'session', reference: sessionId }
+  const prompt = action === 'summary' ? SUMMARY_PROMPT : '一次性自由问题，不持久化正文'
+  return store.acceptSessionSummaryRequest({
+    requestId,
+    sessionId,
+    clientKeyDigest: sha256Canonical({ requestId, client: true }),
+    requestDigest: sha256Canonical({ requestId, request: true }),
+    scopeDigest: sha256Canonical(scope),
+    promptDigest: sha256Canonical(prompt),
+    action,
+    summaryUseMemory: action === 'summary' ? summaryUseMemory : null,
+    inputWatermark: { throughEventOrder: 3 },
+    transcriptVersion: 'raw',
+    inputDigest: sha256Canonical({ requestId, input: true }),
+    ...(resubmitsRequestId ? { resubmitsRequestId } : {})
+  })
+}
+
+function attachSummaryTarget (database, requestId, runId, { state = 'running', attempt = 1 } = {}) {
+  database.prepare(`
+    UPDATE formal_agent_requests SET target_run_id=?,state=?,phase=?,attempt=?,updated_at=2000 WHERE request_id=?
+  `).run(runId, state, state === 'running' ? 'reading_context' : 'retry_wait', attempt, requestId)
 }
 
 function qaResult () {
@@ -229,6 +260,199 @@ test('SEM-F28/J30-RECOVERY: an expired lease token remains valid while the renew
     terminalReason: 'succeeded', errorCode: null, result: qaResult(), usage: null, durationMs: 4
   })
   assert.equal(terminal.terminalReason, 'succeeded')
+})
+
+test('SEM-F38/SEM-T04/J30-RECOVERY: restart fences a running summary and explicit resume reuses its run without resetting attempts', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  acceptSummaryRequest(store, { requestId: 'request.recovery.summary', sessionId: 'session.recovery.summary' })
+  insertRun(subtitleStore.database, {
+    runId: 'run.recovery.summary', recipeId: 'summary.minutes', summaryUseMemory: true,
+    scopeReference: 'session.recovery.summary', sessionSummaryRequestId: 'request.recovery.summary'
+  })
+  attachSummaryTarget(subtitleStore.database, 'request.recovery.summary', 'run.recovery.summary')
+  store.createInteraction({
+    runId: 'run.recovery.summary', interactionId: 'interaction.recovery.summary',
+    routingMode: 'preset', promptDigest: sha256Canonical(SUMMARY_PROMPT)
+  })
+
+  const recovered = store.recoverSessionSummaryRequests()
+  assert.equal(recovered.length, 1)
+  assert.equal(recovered[0].state, 'retry_wait')
+  assert.equal(recovered[0].resumeRequired, true)
+  assert.equal(recovered[0].targetRunId, 'run.recovery.summary')
+  assert.equal(recovered[0].attempt, 1)
+  assert.deepEqual({ ...subtitleStore.database.prepare(`
+    SELECT state,attempt_count,resume_required,lease_owner,lease_expires_at
+    FROM formal_agent_runs WHERE run_id='run.recovery.summary'
+  `).get() }, {
+    state: 'retry_wait', attempt_count: 1, resume_required: 1, lease_owner: null, lease_expires_at: null
+  })
+  assert.throws(() => store.createRun({
+    runId: 'run.recovery.duplicate', recipeId: 'summary.minutes', recipeVersion: '1',
+    scope: { kind: 'session', reference: 'session.recovery.summary' }, transcriptVersion: 'raw',
+    inputWatermark: { throughEventOrder: 3 }, inputDigest: sha256Canonical({ requestId: 'request.recovery.summary', input: true }),
+    requestedBy: 'user', clientIdempotencyKey: 'request.recovery.summary.generation.1', summaryUseMemory: true,
+    requestId: 'request.recovery.summary', requestGeneration: 1
+  }), (error) => error.code === 'AGENT_INTERACTION_STATE_CONFLICT')
+
+  const resumed = store.resumeSessionSummaryRequest({
+    requestId: 'request.recovery.summary', generation: recovered[0].generation, expectedRevision: recovered[0].revision
+  })
+  assert.equal(resumed.generation, 2)
+  assert.equal(resumed.resumeRequired, false)
+  assert.equal(resumed.targetRunId, 'run.recovery.summary')
+  assert.deepEqual({ ...subtitleStore.database.prepare(`
+    SELECT run_id,state,attempt_count,resume_required FROM formal_agent_runs WHERE session_summary_request_id=?
+  `).get('request.recovery.summary') }, {
+    run_id: 'run.recovery.summary', state: 'retry_wait', attempt_count: 1, resume_required: 0
+  })
+})
+
+test('SEM-F38/SEM-T04/J30-RECOVERY: an unavailable fixed prompt terminalizes its run and interaction atomically', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  acceptSummaryRequest(store, { requestId: 'request.recovery.prompt', sessionId: 'session.recovery.prompt' })
+  insertRun(subtitleStore.database, {
+    runId: 'run.recovery.prompt', recipeId: 'summary.minutes', summaryUseMemory: true,
+    scopeReference: 'session.recovery.prompt', sessionSummaryRequestId: 'request.recovery.prompt'
+  })
+  attachSummaryTarget(subtitleStore.database, 'request.recovery.prompt', 'run.recovery.prompt')
+  store.createInteraction({
+    runId: 'run.recovery.prompt', interactionId: 'interaction.recovery.prompt',
+    routingMode: 'preset', promptDigest: sha256Canonical(SUMMARY_PROMPT)
+  })
+  subtitleStore.database.prepare('UPDATE formal_agent_requests SET prompt_digest=? WHERE request_id=?')
+    .run('f'.repeat(64), 'request.recovery.prompt')
+
+  const [recovered] = store.recoverSessionSummaryRequests()
+  assert.equal(recovered.state, 'retry_wait')
+  const failed = store.failUnrecoverableSessionSummaryRequest({
+    requestId: recovered.requestId, generation: recovered.generation, expectedRevision: recovered.revision
+  })
+
+  assert.equal(failed.state, 'failed')
+  assert.equal(failed.errorCode, 'AGENT_REQUEST_INVALID')
+  assert.equal(failed.resumeRequired, false)
+  assert.deepEqual({ ...subtitleStore.database.prepare(`
+    SELECT state,error_code,resume_required FROM formal_agent_runs WHERE run_id=?
+  `).get('run.recovery.prompt') }, {
+    state: 'failed', error_code: 'AGENT_REQUEST_INVALID', resume_required: 0
+  })
+  assert.equal(subtitleStore.database.prepare(`
+    SELECT terminal_reason FROM formal_agent_interactions WHERE interaction_id=?
+  `).get('interaction.recovery.prompt').terminal_reason, 'failed')
+  assert.equal(store.listRecoverableSessionSummaryRequests().some((row) => row.requestId === recovered.requestId), false)
+})
+
+test('SEM-F38/J30-RECOVERY: restart reconciliation preserves durable cancellation and requires a lost question to be resubmitted', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  acceptSummaryRequest(store, { requestId: 'request.recovery.cancel', sessionId: 'session.recovery.cancel' })
+  insertRun(subtitleStore.database, {
+    runId: 'run.recovery.cancel', recipeId: 'summary.minutes', summaryUseMemory: true,
+    scopeReference: 'session.recovery.cancel', sessionSummaryRequestId: 'request.recovery.cancel'
+  })
+  attachSummaryTarget(subtitleStore.database, 'request.recovery.cancel', 'run.recovery.cancel')
+  store.createInteraction({
+    runId: 'run.recovery.cancel', interactionId: 'interaction.recovery.cancel',
+    routingMode: 'preset', promptDigest: sha256Canonical(SUMMARY_PROMPT)
+  })
+  subtitleStore.database.prepare(`
+    UPDATE formal_agent_requests SET cancel_requested=1,state='cancelling',phase='cancelling' WHERE request_id=?
+  `).run('request.recovery.cancel')
+  subtitleStore.database.prepare('UPDATE formal_agent_runs SET cancel_requested_at=1999 WHERE run_id=?')
+    .run('run.recovery.cancel')
+
+  const cancelled = store.recoverSessionSummaryRequests()[0]
+  assert.equal(cancelled.state, 'cancelled')
+  assert.equal(cancelled.resumeRequired, false)
+  assert.equal(subtitleStore.database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get('run.recovery.cancel').state, 'cancelled')
+  assert.equal(subtitleStore.database.prepare('SELECT terminal_reason FROM formal_agent_interactions WHERE interaction_id=?').get('interaction.recovery.cancel').terminal_reason, 'cancelled')
+
+  acceptSummaryRequest(store, {
+    requestId: 'request.recovery.question', sessionId: 'session.recovery.question', action: 'question'
+  })
+  insertRun(subtitleStore.database, {
+    runId: 'run.recovery.question', recipeId: 'qa.answer', scopeReference: 'session.recovery.question',
+    sessionSummaryRequestId: 'request.recovery.question'
+  })
+  attachSummaryTarget(subtitleStore.database, 'request.recovery.question', 'run.recovery.question')
+  store.createInteraction({
+    runId: 'run.recovery.question', interactionId: 'interaction.recovery.question', routingMode: 'model',
+    promptDigest: sha256Canonical('一次性自由问题，不持久化正文')
+  })
+
+  const question = store.recoverSessionSummaryRequests().find((row) => row.requestId === 'request.recovery.question')
+  assert.equal(question.state, 'failed')
+  assert.equal(question.errorCode, 'AGENT_REQUEST_INVALID')
+  assert.equal(question.resumeRequired, true)
+  assert.equal(subtitleStore.database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get('run.recovery.question').state, 'failed')
+})
+
+test('SEM-F38/SEM-T04/J30-RECOVERY: accepted question resubmission durably clears the lost request reminder', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  const lost = acceptSummaryRequest(store, {
+    requestId: 'request.recovery.question-lost', sessionId: 'session.recovery.question-lost', action: 'question'
+  })
+  store.recoverSessionSummaryRequests()
+  const recoverable = store.getSessionSummaryRequest({ requestId: lost.requestId })
+  assert.equal(recoverable.state, 'failed')
+  assert.equal(recoverable.resumeRequired, true)
+
+  const resubmitted = acceptSummaryRequest(store, {
+    requestId: 'request.recovery.question-resubmitted',
+    sessionId: 'session.recovery.question-lost',
+    action: 'question',
+    resubmitsRequestId: lost.requestId
+  })
+  assert.equal(resubmitted.state, 'accepted')
+  const acknowledged = store.getSessionSummaryRequest({ requestId: lost.requestId })
+  assert.equal(acknowledged.state, 'failed')
+  assert.equal(acknowledged.errorCode, 'AGENT_REQUEST_INVALID')
+  assert.equal(acknowledged.resumeRequired, false)
+  assert.equal(subtitleStore.database.prepare('SELECT revision FROM formal_agent_requests WHERE request_id=?').get(lost.requestId).revision, recoverable.revision + 1)
+  assert.equal(store.listRecoverableSessionSummaryRequests().some((row) => row.requestId === lost.requestId), false)
+
+  const replayed = acceptSummaryRequest(store, {
+    requestId: 'request.recovery.question-resubmitted',
+    sessionId: 'session.recovery.question-lost',
+    action: 'question',
+    resubmitsRequestId: lost.requestId
+  })
+  assert.equal(replayed.replayed, true)
+  assert.throws(() => acceptSummaryRequest(store, {
+    requestId: 'request.recovery.question-invalid-resubmission',
+    sessionId: 'session.recovery.question-lost',
+    action: 'question',
+    resubmitsRequestId: 'request.recovery.missing-question'
+  }), (error) => error.code === 'AGENT_REQUEST_INVALID')
+  assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_requests').get().count, 2)
+})
+
+test('SEM-F38/SEM-T04/J30-RECOVERY: a completed route run does not stand in for a lost question result', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  acceptSummaryRequest(store, {
+    requestId: 'request.recovery.route-only', sessionId: 'session.recovery.route-only', action: 'question'
+  })
+  insertRun(subtitleStore.database, {
+    runId: 'run.recovery.route-only', recipeId: 'intent.route', state: 'running',
+    scopeReference: 'session.recovery.route-only'
+  })
+  subtitleStore.database.prepare(`
+    UPDATE formal_agent_runs SET state='succeeded',lease_owner=NULL,lease_expires_at=NULL,result_digest=?,result_summary_json=? WHERE run_id=?
+  `).run(
+    sha256Canonical({ recipeId: 'qa.answer' }),
+    canonicalize({ schemaVersion: 1, recipeId: 'qa.answer' }),
+    'run.recovery.route-only'
+  )
+  subtitleStore.database.prepare(`
+    UPDATE formal_agent_requests SET route_run_id=?,state='routing',phase='waiting_model' WHERE request_id=?
+  `).run('run.recovery.route-only', 'request.recovery.route-only')
+
+  const recovered = store.recoverSessionSummaryRequests().find((row) => row.requestId === 'request.recovery.route-only')
+  assert.equal(recovered.state, 'failed')
+  assert.equal(recovered.errorCode, 'AGENT_REQUEST_INVALID')
+  assert.equal(recovered.resumeRequired, true)
+  assert.equal(recovered.targetRunId, null)
+  assert.equal(recovered.routeRunId, 'run.recovery.route-only')
 })
 
 test('SEM-F38/SEM-T04/J29: summary memory revocation rejects late output and preserves an explicit failure projection', (t) => {

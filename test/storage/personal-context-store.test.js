@@ -667,6 +667,60 @@ test('SEM-F28/J22/J24: formal claim filters user target recipes without changing
   assert.equal(subtitleStore.database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get(runId).state, 'running')
 })
 
+test('SEM-F38/SEM-T04/J30-RECOVERY: formal claims exclude resume-pending and exhausted summary attempts', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  terminalSession(subtitleStore, 'session.summary-resume-gate')
+  const executionStore = new AgentExecutionStore({ subtitleStore, now: () => 1000 })
+  const scope = { kind: 'session', reference: 'session.summary-resume-gate' }
+  const inputDigest = sha256Canonical({ sessionId: scope.reference, frozen: true })
+  executionStore.acceptSessionSummaryRequest({
+    requestId: 'request.summary-resume-gate',
+    sessionId: scope.reference,
+    clientKeyDigest: 'a'.repeat(64),
+    requestDigest: 'b'.repeat(64),
+    scopeDigest: sha256Canonical(scope),
+    promptDigest: 'c'.repeat(64),
+    action: 'summary',
+    summaryUseMemory: true,
+    inputWatermark: { throughEventOrder: 3 },
+    transcriptVersion: 'raw',
+    inputDigest
+  })
+  executionStore.createRun({
+    runId: 'run.summary-resume-gate', recipeId: 'summary.minutes', recipeVersion: '1',
+    scope, transcriptVersion: 'raw', inputWatermark: { throughEventOrder: 3 }, inputDigest,
+    requestedBy: 'user', clientIdempotencyKey: 'request.summary-resume-gate.generation.1',
+    summaryUseMemory: true, requestId: 'request.summary-resume-gate', requestGeneration: 1
+  })
+  subtitleStore.database.prepare(`
+    UPDATE formal_agent_runs SET state='retry_wait',attempt_count=1,resume_required=0,next_attempt_at=0
+    WHERE run_id=?
+  `).run('run.summary-resume-gate')
+  subtitleStore.database.prepare(`
+    UPDATE formal_agent_requests SET state='retry_wait',resume_required=1 WHERE request_id=?
+  `).run('request.summary-resume-gate')
+  const claim = (key) => store.claimNextFormalRun({
+    claimIdempotencyKey: key, owner: `owner.${key}`, leaseMs: 1000, requestedBy: 'user'
+  })
+  assert.equal(claim('claim.summary.resume-pending'), null)
+  assert.equal(store.nextFormalRunAt({ requestedBy: 'user' }), null)
+
+  subtitleStore.database.prepare('UPDATE formal_agent_requests SET resume_required=0 WHERE request_id=?')
+    .run('request.summary-resume-gate')
+  subtitleStore.database.prepare('UPDATE formal_agent_runs SET resume_required=1 WHERE run_id=?')
+    .run('run.summary-resume-gate')
+  assert.equal(claim('claim.summary.run-fenced'), null)
+  subtitleStore.database.prepare('UPDATE formal_agent_runs SET resume_required=0,attempt_count=3,max_attempts=3 WHERE run_id=?')
+    .run('run.summary-resume-gate')
+  assert.equal(claim('claim.summary.attempts-exhausted'), null)
+
+  subtitleStore.database.prepare('UPDATE formal_agent_runs SET attempt_count=1,max_attempts=3 WHERE run_id=?')
+    .run('run.summary-resume-gate')
+  const resumed = claim('claim.summary.explicitly-resumed')
+  assert.equal(resumed.runId, 'run.summary-resume-gate')
+  assert.equal(resumed.attemptIdentity.attempt, 2)
+})
+
 test('SEM-F26/SEM-F28/SEM-T04/J21: automatic policy gates claims and cancels queued session skeletons', (t) => {
   const { subtitleStore, store } = fixture(t)
   terminalSession(subtitleStore, 'session.policy')

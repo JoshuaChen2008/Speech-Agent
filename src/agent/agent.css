@@ -54,6 +54,15 @@ textarea { min-height: 96px; resize: vertical; padding: 10px; color: rgb(var(--f
 .run-card span { color: rgba(var(--fg), .68); font-size: 11px; }
 .run-card strong { font-size: 13px; }
 .run-card button { padding: 5px 9px; }
+.recoverable-runs { display: grid; gap: 8px; padding: 10px; border: 1px solid rgba(var(--fg), .12); border-radius: var(--radius-control); background: rgba(var(--fg), .04); }
+.recoverable-runs .panel-heading { margin: 0; }
+.recoverable-runs h2 { margin: 0; font-size: 13px; }
+.recoverable-runs p { margin: 3px 0 0; color: rgba(var(--fg), .68); font-size: 11px; }
+.recoverable-runs ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.recoverable-runs li { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 10px; padding-top: 7px; border-top: 1px solid rgba(var(--fg), .1); }
+.recoverable-runs li strong { flex: 1 1 120px; font-size: 12px; }
+.recoverable-runs li span { flex: 1 1 140px; color: rgba(var(--fg), .68); font-size: 11px; }
+.recoverable-runs li button { padding: 5px 9px; }
 .result-card { padding: 14px; border: 1px solid rgba(var(--fg), .12); border-radius: var(--radius-bar); background: rgba(var(--fg), .04); }
 .result-card header { display: flex; justify-content: space-between; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid rgba(var(--fg), .12); }
 .result-card header div { display: flex; flex-direction: column; gap: 3px; }

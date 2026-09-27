@@ -47,6 +47,14 @@ test('SEM-F38/J30-ACCEPT: exact request, query, and cancel contracts cross the m
       async cancel (request, context) {
         calls.push({ method: 'cancel', request, sender: context.sender })
         return ok({ snapshot: snapshot({ revision: 3, state: 'cancelled', phase: 'terminal', cancel_requested: true }) })
+      },
+      async resume (request, context) {
+        calls.push({ method: 'resume', request, sender: context.sender })
+        return ok({ snapshot: snapshot({ generation: 2, revision: 5, state: 'accepted', phase: 'accepted' }) })
+      },
+      async listRecoverable (request, context) {
+        calls.push({ method: 'listRecoverable', request, sender: context.sender })
+        return ok({ requests: [{ scope: { kind: 'session', reference: 'session.ipc' }, snapshot: snapshot({ state: 'retry_wait', phase: 'retry_wait', resume_required: true }) }] })
       }
     }
   })
@@ -73,7 +81,20 @@ test('SEM-F38/J30-ACCEPT: exact request, query, and cancel contracts cross the m
     generation: 1
   })
   assert.equal(contract.assertCancelResponse(cancelled).result.snapshot.state, 'cancelled')
-  assert.deepEqual(calls.map((call) => call.method), ['accept', 'get', 'cancel'])
+  const resumed = await handlers.get(CHANNELS.SESSION_SUMMARY_RUN_RESUME)(event, {
+    contract_id: contract.CONTRACT_ID,
+    contract_version: contract.CONTRACT_VERSION,
+    request_id: 'request.summary.ipc',
+    generation: 1,
+    expected_revision: 4
+  })
+  assert.equal(contract.assertResumeResponse(resumed).result.snapshot.generation, 2)
+  const recoverable = await handlers.get(CHANNELS.SESSION_SUMMARY_RUN_LIST_RECOVERABLE)(event, {
+    contract_id: contract.CONTRACT_ID,
+    contract_version: contract.CONTRACT_VERSION
+  })
+  assert.equal(contract.assertListRecoverableResponse(recoverable).result.requests[0].scope.reference, 'session.ipc')
+  assert.deepEqual(calls.map((call) => call.method), ['accept', 'get', 'cancel', 'resume', 'listRecoverable'])
   assert.deepEqual(calls[0].sender, event.sender)
   await assert.rejects(
     () => handlers.get(CHANNELS.SESSION_SUMMARY_RUN_ACCEPT)(event, { ...request, prompt: 'caller override' }),

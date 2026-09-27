@@ -31,6 +31,8 @@ const IPC_CHANNELS = Object.freeze({
   accept: 'session-summary-run:accept',
   get: 'session-summary-run:get',
   cancel: 'session-summary-run:cancel',
+  resume: 'session-summary-run:resume',
+  listRecoverable: 'session-summary-run:list-recoverable',
   changed: 'session-summary-run:changed'
 })
 
@@ -78,7 +80,8 @@ function assertAcceptRequest (request) {
   header(request)
   if (!ACTIONS.includes(request.action)) fail('request.action', 'is not registered')
   const required = ['contract_id', 'contract_version', 'action', 'scope', 'client_request_key']
-  exact(request, request.action === 'summary' ? required : [...required, 'prompt'], 'request')
+  exact(request, request.action === 'summary' ? required : [...required, 'prompt'], 'request',
+    request.action === 'question' ? ['resubmits_request_id'] : [])
   assertScope(request.scope)
   id(request.client_request_key, 'request.client_request_key')
   if (request.action === 'summary') {
@@ -86,6 +89,7 @@ function assertAcceptRequest (request) {
   } else {
     if (typeof request.prompt !== 'string' || request.prompt.length < 1 || request.prompt.length > 4096 ||
         /[\u0000-\u001f\u007f]/u.test(request.prompt)) fail('request.prompt', 'must be bounded question text')
+    if (request.resubmits_request_id !== undefined) id(request.resubmits_request_id, 'request.resubmits_request_id')
   }
   return request
 }
@@ -94,6 +98,21 @@ function assertControlRequest (request) {
   exact(request, ['contract_id', 'contract_version', 'request_id'], 'request')
   header(request)
   id(request.request_id, 'request.request_id')
+  return request
+}
+
+function assertListRecoverableRequest (request) {
+  exact(request, ['contract_id', 'contract_version'], 'request')
+  header(request)
+  return request
+}
+
+function assertResumeRequest (request) {
+  exact(request, ['contract_id', 'contract_version', 'request_id', 'generation', 'expected_revision'], 'request')
+  header(request)
+  id(request.request_id, 'request.request_id')
+  integer(request.generation, 'request.generation', 1)
+  integer(request.expected_revision, 'request.expected_revision')
   return request
 }
 
@@ -191,6 +210,18 @@ function assertSnapshotResult (result) {
 }
 function assertGetResponse (response) { return assertEnvelope(response, assertSnapshotResult) }
 function assertCancelResponse (response) { return assertEnvelope(response, assertSnapshotResult) }
+function assertResumeResponse (response) { return assertEnvelope(response, assertSnapshotResult) }
+function assertListRecoverableResult (result) {
+  exact(result, ['requests'], 'result')
+  if (!Array.isArray(result.requests) || result.requests.length > 100) fail('result.requests', 'must be a bounded array')
+  for (const [index, item] of result.requests.entries()) {
+    exact(item, ['scope', 'snapshot'], `result.requests[${index}]`)
+    assertScope(item.scope, `result.requests[${index}].scope`)
+    assertRequestSnapshot(item.snapshot)
+  }
+  return result
+}
+function assertListRecoverableResponse (response) { return assertEnvelope(response, assertListRecoverableResult) }
 function assertChangedEvent (event) {
   exact(event, ['contract_id', 'contract_version', 'request_id', 'generation', 'revision'], 'event')
   header(event)
@@ -220,5 +251,10 @@ module.exports = {
   assertChangedEvent,
   assertControlRequest,
   assertGetResponse,
+  assertListRecoverableRequest,
+  assertListRecoverableResponse,
+  assertListRecoverableResult,
+  assertResumeRequest,
+  assertResumeResponse,
   assertRequestSnapshot
 }

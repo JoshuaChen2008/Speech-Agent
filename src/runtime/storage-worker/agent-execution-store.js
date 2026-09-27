@@ -437,7 +437,10 @@ class AgentExecutionStore {
       if (requestId !== null) {
         acceptedRequest = this.database.prepare('SELECT * FROM formal_agent_requests WHERE request_id=?').get(requestId)
         if (!acceptedRequest || Number(acceptedRequest.generation) !== requestGeneration) fail('AGENT_REQUEST_IDENTITY_CONFLICT')
-        if (acceptedRequest.cancel_requested !== 0 || acceptedRequest.state === 'cancelled') fail('AGENT_INTERACTION_STATE_CONFLICT')
+        if (acceptedRequest.cancel_requested !== 0 || ['succeeded', 'failed', 'cancelled'].includes(acceptedRequest.state)) {
+          fail('AGENT_INTERACTION_STATE_CONFLICT')
+        }
+        if (acceptedRequest.resume_required !== 0) fail('AGENT_INTERACTION_STATE_CONFLICT')
         if ((acceptedRequest.action === 'summary') !== (recipe.recipeId === 'summary.minutes')) {
           fail('AGENT_REQUEST_IDENTITY_CONFLICT')
         }
@@ -552,6 +555,7 @@ class AgentExecutionStore {
       : { axis: row.budget_axis, actual: Number(row.budget_actual), limit: Number(row.budget_limit) }
     return {
       requestId: row.request_id,
+      scope: { kind: 'session', reference: row.session_id },
       clientKeyDigest: row.client_key_digest,
       requestDigest: row.request_digest,
       scopeDigest: row.scope_digest,
@@ -589,7 +593,7 @@ class AgentExecutionStore {
     exactObject(input, [
       'requestId', 'sessionId', 'clientKeyDigest', 'requestDigest', 'scopeDigest', 'promptDigest', 'action', 'summaryUseMemory',
       'inputWatermark', 'transcriptVersion', 'inputDigest'
-    ])
+    ], ['resubmitsRequestId'])
     const requestId = identifier(input.requestId)
     const sessionId = identifier(input.sessionId)
     for (const field of ['clientKeyDigest', 'requestDigest', 'scopeDigest', 'promptDigest']) digest(input[field])
@@ -599,9 +603,30 @@ class AgentExecutionStore {
     if (!['summary', 'question'].includes(input.action) ||
         input.action === 'summary' && typeof input.summaryUseMemory !== 'boolean' ||
         input.action === 'question' && input.summaryUseMemory !== null) fail('AGENT_REQUEST_INVALID')
+    const resubmitsRequestId = input.resubmitsRequestId === undefined ? null : identifier(input.resubmitsRequestId)
+    if (resubmitsRequestId !== null && input.action !== 'question') fail('AGENT_REQUEST_INVALID')
     if (input.scopeDigest !== sha256Canonical({ kind: 'session', reference: sessionId })) fail('AGENT_REQUEST_INVALID')
     const now = this.nowValue()
     return this.transaction(() => {
+      const confirmResubmittedQuestion = () => {
+        if (resubmitsRequestId === null) return
+        const previous = this.database.prepare(`
+          SELECT session_id,action,state,error_code,resume_required
+          FROM formal_agent_requests WHERE request_id=?
+        `).get(resubmitsRequestId)
+        if (!previous || previous.session_id !== sessionId || previous.action !== 'question' ||
+            previous.state !== 'failed' || previous.error_code !== 'AGENT_REQUEST_INVALID') {
+          fail('AGENT_REQUEST_INVALID')
+        }
+        if (previous.resume_required === 1) {
+          const changed = this.database.prepare(`
+            UPDATE formal_agent_requests SET resume_required=0,revision=revision+1,updated_at=?
+            WHERE request_id=? AND session_id=? AND action='question' AND state='failed'
+              AND error_code='AGENT_REQUEST_INVALID' AND resume_required=1
+          `).run(now, resubmitsRequestId, sessionId)
+          if (Number(changed.changes) !== 1) fail('AGENT_CONTEXT_REVISION_CONFLICT')
+        }
+      }
       const tombstone = this.database.prepare(`
         SELECT * FROM formal_agent_request_tombstones WHERE client_key_digest=?
       `).get(input.clientKeyDigest)
@@ -626,10 +651,12 @@ class AgentExecutionStore {
             prior.input_digest !== input.inputDigest) {
           fail('AGENT_REQUEST_IDENTITY_CONFLICT')
         }
+        confirmResubmittedQuestion()
         return this.sessionSummaryRequestProjection(prior, true)
       }
       const priorByRequestId = this.database.prepare('SELECT 1 FROM formal_agent_requests WHERE request_id=?').get(requestId)
       if (priorByRequestId) fail('AGENT_REQUEST_IDENTITY_CONFLICT')
+      confirmResubmittedQuestion()
       this.database.prepare(`
         INSERT INTO formal_agent_requests(
           request_id,session_id,client_key_digest,request_digest,scope_digest,prompt_digest,action,summary_use_memory,
@@ -809,6 +836,23 @@ class AgentExecutionStore {
     nonNegativeInteger(input.expectedRevision)
     return this.transaction(() => {
       const now = this.nowValue()
+      const current = this.sessionSummaryRequestRow(requestId)
+      if (Number(current.generation) !== input.generation || Number(current.revision) !== input.expectedRevision ||
+          current.state !== 'retry_wait' || current.resume_required !== 1 || current.cancel_requested !== 0) {
+        fail('AGENT_CONTEXT_REVISION_CONFLICT')
+      }
+      if (current.action === 'question') fail('AGENT_REQUEST_INVALID')
+      if (current.target_run_id !== null) {
+        const run = this.runRow(current.target_run_id)
+        if (run.state !== 'retry_wait' || run.resume_required !== 1 || Number(run.attempt_count) >= Number(run.max_attempts)) {
+          fail('AGENT_CONTEXT_REVISION_CONFLICT')
+        }
+        this.database.prepare(`
+          UPDATE formal_agent_runs SET resume_required=0,next_attempt_at=?,lease_owner=NULL,lease_expires_at=NULL,
+            lease_renewed_from_expires_at=NULL,updated_at=?
+          WHERE run_id=? AND state='retry_wait' AND resume_required=1 AND attempt_count < max_attempts
+        `).run(now, now, run.run_id)
+      }
       const result = this.database.prepare(`
         UPDATE formal_agent_requests SET state='accepted',phase='accepted',generation=generation+1,
           revision=revision+1,resume_required=0,cancel_requested=0,error_code=NULL,updated_at=?
@@ -819,10 +863,189 @@ class AgentExecutionStore {
     })
   }
 
+  failUnrecoverableSessionSummaryRequest (input) {
+    exactObject(input, ['requestId', 'generation', 'expectedRevision'])
+    const requestId = identifier(input.requestId)
+    nonNegativeInteger(input.generation)
+    nonNegativeInteger(input.expectedRevision)
+    return this.transaction(() => {
+      const current = this.sessionSummaryRequestRow(requestId)
+      if (Number(current.generation) !== input.generation || Number(current.revision) !== input.expectedRevision ||
+          current.state !== 'retry_wait' || current.resume_required !== 1 || current.cancel_requested !== 0 ||
+          current.action !== 'summary') {
+        fail('AGENT_CONTEXT_REVISION_CONFLICT')
+      }
+      const now = this.nowValue()
+      if (current.target_run_id !== null) {
+        const run = this.runRow(current.target_run_id)
+        if (['queued', 'retry_wait', 'running'].includes(run.state)) {
+          this.database.prepare(`
+            UPDATE formal_agent_runs SET state='failed',error_code='AGENT_REQUEST_INVALID',resume_required=0,
+              lease_owner=NULL,lease_expires_at=NULL,lease_renewed_from_expires_at=NULL,
+              result_digest=NULL,result_summary_json=NULL,updated_at=?
+            WHERE run_id=? AND state IN ('queued','retry_wait','running')
+          `).run(now, run.run_id)
+        }
+        const interaction = this.database.prepare('SELECT * FROM formal_agent_interactions WHERE run_id=?').get(run.run_id)
+        if (interaction && interaction.terminal_reason === null) {
+          this.database.prepare(`
+            UPDATE formal_agent_interactions SET terminal_reason='failed',error_code='AGENT_REQUEST_INVALID',
+              usage_json=NULL,result_json=NULL,result_digest=NULL,terminal_at=?
+            WHERE interaction_id=? AND terminal_reason IS NULL
+          `).run(now, interaction.interaction_id)
+          this.database.prepare(`
+            UPDATE formal_agent_tool_calls SET ended_offset_ms=started_offset_ms,status='cancelled',
+              error_code='TOOL_CANCELLED',result_json=NULL,result_digest=NULL
+            WHERE interaction_id=? AND status='started'
+          `).run(interaction.interaction_id)
+        }
+      }
+      const result = this.database.prepare(`
+        UPDATE formal_agent_requests SET state='failed',phase='terminal',resume_required=0,
+          error_code='AGENT_REQUEST_INVALID',revision=revision+1,updated_at=?
+        WHERE request_id=? AND generation=? AND revision=? AND state='retry_wait' AND resume_required=1 AND cancel_requested=0
+      `).run(now, requestId, input.generation, input.expectedRevision)
+      if (Number(result.changes) !== 1) fail('AGENT_CONTEXT_REVISION_CONFLICT')
+      return this.sessionSummaryRequestProjection(this.sessionSummaryRequestRow(requestId))
+    })
+  }
+
+  recoverSessionSummaryRequests () {
+    return this.transaction(() => {
+      const now = this.nowValue()
+      const requests = this.database.prepare(`
+        SELECT * FROM formal_agent_requests
+        WHERE state NOT IN ('succeeded','failed','cancelled')
+        ORDER BY created_at,request_id
+      `).all()
+      for (const request of requests) {
+        const linkedRunId = request.target_run_id || request.route_run_id
+        const run = linkedRunId === null ? null : this.database.prepare(
+          'SELECT * FROM formal_agent_runs WHERE run_id=?'
+        ).get(linkedRunId)
+
+        // Durable terminal run facts win over an interrupted request projection.
+        if (request.target_run_id !== null && run && ['succeeded', 'failed', 'cancelled'].includes(run.state)) {
+          this.database.prepare(`
+            UPDATE formal_agent_requests SET state=?,phase='terminal',cancel_requested=?,resume_required=0,
+              error_code=?,revision=revision+1,updated_at=? WHERE request_id=?
+          `).run(run.state, run.state === 'cancelled' ? 1 : 0, run.state === 'failed' ? visibleErrorCode(run) : null, now, request.request_id)
+          continue
+        }
+
+        const interaction = run ? this.database.prepare(
+          'SELECT * FROM formal_agent_interactions WHERE run_id=?'
+        ).get(run.run_id) : null
+        if (request.cancel_requested !== 0 || run?.cancel_requested_at !== null && run?.cancel_requested_at !== undefined) {
+          if (run && ['queued', 'retry_wait', 'running'].includes(run.state)) {
+            this.database.prepare(`
+              UPDATE formal_agent_runs SET state='cancelled',cancel_requested_at=COALESCE(cancel_requested_at,?),
+                lease_owner=NULL,lease_expires_at=NULL,lease_renewed_from_expires_at=NULL,resume_required=0,
+                error_code=NULL,result_digest=NULL,result_summary_json=NULL,updated_at=?
+              WHERE run_id=? AND state IN ('queued','retry_wait','running')
+            `).run(now, now, run.run_id)
+          }
+          if (interaction && interaction.terminal_reason === null) {
+            this.database.prepare(`
+              UPDATE formal_agent_interactions SET terminal_reason='cancelled',error_code=NULL,usage_json=NULL,
+                result_json=NULL,result_digest=NULL,terminal_at=? WHERE interaction_id=? AND terminal_reason IS NULL
+            `).run(now, interaction.interaction_id)
+            this.database.prepare(`
+              UPDATE formal_agent_tool_calls SET ended_offset_ms=started_offset_ms,status='cancelled',
+                error_code='TOOL_CANCELLED',result_json=NULL,result_digest=NULL
+              WHERE interaction_id=? AND status='started'
+            `).run(interaction.interaction_id)
+          }
+          this.database.prepare(`
+            UPDATE formal_agent_requests SET state='cancelled',phase='terminal',cancel_requested=1,
+              resume_required=0,error_code=NULL,revision=revision+1,updated_at=? WHERE request_id=?
+          `).run(now, request.request_id)
+          continue
+        }
+
+        if (request.action === 'question') {
+          if (run && ['queued', 'retry_wait', 'running'].includes(run.state)) {
+            this.database.prepare(`
+              UPDATE formal_agent_runs SET state='failed',error_code='AGENT_REQUEST_INVALID',lease_owner=NULL,
+                lease_expires_at=NULL,lease_renewed_from_expires_at=NULL,resume_required=1,
+                result_digest=NULL,result_summary_json=NULL,updated_at=? WHERE run_id=?
+            `).run(now, run.run_id)
+          }
+          if (interaction && interaction.terminal_reason === null) {
+            this.database.prepare(`
+              UPDATE formal_agent_interactions SET terminal_reason='failed',error_code='AGENT_REQUEST_INVALID',
+                usage_json=NULL,result_json=NULL,result_digest=NULL,terminal_at=? WHERE interaction_id=? AND terminal_reason IS NULL
+            `).run(now, interaction.interaction_id)
+            this.database.prepare(`
+              UPDATE formal_agent_tool_calls SET ended_offset_ms=started_offset_ms,status='cancelled',
+                error_code='TOOL_CANCELLED',result_json=NULL,result_digest=NULL
+              WHERE interaction_id=? AND status='started'
+            `).run(interaction.interaction_id)
+          }
+          this.database.prepare(`
+            UPDATE formal_agent_requests SET state='failed',phase='terminal',resume_required=1,
+              error_code='AGENT_REQUEST_INVALID',revision=revision+1,updated_at=? WHERE request_id=?
+          `).run(now, request.request_id)
+          continue
+        }
+
+        if (run && Number(run.attempt_count) >= Number(run.max_attempts)) {
+          this.database.prepare(`
+            UPDATE formal_agent_runs SET state='failed',error_code='AGENT_BUDGET_EXCEEDED',lease_owner=NULL,
+              lease_expires_at=NULL,lease_renewed_from_expires_at=NULL,resume_required=0,
+              result_digest=NULL,result_summary_json=NULL,updated_at=? WHERE run_id=?
+          `).run(now, run.run_id)
+          if (interaction && interaction.terminal_reason === null) {
+            this.database.prepare(`
+              UPDATE formal_agent_interactions SET terminal_reason='failed',error_code='AGENT_BUDGET_EXCEEDED',
+                usage_json=NULL,result_json=NULL,result_digest=NULL,terminal_at=? WHERE interaction_id=? AND terminal_reason IS NULL
+            `).run(now, interaction.interaction_id)
+            this.database.prepare(`
+              UPDATE formal_agent_tool_calls SET ended_offset_ms=started_offset_ms,status='cancelled',
+                error_code='TOOL_CANCELLED',result_json=NULL,result_digest=NULL
+              WHERE interaction_id=? AND status='started'
+            `).run(interaction.interaction_id)
+          }
+          this.database.prepare(`
+            UPDATE formal_agent_requests SET state='failed',phase='terminal',resume_required=0,
+              error_code='AGENT_BUDGET_EXCEEDED',revision=revision+1,updated_at=? WHERE request_id=?
+          `).run(now, request.request_id)
+          continue
+        }
+
+        if (run) {
+          if (interaction && interaction.terminal_reason === null) {
+            this.database.prepare(`
+              UPDATE formal_agent_tool_calls SET ended_offset_ms=started_offset_ms,status='cancelled',
+                error_code='TOOL_CANCELLED',result_json=NULL,result_digest=NULL
+              WHERE interaction_id=? AND status='started'
+            `).run(interaction.interaction_id)
+          }
+          this.database.prepare(`
+            UPDATE formal_agent_runs SET state='retry_wait',resume_required=1,next_attempt_at=?,lease_owner=NULL,
+              lease_expires_at=NULL,lease_renewed_from_expires_at=NULL,error_code=NULL,
+              result_digest=NULL,result_summary_json=NULL,updated_at=? WHERE run_id=?
+          `).run(now, now, run.run_id)
+        }
+        this.database.prepare(`
+          UPDATE formal_agent_requests SET state='retry_wait',phase='retry_wait',resume_required=1,
+            attempt=COALESCE((SELECT attempt_count FROM formal_agent_runs WHERE run_id=?),attempt),
+            validated_chunk_count=NULL,total_chunk_count=NULL,error_code=NULL,revision=revision+1,updated_at=?
+          WHERE request_id=?
+        `).run(run?.run_id || null, now, request.request_id)
+      }
+      return requests.map((request) => this.sessionSummaryRequestProjection(
+        this.sessionSummaryRequestRow(request.request_id)
+      ))
+    })
+  }
+
   listRecoverableSessionSummaryRequests () {
     return this.database.prepare(`
-      SELECT * FROM formal_agent_requests WHERE state NOT IN ('succeeded','failed','cancelled')
-      ORDER BY updated_at,request_id LIMIT 1000
+      SELECT * FROM formal_agent_requests
+      WHERE state NOT IN ('succeeded','failed','cancelled') OR
+        (action='question' AND state='failed' AND error_code='AGENT_REQUEST_INVALID' AND resume_required=1)
+      ORDER BY updated_at DESC,request_id DESC LIMIT 100
     `).all().map((row) => this.sessionSummaryRequestProjection(row))
   }
 

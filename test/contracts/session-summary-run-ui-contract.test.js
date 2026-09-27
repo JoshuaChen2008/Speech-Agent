@@ -23,6 +23,7 @@ test('SEM-F38/J30-ACCEPT: fixed summary action has no caller supplied prompt', (
   assert.equal(contract.assertAcceptRequest(request), request)
   assert.throws(() => contract.assertAcceptRequest({ ...request, summary_use_memory: false }), /exact/)
   assert.throws(() => contract.assertAcceptRequest({ ...request, prompt: 'override' }), /exact/)
+  assert.throws(() => contract.assertAcceptRequest({ ...request, resubmits_request_id: 'request.p1.lost' }), /exact/)
 })
 
 test('SEM-F38/J30-ACCEPT: question action requires a bounded prompt and controls carry only request identity', () => {
@@ -31,9 +32,11 @@ test('SEM-F38/J30-ACCEPT: question action requires a bounded prompt and controls
     action: 'question',
     scope: { kind: 'session', reference: 'session.p1' },
     client_request_key: 'request.p1.question',
-    prompt: 'What decisions were made?'
+    prompt: 'What decisions were made?',
+    resubmits_request_id: 'request.p1.lost'
   }
   assert.equal(contract.assertAcceptRequest(request), request)
+  assert.throws(() => contract.assertAcceptRequest({ ...request, resubmits_request_id: 'not valid' }), /bounded identifier/)
   assert.throws(() => contract.assertAcceptRequest({ ...request, recipe_id: 'summary.minutes' }), /exact/)
   assert.equal(contract.assertControlRequest({ ...header, request_id: 'request.p1.summary' }).request_id, 'request.p1.summary')
   assert.equal(contract.assertCancelRequest({ ...header, request_id: 'request.p1.summary', generation: 1 }).generation, 1)
@@ -71,6 +74,28 @@ test('SEM-F38/J30-PROGRESS: snapshot rejects fabricated progress and non-finite 
   assert.throws(() => contract.assertRequestSnapshot({ ...snapshot, last_activity_age_ms: Infinity }), /safe integer/)
 })
 
+test('SEM-F38/SEM-T04/J30-RECOVERY: frozen scope and explicit continuation use exact versioned contracts', () => {
+  const snapshot = {
+    request_id: 'request.p1.recovered', generation: 1, revision: 4, action: 'summary',
+    state: 'retry_wait', phase: 'retry_wait', attempt: 2, elapsed_ms: 1200,
+    last_activity_age_ms: null, validated_chunk_count: null, total_chunk_count: null,
+    memory_state: 'unknown', error_code: null, budget: null, freshness: 'fresh',
+    cancel_requested: false, resume_required: true, diagnostics_available: false,
+    route_run_id: null, target_run_id: 'run.p1.recovered', interaction_id: 'interaction.p1.recovered',
+    recipe_id: 'summary.minutes', routing_mode: 'preset'
+  }
+  const request = { ...header, request_id: snapshot.request_id, generation: 1, expected_revision: 4 }
+  assert.equal(contract.assertResumeRequest(request), request)
+  assert.throws(() => contract.assertResumeRequest({ ...request, prompt: 'not persisted' }), /exact/)
+  const response = {
+    ...header, ok: true, error: null,
+    result: { requests: [{ scope: { kind: 'session', reference: 'session.p1' }, snapshot }] }
+  }
+  assert.equal(contract.assertListRecoverableRequest(header), header)
+  assert.equal(contract.assertListRecoverableResponse(response), response)
+  assert.throws(() => contract.assertListRecoverableResponse({ ...response, result: { requests: [{ scope: { kind: 'session', reference: 'session.p1' }, snapshot: { ...snapshot, prompt: 'private' } }] } }), /exact/)
+})
+
 test('SEM-F38/J30-ACCEPT: accepted result and response envelope are versioned and exact', () => {
   const snapshot = {
     request_id: 'request.p1.summary', generation: 1, revision: 0, action: 'summary',
@@ -99,7 +124,9 @@ test('SEM-F38/J30-ACCEPT: versioned fixtures bind the contract to main IPC chann
     accept: CHANNELS.SESSION_SUMMARY_RUN_ACCEPT,
     get: CHANNELS.SESSION_SUMMARY_RUN_GET,
     cancel: CHANNELS.SESSION_SUMMARY_RUN_CANCEL,
+    resume: CHANNELS.SESSION_SUMMARY_RUN_RESUME,
+    listRecoverable: CHANNELS.SESSION_SUMMARY_RUN_LIST_RECOVERABLE,
     changed: CHANNELS.SESSION_SUMMARY_RUN_CHANGED
   })
-  assert.equal(Object.hasOwn(contract, 'assertResumeRequest'), false)
+  assert.equal(typeof contract.assertResumeRequest, 'function')
 })

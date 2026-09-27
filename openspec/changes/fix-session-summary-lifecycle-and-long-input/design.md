@@ -26,7 +26,7 @@
 
 ### 2. 请求身份先于模型请求
 
-新增只含元数据的受理记录，由 storage worker 唯一写入，逻辑字段为 requestId/clientKeyDigest/requestDigest/scopeDigest/promptDigest、动作、冻结记忆政策、可空routeRunId/targetRunId、state/revision/generation、cancelRequested、相对时间累计。用户文本留在既有受控提示内存中，终态清理；不新增持久提示正文。明确总结的固定提示可由版本重建，自然语言问题在重启后若提示已丢失，明确要求重新提交，不能空提示自动恢复。
+新增只含元数据的受理记录，由 storage worker 唯一写入，逻辑字段为 requestId/clientKeyDigest/requestDigest/scopeDigest/promptDigest、动作、冻结记忆政策、可空routeRunId/targetRunId、state/revision/generation、cancelRequested、相对时间累计。用户文本留在既有受控提示内存中，终态清理；不新增持久提示正文。明确总结的固定提示可由版本重建，自然语言问题在重启后若提示已丢失，明确要求重新提交，不能空提示自动恢复；重新提交期间固定原会话范围，新问题成功受理时通过同一存储事务清除旧问题的待重新提交标记。
 
 renderer 提交闭集 action=summary 或 question；禁止提交任意recipe/provider/预算。保留旧IPC版本消费者，新增exact合同版本并同步fixture、access policy、preload、service、renderer。提交回执先返回requestId；即使target run尚未创建，也能查询和取消。未知提交结果保留同一幂等键，重试收敛到已受理请求。明显重复点击锁住同一请求；活动请求期间生成按钮禁用，不能因submit Promise结束就重新放开。
 

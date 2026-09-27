@@ -1,11 +1,12 @@
 'use strict'
 
 const { performance } = require('node:perf_hooks')
-const { sha256Canonical } = require('../../runtime/storage-worker/canonical-json')
+const { canonicalize, sha256Canonical } = require('../../runtime/storage-worker/canonical-json')
 const runContract = require('../contracts/agent-run-ui')
 const c = require('../contracts/session-summary-run-ui')
 
 const SUMMARY_PROMPT = '请基于这场已结束的会话生成会话总结，包含主要内容、决定、待办和需要注意。'
+const SUMMARY_PROMPTS_BY_DIGEST = new Map([[sha256Canonical(SUMMARY_PROMPT), SUMMARY_PROMPT]])
 const REQUEST_TARGETS = Object.freeze(['qa.answer'])
 const TERMINAL_STATES = new Set(['succeeded', 'failed', 'cancelled'])
 
@@ -73,7 +74,8 @@ function requestDigestFor (request, identity, summaryUseMemory, frozen) {
     summaryUseMemory,
     transcriptVersion: frozen.transcriptVersion,
     inputWatermark: frozen.inputWatermark,
-    inputDigest: frozen.inputDigest
+    inputDigest: frozen.inputDigest,
+    ...(request.resubmits_request_id ? { resubmitsRequestId: request.resubmits_request_id } : {})
   })
 }
 
@@ -105,6 +107,10 @@ class SessionSummaryRunService {
         typeof options.storage.getSessionSummaryRequest !== 'function' ||
         typeof options.storage.cancelSessionSummaryRequest !== 'function' ||
         typeof options.storage.updateSessionSummaryRequest !== 'function' ||
+        typeof options.storage.recoverSessionSummaryRequests !== 'function' ||
+        typeof options.storage.listRecoverableSessionSummaryRequests !== 'function' ||
+        typeof options.storage.resumeSessionSummaryRequest !== 'function' ||
+        typeof options.storage.failUnrecoverableSessionSummaryRequest !== 'function' ||
         typeof options.storage.derivePersonalContextSessionSource !== 'function') {
       throw new TypeError('summary request storage is required')
     }
@@ -154,6 +160,108 @@ class SessionSummaryRunService {
     const row = await this.readRow(requestId)
     this.emitChanged(row)
     return row
+  }
+
+  async recoverAfterRestart () {
+    const rows = await this.storage.recoverSessionSummaryRequests()
+    for (const row of rows) {
+      if (row.action === 'summary' && row.resumeRequired && !SUMMARY_PROMPTS_BY_DIGEST.has(row.promptDigest)) {
+        const failed = await this.storage.failUnrecoverableSessionSummaryRequest({
+          requestId: row.requestId,
+          generation: row.generation,
+          expectedRevision: row.revision
+        })
+        this.emitChanged(failed)
+        continue
+      }
+      if (row.action === 'summary' && row.resumeRequired && row.targetRunId && this.promptStore) {
+        const prompt = SUMMARY_PROMPTS_BY_DIGEST.get(row.promptDigest)
+        if (prompt) this.promptStore.set(row.targetRunId, prompt)
+      }
+      this.emitChanged(row)
+    }
+    return rows.length
+  }
+
+  async listRecoverable (request) {
+    try {
+      c.assertListRecoverableRequest(request)
+      const rows = await this.storage.listRecoverableSessionSummaryRequests()
+      return c.assertListRecoverableResponse({
+        ...header(), ok: true, error: null,
+        result: {
+          requests: rows.map((row) => ({
+            scope: row.scope,
+            snapshot: this.snapshotFor(row)
+          }))
+        }
+      })
+    } catch (error) {
+      return c.assertListRecoverableResponse(errorResponse(stableErrorCode(error), 'retry'))
+    }
+  }
+
+  async resume (request) {
+    try {
+      c.assertResumeRequest(request)
+      const row = await this.readRow(request.request_id)
+      if (row.generation !== request.generation || row.revision !== request.expected_revision ||
+          row.state !== 'retry_wait' || !row.resumeRequired || row.cancelRequested) {
+        const conflict = new Error('request is no longer waiting for explicit continuation')
+        conflict.code = 'AGENT_CONTEXT_REVISION_CONFLICT'
+        throw conflict
+      }
+      if (row.action !== 'summary') throw Object.assign(new Error('question prompt is not recoverable'), { code: 'AGENT_REQUEST_INVALID' })
+      const prompt = SUMMARY_PROMPTS_BY_DIGEST.get(row.promptDigest)
+      if (!prompt) throw Object.assign(new Error('fixed prompt version is not recoverable'), { code: 'AGENT_REQUEST_INVALID' })
+      if (row.targetRunId && !this.promptStore) {
+        throw Object.assign(new Error('fixed prompt store is unavailable'), { code: 'AGENT_RUN_UNAVAILABLE' })
+      }
+      const frozen = frozenInput(row)
+      if (!frozen) throw Object.assign(new Error('frozen source identity is unavailable'), { code: 'AGENT_REQUEST_INVALID' })
+      const current = await this.storage.derivePersonalContextSessionSource({
+        sessionId: row.scope.reference,
+        transcriptVersion: frozen.transcriptVersion
+      })
+      const currentWatermark = Number.isSafeInteger(current.inputWatermark)
+        ? { throughEventOrder: current.inputWatermark }
+        : current.inputWatermark
+      if ((current.transcriptVersion || 'raw') !== frozen.transcriptVersion ||
+          canonicalize(currentWatermark) !== canonicalize(frozen.inputWatermark) || current.inputDigest !== frozen.inputDigest) {
+        throw Object.assign(new Error('frozen source changed before continuation'), { code: 'AGENT_REQUEST_INVALID' })
+      }
+      if (row.targetRunId && this.promptStore) this.promptStore.set(row.targetRunId, prompt)
+      const resumed = await this.storage.resumeSessionSummaryRequest({
+        requestId: row.requestId,
+        generation: row.generation,
+        expectedRevision: row.revision
+      })
+      this.startClock(resumed)
+      if (resumed.targetRunId) {
+        this.runRequests.set(resumed.targetRunId, { requestId: resumed.requestId, generation: resumed.generation })
+        if (this.scheduler && typeof this.scheduler.wake === 'function') this.scheduler.wake('resume')
+      } else {
+        this.scheduleDispatch({
+          requestId: resumed.requestId,
+          generation: resumed.generation,
+          action: resumed.action,
+          summaryUseMemory: resumed.summaryUseMemory,
+          scope: row.scope,
+          ...frozen,
+          clientIdempotencyKey: `${resumed.requestId}.generation.${resumed.generation}`,
+          prompt
+        })
+      }
+      this.emitChanged(resumed)
+      return c.assertResumeResponse({
+        ...header(), ok: true, error: null,
+        result: { snapshot: this.snapshotFor(resumed) }
+      })
+    } catch (error) {
+      const nextAction = error?.code === 'AGENT_CONTEXT_REVISION_CONFLICT' ? 'refresh_status' :
+        error?.code === 'AGENT_REQUEST_INVALID' ? 'resubmit' : 'retry'
+      return c.assertResumeResponse(errorResponse(stableErrorCode(error), nextAction))
+    }
   }
 
   startClock (row) {
@@ -303,11 +411,12 @@ class SessionSummaryRunService {
             promptDigest: identity.promptDigest,
             action: request.action,
             summaryUseMemory,
+            ...(request.resubmits_request_id ? { resubmitsRequestId: request.resubmits_request_id } : {}),
             ...frozen
           })
         }
         const row = await this.readRow(identity.requestId)
-        if (frozen && !row.cancelRequested && !TERMINAL_STATES.has(row.state)) {
+        if (frozen && !row.cancelRequested && !row.resumeRequired && !TERMINAL_STATES.has(row.state)) {
           this.startClock(row)
           this.scheduleDispatch({
             requestId: row.requestId,
@@ -369,6 +478,7 @@ class SessionSummaryRunService {
         promptDigest: identity.promptDigest,
         action: request.action,
         summaryUseMemory,
+        ...(request.resubmits_request_id ? { resubmitsRequestId: request.resubmits_request_id } : {}),
         ...frozenIdentity
       })
       const row = await this.readRow(identity.requestId)
@@ -413,7 +523,7 @@ class SessionSummaryRunService {
     this.controllers.set(input.requestId, controller)
     try {
       const current = await this.readRow(input.requestId)
-      if (current.cancelRequested || TERMINAL_STATES.has(current.state)) return
+      if (current.cancelRequested || current.resumeRequired || TERMINAL_STATES.has(current.state)) return
       await this.recordProgress({
         requestId: input.requestId,
         generation: input.generation,
@@ -450,7 +560,7 @@ class SessionSummaryRunService {
         throw Object.assign(new Error('target route unavailable'), { code: 'AGENT_RUN_UNAVAILABLE' })
       }
       const latest = await this.readRow(input.requestId)
-      if (latest.cancelRequested || TERMINAL_STATES.has(latest.state)) {
+      if (latest.cancelRequested || latest.resumeRequired || TERMINAL_STATES.has(latest.state)) {
         if (this.scheduler && typeof this.scheduler.cancel === 'function') this.scheduler.cancel(routed.runId)
         return
       }

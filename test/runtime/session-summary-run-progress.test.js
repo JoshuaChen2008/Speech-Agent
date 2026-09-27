@@ -41,6 +41,10 @@ function progressService (initialRow, clock, { cancelState = 'cancelled' } = {})
   const changed = []
   const storage = {
     async acceptSessionSummaryRequest () { throw new Error('not used') },
+    async recoverSessionSummaryRequests () { return [] },
+    async listRecoverableSessionSummaryRequests () { return [] },
+    async resumeSessionSummaryRequest () { throw new Error('not used') },
+    async failUnrecoverableSessionSummaryRequest () { throw new Error('not used') },
     async getSessionSummaryRequest () { return { ...row } },
     async cancelSessionSummaryRequest (input) {
       cancellations.push({ ...input })

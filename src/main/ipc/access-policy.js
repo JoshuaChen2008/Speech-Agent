@@ -63,7 +63,9 @@ const ROLE_ACCESS = Object.freeze({
   [CHANNELS.AGENT_RUN_RECORD_SIGNAL]: Object.freeze(['agent']),
   [CHANNELS.SESSION_SUMMARY_RUN_ACCEPT]: Object.freeze(['agent']),
   [CHANNELS.SESSION_SUMMARY_RUN_GET]: Object.freeze(['agent']),
-  [CHANNELS.SESSION_SUMMARY_RUN_CANCEL]: Object.freeze(['agent'])
+  [CHANNELS.SESSION_SUMMARY_RUN_CANCEL]: Object.freeze(['agent']),
+  [CHANNELS.SESSION_SUMMARY_RUN_RESUME]: Object.freeze(['agent']),
+  [CHANNELS.SESSION_SUMMARY_RUN_LIST_RECOVERABLE]: Object.freeze(['agent'])
 })
 
 const RENDERER_CONFIG_KEYS = Object.freeze([

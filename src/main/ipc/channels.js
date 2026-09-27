@@ -73,5 +73,7 @@ module.exports = Object.freeze({
   SESSION_SUMMARY_RUN_ACCEPT: 'session-summary-run:accept',
   SESSION_SUMMARY_RUN_GET: 'session-summary-run:get',
   SESSION_SUMMARY_RUN_CANCEL: 'session-summary-run:cancel',
+  SESSION_SUMMARY_RUN_RESUME: 'session-summary-run:resume',
+  SESSION_SUMMARY_RUN_LIST_RECOVERABLE: 'session-summary-run:list-recoverable',
   SESSION_SUMMARY_RUN_CHANGED: 'session-summary-run:changed'
 })

@@ -30,7 +30,7 @@ S5-Integration 采用 main-owned `AgentRunService`。submit 的公开载荷只�
 
 ### 2026-09-27 会话总结运行与长输入旅程（P0 局部实现证据）
 
-P0 为**实现完成·尚未验收**；P1 受理存储子切片为**实现完成·尚未验收**，其余 P1 与 P2 仍为已决定、未实施。以下记录子集证据，不沿用 J29 路由修复或旧 PluginHost 资格宣称 J30/J31 全面验收。数值唯一权威见[语义合同增量](semantic-contract.md#会话总结运行与长输入增量2026-09-27)，实施顺序见[任务表](../openspec/changes/fix-session-summary-lifecycle-and-long-input/tasks.md)。以下为 J30/J31 子项，不新增 test lane。
+P0 及 P1 受理、取消、进度、重启恢复子切片为**实现完成·尚未验收**；P1 剩余预算与诊断、P2 长输入仍为已决定待实施。以下记录子集证据，不沿用 J29 路由修复或旧 PluginHost 资格宣称 J30/J31 全面验收。数值唯一权威见[语义合同增量](semantic-contract.md#会话总结运行与长输入增量2026-09-27)，实施顺序见[任务表](../openspec/changes/fix-session-summary-lifecycle-and-long-input/tasks.md)。以下为 J30/J31 子项，不新增 test lane。
 
 | 旅程/子项 | 用户路径与可观察结果 | 必须真实的内部边界与失败矩阵 | 当前证据 |
 |---|---|---|---|
@@ -38,7 +38,7 @@ P0 为**实现完成·尚未验收**；P1 受理存储子切片为**实现完成
 | J30-ACCEPT | 模型路由前可取消；明确总结零模型判定；未知回执同键不重复 | exact IPC、受理、真实路由器、SQLite；路由慢/取消/迟到/兜底、重复点击、删除旧键 | 受理接线子旅程实现完成·尚未验收：真实 SQLite/AgentRunService/ModelAccess/IntentRouteOrchestrator覆盖持久身份、preset零路由、question路由、同键回执丢失且资格/输入源不可用时重放、取消写失败重试；main IPC 与生产 preload 的边界测试、AgentView 组件回归验证精确合同、不确定回执锁定同一请求与会话、刷新期间保持作用域、终态解除锁定并保留会话显示、快照新鲜度。完整正式窗口旅程及 J30 全矩阵仍未验收 |
 | J30-CANCEL | pending/running或旧快照终态取消→权威终态 | 真实事务竞争、service/scheduler/adapter/UI；provider不理abort、工具慢、成功/失败先提交、取消落库失败、登记期限 | P0 子集实现完成·尚未验收：AgentRunService 冲突回读、S5 真实 SQLite 终态竞争及 UI 详情读取失败；P1取消子切片实现完成·尚未验收：路由、模型、工具与输入读取取消、非合作 provider 期限及迟到结果拒绝；StorageGateway 到真实 SQLite 的 worker 旅程验证 128 段 keyset 页读取能接收不进入 storage 请求 FIFO 的取消控制消息且后续读取正常。取消落库失败 UI 全矩阵、完整 main 到权威终态期限旅程、真实模型/公网取消、正式窗口与实机范围仍未验收 |
 | J30-PROGRESS | 真实阶段、等待、块数、attempt、实际记忆事实 | 真实阶段发射/快照/UI；无首响应、工具等待、退避、重跑进度重置、usage未知 | 进度子切片实现完成·尚未验收：provider 请求边界、受控工具结果、claim attempt 与实际记忆查询事实接入快照；去除未使用的无条件上下文解析；elapsed 与活动时间分离，终态前冻结耗时；P2 输入规划前块数保持 null |
-| J30-RECOVERY | 长请求续租→失租/退出→重开→明确继续或已取消 | 真实scheduler/lease/storage/main；旧owner/attempt回写、固定提示重建、自由问题提示缺失、剩余预算 | 已决定 |
+| J30-RECOVERY | 长请求续租→失租/退出→重开→明确继续或已取消；关闭 Agent 窗口不取消任务 | 真实scheduler/lease/storage/main/renderer；恢复列表项重新呈现冻结会话范围；旧owner/attempt回写、固定提示版本重建、自由问题提示缺失后固定原会话范围并要求重新提交、新请求受理时同事务清除旧标记、明确继续复用同一run/绑定并递增attempt、取消事实先核对、剩余预算不因重启清零、scheduler拒绝领取待继续run | 重启恢复子切片实现完成·尚未验收：焦点验证覆盖真实 SQLite/storage worker/service/preload/IPC 的冻结范围查询、固定提示重建、显式继续复用 target run、新问题成功受理时旧丢失问题标记在同事务清除及同键回执丢失重放；AgentView harness 覆盖显式按钮、问题重输期间锁定会话范围和关闭窗口不取消。完整 scheduler 生命周期、剩余预算、正式窗口与 J30 联合验收仍未验证 |
 | J30-DIAG | 活动/失败/取消→诊断→导出或取消保存 | 真实诊断服务/schema/main save adapter/滚动文件；不可写、容量/年龄清理、开始无结束事件、异常脱敏 | 已决定；J12为必要子门禁 |
 | J30-INDEPENDENCE | 总结等待/不合作取消/日志故障期间启动停止字幕→历史/导出 | 真实SessionCoordinator、recorder、storage worker、SQLite、history；只替代声卡/provider/网络/系统边界 | 已决定 |
 | J31-SIZE | >15KB旧规模及4h/5h/6h输入→预检→执行或明确超界；旧版输入预检使用专用稳定错误码并证明零模型调用 | 真planner/能力绑定/runner/Loop/adapter；原文/序列/段数各减一/等于/加一、能力不足、配置竞态、transport上限 | 旧版预检子集实现完成·尚未验收：1589 段合成 SQLite 样本得到专用错误；S5 证明总结模型调用数不增加，J25 证明 renderer 错误/恢复文案及零工具调用；长输入未实现 |
@@ -485,3 +485,5 @@ J20 协议子矩阵还须明确断言：TranscriptionStarted 前零 PCM、StopTr
 2026-09-23 J20 实施更新：状态为**实现完成·尚未验收**；已有设置 renderer→preload→main 配置恢复、两来源独立云端暂停/恢复、停止持久化、断连接管、端口关闭、缺失持久化接口、采集缺口、存储失败及 Retry 的真实内部模块旅程。真实本地张量另有两切点诊断资格，不替代云端/物理来源验收。命令、计数、Luna/max 复核和边界见 [实施记录](validation/nls-implementation-2026-09-23.md)。
 
 2026-09-27 J20 发送节拍增量（SEM-F12/F14）：累计单调时钟期限在重复 10ms 定时迟到下持续传输 450 个 100ms loopback 帧，保持云端识别 provider 活跃，并经 SQLite 写入与字幕历史读取观察到首次稳定转写；旧算法同一确定性用例触发 `RECOGNITION_BUFFER_LIMIT`。provider 回归另覆盖 350ms 单次调度停顿后按新期限继续发送；既有用例守住两秒待发硬上限及失败释放。三个受影响文件定向验证 27/27；真实计时合成负载运行 44.908s 后仍无故障、450 帧均已发送，待发峰值 100ms。状态为**实现完成·尚未验收**；这不替代真实 NLS、公网、物理来源或 I2/I3/I4。
+
+2026-09-28 J30-RECOVERY 重启恢复子切片（SEM-F38/SEM-T04/J30-RECOVERY）：`npm run test:focus -- test/contracts/session-summary-run-ui-contract.test.js test/main/session-summary-run-ipc.test.js test/main/session-summary-run-preload.test.js test/ui/renderer-style-guard.test.js test/ui/agent-ui.test.js test/integration/session-summary-request-j30-accept-journey.test.js test/storage/agent-execution-store.test.js test/storage/session-summary-request-store.test.js test/storage/personal-context-store.test.js test/runtime/session-summary-run-progress.test.js` 为 116/116；`npm run verify:renderer`（renderer 类型检查及生产构建）通过；`git diff --check` 通过。真实 StorageWorkerService/SQLite 与 preload/IPC/service 确定性旅程覆盖固定提示恢复、明确继续领取同一 target run、回执丢失后的同键重放以及自由问题新受理与旧待重提标记同事务收束；AgentView harness 覆盖显式继续/重新输入、重新输入期间锁定会话范围与关闭窗口不取消。状态为**实现完成·尚未验收**；scheduler 全生命周期、跨重启剩余预算、正式 Electron 窗口和完整 J30 联合验收尚未验证。

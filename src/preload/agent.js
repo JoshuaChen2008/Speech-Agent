@@ -87,5 +87,7 @@ contextBridge.exposeInMainWorld('agentApi', {
   acceptSessionSummaryRun: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_ACCEPT, summaryRun.assertAcceptRequest, summaryRun.assertAcceptResponse, request),
   getSessionSummaryRun: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_GET, summaryRun.assertControlRequest, summaryRun.assertGetResponse, request),
   cancelSessionSummaryRun: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_CANCEL, summaryRun.assertCancelRequest, summaryRun.assertCancelResponse, request),
+  resumeSessionSummaryRun: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_RESUME, summaryRun.assertResumeRequest, summaryRun.assertResumeResponse, request),
+  listRecoverableSessionSummaryRuns: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_LIST_RECOVERABLE, summaryRun.assertListRecoverableRequest, summaryRun.assertListRecoverableResponse, request),
   onSessionSummaryRunChanged
 })

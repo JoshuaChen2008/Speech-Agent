@@ -61,6 +61,8 @@ const OPERATIONS = Object.freeze({
   SUMMARY_REQUEST_UPDATE: 'summary-request:update',
   SUMMARY_REQUEST_CANCEL: 'summary-request:cancel',
   SUMMARY_REQUEST_RESUME: 'summary-request:resume',
+  SUMMARY_REQUEST_FAIL_UNRECOVERABLE: 'summary-request:fail-unrecoverable',
+  SUMMARY_REQUEST_RECOVER: 'summary-request:recover',
   SUMMARY_REQUEST_LIST_RECOVERABLE: 'summary-request:list-recoverable',
   SHUTDOWN: 'storage:shutdown'
 })

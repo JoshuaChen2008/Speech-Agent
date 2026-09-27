@@ -464,7 +464,9 @@ registerSessionSummaryRunIpc({
   service: {
     async accept (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.accept(request, context) : unavailableSessionSummaryRunResponse() },
     async get (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.get(request, context) : unavailableSessionSummaryRunResponse() },
-    async cancel (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.cancel(request, context) : unavailableSessionSummaryRunResponse() }
+    async cancel (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.cancel(request, context) : unavailableSessionSummaryRunResponse() },
+    async resume (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.resume(request, context) : unavailableSessionSummaryRunResponse() },
+    async listRecoverable (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.listRecoverable(request, context) : unavailableSessionSummaryRunResponse() }
   }
 })
 
@@ -1541,7 +1543,6 @@ async function bootstrapApplication () {
       requestedBy: 'user',
       onDiagnostic: () => console.error('[agent.scheduler] AGENT_SCHEDULER_FAILED')
     })
-    formalAgentScheduler.start()
   } catch (error) {
     formalAgentScheduler = null
     console.error(`[agent.run] ${error instanceof Error ? error.message : 'AGENT_RUN_UNAVAILABLE'}`)
@@ -1580,6 +1581,8 @@ async function bootstrapApplication () {
       promptStore: formalAgentPrompts,
       onChanged: broadcastSessionSummaryRunChanged
     })
+    await sessionSummaryRunService.recoverAfterRestart()
+    formalAgentScheduler?.start()
   } catch {
     sessionSummaryRunService = null
     console.error('[agent.summary] AGENT_RUN_UNAVAILABLE')

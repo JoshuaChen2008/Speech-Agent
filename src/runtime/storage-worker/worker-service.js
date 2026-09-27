@@ -309,6 +309,14 @@ class StorageWorkerService {
       assertExactKeys(payload, ['request'])
       return this.requireAgentExecutionStore().resumeSessionSummaryRequest(payload.request)
     }
+    if (operation === OPERATIONS.SUMMARY_REQUEST_FAIL_UNRECOVERABLE) {
+      assertExactKeys(payload, ['request'])
+      return this.requireAgentExecutionStore().failUnrecoverableSessionSummaryRequest(payload.request)
+    }
+    if (operation === OPERATIONS.SUMMARY_REQUEST_RECOVER) {
+      assertExactKeys(payload, [])
+      return this.requireAgentExecutionStore().recoverSessionSummaryRequests()
+    }
     if (operation === OPERATIONS.SUMMARY_REQUEST_LIST_RECOVERABLE) {
       assertExactKeys(payload, [])
       return this.requireAgentExecutionStore().listRecoverableSessionSummaryRequests()

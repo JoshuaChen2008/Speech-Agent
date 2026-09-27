@@ -74,6 +74,8 @@ const ISOLATED_AGENT_OPERATIONS = new Set([
   'updateSessionSummaryRequest',
   'cancelSessionSummaryRequest',
   'resumeSessionSummaryRequest',
+  'failUnrecoverableSessionSummaryRequest',
+  'recoverSessionSummaryRequests',
   'listRecoverableSessionSummaryRequests',
   'modelAccessCatalog',
   'modelAccessConfigure',
@@ -546,6 +548,14 @@ class StorageGateway {
     return this.enqueue('resumeSessionSummaryRequest', request)
   }
 
+  failUnrecoverableSessionSummaryRequest (request) {
+    return this.enqueue('failUnrecoverableSessionSummaryRequest', request)
+  }
+
+  recoverSessionSummaryRequests () {
+    return this.enqueue('recoverSessionSummaryRequests', {})
+  }
+
   listRecoverableSessionSummaryRequests () {
     return this.enqueue('listRecoverableSessionSummaryRequests', {})
   }
@@ -610,6 +620,8 @@ class StorageGateway {
       case 'updateSessionSummaryRequest': return host.updateSessionSummaryRequest(item.payload, item.signal)
       case 'cancelSessionSummaryRequest': return host.cancelSessionSummaryRequest(item.payload)
       case 'resumeSessionSummaryRequest': return host.resumeSessionSummaryRequest(item.payload)
+      case 'failUnrecoverableSessionSummaryRequest': return host.failUnrecoverableSessionSummaryRequest(item.payload)
+      case 'recoverSessionSummaryRequests': return host.recoverSessionSummaryRequests()
       case 'listRecoverableSessionSummaryRequests': return host.listRecoverableSessionSummaryRequests()
       case 'modelAccessCatalog': return host.modelAccessCatalog()
       case 'modelAccessConfigure': return host.modelAccessConfigure(item.payload)
