@@ -270,3 +270,7 @@ B3.1 JSONL 是旧版过渡基线；默认组合根现已按下列顺序切到 SQ
 - `openSession.recognition` 可选；传入时在打开会话同一事务冻结 `binding_json`，exact 字段为 `strategy/provider/region/configRevision/projectRef/modelLabel/parameters`。纯本地对应 `local-only/local`、地域/项目/参数为空；云端对应 `cloud-primary/nls/cn-shanghai`，项目引用仅 AppKey 的 SHA-256，参数严格为 ADR 0020 的固定 NLS 参数。配置 revision 为非负整数，模型说明不超过 160 字符，不证明云端权重不可变。重放相同绑定幂等，修改冻结绑定报冲突。
 - `recordRecognitionStatus` 经 Recorder → Gateway → Host → WorkerService 的字幕持久化 FIFO 写入 `actual_provider/fallback_code/fallback_at_ms/fault_code/fault_at_ms`；exact 请求含 `sessionId` 及对应 camelCase 五个状态字段。错误只接受 `src/contracts/recognition.js` 的闭集，相对时点为非负毫秒；无错误时 code/time 均为空。幂等键从全部字段摘要派生，首次降级和首次故障保留，Retry 的空字段不得抹除。降级后拒绝恢复 NLS，纯本地不得登记云端降级。
 - 无元数据行的旧会话、旧 JSONL 导入及未提供绑定的兼容调用一律投影 `resultStatus='not_recorded'`，其它识别元数据均为空；不插入推测策略。已登记会话投影 `known`，历史详情与分页返回经 exact 校验的 `recognition`，正文仍只读取首次稳定转写与独立精修稿，不更改 txt/md/srt 内容。
+
+## 会话总结请求受理元数据（2026-09-27）
+
+状态：**实现完成·尚未验收**。v15 在 v14 后追加 `formal_agent_requests`，以请求 ID、会话 ID、动作、摘要身份 digest、受理时冻结的总结记忆参考偏好、状态/阶段、generation/revision、相对耗时、计数、预算与稳定错误码保存可查询的受理事实；请求正文、字幕正文和模型中间输出不入表。`formal_agent_runs.session_summary_request_id` 关联执行，`resume_required` 标记需用户明确继续的运行。会话删除事务把 client key/request ID/request identity 摘要写入 `formal_agent_request_tombstones`，删除受理行并在 `session_deletion_tombstones.deleted_summary_request_count` 记数；旧请求读取或同键重放只返回已删除，不重建任务。v1–v14 SQL/checksum 保持不变；v14→v15 升级及失败回滚有存储测试证据。P1完整运行链路仍未验收。

@@ -282,6 +282,30 @@ class StorageWorkerService {
       assertExactKeys(payload, ['request'])
       return this.requireAgentExecutionStore().getInteraction(payload.request)
     }
+    if (operation === OPERATIONS.SUMMARY_REQUEST_ACCEPT) {
+      assertExactKeys(payload, ['request'])
+      return this.requireAgentExecutionStore().acceptSessionSummaryRequest(payload.request)
+    }
+    if (operation === OPERATIONS.SUMMARY_REQUEST_GET) {
+      assertExactKeys(payload, ['request'])
+      return this.requireAgentExecutionStore().getSessionSummaryRequest(payload.request)
+    }
+    if (operation === OPERATIONS.SUMMARY_REQUEST_UPDATE) {
+      assertExactKeys(payload, ['request'])
+      return this.requireAgentExecutionStore().updateSessionSummaryRequest(payload.request)
+    }
+    if (operation === OPERATIONS.SUMMARY_REQUEST_CANCEL) {
+      assertExactKeys(payload, ['request'])
+      return this.requireAgentExecutionStore().cancelSessionSummaryRequest(payload.request)
+    }
+    if (operation === OPERATIONS.SUMMARY_REQUEST_RESUME) {
+      assertExactKeys(payload, ['request'])
+      return this.requireAgentExecutionStore().resumeSessionSummaryRequest(payload.request)
+    }
+    if (operation === OPERATIONS.SUMMARY_REQUEST_LIST_RECOVERABLE) {
+      assertExactKeys(payload, [])
+      return this.requireAgentExecutionStore().listRecoverableSessionSummaryRequests()
+    }
     if (operation === OPERATIONS.SHUTDOWN) {
       assertExactKeys(payload, [])
       if (this.store) {

@@ -51,6 +51,12 @@ const OPERATIONS = Object.freeze({
   AGENT_MARK_PRESENTATION: 'agent-execution:mark-presentation',
   AGENT_LIST_INTERACTIONS: 'agent-execution:list-interactions',
   AGENT_GET_INTERACTION: 'agent-execution:get-interaction',
+  SUMMARY_REQUEST_ACCEPT: 'summary-request:accept',
+  SUMMARY_REQUEST_GET: 'summary-request:get',
+  SUMMARY_REQUEST_UPDATE: 'summary-request:update',
+  SUMMARY_REQUEST_CANCEL: 'summary-request:cancel',
+  SUMMARY_REQUEST_RESUME: 'summary-request:resume',
+  SUMMARY_REQUEST_LIST_RECOVERABLE: 'summary-request:list-recoverable',
   SHUTDOWN: 'storage:shutdown'
 })
 
@@ -94,6 +100,8 @@ const SAFE_ERROR_MESSAGES = Object.freeze({
   AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED: 'Summary input exceeded the legacy limit.',
   AGENT_OUTPUT_INVALID: 'Agent output is invalid.',
   AGENT_RUN_NOT_FOUND: 'Agent run was not found.',
+  AGENT_REQUEST_IDENTITY_CONFLICT: 'Agent request identity conflicts with persisted data.',
+  AGENT_REQUEST_ALREADY_CANCELLED: 'Agent request was already cancelled.',
   AGENT_SESSION_DELETED: 'The session has been deleted.',
   AGENT_INTERACTION_NOT_FOUND: 'Agent interaction was not found.',
   AGENT_INTERACTION_STATE_CONFLICT: 'Agent interaction state conflicts with the request.',

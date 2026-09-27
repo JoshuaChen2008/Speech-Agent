@@ -515,6 +515,30 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.AGENT_GET_INTERACTION, { request })
   }
 
+  acceptSessionSummaryRequest (request) {
+    return this.enqueue(OPERATIONS.SUMMARY_REQUEST_ACCEPT, { request })
+  }
+
+  getSessionSummaryRequest (request) {
+    return this.enqueue(OPERATIONS.SUMMARY_REQUEST_GET, { request })
+  }
+
+  updateSessionSummaryRequest (request) {
+    return this.enqueue(OPERATIONS.SUMMARY_REQUEST_UPDATE, { request })
+  }
+
+  cancelSessionSummaryRequest (request) {
+    return this.enqueue(OPERATIONS.SUMMARY_REQUEST_CANCEL, { request })
+  }
+
+  resumeSessionSummaryRequest (request) {
+    return this.enqueue(OPERATIONS.SUMMARY_REQUEST_RESUME, { request })
+  }
+
+  listRecoverableSessionSummaryRequests () {
+    return this.enqueue(OPERATIONS.SUMMARY_REQUEST_LIST_RECOVERABLE, {})
+  }
+
   modelAccessCatalog () {
     return this.perform(OPERATIONS.MODEL_ACCESS_CATALOG, {})
   }

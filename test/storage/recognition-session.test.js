@@ -81,7 +81,7 @@ test('DB1/J30 v14 input-limit projection migration rolls back cleanly and preser
   assert.equal(store.getSessionTranscript({ sessionId: 'pre-v14' }).session.state, 'closed')
   store.close()
 
-  store = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS })
+  store = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 14) })
   assert.equal(store.database.prepare('PRAGMA user_version').get().user_version, 14)
   assert.equal(store.database.prepare("SELECT count(*) AS n FROM pragma_table_info('formal_agent_runs') WHERE name='summary_input_limit_error'").get().n, 1)
   assert.equal(store.database.prepare("SELECT count(*) AS n FROM pragma_table_info('formal_agent_interactions') WHERE name='summary_input_limit_error'").get().n, 1)

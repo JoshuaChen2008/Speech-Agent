@@ -30,7 +30,7 @@ S5-Integration 采用 main-owned `AgentRunService`。submit 的公开载荷只�
 
 ### 2026-09-27 会话总结运行与长输入旅程（P0 局部实现证据）
 
-P0 为**实现完成·尚未验收**；P1/P2 仍为已决定，未实施。以下记录 P0 子集证据，不沿用 J29 路由修复或旧 PluginHost 资格宣称 J30/J31 全面验收。数值唯一权威见[语义合同增量](semantic-contract.md#会话总结运行与长输入增量2026-09-27)，实施顺序见[任务表](../openspec/changes/fix-session-summary-lifecycle-and-long-input/tasks.md)。以下为 J30/J31 子项，不新增 test lane。
+P0 为**实现完成·尚未验收**；P1 受理存储子切片为**实现完成·尚未验收**，其余 P1 与 P2 仍为已决定、未实施。以下记录子集证据，不沿用 J29 路由修复或旧 PluginHost 资格宣称 J30/J31 全面验收。数值唯一权威见[语义合同增量](semantic-contract.md#会话总结运行与长输入增量2026-09-27)，实施顺序见[任务表](../openspec/changes/fix-session-summary-lifecycle-and-long-input/tasks.md)。以下为 J30/J31 子项，不新增 test lane。
 
 | 旅程/子项 | 用户路径与可观察结果 | 必须真实的内部边界与失败矩阵 | 当前证据 |
 |---|---|---|---|
@@ -48,6 +48,8 @@ P0 为**实现完成·尚未验收**；P1/P2 仍为已决定，未实施。以�
 | J31-RESOURCE | 上沿输入下UI/字幕响应、取消、释放缓冲 | 真分页/序列化/调度；缓冲峰值、取消耗时、main事件循环影响；文本容量不替代采集长稳 | 已决定 |
 | J31-RECOVERY | 中断后同run/绑定新attempt整次重跑 | 真SQLite/计划digest/剩余预算；中间正文零持久、取消不复活、来源撤销、删除 | 已决定 |
 | J31-COMPAT | 既有库升级→旧结果/绑定/导出→新v2总结 | 真追加迁移、v1/v2 validator/导出/原始历史；旧SQL/checksum及导出字节不变、删除级联、其它recipe预算不变 | 已决定 |
+
+2026-09-27 P1受理存储子切片：`formal_agent_requests` 的幂等受理、记忆参考偏好冻结、排队目标取消、会话删除收据及 v14→v15 回滚/升级已有定向和 core 证据，状态为**实现完成·尚未验收**。J30-ACCEPT 全链路仍为已决定；main/preload/renderer 接线、路由前取消与未知回执旅程尚未实施。
 
 容量样本使用固定种子合成文本，不复制用户会话。模型替身只证明编排/覆盖，不能用预设答案宣称真实模型内容质量。实机五小时采集、真实模型质量/公网取消、窗口操作、正式包和适用I2/I3/I4分别留证；确定性时间偏移不构成五小时长稳。新增测试仅落既有core/integration/evidence目录，按§2.1选择验证范围。
 

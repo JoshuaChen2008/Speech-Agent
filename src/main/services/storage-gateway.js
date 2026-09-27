@@ -68,6 +68,12 @@ const ISOLATED_AGENT_OPERATIONS = new Set([
   'markAgentReportPresentation',
   'listAgentInteractions',
   'getAgentInteraction',
+  'acceptSessionSummaryRequest',
+  'getSessionSummaryRequest',
+  'updateSessionSummaryRequest',
+  'cancelSessionSummaryRequest',
+  'resumeSessionSummaryRequest',
+  'listRecoverableSessionSummaryRequests',
   'modelAccessCatalog',
   'modelAccessConfigure',
   'modelAccessBind'
@@ -483,6 +489,30 @@ class StorageGateway {
     return this.enqueue('getAgentInteraction', request)
   }
 
+  acceptSessionSummaryRequest (request) {
+    return this.enqueue('acceptSessionSummaryRequest', request)
+  }
+
+  getSessionSummaryRequest (request) {
+    return this.enqueue('getSessionSummaryRequest', request)
+  }
+
+  updateSessionSummaryRequest (request) {
+    return this.enqueue('updateSessionSummaryRequest', request)
+  }
+
+  cancelSessionSummaryRequest (request) {
+    return this.enqueue('cancelSessionSummaryRequest', request)
+  }
+
+  resumeSessionSummaryRequest (request) {
+    return this.enqueue('resumeSessionSummaryRequest', request)
+  }
+
+  listRecoverableSessionSummaryRequests () {
+    return this.enqueue('listRecoverableSessionSummaryRequests', {})
+  }
+
   modelAccessCatalog () {
     return this.enqueue('modelAccessCatalog', {})
   }
@@ -537,6 +567,12 @@ class StorageGateway {
       case 'markAgentReportPresentation': return host.markAgentReportPresentation(item.payload)
       case 'listAgentInteractions': return host.listAgentInteractions(item.payload)
       case 'getAgentInteraction': return host.getAgentInteraction(item.payload)
+      case 'acceptSessionSummaryRequest': return host.acceptSessionSummaryRequest(item.payload)
+      case 'getSessionSummaryRequest': return host.getSessionSummaryRequest(item.payload)
+      case 'updateSessionSummaryRequest': return host.updateSessionSummaryRequest(item.payload)
+      case 'cancelSessionSummaryRequest': return host.cancelSessionSummaryRequest(item.payload)
+      case 'resumeSessionSummaryRequest': return host.resumeSessionSummaryRequest(item.payload)
+      case 'listRecoverableSessionSummaryRequests': return host.listRecoverableSessionSummaryRequests()
       case 'modelAccessCatalog': return host.modelAccessCatalog()
       case 'modelAccessConfigure': return host.modelAccessConfigure(item.payload)
       case 'modelAccessBind': return host.modelAccessBind(item.payload.request, item.payload.availableSlotIds)

@@ -374,7 +374,7 @@ class AgentExecutionStore {
     exactObject(input, [
       'runId', 'recipeId', 'recipeVersion', 'scope', 'transcriptVersion',
       'inputWatermark', 'inputDigest', 'requestedBy', 'clientIdempotencyKey'
-    ], ['summaryUseMemory'])
+    ], ['summaryUseMemory', 'requestId', 'requestGeneration'])
     const runId = identifier(input.runId)
     let recipe
     try { recipe = getRecipe(input.recipeId, input.recipeVersion) } catch { fail('AGENT_REQUEST_INVALID') }
@@ -390,6 +390,10 @@ class AgentExecutionStore {
       ? (input.summaryUseMemory === undefined ? true : input.summaryUseMemory)
       : null
     if (recipe.recipeId === 'summary.minutes' && typeof summaryUseMemory !== 'boolean') fail('AGENT_REQUEST_INVALID')
+    if (Object.hasOwn(input, 'requestId') !== Object.hasOwn(input, 'requestGeneration')) fail('AGENT_REQUEST_INVALID')
+    const requestId = input.requestId === undefined ? null : identifier(input.requestId)
+    const requestGeneration = input.requestGeneration === undefined ? null : boundedInteger(input.requestGeneration, 1, Number.MAX_SAFE_INTEGER)
+    if (requestId !== null && input.requestedBy !== 'user') fail('AGENT_REQUEST_INVALID')
     if (scope.kind === 'session' && !Object.hasOwn(inputWatermark, 'throughEventOrder')) fail('AGENT_REQUEST_INVALID')
     const requestIdentity = {
       recipeId: recipe.recipeId,
@@ -404,6 +408,7 @@ class AgentExecutionStore {
     /* Preserve replay identity for rows created before the summary policy was
        added; only explicitly supplied policies become part of a new digest. */
     if (recipe.recipeId === 'summary.minutes' && Object.hasOwn(input, 'summaryUseMemory')) requestIdentity.summaryUseMemory = summaryUseMemory
+    if (requestId !== null) requestIdentity.requestId = requestId
     const requestDigest = sha256Canonical(requestIdentity)
     const dedupeKey = input.requestedBy === 'user'
       ? sha256Canonical({ requestedBy: 'user', clientIdempotencyKey: input.clientIdempotencyKey })
@@ -413,21 +418,36 @@ class AgentExecutionStore {
         })
     const scopeDigest = sha256Canonical(scope)
     return this.transaction(() => {
+      if (requestId !== null) {
+        const accepted = this.database.prepare('SELECT * FROM formal_agent_requests WHERE request_id=?').get(requestId)
+        if (!accepted || Number(accepted.generation) !== requestGeneration) fail('AGENT_REQUEST_IDENTITY_CONFLICT')
+        if (accepted.cancel_requested !== 0 || accepted.state === 'cancelled') fail('AGENT_INTERACTION_STATE_CONFLICT')
+        if ((accepted.action === 'summary') !== (recipe.recipeId === 'summary.minutes')) {
+          fail('AGENT_REQUEST_IDENTITY_CONFLICT')
+        }
+        if (accepted.session_id !== scope.reference || accepted.scope_digest !== scopeDigest) {
+          fail('AGENT_REQUEST_IDENTITY_CONFLICT')
+        }
+        if (recipe.recipeId === 'summary.minutes' && accepted.summary_use_memory !== (summaryUseMemory ? 1 : 0)) {
+          fail('AGENT_REQUEST_IDENTITY_CONFLICT')
+        }
+      }
       const byId = this.database.prepare('SELECT * FROM formal_agent_runs WHERE run_id=?').get(runId)
       if (byId) {
-        if (byId.request_digest !== requestDigest || byId.dedupe_key !== dedupeKey) fail('AGENT_REQUEST_INVALID')
+        if (byId.request_digest !== requestDigest || byId.dedupe_key !== dedupeKey ||
+            requestId !== null && byId.session_summary_request_id !== requestId) fail('AGENT_REQUEST_INVALID')
         return rowRun(byId, true)
       }
       const byDedupe = this.database.prepare('SELECT * FROM formal_agent_runs WHERE dedupe_key=?').get(dedupeKey)
       if (byDedupe) {
-        if (byDedupe.request_digest !== requestDigest) fail('AGENT_REQUEST_INVALID')
+        if (byDedupe.request_digest !== requestDigest || requestId !== null && byDedupe.session_summary_request_id !== requestId) fail('AGENT_REQUEST_INVALID')
         return rowRun(byDedupe, true)
       }
       const byClient = input.clientIdempotencyKey === null ? null : this.database.prepare(
         'SELECT * FROM formal_agent_runs WHERE client_idempotency_key=?'
       ).get(input.clientIdempotencyKey)
       if (byClient) {
-        if (byClient.request_digest !== requestDigest) fail('AGENT_REQUEST_INVALID')
+        if (byClient.request_digest !== requestDigest || requestId !== null && byClient.session_summary_request_id !== requestId) fail('AGENT_REQUEST_INVALID')
         return rowRun(byClient, true)
       }
       const now = this.nowValue()
@@ -441,21 +461,300 @@ class AgentExecutionStore {
       this.database.prepare(`
         INSERT INTO formal_agent_runs(
           run_id, dedupe_key, client_idempotency_key, request_digest,
+          session_summary_request_id,
           recipe_id, recipe_version, scope_json, scope_digest, transcript_version,
         input_watermark_json, input_digest, personal_context_revision, summary_use_memory, requested_by, state, attempt_count,
           max_attempts, next_attempt_at, lease_owner, lease_expires_at,
           lease_renewed_from_expires_at, cancel_requested_at, error_code,
           result_digest, result_summary_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, 3, ?, NULL, NULL,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, 3, ?, NULL, NULL,
           NULL, NULL, NULL, NULL, NULL, ?, ?)
       `).run(
-        runId, dedupeKey, input.clientIdempotencyKey, requestDigest,
+        runId, dedupeKey, input.clientIdempotencyKey, requestDigest, requestId,
         recipe.recipeId, recipe.recipeVersion, canonicalize(scope), scopeDigest,
         input.transcriptVersion, canonicalize(inputWatermark), input.inputDigest,
         personalContextRevision, summaryUseMemory === null ? null : (summaryUseMemory ? 1 : 0), input.requestedBy, now, now, now
       )
-      return rowRun(this.database.prepare('SELECT * FROM formal_agent_runs WHERE run_id=?').get(runId))
+      const run = this.database.prepare('SELECT * FROM formal_agent_runs WHERE run_id=?').get(runId)
+      if (requestId !== null) {
+        const isRoute = recipe.recipeId === 'intent.route'
+        const column = isRoute ? 'route_run_id' : 'target_run_id'
+        const state = isRoute ? 'routing' : 'queued'
+        const phase = isRoute ? 'waiting_model' : 'accepted'
+        const linked = this.database.prepare(`
+          UPDATE formal_agent_requests SET ${column}=?, state=?, phase=?, revision=revision+1,
+            last_activity_elapsed_ms=elapsed_ms, updated_at=?
+          WHERE request_id=? AND generation=? AND cancel_requested=0 AND ${column} IS NULL
+        `).run(runId, state, phase, now, requestId, requestGeneration)
+        if (Number(linked.changes) !== 1) fail('AGENT_INTERACTION_STATE_CONFLICT')
+      }
+      return rowRun(run)
     })
+  }
+
+  sessionSummaryRequestRow (requestId) {
+    const normalizedRequestId = identifier(requestId)
+    const row = this.database.prepare('SELECT * FROM formal_agent_requests WHERE request_id=?').get(normalizedRequestId)
+    if (!row) {
+      const tombstone = this.database.prepare(`
+        SELECT 1 FROM formal_agent_request_tombstones WHERE request_id_digest=?
+      `).get(sha256Canonical({ requestId: normalizedRequestId }))
+      if (tombstone) fail('AGENT_SESSION_DELETED')
+      fail('AGENT_RUN_NOT_FOUND')
+    }
+    return row
+  }
+
+  sessionSummaryRequestProjection (row, replayed = false) {
+    const budget = row.budget_axis === null
+      ? null
+      : { axis: row.budget_axis, actual: Number(row.budget_actual), limit: Number(row.budget_limit) }
+    return {
+      requestId: row.request_id,
+      clientKeyDigest: row.client_key_digest,
+      requestDigest: row.request_digest,
+      scopeDigest: row.scope_digest,
+      promptDigest: row.prompt_digest,
+      action: row.action,
+      summaryUseMemory: row.summary_use_memory === null ? null : row.summary_use_memory !== 0,
+      routeRunId: row.route_run_id,
+      targetRunId: row.target_run_id,
+      state: row.state,
+      phase: row.phase,
+      generation: Number(row.generation),
+      revision: Number(row.revision),
+      cancelRequested: row.cancel_requested !== 0,
+      resumeRequired: row.resume_required !== 0,
+      attempt: Number(row.attempt),
+      elapsedMs: Number(row.elapsed_ms),
+      lastActivityElapsedMs: Number(row.last_activity_elapsed_ms),
+      validatedChunkCount: row.validated_chunk_count === null ? null : Number(row.validated_chunk_count),
+      totalChunkCount: row.total_chunk_count === null ? null : Number(row.total_chunk_count),
+      memoryState: row.memory_state,
+      errorCode: row.error_code,
+      budget,
+      diagnosticsAvailable: row.diagnostics_available !== 0,
+      replayed
+    }
+  }
+
+  acceptSessionSummaryRequest (input) {
+    exactObject(input, [
+      'requestId', 'sessionId', 'clientKeyDigest', 'requestDigest', 'scopeDigest', 'promptDigest', 'action', 'summaryUseMemory'
+    ])
+    const requestId = identifier(input.requestId)
+    const sessionId = identifier(input.sessionId)
+    for (const field of ['clientKeyDigest', 'requestDigest', 'scopeDigest', 'promptDigest']) digest(input[field])
+    if (!['summary', 'question'].includes(input.action) ||
+        input.action === 'summary' && typeof input.summaryUseMemory !== 'boolean' ||
+        input.action === 'question' && input.summaryUseMemory !== null) fail('AGENT_REQUEST_INVALID')
+    if (input.scopeDigest !== sha256Canonical({ kind: 'session', reference: sessionId })) fail('AGENT_REQUEST_INVALID')
+    const now = this.nowValue()
+    return this.transaction(() => {
+      const tombstone = this.database.prepare(`
+        SELECT * FROM formal_agent_request_tombstones WHERE client_key_digest=?
+      `).get(input.clientKeyDigest)
+      if (tombstone) {
+        if (tombstone.request_digest !== input.requestDigest || tombstone.session_id !== sessionId) {
+          fail('AGENT_REQUEST_IDENTITY_CONFLICT')
+        }
+        fail('AGENT_SESSION_DELETED')
+      }
+      if (this.database.prepare(`
+        SELECT 1 FROM formal_agent_request_tombstones WHERE request_id_digest=?
+      `).get(sha256Canonical({ requestId }))) fail('AGENT_REQUEST_IDENTITY_CONFLICT')
+      if (this.database.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=?').get(sessionId)) {
+        fail('AGENT_SESSION_DELETED')
+      }
+      const prior = this.database.prepare('SELECT * FROM formal_agent_requests WHERE client_key_digest=?').get(input.clientKeyDigest)
+      if (prior) {
+        if (prior.request_id !== requestId || prior.request_digest !== input.requestDigest ||
+            prior.session_id !== sessionId || prior.scope_digest !== input.scopeDigest || prior.prompt_digest !== input.promptDigest || prior.action !== input.action ||
+            prior.summary_use_memory !== (input.summaryUseMemory === null ? null : (input.summaryUseMemory ? 1 : 0))) {
+          fail('AGENT_REQUEST_IDENTITY_CONFLICT')
+        }
+        return this.sessionSummaryRequestProjection(prior, true)
+      }
+      const priorByRequestId = this.database.prepare('SELECT 1 FROM formal_agent_requests WHERE request_id=?').get(requestId)
+      if (priorByRequestId) fail('AGENT_REQUEST_IDENTITY_CONFLICT')
+      this.database.prepare(`
+        INSERT INTO formal_agent_requests(
+          request_id,session_id,client_key_digest,request_digest,scope_digest,prompt_digest,action,summary_use_memory,
+          state,phase,generation,revision,route_run_id,target_run_id,cancel_requested,resume_required,
+          attempt,elapsed_ms,last_activity_elapsed_ms,validated_chunk_count,total_chunk_count,memory_state,
+          error_code,budget_axis,budget_actual,budget_limit,diagnostics_available,created_at,updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,'accepted','accepted',1,0,NULL,NULL,0,0,0,0,0,NULL,NULL,?,NULL,NULL,NULL,NULL,1,?,?)
+      `).run(
+        requestId, sessionId, input.clientKeyDigest, input.requestDigest, input.scopeDigest, input.promptDigest,
+        input.action, input.summaryUseMemory === null ? null : (input.summaryUseMemory ? 1 : 0),
+        input.action === 'summary' && input.summaryUseMemory === false ? 'not_used' : 'not_read', now, now
+      )
+      return this.sessionSummaryRequestProjection(this.sessionSummaryRequestRow(requestId))
+    })
+  }
+
+  getSessionSummaryRequest (input) {
+    exactObject(input, ['requestId'])
+    return this.sessionSummaryRequestProjection(this.sessionSummaryRequestRow(input.requestId))
+  }
+
+  updateSessionSummaryRequest (input) {
+    exactObject(input, ['requestId', 'generation', 'expectedRevision'], [
+      'state', 'phase', 'attempt', 'elapsedMs', 'lastActivityElapsedMs', 'validatedChunkCount',
+      'totalChunkCount', 'memoryState', 'errorCode', 'budget', 'resumeRequired', 'diagnosticsAvailable'
+    ])
+    const requestId = identifier(input.requestId)
+    boundedInteger(input.generation, 1, Number.MAX_SAFE_INTEGER)
+    nonNegativeInteger(input.expectedRevision)
+    const current = this.sessionSummaryRequestRow(requestId)
+    if (Number(current.generation) !== input.generation || Number(current.revision) !== input.expectedRevision ||
+        ['succeeded', 'failed', 'cancelled'].includes(current.state) || current.cancel_requested !== 0) {
+      fail('AGENT_CONTEXT_REVISION_CONFLICT')
+    }
+    const state = input.state === undefined ? current.state : input.state
+    const phase = input.phase === undefined ? current.phase : input.phase
+    if (!['accepted', 'preparing', 'routing', 'queued', 'running', 'retry_wait', 'cancelling', 'succeeded', 'failed', 'cancelled'].includes(state) ||
+        !['accepted', 'preparing', 'waiting_model', 'reading_context', 'reducing', 'validating', 'retry_wait', 'cancelling', 'terminal'].includes(phase)) fail('AGENT_REQUEST_INVALID')
+    const numberOrCurrent = (field, column) => {
+      const value = input[field] === undefined ? Number(current[column]) : nonNegativeInteger(input[field])
+      return value
+    }
+    const attempt = numberOrCurrent('attempt', 'attempt')
+    const elapsedMs = numberOrCurrent('elapsedMs', 'elapsed_ms')
+    const activity = numberOrCurrent('lastActivityElapsedMs', 'last_activity_elapsed_ms')
+    const chunk = (field, column) => input[field] === undefined
+      ? current[column] === null ? null : Number(current[column])
+      : input[field] === null ? null : nonNegativeInteger(input[field])
+    const validated = chunk('validatedChunkCount', 'validated_chunk_count')
+    const total = chunk('totalChunkCount', 'total_chunk_count')
+    if ((validated === null) !== (total === null) || validated !== null && validated > total) fail('AGENT_REQUEST_INVALID')
+    const memoryState = input.memoryState === undefined ? current.memory_state : input.memoryState
+    if (!['not_read', 'not_used', 'empty', 'referenced', 'failed', 'unknown'].includes(memoryState)) fail('AGENT_REQUEST_INVALID')
+    const errorCode = input.errorCode === undefined ? current.error_code : input.errorCode
+    if (errorCode !== null && !require('../../agent/contracts/session-summary-run-ui').ERROR_CODES.includes(errorCode)) fail('AGENT_REQUEST_INVALID')
+    const budget = input.budget === undefined
+      ? current.budget_axis === null ? null : { axis: current.budget_axis, actual: Number(current.budget_actual), limit: Number(current.budget_limit) }
+      : input.budget
+    if (budget !== null) {
+      exactObject(budget, ['axis', 'actual', 'limit'])
+      if (!require('../../agent/contracts/budget-axes').BUDGET_AXES.includes(budget.axis)) fail('AGENT_REQUEST_INVALID')
+      nonNegativeInteger(budget.actual); nonNegativeInteger(budget.limit)
+    }
+    const resumeRequired = input.resumeRequired === undefined ? Number(current.resume_required) : (input.resumeRequired ? 1 : 0)
+    const diagnosticsAvailable = input.diagnosticsAvailable === undefined ? Number(current.diagnostics_available) : (input.diagnosticsAvailable ? 1 : 0)
+    return this.transaction(() => {
+      const result = this.database.prepare(`
+        UPDATE formal_agent_requests SET state=?,phase=?,attempt=?,elapsed_ms=?,last_activity_elapsed_ms=?,
+          validated_chunk_count=?,total_chunk_count=?,memory_state=?,error_code=?,budget_axis=?,budget_actual=?,budget_limit=?,
+          resume_required=?,diagnostics_available=?,revision=revision+1,updated_at=?
+        WHERE request_id=? AND generation=? AND revision=? AND cancel_requested=0
+          AND state NOT IN ('succeeded','failed','cancelled')
+      `).run(
+        state, phase, attempt, elapsedMs, activity, validated, total, memoryState, errorCode,
+        budget?.axis ?? null, budget?.actual ?? null, budget?.limit ?? null, resumeRequired, diagnosticsAvailable,
+        this.nowValue(), requestId, input.generation, input.expectedRevision
+      )
+      if (Number(result.changes) !== 1) fail('AGENT_CONTEXT_REVISION_CONFLICT')
+      return this.sessionSummaryRequestProjection(this.sessionSummaryRequestRow(requestId))
+    })
+  }
+
+  cancelSessionSummaryRequest (input) {
+    exactObject(input, ['requestId', 'generation'])
+    const requestId = identifier(input.requestId)
+    boundedInteger(input.generation, 1, Number.MAX_SAFE_INTEGER)
+    return this.transaction(() => {
+      const row = this.sessionSummaryRequestRow(requestId)
+      if (Number(row.generation) !== input.generation) fail('AGENT_CONTEXT_REVISION_CONFLICT')
+      if (['succeeded', 'failed', 'cancelled'].includes(row.state)) return this.sessionSummaryRequestProjection(row, true)
+      const now = this.nowValue()
+      const linkedRunId = row.target_run_id || row.route_run_id
+      if (row.cancel_requested !== 0 && linkedRunId && ['queued', 'retry_wait', 'running'].includes(this.runRow(linkedRunId).state)) {
+        return this.sessionSummaryRequestProjection(row, true)
+      }
+      if (!linkedRunId) {
+        this.database.prepare(`
+          UPDATE formal_agent_requests SET state='cancelled',phase='terminal',cancel_requested=1,
+            revision=revision+1,updated_at=? WHERE request_id=?
+        `).run(now, requestId)
+      } else {
+        const linkedRun = this.runRow(linkedRunId)
+        if (['queued', 'retry_wait'].includes(linkedRun.state)) {
+          this.database.prepare(`
+            UPDATE formal_agent_runs SET state='cancelled', cancel_requested_at=COALESCE(cancel_requested_at,?),
+              lease_owner=NULL,lease_expires_at=NULL,lease_renewed_from_expires_at=NULL,updated_at=?
+            WHERE run_id=? AND state IN ('queued','retry_wait')
+          `).run(now, now, linkedRunId)
+          const interaction = this.database.prepare('SELECT * FROM formal_agent_interactions WHERE run_id=?').get(linkedRunId)
+          if (interaction && interaction.terminal_reason === null) {
+            this.database.prepare(`
+              UPDATE formal_agent_interactions SET terminal_reason='cancelled',error_code=NULL,usage_json=NULL,
+                duration_ms=0,result_json=NULL,result_digest=NULL,terminal_at=?
+              WHERE interaction_id=? AND terminal_reason IS NULL
+            `).run(now, interaction.interaction_id)
+            this.database.prepare(`
+              UPDATE formal_agent_tool_calls SET ended_offset_ms=started_offset_ms,status='cancelled',
+                error_code='TOOL_CANCELLED',result_json=NULL,result_digest=NULL
+              WHERE interaction_id=? AND status='started'
+            `).run(interaction.interaction_id)
+          }
+          this.database.prepare(`
+            UPDATE formal_agent_requests SET state='cancelled',phase='terminal',cancel_requested=1,
+              revision=revision+1,updated_at=? WHERE request_id=?
+          `).run(now, requestId)
+        } else if (linkedRun.state === 'running') {
+          this.database.prepare(`
+            UPDATE formal_agent_requests SET state='cancelling',phase='cancelling',cancel_requested=1,
+              revision=revision+1,updated_at=? WHERE request_id=?
+          `).run(now, requestId)
+          this.database.prepare(`
+            UPDATE formal_agent_runs SET cancel_requested_at=COALESCE(cancel_requested_at,?),updated_at=?
+            WHERE run_id=? AND state='running'
+          `).run(now, now, linkedRunId)
+        } else if (linkedRun.state === 'failed' && !row.target_run_id) {
+          this.database.prepare(`
+            UPDATE formal_agent_requests SET state='failed',phase='terminal',cancel_requested=0,error_code=?,
+              revision=revision+1,updated_at=? WHERE request_id=?
+          `).run(linkedRun.error_code, now, requestId)
+        } else if (row.target_run_id) {
+          const state = linkedRun.state
+          this.database.prepare(`
+            UPDATE formal_agent_requests SET state=?,phase='terminal',cancel_requested=?,error_code=?,
+              revision=revision+1,updated_at=? WHERE request_id=?
+          `).run(state, state === 'cancelled' ? 1 : 0, linkedRun.error_code, now, requestId)
+        } else {
+          this.database.prepare(`
+            UPDATE formal_agent_requests SET state='cancelled',phase='terminal',cancel_requested=1,
+              revision=revision+1,updated_at=? WHERE request_id=?
+          `).run(now, requestId)
+        }
+      }
+      return this.sessionSummaryRequestProjection(this.sessionSummaryRequestRow(requestId))
+    })
+  }
+
+  resumeSessionSummaryRequest (input) {
+    exactObject(input, ['requestId', 'generation', 'expectedRevision'])
+    const requestId = identifier(input.requestId)
+    nonNegativeInteger(input.generation)
+    nonNegativeInteger(input.expectedRevision)
+    return this.transaction(() => {
+      const now = this.nowValue()
+      const result = this.database.prepare(`
+        UPDATE formal_agent_requests SET state='accepted',phase='accepted',generation=generation+1,
+          revision=revision+1,resume_required=0,cancel_requested=0,error_code=NULL,updated_at=?
+        WHERE request_id=? AND generation=? AND revision=? AND state='retry_wait' AND resume_required=1 AND cancel_requested=0
+      `).run(now, requestId, input.generation, input.expectedRevision)
+      if (Number(result.changes) !== 1) fail('AGENT_CONTEXT_REVISION_CONFLICT')
+      return this.sessionSummaryRequestProjection(this.sessionSummaryRequestRow(requestId))
+    })
+  }
+
+  listRecoverableSessionSummaryRequests () {
+    return this.database.prepare(`
+      SELECT * FROM formal_agent_requests WHERE state NOT IN ('succeeded','failed','cancelled')
+      ORDER BY updated_at,request_id LIMIT 1000
+    `).all().map((row) => this.sessionSummaryRequestProjection(row))
   }
 
   cancelRun (input) {

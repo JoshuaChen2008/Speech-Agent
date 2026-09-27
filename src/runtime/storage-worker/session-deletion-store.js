@@ -41,6 +41,7 @@ class SessionDeletionStore {
       deletedInteractionCount: Number(row.deleted_interaction_count),
       deletedToolCallCount: Number(row.deleted_tool_call_count),
       deletedReportPresentationCount: Number(row.deleted_report_presentation_count || 0),
+      deletedSummaryRequestCount: Number(row.deleted_summary_request_count || 0),
       deletedEpisodeCount: Number(row.deleted_episode_count),
       deletedContextEvidenceCount: Number(row.deleted_context_evidence_count),
       deletedOrphanContextItemCount: Number(row.deleted_orphan_context_item_count),
@@ -110,6 +111,11 @@ class SessionDeletionStore {
       const deletedReportPresentationCount = Number(database.prepare(
         'SELECT COUNT(*) AS count FROM formal_agent_report_presentations WHERE session_id = ?'
       ).get(sessionId).count)
+      const summaryRequestRows = database.prepare(`
+        SELECT client_key_digest,request_id,session_id,request_digest
+        FROM formal_agent_requests WHERE session_id=?
+      `).all(sessionId)
+      const deletedSummaryRequestCount = summaryRequestRows.length
       const contextDeletion = personalContextStore
         ? personalContextStore.planSessionDeletion(sessionId)
         : { episodeCount: 0, evidenceCount: 0, orphanItemIds: [] }
@@ -125,17 +131,28 @@ class SessionDeletionStore {
           deleted_memory_evidence_count, deleted_orphan_memory_count,
           deleted_interaction_count, deleted_tool_call_count, deleted_episode_count,
           deleted_context_evidence_count, deleted_orphan_context_item_count,
-          deleted_report_presentation_count, deleted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          deleted_report_presentation_count, deleted_summary_request_count, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         sessionId, deletionIdempotencyKey, requestDigest,
         deletedJobCount, deletedArtifactCount, deletedDebugThreadCount,
         deletedMemoryEvidenceCount, deletedOrphanMemoryCount,
         deletedInteractionCount, deletedToolCallCount, deletedEpisodeCount,
         deletedContextEvidenceCount, deletedOrphanContextItemCount,
-        deletedReportPresentationCount, now
+        deletedReportPresentationCount, deletedSummaryRequestCount, now
       )
       if (personalContextStore) personalContextStore.applySessionDeletion(sessionId, contextDeletion, now)
+      const insertRequestTombstone = database.prepare(`
+        INSERT INTO formal_agent_request_tombstones(
+          client_key_digest,request_id_digest,session_id,request_digest,deleted_at
+        ) VALUES (?,?,?,?,?)
+      `)
+      for (const request of summaryRequestRows) {
+        insertRequestTombstone.run(
+          request.client_key_digest, sha256Canonical({ requestId: request.request_id }),
+          request.session_id, request.request_digest, now
+        )
+      }
       if (formalInteractionIds.length > 0) {
         database.prepare(`
           DELETE FROM formal_agent_tool_calls
@@ -157,6 +174,7 @@ class SessionDeletionStore {
           WHERE run_id IN (${formalRunIdList.map(() => '?').join(',')})
         `).run(...formalRunIdList)
       }
+      database.prepare('DELETE FROM formal_agent_requests WHERE session_id = ?').run(sessionId)
       database.prepare('DELETE FROM formal_agent_report_presentations WHERE session_id = ?').run(sessionId)
       database.prepare('DELETE FROM refinement_session_results WHERE session_id = ?').run(sessionId)
       database.prepare('DELETE FROM segments WHERE session_id = ?').run(sessionId)

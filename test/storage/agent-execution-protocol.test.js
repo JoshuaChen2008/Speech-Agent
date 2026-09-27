@@ -99,3 +99,27 @@ test('SEM-F16/SEM-F29/J22/J24: run create/cancel commands reuse the execution wo
   assert.equal(Object.hasOwn(cancelled.result, 'database'), false)
   void service
 })
+
+test('SEM-F38/DB1/J30-ACCEPT: summary request protocol persists, replays and cancels the same accepted identity', (t) => {
+  const { call } = fixture(t)
+  const acceptedRequest = {
+    requestId: 'request.protocol.summary',
+    sessionId: 'protocol-session',
+    clientKeyDigest: sha256Canonical({ key: 'protocol-key' }),
+    requestDigest: sha256Canonical({ action: 'summary', session: 'protocol-session' }),
+    scopeDigest: sha256Canonical({ kind: 'session', reference: 'protocol-session' }),
+    promptDigest: sha256Canonical({ prompt: 'registered-summary-preset' }),
+    action: 'summary',
+    summaryUseMemory: true
+  }
+  const accepted = call(OPERATIONS.SUMMARY_REQUEST_ACCEPT, { request: acceptedRequest })
+  assert.equal(accepted.ok, true)
+  assert.equal(accepted.result.state, 'accepted')
+  assert.equal(accepted.result.memoryState, 'not_read')
+  assert.equal(call(OPERATIONS.SUMMARY_REQUEST_ACCEPT, { request: acceptedRequest }).result.replayed, true)
+  assert.equal(call(OPERATIONS.SUMMARY_REQUEST_GET, { request: { requestId: acceptedRequest.requestId } }).result.revision, 0)
+  const cancelled = call(OPERATIONS.SUMMARY_REQUEST_CANCEL, { request: { requestId: acceptedRequest.requestId, generation: 1 } })
+  assert.equal(cancelled.ok, true)
+  assert.equal(cancelled.result.state, 'cancelled')
+  assert.equal(call(OPERATIONS.SUMMARY_REQUEST_GET, { request: { requestId: acceptedRequest.requestId } }).result.cancelRequested, true)
+})
