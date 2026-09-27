@@ -109,6 +109,9 @@ test('SEM-F38/DB1/J30-ACCEPT: summary request protocol persists, replays and can
     requestDigest: sha256Canonical({ action: 'summary', session: 'protocol-session' }),
     scopeDigest: sha256Canonical({ kind: 'session', reference: 'protocol-session' }),
     promptDigest: sha256Canonical({ prompt: 'registered-summary-preset' }),
+    inputWatermark: { throughEventOrder: 1 },
+    transcriptVersion: 'raw',
+    inputDigest: sha256Canonical({ input: 'protocol-session' }),
     action: 'summary',
     summaryUseMemory: true
   }

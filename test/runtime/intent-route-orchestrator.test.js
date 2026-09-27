@@ -65,6 +65,64 @@ test('SEM-F16/SEM-F28/J22/J24: model-first route creates independent route and t
   assert.equal(calls.find(([name, request]) => name === 'interaction.create' && request.runId === target[1].runId)[1].routingMode, 'model')
 })
 
+test('SEM-F38/J30-ACCEPT: fixed summary preset creates its linked target without model intent routing', async () => {
+  const { orchestrator, calls } = harness()
+  const result = await orchestrator.submitFixedTarget({
+    ...base,
+    requestId: 'request.summary.fixed',
+    requestGeneration: 1,
+    summaryUseMemory: false
+  })
+  assert.equal(result.recipeId, 'summary.minutes')
+  assert.equal(result.routingMode, 'preset')
+  assert.equal(calls.filter(([name]) => name === 'run.create').length, 1)
+  assert.equal(calls.filter(([name]) => name === 'loop').length, 0)
+  const target = calls.find(([name]) => name === 'run.create')[1]
+  assert.equal(target.requestId, 'request.summary.fixed')
+  assert.equal(target.requestGeneration, 1)
+  assert.equal(target.summaryUseMemory, false)
+})
+
+test('SEM-F38/J30-ACCEPT: question routing keeps the real model route while excluding the fixed summary recipe', async () => {
+  const { orchestrator, calls } = harness()
+  const result = await orchestrator.submit({
+    ...base,
+    requestId: 'request.question.route',
+    requestGeneration: 1,
+    permittedTargetRecipes: ['qa.answer']
+  })
+  assert.equal(result.recipeId, 'qa.answer')
+  assert.equal(result.routingMode, 'model')
+  assert.equal(calls.filter(([name]) => name === 'loop').length, 1)
+  const requestRuns = calls.filter(([name]) => name === 'run.create').map(([, request]) => request)
+  assert.deepEqual(requestRuns.map((request) => request.recipeId), ['intent.route', 'qa.answer'])
+  assert.ok(requestRuns.every((request) => request.requestId === 'request.question.route' && request.requestGeneration === 1))
+  assert.equal(requestRuns.some((request) => request.recipeId === 'summary.minutes'), false)
+})
+
+test('SEM-F38/J30-ACCEPT: question rules fallback cannot turn into a fixed summary action', async () => {
+  const { orchestrator, calls } = harness({ loopError: 'AGENT_PROVIDER_TIMEOUT' })
+  const result = await orchestrator.submit({
+    ...base,
+    prompt: '请总结本次会话',
+    requestId: 'request.question.fallback',
+    requestGeneration: 1,
+    permittedTargetRecipes: ['qa.answer']
+  })
+  assert.equal(result.recipeId, 'qa.answer')
+  assert.equal(result.routingMode, 'rules')
+  assert.equal(calls.some(([name, request]) => name === 'run.create' && request.recipeId === 'summary.minutes'), false)
+})
+
+test('SEM-F38/SEM-F16: the existing target allowlist still rejects recipes outside the configured set', async () => {
+  const { orchestrator, calls } = harness({ loopResult: { recipeId: 'report.analysis', confidence: 1 } })
+  orchestrator.allowedTargetRecipes = new Set(['summary.minutes', 'qa.answer'])
+  const result = await orchestrator.submit(base)
+  assert.equal(result.unsupported, true)
+  assert.equal(result.recipeId, 'report.analysis')
+  assert.equal(calls.filter(([name, request]) => name === 'run.create' && request.recipeId !== 'intent.route').length, 0)
+})
+
 test('SEM-F16/SEM-F28/J22: non-ready and route failures use deterministic rules without confidence thresholds', async () => {
   const unavailable = harness({ eligibility: 'credential_unavailable' })
   const fallback = await unavailable.orchestrator.submit({ ...base, prompt: '请分析内容' })

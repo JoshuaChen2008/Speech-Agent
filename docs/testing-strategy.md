@@ -35,7 +35,7 @@ P0 为**实现完成·尚未验收**；P1 受理存储子切片为**实现完成
 | 旅程/子项 | 用户路径与可观察结果 | 必须真实的内部边界与失败矩阵 | 当前证据 |
 |---|---|---|---|
 | J30-STATE | 提交→快速失败→通知丢失→详情校准→准确失败；刷新/恢复/重载一致 | main/service/runner/SQLite/renderer/preload；旧revision/目标迟到、读取故障、新鲜度、草稿保留 | P0 子集实现完成·尚未验收：S5 SQLite 终态通知和 J25 生产 renderer 容量失败；J30 全矩阵未验收 |
-| J30-ACCEPT | 模型路由前可取消；明确总结零模型判定；未知回执同键不重复 | exact IPC、受理、真实路由器、SQLite；路由慢/取消/迟到/兜底、重复点击、删除旧键 | 已决定 |
+| J30-ACCEPT | 模型路由前可取消；明确总结零模型判定；未知回执同键不重复 | exact IPC、受理、真实路由器、SQLite；路由慢/取消/迟到/兜底、重复点击、删除旧键 | 后端受理子旅程实现完成·尚未验收：真实 SQLite/AgentRunService/ModelAccess/IntentRouteOrchestrator覆盖持久身份、preset零路由、question路由、同键回执丢失且资格/输入源不可用时重放、取消写失败重试；main/preload/renderer及完整 J30 仍未验收 |
 | J30-CANCEL | pending/running或旧快照终态取消→权威终态 | 真实事务竞争、service/scheduler/adapter/UI；provider不理abort、工具慢、成功/失败先提交、取消落库失败、登记期限 | P0 子集实现完成·尚未验收：AgentRunService 冲突回读、S5 真实 SQLite 终态竞争及 UI 详情读取失败；全链取消期限未验收 |
 | J30-PROGRESS | 真实阶段、等待、块数、attempt、实际记忆事实 | 真实阶段发射/快照/UI；无首响应、工具等待、退避、重跑进度重置、usage未知 | 已决定 |
 | J30-RECOVERY | 长请求续租→失租/退出→重开→明确继续或已取消 | 真实scheduler/lease/storage/main；旧owner/attempt回写、固定提示重建、自由问题提示缺失、剩余预算 | 已决定 |
@@ -49,11 +49,13 @@ P0 为**实现完成·尚未验收**；P1 受理存储子切片为**实现完成
 | J31-RECOVERY | 中断后同run/绑定新attempt整次重跑 | 真SQLite/计划digest/剩余预算；中间正文零持久、取消不复活、来源撤销、删除 | 已决定 |
 | J31-COMPAT | 既有库升级→旧结果/绑定/导出→新v2总结 | 真追加迁移、v1/v2 validator/导出/原始历史；旧SQL/checksum及导出字节不变、删除级联、其它recipe预算不变 | 已决定 |
 
-2026-09-27 P1受理存储子切片：`formal_agent_requests` 的幂等受理、记忆参考偏好冻结、排队目标取消、会话删除收据及 v14→v15 回滚/升级已有定向和 core 证据，状态为**实现完成·尚未验收**。J30-ACCEPT 全链路仍为已决定；main/preload/renderer 接线、路由前取消与未知回执旅程尚未实施。
+2026-09-27 P1受理子切片：`formal_agent_requests` 的幂等受理、记忆参考偏好冻结、原始输入身份冻结、排队目标取消、会话删除收据、run 输入身份写屏障、无输入身份的 v15 活动行升级收束及 v14→v16 回滚/升级已有定向和 core 证据；服务层 J30-ACCEPT 真实 SQLite 旅程覆盖未知回执重放及取消写失败重试，状态为**实现完成·尚未验收**。完整 J30-ACCEPT 仍待 main/preload/renderer 接线和正式窗口旅程。
 
 容量样本使用固定种子合成文本，不复制用户会话。模型替身只证明编排/覆盖，不能用预设答案宣称真实模型内容质量。实机五小时采集、真实模型质量/公网取消、窗口操作、正式包和适用I2/I3/I4分别留证；确定性时间偏移不构成五小时长稳。新增测试仅落既有core/integration/evidence目录，按§2.1选择验证范围。
 
 2026-09-27 P0 本地验证：`npm run test:core` 为 986 项通过；`node --test test/ui/agent-ui.test.js` 为 37 项通过；`npm run verify:renderer`、J25 Electron/SQLite 旅程及 S5 SQLite 旅程通过。`npm run test:integration` 中 67 项有 64 项通过、3 项因本机 Electron GPU 子进程不可用而失败；相关 J25、S5、J29 旅程通过，因此完整 integration lane 仍未验收。未验证范围还包括 P1 运行控制/诊断、P2 长输入、真实模型质量、公网取消和实机运行。
+
+2026-09-27 P1受理服务切片验证：`npm run test:focus -- test/storage/session-summary-request-store.test.js test/storage/agent-execution-protocol.test.js test/integration/session-summary-request-j30-accept-journey.test.js test/runtime/intent-route-orchestrator.test.js test/contracts/session-summary-run-ui-contract.test.js` 为 35/35；`npm run test:core` 为 1008 项通过，包含 renderer 类型检查与构建。J30旅程使用真实 SQLite、存储 worker、StorageGateway、AgentRunService、ModelAccessRuntime 和 IntentRouteOrchestrator，仅替代 Agent 模型 provider 外部边界。尚未验证 main/preload/renderer 接线、完整 integration lane、真实模型、公网取消或实机运行。
 
 ### 2026-09-13 两项功能的新增旅程矩阵（规划登记）
 

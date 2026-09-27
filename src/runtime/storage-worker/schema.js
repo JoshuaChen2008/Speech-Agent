@@ -78,6 +78,20 @@ ALTER TABLE formal_agent_runs
 ALTER TABLE session_deletion_tombstones
   ADD COLUMN deleted_summary_request_count INTEGER NOT NULL DEFAULT 0 CHECK (deleted_summary_request_count >= 0);
 `;
+/* A durable acceptance must retain the exact input identity so a retry after
+   a lost receipt cannot re-read a changed transcript. */
+const SESSION_SUMMARY_INPUT_IDENTITY_SQL = `
+ALTER TABLE formal_agent_requests ADD COLUMN input_watermark_json TEXT;
+ALTER TABLE formal_agent_requests
+  ADD COLUMN transcript_version TEXT CHECK (transcript_version IS NULL OR transcript_version IN ('raw','refined'));
+ALTER TABLE formal_agent_requests
+  ADD COLUMN input_digest TEXT CHECK (input_digest IS NULL OR length(input_digest) = 64);
+UPDATE formal_agent_requests SET state='failed',phase='terminal',error_code='AGENT_RUN_UNAVAILABLE',
+  revision=revision+1
+WHERE input_watermark_json IS NULL AND transcript_version IS NULL AND input_digest IS NULL
+  AND route_run_id IS NULL AND target_run_id IS NULL
+  AND state IN ('accepted','preparing','routing','queued','retry_wait');
+`
 const FORMAL_AGENT_MIGRATIONS = Object.freeze([
   ...history.FORMAL_AGENT_MIGRATIONS,
   Object.freeze({ version: 10, sql: RETIREMENT_SQL, checksum: history.checksum(RETIREMENT_SQL) }),
@@ -85,7 +99,8 @@ const FORMAL_AGENT_MIGRATIONS = Object.freeze([
   Object.freeze({ version: 12, sql: SUMMARY_MEMORY_ERROR_SQL, checksum: history.checksum(SUMMARY_MEMORY_ERROR_SQL) }),
   Object.freeze({ version: 13, sql: RECOGNITION_SESSION_SQL, checksum: history.checksum(RECOGNITION_SESSION_SQL) }),
   Object.freeze({ version: 14, sql: SUMMARY_INPUT_LIMIT_ERROR_SQL, checksum: history.checksum(SUMMARY_INPUT_LIMIT_ERROR_SQL) }),
-  Object.freeze({ version: 15, sql: SESSION_SUMMARY_REQUEST_SQL, checksum: history.checksum(SESSION_SUMMARY_REQUEST_SQL) })
+  Object.freeze({ version: 15, sql: SESSION_SUMMARY_REQUEST_SQL, checksum: history.checksum(SESSION_SUMMARY_REQUEST_SQL) }),
+  Object.freeze({ version: 16, sql: SESSION_SUMMARY_INPUT_IDENTITY_SQL, checksum: history.checksum(SESSION_SUMMARY_INPUT_IDENTITY_SQL) })
 ])
 module.exports = {
   ...history,
@@ -93,6 +108,7 @@ module.exports = {
   SUMMARY_MEMORY_ERROR_SQL,
   SUMMARY_INPUT_LIMIT_ERROR_SQL,
   SESSION_SUMMARY_REQUEST_SQL,
+  SESSION_SUMMARY_INPUT_IDENTITY_SQL,
   FORMAL_AGENT_MIGRATIONS,
-  FORMAL_AGENT_SCHEMA_VERSION: 15
+  FORMAL_AGENT_SCHEMA_VERSION: 16
 }

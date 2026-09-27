@@ -33,6 +33,8 @@ test('SEM-F38/J30-ACCEPT: question action requires a bounded prompt and controls
   assert.equal(contract.assertAcceptRequest(request), request)
   assert.throws(() => contract.assertAcceptRequest({ ...request, recipe_id: 'summary.minutes' }), /exact/)
   assert.equal(contract.assertControlRequest({ ...header, request_id: 'request.p1.summary' }).request_id, 'request.p1.summary')
+  assert.equal(contract.assertCancelRequest({ ...header, request_id: 'request.p1.summary', generation: 1 }).generation, 1)
+  assert.throws(() => contract.assertCancelRequest({ ...header, request_id: 'request.p1.summary' }), /exact/)
 })
 
 test('SEM-F38/J30-PROGRESS: snapshot rejects fabricated progress and non-finite ages', () => {
@@ -53,9 +55,35 @@ test('SEM-F38/J30-PROGRESS: snapshot rejects fabricated progress and non-finite 
     budget: null,
     freshness: 'fresh',
     cancel_requested: false,
-    diagnostics_available: true
+    resume_required: false,
+    diagnostics_available: false,
+    route_run_id: null,
+    target_run_id: 'run.summary.target',
+    interaction_id: 'interaction.summary.target',
+    recipe_id: 'summary.minutes',
+    routing_mode: 'preset'
   }
   assert.equal(contract.assertRequestSnapshot(snapshot), snapshot)
   assert.throws(() => contract.assertRequestSnapshot({ ...snapshot, progress_percent: 40 }), /exact/)
   assert.throws(() => contract.assertRequestSnapshot({ ...snapshot, last_activity_age_ms: Infinity }), /safe integer/)
+})
+
+test('SEM-F38/J30-ACCEPT: accepted result and response envelope are versioned and exact', () => {
+  const snapshot = {
+    request_id: 'request.p1.summary', generation: 1, revision: 0, action: 'summary',
+    state: 'accepted', phase: 'accepted', attempt: 0, elapsed_ms: 0,
+    last_activity_age_ms: null, validated_chunk_count: null, total_chunk_count: null,
+    memory_state: 'not_read', error_code: null, budget: null, freshness: 'unknown',
+    cancel_requested: false, resume_required: false, diagnostics_available: false,
+    route_run_id: null, target_run_id: null, interaction_id: null, recipe_id: null, routing_mode: null
+  }
+  const response = {
+    ...header,
+    ok: true,
+    error: null,
+    result: { accepted: true, replayed: false, snapshot }
+  }
+  assert.equal(contract.assertAcceptResponse(response), response)
+  assert.throws(() => contract.assertAcceptResponse({ ...response, internal_digest: 'x' }), /exact/)
+  assert.throws(() => contract.assertAcceptResponse({ ...response, result: { ...response.result, snapshot: { ...snapshot, prompt: 'sensitive' } } }), /exact/)
 })

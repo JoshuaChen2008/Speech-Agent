@@ -395,6 +395,7 @@ class AgentExecutionStore {
     const requestGeneration = input.requestGeneration === undefined ? null : boundedInteger(input.requestGeneration, 1, Number.MAX_SAFE_INTEGER)
     if (requestId !== null && input.requestedBy !== 'user') fail('AGENT_REQUEST_INVALID')
     if (scope.kind === 'session' && !Object.hasOwn(inputWatermark, 'throughEventOrder')) fail('AGENT_REQUEST_INVALID')
+    let acceptedRequest = null
     const requestIdentity = {
       recipeId: recipe.recipeId,
       recipeVersion: recipe.recipeVersion,
@@ -419,16 +420,16 @@ class AgentExecutionStore {
     const scopeDigest = sha256Canonical(scope)
     return this.transaction(() => {
       if (requestId !== null) {
-        const accepted = this.database.prepare('SELECT * FROM formal_agent_requests WHERE request_id=?').get(requestId)
-        if (!accepted || Number(accepted.generation) !== requestGeneration) fail('AGENT_REQUEST_IDENTITY_CONFLICT')
-        if (accepted.cancel_requested !== 0 || accepted.state === 'cancelled') fail('AGENT_INTERACTION_STATE_CONFLICT')
-        if ((accepted.action === 'summary') !== (recipe.recipeId === 'summary.minutes')) {
+        acceptedRequest = this.database.prepare('SELECT * FROM formal_agent_requests WHERE request_id=?').get(requestId)
+        if (!acceptedRequest || Number(acceptedRequest.generation) !== requestGeneration) fail('AGENT_REQUEST_IDENTITY_CONFLICT')
+        if (acceptedRequest.cancel_requested !== 0 || acceptedRequest.state === 'cancelled') fail('AGENT_INTERACTION_STATE_CONFLICT')
+        if ((acceptedRequest.action === 'summary') !== (recipe.recipeId === 'summary.minutes')) {
           fail('AGENT_REQUEST_IDENTITY_CONFLICT')
         }
-        if (accepted.session_id !== scope.reference || accepted.scope_digest !== scopeDigest) {
+        if (acceptedRequest.session_id !== scope.reference || acceptedRequest.scope_digest !== scopeDigest) {
           fail('AGENT_REQUEST_IDENTITY_CONFLICT')
         }
-        if (recipe.recipeId === 'summary.minutes' && accepted.summary_use_memory !== (summaryUseMemory ? 1 : 0)) {
+        if (recipe.recipeId === 'summary.minutes' && acceptedRequest.summary_use_memory !== (summaryUseMemory ? 1 : 0)) {
           fail('AGENT_REQUEST_IDENTITY_CONFLICT')
         }
       }
@@ -449,6 +450,10 @@ class AgentExecutionStore {
       if (byClient) {
         if (byClient.request_digest !== requestDigest || requestId !== null && byClient.session_summary_request_id !== requestId) fail('AGENT_REQUEST_INVALID')
         return rowRun(byClient, true)
+      }
+      if (acceptedRequest && (acceptedRequest.transcript_version !== input.transcriptVersion ||
+          acceptedRequest.input_watermark_json !== canonicalize(inputWatermark) || acceptedRequest.input_digest !== input.inputDigest)) {
+        fail('AGENT_REQUEST_IDENTITY_CONFLICT')
       }
       const now = this.nowValue()
       const revisionRow = this.database.prepare(`
@@ -506,6 +511,27 @@ class AgentExecutionStore {
   }
 
   sessionSummaryRequestProjection (row, replayed = false) {
+    const targetRun = row.target_run_id === null
+      ? null
+      : this.database.prepare('SELECT run_id,recipe_id,state,attempt_count FROM formal_agent_runs WHERE run_id=?').get(row.target_run_id)
+    const routeRun = row.route_run_id === null
+      ? null
+      : this.database.prepare('SELECT run_id,state FROM formal_agent_runs WHERE run_id=?').get(row.route_run_id)
+    const targetInteraction = targetRun === null
+      ? null
+      : this.database.prepare('SELECT interaction_id,routing_mode FROM formal_agent_interactions WHERE run_id=?').get(targetRun.run_id)
+    let state = row.state
+    let phase = row.phase
+    if (targetRun) {
+      if (['succeeded', 'failed', 'cancelled'].includes(targetRun.state)) {
+        state = targetRun.state
+        phase = 'terminal'
+      } else if (row.cancel_requested === 0) {
+        state = targetRun.state
+      }
+    } else if (routeRun && row.cancel_requested === 0 && routeRun.state === 'running') {
+      state = 'running'
+    }
     const budget = row.budget_axis === null
       ? null
       : { axis: row.budget_axis, actual: Number(row.budget_actual), limit: Number(row.budget_limit) }
@@ -515,17 +541,23 @@ class AgentExecutionStore {
       requestDigest: row.request_digest,
       scopeDigest: row.scope_digest,
       promptDigest: row.prompt_digest,
+      inputWatermark: row.input_watermark_json === null ? null : jsonObject(row.input_watermark_json),
+      transcriptVersion: row.transcript_version,
+      inputDigest: row.input_digest,
       action: row.action,
       summaryUseMemory: row.summary_use_memory === null ? null : row.summary_use_memory !== 0,
       routeRunId: row.route_run_id,
       targetRunId: row.target_run_id,
-      state: row.state,
-      phase: row.phase,
+      targetInteractionId: targetInteraction?.interaction_id || null,
+      targetRoutingMode: targetInteraction?.routing_mode || null,
+      targetRecipeId: targetRun?.recipe_id || null,
+      state,
+      phase,
       generation: Number(row.generation),
       revision: Number(row.revision),
       cancelRequested: row.cancel_requested !== 0,
       resumeRequired: row.resume_required !== 0,
-      attempt: Number(row.attempt),
+      attempt: targetRun ? Number(targetRun.attempt_count) : Number(row.attempt),
       elapsedMs: Number(row.elapsed_ms),
       lastActivityElapsedMs: Number(row.last_activity_elapsed_ms),
       validatedChunkCount: row.validated_chunk_count === null ? null : Number(row.validated_chunk_count),
@@ -540,11 +572,15 @@ class AgentExecutionStore {
 
   acceptSessionSummaryRequest (input) {
     exactObject(input, [
-      'requestId', 'sessionId', 'clientKeyDigest', 'requestDigest', 'scopeDigest', 'promptDigest', 'action', 'summaryUseMemory'
+      'requestId', 'sessionId', 'clientKeyDigest', 'requestDigest', 'scopeDigest', 'promptDigest', 'action', 'summaryUseMemory',
+      'inputWatermark', 'transcriptVersion', 'inputDigest'
     ])
     const requestId = identifier(input.requestId)
     const sessionId = identifier(input.sessionId)
     for (const field of ['clientKeyDigest', 'requestDigest', 'scopeDigest', 'promptDigest']) digest(input[field])
+    const inputWatermark = runWatermark(input.inputWatermark)
+    if (Object.keys(inputWatermark).length !== 1 || inputWatermark.throughEventOrder === undefined || input.transcriptVersion !== 'raw') fail('AGENT_REQUEST_INVALID')
+    digest(input.inputDigest)
     if (!['summary', 'question'].includes(input.action) ||
         input.action === 'summary' && typeof input.summaryUseMemory !== 'boolean' ||
         input.action === 'question' && input.summaryUseMemory !== null) fail('AGENT_REQUEST_INVALID')
@@ -570,7 +606,9 @@ class AgentExecutionStore {
       if (prior) {
         if (prior.request_id !== requestId || prior.request_digest !== input.requestDigest ||
             prior.session_id !== sessionId || prior.scope_digest !== input.scopeDigest || prior.prompt_digest !== input.promptDigest || prior.action !== input.action ||
-            prior.summary_use_memory !== (input.summaryUseMemory === null ? null : (input.summaryUseMemory ? 1 : 0))) {
+            prior.summary_use_memory !== (input.summaryUseMemory === null ? null : (input.summaryUseMemory ? 1 : 0)) ||
+            prior.input_watermark_json !== canonicalize(inputWatermark) || prior.transcript_version !== input.transcriptVersion ||
+            prior.input_digest !== input.inputDigest) {
           fail('AGENT_REQUEST_IDENTITY_CONFLICT')
         }
         return this.sessionSummaryRequestProjection(prior, true)
@@ -580,13 +618,15 @@ class AgentExecutionStore {
       this.database.prepare(`
         INSERT INTO formal_agent_requests(
           request_id,session_id,client_key_digest,request_digest,scope_digest,prompt_digest,action,summary_use_memory,
+          input_watermark_json,transcript_version,input_digest,
           state,phase,generation,revision,route_run_id,target_run_id,cancel_requested,resume_required,
           attempt,elapsed_ms,last_activity_elapsed_ms,validated_chunk_count,total_chunk_count,memory_state,
           error_code,budget_axis,budget_actual,budget_limit,diagnostics_available,created_at,updated_at
-        ) VALUES (?,?,?,?,?,?,?,?,'accepted','accepted',1,0,NULL,NULL,0,0,0,0,0,NULL,NULL,?,NULL,NULL,NULL,NULL,1,?,?)
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,'accepted','accepted',1,0,NULL,NULL,0,0,0,0,0,NULL,NULL,?,NULL,NULL,NULL,NULL,0,?,?)
       `).run(
         requestId, sessionId, input.clientKeyDigest, input.requestDigest, input.scopeDigest, input.promptDigest,
         input.action, input.summaryUseMemory === null ? null : (input.summaryUseMemory ? 1 : 0),
+        canonicalize(inputWatermark), input.transcriptVersion, input.inputDigest,
         input.action === 'summary' && input.summaryUseMemory === false ? 'not_used' : 'not_read', now, now
       )
       return this.sessionSummaryRequestProjection(this.sessionSummaryRequestRow(requestId))

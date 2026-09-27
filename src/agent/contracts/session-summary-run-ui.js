@@ -15,8 +15,9 @@ const PHASES = Object.freeze([
 ])
 const MEMORY_STATES = Object.freeze(['not_read', 'not_used', 'empty', 'referenced', 'failed', 'unknown'])
 const FRESHNESS_STATES = Object.freeze(['fresh', 'stale', 'unknown'])
+const ROUTING_MODES = Object.freeze(['model', 'rules', 'preset'])
 const ID = /^[a-z0-9][a-z0-9._:-]{0,159}$/
-const DIGEST = /^[a-f0-9]{64}$/
+const RECIPE_ID = /^[a-z][a-z0-9]*(?:\.[a-z0-9]+)+$/
 const ERROR_CODES = Object.freeze([
   'AGENT_RUN_UNAVAILABLE', 'AGENT_RUN_INVALID', 'AGENT_CANCELLED',
   'AGENT_PROVIDER_AUTH_FAILED', 'AGENT_PROVIDER_RATE_LIMITED', 'AGENT_PROVIDER_UNAVAILABLE',
@@ -31,9 +32,7 @@ const IPC_CHANNELS = Object.freeze({
   get: 'session-summary-run:get',
   cancel: 'session-summary-run:cancel',
   resume: 'session-summary-run:resume',
-  changed: 'session-summary-run:changed',
-  getDiagnostics: 'session-summary-run:get-diagnostics',
-  exportDiagnostics: 'session-summary-run:export-diagnostics'
+  changed: 'session-summary-run:changed'
 })
 
 function fail (path, message) { throw new TypeError(`${path}: ${message}`) }
@@ -99,6 +98,23 @@ function assertControlRequest (request) {
   return request
 }
 
+function assertCancelRequest (request) {
+  exact(request, ['contract_id', 'contract_version', 'generation', 'request_id'], 'request')
+  header(request)
+  id(request.request_id, 'request.request_id')
+  integer(request.generation, 'request.generation', 1)
+  return request
+}
+
+function assertResumeRequest (request) {
+  exact(request, ['contract_id', 'contract_version', 'expected_revision', 'generation', 'request_id'], 'request')
+  header(request)
+  id(request.request_id, 'request.request_id')
+  integer(request.generation, 'request.generation', 1)
+  integer(request.expected_revision, 'request.expected_revision')
+  return request
+}
+
 function assertBudget (value) {
   if (value === null) return value
   exact(value, ['axis', 'actual', 'limit'], 'snapshot.budget')
@@ -112,7 +128,8 @@ function assertRequestSnapshot (snapshot) {
   exact(snapshot, [
     'request_id', 'generation', 'revision', 'action', 'state', 'phase', 'attempt',
     'elapsed_ms', 'last_activity_age_ms', 'validated_chunk_count', 'total_chunk_count',
-    'memory_state', 'error_code', 'budget', 'freshness', 'cancel_requested', 'diagnostics_available'
+    'memory_state', 'error_code', 'budget', 'freshness', 'cancel_requested', 'resume_required',
+    'diagnostics_available', 'route_run_id', 'target_run_id', 'interaction_id', 'recipe_id', 'routing_mode'
   ], 'snapshot')
   id(snapshot.request_id, 'snapshot.request_id')
   integer(snapshot.generation, 'snapshot.generation', 1)
@@ -135,15 +152,63 @@ function assertRequestSnapshot (snapshot) {
   assertBudget(snapshot.budget)
   if (!FRESHNESS_STATES.includes(snapshot.freshness)) fail('snapshot.freshness', 'is not registered')
   if (typeof snapshot.cancel_requested !== 'boolean') fail('snapshot.cancel_requested', 'must be boolean')
+  if (typeof snapshot.resume_required !== 'boolean') fail('snapshot.resume_required', 'must be boolean')
   if (typeof snapshot.diagnostics_available !== 'boolean') fail('snapshot.diagnostics_available', 'must be boolean')
+  for (const key of ['route_run_id', 'target_run_id', 'interaction_id']) {
+    if (snapshot[key] !== null) id(snapshot[key], `snapshot.${key}`)
+  }
+  if (snapshot.recipe_id !== null && (typeof snapshot.recipe_id !== 'string' || !RECIPE_ID.test(snapshot.recipe_id))) {
+    fail('snapshot.recipe_id', 'must be null or a registered recipe identity')
+  }
+  if (snapshot.routing_mode !== null && !ROUTING_MODES.includes(snapshot.routing_mode)) fail('snapshot.routing_mode', 'is not registered')
   return snapshot
 }
 
 function assertAcceptResult (result) {
-  exact(result, ['accepted', 'snapshot'], 'result')
+  exact(result, ['accepted', 'replayed', 'snapshot'], 'result')
   if (typeof result.accepted !== 'boolean') fail('result.accepted', 'must be boolean')
+  if (typeof result.replayed !== 'boolean') fail('result.replayed', 'must be boolean')
   assertRequestSnapshot(result.snapshot)
   return result
+}
+
+function assertPublicError (error) {
+  exact(error, ['code', 'next_action'], 'response.error')
+  if (!ERROR_CODES.includes(error.code)) fail('response.error.code', 'is not registered')
+  if (error.next_action !== null && typeof error.next_action !== 'string') fail('response.error.next_action', 'must be null or a string')
+  return error
+}
+
+function assertEnvelope (response, resultValidator) {
+  exact(response, ['contract_id', 'contract_version', 'ok', 'error', 'result'], 'response')
+  if (response.contract_id !== CONTRACT_ID || response.contract_version !== CONTRACT_VERSION) fail('response', 'unsupported contract version')
+  if (typeof response.ok !== 'boolean') fail('response.ok', 'must be boolean')
+  if (response.ok) {
+    if (response.error !== null) fail('response.error', 'must be null')
+    resultValidator(response.result)
+  } else {
+    if (response.result !== null) fail('response.result', 'must be null for a failed response')
+    assertPublicError(response.error)
+  }
+  return response
+}
+
+function assertAcceptResponse (response) { return assertEnvelope(response, assertAcceptResult) }
+function assertSnapshotResult (result) {
+  exact(result, ['snapshot'], 'result')
+  assertRequestSnapshot(result.snapshot)
+  return result
+}
+function assertGetResponse (response) { return assertEnvelope(response, assertSnapshotResult) }
+function assertCancelResponse (response) { return assertEnvelope(response, assertSnapshotResult) }
+function assertResumeResponse (response) { return assertEnvelope(response, assertSnapshotResult) }
+function assertChangedEvent (event) {
+  exact(event, ['contract_id', 'contract_version', 'request_id', 'generation', 'revision'], 'event')
+  header(event)
+  id(event.request_id, 'event.request_id')
+  integer(event.generation, 'event.generation', 1)
+  integer(event.revision, 'event.revision')
+  return event
 }
 
 module.exports = {
@@ -155,10 +220,18 @@ module.exports = {
   IPC_CHANNELS,
   MEMORY_STATES,
   PHASES,
+  ROUTING_MODES,
   STATES,
   assertAcceptRequest,
+  assertAcceptResponse,
   assertAcceptResult,
   assertBudget,
+  assertCancelRequest,
+  assertCancelResponse,
+  assertChangedEvent,
   assertControlRequest,
+  assertGetResponse,
+  assertResumeRequest,
+  assertResumeResponse,
   assertRequestSnapshot
 }

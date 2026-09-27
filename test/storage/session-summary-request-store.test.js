@@ -37,6 +37,9 @@ function acceptedRequest (overrides = {}) {
     requestDigest: '2'.repeat(64),
     scopeDigest: sha256Canonical({ kind: 'session', reference: 'session.p1' }),
     promptDigest: '4'.repeat(64),
+    inputWatermark: { throughEventOrder: 5 },
+    transcriptVersion: 'raw',
+    inputDigest: '6'.repeat(64),
     action: 'summary',
     summaryUseMemory: true,
     ...overrides
@@ -50,11 +53,31 @@ test('SEM-F38/DB1/J30-ACCEPT: accepted identity is durable, digest-only and idem
   assert.equal(first.requestId, accepted.requestId)
   assert.equal(first.state, 'accepted')
   assert.equal(first.revision, 0)
+  assert.equal(first.diagnosticsAvailable, false)
   assert.deepEqual(store.acceptSessionSummaryRequest(accepted), { ...first, replayed: true })
   const row = subtitleStore.database.prepare('SELECT * FROM formal_agent_requests').get()
   assert.equal(row.prompt_digest, accepted.promptDigest)
+  assert.equal(row.input_watermark_json, '{"throughEventOrder":5}')
+  assert.equal(row.transcript_version, 'raw')
+  assert.equal(row.input_digest, accepted.inputDigest)
+  assert.equal(row.diagnostics_available, 0)
   assert.equal(Object.hasOwn(row, 'prompt'), false)
   assert.throws(() => store.acceptSessionSummaryRequest({ ...accepted, requestDigest: '5'.repeat(64) }), (error) => error.code === 'AGENT_REQUEST_IDENTITY_CONFLICT')
+  assert.throws(() => store.acceptSessionSummaryRequest({ ...accepted, inputDigest: '7'.repeat(64) }), (error) => error.code === 'AGENT_REQUEST_IDENTITY_CONFLICT')
+})
+
+test('SEM-F38/DB1/J30-ACCEPT: linked run must use the accepted input version, watermark and digest', (t) => {
+  const { store } = fixture(t)
+  const accepted = acceptedRequest({ action: 'question', summaryUseMemory: null })
+  store.acceptSessionSummaryRequest(accepted)
+  assert.throws(() => store.createRun({
+    runId: 'run.request.changed-input', recipeId: 'qa.answer', recipeVersion: '1',
+    scope: { kind: 'session', reference: accepted.sessionId }, transcriptVersion: 'raw',
+    inputWatermark: { throughEventOrder: accepted.inputWatermark.throughEventOrder + 1 },
+    inputDigest: accepted.inputDigest, requestedBy: 'user', clientIdempotencyKey: 'request.changed-input',
+    requestId: accepted.requestId, requestGeneration: 1
+  }), (error) => error.code === 'AGENT_REQUEST_IDENTITY_CONFLICT')
+  assert.equal(store.getSessionSummaryRequest({ requestId: accepted.requestId }).targetRunId, null)
 })
 
 test('SEM-F38/DB1/J30-CANCEL: request cancellation blocks a later target run', (t) => {
@@ -67,7 +90,7 @@ test('SEM-F38/DB1/J30-CANCEL: request cancellation blocks a later target run', (
   assert.throws(() => store.createRun({
     runId: 'run.cancelled.request', recipeId: 'qa.answer', recipeVersion: '1',
     scope: { kind: 'session', reference: 'session.p1' }, transcriptVersion: 'raw',
-    inputWatermark: { throughEventOrder: 1 }, inputDigest: sha256Canonical({ input: 'synthetic' }),
+    inputWatermark: accepted.inputWatermark, inputDigest: accepted.inputDigest,
     requestedBy: 'user', clientIdempotencyKey: 'request.digest.key', requestId: accepted.requestId, requestGeneration: 1
   }), (error) => error.code === 'AGENT_INTERACTION_STATE_CONFLICT')
   assert.equal(store.getSessionSummaryRequest({ requestId: accepted.requestId }).state, 'cancelled')
@@ -95,7 +118,7 @@ test('SEM-F38/DB1/J30-ACCEPT: summary acceptance requires a frozen memory prefer
   assert.throws(() => store.createRun({
     runId: 'run.request.memory-conflict', recipeId: 'summary.minutes', recipeVersion: '1',
     scope: { kind: 'session', reference: request.sessionId }, transcriptVersion: 'raw',
-    inputWatermark: { throughEventOrder: 1 }, inputDigest: sha256Canonical({ input: 'synthetic' }),
+    inputWatermark: request.inputWatermark, inputDigest: request.inputDigest,
     requestedBy: 'user', clientIdempotencyKey: 'request.memory.conflict', requestId: request.requestId,
     requestGeneration: 1, summaryUseMemory: true
   }), (error) => error.code === 'AGENT_REQUEST_IDENTITY_CONFLICT')
@@ -131,7 +154,7 @@ test('SEM-F38/DB1/J30-CANCEL: cancelling a queued target prevents it from remain
   store.createRun({
     runId: 'run.queued.request', recipeId: 'qa.answer', recipeVersion: '1',
     scope: { kind: 'session', reference: accepted.sessionId }, transcriptVersion: 'raw',
-    inputWatermark: { throughEventOrder: 1 }, inputDigest: sha256Canonical({ input: 'synthetic' }),
+    inputWatermark: accepted.inputWatermark, inputDigest: accepted.inputDigest,
     requestedBy: 'user', clientIdempotencyKey: 'request.digest.key', requestId: accepted.requestId, requestGeneration: 1
   })
   const cancelled = store.cancelSessionSummaryRequest({ requestId: accepted.requestId, generation: 1 })
@@ -148,7 +171,7 @@ test('SEM-F38/DB1/J30-CANCEL: repeated cancellation while a target is running re
   store.createRun({
     runId: 'run.running.request', recipeId: 'qa.answer', recipeVersion: '1',
     scope: { kind: 'session', reference: accepted.sessionId }, transcriptVersion: 'raw',
-    inputWatermark: { throughEventOrder: 1 }, inputDigest: sha256Canonical({ input: 'synthetic' }),
+    inputWatermark: accepted.inputWatermark, inputDigest: accepted.inputDigest,
     requestedBy: 'user', clientIdempotencyKey: 'request.running.key', requestId: accepted.requestId, requestGeneration: 1
   })
   subtitleStore.database.prepare("UPDATE formal_agent_runs SET state='running',attempt_count=1,lease_owner='worker.test',lease_expires_at=5000 WHERE run_id=?").run('run.running.request')
@@ -167,7 +190,7 @@ test('SEM-F38/DB1/J30-CANCEL: cancellation after route failure preserves the fai
   store.createRun({
     runId: 'run.failed.route', recipeId: 'intent.route', recipeVersion: '1',
     scope: { kind: 'session', reference: accepted.sessionId }, transcriptVersion: 'raw',
-    inputWatermark: { throughEventOrder: 1 }, inputDigest: sha256Canonical({ input: 'synthetic' }),
+    inputWatermark: accepted.inputWatermark, inputDigest: accepted.inputDigest,
     requestedBy: 'user', clientIdempotencyKey: 'request.failed.route', requestId: accepted.requestId, requestGeneration: 1
   })
   subtitleStore.database.prepare("UPDATE formal_agent_runs SET state='failed',error_code='AGENT_INTERNAL_FAILURE' WHERE run_id=?").run('run.failed.route')
@@ -177,7 +200,7 @@ test('SEM-F38/DB1/J30-CANCEL: cancellation after route failure preserves the fai
   assert.equal(result.cancelRequested, false)
 })
 
-test('DB1: migration v14 to v15 preserves existing rows and old checksums and rolls back failed application', (t) => {
+test('DB1: migration v14 to v16 preserves existing rows and old checksums and rolls back failed application', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-request-migration-'))
   const databasePath = path.join(root, 'speech-agent.sqlite3')
   let subtitleStore
@@ -202,8 +225,37 @@ test('DB1: migration v14 to v15 preserves existing rows and old checksums and ro
   subtitleStore = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS, now: () => 4000 })
   const upgradedHistory = subtitleStore.database.prepare('SELECT version,checksum FROM schema_migrations ORDER BY version').all()
   assert.deepEqual(upgradedHistory.slice(0, 14), priorHistory)
-  assert.equal(upgradedHistory.length, 15)
+  assert.equal(upgradedHistory.length, 16)
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM sessions WHERE session_id = ?').get('session.migration').count, 1)
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM sqlite_schema WHERE name = ?').get('formal_agent_requests').count, 1)
   assert.equal(subtitleStore.database.prepare("SELECT COUNT(*) AS count FROM pragma_table_info('session_deletion_tombstones') WHERE name = 'deleted_summary_request_count'").get().count, 1)
+})
+
+test('DB1/J30-RECOVERY: v15 accepted requests without a linked run fail closed when v16 adds frozen input identity', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-request-v15-recovery-'))
+  const databasePath = path.join(root, 'speech-agent.sqlite3')
+  let subtitleStore
+  t.after(() => {
+    try { subtitleStore?.close() } catch {}
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  subtitleStore = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 15), now: () => 1000 })
+  subtitleStore.database.prepare(`
+    INSERT INTO formal_agent_requests(
+      request_id,session_id,client_key_digest,request_digest,scope_digest,prompt_digest,action,summary_use_memory,
+      state,phase,generation,revision,route_run_id,target_run_id,cancel_requested,resume_required,
+      attempt,elapsed_ms,last_activity_elapsed_ms,validated_chunk_count,total_chunk_count,memory_state,
+      error_code,budget_axis,budget_actual,budget_limit,diagnostics_available,created_at,updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'summary', 1, 'accepted', 'accepted', 1, 0, NULL, NULL, 0, 0,
+      0, 0, 0, NULL, NULL, 'not_read', NULL, NULL, NULL, NULL, 0, 1000, 1000)
+  `).run('request.v15.unlinked', 'session.v15.unlinked', '1'.repeat(64), '2'.repeat(64), '3'.repeat(64), '4'.repeat(64))
+  subtitleStore.close()
+
+  subtitleStore = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS, now: () => 2000 })
+  const row = subtitleStore.database.prepare('SELECT state,phase,error_code,revision,input_digest FROM formal_agent_requests WHERE request_id=?').get('request.v15.unlinked')
+  assert.equal(row.state, 'failed')
+  assert.equal(row.phase, 'terminal')
+  assert.equal(row.error_code, 'AGENT_RUN_UNAVAILABLE')
+  assert.equal(row.revision, 1)
+  assert.equal(row.input_digest, null)
 })
