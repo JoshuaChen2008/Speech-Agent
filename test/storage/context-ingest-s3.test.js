@@ -113,8 +113,12 @@ test('SEM-F32/J21: interaction signal ingestion accepts the six explicit values,
     runId: run.runId, interactionId: 'interaction.signal', routingMode: 'model',
     promptDigest: sha256Canonical('private prompt')
   })
+  const attempt = personalContext.claimNextFormalRun({
+    claimIdempotencyKey: 'claim.user.signal', owner: 'owner.user.signal', leaseMs: 30000, requestedBy: 'user'
+  })
   execution.terminalizeInteraction({
-    interactionId: 'interaction.signal', terminalReason: 'succeeded', errorCode: null,
+    interactionId: 'interaction.signal', attemptIdentity: attempt.attemptIdentity,
+    terminalReason: 'succeeded', errorCode: null,
     result: { schemaVersion: 1, answer: 'private result', sourceRefs: [], memoryRefs: [], unresolved: [] },
     usage: null, durationMs: 4
   })
@@ -227,17 +231,22 @@ test('SEM-F26/SEM-F32/J21: session deletion removes formal interactions, tool ca
     runId: run.runId, interactionId: 'interaction.signal.delete', routingMode: 'model',
     promptDigest: sha256Canonical('private prompt')
   })
+  const attempt = personalContext.claimNextFormalRun({
+    claimIdempotencyKey: 'claim.user.signal.delete', owner: 'owner.user.signal.delete', leaseMs: 30000, requestedBy: 'user'
+  })
   execution.startToolCall({
-    callId: 'call.signal.delete', interactionId: 'interaction.signal.delete', attempt: 1,
+    callId: 'call.signal.delete', interactionId: 'interaction.signal.delete', attemptIdentity: attempt.attemptIdentity, attempt: 1,
     callOrder: 1, toolName: 'search_context', startedOffsetMs: 0, args: { query: 'bounded' }
   })
   execution.finishToolCall({
-    callId: 'call.signal.delete', status: 'succeeded', errorCode: null, result: { entries: [] },
+    callId: 'call.signal.delete', attemptIdentity: attempt.attemptIdentity,
+    status: 'succeeded', errorCode: null, result: { entries: [] },
     endedOffsetMs: 1, sourceRefs: [], counts: { resultBytes: 0, sourceTextBytes: 0, sourceReferenceCount: 0 }
   })
   const result = { schemaVersion: 1, answer: 'private result', sourceRefs: [], memoryRefs: [], unresolved: [] }
   execution.terminalizeInteraction({
-    interactionId: 'interaction.signal.delete', terminalReason: 'succeeded', errorCode: null,
+    interactionId: 'interaction.signal.delete', attemptIdentity: attempt.attemptIdentity,
+    terminalReason: 'succeeded', errorCode: null,
     result, usage: null, durationMs: 4
   })
   enableAutomaticPolicy(personalContext)

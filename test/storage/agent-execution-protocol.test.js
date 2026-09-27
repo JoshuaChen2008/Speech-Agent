@@ -39,7 +39,7 @@ function insertRun (service) {
       requested_by,state,attempt_count,max_attempts,next_attempt_at,lease_owner,
       lease_expires_at,created_at,updated_at
     ) VALUES ('protocol-run', ?, 'protocol-client', ?, 'qa.answer', '1', ?, ?, 'raw', ?, ?,
-      'user', 'running', 1, 3, 0, 'protocol-owner', 5000, 1, 1)
+      'user', 'running', 1, 3, 0, 'protocol-owner', 9000000000000, 1, 1)
   `).run(
     'a'.repeat(64), 'b'.repeat(64), canonicalize(scope), sha256Canonical(scope),
     canonicalize(inputWatermark), inputDigest
@@ -67,17 +67,21 @@ test('SEM-F28/SEM-F34/J22: storage worker exposes exact v7 execution commands wi
   assert.equal(created.ok, true)
   assert.equal(created.result.maxTurns, 3)
   const result = call(OPERATIONS.AGENT_TERMINALIZE_INTERACTION, { request: {
-    interactionId: 'protocol-interaction', terminalReason: 'cancelled', errorCode: null,
+    interactionId: 'protocol-interaction',
+    attemptIdentity: { runId: 'protocol-run', attempt: 1, owner: 'protocol-owner', leaseExpiresAt: 9000000000000 },
+    terminalReason: 'cancelled', errorCode: null,
     result: null, usage: null, durationMs: 0
   } })
   assert.equal(result.ok, true)
   assert.equal(result.result.terminalReason, 'cancelled')
   const invalid = call(OPERATIONS.AGENT_START_TOOL_CALL, { request: {
-    callId: 'protocol-call', interactionId: 'protocol-interaction', attempt: 1, callOrder: 1,
+    callId: 'protocol-call', interactionId: 'protocol-interaction',
+    attemptIdentity: { runId: 'protocol-run', attempt: 1, owner: 'protocol-owner', leaseExpiresAt: 9000000000000 },
+    attempt: 1, callOrder: 1,
     toolName: 'search_context', startedOffsetMs: 0, args: {}
   } })
   assert.equal(invalid.ok, false)
-  assert.equal(invalid.error.code, 'AGENT_INTERACTION_STATE_CONFLICT')
+  assert.equal(invalid.error.code, 'AGENT_CONTEXT_OPERATION_FAILED')
   assert.equal(Object.hasOwn(result.result, 'database'), false)
 })
 

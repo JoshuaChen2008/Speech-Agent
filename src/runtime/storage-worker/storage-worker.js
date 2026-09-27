@@ -2,10 +2,11 @@
 
 // @ts-check
 
-/* storage utility process 入口。协议/业务在 worker-service 中，本文只适配
-   Electron parentPort 并保证请求串行；renderer 永远不能直连本端口。 */
+/* storage utility process 入口。普通协议命令按 FIFO 执行；取消与租约续期
+   控制消息可在分页读取的让出点处理。renderer 永远不能直连本端口。 */
 
 const { StorageWorkerService } = require('./worker-service')
+const { CONTROL_MESSAGES } = require('./protocol')
 
 const service = new StorageWorkerService()
 let commandQueue = Promise.resolve()
@@ -15,8 +16,13 @@ function post (message) {
 }
 
 process.parentPort.on('message', (event) => {
-  if (event?.data?.type === 'storage:cancel-personal-context-read') {
+  if (event?.data?.type === CONTROL_MESSAGES.CANCEL_PERSONAL_CONTEXT_READ) {
     service.cancelPersonalContextReadControl(event.data)
+    return
+  }
+  if (event?.data?.type === CONTROL_MESSAGES.RENEW_FORMAL_AGENT_RUN_LEASE) {
+    const response = service.handleLeaseRenewalControl(event.data)
+    post(response)
     return
   }
   commandQueue = commandQueue.then(async () => {

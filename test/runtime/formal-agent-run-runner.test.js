@@ -151,6 +151,37 @@ test('SEM-F28/SEM-T04/J22/J24: cancellation terminalizes without accepting a lat
   assert.equal(terminal.result, null)
 })
 
+test('SEM-F28/J30-RECOVERY: scheduler stop during progress flush prevents target terminalization', async () => {
+  const flushStarted = deferred()
+  const releaseFlush = deferred()
+  const controller = new AbortController()
+  const { runner, calls } = harness({ recipeId: 'summary.minutes' })
+  let validatingProgressCount = 0
+  runner.onProgress = async (event) => {
+    if (event.phase !== 'validating') return
+    validatingProgressCount += 1
+    if (validatingProgressCount === 2) {
+      flushStarted.resolve()
+      await releaseFlush.promise
+    }
+  }
+
+  const pending = runner.run(job({
+    recipeId: 'summary.minutes',
+    signal: controller.signal,
+    sessionSummaryRequest: { requestId: 'request.runner.stop-during-flush', generation: 1 }
+  }))
+  await flushStarted.promise
+  const reason = new Error('scheduler stopped')
+  reason.code = 'AGENT_SCHEDULER_STOPPED'
+  controller.abort(reason)
+  releaseFlush.resolve()
+
+  assert.equal(await pending, null)
+  assert.equal(calls.some(([kind]) => kind === 'terminalize'), false)
+  assert.equal(calls.some(([kind]) => kind === 'fail'), false)
+})
+
 test('SEM-F38/J30-CANCEL: cancellation during session input read releases the run before late input returns', async () => {
   const inputReadStarted = deferred()
   const inputRead = deferred()
@@ -271,6 +302,7 @@ test('SEM-F38/J30-PROGRESS: reading_context is visible while session input is st
   await inputReadStarted.promise
   assert.deepEqual(progress.at(-1), {
     requestId: 'request.runner.input-wait', generation: 1, runId: 'run.user.runner',
+    attemptIdentity: job().attemptIdentity,
     attempt: 1, phase: 'reading_context', activity: false
   })
   inputRead.resolve(await originalReadSessionInput())
@@ -355,9 +387,20 @@ test('SEM-F28/SEM-F34/J22/J24: invalid output Schema terminalizes without a part
   assert.equal(result, null)
   const terminal = calls.find(([kind]) => kind === 'terminalize')[1]
   assert.deepEqual(terminal, {
-    interactionId: 'interaction.user.runner', terminalReason: 'failed',
+    interactionId: 'interaction.user.runner', attemptIdentity: job().attemptIdentity, terminalReason: 'failed',
     errorCode: 'AGENT_OUTPUT_INVALID', result: null, usage: null, durationMs: 0
   })
+})
+
+test('SEM-F28/J30-RECOVERY: scheduler stop abort leaves the durable run for explicit recovery', async () => {
+  const { runner, calls } = harness()
+  const controller = new AbortController()
+  const reason = new Error('scheduler stopped')
+  reason.code = 'AGENT_SCHEDULER_STOPPED'
+  controller.abort(reason)
+  assert.equal(await runner.run(job({ signal: controller.signal })), null)
+  assert.equal(calls.some(([kind]) => kind === 'terminalize'), false)
+  assert.equal(calls.some(([kind]) => kind === 'fail'), false)
 })
 
 test('SEM-F28/SEM-F34/J22/J24: budget exhaustion terminalizes with the task error and no result', async () => {

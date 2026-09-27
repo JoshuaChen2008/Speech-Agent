@@ -46,6 +46,7 @@ function serviceBackedHost (service, databasePath) {
     async start () { call(OPERATIONS.INITIALIZE, { databasePath }); this.state = 'ready' },
     async createAgentRun (request) { return call(OPERATIONS.AGENT_CREATE_RUN, { request }) },
     async cancelAgentRun (request) { return call(OPERATIONS.AGENT_CANCEL_RUN, { request }) },
+    async claimNextFormalAgentRun (request) { return call(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request }) },
     async createAgentInteraction (request) { return call(OPERATIONS.AGENT_CREATE_INTERACTION, { request }) },
     async terminalizeAgentInteraction (request) { return call(OPERATIONS.AGENT_TERMINALIZE_INTERACTION, { request }) },
     async startAgentToolCall (request) { return call(OPERATIONS.AGENT_START_TOOL_CALL, { request }) },
@@ -167,6 +168,9 @@ test('SEM-F16/SEM-F28/SEM-F33/SEM-F34/SEM-T10/J22/J24: model route persists its 
     recipeId: result.recipeId,
     recipeVersion: '1',
     attempt: 1,
+    attemptIdentity: (await gateway.claimNextFormalAgentRun({
+      claimIdempotencyKey: 'claim.route.target', owner: 'owner.route.target', leaseMs: 30000, requestedBy: 'user'
+    })).attemptIdentity,
     tools: controlled.toolsForRecipe(result.recipeId, '1'),
     budget: deriveRecipeBudget({ maxInputTokens: 64000, maxOutputTokens: 4096 }, result.recipeId, '1', 'user'),
     interactions: {

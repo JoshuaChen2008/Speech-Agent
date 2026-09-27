@@ -5,6 +5,10 @@
 const crypto = require('node:crypto')
 
 const PROTOCOL_VERSION = 1
+const CONTROL_MESSAGES = Object.freeze({
+  CANCEL_PERSONAL_CONTEXT_READ: 'storage:cancel-personal-context-read',
+  RENEW_FORMAL_AGENT_RUN_LEASE: 'storage:renew-formal-agent-run-lease'
+})
 const OPERATIONS = Object.freeze({
   DB0_QUALIFY: 'db0:qualify',
   INITIALIZE: 'storage:initialize',
@@ -36,6 +40,7 @@ const OPERATIONS = Object.freeze({
   PERSONAL_CONTEXT_CANCEL_INTERACTION_INGEST: 'personal-context:cancel-interaction-ingest',
   FORMAL_AGENT_CLAIM_RUN: 'formal-agent:claim-run',
   FORMAL_AGENT_NEXT_RUN_AT: 'formal-agent:next-run-at',
+  FORMAL_AGENT_RENEW_RUN_LEASE: 'formal-agent:renew-run-lease',
   FORMAL_AGENT_COMPLETE_RUN: 'formal-agent:complete-run',
   FORMAL_AGENT_FAIL_RUN: 'formal-agent:fail-run',
   MODEL_ACCESS_CATALOG: 'model-access:catalog',
@@ -221,6 +226,7 @@ function publicError (error) {
 
 module.exports = {
   OPERATIONS,
+  CONTROL_MESSAGES,
   LEGACY_IMPORT_KEYS,
   PROTOCOL_VERSION,
   SAFE_ERROR_MESSAGES,

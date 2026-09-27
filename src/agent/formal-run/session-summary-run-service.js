@@ -184,9 +184,9 @@ class SessionSummaryRunService {
     return publicSnapshot(row, this.elapsedFor(row))
   }
 
-  recordProgress (event) {
+  recordProgress (event, signal) {
     if (!event || typeof event !== 'object' || Array.isArray(event)) return Promise.resolve(null)
-    const allowed = new Set(['requestId', 'generation', 'runId', 'attempt', 'phase', 'state', 'activity', 'memoryState'])
+    const allowed = new Set(['requestId', 'generation', 'runId', 'attemptIdentity', 'attempt', 'phase', 'state', 'activity', 'memoryState'])
     const actual = Object.keys(event)
     if (actual.some((key) => !allowed.has(key)) ||
         typeof event.requestId !== 'string' || !Number.isSafeInteger(event.generation) || event.generation < 1 ||
@@ -196,18 +196,29 @@ class SessionSummaryRunService {
         event.state !== undefined && !c.STATES.includes(event.state) ||
         event.activity !== undefined && typeof event.activity !== 'boolean' ||
         event.memoryState !== undefined && !c.MEMORY_STATES.includes(event.memoryState)) return Promise.resolve(null)
+    if (event.runId !== null && event.attempt > 0) {
+      const identity = event.attemptIdentity
+      if (!identity || Object.keys(identity).sort().join(',') !== 'attempt,leaseExpiresAt,owner,runId' ||
+          identity.runId !== event.runId || identity.attempt !== event.attempt ||
+          typeof identity.owner !== 'string' || !Number.isSafeInteger(identity.leaseExpiresAt) || identity.leaseExpiresAt < 0) return Promise.resolve(null)
+    } else if (event.attemptIdentity !== undefined) return Promise.resolve(null)
     const prior = this.progressQueues.get(event.requestId) || Promise.resolve()
-    const task = prior.catch(() => null).then(() => this.persistProgress(event))
+    const task = prior.catch(() => null).then(() => {
+      if (signal?.aborted) return null
+      return this.persistProgress(event, signal)
+    })
     this.progressQueues.set(event.requestId, task)
     return task.finally(() => {
       if (this.progressQueues.get(event.requestId) === task) this.progressQueues.delete(event.requestId)
     })
   }
 
-  async persistProgress (event) {
+  async persistProgress (event, signal) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (signal?.aborted) return null
       let row
       try { row = await this.readRow(event.requestId) } catch { return null }
+      if (signal?.aborted) return null
       if (row.generation !== event.generation || row.cancelRequested || TERMINAL_STATES.has(row.state)) return null
       if (event.runId !== null && event.runId !== row.routeRunId && event.runId !== row.targetRunId) return null
       if (event.attempt < row.attempt) return null
@@ -236,12 +247,13 @@ class SessionSummaryRunService {
         memoryState
       }
       if (event.state !== undefined) update.state = event.state
+      if (event.attemptIdentity !== undefined) update.attemptIdentity = { ...event.attemptIdentity }
       if (newAttempt) {
         update.validatedChunkCount = null
         update.totalChunkCount = null
       }
       try {
-        const updated = await this.storage.updateSessionSummaryRequest(update)
+        const updated = await this.storage.updateSessionSummaryRequest(update, signal)
         this.emitChanged(updated)
         return updated
       } catch (error) {
@@ -429,7 +441,7 @@ class SessionSummaryRunService {
           attempt: 0,
           phase: 'waiting_model',
           activity: true
-        }) } : {})
+        }, controller.signal) } : {})
       }
       const routed = input.action === 'summary'
         ? await this.routeOrchestrator.submitFixedTarget({ ...routeInput, summaryUseMemory: input.summaryUseMemory })

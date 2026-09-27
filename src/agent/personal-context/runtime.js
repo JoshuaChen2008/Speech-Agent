@@ -74,10 +74,10 @@ class PersonalContextRuntime {
       storage: this.gateway,
       modelAccess: options.modelAccess,
       interactions: options.interactions || {
-        create: (request) => this.gateway.createAgentInteraction(request),
-        terminalize: (request) => this.gateway.terminalizeAgentInteraction(request),
-        startToolCall: (request) => this.gateway.startAgentToolCall(request),
-        finishToolCall: (request) => this.gateway.finishAgentToolCall(request)
+        create: (request, signal) => this.gateway.createAgentInteraction(request, signal),
+        terminalize: (request, signal) => this.gateway.terminalizeAgentInteraction(request, signal),
+        startToolCall: (request, signal) => this.gateway.startAgentToolCall(request, signal),
+        finishToolCall: (request, signal) => this.gateway.finishAgentToolCall(request, signal)
       },
       loop: options.loop,
       loopFactory: options.loopFactory,

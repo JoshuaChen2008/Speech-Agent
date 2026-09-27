@@ -55,6 +55,7 @@ const ISOLATED_AGENT_OPERATIONS = new Set([
   'commitPersonalContextInteractionIngest',
   'cancelPersonalContextInteractionIngest',
   'claimNextFormalAgentRun',
+  'renewFormalAgentRun',
   'nextFormalAgentRunAt',
   'completeFormalAgentRun',
   'failFormalAgentRun',
@@ -436,20 +437,20 @@ class StorageGateway {
     return this.enqueue('readPersonalContextToolContext', request, { signal })
   }
 
-  commitPersonalContextSessionIngest (request) {
-    return this.enqueue('commitPersonalContextSessionIngest', request)
+  commitPersonalContextSessionIngest (request, signal) {
+    return this.enqueue('commitPersonalContextSessionIngest', request, { signal })
   }
 
   preparePersonalContextInteractionIngest (request) {
     return this.enqueue('preparePersonalContextInteractionIngest', request)
   }
 
-  readPersonalContextInteractionInput (source, ephemeral = null) {
-    return this.enqueue('readPersonalContextInteractionInput', { source, ephemeral })
+  readPersonalContextInteractionInput (source, ephemeral = null, signal) {
+    return this.enqueue('readPersonalContextInteractionInput', { source, ephemeral }, { signal })
   }
 
-  commitPersonalContextInteractionIngest (request) {
-    return this.enqueue('commitPersonalContextInteractionIngest', request)
+  commitPersonalContextInteractionIngest (request, signal) {
+    return this.enqueue('commitPersonalContextInteractionIngest', request, { signal })
   }
 
   cancelPersonalContextInteractionIngest (request) {
@@ -460,20 +461,33 @@ class StorageGateway {
     return this.enqueue('claimNextFormalAgentRun', request)
   }
 
+  renewFormalAgentRun (request) {
+    if (!this.accepting || this.stopped) return Promise.reject(new StorageError('SHUTTING_DOWN'))
+    if (this.faulted) return Promise.reject(this.fault)
+    const host = this.host
+    if (!host || this.hostInvalid || typeof host.renewFormalAgentRun !== 'function') {
+      return Promise.reject(new StorageError('AGENT_CONTEXT_OPERATION_FAILED'))
+    }
+    return Promise.resolve(host.renewFormalAgentRun(request)).catch((error) => {
+      if (isTransportFailure(error) && this.host === host) this.hostInvalid = true
+      throw error
+    })
+  }
+
   nextFormalAgentRunAt (request = {}) {
     return this.enqueue('nextFormalAgentRunAt', request)
   }
 
-  completeFormalAgentRun (request) {
-    return this.enqueue('completeFormalAgentRun', request)
+  completeFormalAgentRun (request, signal) {
+    return this.enqueue('completeFormalAgentRun', request, { signal })
   }
 
-  failFormalAgentRun (request) {
-    return this.enqueue('failFormalAgentRun', request)
+  failFormalAgentRun (request, signal) {
+    return this.enqueue('failFormalAgentRun', request, { signal })
   }
 
-  createAgentInteraction (request) {
-    return this.enqueue('createAgentInteraction', request)
+  createAgentInteraction (request, signal) {
+    return this.enqueue('createAgentInteraction', request, { signal })
   }
 
   createAgentRun (request) {
@@ -484,16 +498,16 @@ class StorageGateway {
     return this.enqueue('cancelAgentRun', request)
   }
 
-  terminalizeAgentInteraction (request) {
-    return this.enqueue('terminalizeAgentInteraction', request)
+  terminalizeAgentInteraction (request, signal) {
+    return this.enqueue('terminalizeAgentInteraction', request, { signal })
   }
 
-  startAgentToolCall (request) {
-    return this.enqueue('startAgentToolCall', request)
+  startAgentToolCall (request, signal) {
+    return this.enqueue('startAgentToolCall', request, { signal })
   }
 
-  finishAgentToolCall (request) {
-    return this.enqueue('finishAgentToolCall', request)
+  finishAgentToolCall (request, signal) {
+    return this.enqueue('finishAgentToolCall', request, { signal })
   }
 
   createAgentReportPresentation (request) {
@@ -520,8 +534,8 @@ class StorageGateway {
     return this.enqueue('getSessionSummaryRequest', request)
   }
 
-  updateSessionSummaryRequest (request) {
-    return this.enqueue('updateSessionSummaryRequest', request)
+  updateSessionSummaryRequest (request, signal) {
+    return this.enqueue('updateSessionSummaryRequest', request, { signal })
   }
 
   cancelSessionSummaryRequest (request) {
@@ -571,28 +585,29 @@ class StorageGateway {
       case 'derivePersonalContextSessionSource': return host.derivePersonalContextSessionSource(item.payload)
       case 'readPersonalContextSessionInput': return host.readPersonalContextSessionInput(item.payload, item.signal)
       case 'readPersonalContextToolContext': return host.readPersonalContextToolContext(item.payload, item.signal)
-      case 'commitPersonalContextSessionIngest': return host.commitPersonalContextSessionIngest(item.payload)
+      case 'commitPersonalContextSessionIngest': return host.commitPersonalContextSessionIngest(item.payload, item.signal)
       case 'preparePersonalContextInteractionIngest': return host.preparePersonalContextInteractionIngest(item.payload)
-      case 'readPersonalContextInteractionInput': return host.readPersonalContextInteractionInput(item.payload.source, item.payload.ephemeral)
-      case 'commitPersonalContextInteractionIngest': return host.commitPersonalContextInteractionIngest(item.payload)
+      case 'readPersonalContextInteractionInput': return host.readPersonalContextInteractionInput(item.payload.source, item.payload.ephemeral, item.signal)
+      case 'commitPersonalContextInteractionIngest': return host.commitPersonalContextInteractionIngest(item.payload, item.signal)
       case 'cancelPersonalContextInteractionIngest': return host.cancelPersonalContextInteractionIngest(item.payload)
       case 'claimNextFormalAgentRun': return host.claimNextFormalAgentRun(item.payload)
+      case 'renewFormalAgentRun': return host.renewFormalAgentRun(item.payload)
       case 'nextFormalAgentRunAt': return host.nextFormalAgentRunAt(item.payload)
-      case 'completeFormalAgentRun': return host.completeFormalAgentRun(item.payload)
-      case 'failFormalAgentRun': return host.failFormalAgentRun(item.payload)
+      case 'completeFormalAgentRun': return host.completeFormalAgentRun(item.payload, item.signal)
+      case 'failFormalAgentRun': return host.failFormalAgentRun(item.payload, item.signal)
       case 'createAgentRun': return host.createAgentRun(item.payload)
       case 'cancelAgentRun': return host.cancelAgentRun(item.payload)
-      case 'createAgentInteraction': return host.createAgentInteraction(item.payload)
-      case 'terminalizeAgentInteraction': return host.terminalizeAgentInteraction(item.payload)
-      case 'startAgentToolCall': return host.startAgentToolCall(item.payload)
-      case 'finishAgentToolCall': return host.finishAgentToolCall(item.payload)
+      case 'createAgentInteraction': return host.createAgentInteraction(item.payload, item.signal)
+      case 'terminalizeAgentInteraction': return host.terminalizeAgentInteraction(item.payload, item.signal)
+      case 'startAgentToolCall': return host.startAgentToolCall(item.payload, item.signal)
+      case 'finishAgentToolCall': return host.finishAgentToolCall(item.payload, item.signal)
       case 'createAgentReportPresentation': return host.createAgentReportPresentation(item.payload)
       case 'markAgentReportPresentation': return host.markAgentReportPresentation(item.payload)
       case 'listAgentInteractions': return host.listAgentInteractions(item.payload)
       case 'getAgentInteraction': return host.getAgentInteraction(item.payload)
       case 'acceptSessionSummaryRequest': return host.acceptSessionSummaryRequest(item.payload)
       case 'getSessionSummaryRequest': return host.getSessionSummaryRequest(item.payload)
-      case 'updateSessionSummaryRequest': return host.updateSessionSummaryRequest(item.payload)
+      case 'updateSessionSummaryRequest': return host.updateSessionSummaryRequest(item.payload, item.signal)
       case 'cancelSessionSummaryRequest': return host.cancelSessionSummaryRequest(item.payload)
       case 'resumeSessionSummaryRequest': return host.resumeSessionSummaryRequest(item.payload)
       case 'listRecoverableSessionSummaryRequests': return host.listRecoverableSessionSummaryRequests()
@@ -616,6 +631,11 @@ class StorageGateway {
   async drain () {
     while (!this.faulted && !this.stopped && this.queue.length > 0) {
       const item = this.queue[0]
+
+      if (this.hostInvalid && !item.needsRecovery) {
+        item.needsRecovery = true
+        item.lastError ||= new Error('storage host requires replacement')
+      }
 
       if (item.needsRecovery) {
         if (item.restarts >= this.maxRestarts) {

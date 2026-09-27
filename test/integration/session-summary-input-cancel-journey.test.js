@@ -12,8 +12,9 @@ const vm = require('node:vm')
 const { StorageGateway } = require('../../src/main/services/storage-gateway')
 const { PersonalContextStore } = require('../../src/runtime/storage-worker/personal-context-store')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
+const { CONTROL_MESSAGES, OPERATIONS } = require('../../src/runtime/storage-worker/protocol')
 
-function createUtilityChild (service) {
+function createUtilityChild (service, afterDispatch) {
   const child = new EventEmitter()
   const parentPort = new EventEmitter()
   let exited = false
@@ -28,6 +29,7 @@ function createUtilityChild (service) {
   child.postMessage = (message) => {
     if (exited) throw new Error('utility child has exited')
     parentPort.emit('message', { data: message })
+    afterDispatch?.(message)
   }
   child.kill = () => exit(0)
 
@@ -39,6 +41,7 @@ function createUtilityChild (service) {
   }
   const localRequire = (specifier) => {
     if (specifier === './worker-service') return serviceModule
+    if (specifier === './protocol') return { CONTROL_MESSAGES }
     throw new Error(`unexpected storage worker dependency: ${specifier}`)
   }
   const wrapper = `(function (require, process, setImmediate) {\n${entry}\n})`
@@ -61,6 +64,7 @@ async function waitFor (predicate) {
 test('SEM-F38/J30-CANCEL real SQLite session and tool context reads yield and cancel without retiring storage', { timeout: 30000 }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'session-input-cancel-'))
   const databasePath = path.join(root, 'speech-agent.sqlite3')
+  let afterDispatch = null
   let reportFirstPage
   const firstPageRead = new Promise((resolve) => { reportFirstPage = resolve })
   const service = new StorageWorkerService({
@@ -80,7 +84,7 @@ test('SEM-F38/J30-CANCEL real SQLite session and tool context reads yield and ca
     requestTimeoutMs: 5000,
     electron: {
       utilityProcess: {
-        fork: () => createUtilityChild(service)
+        fork: () => createUtilityChild(service, (message) => afterDispatch?.(message))
       }
     }
   })
@@ -114,12 +118,43 @@ test('SEM-F38/J30-CANCEL real SQLite session and tool context reads yield and ca
   await gateway.closeSession({ sessionId, sourceId: 'mic', endedAt: 1770000001000, state: 'closed' })
   const source = await gateway.derivePersonalContextSessionSource({ sessionId, transcriptVersion: 'raw' })
   const storageHost = gateway.host
+  await gateway.createAgentRun({
+    runId: 'run.lease-priority',
+    recipeId: 'qa.answer',
+    recipeVersion: '1',
+    scope: { kind: 'session', reference: sessionId },
+    transcriptVersion: 'raw',
+    inputWatermark: { throughEventOrder: source.inputWatermark },
+    inputDigest: source.inputDigest,
+    requestedBy: 'user',
+    clientIdempotencyKey: 'lease-priority'
+  })
+  const claimed = await gateway.claimNextFormalAgentRun({
+    claimIdempotencyKey: 'claim.lease-priority', owner: 'owner.lease-priority', leaseMs: 30000, requestedBy: 'user'
+  })
+  assert.ok(claimed?.attemptIdentity)
 
   const controller = new AbortController()
   const read = gateway.readPersonalContextSessionInput(source, controller.signal)
   const firstPageCount = await firstPageRead
   assert.equal(firstPageCount, 128, 'cancellation begins after the first keyset page has been fetched')
   await waitFor(() => service.activeSessionInputReads.size === 1)
+  const renewed = await gateway.renewFormalAgentRun({ attemptIdentity: claimed.attemptIdentity, leaseMs: 30000 })
+  assert.ok(renewed.attemptIdentity.leaseExpiresAt > claimed.attemptIdentity.leaseExpiresAt)
+  assert.equal(service.activeSessionInputReads.size, 1, 'lease renewal responds while the SQLite input read remains active')
+  const stoppedWriteController = new AbortController()
+  const stoppedWrite = gateway.failFormalAgentRun({
+    attemptIdentity: claimed.attemptIdentity,
+    errorCode: 'AGENT_PROVIDER_UNAVAILABLE'
+  }, stoppedWriteController.signal)
+  const renewalRaceWrite = gateway.failFormalAgentRun({
+    attemptIdentity: claimed.attemptIdentity,
+    errorCode: 'AGENT_PROVIDER_UNAVAILABLE'
+  })
+  const stopReason = new Error('scheduler stopped')
+  stopReason.code = 'AGENT_SCHEDULER_STOPPED'
+  stoppedWriteController.abort(stopReason)
+  await assert.rejects(stoppedWrite, (error) => error?.code === 'AGENT_CANCELLED')
   const cancelledAt = performance.now()
   controller.abort()
 
@@ -129,6 +164,41 @@ test('SEM-F38/J30-CANCEL real SQLite session and tool context reads yield and ca
   assert.ok(cancellationMs < 5000, `worker cancellation and subsequent storage command took ${cancellationMs}ms`)
   assert.equal(stats.sessions, 1)
   assert.equal(stats.captionEvents, 260)
+  assert.equal((await renewalRaceWrite).state, 'retry_wait', 'the prior lease identity remains valid for the same active attempt after renewal')
+  assert.equal(service.personalContextStore.database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get('run.lease-priority').state, 'retry_wait')
+
+  await gateway.createAgentRun({
+    runId: 'run.lease.dispatched',
+    recipeId: 'qa.answer',
+    recipeVersion: '1',
+    scope: { kind: 'session', reference: sessionId },
+    transcriptVersion: 'raw',
+    inputWatermark: { throughEventOrder: source.inputWatermark },
+    inputDigest: source.inputDigest,
+    requestedBy: 'user',
+    clientIdempotencyKey: 'lease-dispatched'
+  })
+  const dispatchedClaim = await gateway.claimNextFormalAgentRun({
+    claimIdempotencyKey: 'claim.lease.dispatched', owner: 'owner.lease.dispatched', leaseMs: 30000, requestedBy: 'user'
+  })
+  const dispatchedStop = new AbortController()
+  const dispatchedStopReason = new Error('scheduler stopped after storage dispatch')
+  dispatchedStopReason.code = 'AGENT_SCHEDULER_STOPPED'
+  let storageDispatchPrecededStop = false
+  afterDispatch = (message) => {
+    if (message.operation !== OPERATIONS.FORMAL_AGENT_FAIL_RUN) return
+    storageDispatchPrecededStop = true
+    dispatchedStop.abort(dispatchedStopReason)
+    afterDispatch = null
+  }
+  const dispatchedFailure = await gateway.failFormalAgentRun({
+    attemptIdentity: dispatchedClaim.attemptIdentity,
+    errorCode: 'AGENT_PROVIDER_UNAVAILABLE'
+  }, dispatchedStop.signal)
+  assert.equal(storageDispatchPrecededStop, true)
+  assert.equal(dispatchedStop.signal.aborted, true)
+  assert.equal(dispatchedFailure.state, 'retry_wait', 'a write already dispatched to the worker wins the stop race')
+  assert.equal(service.personalContextStore.database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get('run.lease.dispatched').state, 'retry_wait')
   assert.equal(service.activeSessionInputReads.size, 0)
   assert.equal(gateway.faulted, false)
   assert.strictEqual(gateway.host, storageHost)

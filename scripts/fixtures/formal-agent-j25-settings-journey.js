@@ -46,8 +46,13 @@ ipcMain.handle = (channel, handler) => originalIpcHandle(channel, async (...args
     if (hold) await hold.promise
   }
   const response = await handler(...args)
-  if (channel === 'agent-run:submit' && response?.ok === true && response.result) {
-    submitReceipts.push({ interactionId: response.result.interaction_id, recipeId: response.result.recipe_id })
+  if (channel === 'session-summary-run:accept' && response?.ok === true && response.result?.accepted === true) {
+    const snapshot = response.result.snapshot
+    submitReceipts.push({
+      requestId: snapshot.request_id,
+      generation: snapshot.generation,
+      recipeId: snapshot.action === 'question' ? 'qa.answer' : 'summary.minutes'
+    })
   }
   return response
 })
@@ -673,13 +678,32 @@ async function runAgentBar (toolbar, providerState) {
     document.querySelector('[data-action="qa"]').click()
     return true
   })()`)
-  const qaReceipt = await waitFor(() => submitReceipts.slice(qaSubmitCount).find((receipt) => receipt.recipeId === 'qa.answer'), 'QA submit receipt')
+  const qaReceipt = await waitFor(() => submitReceipts.slice(qaSubmitCount).find((receipt) => receipt.recipeId === 'qa.answer'), 'QA session-summary acceptance')
   const result = await agent.webContents.executeJavaScript(`(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
     const headers = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
+    const summaryHeaders = { contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0' }
+    const requestId = ${JSON.stringify(qaReceipt.requestId)}
+    let requestSnapshot = null
+    for (let i = 0; i < 240; i += 1) {
+      const request = await window.agentApi.getSessionSummaryRun({ ...summaryHeaders, request_id: requestId })
+      requestSnapshot = request?.ok === true ? request.result.snapshot : null
+      if (requestSnapshot?.interaction_id) break
+      await sleep(50)
+    }
+    const interactionId = requestSnapshot?.interaction_id || null
+    if (!interactionId) {
+      return {
+        succeeded: false,
+        terminalState: requestSnapshot?.state || 'unavailable',
+        terminalErrorCode: requestSnapshot?.error_code || 'unavailable',
+        historyVisible: false, historyItems: [], modelVisible: false,
+        routingMode: requestSnapshot?.routing_mode || null, interactionId: null,
+        resultDigest: null, requestState: requestSnapshot?.state || 'unavailable'
+      }
+    }
     let detail = null
     let history = null
-    const interactionId = ${JSON.stringify(qaReceipt.interactionId)}
     for (let i = 0; i < 240; i += 1) {
       history = await window.agentApi.getHistory({ ...headers, limit: 50, cursor: null })
       detail = await window.agentApi.getInteraction({ ...headers, interaction_id: interactionId })
@@ -695,14 +719,15 @@ async function runAgentBar (toolbar, providerState) {
       modelVisible: detail?.result?.model?.model_id === 'j25-local-model',
       routingMode: detail?.result?.routing_mode || null,
       interactionId,
-      resultDigest: detail?.result?.result_digest || null
+      resultDigest: detail?.result?.result_digest || null,
+      requestState: requestSnapshot?.state || 'unavailable'
     }
   })()`)
   const runProviderShapes = providerState.requestShapes.slice(providerShapeCountAtSubmit)
   const runProviderModelIds = providerState.modelIds.slice(providerModelCountAtSubmit)
   const runProviderCredentialObserved = runProviderShapes.some((shape) => shape.authorizationPresent)
   const runProviderCredentialExact = runProviderShapes.some((shape) => shape.authorizationExact)
-  if (!result.succeeded) throw new Error(`production Agent Bar request ended ${result.terminalState}/${result.terminalErrorCode} ${JSON.stringify({ historyItems: result.historyItems, providerRequestCount: runProviderShapes.length, requestShapes: runProviderShapes })}`)
+  if (!result.succeeded) throw new Error(`production Agent Bar request ended ${result.terminalState}/${result.terminalErrorCode} at ${result.requestState} ${JSON.stringify({ historyItems: result.historyItems, providerRequestCount: runProviderShapes.length, requestShapes: runProviderShapes })}`)
   await agent.webContents.reload()
   await waitFor(async () => agent.webContents.executeJavaScript("document.readyState === 'complete'"), 'reloaded Agent Bar renderer')
   await waitFor(async () => agent.webContents.executeJavaScript("Boolean(document.querySelector('.history-card'))"), 'history renderer')
@@ -821,7 +846,22 @@ async function runAgentBar (toolbar, providerState) {
       throw new Error(label + ' timed out')
     }
     const headers = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
-    const interactionId = ${JSON.stringify(capacityReceipt.interactionId)}
+    const summaryHeaders = { contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0' }
+    const requestId = ${JSON.stringify(capacityReceipt.requestId)}
+    let requestSnapshot = null
+    for (let i = 0; i < 240; i += 1) {
+      const request = await window.agentApi.getSessionSummaryRun({ ...summaryHeaders, request_id: requestId })
+      requestSnapshot = request?.ok === true ? request.result.snapshot : null
+      if (requestSnapshot?.interaction_id) break
+      await sleep(50)
+    }
+    const interactionId = requestSnapshot?.interaction_id || null
+    if (!interactionId) {
+      return {
+        failed: false, dedicatedError: false, exactFeedback: false, recoveryFeedback: false,
+        summaryToolCalls: -1, requestState: requestSnapshot?.state || 'unavailable'
+      }
+    }
     let detail = null
     for (let i = 0; i < 240; i += 1) {
       detail = await window.agentApi.getInteraction({ ...headers, interaction_id: interactionId })
@@ -839,7 +879,8 @@ async function runAgentBar (toolbar, providerState) {
       dedicatedError: detail?.ok === true && detail.result.error_code === 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED',
       exactFeedback: alertText.includes('会话总结输入超过当前上限；总结模型尚未调用。'),
       recoveryFeedback: recoveryText.includes('可缩短输入，或选择内容较少的会话后重试。'),
-      summaryToolCalls: detail?.ok === true ? detail.result.tool_calls.length : -1
+      summaryToolCalls: detail?.ok === true ? detail.result.tool_calls.length : -1,
+      requestState: requestSnapshot?.state || 'unavailable'
     }
   })()`)
   const capacityProviderShapes = providerState.requestShapes.slice(providerShapeCountBeforeCapacity)

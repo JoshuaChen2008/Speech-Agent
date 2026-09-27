@@ -22,6 +22,7 @@ function identifier (value, label) {
 }
 
 function knownToolError (error) {
+  if (error?.code === 'AGENT_CANCELLED') return 'TOOL_CANCELLED'
   return TOOL_ERROR_CODES.includes(error?.code) ? error.code : 'TOOL_INTERNAL_FAILURE'
 }
 
@@ -37,6 +38,11 @@ class ToolAuditRuntime {
     this.recipe = getRecipe(options.recipeId, options.recipeVersion)
     this.interactionId = options.interactionId
     this.attempt = options.attempt
+    const attemptIdentity = options.attemptIdentity
+    if (!attemptIdentity || attemptIdentity.attempt !== this.attempt ||
+        typeof attemptIdentity.runId !== 'string' || typeof attemptIdentity.owner !== 'string' ||
+        !Number.isSafeInteger(attemptIdentity.leaseExpiresAt)) throw new TypeError('attemptIdentity is invalid')
+    this.attemptIdentity = attemptIdentity
     this.interactions = options.interactions
     this.budget = assertBudgetSnapshot(options.budget)
     this.toolsByName = new Map()
@@ -129,13 +135,16 @@ class ToolAuditRuntime {
     const startedOffsetMs = this.offset()
     const callId = `tool.${this.interactionId}.${this.attempt}.${callOrder}`
     this.activeToolCalls += 1
+    let callRecorded = false
     let toolStarted = false
     try {
       const before = this.budgetExceeded(callOrder, this.activeToolCalls, 0)
       await this.interactions.startToolCall({
-        callId, interactionId: this.interactionId, attempt: this.attempt, callOrder,
+        callId, interactionId: this.interactionId, attemptIdentity: { ...this.attemptIdentity },
+        attempt: this.attempt, callOrder,
         toolName: tool.name, startedOffsetMs, args
-      })
+      }, this.signal)
+      callRecorded = true
       if (before.exhausted) {
         await this.finishFailure(callId, startedOffsetMs, 'TOOL_BUDGET_EXCEEDED')
         throw toolError('TOOL_BUDGET_EXCEEDED')
@@ -160,18 +169,19 @@ class ToolAuditRuntime {
         throw toolError('TOOL_BUDGET_EXCEEDED')
       }
       await this.interactions.finishToolCall({
-        callId, status: 'succeeded', result, errorCode: null, endedOffsetMs: this.offset(),
+        callId, attemptIdentity: { ...this.attemptIdentity }, status: 'succeeded', result,
+        errorCode: null, endedOffsetMs: this.offset(),
         sourceRefs: [...metadata.sourceRefs],
         counts: {
           resultBytes: metadata.resultBytes,
           sourceTextBytes: metadata.sourceTextBytes,
           sourceReferenceCount: metadata.sourceReferenceCount
         }
-      })
+      }, this.signal)
       return result
     } catch (error) {
       const code = knownToolError(error)
-      if (code !== 'TOOL_BUDGET_EXCEEDED') await this.finishFailure(callId, startedOffsetMs, code)
+      if (callRecorded && code !== 'TOOL_BUDGET_EXCEEDED') await this.finishFailure(callId, startedOffsetMs, code)
       if (this.onProgress && toolStarted && code !== 'TOOL_BUDGET_EXCEEDED') {
         await this.reportProgress({
           type: 'tool_failed', toolName: tool.name,
@@ -188,7 +198,7 @@ class ToolAuditRuntime {
   reportProgress (event) {
     if (!this.onProgress) return null
     try {
-      return Promise.resolve(this.onProgress(Object.freeze({ phase: 'reading_context', activity: true, ...event })))
+      return Promise.resolve(this.onProgress(Object.freeze({ phase: 'reading_context', activity: true, ...event }), this.signal))
         .catch(() => {})
     } catch { /* progress persistence cannot change tool execution */
       return null
@@ -198,13 +208,16 @@ class ToolAuditRuntime {
   async finishFailure (callId, startedOffsetMs, errorCode) {
     await this.interactions.finishToolCall({
       callId,
+      attemptIdentity: { ...this.attemptIdentity },
       status: errorCode === 'TOOL_CANCELLED' ? 'cancelled' : 'failed',
       result: null,
       errorCode,
       endedOffsetMs: Math.max(startedOffsetMs, this.offset()),
       sourceRefs: [],
       counts: { resultBytes: 0, sourceTextBytes: 0, sourceReferenceCount: 0 }
-    })
+    }, errorCode === 'TOOL_CANCELLED' && this.signal?.reason?.code === 'AGENT_CANCELLED'
+      ? undefined
+      : this.signal)
   }
 }
 

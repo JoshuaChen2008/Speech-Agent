@@ -25,6 +25,10 @@ function codedError (code) {
   return error
 }
 
+function schedulerInterrupted (signal) {
+  return ['AGENT_SCHEDULER_STOPPED', 'AGENT_LEASE_LOST'].includes(signal?.reason?.code)
+}
+
 async function awaitWithCancellation (operation, signal) {
   if (signal?.aborted) throw codedError('AGENT_CANCELLED')
   const pending = Promise.resolve().then(() => {
@@ -174,6 +178,7 @@ class FormalAgentRunRunner {
       recipeId: recipe.recipeId,
       recipeVersion: recipe.recipeVersion,
       attempt: attemptIdentity.attempt,
+      attemptIdentity,
       tools: controlled.toolsForRecipe(recipe.recipeId, recipe.recipeVersion),
       budget: binding.budget,
       interactions: this.interactions,
@@ -194,6 +199,7 @@ class FormalAgentRunRunner {
       requestId: identity.requestId,
       generation: identity.generation,
       runId: job.attemptIdentity.runId,
+      attemptIdentity: { ...job.attemptIdentity },
       attempt: job.attemptIdentity.attempt,
       phase,
       activity: event.activity === true || ['request_started', 'response_received', 'request_failed'].includes(event.type)
@@ -202,7 +208,7 @@ class FormalAgentRunRunner {
     if (['not_read', 'not_used', 'empty', 'referenced', 'failed', 'unknown'].includes(event.memoryState)) {
       update.memoryState = event.memoryState
     }
-    try { await awaitWithCancellation(() => this.onProgress(Object.freeze(update)), job.signal) } catch { /* snapshot observers do not change Agent execution */ }
+    try { await awaitWithCancellation(() => this.onProgress(Object.freeze(update), job.signal), job.signal) } catch { /* snapshot observers do not change Agent execution */ }
   }
 
   async flushProgress (job) {
@@ -212,12 +218,12 @@ class FormalAgentRunRunner {
     if (phase) await this.reportProgress(job, { phase, activity: false })
   }
 
-  async terminalizeFailure (interactionId, code, durationMs) {
+  async terminalizeFailure (interactionId, attemptIdentity, code, durationMs, signal) {
     try {
       await this.interactions.terminalize({
-        interactionId, terminalReason: 'failed', errorCode: code,
+        interactionId, attemptIdentity: { ...attemptIdentity }, terminalReason: 'failed', errorCode: code,
         result: null, usage: null, durationMs
-      })
+      }, signal)
       return true
     } catch {
       return false
@@ -236,7 +242,7 @@ class FormalAgentRunRunner {
         typeof job.sessionSummaryRequest.requestId !== 'string' || !Number.isSafeInteger(job.sessionSummaryRequest.generation) ||
         job.sessionSummaryRequest.generation < 1)) throw codedError('AGENT_REQUEST_INVALID')
     if (typeof job.interactionId !== 'string' || job.interactionId.length === 0) {
-      await this.storage.failFormalAgentRun({ attemptIdentity: job.attemptIdentity, errorCode: 'AGENT_REQUEST_INVALID' })
+      await this.storage.failFormalAgentRun({ attemptIdentity: job.attemptIdentity, errorCode: 'AGENT_REQUEST_INVALID' }, job.signal)
       return null
     }
     const startedAt = this.now()
@@ -297,16 +303,18 @@ class FormalAgentRunRunner {
       validateRecipeOutput(recipe.recipeId, recipe.recipeVersion, output)
       if (job.signal?.aborted) throw codedError('AGENT_CANCELLED')
       await this.flushProgress(job)
+      if (schedulerInterrupted(job.signal)) return null
       const durationMs = Math.max(0, this.now() - startedAt)
       try {
         const terminal = await this.interactions.terminalize({
           interactionId: job.interactionId,
+          attemptIdentity: { ...job.attemptIdentity },
           terminalReason: 'succeeded',
           errorCode: null,
           result: output,
           usage: usageValue(result?.usage, binding?.capabilities?.usageReporting),
           durationMs
-        })
+        }, job.signal)
         terminalReason = 'succeeded'
         return terminal
       } catch (error) {
@@ -316,28 +324,34 @@ class FormalAgentRunRunner {
         throw error
       }
     } catch (error) {
+      if (['AGENT_SCHEDULER_STOPPED', 'AGENT_LEASE_LOST'].includes(job.signal?.reason?.code)) return null
       const code = normalizedErrorCode(error)
       const durationMs = Math.max(0, this.now() - startedAt)
       if (code === 'AGENT_CANCELLED') {
         await this.flushProgress(job)
+        if (schedulerInterrupted(job.signal)) return null
         try {
           await this.interactions.terminalize({
-            interactionId: job.interactionId, terminalReason: 'cancelled',
+            interactionId: job.interactionId,
+            attemptIdentity: { ...job.attemptIdentity },
+            terminalReason: 'cancelled',
             errorCode: null, result: null, usage: null, durationMs
-          })
+          }, job.signal?.reason?.code === 'AGENT_CANCELLED' ? undefined : job.signal)
           terminalReason = 'cancelled'
         } catch { /* cancelRun may have already terminalized the interaction */ }
       } else if (TERMINAL_ERRORS.has(code)) {
         await this.flushProgress(job)
-        if (await this.terminalizeFailure(job.interactionId, code, durationMs)) terminalReason = 'failed'
+        if (schedulerInterrupted(job.signal)) return null
+        if (await this.terminalizeFailure(job.interactionId, job.attemptIdentity, code, durationMs, job.signal)) terminalReason = 'failed'
       } else {
         const settlement = await this.storage.failFormalAgentRun({
           attemptIdentity: job.attemptIdentity,
           errorCode: code
-        }).catch(() => null)
+        }, job.signal).catch(() => null)
         if (settlement?.state === 'failed') {
           await this.flushProgress(job)
-          if (await this.terminalizeFailure(job.interactionId, code, durationMs)) terminalReason = 'failed'
+          if (schedulerInterrupted(job.signal)) return null
+          if (await this.terminalizeFailure(job.interactionId, job.attemptIdentity, code, durationMs, job.signal)) terminalReason = 'failed'
         } else if (settlement?.state === 'retry_wait') {
           await this.reportProgress(job, { phase: 'retry_wait', state: 'retry_wait', activity: false })
         }

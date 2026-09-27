@@ -8,6 +8,7 @@ const test = require('node:test')
 
 const {
   OPERATIONS,
+  CONTROL_MESSAGES,
   PROTOCOL_VERSION,
   SAFE_ERROR_MESSAGES,
   StorageError,
@@ -239,6 +240,7 @@ test('SEM-F28 formal Agent host methods preserve exact operation and payload ide
     ['personalContextManage', OPERATIONS.PERSONAL_CONTEXT_MANAGE, { type: 'view' }],
     ['deletePersonalContextSessionData', OPERATIONS.PERSONAL_CONTEXT_DELETE_SESSION_DATA, { sessionId: 's', deletionIdempotencyKey: 'delete.new' }],
     ['claimNextFormalAgentRun', OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { claimIdempotencyKey: 'claim.new', owner: 'owner.new', leaseMs: 1000 }],
+    ['renewFormalAgentRun', OPERATIONS.FORMAL_AGENT_RENEW_RUN_LEASE, { attemptIdentity: { runId: 'run.new', attempt: 1, owner: 'owner.new', leaseExpiresAt: 1000 }, leaseMs: 1000 }],
     ['completeFormalAgentRun', OPERATIONS.FORMAL_AGENT_COMPLETE_RUN, { attemptIdentity: {}, resultDigest: 'a'.repeat(64), resultSummary: {} }],
     ['failFormalAgentRun', OPERATIONS.FORMAL_AGENT_FAIL_RUN, { attemptIdentity: {}, errorCode: 'AGENT_INTERNAL_FAILURE' }]
   ]
@@ -246,19 +248,61 @@ test('SEM-F28 formal Agent host methods preserve exact operation and payload ide
     for (const [method, operation, payload] of cases) {
       const pending = host[method](payload)
       await nextTurn()
-      const request = requestFor(child, operation)
+      const request = method === 'renewFormalAgentRun'
+        ? child.messages.findLast((message) => message.type === CONTROL_MESSAGES.RENEW_FORMAL_AGENT_RUN_LEASE)
+        : requestFor(child, operation)
+      if (method === 'renewFormalAgentRun') {
+        assert.deepEqual(request, {
+          version: PROTOCOL_VERSION,
+          type: CONTROL_MESSAGES.RENEW_FORMAL_AGENT_RUN_LEASE,
+          requestId: request.requestId,
+          request: payload
+        })
+        child.emit('message', successResponse(request, { operation }))
+        assert.deepEqual(await pending, { operation })
+        continue
+      }
       const expectedPayload = method === 'personalContextIngest'
         ? { source: payload }
         : method === 'personalContextResolve'
           ? { request: payload }
           : method === 'personalContextManage' ? { command: payload }
-            : ['claimNextFormalAgentRun', 'completeFormalAgentRun', 'failFormalAgentRun'].includes(method)
+            : ['claimNextFormalAgentRun', 'renewFormalAgentRun', 'completeFormalAgentRun', 'failFormalAgentRun'].includes(method)
               ? { request: payload }
               : payload
       assert.deepEqual(request.payload, expectedPayload)
       child.emit('message', successResponse(request, { operation }))
       assert.deepEqual(await pending, { operation })
     }
+  } finally {
+    await terminateQuietly(host)
+  }
+})
+
+test('SEM-F28/J30-RECOVERY lease renewal bypasses a pending paginated read without crossing responses', async () => {
+  const { child, host } = await startReady()
+  try {
+    const read = host.readPersonalContextSessionInput({ sourceKind: 'session' })
+    await nextTurn()
+    const readRequest = requestFor(child, OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT)
+    assert.ok(readRequest)
+
+    const attemptIdentity = { runId: 'run.priority', attempt: 1, owner: 'owner.priority', leaseExpiresAt: 1000 }
+    const renewal = host.renewFormalAgentRun({ attemptIdentity, leaseMs: 30000 })
+    await nextTurn()
+    const control = child.messages.findLast((message) => message.type === CONTROL_MESSAGES.RENEW_FORMAL_AGENT_RUN_LEASE)
+    assert.deepEqual(control, {
+      version: PROTOCOL_VERSION,
+      type: CONTROL_MESSAGES.RENEW_FORMAL_AGENT_RUN_LEASE,
+      requestId: control.requestId,
+      request: { attemptIdentity, leaseMs: 30000 }
+    })
+    child.emit('message', successResponse(readRequest, { segmentCount: 0 }))
+    assert.deepEqual(await read, { segmentCount: 0 })
+    assert.equal(host.state, 'ready', 'the first response must not be mistaken for an unknown concurrent response')
+    child.emit('message', successResponse(control, { renewed: true }))
+    assert.deepEqual(await renewal, { renewed: true })
+    assert.equal(host.state, 'ready')
   } finally {
     await terminateQuietly(host)
   }
@@ -283,6 +327,30 @@ test('SEM-F38/J30-CANCEL session input cancellation bypasses the storage request
     await assert.rejects(pending, (error) => error instanceof StorageError && error.code === 'AGENT_CANCELLED')
     assert.equal(host.state, 'ready', 'cancelling a read must not retire the storage worker')
     assert.equal(child.killCount, 0)
+  } finally {
+    await terminateQuietly(host)
+  }
+})
+
+test('SEM-F38/J30-RECOVERY an aborted attempt is fenced before a queued storage write is sent', async () => {
+  const { child, host } = await startReady()
+  const controller = new AbortController()
+  try {
+    const read = host.readPersonalContextSessionInput({ sourceKind: 'session' })
+    await nextTurn()
+    const readRequest = requestFor(child, OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT)
+    assert.ok(readRequest)
+
+    const terminal = host.terminalizeAgentInteraction({ interactionId: 'interaction.queued' }, controller.signal)
+    const reason = new Error('lease lost')
+    reason.code = 'AGENT_LEASE_LOST'
+    controller.abort(reason)
+    child.emit('message', successResponse(readRequest, { segmentCount: 0 }))
+
+    assert.deepEqual(await read, { segmentCount: 0 })
+    await assert.rejects(terminal, (error) => error instanceof StorageError && error.code === 'AGENT_CANCELLED')
+    assert.equal(child.messages.some((message) => message.operation === OPERATIONS.AGENT_TERMINALIZE_INTERACTION), false)
+    assert.equal(host.state, 'ready')
   } finally {
     await terminateQuietly(host)
   }

@@ -83,11 +83,16 @@ function progressService (initialRow, clock, { cancelState = 'cancelled' } = {})
   return { service, storage, updates, cancellations, changed, getRow: () => ({ ...row }) }
 }
 
+const attemptIdentity = Object.freeze({
+  runId: 'run.progress.one', attempt: 1, owner: 'owner.progress.one', leaseExpiresAt: 30000
+})
+
 test('SEM-F38/J30-PROGRESS: snapshots advance elapsed time without inventing activity or revisions', async () => {
   const clock = { value: 0 }
   const { service, updates } = progressService(snapshotRow(), clock)
   await service.recordProgress({
     requestId: 'request.progress.one', generation: 1, runId: 'run.progress.one',
+    attemptIdentity,
     attempt: 1, phase: 'waiting_model', activity: false
   })
 
@@ -106,6 +111,7 @@ test('SEM-F38/J30-PROGRESS: snapshots advance elapsed time without inventing act
   clock.value = 300
   await service.recordProgress({
     requestId: 'request.progress.one', generation: 1, runId: 'run.progress.one',
+    attemptIdentity,
     attempt: 1, phase: 'waiting_model', activity: true
   })
   clock.value = 450
@@ -119,6 +125,45 @@ test('SEM-F38/J30-PROGRESS: snapshots advance elapsed time without inventing act
   assert.equal(updates.length, 2)
 })
 
+test('SEM-F38/J30-RECOVERY: scheduler stop drops progress already queued behind an earlier snapshot', async () => {
+  const clock = { value: 0 }
+  const { service, storage, updates } = progressService(snapshotRow(), clock)
+  let releaseFirst
+  let firstUpdateStarted
+  const firstStarted = new Promise((resolve) => { firstUpdateStarted = resolve })
+  const gate = new Promise((resolve) => { releaseFirst = resolve })
+  const persistUpdate = storage.updateSessionSummaryRequest.bind(storage)
+  let updateCalls = 0
+  storage.updateSessionSummaryRequest = async (input, signal) => {
+    updateCalls += 1
+    if (updateCalls === 1) {
+      firstUpdateStarted()
+      await gate
+    }
+    return persistUpdate(input, signal)
+  }
+
+  const first = service.recordProgress({
+    requestId: 'request.progress.one', generation: 1, runId: 'run.progress.one',
+    attemptIdentity, attempt: 1, phase: 'waiting_model', activity: false
+  })
+  await firstStarted
+  const controller = new AbortController()
+  const queued = service.recordProgress({
+    requestId: 'request.progress.one', generation: 1, runId: 'run.progress.one',
+    attemptIdentity, attempt: 1, phase: 'validating', activity: false
+  }, controller.signal)
+  const reason = new Error('scheduler stopped')
+  reason.code = 'AGENT_SCHEDULER_STOPPED'
+  controller.abort(reason)
+  releaseFirst()
+
+  await Promise.all([first, queued])
+  assert.equal(updateCalls, 1)
+  assert.equal(updates.length, 1)
+  assert.equal(updates[0].phase, 'waiting_model')
+})
+
 test('SEM-F38/J30-PROGRESS: a new attempt clears prior chunk and memory observations', async () => {
   const clock = { value: 1000 }
   const { service, updates } = progressService(snapshotRow({
@@ -129,6 +174,7 @@ test('SEM-F38/J30-PROGRESS: a new attempt clears prior chunk and memory observat
   }), clock)
   await service.recordProgress({
     requestId: 'request.progress.one', generation: 1, runId: 'run.progress.one',
+    attemptIdentity: { ...attemptIdentity, attempt: 2, leaseExpiresAt: 31000 },
     attempt: 2, phase: 'preparing', activity: false
   })
 
@@ -143,6 +189,7 @@ test('SEM-F38/J30-PROGRESS: cancellation freezes the current elapsed time in the
   const { service, cancellations } = progressService(snapshotRow(), clock)
   await service.recordProgress({
     requestId: 'request.progress.one', generation: 1, runId: 'run.progress.one',
+    attemptIdentity,
     attempt: 1, phase: 'waiting_model', activity: true
   })
   clock.value = 1250
@@ -192,6 +239,7 @@ test('SEM-F38/J30-PROGRESS: cancelling snapshots freeze elapsed and repeated can
   const { service, cancellations } = progressService(snapshotRow(), clock, { cancelState: 'cancelling' })
   await service.recordProgress({
     requestId: 'request.progress.one', generation: 1, runId: 'run.progress.one',
+    attemptIdentity,
     attempt: 1, phase: 'waiting_model', activity: true
   })
   clock.value = 1250

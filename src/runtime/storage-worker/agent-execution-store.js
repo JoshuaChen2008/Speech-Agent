@@ -345,6 +345,21 @@ class AgentExecutionStore {
     return row
   }
 
+  assertActiveAttempt (run, attemptIdentity, now, { allowCancelRequested = false } = {}) {
+    exactObject(attemptIdentity, ['runId', 'attempt', 'owner', 'leaseExpiresAt'])
+    const runId = identifier(attemptIdentity.runId)
+    boundedInteger(attemptIdentity.attempt, 1, 100)
+    identifier(attemptIdentity.owner)
+    nonNegativeInteger(attemptIdentity.leaseExpiresAt)
+    if (!run || run.run_id !== runId || run.state !== 'running' ||
+        Number(run.attempt_count) !== attemptIdentity.attempt || run.lease_owner !== attemptIdentity.owner ||
+        attemptIdentity.leaseExpiresAt > Number(run.lease_expires_at) || Number(run.lease_expires_at) <= now ||
+        (!allowCancelRequested && run.cancel_requested_at !== null)) {
+      fail('AGENT_CONTEXT_OPERATION_FAILED')
+    }
+    return attemptIdentity
+  }
+
   guardTombstone (row) {
     const scope = runScope(row)
     const sessionId = scope && scope.kind === 'session' ? scope.reference : null
@@ -641,7 +656,7 @@ class AgentExecutionStore {
   updateSessionSummaryRequest (input) {
     exactObject(input, ['requestId', 'generation', 'expectedRevision'], [
       'state', 'phase', 'attempt', 'elapsedMs', 'lastActivityElapsedMs', 'validatedChunkCount',
-      'totalChunkCount', 'memoryState', 'errorCode', 'budget', 'resumeRequired', 'diagnosticsAvailable'
+      'totalChunkCount', 'memoryState', 'errorCode', 'budget', 'resumeRequired', 'diagnosticsAvailable', 'attemptIdentity'
     ])
     const requestId = identifier(input.requestId)
     boundedInteger(input.generation, 1, Number.MAX_SAFE_INTEGER)
@@ -683,6 +698,12 @@ class AgentExecutionStore {
     const resumeRequired = input.resumeRequired === undefined ? Number(current.resume_required) : (input.resumeRequired ? 1 : 0)
     const diagnosticsAvailable = input.diagnosticsAvailable === undefined ? Number(current.diagnostics_available) : (input.diagnosticsAvailable ? 1 : 0)
     return this.transaction(() => {
+      if (input.attemptIdentity !== undefined) {
+        const attemptIdentity = input.attemptIdentity
+        const run = this.runRow(attemptIdentity.runId)
+        if (run.session_summary_request_id !== requestId) fail('AGENT_CONTEXT_OPERATION_FAILED')
+        this.assertActiveAttempt(run, attemptIdentity, this.nowValue())
+      }
       const result = this.database.prepare(`
         UPDATE formal_agent_requests SET state=?,phase=?,attempt=?,elapsed_ms=?,last_activity_elapsed_ms=?,
           validated_chunk_count=?,total_chunk_count=?,memory_state=?,error_code=?,budget_axis=?,budget_actual=?,budget_limit=?,
@@ -894,7 +915,7 @@ class AgentExecutionStore {
   }
 
   terminalizeInteraction (input) {
-    exactObject(input, ['interactionId', 'terminalReason', 'errorCode', 'result', 'usage', 'durationMs'])
+    exactObject(input, ['interactionId', 'terminalReason', 'errorCode', 'result', 'usage', 'durationMs'], ['attemptIdentity'])
     const interactionId = identifier(input.interactionId)
     if (!TERMINAL_REASONS.includes(input.terminalReason)) fail('AGENT_REQUEST_INVALID')
     nonNegativeInteger(input.durationMs)
@@ -920,6 +941,21 @@ class AgentExecutionStore {
       const row = this.interactionRow(interactionId)
       const run = this.runRow(row.run_id)
       this.guardTombstone(run)
+      const now = this.nowValue()
+      if (row.terminal_reason === null) {
+        if (input.attemptIdentity !== undefined) {
+          if (run.cancel_requested_at !== null && terminalReason !== 'cancelled') fail('AGENT_INTERACTION_STATE_CONFLICT')
+          this.assertActiveAttempt(run, input.attemptIdentity, now, { allowCancelRequested: terminalReason === 'cancelled' })
+        } else if (run.recipe_id !== 'intent.route' || run.state !== 'queued' ||
+            terminalReason === 'succeeded' && run.cancel_requested_at !== null) {
+          fail('AGENT_CONTEXT_OPERATION_FAILED')
+        }
+      } else {
+        if (input.attemptIdentity !== undefined) {
+          exactObject(input.attemptIdentity, ['runId', 'attempt', 'owner', 'leaseExpiresAt'])
+          if (input.attemptIdentity.runId !== run.run_id) fail('AGENT_CONTEXT_OPERATION_FAILED')
+        }
+      }
       const binding = this.bindingForRun(run)
       const storedError = storedErrorCode(input.errorCode)
       const summaryMemoryError = input.errorCode === SUMMARY_MEMORY_ERROR ? 1 : 0
@@ -954,7 +990,6 @@ class AgentExecutionStore {
         if (!same) fail('AGENT_INTERACTION_STATE_CONFLICT')
         return rowInteraction(row, true)
       }
-      const now = this.nowValue()
       if (now < Number(row.created_at)) fail('STORAGE_COMMAND_FAILED')
       const summaryInputLimitError = input.errorCode === SUMMARY_INPUT_LIMIT_ERROR ? 1 : 0
       this.database.prepare(`
@@ -999,10 +1034,11 @@ class AgentExecutionStore {
   }
 
   startToolCall (input) {
-    exactObject(input, ['callId', 'interactionId', 'attempt', 'callOrder', 'toolName', 'startedOffsetMs', 'args'])
+    exactObject(input, ['callId', 'interactionId', 'attemptIdentity', 'attempt', 'callOrder', 'toolName', 'startedOffsetMs', 'args'])
     const callId = identifier(input.callId)
     const interactionId = identifier(input.interactionId)
     boundedInteger(input.attempt, 1, 100)
+    if (input.attemptIdentity?.attempt !== input.attempt) fail('AGENT_REQUEST_INVALID')
     boundedInteger(input.callOrder, 1, 12)
     if (!TOOL_NAMES.includes(input.toolName)) fail('AGENT_REQUEST_INVALID')
     nonNegativeInteger(input.startedOffsetMs)
@@ -1015,11 +1051,16 @@ class AgentExecutionStore {
           Number(prior.call_order) === input.callOrder && prior.tool_name === input.toolName &&
           prior.started_offset_ms === input.startedOffsetMs && prior.args_digest === sha256Canonical(input.args)
         if (!same) fail('AGENT_TOOL_STATE_CONFLICT')
+        if (prior.status === 'started') {
+          const priorInteraction = this.interactionRow(prior.interaction_id)
+          this.assertActiveAttempt(this.runRow(priorInteraction.run_id), input.attemptIdentity, this.nowValue())
+        }
         return rowToolCall(prior, true)
       }
       const row = this.interactionRow(interactionId)
       const run = this.runRow(row.run_id)
       this.guardTombstone(run)
+      this.assertActiveAttempt(run, input.attemptIdentity, this.nowValue())
       if (row.terminal_reason !== null) fail('AGENT_INTERACTION_STATE_CONFLICT')
       const orderConflict = this.database.prepare(`
         SELECT 1 FROM formal_agent_tool_calls WHERE interaction_id=? AND attempt=? AND call_order=?
@@ -1043,8 +1084,9 @@ class AgentExecutionStore {
   }
 
   finishToolCall (input) {
-    exactObject(input, ['callId', 'status', 'result', 'errorCode', 'endedOffsetMs', 'sourceRefs', 'counts'])
+    exactObject(input, ['callId', 'attemptIdentity', 'status', 'result', 'errorCode', 'endedOffsetMs', 'sourceRefs', 'counts'])
     const callId = identifier(input.callId)
+    exactObject(input.attemptIdentity, ['runId', 'attempt', 'owner', 'leaseExpiresAt'])
     if (!TOOL_STATUSES.includes(input.status) || input.status === 'started') fail('AGENT_REQUEST_INVALID')
     if (!Array.isArray(input.sourceRefs) || input.sourceRefs.length > MAX_SOURCE_REFS) fail('TOOL_ARGS_INVALID')
     try { input.sourceRefs.forEach(assertSourceRef) } catch { fail('TOOL_ARGS_INVALID') }
@@ -1057,7 +1099,7 @@ class AgentExecutionStore {
       if (input.errorCode !== null || input.result === null) fail('AGENT_REQUEST_INVALID')
       const result = jsonValue(input.result, 'TOOL_ARGS_INVALID')
       if (Buffer.byteLength(result.encoded, 'utf8') > MAX_RESULT_BYTES) {
-        return this.closeOversizedTool(callId, input.endedOffsetMs, sourceRefs.encoded, counts.encoded)
+        return this.closeOversizedTool(callId, input.attemptIdentity, input.endedOffsetMs, sourceRefs.encoded, counts.encoded)
       }
       resultEncoded = result.encoded
       resultDigest = sha256Canonical(input.result)
@@ -1074,6 +1116,7 @@ class AgentExecutionStore {
       const interaction = this.interactionRow(row.interaction_id)
       const run = this.runRow(interaction.run_id)
       this.guardTombstone(run)
+      if (Number(row.attempt) !== input.attemptIdentity.attempt) fail('AGENT_CONTEXT_OPERATION_FAILED')
       if (row.status !== 'started') {
         const same = row.status === input.status && row.error_code === input.errorCode &&
           row.result_digest === resultDigest && Number(row.ended_offset_ms) === input.endedOffsetMs &&
@@ -1081,6 +1124,7 @@ class AgentExecutionStore {
         if (!same) fail('AGENT_TOOL_STATE_CONFLICT')
         return rowToolCall(row, true)
       }
+      this.assertActiveAttempt(run, input.attemptIdentity, this.nowValue(), { allowCancelRequested: input.status === 'cancelled' })
       if (interaction.terminal_reason !== null) fail('AGENT_INTERACTION_STATE_CONFLICT')
       this.database.prepare(`
         UPDATE formal_agent_tool_calls SET ended_offset_ms=?, status=?, error_code=?,
@@ -1092,7 +1136,7 @@ class AgentExecutionStore {
     })
   }
 
-  closeOversizedTool (callId, endedOffsetMs, sourceRefs, counts) {
+  closeOversizedTool (callId, attemptIdentity, endedOffsetMs, sourceRefs, counts) {
     nonNegativeInteger(endedOffsetMs)
     const result = this.transaction(() => {
       const row = this.database.prepare('SELECT * FROM formal_agent_tool_calls WHERE call_id=?').get(callId)
@@ -1101,6 +1145,8 @@ class AgentExecutionStore {
       const interaction = this.interactionRow(row.interaction_id)
       const run = this.runRow(interaction.run_id)
       this.guardTombstone(run)
+      if (Number(row.attempt) !== attemptIdentity.attempt) fail('AGENT_CONTEXT_OPERATION_FAILED')
+      this.assertActiveAttempt(run, attemptIdentity, this.nowValue())
       if (interaction.terminal_reason !== null) fail('AGENT_INTERACTION_STATE_CONFLICT')
       this.database.prepare(`
         UPDATE formal_agent_tool_calls SET ended_offset_ms=?, status='failed', error_code='TOOL_BUDGET_EXCEEDED',

@@ -7,6 +7,7 @@ const { FORMAL_AGENT_MIGRATIONS } = require('./schema')
 const { SqliteSubtitleStore } = require('./subtitle-store')
 const {
   OPERATIONS,
+  CONTROL_MESSAGES,
   LEGACY_IMPORT_KEYS,
   PROTOCOL_VERSION,
   StorageError,
@@ -217,6 +218,10 @@ class StorageWorkerService {
       assertExactKeys(payload, ['request'])
       return this.requirePersonalContextStore().claimNextFormalRun(payload.request)
     }
+    if (operation === OPERATIONS.FORMAL_AGENT_RENEW_RUN_LEASE) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().renewFormalRunLease(payload.request)
+    }
     if (operation === OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT) {
       if (!payload || typeof payload !== 'object' || Array.isArray(payload) ||
           (Object.keys(payload).length !== 0 && Object.keys(payload).join(',') !== 'requestedBy')) {
@@ -357,6 +362,34 @@ class StorageWorkerService {
         error: publicError(error)
       }
     }
+  }
+
+  handleLeaseRenewalControl (message) {
+    const requestId = typeof message?.requestId === 'string' && message.requestId.length <= 128
+      ? message.requestId
+      : ''
+    try {
+      assertExactKeys(message, ['version', 'type', 'requestId', 'request'], 'INVALID_REQUEST')
+      if (message.version !== PROTOCOL_VERSION || message.type !== CONTROL_MESSAGES.RENEW_FORMAL_AGENT_RUN_LEASE ||
+          typeof message.requestId !== 'string' || message.requestId.length < 1 || message.requestId.length > 128) {
+        throw new StorageError('INVALID_REQUEST')
+      }
+    } catch (error) {
+      return {
+        version: PROTOCOL_VERSION,
+        type: 'storage:response',
+        requestId,
+        ok: false,
+        error: publicError(error)
+      }
+    }
+    return this.handle({
+      version: PROTOCOL_VERSION,
+      type: 'storage:request',
+      requestId,
+      operation: OPERATIONS.FORMAL_AGENT_RENEW_RUN_LEASE,
+      payload: { request: message.request }
+    })
   }
 
   readSessionInputRequest (requestId, source) {

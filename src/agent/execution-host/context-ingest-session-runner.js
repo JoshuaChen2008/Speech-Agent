@@ -28,6 +28,12 @@ function codedError (code) {
   return error
 }
 
+function assertSchedulerActive (signal) {
+  if (['AGENT_SCHEDULER_STOPPED', 'AGENT_LEASE_LOST'].includes(signal?.reason?.code)) {
+    throw signal.reason
+  }
+}
+
 function exactObject (value, keys, optional = []) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw codedError('AGENT_REQUEST_INVALID')
   const expected = [...keys].sort()
@@ -150,19 +156,19 @@ class ContextIngestSessionRunner {
     return this.personalContext.prepareSessionIngest(source)
   }
 
-  async failAttempt (attemptIdentity, code) {
+  async failAttempt (attemptIdentity, code, signal) {
     if (this.storage && typeof this.storage.failFormalAgentRun === 'function') {
-      return this.storage.failFormalAgentRun({ attemptIdentity, errorCode: code })
+      return this.storage.failFormalAgentRun({ attemptIdentity, errorCode: code }, signal)
     }
     return null
   }
 
-  async terminalizeFailure (interactionId, code, durationMs) {
+  async terminalizeFailure (interactionId, attemptIdentity, code, durationMs, signal) {
     try {
       return await this.interactions.terminalize({
-        interactionId, terminalReason: 'failed', errorCode: code,
+        interactionId, attemptIdentity: { ...attemptIdentity }, terminalReason: 'failed', errorCode: code,
         result: null, usage: null, durationMs
-      })
+      }, signal)
     } catch {
       return null
     }
@@ -179,13 +185,14 @@ class ContextIngestSessionRunner {
         !binding?.budget) {
       return undefined
     }
-    const context = await this.personalContext.readToolContext({ runId: attemptIdentity.runId })
+    const context = await this.personalContext.readToolContext({ runId: attemptIdentity.runId }, signal)
     const controlled = createControlledToolRuntime({ context, signal })
     const audited = createToolAuditRuntime({
       interactionId,
       recipeId: recipe.recipeId,
       recipeVersion: recipe.recipeVersion,
       attempt: attemptIdentity.attempt,
+      attemptIdentity,
       tools: controlled.toolsForRecipe(recipe.recipeId, recipe.recipeVersion),
       budget: binding.budget,
       interactions: this.interactions,
@@ -203,13 +210,13 @@ class ContextIngestSessionRunner {
         attemptIdentity: job.attemptIdentity,
         resultDigest: sha256Canonical(summary),
         resultSummary: summary
-      })
+      }, job.signal)
       return result
     } catch {
       await this.storage.failFormalAgentRun({
         attemptIdentity: job.attemptIdentity,
         errorCode: 'AGENT_INTERNAL_FAILURE'
-      })
+      }, job.signal)
       return null
     }
   }
@@ -227,6 +234,7 @@ class ContextIngestSessionRunner {
     let interactionCreated = false
     let terminalReason = null
     try {
+      assertSchedulerActive(job.signal)
       const recipe = getRecipe(job.recipeId, '1')
       const binding = await this.modelAccess.bind({
         runId: attemptIdentity.runId,
@@ -234,26 +242,32 @@ class ContextIngestSessionRunner {
         recipeVersion: recipe.recipeVersion,
         executionForm: 'agent_loop'
       })
+      assertSchedulerActive(job.signal)
       await this.interactions.create({
         runId: attemptIdentity.runId,
         interactionId,
         routingMode: 'preset',
         promptDigest: null
-      })
+      }, job.signal)
       interactionCreated = true
+      assertSchedulerActive(job.signal)
       const input = job.recipeId === 'context.ingest.interaction'
         ? (typeof this.personalContext.readInteractionInput === 'function'
             ? await this.personalContext.readInteractionInput(
-                job.source, await this.interactionPayloadProvider(attemptIdentity.runId)
+                job.source, await this.interactionPayloadProvider(attemptIdentity.runId), job.signal
               )
             : job.source)
         : (typeof this.personalContext.readSessionInput === 'function'
-            ? await this.personalContext.readSessionInput(job.source)
+            ? await this.personalContext.readSessionInput(job.source, job.signal)
             : job.source)
+      assertSchedulerActive(job.signal)
       const prompt = promptForInput(input)
       const resolvedModel = await this.resolveModel(binding)
+      assertSchedulerActive(job.signal)
       const tools = await this.toolsForRun(recipe, binding, interactionId, attemptIdentity, job.signal)
+      assertSchedulerActive(job.signal)
       const loop = await this.loopFactory(binding)
+      assertSchedulerActive(job.signal)
       if (!loop || typeof loop.agentLoop !== 'function') throw codedError('AGENT_INTERNAL_FAILURE')
       const result = await loop.agentLoop({
         recipeId: recipe.recipeId,
@@ -265,35 +279,40 @@ class ContextIngestSessionRunner {
         ...(tools === undefined ? {} : { tools }),
         usageReporting: binding?.capabilities?.usageReporting !== false
       })
+      assertSchedulerActive(job.signal)
       const output = outputValue(result)
       validateRecipeOutput(recipe.recipeId, recipe.recipeVersion, output)
+      assertSchedulerActive(job.signal)
       if (job.recipeId === 'context.ingest.interaction') {
         if (typeof this.personalContext.commitInteractionIngest !== 'function') throw codedError('AGENT_REQUEST_INVALID')
-        await this.personalContext.commitInteractionIngest({ runId: attemptIdentity.runId, attemptIdentity, output })
+        await this.personalContext.commitInteractionIngest({ runId: attemptIdentity.runId, attemptIdentity, output }, job.signal)
       } else {
-        await this.personalContext.commitSessionIngest({ runId: attemptIdentity.runId, attemptIdentity, output })
+        await this.personalContext.commitSessionIngest({ runId: attemptIdentity.runId, attemptIdentity, output }, job.signal)
       }
+      assertSchedulerActive(job.signal)
       const durationMs = Math.max(0, this.now() - startedAt)
       const terminal = await this.interactions.terminalize({
         interactionId,
+        attemptIdentity: { ...attemptIdentity },
         terminalReason: 'succeeded',
         errorCode: null,
         result: output,
         usage: usageValue(result?.usage, binding?.capabilities?.usageReporting),
         durationMs
-      })
+      }, job.signal)
       terminalReason = 'succeeded'
       return { ...terminal, state: 'succeeded', output }
     } catch (error) {
+      if (['AGENT_SCHEDULER_STOPPED', 'AGENT_LEASE_LOST'].includes(job.signal?.reason?.code)) return null
       const code = errorCode(error)
       const durationMs = Math.max(0, this.now() - startedAt)
       if (code === 'AGENT_CANCELLED') {
         if (interactionCreated) {
           try {
             await this.interactions.terminalize({
-              interactionId, terminalReason: 'cancelled', errorCode: null,
+              interactionId, attemptIdentity: { ...attemptIdentity }, terminalReason: 'cancelled', errorCode: null,
               result: null, usage: null, durationMs
-            })
+            }, job.signal?.reason?.code === 'AGENT_CANCELLED' ? undefined : job.signal)
           } catch { /* cancelRun may already have terminalized the row */ }
           terminalReason = 'cancelled'
         }
@@ -301,19 +320,19 @@ class ContextIngestSessionRunner {
       }
       if (TERMINAL_ERRORS.has(code)) {
         if (interactionCreated) {
-          await this.terminalizeFailure(interactionId, code, durationMs)
+          await this.terminalizeFailure(interactionId, attemptIdentity, code, durationMs, job.signal)
           terminalReason = 'failed'
         } else {
-          const settlement = await this.failAttempt(attemptIdentity, code)
+          const settlement = await this.failAttempt(attemptIdentity, code, job.signal)
           if (settlement?.state === 'failed' && job.recipeId === 'context.ingest.interaction') terminalReason = 'failed'
         }
         return null
       }
-      const settlement = await this.failAttempt(attemptIdentity, code)
+      const settlement = await this.failAttempt(attemptIdentity, code, job.signal)
       // A retryable error keeps the pending interaction and skeleton intact.
       // Once S1 exhausts attempts, close the pending interaction as failed.
       if (settlement?.state === 'failed' && interactionCreated) {
-        await this.terminalizeFailure(interactionId, code, durationMs)
+        await this.terminalizeFailure(interactionId, attemptIdentity, code, durationMs, job.signal)
         terminalReason = 'failed'
       } else if (settlement?.state === 'failed' && job.recipeId === 'context.ingest.interaction') {
         terminalReason = 'failed'

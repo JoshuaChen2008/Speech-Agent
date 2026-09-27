@@ -595,6 +595,47 @@ test('SEM-F28/SEM-F30/J21: a controlled v5 run replays one claim attempt and set
   }), null)
 })
 
+test('SEM-F28/J30-RECOVERY: renewal keeps the active attempt writable and reclaim fences its old identity', (t) => {
+  let now = 1000
+  const { subtitleStore, store } = fixture(t, { now: () => now })
+  enableAutomaticPolicy(store)
+  terminalSession(subtitleStore, 'session.lease-renewal')
+  const prepared = store.prepareSessionIngestRequest({ sessionId: 'session.lease-renewal', transcriptVersion: 'raw' })
+  const first = store.claimNextFormalRun({
+    claimIdempotencyKey: 'claim.lease.first', owner: 'owner.lease.first', leaseMs: 30000
+  })
+  assert.equal(first.runId, prepared.runId)
+
+  now += 10000
+  const renewed = store.renewFormalRunLease({ attemptIdentity: first.attemptIdentity, leaseMs: 30000 })
+  assert.equal(renewed.attemptIdentity.leaseExpiresAt, now + 30000)
+  assert.equal(subtitleStore.database.prepare('SELECT lease_renewed_from_expires_at FROM formal_agent_runs WHERE run_id=?').get(first.runId).lease_renewed_from_expires_at, first.attemptIdentity.leaseExpiresAt)
+  now += 10000
+  const renewedAgain = store.renewFormalRunLease({ attemptIdentity: renewed.attemptIdentity, leaseMs: 30000 })
+  assert.equal(renewedAgain.attemptIdentity.leaseExpiresAt, now + 30000)
+  assert.equal(subtitleStore.database.prepare('SELECT lease_renewed_from_expires_at FROM formal_agent_runs WHERE run_id=?').get(first.runId).lease_renewed_from_expires_at, renewed.attemptIdentity.leaseExpiresAt)
+  now = first.attemptIdentity.leaseExpiresAt + 1
+  assert.ok(now < renewedAgain.attemptIdentity.leaseExpiresAt, 'the renewed database lease remains active after the original token expires')
+  assert.equal(store.failFormalRun({
+    attemptIdentity: first.attemptIdentity, errorCode: 'AGENT_PROVIDER_UNAVAILABLE'
+  }).state, 'retry_wait')
+
+  now = renewedAgain.attemptIdentity.leaseExpiresAt + 1
+  const second = store.claimNextFormalRun({
+    claimIdempotencyKey: 'claim.lease.second', owner: 'owner.lease.second', leaseMs: 30000
+  })
+  assert.equal(second.attemptIdentity.attempt, 2)
+  assert.equal(second.attemptIdentity.owner, 'owner.lease.second')
+  assert.throws(() => store.completeFormalRun({
+    attemptIdentity: first.attemptIdentity,
+    resultDigest: sha256Canonical({ episodeCount: 1, memoryCount: 0 }),
+    resultSummary: { episodeCount: 1, memoryCount: 0 }
+  }), (error) => error.code === 'AGENT_CONTEXT_OPERATION_FAILED')
+  assert.equal(store.failFormalRun({
+    attemptIdentity: second.attemptIdentity, errorCode: 'AGENT_PROVIDER_UNAVAILABLE'
+  }).state, 'retry_wait')
+})
+
 test('SEM-F28/J22/J24: formal claim filters user target recipes without changing the automatic claim contract', (t) => {
   const { subtitleStore, store } = fixture(t)
   enableAutomaticPolicy(store)

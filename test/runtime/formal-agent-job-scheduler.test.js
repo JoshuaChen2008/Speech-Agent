@@ -14,13 +14,17 @@ function settled () {
 }
 
 test('SEM-F28/SEM-F30/J21: scheduler starts once, owns one worker and drains fixed recipe jobs', async () => {
-  const jobs = [{ runId: 'run.1' }, null]
+  const jobs = [{ runId: 'run.1', attemptIdentity: { runId: 'run.1', attempt: 1, owner: 'owner.1', leaseExpiresAt: 30000 } }, null]
   const claims = []
   const runs = []
   const scheduler = new FormalAgentJobScheduler({
     owner: 'owner.1',
     storage: {
       claimNextFormalAgentRun: async (identity) => { claims.push(identity); return jobs.shift() },
+      renewFormalAgentRun: async ({ attemptIdentity, leaseMs }) => ({
+        runId: attemptIdentity.runId,
+        attemptIdentity: { ...attemptIdentity, leaseExpiresAt: attemptIdentity.leaseExpiresAt + leaseMs }
+      }),
       nextFormalAgentRunAt: async () => null
     },
     runner: { run: async (job) => runs.push(job.runId) }
@@ -146,6 +150,10 @@ test('SEM-F28/SEM-T04/J22/J24: scheduler stop aborts an active Agent attempt wit
   const scheduler = new FormalAgentJobScheduler({
     storage: {
       claimNextFormalAgentRun: async () => new Promise((resolve) => { resolveClaim = resolve }),
+      renewFormalAgentRun: async ({ attemptIdentity, leaseMs }) => ({
+        runId: attemptIdentity.runId,
+        attemptIdentity: { ...attemptIdentity, leaseExpiresAt: attemptIdentity.leaseExpiresAt + leaseMs }
+      }),
       nextFormalAgentRunAt: async () => null
     },
     runner: { run: async (job) => { signal = job.signal; await new Promise(() => {}) } }
@@ -156,6 +164,92 @@ test('SEM-F28/SEM-T04/J22/J24: scheduler stop aborts an active Agent attempt wit
   await settled()
   await scheduler.stop()
   assert.equal(signal.aborted, true)
+  assert.equal(signal.reason.code, 'AGENT_SCHEDULER_STOPPED')
+})
+
+test('SEM-F28/J30-RECOVERY: user scheduler renews the active owner lease every ten seconds', async () => {
+  const timers = []
+  const identity = { runId: 'run.lease.renew', attempt: 1, owner: 'owner.lease', leaseExpiresAt: 30000 }
+  let releaseRun
+  let renewals = 0
+  const scheduler = new FormalAgentJobScheduler({
+    owner: 'owner.lease', requestedBy: 'user', leaseMs: 30000,
+    storage: {
+      claimNextFormalAgentRun: async () => ({ runId: identity.runId, recipeId: 'qa.answer', attemptIdentity: identity }),
+      renewFormalAgentRun: async ({ attemptIdentity: requested, leaseMs }) => {
+        renewals += 1
+        assert.equal(requested.leaseExpiresAt, identity.leaseExpiresAt)
+        assert.equal(leaseMs, 30000)
+        return { runId: identity.runId, attemptIdentity: { ...requested, leaseExpiresAt: requested.leaseExpiresAt + leaseMs } }
+      },
+      nextFormalAgentRunAt: async () => null
+    },
+    runner: { run: async () => new Promise((resolve) => { releaseRun = resolve }) },
+    setTimer: (callback, delay) => { timers.push({ callback, delay }); return timers.length },
+    clearTimer: () => {}
+  })
+  scheduler.start()
+  await settled()
+  assert.equal(timers[0].delay, 10000)
+  timers[0].callback()
+  await settled()
+  assert.equal(renewals, 1)
+  assert.equal(identity.leaseExpiresAt, 60000)
+  assert.equal(timers.at(-1).delay, 10000)
+  await scheduler.stop()
+  releaseRun()
+})
+
+test('SEM-F28/SEM-T04/J30-RECOVERY: failed renewal aborts the attempt and emits only a stable diagnostic', async () => {
+  const timers = []
+  const diagnostics = []
+  let signal
+  const scheduler = new FormalAgentJobScheduler({
+    owner: 'owner.lease.loss', requestedBy: 'user',
+    storage: {
+      claimNextFormalAgentRun: async () => ({
+        runId: 'run.lease.loss', recipeId: 'qa.answer',
+        attemptIdentity: { runId: 'run.lease.loss', attempt: 1, owner: 'owner.lease.loss', leaseExpiresAt: 30000 }
+      }),
+      renewFormalAgentRun: async () => { throw new Error('private database detail') },
+      nextFormalAgentRunAt: async () => null
+    },
+    runner: { run: async (job) => { signal = job.signal; await new Promise(() => {}) } },
+    onDiagnostic: (value) => diagnostics.push(value),
+    setTimer: (callback, delay) => { timers.push({ callback, delay }); return timers.length },
+    clearTimer: () => {}
+  })
+  scheduler.start()
+  await settled()
+  timers[0].callback()
+  await settled()
+  assert.equal(signal.aborted, true)
+  assert.equal(signal.reason.code, 'AGENT_LEASE_LOST')
+  assert.deepEqual(diagnostics, [{ code: 'AGENT_SCHEDULER_FAILED' }])
+  await scheduler.stop()
+})
+
+test('SEM-F28/SEM-T04/J30-RECOVERY: a claimed run without lease renewal support makes no runner call', async () => {
+  const diagnostics = []
+  const jobs = [
+    { runId: 'run.no-renew', recipeId: 'qa.answer', attemptIdentity: { runId: 'run.no-renew', attempt: 1, owner: 'owner.no-renew', leaseExpiresAt: 30000 } },
+    null
+  ]
+  let runCount = 0
+  const scheduler = new FormalAgentJobScheduler({
+    owner: 'owner.no-renew', requestedBy: 'user',
+    storage: {
+      claimNextFormalAgentRun: async () => jobs.shift(),
+      nextFormalAgentRunAt: async () => null
+    },
+    runner: { run: async () => { runCount += 1 } },
+    onDiagnostic: (value) => diagnostics.push(value)
+  })
+  scheduler.start()
+  await settled()
+  assert.equal(runCount, 0)
+  assert.deepEqual(diagnostics, [{ code: 'AGENT_SCHEDULER_FAILED' }])
+  await scheduler.stop()
 })
 
 test('SEM-F28/SEM-T04/J22/J24: a replaced scheduler generation ignores a late Agent result', async () => {
@@ -166,6 +260,10 @@ test('SEM-F28/SEM-T04/J22/J24: a replaced scheduler generation ignores a late Ag
   const scheduler = new FormalAgentJobScheduler({
     storage: {
       claimNextFormalAgentRun: async () => new Promise((resolve) => { resolveClaim = resolve }),
+      renewFormalAgentRun: async ({ attemptIdentity, leaseMs }) => ({
+        runId: attemptIdentity.runId,
+        attemptIdentity: { ...attemptIdentity, leaseExpiresAt: attemptIdentity.leaseExpiresAt + leaseMs }
+      }),
       nextFormalAgentRunAt: async () => null
     },
     runner: {

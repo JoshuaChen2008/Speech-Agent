@@ -11,6 +11,7 @@
 const path = require('node:path')
 const {
   OPERATIONS,
+  CONTROL_MESSAGES,
   PROTOCOL_VERSION,
   SAFE_ERROR_MESSAGES,
   StorageError,
@@ -135,6 +136,8 @@ class StorageWorkerHost {
     this.exitPromise = null
     this.tail = Promise.resolve()
     this.counter = 0
+    this.pendingRequests = new Set()
+    this.responsesInDispatch = new Set()
     this.generation = 0
     this.state = 'stopped'
     this.closing = false
@@ -284,6 +287,7 @@ class StorageWorkerHost {
       let requestSent = false
       const cleanup = () => {
         clearTimeout(timer)
+        this.pendingRequests.delete(requestId)
         options.signal?.removeEventListener('abort', onAbort)
         child.removeListener('message', onMessage)
         child.removeListener('exit', onExit)
@@ -304,6 +308,13 @@ class StorageWorkerHost {
       }, operation === OPERATIONS.INITIALIZE ? 300000 : this.requestTimeoutMs)
       const onMessage = (message) => {
         if (settled) return
+        if (message?.requestId !== requestId) {
+          if (this.pendingRequests.has(message?.requestId) || this.responsesInDispatch.has(message?.requestId)) return
+          failTransport(responseError(operation))
+          return
+        }
+        this.responsesInDispatch.add(requestId)
+        setImmediate(() => this.responsesInDispatch.delete(requestId))
         let response
         try {
           response = validateResponse(message, requestId, operation)
@@ -326,6 +337,8 @@ class StorageWorkerHost {
         ))
       }
       const onAbort = () => {
+        // The signal can withdraw queued work before postMessage; after send,
+        // it cannot retract the request already handed to the worker.
         if (settled || !CANCELLABLE_PERSONAL_CONTEXT_READS.has(operation)) return
         if (!requestSent) {
           settled = true
@@ -351,6 +364,7 @@ class StorageWorkerHost {
       }
       child.on('message', onMessage)
       child.once('exit', onExit)
+      this.pendingRequests.add(requestId)
       if (options.signal) {
         options.signal.addEventListener('abort', onAbort, { once: true })
         if (options.signal.aborted) {
@@ -358,13 +372,20 @@ class StorageWorkerHost {
           return
         }
       }
-      const request = {
-        version: PROTOCOL_VERSION,
-        type: 'storage:request',
-        requestId,
-        operation,
-        payload
-      }
+      const request = options.priorityControl
+        ? {
+            version: PROTOCOL_VERSION,
+            type: CONTROL_MESSAGES.RENEW_FORMAL_AGENT_RUN_LEASE,
+            requestId,
+            request: payload.request
+          }
+        : {
+            version: PROTOCOL_VERSION,
+            type: 'storage:request',
+            requestId,
+            operation,
+            payload
+          }
       if (idempotencyKey !== undefined) request.idempotencyKey = idempotencyKey
       try {
         requestSent = true
@@ -483,20 +504,20 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_READ_TOOL_CONTEXT, { request }, undefined, { signal })
   }
 
-  commitPersonalContextSessionIngest (request) {
-    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_COMMIT_SESSION_INGEST, { request })
+  commitPersonalContextSessionIngest (request, signal) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_COMMIT_SESSION_INGEST, { request }, undefined, { signal })
   }
 
   preparePersonalContextInteractionIngest (request) {
     return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_PREPARE_INTERACTION_INGEST, { request })
   }
 
-  readPersonalContextInteractionInput (source, ephemeral = null) {
-    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_READ_INTERACTION_INPUT, { source, ephemeral })
+  readPersonalContextInteractionInput (source, ephemeral = null, signal) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_READ_INTERACTION_INPUT, { source, ephemeral }, undefined, { signal })
   }
 
-  commitPersonalContextInteractionIngest (request) {
-    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_COMMIT_INTERACTION_INGEST, { request })
+  commitPersonalContextInteractionIngest (request, signal) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_COMMIT_INTERACTION_INGEST, { request }, undefined, { signal })
   }
 
   cancelPersonalContextInteractionIngest (request) {
@@ -507,20 +528,26 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request })
   }
 
+  renewFormalAgentRun (request) {
+    if (this.closing) return Promise.reject(this.stateError('HOST_SHUTTING_DOWN'))
+    if (this.state !== 'ready' || !this.child) return Promise.reject(this.stateError())
+    return this.perform(OPERATIONS.FORMAL_AGENT_RENEW_RUN_LEASE, { request }, undefined, { priorityControl: true })
+  }
+
   nextFormalAgentRunAt (request = {}) {
     return this.enqueue(OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT, request)
   }
 
-  completeFormalAgentRun (request) {
-    return this.enqueue(OPERATIONS.FORMAL_AGENT_COMPLETE_RUN, { request })
+  completeFormalAgentRun (request, signal) {
+    return this.enqueue(OPERATIONS.FORMAL_AGENT_COMPLETE_RUN, { request }, undefined, { signal })
   }
 
-  failFormalAgentRun (request) {
-    return this.enqueue(OPERATIONS.FORMAL_AGENT_FAIL_RUN, { request })
+  failFormalAgentRun (request, signal) {
+    return this.enqueue(OPERATIONS.FORMAL_AGENT_FAIL_RUN, { request }, undefined, { signal })
   }
 
-  createAgentInteraction (request) {
-    return this.enqueue(OPERATIONS.AGENT_CREATE_INTERACTION, { request })
+  createAgentInteraction (request, signal) {
+    return this.enqueue(OPERATIONS.AGENT_CREATE_INTERACTION, { request }, undefined, { signal })
   }
 
   createAgentRun (request) {
@@ -531,16 +558,16 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.AGENT_CANCEL_RUN, { request })
   }
 
-  terminalizeAgentInteraction (request) {
-    return this.enqueue(OPERATIONS.AGENT_TERMINALIZE_INTERACTION, { request })
+  terminalizeAgentInteraction (request, signal) {
+    return this.enqueue(OPERATIONS.AGENT_TERMINALIZE_INTERACTION, { request }, undefined, { signal })
   }
 
-  startAgentToolCall (request) {
-    return this.enqueue(OPERATIONS.AGENT_START_TOOL_CALL, { request })
+  startAgentToolCall (request, signal) {
+    return this.enqueue(OPERATIONS.AGENT_START_TOOL_CALL, { request }, undefined, { signal })
   }
 
-  finishAgentToolCall (request) {
-    return this.enqueue(OPERATIONS.AGENT_FINISH_TOOL_CALL, { request })
+  finishAgentToolCall (request, signal) {
+    return this.enqueue(OPERATIONS.AGENT_FINISH_TOOL_CALL, { request }, undefined, { signal })
   }
 
   createAgentReportPresentation (request) {
@@ -567,8 +594,8 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.SUMMARY_REQUEST_GET, { request })
   }
 
-  updateSessionSummaryRequest (request) {
-    return this.enqueue(OPERATIONS.SUMMARY_REQUEST_UPDATE, { request })
+  updateSessionSummaryRequest (request, signal) {
+    return this.enqueue(OPERATIONS.SUMMARY_REQUEST_UPDATE, { request }, undefined, { signal })
   }
 
   cancelSessionSummaryRequest (request) {

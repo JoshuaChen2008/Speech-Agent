@@ -96,6 +96,10 @@ test('SEM-F28/SEM-F30/SEM-T10/J22/J24: ready terminal notice prepares one sessio
       runId: 'run.runtime', recipeId: 'context.ingest.session', source,
       attemptIdentity: { runId: 'run.runtime', attempt: 1, owner: 'scheduler', leaseExpiresAt: 100000 }
     }),
+    renewFormalAgentRun: async ({ attemptIdentity, leaseMs }) => ({
+      runId: attemptIdentity.runId,
+      attemptIdentity: { ...attemptIdentity, leaseExpiresAt: attemptIdentity.leaseExpiresAt + leaseMs }
+    }),
     nextFormalAgentRunAt: async () => null,
     failFormalAgentRun: async (request) => { calls.push(['fail', request]); return { state: 'failed' } },
     createAgentInteraction: async (request) => { calls.push(['interaction:create', request]); return request },

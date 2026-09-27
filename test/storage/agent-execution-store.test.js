@@ -20,14 +20,15 @@ const providerUsage = {
   cacheMissInputTokens: null
 }
 
-function fixture (t) {
+function fixture (t, options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-execution-store-'))
+  const now = typeof options.now === 'function' ? options.now : () => 2000
   const subtitleStore = new SqliteSubtitleStore({
     databasePath: path.join(root, 'speech-agent.sqlite3'),
     migrations: FORMAL_AGENT_MIGRATIONS,
     now: () => 1000
   })
-  const store = new AgentExecutionStore({ subtitleStore, now: () => 2000 })
+  const store = new AgentExecutionStore({ subtitleStore, now })
   t.after(() => {
     try { subtitleStore.close() } catch {}
     fs.rmSync(root, { recursive: true, force: true })
@@ -103,6 +104,10 @@ function qaResult () {
   return { schemaVersion: 1, answer: 'answer', sourceRefs: [], memoryRefs: [], unresolved: [] }
 }
 
+function attemptIdentity (runId, attempt = 1, owner = 'worker', leaseExpiresAt = 5000) {
+  return { runId, attempt, owner, leaseExpiresAt }
+}
+
 test('SEM-F28/SEM-F34/J22/J24: interaction writer derives the recipe snapshot and rejects caller-owned facts', (t) => {
   const { subtitleStore, store } = fixture(t)
   insertRun(subtitleStore.database, { runId: 'run.interaction' })
@@ -136,7 +141,7 @@ test('SEM-F28/SEM-F33/J22: terminal success/cancel are atomic, usage is nullable
   store.createInteraction({ runId: 'run.success', interactionId: 'interaction.success', routingMode: 'preset', promptDigest: 'b'.repeat(64) })
   store.createInteraction({ runId: 'run.cancel', interactionId: 'interaction.cancel', routingMode: 'rules', promptDigest: 'c'.repeat(64) })
   const success = store.terminalizeInteraction({
-    interactionId: 'interaction.success', terminalReason: 'succeeded', errorCode: null,
+    interactionId: 'interaction.success', attemptIdentity: attemptIdentity('run.success'), terminalReason: 'succeeded', errorCode: null,
     result: qaResult(), usage: providerUsage, durationMs: 25
   })
   assert.equal(success.terminalReason, 'succeeded')
@@ -145,22 +150,22 @@ test('SEM-F28/SEM-F33/J22: terminal success/cancel are atomic, usage is nullable
   assert.equal(subtitleStore.database.prepare("SELECT state FROM formal_agent_runs WHERE run_id='run.success'").get().state, 'succeeded')
   assert.equal(subtitleStore.database.prepare("SELECT lease_owner FROM formal_agent_runs WHERE run_id='run.success'").get().lease_owner, null)
   assert.deepEqual(store.terminalizeInteraction({
-    interactionId: 'interaction.success', terminalReason: 'succeeded', errorCode: null,
+    interactionId: 'interaction.success', attemptIdentity: attemptIdentity('run.success'), terminalReason: 'succeeded', errorCode: null,
     result: qaResult(), usage: providerUsage, durationMs: 25
   }), { ...success, replayed: true })
   assert.throws(() => store.terminalizeInteraction({
-    interactionId: 'interaction.success', terminalReason: 'failed', errorCode: 'AGENT_INTERNAL_FAILURE',
+    interactionId: 'interaction.success', attemptIdentity: attemptIdentity('run.success'), terminalReason: 'failed', errorCode: 'AGENT_INTERNAL_FAILURE',
     result: null, usage: null, durationMs: 26
   }), (error) => error.code === 'AGENT_INTERACTION_STATE_CONFLICT')
   const cancelRequested = store.cancelRun({ runId: 'run.cancel' })
   assert.equal(cancelRequested.state, 'running')
   assert.equal(cancelRequested.cancelRequested, true)
   assert.throws(() => store.terminalizeInteraction({
-    interactionId: 'interaction.cancel', terminalReason: 'succeeded', errorCode: null,
+    interactionId: 'interaction.cancel', attemptIdentity: attemptIdentity('run.cancel'), terminalReason: 'succeeded', errorCode: null,
     result: qaResult(), usage: null, durationMs: 1
   }), (error) => error.code === 'AGENT_INTERACTION_STATE_CONFLICT')
   const cancelled = store.terminalizeInteraction({
-    interactionId: 'interaction.cancel', terminalReason: 'cancelled', errorCode: null,
+    interactionId: 'interaction.cancel', attemptIdentity: attemptIdentity('run.cancel'), terminalReason: 'cancelled', errorCode: null,
     result: null, usage: null, durationMs: 0
   })
   assert.equal(cancelled.terminalReason, 'cancelled')
@@ -168,9 +173,62 @@ test('SEM-F28/SEM-F33/J22: terminal success/cancel are atomic, usage is nullable
   assert.equal(cancelled.usage, null)
   assert.equal(subtitleStore.database.prepare("SELECT state FROM formal_agent_runs WHERE run_id='run.cancel'").get().state, 'cancelled')
   assert.throws(() => store.terminalizeInteraction({
-    interactionId: 'interaction.cancel', terminalReason: 'succeeded', errorCode: null,
+    interactionId: 'interaction.cancel', attemptIdentity: attemptIdentity('run.cancel'), terminalReason: 'succeeded', errorCode: null,
     result: qaResult(), usage: null, durationMs: 1
   }), (error) => error.code === 'AGENT_INTERACTION_STATE_CONFLICT')
+})
+
+test('SEM-F28/J30-RECOVERY: owner and attempt independently fence an older target attempt', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  insertRun(subtitleStore.database, { runId: 'run.lease.fenced' })
+  store.createInteraction({ runId: 'run.lease.fenced', interactionId: 'interaction.lease.fenced', routingMode: 'preset', promptDigest: 'c'.repeat(64) })
+  const oldAttempt = attemptIdentity('run.lease.fenced')
+  subtitleStore.database.prepare(`
+    UPDATE formal_agent_runs SET attempt_count=2,lease_owner='worker',lease_expires_at=7000
+    WHERE run_id='run.lease.fenced'
+  `).run()
+  assert.throws(() => store.terminalizeInteraction({
+    interactionId: 'interaction.lease.fenced', attemptIdentity: oldAttempt,
+    terminalReason: 'succeeded', errorCode: null, result: qaResult(), usage: null, durationMs: 4
+  }), (error) => error.code === 'AGENT_CONTEXT_OPERATION_FAILED')
+  assert.equal(subtitleStore.database.prepare('SELECT terminal_reason FROM formal_agent_interactions WHERE interaction_id=?').get('interaction.lease.fenced').terminal_reason, null)
+  subtitleStore.database.prepare(`
+    UPDATE formal_agent_runs SET attempt_count=1,lease_owner='worker.replacement',lease_expires_at=7000
+    WHERE run_id='run.lease.fenced'
+  `).run()
+  assert.throws(() => store.terminalizeInteraction({
+    interactionId: 'interaction.lease.fenced', attemptIdentity: oldAttempt,
+    terminalReason: 'succeeded', errorCode: null, result: qaResult(), usage: null, durationMs: 4
+  }), (error) => error.code === 'AGENT_CONTEXT_OPERATION_FAILED')
+  subtitleStore.database.prepare(`
+    UPDATE formal_agent_runs SET attempt_count=2,lease_owner='worker.replacement',lease_expires_at=7000
+    WHERE run_id='run.lease.fenced'
+  `).run()
+  const current = store.terminalizeInteraction({
+    interactionId: 'interaction.lease.fenced',
+    attemptIdentity: attemptIdentity('run.lease.fenced', 2, 'worker.replacement', 7000),
+    terminalReason: 'succeeded', errorCode: null, result: qaResult(), usage: null, durationMs: 4
+  })
+  assert.equal(current.terminalReason, 'succeeded')
+})
+
+test('SEM-F28/J30-RECOVERY: an expired lease token remains valid while the renewed lease is active', (t) => {
+  let now = 2000
+  const { subtitleStore, store } = fixture(t, { now: () => now })
+  insertRun(subtitleStore.database, { runId: 'run.lease.renewed' })
+  store.createInteraction({ runId: 'run.lease.renewed', interactionId: 'interaction.lease.renewed', routingMode: 'preset', promptDigest: 'd'.repeat(64) })
+  const originalAttempt = attemptIdentity('run.lease.renewed')
+  subtitleStore.database.prepare(`
+    UPDATE formal_agent_runs SET lease_renewed_from_expires_at=lease_expires_at,lease_expires_at=9000
+    WHERE run_id='run.lease.renewed'
+  `).run()
+
+  now = 6000
+  const terminal = store.terminalizeInteraction({
+    interactionId: 'interaction.lease.renewed', attemptIdentity: originalAttempt,
+    terminalReason: 'succeeded', errorCode: null, result: qaResult(), usage: null, durationMs: 4
+  })
+  assert.equal(terminal.terminalReason, 'succeeded')
 })
 
 test('SEM-F38/SEM-T04/J29: summary memory revocation rejects late output and preserves an explicit failure projection', (t) => {
@@ -183,12 +241,12 @@ test('SEM-F38/SEM-T04/J29: summary memory revocation rejects late output and pre
   })
   subtitleStore.database.prepare('UPDATE personal_context_projection_state SET content_revision=1 WHERE singleton_key=1').run()
   assert.throws(() => store.terminalizeInteraction({
-    interactionId: 'interaction.summary-revoked', terminalReason: 'succeeded', errorCode: null,
+    interactionId: 'interaction.summary-revoked', attemptIdentity: attemptIdentity('run.summary-revoked'), terminalReason: 'succeeded', errorCode: null,
     result: { schemaVersion: 1, summary: 'late', decisions: [], actionItems: [], risks: [], sourceRefs: [], memoryRefs: [] },
     usage: null, durationMs: 2
   }), (error) => error.code === 'AGENT_INPUT_CHANGED')
   const failed = store.terminalizeInteraction({
-    interactionId: 'interaction.summary-revoked', terminalReason: 'failed',
+    interactionId: 'interaction.summary-revoked', attemptIdentity: attemptIdentity('run.summary-revoked'), terminalReason: 'failed',
     errorCode: 'AGENT_SUMMARY_MEMORY_READ_FAILED', result: null, usage: null, durationMs: 3
   })
   assert.equal(failed.errorCode, 'AGENT_SUMMARY_MEMORY_READ_FAILED')
@@ -206,7 +264,7 @@ test('SEM-F38/SEM-T04/J31-SIZE: legacy summary input-limit failure is distinct i
     runId: 'run.summary.input-limit', interactionId: 'interaction.summary.input-limit', routingMode: 'preset', promptDigest: 'b'.repeat(64)
   })
   const failed = store.terminalizeInteraction({
-    interactionId: 'interaction.summary.input-limit', terminalReason: 'failed',
+    interactionId: 'interaction.summary.input-limit', attemptIdentity: attemptIdentity('run.summary.input-limit'), terminalReason: 'failed',
     errorCode: 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED', result: null, usage: null, durationMs: 1
   })
   assert.equal(failed.errorCode, 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED')
@@ -233,7 +291,7 @@ test('SEM-F38/J29: frozen summary policy survives storage detail, history and ve
     risks: []
   }
   store.terminalizeInteraction({
-    interactionId: 'interaction.summary.policy', terminalReason: 'succeeded', errorCode: null,
+    interactionId: 'interaction.summary.policy', attemptIdentity: attemptIdentity('run.summary.policy'), terminalReason: 'succeeded', errorCode: null,
     result: summaryResult, usage: null, durationMs: 4
   })
   const detail = store.getInteraction({ interactionId: 'interaction.summary.policy' })
@@ -252,40 +310,53 @@ test('SEM-F28/SEM-F34/J22: tool calls enforce grants, exact state/error binding,
   insertRun(subtitleStore.database, { runId: 'run.tools' })
   store.createInteraction({ runId: 'run.tools', interactionId: 'interaction.tools', routingMode: 'model', promptDigest: 'd'.repeat(64) })
   const started = store.startToolCall({
-    callId: 'call.one', interactionId: 'interaction.tools', attempt: 1, callOrder: 1,
+    callId: 'call.one', interactionId: 'interaction.tools', attemptIdentity: attemptIdentity('run.tools'), attempt: 1, callOrder: 1,
     toolName: 'search_context', startedOffsetMs: 5, args: { query: 'q' }
   })
   assert.equal(started.status, 'started')
   const finished = store.finishToolCall({
-    callId: 'call.one', status: 'succeeded', result: { sourceRefs: [] },
+    callId: 'call.one', attemptIdentity: attemptIdentity('run.tools'), status: 'succeeded', result: { sourceRefs: [] },
     errorCode: null, endedOffsetMs: 15, sourceRefs: [], counts: { matches: 0 }
   })
   assert.equal(finished.status, 'succeeded')
   assert.equal(finished.resultDigest, sha256Canonical({ sourceRefs: [] }))
   assert.deepEqual(store.startToolCall({
-    callId: 'call.one', interactionId: 'interaction.tools', attempt: 1, callOrder: 1,
+    callId: 'call.one', interactionId: 'interaction.tools', attemptIdentity: attemptIdentity('run.tools'), attempt: 1, callOrder: 1,
     toolName: 'search_context', startedOffsetMs: 5, args: { query: 'q' }
   }), { ...finished, replayed: true })
   const denied = store.startToolCall({
-    callId: 'call.denied', interactionId: 'interaction.tools', attempt: 1, callOrder: 2,
+    callId: 'call.denied', interactionId: 'interaction.tools', attemptIdentity: attemptIdentity('run.tools'), attempt: 1, callOrder: 2,
     toolName: 'read_sources', startedOffsetMs: 20, args: { urls: [] }
   })
   assert.equal(denied.status, 'failed')
   assert.equal(denied.errorCode, 'TOOL_NOT_AVAILABLE_FOR_RECIPE')
   assert.throws(() => store.startToolCall({
-    callId: 'call.too-large', interactionId: 'interaction.tools', attempt: 1, callOrder: 3,
+    callId: 'call.too-large', interactionId: 'interaction.tools', attemptIdentity: attemptIdentity('run.tools'), attempt: 1, callOrder: 3,
     toolName: 'search_context', startedOffsetMs: 30, args: { text: 'x'.repeat(9000) }
   }), (error) => error.code === 'TOOL_BUDGET_EXCEEDED')
   assert.throws(() => store.finishToolCall({
-    callId: 'call.one', status: 'failed', result: null, errorCode: 'TOOL_INTERNAL_FAILURE',
+    callId: 'call.one', attemptIdentity: attemptIdentity('run.tools'), status: 'failed', result: null, errorCode: 'TOOL_INTERNAL_FAILURE',
     endedOffsetMs: 16, sourceRefs: [], counts: {}
   }), (error) => error.code === 'AGENT_TOOL_STATE_CONFLICT')
+  store.startToolCall({
+    callId: 'call.inflight', interactionId: 'interaction.tools', attemptIdentity: attemptIdentity('run.tools'), attempt: 1, callOrder: 4,
+    toolName: 'search_context', startedOffsetMs: 35, args: {}
+  })
+  subtitleStore.database.prepare("UPDATE formal_agent_runs SET attempt_count=2,lease_owner='worker.retry',lease_expires_at=7000 WHERE run_id='run.tools'").run()
+  assert.throws(() => store.startToolCall({
+    callId: 'call.stale', interactionId: 'interaction.tools', attemptIdentity: attemptIdentity('run.tools'), attempt: 1, callOrder: 1,
+    toolName: 'search_context', startedOffsetMs: 36, args: {}
+  }), (error) => error.code === 'AGENT_CONTEXT_OPERATION_FAILED')
+  assert.throws(() => store.finishToolCall({
+    callId: 'call.inflight', attemptIdentity: attemptIdentity('run.tools'), status: 'failed', result: null, errorCode: 'TOOL_INTERNAL_FAILURE',
+    endedOffsetMs: 37, sourceRefs: [], counts: {}
+  }), (error) => error.code === 'AGENT_CONTEXT_OPERATION_FAILED')
   const retry = store.startToolCall({
-    callId: 'call.retry', interactionId: 'interaction.tools', attempt: 2, callOrder: 1,
+    callId: 'call.retry', interactionId: 'interaction.tools', attemptIdentity: attemptIdentity('run.tools', 2, 'worker.retry', 7000), attempt: 2, callOrder: 1,
     toolName: 'search_context', startedOffsetMs: 1, args: {}
   })
   assert.equal(retry.attempt, 2)
-  assert.equal(subtitleStore.database.prepare("SELECT COUNT(*) AS count FROM formal_agent_tool_calls WHERE interaction_id='interaction.tools'").get().count, 3)
+  assert.equal(subtitleStore.database.prepare("SELECT COUNT(*) AS count FROM formal_agent_tool_calls WHERE interaction_id='interaction.tools'").get().count, 4)
 })
 
 test('SEM-F28/SEM-F34/J22: presentations are one receipt per session and history is opaque keyset pagination', (t) => {
@@ -304,9 +375,14 @@ test('SEM-F28/SEM-F34/J22: presentations are one receipt per session and history
     ['run.history.route', 'interaction.history.route', 12]
   ]) {
     insertRun(subtitleStore.database, { runId, recipeId: interactionId.endsWith('.route') ? 'intent.route' : 'qa.answer', state: 'queued', attempt: 0 })
+    if (!interactionId.endsWith('.route')) {
+      subtitleStore.database.prepare("UPDATE formal_agent_runs SET state='running',attempt_count=1,lease_owner='worker',lease_expires_at=5000 WHERE run_id=?").run(runId)
+    }
     store.createInteraction({ runId, interactionId, routingMode: 'rules', promptDigest: 'e'.repeat(64) })
     store.terminalizeInteraction({
-      interactionId, terminalReason: 'cancelled', errorCode: null, result: null, usage: null, durationMs: 0
+      interactionId,
+      ...(interactionId.endsWith('.route') ? {} : { attemptIdentity: attemptIdentity(runId) }),
+      terminalReason: 'cancelled', errorCode: null, result: null, usage: null, durationMs: 0
     })
     subtitleStore.database.prepare('UPDATE formal_agent_interactions SET terminal_at=? WHERE interaction_id=?').run(2000 + terminalAt, interactionId)
   }
@@ -328,7 +404,7 @@ test('SEM-F33/J22: usageReporting=false rejects provider usage instead of estima
   insertRun(subtitleStore.database, { runId: 'run.unknown-usage', usageReporting: false })
   store.createInteraction({ runId: 'run.unknown-usage', interactionId: 'interaction.unknown-usage', routingMode: 'preset', promptDigest: 'f'.repeat(64) })
   assert.throws(() => store.terminalizeInteraction({
-    interactionId: 'interaction.unknown-usage', terminalReason: 'succeeded', errorCode: null,
+    interactionId: 'interaction.unknown-usage', attemptIdentity: attemptIdentity('run.unknown-usage'), terminalReason: 'succeeded', errorCode: null,
     result: qaResult(), usage: providerUsage, durationMs: 1
   }), (error) => error.code === 'AGENT_REQUEST_INVALID')
   const row = subtitleStore.database.prepare("SELECT usage_json, terminal_reason FROM formal_agent_interactions WHERE interaction_id='interaction.unknown-usage'").get()

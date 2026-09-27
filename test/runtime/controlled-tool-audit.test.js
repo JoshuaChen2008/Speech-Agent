@@ -9,6 +9,7 @@ const { deriveRecipeBudget } = require('../../src/agent/contracts/budget-axes')
 
 const source = { sessionId: 'session.tool.audit', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }
 const memory = { memoryId: 'memory.tool.audit', revisionId: 'revision.tool.audit' }
+const attemptIdentity = { runId: 'run.tool.audit', attempt: 1, owner: 'scheduler.tool.audit', leaseExpiresAt: 1000 }
 const context = {
   scope: { registeredAliasKeys: ['decision'], memoryRefs: [memory], sourceRefs: [source] },
   entries: [{ aliasKey: 'decision', memoryRef: memory, kind: 'decision', displayText: 'A bounded decision.', sourceRefs: [source] }],
@@ -21,6 +22,7 @@ test('SEM-F28/SEM-F34/J22/J24: tool audit records an ordered successful call wit
   const controlled = createControlledToolRuntime({ context })
   const audit = createToolAuditRuntime({
     interactionId: 'interaction.tool.audit', recipeId: 'qa.answer', recipeVersion: '1', attempt: 1,
+    attemptIdentity,
     tools: controlled.toolsForRecipe('qa.answer', '1'),
     budget: deriveRecipeBudget({ maxInputTokens: 64000, maxOutputTokens: 4096 }, 'qa.answer', '1', 'user'),
     interactions: {
@@ -42,6 +44,7 @@ test('SEM-F28/SEM-F34/SEM-T04/J22: tool audit closes a failed call with a regist
   const calls = []
   const audit = createToolAuditRuntime({
     interactionId: 'interaction.tool.failure', recipeId: 'qa.answer', recipeVersion: '1', attempt: 1,
+    attemptIdentity: { ...attemptIdentity, runId: 'run.tool.failure' },
     tools: [{ name: 'search_context', execute: async () => { const error = new Error('bad args'); error.code = 'TOOL_ARGS_INVALID'; throw error } }],
     budget: deriveRecipeBudget({ maxInputTokens: 64000, maxOutputTokens: 4096 }, 'qa.answer', '1', 'user'),
     interactions: {
@@ -64,6 +67,7 @@ test('SEM-F28/SEM-F34/SEM-T04/J22/J24: a tool timeout closes one audit record an
   const toolResult = new Promise((resolve) => { release = resolve })
   const audit = createToolAuditRuntime({
     interactionId: 'interaction.tool.timeout', recipeId: 'qa.answer', recipeVersion: '1', attempt: 1,
+    attemptIdentity: { ...attemptIdentity, runId: 'run.tool.timeout' },
     tools: [{ name: 'search_context', execute: async () => toolResult }],
     budget: deriveRecipeBudget({ maxInputTokens: 64000, maxOutputTokens: 4096 }, 'qa.answer', '1', 'user'),
     interactions: {
@@ -93,6 +97,7 @@ test('SEM-F28/SEM-F34/SEM-T04/J22/J24: cancellation closes one audit record and 
   const toolResult = new Promise((resolve) => { release = resolve })
   const audit = createToolAuditRuntime({
     interactionId: 'interaction.tool.cancelled', recipeId: 'qa.answer', recipeVersion: '1', attempt: 1,
+    attemptIdentity: { ...attemptIdentity, runId: 'run.tool.cancelled' },
     tools: [{ name: 'search_context', execute: async () => toolResult }],
     budget: deriveRecipeBudget({ maxInputTokens: 64000, maxOutputTokens: 4096 }, 'qa.answer', '1', 'user'),
     interactions: {
@@ -120,6 +125,7 @@ test('SEM-F28/SEM-F34/SEM-T04/J22/J24: the second simultaneous tool call is reje
   let executions = 0
   const audit = createToolAuditRuntime({
     interactionId: 'interaction.tool.parallel', recipeId: 'qa.answer', recipeVersion: '1', attempt: 1,
+    attemptIdentity: { ...attemptIdentity, runId: 'run.tool.parallel' },
     tools: [{
       name: 'search_context',
       execute: async () => {

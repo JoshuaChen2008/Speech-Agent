@@ -1517,7 +1517,7 @@ async function bootstrapApplication () {
       personalContext: executionAdapter,
       modelAccess: modelAccessRuntime,
       promptProvider: (runId) => formalAgentPrompts.get(runId) || null,
-      onProgress: (event) => sessionSummaryRunService?.recordProgress(event),
+      onProgress: (event, signal) => sessionSummaryRunService?.recordProgress(event, signal),
       onSettled: (runId, terminalReason, interactionId) => settleFormalAgentPrompt({
         promptStore: formalAgentPrompts,
         signalService: formalAgentSignalService,
@@ -1530,9 +1530,9 @@ async function bootstrapApplication () {
         if (event?.requestId) void sessionSummaryRunService?.notifyRunChanged(event)
       },
       interactions: {
-        terminalize: (request) => applicationRuntime.gateway.terminalizeAgentInteraction(request),
-        startToolCall: (request) => applicationRuntime.gateway.startAgentToolCall(request),
-        finishToolCall: (request) => applicationRuntime.gateway.finishAgentToolCall(request)
+        terminalize: (request, signal) => applicationRuntime.gateway.terminalizeAgentInteraction(request, signal),
+        startToolCall: (request, signal) => applicationRuntime.gateway.startAgentToolCall(request, signal),
+        finishToolCall: (request, signal) => applicationRuntime.gateway.finishAgentToolCall(request, signal)
       }
     })
     formalAgentScheduler = new FormalAgentJobScheduler({

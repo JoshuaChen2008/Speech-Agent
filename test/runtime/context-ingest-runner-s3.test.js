@@ -44,6 +44,12 @@ function seams (overrides = {}) {
   return { options: { ...base, ...overrides }, calls }
 }
 
+function deferred () {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
+}
+
 test('SEM-F28/SEM-F30/SEM-T10/J22/J24: S3 session runner freezes a skeleton before bind and uses the unified loop', async () => {
   const { options, calls } = seams()
   const runner = new ContextIngestSessionRunner(options)
@@ -78,6 +84,65 @@ test('SEM-F28/SEM-F30/J21: production session ingest creates its loop from the f
   assert.equal(result.state, 'succeeded')
   assert.equal(calls.some(([name]) => name === 'loopFactory'), true)
   assert.equal(calls.filter(([name]) => name === 'loop').length, 1)
+})
+
+test('SEM-F28/J30-RECOVERY: scheduler stop during the Agent Loop prevents context ingest commit', async () => {
+  const loopStarted = deferred()
+  const loopResult = deferred()
+  const controller = new AbortController()
+  const { options, calls } = seams({
+    loop: { agentLoop: async () => { loopStarted.resolve(); return loopResult.promise } }
+  })
+  const runner = new ContextIngestSessionRunner(options)
+  const pending = runner.run({
+    recipeId: 'context.ingest.session', source,
+    attemptIdentity: { runId: 'run.ingest', attempt: 1, owner: 'runner', leaseExpiresAt: 1000 },
+    interactionId: 'interaction.ingest', signal: controller.signal
+  })
+  await loopStarted.promise
+  const reason = new Error('lease lost')
+  reason.code = 'AGENT_LEASE_LOST'
+  controller.abort(reason)
+  loopResult.resolve({ text: JSON.stringify(output), usage: undefined })
+
+  assert.equal(await pending, null)
+  assert.equal(calls.some(([name]) => name === 'commit'), false)
+  assert.equal(calls.some(([name]) => name === 'interaction:terminalize'), false)
+  assert.equal(calls.some(([name]) => name === 'fail'), false)
+})
+
+test('SEM-F28/J30-RECOVERY: scheduler stop during context ingest commit prevents stale interaction terminalization', async () => {
+  const commitStarted = deferred()
+  const releaseCommit = deferred()
+  const controller = new AbortController()
+  const { options, calls } = seams({
+    personalContext: {
+      prepareSessionIngest: async () => ({ runId: 'run.ingest', episodeId: 'episode.ingest' }),
+      readSessionInput: async (value) => ({ ...value, events: [{ eventOrder: 1, segmentId: 'segment.1', text: 'boundary' }] }),
+      commitSessionIngest: async (value) => {
+        calls.push(['commit', value])
+        commitStarted.resolve()
+        await releaseCommit.promise
+        return { state: 'committed' }
+      }
+    }
+  })
+  const runner = new ContextIngestSessionRunner(options)
+  const pending = runner.run({
+    recipeId: 'context.ingest.session', source,
+    attemptIdentity: { runId: 'run.ingest', attempt: 1, owner: 'runner', leaseExpiresAt: 1000 },
+    interactionId: 'interaction.ingest', signal: controller.signal
+  })
+  await commitStarted.promise
+  const reason = new Error('scheduler stopped')
+  reason.code = 'AGENT_SCHEDULER_STOPPED'
+  controller.abort(reason)
+  releaseCommit.resolve()
+
+  assert.equal(await pending, null)
+  assert.equal(calls.filter(([name]) => name === 'commit').length, 1)
+  assert.equal(calls.some(([name]) => name === 'interaction:terminalize'), false)
+  assert.equal(calls.some(([name]) => name === 'fail'), false)
 })
 
 test('SEM-F28/SEM-F30/SEM-T04/J22/J24: S3 session runner keeps the skeleton replayable after provider failure', async () => {

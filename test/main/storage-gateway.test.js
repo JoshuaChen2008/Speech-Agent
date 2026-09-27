@@ -650,3 +650,37 @@ test('SEM-F28 / J24 gateway forwards formal result and personal-context deletion
     ['delete', { sessionId: 'session-a', deletionIdempotencyKey: 'delete-a' }]
   ])
 })
+
+test('SEM-F38/J30-RECOVERY: an aborted Agent attempt removes queued progress and terminal writes', async (t) => {
+  const started = deferred()
+  const release = deferred()
+  const log = []
+  const gateway = new StorageGateway({
+    databasePath: DATABASE_PATH,
+    hostFactory: () => hostWith({
+      async openSession (input) {
+        started.resolve()
+        await release.promise
+        return { status: 'committed', input }
+      },
+      async updateSessionSummaryRequest (request) { log.push(['progress', request]); return { state: 'running' } },
+      async terminalizeAgentInteraction (request) { log.push(['terminal', request]); return { terminalReason: request.terminalReason } }
+    })
+  })
+  t.after(() => gateway.terminate())
+  const blocker = gateway.openSession({ sessionId: 'session.queue-blocker', sourceId: 'mic', startedAt: 1 })
+  await started.promise
+
+  const controller = new AbortController()
+  const progress = gateway.updateSessionSummaryRequest({ requestId: 'request.queued', generation: 1 }, controller.signal)
+  const terminal = gateway.terminalizeAgentInteraction({ interactionId: 'interaction.queued' }, controller.signal)
+  const reason = new Error('lease lost')
+  reason.code = 'AGENT_LEASE_LOST'
+  controller.abort(reason)
+
+  await assert.rejects(progress, (error) => error.code === 'AGENT_CANCELLED')
+  await assert.rejects(terminal, (error) => error.code === 'AGENT_CANCELLED')
+  release.resolve()
+  assert.equal((await blocker).status, 'committed')
+  assert.deepEqual(log, [])
+})

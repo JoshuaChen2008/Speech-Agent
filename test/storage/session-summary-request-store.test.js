@@ -112,6 +112,48 @@ test('SEM-F38/DB1/J30-PROGRESS: request revisions reject stale phase updates', (
   }), (error) => error.code === 'AGENT_CONTEXT_REVISION_CONFLICT')
 })
 
+test('SEM-F28/SEM-F38/DB1/J30-RECOVERY: a replaced lease attempt cannot update summary progress', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  const accepted = acceptedRequest()
+  store.acceptSessionSummaryRequest(accepted)
+  store.createRun({
+    runId: 'run.request.progress-fence', recipeId: 'summary.minutes', recipeVersion: '1',
+    scope: { kind: 'session', reference: accepted.sessionId }, transcriptVersion: 'raw',
+    inputWatermark: accepted.inputWatermark, inputDigest: accepted.inputDigest,
+    requestedBy: 'user', clientIdempotencyKey: 'request.progress-fence',
+    requestId: accepted.requestId, requestGeneration: 1, summaryUseMemory: true
+  })
+  subtitleStore.database.prepare(`
+    UPDATE formal_agent_runs
+    SET state='running',attempt_count=1,lease_owner='owner.first',lease_expires_at=5000
+    WHERE run_id='run.request.progress-fence'
+  `).run()
+  const linked = store.getSessionSummaryRequest({ requestId: accepted.requestId })
+  const firstProgress = store.updateSessionSummaryRequest({
+    requestId: accepted.requestId, generation: 1, expectedRevision: linked.revision,
+    state: 'running', phase: 'reading_context', attempt: 1,
+    attemptIdentity: { runId: 'run.request.progress-fence', attempt: 1, owner: 'owner.first', leaseExpiresAt: 5000 }
+  })
+  subtitleStore.database.prepare(`
+    UPDATE formal_agent_runs
+    SET attempt_count=2,lease_owner='owner.current',lease_expires_at=7000
+    WHERE run_id='run.request.progress-fence'
+  `).run()
+
+  assert.throws(() => store.updateSessionSummaryRequest({
+    requestId: accepted.requestId, generation: 1, expectedRevision: firstProgress.revision,
+    state: 'running', phase: 'waiting_model', attempt: 1,
+    attemptIdentity: { runId: 'run.request.progress-fence', attempt: 1, owner: 'owner.first', leaseExpiresAt: 5000 }
+  }), (error) => error.code === 'AGENT_CONTEXT_OPERATION_FAILED')
+  const currentProgress = store.updateSessionSummaryRequest({
+    requestId: accepted.requestId, generation: 1, expectedRevision: firstProgress.revision,
+    state: 'running', phase: 'waiting_model', attempt: 2,
+    attemptIdentity: { runId: 'run.request.progress-fence', attempt: 2, owner: 'owner.current', leaseExpiresAt: 7000 }
+  })
+  assert.equal(currentProgress.attempt, 2)
+  assert.equal(currentProgress.phase, 'waiting_model')
+})
+
 test('SEM-F38/DB1/J30-PROGRESS: routing links begin in preparation without claiming activity', (t) => {
   const { store } = fixture(t)
   const accepted = acceptedRequest({ action: 'question', summaryUseMemory: null })
