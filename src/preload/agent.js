@@ -3,6 +3,7 @@ const { contextBridge } = require('electron')
 const CHANNELS = require('../main/ipc/channels')
 const { ipcRenderer, createWindowInteractionBridge, subscribe } = require('./shared')
 const c = require('../agent/contracts/agent-run-ui')
+const summaryRun = require('../agent/contracts/session-summary-run-ui')
 const context = require('../agent/contracts/agent-context-ui')
 const interaction = createWindowInteractionBridge('agent')
 let requestedScope = null
@@ -24,6 +25,12 @@ function onChanged (callback) {
   const handler = (_event, value) => { try { callback(c.assertChangedEvent(value)) } catch {} }
   ipcRenderer.on(CHANNELS.AGENT_RUN_CHANGED, handler)
   return () => ipcRenderer.removeListener(CHANNELS.AGENT_RUN_CHANGED, handler)
+}
+function onSessionSummaryRunChanged (callback) {
+  if (typeof callback !== 'function') throw new TypeError('callback must be a function')
+  const handler = (_event, value) => { try { callback(summaryRun.assertChangedEvent(value)) } catch {} }
+  ipcRenderer.on(CHANNELS.SESSION_SUMMARY_RUN_CHANGED, handler)
+  return () => ipcRenderer.removeListener(CHANNELS.SESSION_SUMMARY_RUN_CHANGED, handler)
 }
 function onAgentContextChanged (callback) {
   if (typeof callback !== 'function') throw new TypeError('callback must be a function')
@@ -76,5 +83,9 @@ contextBridge.exposeInMainWorld('agentApi', {
   getHistory: (request) => invoke(CHANNELS.AGENT_RUN_GET_HISTORY, c.assertHistoryRequest, c.assertHistoryResponse, request),
   getInteraction: (request) => invoke(CHANNELS.AGENT_RUN_GET_INTERACTION, c.assertInteractionRequest, c.assertInteractionResponse, request),
   exportInteraction: (request) => invoke(CHANNELS.AGENT_RUN_EXPORT_INTERACTION, c.assertExportRequest, c.assertExportResponse, request),
-  recordSignal: (request) => invoke(CHANNELS.AGENT_RUN_RECORD_SIGNAL, c.assertRecordSignalRequest, c.assertRecordSignalResponse, request)
+  recordSignal: (request) => invoke(CHANNELS.AGENT_RUN_RECORD_SIGNAL, c.assertRecordSignalRequest, c.assertRecordSignalResponse, request),
+  acceptSessionSummaryRun: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_ACCEPT, summaryRun.assertAcceptRequest, summaryRun.assertAcceptResponse, request),
+  getSessionSummaryRun: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_GET, summaryRun.assertControlRequest, summaryRun.assertGetResponse, request),
+  cancelSessionSummaryRun: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_CANCEL, summaryRun.assertCancelRequest, summaryRun.assertCancelResponse, request),
+  onSessionSummaryRunChanged
 })

@@ -11,7 +11,6 @@ const { act } = React
 const { createRoot } = require('react-dom/client')
 const { JSDOM } = require('jsdom')
 const { loadRendererModule } = require('./load-renderer-module')
-const { deterministicRoute } = require('../../src/agent/execution-host/intent-router')
 
 const root = path.resolve(__dirname, '..', '..')
 const CONTRACT = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
@@ -66,8 +65,13 @@ async function createHarness (options = {}) {
   global.IS_REACT_ACT_ENVIRONMENT = true
   const changed = []
   const configChanged = []
+  const summaryChanged = []
   const calls = []
   const submitRequests = []
+  const summarySnapshots = new Map()
+  const summarySnapshotByKey = new Map()
+  const summaryCancelRequests = []
+  let summaryRequestSequence = 0
   const cancelRequests = []
   const exportRequests = []
   const signalRequests = []
@@ -89,6 +93,7 @@ async function createHarness (options = {}) {
     getConfig: options.getConfig || (async () => ({ agentEnabled: true, memoryEnabled: true, summaryUseMemory: true })),
     onConfig (callback) { configChanged.push(callback); calls.push('config'); return () => {} },
     subscribeChanged (callback) { changed.push(callback); calls.push('subscribe'); return () => {} },
+    onSessionSummaryRunChanged (callback) { summaryChanged.push(callback); return () => {} },
     async getScopes (request) {
       calls.push(['scopes', request.cursor])
       if (options.getScopes) return options.getScopes(request, { scope, scopeItem })
@@ -104,10 +109,44 @@ async function createHarness (options = {}) {
       if (options.getEligibility) return options.getEligibility(request)
       return { ok: true, snapshot: { scope: request.scope, eligibility: 'ready', next_action: null, revision: 1 } }
     },
-    async submit (request) {
+    async acceptSessionSummaryRun (request) {
       submitRequests.push(request)
       if (options.submit) return options.submit(request)
-      return { ok: true, result: { eligibility: 'ready', interaction_id: 'interaction.ui.3', recipe_id: 'qa.answer', revision: 2, routing_mode: 'model', run_id: 'run.ui.3', state: 'pending' } }
+      let snapshot = summarySnapshotByKey.get(request.client_request_key)
+      const replayed = !!snapshot
+      if (!snapshot) {
+        summaryRequestSequence += 1
+        const id = `request.summary.ui.${summaryRequestSequence}`
+        const summary = request.action === 'summary'
+        snapshot = {
+          request_id: id, generation: 1, revision: 0, action: request.action,
+          state: 'queued', phase: 'accepted', attempt: 0, elapsed_ms: 0,
+          last_activity_age_ms: null, validated_chunk_count: null, total_chunk_count: null,
+          memory_state: 'not_read', error_code: null, budget: null, freshness: 'fresh',
+          cancel_requested: false, resume_required: false, diagnostics_available: false,
+          route_run_id: null, target_run_id: `run.ui.${summaryRequestSequence + 2}`,
+          interaction_id: 'interaction.ui.3', recipe_id: summary ? 'summary.minutes' : 'qa.answer',
+          routing_mode: summary ? 'preset' : 'model'
+        }
+        summarySnapshotByKey.set(request.client_request_key, snapshot)
+        summarySnapshots.set(id, snapshot)
+        const event = { contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0', request_id: id, generation: 1, revision: 0 }
+        for (const listener of summaryChanged) listener(event)
+      }
+      return { ok: true, result: { accepted: true, replayed, snapshot } }
+    },
+    async getSessionSummaryRun (request) {
+      if (options.getSessionSummaryRun) return options.getSessionSummaryRun(request)
+      const snapshot = summarySnapshots.get(request.request_id)
+      return snapshot ? { ok: true, result: { snapshot } } : { ok: false, error: { code: 'AGENT_RUN_UNAVAILABLE', next_action: 'retry' }, result: null }
+    },
+    async cancelSessionSummaryRun (request) {
+      summaryCancelRequests.push(request)
+      if (options.cancelSessionSummaryRun) return options.cancelSessionSummaryRun(request)
+      const snapshot = summarySnapshots.get(request.request_id)
+      const cancelled = { ...snapshot, revision: snapshot.revision + 1, state: 'cancelling', phase: 'cancelling', cancel_requested: true }
+      summarySnapshots.set(request.request_id, cancelled)
+      return { ok: true, result: { snapshot: cancelled } }
     },
     async cancel (request) {
       cancelRequests.push(request)
@@ -137,7 +176,7 @@ async function createHarness (options = {}) {
   await act(async () => reactRoot.render(React.createElement(AgentView)))
   await flush()
   return {
-    calls, changed, configChanged, cancelRequests, detailRequests, dom, exportRequests, historyItem, scopeItem, signalRequests, submitRequests,
+    calls, changed, configChanged, cancelRequests, detailRequests, dom, exportRequests, historyItem, scopeItem, signalRequests, submitRequests, summaryCancelRequests, summaryChanged, summarySnapshots,
     activeIntervals: () => intervals.size,
     async tickIntervals (milliseconds) {
       const callbacks = [...intervals.values()].filter((interval) => interval.milliseconds === milliseconds).map((interval) => interval.callback)
@@ -167,7 +206,7 @@ test('S5-UX/J22/J24: formal Agent renderer consumes the exact facade and keeps p
   assert.match(source('src/agent/index.html'), /src="\.\/entry\.tsx"/)
   assert.match(source('src/agent/entry.tsx'), /createRoot[\s\S]*AgentView/)
   const view = source('src/agent/agent-view.tsx')
-  for (const method of ['subscribeChanged', 'getConfig', 'onConfig', 'getScopes', 'getEligibility', 'submit', 'cancel', 'getHistory', 'getInteraction', 'exportInteraction', 'recordSignal']) assert.match(view, new RegExp(`api\\.${method}`))
+  for (const method of ['subscribeChanged', 'getConfig', 'onConfig', 'getScopes', 'getEligibility', 'acceptSessionSummaryRun', 'getSessionSummaryRun', 'cancelSessionSummaryRun', 'onSessionSummaryRunChanged', 'cancel', 'getHistory', 'getInteraction', 'exportInteraction', 'recordSignal']) assert.match(view, new RegExp(`api\\.${method}`))
   assert.match(source('src/preload/agent.js'), /getConfig:\s*\(\)\s*=>\s*ipcRenderer\.invoke\(CHANNELS\.CONFIG_GET\)/)
   assert.match(source('src/preload/agent.js'), /onConfig:\s*\(callback\)\s*=>\s*subscribe\(CHANNELS\.CONFIG_CHANGED, callback\)/)
   assert.match(view, /生成总结/)
@@ -213,12 +252,14 @@ test('SEM-F38/J30-CANCEL: an accepted pending receipt keeps cancellation availab
   }); t.after(() => harness.dispose())
   await act(async () => click(document.querySelector('[data-action="minutes"]')))
   await flush()
-  assert.equal(document.querySelector('.run-card strong').textContent, '等待生成')
+  assert.equal(document.querySelector('.run-card strong').textContent, '等待处理')
+  assert.equal(document.querySelector('.scope-card').disabled, true)
   assert.equal(document.querySelector('.run-card button').disabled, false)
   await act(async () => click(document.querySelector('.run-card button')))
   await flush()
-  assert.equal(harness.cancelRequests.length, 1)
-  assert.equal(harness.cancelRequests[0].interaction_id, 'interaction.ui.3')
+  assert.equal(harness.summaryCancelRequests.length, 1)
+  assert.equal(harness.summaryCancelRequests[0].request_id, [...harness.summarySnapshots.keys()][0])
+  assert.equal(harness.summaryCancelRequests[0].generation, 1)
   assert.equal(document.querySelector('.run-card strong').textContent, '正在取消')
 })
 
@@ -295,11 +336,12 @@ test('S5-UX/J22: reload subscribes before reading, selects a terminal session, a
   await act(async () => click(document.querySelector('[data-action="minutes"]')))
   await flush()
   assert.equal(harness.submitRequests.length, 1)
-  assert.deepEqual(Object.keys(harness.submitRequests[0]).sort(), ['client_idempotency_key', 'contract_id', 'contract_version', 'prompt', 'scope'])
-  assert.match(harness.submitRequests[0].prompt, /会话总结/)
-  const { scope, prompt } = harness.submitRequests[0]
-  assert.equal(deterministicRoute({ scope, prompt }).recipeId, 'summary.minutes')
-  assert.equal(document.querySelector('.run-card strong').textContent, '等待生成', 'submit ACK is pending until the authoritative detail is read')
+  assert.deepEqual(Object.keys(harness.submitRequests[0]).sort(), ['action', 'client_request_key', 'contract_id', 'contract_version', 'scope'])
+  assert.equal(harness.submitRequests[0].action, 'summary')
+  const snapshot = [...harness.summarySnapshots.values()][0]
+  assert.equal(snapshot.routing_mode, 'preset')
+  assert.equal(snapshot.route_run_id, null)
+  assert.equal(document.querySelector('.run-card strong').textContent, '等待处理', 'the accepted request does not claim a completed result')
   assert.equal(document.body.textContent.includes('interaction.ui.2'), false)
 })
 
@@ -683,7 +725,7 @@ test('SEM-F31/J24: a late cancellation receipt remains attached to its original 
   assert.equal(document.querySelector('.status').textContent, '已导出交互 JSON')
 })
 
-test('SEM-F32/J22: submit blocks same-turn duplicates, retains input on unknown receipt, and reuses its idempotency key only for the same payload', async (t) => {
+test('SEM-F38/J30-ACCEPT/J22: an unknown acceptance response retains input and reuses its request key only for the same payload', async (t) => {
   const first = deferred()
   let attempt = 0
   const harness = await createHarness({
@@ -698,21 +740,104 @@ test('SEM-F32/J22: submit blocks same-turn duplicates, retains input on unknown 
   const submit = document.querySelector('[data-action="qa"]')
   await act(async () => { click(submit); click(submit) })
   assert.equal(harness.submitRequests.length, 1)
-  first.reject(new Error('SECRET choose_supported_recipe'))
+  first.resolve({ ok: false, error: { code: 'AGENT_RUN_UNAVAILABLE', next_action: 'retry' }, result: null })
   await flush()
   assert.equal(prompt.value, '原始问题')
+  assert.equal(prompt.disabled, true)
+  assert.equal(document.querySelector('.scope-card').disabled, true)
   assert.equal(document.body.textContent.includes('SECRET'), false)
   assert.equal(document.body.textContent.includes('choose_supported_recipe'), false)
+  await act(async () => harness.changed[0]({ revision: 4 }))
+  await flush()
+  assert.equal(prompt.disabled, true)
+  assert.equal(document.querySelector('.scope-card').disabled, true)
 
-  await act(async () => click(submit))
+  const retry = document.querySelector('[aria-label="受理状态未确认"] button')
+  assert.ok(retry)
+  await act(async () => click(retry))
   await flush()
   assert.equal(harness.submitRequests.length, 2)
-  assert.equal(harness.submitRequests[1].client_idempotency_key, harness.submitRequests[0].client_idempotency_key)
-  await act(async () => input(prompt, '调整后的问题'))
+  assert.equal(harness.submitRequests[1].client_request_key, harness.submitRequests[0].client_request_key)
+  assert.deepEqual(harness.submitRequests[1].scope, harness.submitRequests[0].scope)
+  assert.equal(harness.submitRequests[1].prompt, harness.submitRequests[0].prompt)
+})
+
+test('SEM-F38/J30-ACCEPT: an explicit settings refusal releases the pinned request for correction', async (t) => {
+  const harness = await createHarness({
+    submit: async () => ({ ok: false, error: { code: 'AGENT_RUN_UNAVAILABLE', next_action: 'settings' }, result: null })
+  }); t.after(() => harness.dispose())
+  const prompt = document.querySelector('#agentPrompt')
   await act(async () => input(prompt, '原始问题'))
-  await act(async () => click(submit))
+  await act(async () => click(document.querySelector('[data-action="qa"]')))
   await flush()
-  assert.notEqual(harness.submitRequests[2].client_idempotency_key, harness.submitRequests[1].client_idempotency_key)
+  assert.equal(document.querySelector('[aria-label="受理状态未确认"]'), null)
+  assert.equal(prompt.disabled, false)
+  assert.equal(document.querySelector('.scope-card').disabled, false)
+  assert.match(document.querySelector('.status').textContent, /请在设置中完成所需配置/)
+})
+
+test('SEM-F38/J30-ACCEPT: refresh preserves the submitted session when it is absent from the first scope page', async (t) => {
+  let scopeReads = 0
+  const harness = await createHarness({
+    getScopes: async (request, values) => {
+      if (request.cursor) return { ok: true, scopes: [], next_cursor: null, default_scope: null, revision: ++scopeReads }
+      scopeReads += 1
+      const second = {
+        ...values.scopeItem,
+        scope: { kind: 'session', reference: 'session.ui.2' },
+        display_name: '第二场已结束会话'
+      }
+      return {
+        ok: true,
+        scopes: scopeReads === 1 ? [values.scopeItem, second] : [values.scopeItem],
+        next_cursor: null,
+        default_scope: values.scope,
+        revision: scopeReads
+      }
+    }
+  }); t.after(() => harness.dispose())
+
+  await act(async () => click(document.querySelectorAll('.scope-card')[1]))
+  await flush()
+  assert.match(document.querySelector('.selected-scope').textContent, /第二场已结束会话/)
+  await act(async () => click(document.querySelector('[data-action="minutes"]')))
+  await flush()
+  assert.equal(harness.submitRequests[0].scope.reference, 'session.ui.2')
+  assert.equal(document.querySelectorAll('.scope-card').length, 1)
+  assert.match(document.querySelector('.selected-scope').textContent, /第二场已结束会话/)
+
+  await act(async () => click(document.querySelector('.scope-panel .panel-heading button')))
+  await flush()
+  await act(async () => harness.changed[0]({ revision: 4 }))
+  await flush()
+  assert.ok(scopeReads >= 4)
+  assert.match(document.querySelector('.selected-scope').textContent, /第二场已结束会话/)
+  assert.equal(document.querySelector('.scope-card').disabled, true)
+
+  const [requestId, snapshot] = [...harness.summarySnapshots.entries()][0]
+  const terminal = { ...snapshot, revision: snapshot.revision + 1, state: 'succeeded', phase: 'terminal' }
+  harness.summarySnapshots.set(requestId, terminal)
+  await act(async () => harness.summaryChanged[0]({
+    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+    request_id: requestId, generation: terminal.generation, revision: terminal.revision
+  }))
+  await flush()
+  assert.equal(document.querySelector('.scope-card').disabled, false)
+  assert.match(document.querySelector('.selected-scope').textContent, /第二场已结束会话/)
+
+  await act(async () => click(document.querySelector('.scope-panel .panel-heading button')))
+  await flush()
+  assert.match(document.querySelector('.selected-scope').textContent, /第二场已结束会话/)
+})
+
+test('SEM-F38/J30-PROGRESS: a recent authoritative snapshot remains the last known state during a failed read', async (t) => {
+  const harness = await createHarness({
+    getSessionSummaryRun: async () => ({ ok: false, error: { code: 'AGENT_RUN_UNAVAILABLE', next_action: 'retry' }, result: null })
+  }); t.after(() => harness.dispose())
+  await act(async () => click(document.querySelector('[data-action="minutes"]')))
+  await flush()
+  assert.equal(document.querySelector('.run-card strong').textContent, '等待处理')
+  assert.equal(document.querySelector('.run-card').textContent.includes('上次确认状态'), false)
 })
 
 test('SEM-F32/J21/J24: feedback blocks same-turn duplicates, reuses a key after unknown receipt, and only clears the submitted draft snapshot', async (t) => {
@@ -777,7 +902,7 @@ test('SEM-F32/J22: an explicit successful submit ends the idempotency-key lifecy
   await act(async () => click(document.querySelector('[data-action="qa"]')))
   await flush()
   assert.equal(harness.submitRequests.length, 2)
-  assert.notEqual(harness.submitRequests[0].client_idempotency_key, harness.submitRequests[1].client_idempotency_key)
+  assert.notEqual(harness.submitRequests[0].client_request_key, harness.submitRequests[1].client_request_key)
 })
 
 test('SEM-F35/J22/J26: command errors and next actions use fixed Chinese copy, and export cancellation has no success notice', async (t) => {

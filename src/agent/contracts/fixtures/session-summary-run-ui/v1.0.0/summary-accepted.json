@@ -1,0 +1,44 @@
+{
+  "request": {
+    "contract_id": "speech-agent.session-summary-run.ui",
+    "contract_version": "1.0.0",
+    "action": "summary",
+    "scope": { "kind": "session", "reference": "session.fixture" },
+    "client_request_key": "agent.ui.fixture"
+  },
+  "response": {
+    "contract_id": "speech-agent.session-summary-run.ui",
+    "contract_version": "1.0.0",
+    "ok": true,
+    "error": null,
+    "result": {
+      "accepted": true,
+      "replayed": false,
+      "snapshot": {
+        "request_id": "request.summary.fixture",
+        "generation": 1,
+        "revision": 0,
+        "action": "summary",
+        "state": "accepted",
+        "phase": "accepted",
+        "attempt": 0,
+        "elapsed_ms": 0,
+        "last_activity_age_ms": null,
+        "validated_chunk_count": null,
+        "total_chunk_count": null,
+        "memory_state": "not_read",
+        "error_code": null,
+        "budget": null,
+        "freshness": "fresh",
+        "cancel_requested": false,
+        "resume_required": false,
+        "diagnostics_available": false,
+        "route_run_id": null,
+        "target_run_id": null,
+        "interaction_id": null,
+        "recipe_id": null,
+        "routing_mode": null
+      }
+    }
+  }
+}

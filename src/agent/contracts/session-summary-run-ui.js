@@ -31,7 +31,6 @@ const IPC_CHANNELS = Object.freeze({
   accept: 'session-summary-run:accept',
   get: 'session-summary-run:get',
   cancel: 'session-summary-run:cancel',
-  resume: 'session-summary-run:resume',
   changed: 'session-summary-run:changed'
 })
 
@@ -103,15 +102,6 @@ function assertCancelRequest (request) {
   header(request)
   id(request.request_id, 'request.request_id')
   integer(request.generation, 'request.generation', 1)
-  return request
-}
-
-function assertResumeRequest (request) {
-  exact(request, ['contract_id', 'contract_version', 'expected_revision', 'generation', 'request_id'], 'request')
-  header(request)
-  id(request.request_id, 'request.request_id')
-  integer(request.generation, 'request.generation', 1)
-  integer(request.expected_revision, 'request.expected_revision')
   return request
 }
 
@@ -201,7 +191,6 @@ function assertSnapshotResult (result) {
 }
 function assertGetResponse (response) { return assertEnvelope(response, assertSnapshotResult) }
 function assertCancelResponse (response) { return assertEnvelope(response, assertSnapshotResult) }
-function assertResumeResponse (response) { return assertEnvelope(response, assertSnapshotResult) }
 function assertChangedEvent (event) {
   exact(event, ['contract_id', 'contract_version', 'request_id', 'generation', 'revision'], 'event')
   header(event)
@@ -231,7 +220,5 @@ module.exports = {
   assertChangedEvent,
   assertControlRequest,
   assertGetResponse,
-  assertResumeRequest,
-  assertResumeResponse,
   assertRequestSnapshot
 }

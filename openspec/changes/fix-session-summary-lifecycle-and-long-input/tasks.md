@@ -26,7 +26,7 @@
 
 ## 3. P1 受理与运行控制
 
-- [ ] 3.1 定义版本化exact受理/查询/取消/快照合同及fixture，列明字段/错误与旧调用兼容，同步policy/preload/main/renderer（J30-ACCEPT）。
+- [x] 3.1 定义版本化exact受理/查询/取消/快照合同及fixture，列明字段/错误与旧调用兼容，同步policy/preload/main/renderer（J30-ACCEPT）。
 - [x] 3.2 追加受理元数据与revision/generation迁移，保持旧SQL/checksum；实现幂等受理、删除级联和旧键不复活；v16冻结原始输入版本、水位与digest，供未知回执重放使用（J30-ACCEPT/DB1）。
 - [x] 3.3 模型前返回持久身份；summary动作用preset，question保留真实路由器；取消阻止兜底/目标创建，未知回执同键收敛；覆盖取消写失败的重试路径（J30-ACCEPT/CANCEL）。
 - [ ] 3.4 快照连接真实阶段事件，区分elapsed/activity、attempt/块计数及尚未读取记忆；不把心跳当进展（J30-PROGRESS）。

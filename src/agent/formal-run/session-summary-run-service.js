@@ -38,7 +38,7 @@ function publicSnapshot (row) {
     memory_state: row.memoryState,
     error_code: row.errorCode,
     budget: row.budget,
-    freshness: 'unknown',
+    freshness: 'fresh',
     cancel_requested: row.cancelRequested,
     resume_required: row.resumeRequired,
     diagnostics_available: row.diagnosticsAvailable,

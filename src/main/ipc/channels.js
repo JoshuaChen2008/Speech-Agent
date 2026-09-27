@@ -69,5 +69,9 @@ module.exports = Object.freeze({
   AGENT_RUN_GET_INTERACTION: 'agent-run:get-interaction',
   AGENT_RUN_CHANGED: 'agent-run:changed',
   AGENT_RUN_EXPORT_INTERACTION: 'agent-run:export-interaction',
-  AGENT_RUN_RECORD_SIGNAL: 'agent-run:record-signal'
+  AGENT_RUN_RECORD_SIGNAL: 'agent-run:record-signal',
+  SESSION_SUMMARY_RUN_ACCEPT: 'session-summary-run:accept',
+  SESSION_SUMMARY_RUN_GET: 'session-summary-run:get',
+  SESSION_SUMMARY_RUN_CANCEL: 'session-summary-run:cancel',
+  SESSION_SUMMARY_RUN_CHANGED: 'session-summary-run:changed'
 })

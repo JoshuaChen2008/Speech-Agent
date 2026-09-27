@@ -4,6 +4,9 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const contract = require('../../src/agent/contracts/session-summary-run-ui')
+const CHANNELS = require('../../src/main/ipc/channels')
+const summaryAccepted = require('../../src/agent/contracts/fixtures/session-summary-run-ui/v1.0.0/summary-accepted.json')
+const summaryChanged = require('../../src/agent/contracts/fixtures/session-summary-run-ui/v1.0.0/changed-summary.json')
 
 const header = {
   contract_id: 'speech-agent.session-summary-run.ui',
@@ -73,7 +76,7 @@ test('SEM-F38/J30-ACCEPT: accepted result and response envelope are versioned an
     request_id: 'request.p1.summary', generation: 1, revision: 0, action: 'summary',
     state: 'accepted', phase: 'accepted', attempt: 0, elapsed_ms: 0,
     last_activity_age_ms: null, validated_chunk_count: null, total_chunk_count: null,
-    memory_state: 'not_read', error_code: null, budget: null, freshness: 'unknown',
+    memory_state: 'not_read', error_code: null, budget: null, freshness: 'fresh',
     cancel_requested: false, resume_required: false, diagnostics_available: false,
     route_run_id: null, target_run_id: null, interaction_id: null, recipe_id: null, routing_mode: null
   }
@@ -86,4 +89,17 @@ test('SEM-F38/J30-ACCEPT: accepted result and response envelope are versioned an
   assert.equal(contract.assertAcceptResponse(response), response)
   assert.throws(() => contract.assertAcceptResponse({ ...response, internal_digest: 'x' }), /exact/)
   assert.throws(() => contract.assertAcceptResponse({ ...response, result: { ...response.result, snapshot: { ...snapshot, prompt: 'sensitive' } } }), /exact/)
+})
+
+test('SEM-F38/J30-ACCEPT: versioned fixtures bind the contract to main IPC channel names', () => {
+  assert.equal(contract.assertAcceptRequest(summaryAccepted.request), summaryAccepted.request)
+  assert.equal(contract.assertAcceptResponse(summaryAccepted.response), summaryAccepted.response)
+  assert.equal(contract.assertChangedEvent(summaryChanged), summaryChanged)
+  assert.deepEqual(contract.IPC_CHANNELS, {
+    accept: CHANNELS.SESSION_SUMMARY_RUN_ACCEPT,
+    get: CHANNELS.SESSION_SUMMARY_RUN_GET,
+    cancel: CHANNELS.SESSION_SUMMARY_RUN_CANCEL,
+    changed: CHANNELS.SESSION_SUMMARY_RUN_CHANGED
+  })
+  assert.equal(Object.hasOwn(contract, 'assertResumeRequest'), false)
 })

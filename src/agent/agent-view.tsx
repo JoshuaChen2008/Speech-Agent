@@ -2,9 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } 
 
 type Dict = Record<string, any>
 type ScopeItem = { scope: { kind: 'session', reference: string }, display_name: string, started_at: string | null, ended_at: string, state: 'terminal' }
+type SummaryRunSubmission = { action: 'summary' | 'question', fingerprint: string, key: string, prompt: string | null, scope: ScopeItem['scope'], scopeItem: ScopeItem }
+type SummaryScopePin = { scope: ScopeItem['scope'], scopeItem: ScopeItem, requestId: string | null }
 type State = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelling' | 'cancelled'
 
 const CONTRACT = Object.freeze({ contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' })
+const SUMMARY_RUN_CONTRACT = Object.freeze({ contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0' })
+const SUMMARY_RUN_TERMINAL_STATES = new Set(['succeeded', 'failed', 'cancelled'])
 const SCOPE_LIMIT = 50
 const HISTORY_LIMIT = 50
 const EDIT_LIMIT = 4096
@@ -35,7 +39,7 @@ const ERROR_MESSAGES: Record<string, string> = Object.freeze({
   AGENT_WORKER_EXITED: '处理异常，请稍后重试',
   AGENT_INTERNAL_FAILURE: '处理异常，请稍后重试',
   AGENT_BUDGET_EXCEEDED: '本次处理已达到预算限制',
-  AGENT_SUMMARY_MEMORY_READ_FAILED: '暂时无法读取记忆；可以重试，或仅用本次会话生成',
+  AGENT_SUMMARY_MEMORY_READ_FAILED: '暂时无法读取记忆；可重试，或先在设置中关闭“总结时参考记忆”再重新生成',
   AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED: '会话总结输入超过当前上限；总结模型尚未调用。',
   TOOL_ARGS_INVALID: '读取请求无效，本次调用未执行',
   TOOL_SCOPE_DENIED: '这次请求不能读取所选会话',
@@ -64,6 +68,7 @@ class PublicResponseError extends Error {}
 
 function responseErrorMessage (response: Dict, fallback: string): string {
   if (response?.error?.next_action === 'restart_application') return NEXT_ACTION_MESSAGES.restart_application
+  if (response?.error?.next_action === 'settings') return NEXT_ACTION_MESSAGES.settings
   return ERROR_MESSAGES[response?.error?.code] || NEXT_ACTION_MESSAGES[response?.error?.next_action] || fallback
 }
 
@@ -103,6 +108,27 @@ function utcLabel (value: string | null): string {
 
 function stateLabel (state: string | null): string {
   return ({ pending: '等待生成', running: '正在生成', succeeded: '已生成', failed: '生成失败', cancelling: '正在取消', cancelled: '已取消' } as Dict)[state || ''] || '状态未知'
+}
+
+function summaryRunStateLabel (snapshot: Dict | null): string {
+  if (!snapshot) return '状态未知'
+  const terminal = ({ succeeded: '已生成', failed: '生成失败', cancelled: '已取消' } as Dict)[snapshot.state]
+  if (terminal) return terminal
+  return ({
+    accepted: '已受理', preparing: '正在准备', routing: '正在确定处理方式', queued: '等待处理',
+    running: '正在处理', retry_wait: '等待重试', cancelling: '正在取消'
+  } as Dict)[snapshot.state] || '状态未知'
+}
+
+function summaryRunPhaseLabel (phase: unknown): string {
+  return ({
+    accepted: '已受理', preparing: '准备输入', waiting_model: '等待模型响应', reading_context: '读取上下文',
+    reducing: '整理内容', validating: '校验结果', retry_wait: '等待重试', cancelling: '正在取消', terminal: '已结束'
+  } as Dict)[String(phase || '')] || '阶段暂未记录'
+}
+
+function summaryRunTerminal (snapshot: Dict | null): boolean {
+  return !!snapshot && SUMMARY_RUN_TERMINAL_STATES.has(snapshot.state)
 }
 
 function eligibilityLabel (value: string | null): string {
@@ -248,6 +274,7 @@ function makeIdempotencyKey (): string {
 }
 
 function headers (): Dict { return { ...CONTRACT } }
+function summaryRunHeaders (): Dict { return { ...SUMMARY_RUN_CONTRACT } }
 
 function requestFingerprint (value: unknown): string { return JSON.stringify(value) }
 
@@ -275,6 +302,10 @@ export function AgentView (): ReactElement {
   const detailLastSuccessAtRef = useRef<number | null>(null)
   const requestedScopeRef = useRef<ScopeItem['scope'] | null>(null)
   const activeInteractionRef = useRef<string | null>(null)
+  const summaryRequestIdentityRef = useRef<{ requestId: string, generation: number } | null>(null)
+  const summarySnapshotRef = useRef<Dict | null>(null)
+  const summarySnapshotReadRef = useRef<{ requestId: string, promise: Promise<void> } | null>(null)
+  const summaryLastSuccessAtRef = useRef<number | null>(null)
   const selectedScopeRef = useRef<ScopeItem['scope'] | null>(null)
   const draftsRef = useRef(new Map<string, string>())
   const interactionStatusRef = useRef(new Map<string, string>())
@@ -283,11 +314,14 @@ export function AgentView (): ReactElement {
   const cancelLocksRef = useRef(new Set<string>())
   const exportLocksRef = useRef(new Set<string>())
   const signalLocksRef = useRef(new Set<string>())
-  const pendingSubmitKeyRef = useRef<{ fingerprint: string, key: string } | null>(null)
+  const pendingSubmitKeyRef = useRef<SummaryRunSubmission | null>(null)
+  const summaryScopePinRef = useRef<SummaryScopePin | null>(null)
+  const unresolvedSubmissionRef = useRef<SummaryRunSubmission | null>(null)
   const pendingSignalKeysRef = useRef(new Map<string, { fingerprint: string, key: string, signalKind: string }>())
   const promptRef = useRef('')
   const refreshRef = useRef<() => void>(() => {})
   const loadDetailRef = useRef<(interactionId: string | null) => Promise<void>>(async () => {})
+  const reloadSummarySnapshotRef = useRef<() => void>(() => {})
   const [scopes, setScopes] = useState<ScopeItem[]>([])
   const [scopeCursor, setScopeCursor] = useState<string | null>(null)
   const [selectedScope, setSelectedScope] = useState<ScopeItem['scope'] | null>(null)
@@ -303,6 +337,11 @@ export function AgentView (): ReactElement {
   const [cancelPendingInteractionId, setCancelPendingInteractionId] = useState<string | null>(null)
   const [status, setStatus] = useState('')
   const [activeInteractionId, setActiveInteractionId] = useState<string | null>(null)
+  const [activeSummarySnapshot, setActiveSummarySnapshot] = useState<Dict | null>(null)
+  const [summaryScopePin, setSummaryScopePin] = useState<SummaryScopePin | null>(null)
+  const [unresolvedSubmission, setUnresolvedSubmission] = useState<SummaryRunSubmission | null>(null)
+  const [summarySnapshotStale, setSummarySnapshotStale] = useState(false)
+  const [summarySnapshotError, setSummarySnapshotError] = useState('')
   const [interactionStateHint, setInteractionStateHint] = useState<State | null>(null)
   const [terminalCancelStateHint, setTerminalCancelStateHint] = useState<State | null>(null)
   const [detail, setDetail] = useState<Dict | null>(null)
@@ -321,6 +360,13 @@ export function AgentView (): ReactElement {
   const configRevisionRef = useRef(-1)
   const terminalCancelStateRef = useRef<State | null>(null)
   const state: State | null = terminalCancelStateHint || knownInteractionState(detail?.state) || interactionStateHint
+
+  const clearSummaryScopePin = useCallback((requestId?: string) => {
+    const pin = summaryScopePinRef.current
+    if (!pin || (requestId && pin.requestId && pin.requestId !== requestId)) return
+    summaryScopePinRef.current = null
+    setSummaryScopePin((current) => current ? { ...current, requestId: null } : null)
+  }, [])
 
   const applyConfig = useCallback((config: Dict) => {
     const revision = Number(config?.agentSettingsRevision)
@@ -346,7 +392,9 @@ export function AgentView (): ReactElement {
       setScopeCursor(value.next_cursor)
       setSelectedScope((current) => {
         const visible = reset ? nextScopes : mergeByIdentity(scopes, nextScopes, (item) => scopeIdentity(item.scope))
+        if (summaryScopePinRef.current) return summaryScopePinRef.current.scope
         if (requestedScopeRef.current && visible.some((item) => scopeIdentity(item.scope) === scopeIdentity(requestedScopeRef.current))) return requestedScopeRef.current
+        if (current && summaryScopePin && scopeIdentity(current) === scopeIdentity(summaryScopePin.scope)) return current
         if (current && visible.some((item) => scopeIdentity(item.scope) === scopeIdentity(current))) return current
         return value.default_scope || nextScopes[0]?.scope || null
       })
@@ -355,7 +403,7 @@ export function AgentView (): ReactElement {
     } finally {
       if (token === scopeGeneration.current) setScopePending(false)
     }
-  }, [api, scopeCursor, scopes])
+  }, [api, scopeCursor, scopes, summaryScopePin])
 
   const loadHistory = useCallback(async (reset: boolean) => {
     const token = ++historyGeneration.current
@@ -396,6 +444,7 @@ export function AgentView (): ReactElement {
     void loadHistory(true)
     void loadEligibility(selectedScopeRef.current)
     if (activeInteractionRef.current) void loadDetailRef.current(activeInteractionRef.current)
+    if (summaryRequestIdentityRef.current) reloadSummarySnapshotRef.current()
   }, [loadEligibility, loadHistory, loadScopes])
 
   const loadDetail = useCallback(async (interactionId: string | null) => {
@@ -430,6 +479,10 @@ export function AgentView (): ReactElement {
         return
       }
       setDetail(nextDetail)
+      const summarySnapshot = summarySnapshotRef.current
+      if (summarySnapshot?.interaction_id === interactionId && ['succeeded', 'failed', 'cancelled'].includes(String(nextDetail.state))) {
+        clearSummaryScopePin(summarySnapshot.request_id)
+      }
       setInteractionStateHint(knownInteractionState(nextDetail.state))
       detailLastSuccessAtRef.current = Date.now()
       setDetailStale(false)
@@ -444,7 +497,7 @@ export function AgentView (): ReactElement {
         }
       }
     }
-  }, [api])
+  }, [api, clearSummaryScopePin])
 
   useEffect(() => { refreshRef.current = refresh }, [refresh])
   useEffect(() => { loadDetailRef.current = loadDetail }, [loadDetail])
@@ -511,6 +564,10 @@ export function AgentView (): ReactElement {
   useEffect(() => {
     if (typeof api.onRequestedScope !== 'function') return
     const dispose = api.onRequestedScope((scope: ScopeItem['scope']) => {
+      if (summaryScopePinRef.current) {
+        setSelectedScope(summaryScopePinRef.current.scope)
+        return
+      }
       requestedScopeRef.current = scope
       setSelectedScope(scope)
       setStatus('已选择这场会话')
@@ -562,37 +619,45 @@ export function AgentView (): ReactElement {
   }, [api])
 
   const selected = useMemo(() => {
-    const found = scopes.find((item) => item.scope.reference === selectedScope?.reference)
+    const found = scopes.find((item) => scopeIdentity(item.scope) === scopeIdentity(selectedScope))
     if (found) return found
+    if (selectedScope && summaryScopePin && scopeIdentity(selectedScope) === scopeIdentity(summaryScopePin.scope)) return summaryScopePin.scopeItem
     if (selectedScope && requestedScopeRef.current && scopeIdentity(selectedScope) === scopeIdentity(requestedScopeRef.current)) {
       return { scope: selectedScope, display_name: `已选择会话 · ${selectedScope.reference}`, started_at: null, ended_at: '', state: 'terminal' } as ScopeItem
     }
     return null
-  }, [scopes, selectedScope])
-  const cancelPending = activeInteractionId !== null && cancelPendingInteractionId === activeInteractionId
+  }, [scopes, selectedScope, summaryScopePin])
+  const summaryRequestId = activeSummarySnapshot?.request_id || null
+  const summaryTargetTerminal = !!activeSummarySnapshot?.interaction_id &&
+    activeSummarySnapshot.interaction_id === activeInteractionId &&
+    ['succeeded', 'failed', 'cancelled'].includes(String(detail?.state || ''))
+  const activeSummaryPending = !!activeSummarySnapshot && !summaryRunTerminal(activeSummarySnapshot) && !summaryTargetTerminal
+  const cancelPending = summaryRequestId !== null
+    ? cancelPendingInteractionId === summaryRequestId
+    : activeInteractionId !== null && cancelPendingInteractionId === activeInteractionId
   const exportPending = activeInteractionId !== null && exportPendingInteractionId === activeInteractionId
   const signalPending = activeInteractionId !== null && signalPendingInteractionId === activeInteractionId
-  const activeRunPending = activeInteractionId !== null && (state === null || ['pending', 'running', 'cancelling'].includes(state))
-  const busy = submitPending || activeRunPending || cancelPending || exportPending || signalPending || rememberPending
+  const activeRunPending = activeSummaryPending || activeInteractionId !== null && (state === null || ['pending', 'running', 'cancelling'].includes(state))
+  const busy = submitPending || activeRunPending || cancelPending || exportPending || signalPending || rememberPending || unresolvedSubmission !== null
+  const scopeSelectionLocked = submitPending || activeSummaryPending || unresolvedSubmission !== null
   const canSubmit = eligibility === 'ready' && !busy && prompt.trim().length > 0 && selectedScope !== null
   const canRegenerate = detail?.recipe_id === 'summary.minutes' && ['succeeded', 'failed', 'cancelled'].includes(state || '') && selectedScope !== null && !busy
   const openSettings = () => {
     if (typeof api.openSettings === 'function') api.openSettings()
   }
-  const regenerate = (summaryUseMemory?: boolean) => {
+  const regenerate = () => {
     if (!canRegenerate) return
-    void submit('请基于这场已结束的会话生成会话总结，包含主要内容、决定、待办和需要注意。', 'minutes', summaryUseMemory)
+    void submit('请基于这场已结束的会话生成会话总结，包含主要内容、决定、待办和需要注意。', 'minutes')
   }
   const selectScope = (scope: ScopeItem['scope']) => {
+    if (unresolvedSubmissionRef.current || summaryScopePinRef.current) return
     if (scopeIdentity(scope) !== scopeIdentity(selectedScopeRef.current)) pendingSubmitKeyRef.current = null
+    requestedScopeRef.current = null
+    setSummaryScopePin(null)
     setSelectedScope(scope)
   }
   const updatePrompt = (value: string) => {
-    const retainedSubmit = pendingSubmitKeyRef.current
-    if (retainedSubmit && selectedScopeRef.current) {
-      const nextFingerprint = requestFingerprint({ scope: selectedScopeRef.current, prompt: value.trim() })
-      if (nextFingerprint !== retainedSubmit.fingerprint) pendingSubmitKeyRef.current = null
-    }
+    if (unresolvedSubmissionRef.current) return
     promptRef.current = value
     setPrompt(value)
   }
@@ -630,43 +695,244 @@ export function AgentView (): ReactElement {
     if (value.length > EDIT_LIMIT) setSignalStatus('要记住的内容最多 4096 个字符')
     else if (signalStatus === '要记住的内容最多 4096 个字符') setSignalStatus('')
   }
-  const selectInteraction = (interactionId: string, stateHint: State | null) => {
+  const selectInteraction = useCallback((interactionId: string | null, stateHint: State | null) => {
     ++detailGeneration.current
     detailRequestRef.current = null
     detailLastSuccessAtRef.current = null
+    summaryRequestIdentityRef.current = null
+    summarySnapshotRef.current = null
+    summaryLastSuccessAtRef.current = null
     activeInteractionRef.current = interactionId
     setDetail(null)
     setDetailError('')
     setDetailPending(false)
     setDetailStale(false)
+    setActiveSummarySnapshot(null)
+    setSummarySnapshotStale(false)
+    setSummarySnapshotError('')
     setInteractionStateHint(stateHint)
     terminalCancelStateRef.current = null
     setTerminalCancelStateHint(null)
     setActiveInteractionId(interactionId)
+    if (!interactionId) {
+      setDetail(null); setDetailError(''); setDetailPending(false); setDetailStale(false)
+    }
+  }, [])
+  const applySummarySnapshot = useCallback((snapshot: Dict) => {
+    const identity = summaryRequestIdentityRef.current
+    if (identity && (identity.requestId !== snapshot.request_id || identity.generation !== snapshot.generation)) return
+    const current = summarySnapshotRef.current
+    if (current && current.request_id === snapshot.request_id && current.generation === snapshot.generation &&
+        Number.isSafeInteger(snapshot.revision) && snapshot.revision < current.revision) return
+    const nextIdentity = { requestId: snapshot.request_id, generation: snapshot.generation }
+    const newRequest = !identity || identity.requestId !== snapshot.request_id || identity.generation !== snapshot.generation
+    if (typeof snapshot.interaction_id === 'string' && activeInteractionRef.current !== snapshot.interaction_id) {
+      selectInteraction(snapshot.interaction_id, null)
+    } else if (newRequest && snapshot.interaction_id === null && activeInteractionRef.current) {
+      selectInteraction(null, null)
+    }
+    summaryRequestIdentityRef.current = nextIdentity
+    summarySnapshotRef.current = snapshot
+    summaryLastSuccessAtRef.current = Date.now()
+    if (summaryRunTerminal(snapshot)) clearSummaryScopePin(snapshot.request_id)
+    setActiveSummarySnapshot(snapshot)
+    setSummarySnapshotStale(false)
+    setSummarySnapshotError('')
+  }, [clearSummaryScopePin, selectInteraction])
+  const loadSummarySnapshot = useCallback(async (requestId: string) => {
+    const identity = summaryRequestIdentityRef.current
+    if (!identity || identity.requestId !== requestId || typeof api.getSessionSummaryRun !== 'function') return
+    const currentRead = summarySnapshotReadRef.current
+    if (currentRead?.requestId === requestId) return currentRead.promise
+    const read = { requestId, promise: Promise.resolve() as Promise<void> }
+    const task = (async () => {
+      try {
+        const response = await api.getSessionSummaryRun({ ...summaryRunHeaders(), request_id: requestId })
+        if (summaryRequestIdentityRef.current?.requestId !== requestId) return
+        if (response?.ok !== true || !response?.result?.snapshot) {
+          throw new PublicResponseError(responseErrorMessage(response, '状态暂时无法确认'))
+        }
+        applySummarySnapshot(response.result.snapshot)
+      } catch (error) {
+        if (summaryRequestIdentityRef.current?.requestId !== requestId) return
+        const lastSuccessAt = summaryLastSuccessAtRef.current
+        setSummarySnapshotStale(lastSuccessAt === null || Date.now() - lastSuccessAt >= 10000)
+        setSummarySnapshotError(error instanceof PublicResponseError ? error.message : '状态暂时无法确认')
+      } finally {
+        if (summarySnapshotReadRef.current === read) summarySnapshotReadRef.current = null
+      }
+    })()
+    read.promise = task
+    summarySnapshotReadRef.current = read
+    return task
+  }, [api, applySummarySnapshot])
+  reloadSummarySnapshotRef.current = () => {
+    const identity = summaryRequestIdentityRef.current
+    if (identity) void loadSummarySnapshot(identity.requestId)
   }
-  const submit = async (value: string, recipe: 'minutes' | 'qa', summaryUseMemory?: boolean) => {
-    if (!selectedScope || eligibility !== 'ready' || submitLockRef.current) return
-    const normalized = value.trim()
-    if (!normalized) return
-    const fingerprint = requestFingerprint({ scope: selectedScope, prompt: normalized, summary_use_memory: summaryUseMemory ?? null })
-    const retained = pendingSubmitKeyRef.current
-    const idempotencyKey = retained?.fingerprint === fingerprint ? retained.key : makeIdempotencyKey()
-    pendingSubmitKeyRef.current = { fingerprint, key: idempotencyKey }
+  useEffect(() => {
+    if (typeof api.onSessionSummaryRunChanged !== 'function') return
+    const dispose = api.onSessionSummaryRunChanged((event: Dict) => {
+      const identity = summaryRequestIdentityRef.current
+      const snapshot = summarySnapshotRef.current
+      if (!identity || event.request_id !== identity.requestId || event.generation !== identity.generation ||
+          snapshot && event.revision < snapshot.revision) return
+      void loadSummarySnapshot(identity.requestId)
+    })
+    return () => { if (typeof dispose === 'function') dispose() }
+  }, [api, loadSummarySnapshot])
+  useEffect(() => {
+    const snapshot = activeSummarySnapshot
+    if (!snapshot || summaryRunTerminal(snapshot)) return
+    let interval: number | null = null
+    const stop = () => {
+      if (interval !== null) window.clearInterval(interval)
+      interval = null
+    }
+    const poll = () => {
+      if (document.visibilityState === 'hidden') return
+      const lastSuccessAt = summaryLastSuccessAtRef.current
+      if (lastSuccessAt !== null && Date.now() - lastSuccessAt >= 10000) setSummarySnapshotStale(true)
+      void loadSummarySnapshot(snapshot.request_id)
+    }
+    const start = () => {
+      if (document.visibilityState === 'hidden') { stop(); return }
+      if (interval === null) interval = window.setInterval(poll, 2000)
+      poll()
+    }
+    start()
+    document.addEventListener('visibilitychange', start)
+    return () => { stop(); document.removeEventListener('visibilitychange', start) }
+  }, [activeSummarySnapshot?.request_id, activeSummarySnapshot?.state, loadSummarySnapshot])
+  const submit = async (value: string, recipe: 'minutes' | 'qa') => {
+    if (submitLockRef.current) return
+    const unresolved = unresolvedSubmissionRef.current
+    if (!unresolved && (!selectedScope || eligibility !== 'ready')) return
+    const action = recipe === 'minutes' ? 'summary' : 'question'
+    if (unresolved && unresolved.action !== action) return
+    const normalized = unresolved?.prompt || value.trim()
+    if (action === 'question' && !normalized) return
+    const scope = unresolved?.scope || selectedScope
+    if (!scope) return
+    const fingerprint = unresolved?.fingerprint || requestFingerprint({ scope, action, prompt: action === 'question' ? normalized : null })
+    const idempotencyKey = unresolved?.key || makeIdempotencyKey()
+    const fallbackScopeItem: ScopeItem = { scope, display_name: `已选择会话 · ${scope.reference}`, started_at: null, ended_at: '', state: 'terminal' }
+    const scopeItem = unresolved?.scopeItem ||
+      scopes.find((item) => scopeIdentity(item.scope) === scopeIdentity(scope)) ||
+      (summaryScopePinRef.current && scopeIdentity(summaryScopePinRef.current.scope) === scopeIdentity(scope)
+        ? summaryScopePinRef.current.scopeItem
+        : fallbackScopeItem)
+    const submission: SummaryRunSubmission = unresolved || {
+      action,
+      fingerprint,
+      key: idempotencyKey,
+      prompt: action === 'question' ? normalized : null,
+      scope,
+      scopeItem
+    }
+    pendingSubmitKeyRef.current = submission
+    const pin: SummaryScopePin = { scope: submission.scope, scopeItem: submission.scopeItem, requestId: summaryScopePinRef.current?.requestId || null }
+    summaryScopePinRef.current = pin
+    setSummaryScopePin(pin)
+    setSelectedScope(submission.scope)
+    if (!unresolved) {
+      summaryRequestIdentityRef.current = null
+      summarySnapshotRef.current = null
+      summaryLastSuccessAtRef.current = null
+      setActiveSummarySnapshot(null)
+      setSummarySnapshotStale(false)
+      setSummarySnapshotError('')
+    }
     submitLockRef.current = true
     setSubmitPending(true); setStatus(recipe === 'minutes' ? '正在生成会话总结…' : '正在提交会话问题…'); setDetailError('')
+    let acceptedReceipt = false
+    let receiptUnknown = true
     try {
-      const response = await api.submit({ ...headers(), scope: selectedScope, prompt: normalized, client_idempotency_key: idempotencyKey, ...(summaryUseMemory === undefined ? {} : { summary_use_memory: summaryUseMemory }) })
+      const request = {
+        ...summaryRunHeaders(),
+        action: submission.action,
+        scope: submission.scope,
+        client_request_key: idempotencyKey,
+        ...(submission.action === 'question' ? { prompt: submission.prompt } : {})
+      }
+      const response = await api.acceptSessionSummaryRun(request)
+      if (response?.ok !== true || response?.result?.accepted !== true || !response?.result?.snapshot) {
+        if (response?.ok === false && response.error?.next_action && response.error.next_action !== 'retry') {
+          receiptUnknown = false
+          pendingSubmitKeyRef.current = null
+          unresolvedSubmissionRef.current = null
+          setUnresolvedSubmission(null)
+          clearSummaryScopePin()
+        }
+        throw new PublicResponseError(responseErrorMessage(response, '请求未受理，请再次尝试'))
+      }
+      acceptedReceipt = true
+      receiptUnknown = false
+      const snapshot = response.result.snapshot as Dict
       if (pendingSubmitKeyRef.current?.key === idempotencyKey) pendingSubmitKeyRef.current = null
-      const result = unwrap<Dict>(response)
-      const submittedState = knownInteractionState(result.state) || 'pending'
-      selectInteraction(result.interaction_id, submittedState)
-      setStatus(stateLabel(submittedState))
-      if (recipe === 'qa' && promptRef.current.trim() === normalized) setPrompt('')
+      unresolvedSubmissionRef.current = null
+      setUnresolvedSubmission(null)
+      const acceptedPin: SummaryScopePin = { scope: submission.scope, scopeItem: submission.scopeItem, requestId: snapshot.request_id }
+      summaryScopePinRef.current = acceptedPin
+      setSummaryScopePin(acceptedPin)
+      summaryRequestIdentityRef.current = null
+      summarySnapshotRef.current = null
+      setActiveSummarySnapshot(null)
+      applySummarySnapshot(snapshot)
+      setStatus(summaryRunStateLabel(snapshot))
+      if (submission.action === 'question' && promptRef.current.trim() === submission.prompt) setPrompt('')
+      void loadSummarySnapshot(snapshot.request_id)
       refresh()
-    } catch (error) { setStatus(error instanceof PublicResponseError ? error.message : '请求未提交，请再次点击重试') }
+    } catch (error) {
+      if (!acceptedReceipt && receiptUnknown) {
+        pendingSubmitKeyRef.current = submission
+        unresolvedSubmissionRef.current = submission
+        setUnresolvedSubmission(submission)
+        const message = error instanceof PublicResponseError ? error.message : '请求受理状态暂时无法确认'
+        setStatus(`${message}；重试会沿用同一请求`)
+      } else if (!acceptedReceipt) {
+        setStatus(error instanceof PublicResponseError ? error.message : '请求未受理，请检查后重试')
+      } else {
+        setStatus('请求已受理，但状态暂时无法确认')
+      }
+    }
     finally { submitLockRef.current = false; setSubmitPending(false) }
   }
+  const retryUnresolvedSubmission = () => {
+    const submission = unresolvedSubmissionRef.current
+    if (!submission) return
+    void submit(submission.action === 'summary' ? '会话总结' : submission.prompt || '', submission.action === 'summary' ? 'minutes' : 'qa')
+  }
   const cancel = async () => {
+    const summarySnapshot = summarySnapshotRef.current
+    if (summarySnapshot && !summaryRunTerminal(summarySnapshot) && !summaryTargetTerminal) {
+      const requestId = summarySnapshot.request_id
+      if (cancelLocksRef.current.has(requestId)) return
+      cancelLocksRef.current.add(requestId)
+      setCancelPendingInteractionId(requestId); setStatus('正在取消生成…')
+      try {
+        const result = unwrap<Dict>(await api.cancelSessionSummaryRun({
+          ...summaryRunHeaders(), request_id: requestId, generation: summarySnapshot.generation
+        }))
+        applySummarySnapshot(result.snapshot)
+        setStatus(summaryRunStateLabel(result.snapshot))
+        void loadSummarySnapshot(requestId)
+        if (activeInteractionRef.current) void loadDetailRef.current(activeInteractionRef.current)
+        refresh()
+      } catch (error) {
+        const message = error instanceof PublicResponseError
+          ? `${error.message}；取消状态尚未确认`
+          : '取消状态尚未确认，请刷新状态后重试'
+        setStatus(message)
+        setSummarySnapshotError(message)
+        setSummarySnapshotStale(true)
+        void loadSummarySnapshot(requestId)
+      } finally {
+        cancelLocksRef.current.delete(requestId)
+        setCancelPendingInteractionId((current) => current === requestId ? null : current)
+      }
+      return
+    }
     if (!activeInteractionId || cancelLocksRef.current.has(activeInteractionId) || !['pending', 'running'].includes(state || '')) return
     const interactionId = activeInteractionId
     cancelLocksRef.current.add(interactionId)
@@ -858,7 +1124,7 @@ export function AgentView (): ReactElement {
           <div className="panel-heading"><div><h1>已结束的会话</h1><p>{scopePending ? '正在读取会话…' : scopes.length ? `已显示 ${scopes.length} 个会话` : '暂无可用会话'}</p></div><button type="button" onClick={refresh} disabled={scopePending || historyPending}>刷新</button></div>
           {scopeError && <p className="error" role="alert">{scopeError}</p>}
           <div className="scope-list" role="list">
-            {scopes.map((item) => <button type="button" role="listitem" className="scope-card" aria-current={item.scope.reference === selectedScope?.reference} key={scopeIdentity(item.scope)} onClick={() => selectScope(item.scope)}><strong>{utcLabel(item.ended_at)}</strong><span>{item.display_name}</span></button>)}
+            {scopes.map((item) => <button type="button" role="listitem" className="scope-card" aria-current={scopeIdentity(item.scope) === scopeIdentity(selectedScope)} key={scopeIdentity(item.scope)} onClick={() => selectScope(item.scope)} disabled={scopeSelectionLocked}><strong>{utcLabel(item.ended_at)}</strong><span>{item.display_name}</span></button>)}
             {!scopePending && scopes.length === 0 && !scopeError && <p className="empty">还没有可总结的会话。如果正在监听，请先结束会话，再刷新这里。</p>}
           </div>
           {scopeCursor && <button className="more-button" type="button" onClick={() => void loadScopes(false)} disabled={scopePending}>加载更多</button>}
@@ -872,18 +1138,20 @@ export function AgentView (): ReactElement {
           <label className="prompt-label" htmlFor="agentPrompt">针对这次会话提问</label>
           <textarea id="agentPrompt" value={prompt} onChange={(event) => updatePrompt(event.target.value)} placeholder="例如：这场会最重要的决定是什么？" disabled={busy || eligibility !== 'ready'} />
           <div className="request-actions"><button type="button" className="primary" data-action="minutes" disabled={busy || eligibility !== 'ready'} onClick={() => void submit('请基于这场已结束的会话生成会话总结，包含主要内容、决定、待办和需要注意。', 'minutes')}>生成总结</button><button type="button" data-action="qa" disabled={!canSubmit} onClick={() => void submit(prompt, 'qa')}>提交问题</button></div>
-          {activeInteractionId && <div className="run-card" aria-label="当前请求状态"><div><span>当前请求</span><strong>{detailStale && ['pending', 'running', 'cancelling'].includes(String(state || '')) ? '状态暂时无法确认' : stateLabel(state)}</strong>{detailStale && ['pending', 'running', 'cancelling'].includes(String(state || '')) && <span className="stale-status" role="status">上次确认状态：{stateLabel(state)}；正在重新读取。</span>}</div><button type="button" onClick={() => void cancel()} disabled={cancelPending || !['pending', 'running'].includes(state || '')}>{cancelPending ? '正在取消…' : '取消生成'}</button></div>}
+          {unresolvedSubmission && <div className="run-card" aria-label="受理状态未确认"><div><span>当前请求</span><strong>受理状态暂时无法确认</strong><span>会话和请求内容已固定；重试会沿用同一请求。</span></div><button type="button" onClick={retryUnresolvedSubmission} disabled={submitPending}>重试原请求</button></div>}
+          {activeSummarySnapshot && <div className="run-card" aria-label="当前会话总结请求状态"><div><span>当前请求 · {summaryRunPhaseLabel(activeSummarySnapshot.phase)}</span><strong>{summarySnapshotStale ? '状态暂时无法确认' : summaryRunStateLabel(activeSummarySnapshot)}</strong>{summarySnapshotStale && <span className="stale-status" role="status">上次确认状态：{summaryRunStateLabel(activeSummarySnapshot)}；正在重新读取。</span>}<span>已用时 {activeSummarySnapshot.elapsed_ms} ms{activeSummarySnapshot.validated_chunk_count !== null ? ` · 已校验 ${activeSummarySnapshot.validated_chunk_count}/${activeSummarySnapshot.total_chunk_count} 个分块` : ''}</span>{summarySnapshotError && <span className="stale-status" role="status">{summarySnapshotError}</span>}</div><button type="button" onClick={() => void cancel()} disabled={cancelPending || summaryRunTerminal(activeSummarySnapshot) || summaryTargetTerminal}>{cancelPending ? '正在取消…' : '取消生成'}</button></div>}
+          {!activeSummarySnapshot && activeInteractionId && <div className="run-card" aria-label="当前请求状态"><div><span>当前请求</span><strong>{detailStale && ['pending', 'running', 'cancelling'].includes(String(state || '')) ? '状态暂时无法确认' : stateLabel(state)}</strong>{detailStale && ['pending', 'running', 'cancelling'].includes(String(state || '')) && <span className="stale-status" role="status">上次确认状态：{stateLabel(state)}；正在重新读取。</span>}</div><button type="button" onClick={() => void cancel()} disabled={cancelPending || !['pending', 'running'].includes(state || '')}>{cancelPending ? '正在取消…' : '取消生成'}</button></div>}
           {detailError && <p className="error" role="alert">{detailError}</p>}
           {!detail && detailPending && <p className="loading">正在读取结果…</p>}
           {detail && <article className="result-card" aria-label="会话总结结果">
             <header><div><span>{recipeLabel(detail.recipe_id)}</span><strong>{detailStale && ['pending', 'running', 'cancelling'].includes(String(state || '')) ? '状态暂时无法确认' : stateLabel(detail.state)}</strong></div><small>{utcLabel(detail.terminal_at ? new Date(detail.terminal_at).toISOString() : null)} · {durationLabel(detail.duration_ms)} · {usageLabel(detail.usage, detail.usage_state)}</small></header>
             {detail.state === 'failed' && <p className="error" role="alert">{detailErrorLabel(detail.error_code, detail.recipe_id)}</p>}
-            {detail.state === 'failed' && detail.recipe_id === 'summary.minutes' && detail.error_code === 'AGENT_SUMMARY_MEMORY_READ_FAILED' && <p className="memory-read-recovery" role="status">可以先重试读取记忆；如果只想依据这场会话，选择“仅用本次会话生成”。</p>}
+            {detail.state === 'failed' && detail.recipe_id === 'summary.minutes' && detail.error_code === 'AGENT_SUMMARY_MEMORY_READ_FAILED' && <p className="memory-read-recovery" role="status">可以重试读取记忆；如果希望总结仅依据本次会话，请先在设置中关闭“总结时参考记忆”，再重新生成。</p>}
             {detail.result === null
               ? <p className="empty">{detail.state === 'failed' && detail.error_code === 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED' && detail.recipe_id === 'summary.minutes' ? '这次未生成会话总结；可缩短输入，或选择内容较少的会话后重试。' : detail.state === 'failed' ? '这次总结没有生成，请重试。' : detail.state === 'cancelled' ? '这次生成已取消。' : '结果会在生成后显示。'}</p>
               : resultSections(detail.result, detail.recipe_id).map((section) => <section key={section.label}><h2>{section.label}</h2><p>{section.value}</p></section>)}
             {state === 'succeeded' && typeof detail.result_digest === 'string' && <section className="signal-actions" aria-label="这份结果需要调整吗"><h2>这份结果需要调整吗？</h2><label htmlFor="agentEdit">写下修改内容</label><textarea id="agentEdit" value={editText} maxLength={EDIT_LIMIT} onChange={(event) => updateEditText(event.target.value)} placeholder="例如：把第二项待办写得更具体" disabled={busy} /><div className="signal-buttons"><button type="button" data-signal="edit" onClick={() => void recordSignal('edit', { text: editText.trim() })} disabled={signalPending || editText.trim().length === 0}>提交修改</button><button type="button" data-signal="accept" onClick={() => void recordSignal('accept')} disabled={signalPending}>有帮助</button><button type="button" data-signal="reject" onClick={() => void recordSignal('reject')} disabled={signalPending}>不准确</button></div><div className="remember-flow"><p className="remember-hint">只保存你明确选中的一条内容；先写下原文，再选择类型和范围。</p><label htmlFor="agentRemember">要记住哪一条</label><textarea id="agentRemember" aria-label="要记住哪一条" value={rememberText} maxLength={EDIT_LIMIT} onChange={(event) => updateRememberText(event.target.value)} placeholder="例如：项目代号是北辰" disabled={busy} />{detail.recipe_id === 'summary.minutes' && <><label htmlFor="agentRememberKind">内容类型</label><select id="agentRememberKind" aria-label="内容类型" value={rememberKind} onChange={(event) => setRememberKind(event.target.value)} disabled={busy}>{MEMORY_KINDS.map((kind) => <option key={kind} value={kind}>{MEMORY_KIND_LABELS[kind]}</option>)}</select><label htmlFor="agentRememberScope">保存范围</label><select id="agentRememberScope" aria-label="保存范围" value={rememberScope} onChange={(event) => setRememberScope(event.target.value as 'global' | 'session')} disabled={busy}><option value="global">所有会话都可以使用</option><option value="session">仅这场会话</option></select></>}<button type="button" data-signal="remember" onClick={() => detail.recipe_id === 'summary.minutes' ? void rememberExplicitly() : void recordSignal('remember', { text: rememberText.trim() })} disabled={busy || rememberText.trim().length === 0}>{rememberPending ? '正在保存…' : '记住其中一条'}</button></div><button type="button" data-signal="forget" onClick={() => void recordSignal('forget')} disabled={signalPending}>不再使用</button>{signalStatus && <p className="signal-status" role="status">{signalStatus}</p>}</section>}
-            <footer><span>参考来源 {sourceCount(detail)} 条</span>{memoryLabel && <span>{memoryLabel}</span>}<span>{detail.model?.provider_kind === 'cloud' ? '云端模型' : '本地模型'} · 本次使用的模型已固定</span><span className="export-privacy">导出内容可能包含字幕或个人上下文</span>{canRegenerate && <button type="button" onClick={() => regenerate()}>重新生成</button>}{canRegenerate && detail.error_code === 'AGENT_SUMMARY_MEMORY_READ_FAILED' && <button type="button" onClick={() => regenerate(false)}>仅用本次会话生成</button>}<button type="button" onClick={() => void exportInteraction()} disabled={exportPending || !['succeeded', 'failed', 'cancelled'].includes(state || '')}>{exportPending ? '正在导出…' : '导出结果 JSON'}</button></footer>
+            <footer><span>参考来源 {sourceCount(detail)} 条</span>{memoryLabel && <span>{memoryLabel}</span>}<span>{detail.model?.provider_kind === 'cloud' ? '云端模型' : '本地模型'} · 本次使用的模型已固定</span><span className="export-privacy">导出内容可能包含字幕或个人上下文</span>{canRegenerate && <button type="button" onClick={() => regenerate()}>重新生成</button>}<button type="button" onClick={() => void exportInteraction()} disabled={exportPending || !['succeeded', 'failed', 'cancelled'].includes(state || '')}>{exportPending ? '正在导出…' : '导出结果 JSON'}</button></footer>
             {Array.isArray(detail.tool_calls) && detail.tool_calls.length > 0 && <details className="tool-audit"><summary>详细信息（{detail.tool_calls.length} 条读取记录）</summary><ol>{detail.tool_calls.map((call: Dict, index: number) => <li key={`${call.attempt}-${call.call_order}-${index}`}><div className="tool-call-heading"><span>{call.tool_name === 'search_context' ? '检索记忆' : call.tool_name === 'read_sources' ? '读取来源' : '受控读取'}</span><strong>{call.status === 'succeeded' ? '成功' : call.status === 'failed' ? '失败' : call.status === 'cancelled' ? '已取消' : '处理中'}</strong>{call.status === 'failed' && <span>{errorCodeLabel(call.error_code)}</span>}</div><details className="tool-call-detail"><summary>查看参数与返回</summary><div><span>参数</span><pre>{JSON.stringify(call.args, null, 2)}</pre></div><div><span>返回</span><pre>{call.result === null ? '无返回值' : JSON.stringify(call.result, null, 2)}</pre></div></details></li>)}</ol></details>}
           </article>}
         </section>

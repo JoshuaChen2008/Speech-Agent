@@ -5,6 +5,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
+const vm = require('node:vm')
 
 const { AgentRunService } = require('../../src/agent/formal-run/agent-run-service')
 const { SessionSummaryRunService } = require('../../src/agent/formal-run/session-summary-run-service')
@@ -17,6 +18,44 @@ const { StorageGateway } = require('../../src/main/services/storage-gateway')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
 const { OPERATIONS, PROTOCOL_VERSION, StorageError, makeCaptionEventId, makeCloseSessionKey, makeOpenSessionKey } = require('../../src/runtime/storage-worker/protocol')
 const contract = require('../../src/agent/contracts/session-summary-run-ui')
+const CHANNELS = require('../../src/main/ipc/channels')
+const { registerSessionSummaryRunIpc } = require('../../src/main/ipc/session-summary-run-ipc')
+
+function createAgentPreloadApi (handlers, event) {
+  const exposed = {}
+  const listeners = new Map()
+  const source = fs.readFileSync(path.join(process.cwd(), 'src', 'preload', 'agent.js'), 'utf8')
+  const localRequire = (specifier) => {
+    if (specifier === 'electron') return { contextBridge: { exposeInMainWorld: (name, value) => { exposed[name] = value } } }
+    if (specifier === './shared') {
+      return {
+        createWindowInteractionBridge: () => ({ dragStart: () => {}, dragEnd: () => {}, onInteractionSync: () => () => {} }),
+        ipcRenderer: {
+          invoke: (channel, request) => {
+            const handler = handlers.get(channel)
+            if (!handler) throw new Error(`no main handler for ${channel}`)
+            return handler(event, request)
+          },
+          on: (channel, callback) => listeners.set(channel, callback),
+          removeListener: (channel, callback) => { if (listeners.get(channel) === callback) listeners.delete(channel) },
+          send: () => {}
+        },
+        subscribe: () => () => {}
+      }
+    }
+    if (specifier === '../main/ipc/channels') return CHANNELS
+    if (specifier === '../agent/contracts/agent-run-ui') return require('../../src/agent/contracts/agent-run-ui')
+    if (specifier === '../agent/contracts/session-summary-run-ui') return contract
+    if (specifier === '../agent/contracts/agent-context-ui') return require('../../src/agent/contracts/agent-context-ui')
+    throw new Error(`unexpected preload dependency: ${specifier}`)
+  }
+  const wrapper = ['(function (require, module, exports) {', source, '})'].join('\n')
+  vm.runInNewContext(wrapper, {})(localRequire, { exports: {} }, {})
+  return {
+    api: exposed.agentApi,
+    emit: (channel, value) => listeners.get(channel)?.({}, value)
+  }
+}
 
 const RUN_CONTRACT = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
 const SCOPE = { kind: 'session', reference: 'session.j30.accept' }
@@ -234,13 +273,32 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
       return runService.getEligibility(input)
     }
   }
+  let preloadBridge = null
   const summaryRun = new SessionSummaryRunService({
     storage: requestStorage,
     runService: requestRunService,
     routeOrchestrator,
     getConfig: () => config.get(),
-    defer: (callback) => dispatchQueue.push(callback)
+    defer: (callback) => dispatchQueue.push(callback),
+    onChanged: (event) => preloadBridge?.emit(CHANNELS.SESSION_SUMMARY_RUN_CHANGED, event)
   })
+  const handlers = new Map()
+  registerSessionSummaryRunIpc({
+    ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
+    authorize: (_event, channel) => {
+      if (![CHANNELS.SESSION_SUMMARY_RUN_ACCEPT, CHANNELS.SESSION_SUMMARY_RUN_GET, CHANNELS.SESSION_SUMMARY_RUN_CANCEL].includes(channel)) {
+        throw new Error('unexpected summary IPC channel')
+      }
+    },
+    service: summaryRun
+  })
+  const ipcEvent = { sender: { id: 101 }, role: 'agent' }
+  preloadBridge = createAgentPreloadApi(handlers, ipcEvent)
+  const summaryApi = {
+    accept: (request) => preloadBridge.api.acceptSessionSummaryRun(request),
+    get: (request) => preloadBridge.api.getSessionSummaryRun(request),
+    cancel: (request) => preloadBridge.api.cancelSessionSummaryRun(request)
+  }
   t.after(async () => {
     vault.close()
     await gateway.shutdown().catch(() => gateway.terminate())
@@ -248,8 +306,10 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   })
 
   const summaryRequest = request('summary', 'j30.summary.key')
+  const changedEvents = []
+  const unsubscribeSummaryChanges = preloadBridge.api.onSessionSummaryRunChanged((event) => changedEvents.push(event))
   loseNextAcceptanceReply = true
-  const unknownReceipt = await summaryRun.accept(summaryRequest)
+  const unknownReceipt = await summaryApi.accept(summaryRequest)
   assert.equal(unknownReceipt.ok, false)
   assert.equal(routeCalls, 0)
   assert.equal(dispatchQueue.length, 0)
@@ -257,16 +317,18 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   const sourceReadsBeforeReplay = frozenSourceReadCount
   failEligibility = true
   failFrozenSourceRead = true
-  const summaryAccepted = await summaryRun.accept(summaryRequest)
+  const summaryAccepted = await summaryApi.accept(summaryRequest)
+  assert.ok(changedEvents.some((event) => event.request_id === summaryAccepted.result.snapshot.request_id))
   assert.equal(summaryAccepted.ok, true)
   assert.equal(summaryAccepted.result.snapshot.action, 'summary')
   assert.equal(summaryAccepted.result.snapshot.state, 'accepted')
+  assert.equal(summaryAccepted.result.snapshot.freshness, 'fresh')
   assert.equal(routeCalls, 0)
   assert.equal(eligibilityCheckCount, checksBeforeReplay)
   assert.equal(frozenSourceReadCount, sourceReadsBeforeReplay)
   failEligibility = false
   failFrozenSourceRead = false
-  const summaryReplay = await summaryRun.accept(summaryRequest)
+  const summaryReplay = await summaryApi.accept(summaryRequest)
   assert.equal(summaryReplay.ok, true)
   assert.equal(summaryReplay.result.replayed, true)
   assert.equal(summaryReplay.result.snapshot.request_id, summaryAccepted.result.snapshot.request_id)
@@ -274,7 +336,7 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   assert.equal(dispatchQueue.length, 1)
   dispatchQueue.shift()()
   await waitFor(() => summaryRun.dispatches.size === 0, 'preset summary target persistence')
-  const summarySnapshot = await summaryRun.get({
+  const summarySnapshot = await summaryApi.get({
     contract_id: contract.CONTRACT_ID,
     contract_version: contract.CONTRACT_VERSION,
     request_id: summaryAccepted.result.snapshot.request_id
@@ -286,19 +348,19 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   assert.equal(routeCalls, 0)
 
   const questionRequest = request('question', 'j30.question.key', '这场会决定了什么？')
-  const questionAccepted = await summaryRun.accept(questionRequest)
+  const questionAccepted = await summaryApi.accept(questionRequest)
   assert.equal(questionAccepted.ok, true)
   assert.equal(routeCalls, 0)
   dispatchQueue.shift()()
   await waitFor(async () => {
-    const current = await summaryRun.get({
+    const current = await summaryApi.get({
       contract_id: contract.CONTRACT_ID,
       contract_version: contract.CONTRACT_VERSION,
       request_id: questionAccepted.result.snapshot.request_id
     })
     return current.ok && current.result.snapshot.target_run_id !== null
   }, 'question route target')
-  const questionSnapshot = await summaryRun.get({
+  const questionSnapshot = await summaryApi.get({
     contract_id: contract.CONTRACT_ID,
     contract_version: contract.CONTRACT_VERSION,
     request_id: questionAccepted.result.snapshot.request_id
@@ -306,7 +368,7 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   assert.equal(questionSnapshot.result.snapshot.recipe_id, 'qa.answer')
   assert.equal(questionSnapshot.result.snapshot.routing_mode, 'model')
   assert.equal(routeCalls, 1)
-  const questionReplay = await summaryRun.accept(questionRequest)
+  const questionReplay = await summaryApi.accept(questionRequest)
   assert.equal(questionReplay.ok, true)
   assert.equal(questionReplay.result.replayed, true)
   assert.equal(questionReplay.result.snapshot.target_run_id, questionSnapshot.result.snapshot.target_run_id)
@@ -317,12 +379,12 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
 
   routeBehavior = 'wait'
   const uncertainCancelRequest = request('question', 'j30.question.cancel.storage-failure', '取消状态存储失败后可重试')
-  const uncertainCancelAccepted = await summaryRun.accept(uncertainCancelRequest)
+  const uncertainCancelAccepted = await summaryApi.accept(uncertainCancelRequest)
   assert.equal(uncertainCancelAccepted.ok, true)
   dispatchQueue.shift()()
   await waitFor(() => routeCalls === 2, 'question route before cancellation persistence failure')
   failNextCancelWrite = true
-  const cancelNotConfirmed = await summaryRun.cancel({
+  const cancelNotConfirmed = await summaryApi.cancel({
     contract_id: contract.CONTRACT_ID,
     contract_version: contract.CONTRACT_VERSION,
     request_id: uncertainCancelAccepted.result.snapshot.request_id,
@@ -331,7 +393,7 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   assert.equal(cancelNotConfirmed.ok, false)
   assert.equal(cancelNotConfirmed.error.next_action, 'verify_state')
   await waitFor(() => summaryRun.dispatches.size === 0, 'route local abort after cancellation persistence failure')
-  const cancelUncertainSnapshot = await summaryRun.get({
+  const cancelUncertainSnapshot = await summaryApi.get({
     contract_id: contract.CONTRACT_ID,
     contract_version: contract.CONTRACT_VERSION,
     request_id: uncertainCancelAccepted.result.snapshot.request_id
@@ -339,7 +401,7 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   assert.equal(cancelUncertainSnapshot.ok, true)
   assert.notEqual(cancelUncertainSnapshot.result.snapshot.state, 'failed')
   assert.notEqual(cancelUncertainSnapshot.result.snapshot.state, 'cancelled')
-  const retriedCancellation = await summaryRun.cancel({
+  const retriedCancellation = await summaryApi.cancel({
     contract_id: contract.CONTRACT_ID,
     contract_version: contract.CONTRACT_VERSION,
     request_id: uncertainCancelAccepted.result.snapshot.request_id,
@@ -349,11 +411,11 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   assert.equal(retriedCancellation.result.snapshot.state, 'cancelled')
 
   const cancelledRequest = request('question', 'j30.question.cancel', '这个请求应在路由时取消')
-  const cancelledAccepted = await summaryRun.accept(cancelledRequest)
+  const cancelledAccepted = await summaryApi.accept(cancelledRequest)
   assert.equal(cancelledAccepted.ok, true)
   dispatchQueue.shift()()
   await waitFor(() => routeCalls === 3, 'in-flight question route')
-  const cancelled = await summaryRun.cancel({
+  const cancelled = await summaryApi.cancel({
     contract_id: contract.CONTRACT_ID,
     contract_version: contract.CONTRACT_VERSION,
     request_id: cancelledAccepted.result.snapshot.request_id,
@@ -372,4 +434,5 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   assert.equal(requestRows.length, 4)
   assert.equal(JSON.stringify(requestRows).includes('J30 合成会话正文 marker'), false)
   assert.equal(JSON.stringify(requestRows).includes('这个请求应在路由时取消'), false)
+  unsubscribeSummaryChanges()
 })

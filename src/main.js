@@ -63,8 +63,11 @@ const {
   registerModelAccessIpc
 } = require('./main/ipc/model-access-ipc')
 const { registerAgentRunIpc } = require('./main/ipc/agent-run-ipc')
+const { registerSessionSummaryRunIpc } = require('./main/ipc/session-summary-run-ipc')
 const agentRunUi = require('./agent/contracts/agent-run-ui')
+const sessionSummaryRunUi = require('./agent/contracts/session-summary-run-ui')
 const { AgentRunService } = require('./agent/formal-run/agent-run-service')
+const { SessionSummaryRunService } = require('./agent/formal-run/session-summary-run-service')
 const { AgentInteractionSignalService } = require('./agent/formal-run/agent-interaction-signal-service')
 const { AgentInteractionExporter } = require('./agent/formal-run/agent-interaction-exporter')
 const { settleFormalAgentPrompt } = require('./agent/formal-run/settle-agent-prompt')
@@ -143,6 +146,7 @@ let agentRequestedSessionId = null
 /** @type {null | import('./agent/model-access/credential-vault').CredentialVault} */ let modelAccessVault = null
 /** @type {null | import('./agent/model-access/remote-catalog-controller').RemoteModelCatalogPullController} */ let remoteModelCatalogController = null
 /** @type {null | AgentRunService} */ let formalAgentService = null
+/** @type {null | SessionSummaryRunService} */ let sessionSummaryRunService = null
 /** @type {null | AgentInteractionSignalService} */ let formalAgentSignalService = null
 /** @type {null | { start: Function, stop: Function, wake: Function, cancel: Function }} */ let formalAgentScheduler = null
 /** @type {null | { submit: Function }} */ let formalRouteOrchestrator = null
@@ -369,6 +373,10 @@ function broadcastAgentRunChanged (event) {
   send(historyWin, CHANNELS.AGENT_RUN_CHANGED, event)
 }
 
+function broadcastSessionSummaryRunChanged (event) {
+  try { send(agentWin, CHANNELS.SESSION_SUMMARY_RUN_CHANGED, sessionSummaryRunUi.assertChangedEvent(event)) } catch {}
+}
+
 refinementNoticeStore.onChanged(broadcastRefinementNotice)
 
 registerPersonalContextIpc({
@@ -437,6 +445,26 @@ registerAgentRunIpc({
     async getInteraction (request, context) { return formalAgentService ? formalAgentService.getInteraction(request, context) : unavailableAgentCommand() },
     async exportInteraction (request, context) { return formalAgentService ? formalAgentService.exportInteraction(request, context) : unavailableAgentCommand() },
     async recordSignal (request, context) { return formalAgentSignalService ? formalAgentSignalService.recordSignal(request, context) : unavailableAgentCommand() }
+  }
+})
+
+function unavailableSessionSummaryRunResponse () {
+  return {
+    contract_id: sessionSummaryRunUi.CONTRACT_ID,
+    contract_version: sessionSummaryRunUi.CONTRACT_VERSION,
+    ok: false,
+    error: { code: 'AGENT_RUN_UNAVAILABLE', next_action: 'retry' },
+    result: null
+  }
+}
+
+registerSessionSummaryRunIpc({
+  ipcMain,
+  authorize: requireSender,
+  service: {
+    async accept (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.accept(request, context) : unavailableSessionSummaryRunResponse() },
+    async get (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.get(request, context) : unavailableSessionSummaryRunResponse() },
+    async cancel (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.cancel(request, context) : unavailableSessionSummaryRunResponse() }
   }
 })
 
@@ -1536,6 +1564,21 @@ async function bootstrapApplication () {
   } catch (error) {
     formalAgentService = null
     console.error(`[agent.run] ${error instanceof Error ? error.message : 'AGENT_RUN_UNAVAILABLE'}`)
+  }
+  try {
+    if (!formalAgentService) throw new Error('formal Agent service is unavailable')
+    sessionSummaryRunService = new SessionSummaryRunService({
+      storage: applicationRuntime.gateway,
+      runService: formalAgentService,
+      routeOrchestrator: formalRouteOrchestrator,
+      scheduler: formalAgentScheduler,
+      getConfig: () => config.get(),
+      promptStore: formalAgentPrompts,
+      onChanged: broadcastSessionSummaryRunChanged
+    })
+  } catch {
+    sessionSummaryRunService = null
+    console.error('[agent.summary] AGENT_RUN_UNAVAILABLE')
   }
   powerSessionGuard = new PowerSessionGuard({
     powerMonitor,
