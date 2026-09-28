@@ -167,6 +167,72 @@ test('SEM-F40/J30-DIAG: rolling store removes aged/oversized files and rotates a
   for (const name of files) assert.ok((await fs.stat(path.join(directory, name))).size <= MAX_FILE_BYTES)
 })
 
+test('SEM-F40/J30-DIAG: allocating a sixth valid file evicts the oldest retained file', async (t) => {
+  const root = await temporaryDirectory(t)
+  const directory = path.join(root, 'diagnostics')
+  await fs.mkdir(directory)
+  const now = Date.now()
+  for (let sequence = 1; sequence <= MAX_FILES; sequence += 1) {
+    const record = assertDiagnosticRecord({
+      schemaVersion: 1,
+      appVersion: '0.1.0',
+      requestDigest: 'a'.repeat(64),
+      runDigest: 'b'.repeat(64),
+      attempt: 1,
+      sequence,
+      phase: 'accepted',
+      event: 'accepted',
+      elapsedMs: sequence,
+      lastActivityAgeMs: null,
+      errorCode: null,
+      budgetAxis: null,
+      metrics: { actual: null, limit: null, unit: null },
+      modelBindingDigest: 'c'.repeat(64),
+      planDigest: null
+    })
+    const file = path.join(directory, `agent-run-diagnostics-${String(sequence).padStart(12, '0')}.jsonl`)
+    await fs.writeFile(file, `${JSON.stringify(record)}\n`)
+  }
+
+  const originalLstat = fs.lstat.bind(fs)
+  const originalStat = fs.stat.bind(fs)
+  const fsApi = new Proxy(fs, {
+    get (target, property) {
+      if (property === 'lstat') return async (filePath) => {
+        const stats = await originalLstat(filePath)
+        return {
+          isDirectory: () => stats.isDirectory(),
+          isSymbolicLink: () => stats.isSymbolicLink(),
+          isFile: () => stats.isFile(),
+          size: stats.size,
+          mtimeMs: now,
+          birthtimeMs: now
+        }
+      }
+      if (property === 'stat') return async (filePath) => {
+        const stats = await originalStat(filePath)
+        return { size: filePath.endsWith('agent-run-diagnostics-000000000005.jsonl') ? MAX_FILE_BYTES : stats.size }
+      }
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    }
+  })
+  const diagnostics = new AgentRunDiagnostics({ directory, appVersion: '0.1.0', now: () => now, fsApi })
+  await diagnostics.initialization
+  assert.equal((await readRecords(directory)).records.length, MAX_FILES)
+  assert.equal(diagnostics.record(input()), true)
+  assert.equal(await diagnostics.drain(), true)
+
+  const files = (await fs.readdir(directory)).filter((name) => name.endsWith('.jsonl')).sort()
+  assert.equal(files.length, MAX_FILES)
+  assert.equal(files.includes('agent-run-diagnostics-000000000001.jsonl'), false)
+  for (let sequence = 2; sequence <= MAX_FILES + 1; sequence += 1) {
+    assert.ok(files.includes(`agent-run-diagnostics-${String(sequence).padStart(12, '0')}.jsonl`))
+  }
+  const { records } = await readRecords(directory)
+  assert.equal(records.some((record) => record.sequence === MAX_FILES + 1), true)
+})
+
 test('SEM-F40/J30-DIAG: age retention is enforced after continuous appends to the current file', async (t) => {
   const root = await temporaryDirectory(t)
   const directory = path.join(root, 'diagnostics')

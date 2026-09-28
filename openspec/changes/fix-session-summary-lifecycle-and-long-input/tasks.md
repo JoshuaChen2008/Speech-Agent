@@ -36,11 +36,11 @@
 
 ## 4. P1 本地诊断
 
-- [x] 4.1 实现exact无正文诊断schema及记录服务，覆盖受理/计划/请求开始结束/工具/退避/取消/终态/恢复；预算失败带实际值和限值（SEM-F40/J30-DIAG）。实现完成·尚未验收：请求/运行 ID 只写 digest，模型绑定与计划只写 digest，v1 15 KB 兼容预检以 bytes 指标记录且不伪造十轴 budgetAxis；事件通过真实 runner 与 SQLite/服务旅程验证，诊断字段和写入 schema 有 contract/main 测试。查询/导出在4.3实现；敏感标记负扫描与字幕独立旅程已有4.4子切片证据，完整J30-DIAG仍待4.5。
-- [x] 4.2 实现滚动数量/大小/年龄上限及写失败的可见降级、有界内存；不阻塞任务终态或字幕（J30-DIAG）。实现完成·尚未验收：本地最多 5 个文件、每个 1 MiB、按创建时间优先保留 7 天，队列最多 256 条且单条≤2 KiB；写入故障经真实 SQLite/service/preload 旅程下发不可用状态，活动及恢复请求显示降级标记，请求仍可收束且字幕会话可重新开始/结束。4.3增加查询/导出；敏感标记负扫描与字幕独立旅程已有4.4子切片证据，完整J30-DIAG仍待4.5。
-- [x] 4.3 main-owned诊断查询/保存对话框/原子导出支持活动和终态；取消零写入，区别于正文结果导出（J30-DIAG/J26）。实现完成·尚未验收：renderer只提交已持久化request_id与分页参数，main从SQLite读取requestDigest后查询；响应最多100条、按sequence倒序；导出只包含精确诊断schema，经main-owned保存对话框和同目录原子写入；取消不写目标文件且不显示成功状态。真实SQLite/preload/IPC/UI旅程覆盖保存、取消、写失败可用性及字幕状态隔离，定向测试73/73，renderer验证通过；4.4敏感标记负扫描与J12字幕独立旅程子切片已有证据，完整J30-DIAG仍待4.5。
-- [x] 4.4 敏感标记覆盖字幕/提示/工具/provider/异常，扫描诊断和证据；日志故障/取消不合作provider期间完成新字幕会话及历史导出旅程（J12/J30-INDEPENDENCE）。实现完成·尚未验收：真实 FormalAgentRunRunner 在受控网络边界 provider 异常后以稳定错误码收束，健康诊断查询/导出不含异常消息、stack 或 provider字段标记；诊断合同拒绝提示、字幕、工具参数/结果、provider事件/响应和异常字段，Agent Loop仅向观察者发布受限进度与工具元数据；J30 SQLite/preload 旅程扫描诊断 JSONL、main-owned 诊断导出与 validation JSON 中的隐私标记，并在诊断写入降级、非合作 provider 未结算及取消后，通过真实 SessionCoordinator/recorder/storage worker/HistoryService 新建、停止、分页并导出字幕，确认临时目录未发现列举的音频扩展名文件。定向测试24/24；完整J30/J12仍待P1.5与阶段联合验收。
-- [ ] 4.5 执行P1完整确定性旅程，记录阶段/取消期限/诊断容量证据及公网边界。
+- [x] 4.1 实现exact无正文诊断schema及记录服务，覆盖受理/计划/请求开始结束/工具/退避/取消/终态/恢复；预算失败带实际值和限值（SEM-F40/J30-DIAG）。实现完成·尚未验收：请求/运行 ID 只写 digest，模型绑定与计划只写 digest，v1 15 KB 兼容预检以 bytes 指标记录且不伪造十轴 budgetAxis；事件通过真实 runner 与 SQLite/服务旅程验证，诊断字段和写入 schema 有 contract/main 测试。查询/导出在4.3实现；敏感标记负扫描与字幕独立旅程已有4.4子切片证据；P1.5 关联证据见4.5，完整 Electron 联合旅程仍待阶段验收。
+- [x] 4.2 实现滚动数量/大小/年龄上限及写失败的可见降级、有界内存；不阻塞任务终态或字幕（J30-DIAG）。实现完成·尚未验收：本地最多 5 个文件、每个 1 MiB、按创建时间优先保留 7 天，队列最多 256 条且单条≤2 KiB；写入故障经真实 SQLite/service/preload 旅程下发不可用状态，活动及恢复请求显示降级标记，请求仍可收束且字幕会话可重新开始/结束。文件数直接淘汰边界由P1.5新增旅程验证，完整 Electron 联合旅程仍待阶段验收。
+- [x] 4.3 main-owned诊断查询/保存对话框/原子导出支持活动和终态；取消零写入，区别于正文结果导出（J30-DIAG/J26）。实现完成·尚未验收：renderer只提交已持久化request_id与分页参数，main从SQLite读取requestDigest后查询；响应最多100条、按sequence倒序；导出只包含精确诊断schema，经main-owned保存对话框和同目录原子写入；取消不写目标文件且不显示成功状态。真实SQLite/preload/IPC/UI旅程覆盖保存、取消、写失败可用性及字幕状态隔离，定向测试73/73，renderer 类型检查与生产构建返回码为0；4.4敏感标记负扫描与J12字幕独立旅程子切片已有证据，P1.5 关联验证见4.5，完整 Electron 联合旅程仍待阶段验收。
+- [x] 4.4 敏感标记覆盖字幕/提示/工具/provider/异常，扫描诊断和证据；日志故障/取消不合作provider期间完成新字幕会话及历史导出旅程（J12/J30-INDEPENDENCE）。实现完成·尚未验收：真实 FormalAgentRunRunner 在受控网络边界 provider 异常后以稳定错误码收束，健康诊断查询/导出不含异常消息、stack 或 provider字段标记；诊断合同拒绝提示、字幕、工具参数/结果、provider事件/响应和异常字段，Agent Loop仅向观察者发布受限进度与工具元数据；J30 SQLite/preload 旅程扫描诊断 JSONL、main-owned 诊断导出与 validation JSON 中的隐私标记，并在诊断写入降级、非合作 provider 未结算及取消后，通过真实 SessionCoordinator/recorder/storage worker/HistoryService 新建、停止、分页并导出字幕，确认临时目录未发现列举的音频扩展名文件。定向测试24/24；完整J30/J12仍待阶段联合验收。
+- [x] 4.5 执行P1完整确定性旅程，记录阶段/取消期限/诊断容量证据及公网边界。实现完成·尚未验收：关联 focus 149/149，`npm run test:core` 1081/1081，`npm run verify:renderer` 返回码为0；J29/J30 覆盖受理、阶段、恢复、诊断与字幕独立性。真实 SQLite worker 取消旅程在首个 128 段 keyset 页后收束为 `AGENT_CANCELLED`，下一存储命令及工具上下文取消均在 5 秒内完成；诊断测试创建 5 个有效文件并验证第六个文件分配会淘汰最旧项，且覆盖单个 1 MiB、7 天保留、256 条队列及单条≤2 KiB。只使用受控 provider/网络边界；公网模型、正式 Electron 窗口及五小时实机采集仍未验证，故不提升 J30/J12 联合验收状态。
 
 ## 5. P2 预算与存储
 
