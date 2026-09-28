@@ -20,10 +20,12 @@ const {
 } = require('../../src/agent/execution-host')
 const { ConfigStore } = require('../../src/main/services/config-store')
 const { SqliteSessionRecorder } = require('../../src/main/services/sqlite-session-recorder')
+const { AgentRunDiagnostics } = require('../../src/main/services/agent-run-diagnostics')
 const { StorageGateway } = require('../../src/main/services/storage-gateway')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
 const { CONTROL_MESSAGES, OPERATIONS, PROTOCOL_VERSION, StorageError, makeCaptionEventId, makeCloseSessionKey, makeOpenSessionKey } = require('../../src/runtime/storage-worker/protocol')
 const summaryContract = require('../../src/agent/contracts/session-summary-run-ui')
+const { assertDiagnosticRecord } = require('../../src/agent/contracts/agent-run-diagnostics')
 
 const CAPABILITIES = Object.freeze({
   maxInputTokens: 64000,
@@ -118,7 +120,21 @@ async function waitFor (predicate, description) {
   throw new Error(`timed out waiting for ${description}`)
 }
 
-function createExecutionSystem ({ gateway, modelAccess, config, promptStore, owner, onJob, leaseRenewEveryMs }) {
+async function readDiagnosticRecords (directory) {
+  const names = (await fs.promises.readdir(directory)).filter((name) => /^agent-run-diagnostics-\d{12}\.jsonl$/.test(name)).sort()
+  const records = []
+  for (const name of names) {
+    const contents = await fs.promises.readFile(path.join(directory, name), 'utf8')
+    for (const line of contents.split('\n')) {
+      if (!line) continue
+      const record = assertDiagnosticRecord(JSON.parse(line))
+      records.push(record)
+    }
+  }
+  return records
+}
+
+function createExecutionSystem ({ gateway, modelAccess, config, promptStore, owner, onJob, leaseRenewEveryMs, diagnosticStore }) {
   let summaryRuns = null
   const trace = []
   let firstJob = null
@@ -186,7 +202,8 @@ function createExecutionSystem ({ gateway, modelAccess, config, promptStore, own
     routeOrchestrator,
     scheduler,
     getConfig: () => config.get(),
-    promptStore
+    promptStore,
+    diagnostics: diagnosticStore
   })
   return {
     scheduler,
@@ -204,6 +221,9 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   const databasePath = path.join(root, 'speech-agent.sqlite3')
   const configPath = path.join(root, 'config.json')
   const vaultPath = path.join(root, 'vault')
+  const diagnosticDirectory = path.join(root, 'logs', 'agent-run-diagnostics')
+  let diagnosticStore = new AgentRunDiagnostics({ directory: diagnosticDirectory, appVersion: '0.1.0' })
+  await diagnosticStore.initialization
   const config = new ConfigStore(configPath, { now: () => 1770000000000 })
   config.load()
   config.updateAgentSettings({
@@ -289,6 +309,7 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
 
   let system = createExecutionSystem({
     gateway, modelAccess, config, promptStore: new Map(), owner: 'owner.j30.budget.first',
+    diagnosticStore,
     leaseRenewEveryMs: 10,
     onJob: (job) => { runBeingExecuted = job.attemptIdentity; providerAttempt = job.attemptIdentity.attempt }
   })
@@ -343,10 +364,16 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
 
   await system.scheduler.stop()
   await system.getFirstJobSettled()
+  await diagnosticStore.drain()
+  const beforeRestartDiagnostics = await readDiagnosticRecords(diagnosticDirectory)
+  assert.equal(beforeRestartDiagnostics.some((record) => record.event === 'accepted'), true)
+  assert.equal(beforeRestartDiagnostics.some((record) => record.event === 'model_request_started' && record.attempt === 1), true)
   await gateway.shutdown()
   activeVault.close()
   activeVault = null
 
+  diagnosticStore = new AgentRunDiagnostics({ directory: diagnosticDirectory, appVersion: '0.1.0' })
+  await diagnosticStore.initialization
   service = new StorageWorkerService()
   gateway = new StorageGateway({ databasePath, hostFactory: () => serviceBackedHost(service, databasePath, (result) => renewalResults.push(result)), maxRestarts: 0 })
   await gateway.start()
@@ -355,6 +382,7 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   await modelAccess.initialize()
   system = createExecutionSystem({
     gateway, modelAccess, config, promptStore: new Map(), owner: 'owner.j30.budget.restarted',
+    diagnosticStore,
     onJob: (job) => { runBeingExecuted = job.attemptIdentity; providerAttempt = job.attemptIdentity.attempt }
   })
   assert.equal(await system.summaryRuns.recoverAfterRestart(), 1)
@@ -422,5 +450,21 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   activeVault.close()
   activeVault = null
   await gateway.shutdown()
+  await diagnosticStore.drain()
+  const diagnosticRecords = await readDiagnosticRecords(diagnosticDirectory)
+  const diagnosticBytes = JSON.stringify(diagnosticRecords)
+  for (const event of ['accepted', 'planning', 'model_request_started', 'model_request_ended', 'recovery', 'terminal']) {
+    assert.equal(diagnosticRecords.some((record) => record.event === event), true, `diagnostic event ${event}`)
+  }
+  assert.equal(diagnosticRecords.some((record) => record.event === 'model_request_started' && record.attempt === 2 && record.modelBindingDigest), true)
+  assert.equal(diagnosticBytes.includes('synthetic committed caption'), false)
+  assert.equal(diagnosticBytes.includes('synthetic-provider-credential'), false)
+  assert.equal(diagnosticBytes.includes('合成会话总结'), false)
+  assert.equal(diagnosticBytes.includes(requestId), false)
+  assert.equal(diagnosticBytes.includes(runId), false)
+  assert.equal(diagnosticBytes.includes(root), false)
+  const sequences = diagnosticRecords.map((record) => record.sequence)
+  assert.deepEqual(sequences, [...sequences].sort((left, right) => left - right))
+  assert.equal(new Set(sequences).size, sequences.length)
   gateway = null
 })

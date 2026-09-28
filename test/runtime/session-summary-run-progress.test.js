@@ -34,7 +34,7 @@ function snapshotRow (overrides = {}) {
   }
 }
 
-function progressService (initialRow, clock, { cancelState = 'cancelled' } = {}) {
+function progressService (initialRow, clock, { cancelState = 'cancelled', diagnostics = null } = {}) {
   let row = { ...initialRow }
   const updates = []
   const cancellations = []
@@ -42,7 +42,7 @@ function progressService (initialRow, clock, { cancelState = 'cancelled' } = {})
   const storage = {
     async acceptSessionSummaryRequest () { throw new Error('not used') },
     async recoverSessionSummaryRequests () { return [] },
-    async listRecoverableSessionSummaryRequests () { return [] },
+    async listRecoverableSessionSummaryRequests () { return row.state === 'succeeded' || row.state === 'failed' || row.state === 'cancelled' ? [] : [{ ...row }] },
     async resumeSessionSummaryRequest () { throw new Error('not used') },
     async failUnrecoverableSessionSummaryRequest () { throw new Error('not used') },
     async getSessionSummaryRequest () { return { ...row } },
@@ -73,6 +73,7 @@ function progressService (initialRow, clock, { cancelState = 'cancelled' } = {})
         validatedChunkCount: input.validatedChunkCount === undefined ? row.validatedChunkCount : input.validatedChunkCount,
         totalChunkCount: input.totalChunkCount === undefined ? row.totalChunkCount : input.totalChunkCount,
         memoryState: input.memoryState ?? row.memoryState,
+        diagnosticsAvailable: input.diagnosticsAvailable === undefined ? row.diagnosticsAvailable : input.diagnosticsAvailable,
         revision: row.revision + 1
       }
       return { ...row }
@@ -81,6 +82,7 @@ function progressService (initialRow, clock, { cancelState = 'cancelled' } = {})
   const service = new SessionSummaryRunService({
     storage,
     runService: { async getEligibility () { return { ok: true } } },
+    diagnostics,
     monotonicNow: () => clock.value,
     onChanged: (event) => changed.push(event)
   })
@@ -89,6 +91,97 @@ function progressService (initialRow, clock, { cancelState = 'cancelled' } = {})
 
 const attemptIdentity = Object.freeze({
   runId: 'run.progress.one', attempt: 1, owner: 'owner.progress.one', leaseExpiresAt: 30000
+})
+
+test('SEM-F40/J30-DIAG: diagnostic availability updates the active request snapshot and emits a refresh', async () => {
+  const clock = { value: 0 }
+  const { service, changed, getRow } = progressService(snapshotRow(), clock)
+  assert.equal(await service.setDiagnosticsAvailability(true), 1)
+  assert.equal(getRow().diagnosticsAvailable, true)
+  assert.equal(getRow().revision, 1)
+  assert.equal(changed.at(-1).revision, 1)
+
+  const available = await service.get({
+    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+    request_id: 'request.progress.one'
+  })
+  assert.equal(available.result.snapshot.diagnostics_available, true)
+  await service.setDiagnosticsAvailability(false)
+  const unavailable = await service.get({
+    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+    request_id: 'request.progress.one'
+  })
+  assert.equal(unavailable.result.snapshot.diagnostics_available, false)
+})
+
+test('SEM-F40/J30-DIAG: initializing diagnostics are reported unavailable until ready', async () => {
+  const clock = { value: 0 }
+  let status = { available: false, state: 'initializing' }
+  const diagnostics = {
+    getStatus: () => status,
+    record: () => true
+  }
+  const { service } = progressService(snapshotRow({ diagnosticsAvailable: true }), clock, { diagnostics })
+  const initializing = await service.get({
+    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+    request_id: 'request.progress.one'
+  })
+  assert.equal(initializing.result.snapshot.diagnostics_available, false)
+
+  status = { available: true, state: 'available' }
+  const ready = await service.get({
+    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+    request_id: 'request.progress.one'
+  })
+  assert.equal(ready.result.snapshot.diagnostics_available, true)
+})
+
+test('SEM-F40/J30-DIAG: known budget rejection persists actual/limit bytes through the summary service', async () => {
+  const clock = { value: 0 }
+  const diagnostics = []
+  const { service } = progressService(snapshotRow(), clock, {
+    diagnostics: { record: (input) => { diagnostics.push(input); return true } }
+  })
+  await service.recordProgress({
+    requestId: 'request.progress.one', generation: 1, runId: 'run.progress.one',
+    attemptIdentity, attempt: 1, phase: 'preparing', activity: false,
+    diagnosticEvent: 'budget_rejected', errorCode: 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED',
+    budgetAxis: null, metrics: { actual: 15001, limit: 15000, unit: 'bytes' }
+  })
+  assert.equal(diagnostics.length, 1)
+  assert.equal(diagnostics[0].event, 'budget_rejected')
+  assert.equal(diagnostics[0].errorCode, 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED')
+  assert.equal(diagnostics[0].metrics.actual, 15001)
+  assert.equal(diagnostics[0].metrics.limit, 15000)
+})
+
+test('SEM-F40/J30-DIAG: stale attempts rejected by storage do not write progress diagnostics', async () => {
+  const clock = { value: 0 }
+  const diagnostics = []
+  const { service } = progressService(snapshotRow({ attempt: 2 }), clock, {
+    diagnostics: { record: (input) => { diagnostics.push(input); return true } }
+  })
+  const persisted = await service.recordProgress({
+    requestId: 'request.progress.one', generation: 1, runId: 'run.progress.one',
+    attemptIdentity, attempt: 1, phase: 'waiting_model', activity: true,
+    diagnosticEvent: 'model_request_started'
+  })
+  assert.equal(persisted, null)
+  assert.equal(diagnostics.length, 0)
+})
+
+test('SEM-F40/J30-DIAG: token budget measurements use the registered count unit', () => {
+  const diagnostics = []
+  const { service } = progressService(snapshotRow({
+    budget: { axis: 'maxRequestInputTokens', actual: 1201, limit: 1200 }
+  }), { value: 0 }, {
+    diagnostics: { record: (input) => { diagnostics.push(input); return true } }
+  })
+  service.recordDiagnostic(snapshotRow({
+    budget: { axis: 'maxRequestInputTokens', actual: 1201, limit: 1200 }
+  }), 'budget_rejected', { errorCode: 'AGENT_BUDGET_EXCEEDED' })
+  assert.equal(diagnostics[0].metrics.unit, 'count')
+  assert.equal(diagnostics[0].budgetAxis, 'maxRequestInputTokens')
 })
 
 test('SEM-F38/J30-PROGRESS: snapshots advance elapsed time without inventing activity or revisions', async () => {

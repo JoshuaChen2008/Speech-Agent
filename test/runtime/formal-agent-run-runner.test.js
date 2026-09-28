@@ -130,14 +130,17 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F34/SEM-F38/J22/J29: user target runner uses b
 })
 
 test('SEM-F28/SEM-T04/J22/J24: provider retry keeps the same attempt claim without terminalizing a partial result', async () => {
+  const progress = []
   const { runner, calls } = harness({
     adapterRun: async () => { const error = new Error('timeout'); error.code = 'AGENT_PROVIDER_TIMEOUT'; throw error }
   })
-  const result = await runner.run(job())
+  runner.onProgress = (event) => progress.push(event)
+  const result = await runner.run(job({ sessionSummaryRequest: { requestId: 'request.runner.retry', generation: 1 } }))
   assert.equal(result, null)
   assert.equal(calls.filter(([kind]) => kind === 'fail').length, 1)
   assert.equal(calls.filter(([kind]) => kind === 'terminalize').length, 0)
   assert.equal(calls.find(([kind]) => kind === 'fail')[1].attemptIdentity.attempt, 1)
+  assert.equal(progress.some((event) => event.diagnosticEvent === 'backoff'), true)
 })
 
 test('SEM-F28/SEM-T04/J22/J24: cancellation terminalizes without accepting a late provider result', async () => {
@@ -242,6 +245,36 @@ test('SEM-F15/SEM-F16/SEM-F34/J22: summary.minutes uses the same Agent Loop and 
   assert.deepEqual(terminal.result.conclusions[0].sourceRefs, [sourceRef])
 })
 
+test('SEM-F40/J30-DIAG: known summary preflight byte rejection reports only finite metrics', async () => {
+  const privateMarker = 'private-transcript-marker-'.repeat(800)
+  const { runner, calls } = harness({
+    recipeId: 'summary.minutes',
+    readSessionInput: async () => ({
+      sourceKind: 'session', sessionId: 'session.runner', transcriptVersion: 'raw',
+      inputWatermark: 2, inputDigest: 'a'.repeat(64), fromEventOrder: 1, throughEventOrder: 2,
+      events: [{ eventOrder: 1, segmentId: 'segment.1', text: privateMarker }]
+    })
+  })
+  const progress = []
+  runner.onProgress = (event) => progress.push(event)
+  await runner.run(job({
+    recipeId: 'summary.minutes',
+    summaryUseMemory: false,
+    sessionSummaryRequest: { requestId: 'request.runner.input-limit', generation: 1 }
+  }))
+
+  const rejected = progress.find((event) => event.diagnosticEvent === 'budget_rejected')
+  assert.ok(rejected)
+  assert.equal(rejected.errorCode, 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED')
+  assert.equal(rejected.budgetAxis, null, 'the legacy serialized-input cap is not one of the registered ten budget axes')
+  assert.ok(rejected.metrics.actual > rejected.metrics.limit)
+  assert.equal(rejected.metrics.limit, 15000)
+  assert.equal(rejected.metrics.unit, 'bytes')
+  assert.equal(JSON.stringify(progress).includes(privateMarker), false)
+  const terminal = calls.find(([kind]) => kind === 'terminalize')?.[1]
+  assert.equal(terminal?.errorCode, 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED')
+})
+
 test('SEM-F38/J30-PROGRESS: runner reports actual provider and memory events without content', async () => {
   const progress = []
   const { runner, sourceRef } = harness({
@@ -280,6 +313,9 @@ test('SEM-F38/J30-PROGRESS: runner reports actual provider and memory events wit
     { phase: 'validating', activity: false, memoryState: undefined }
   ])
   assert.ok(progress.every((event) => event.runId === 'run.user.runner' && event.attempt === 1))
+  assert.deepEqual(progress.map((event) => event.diagnosticEvent).filter(Boolean), [
+    'planning', 'model_request_started', 'tool_started', 'tool_ended', 'model_request_ended'
+  ])
   assert.equal(JSON.stringify(progress).includes('只依据本次会话'), false)
   assert.equal(JSON.stringify(progress).includes('none'), false)
 })
@@ -300,11 +336,13 @@ test('SEM-F38/J30-PROGRESS: reading_context is visible while session input is st
     sessionSummaryRequest: { requestId: 'request.runner.input-wait', generation: 1 }
   }))
   await inputReadStarted.promise
-  assert.deepEqual(progress.at(-1), {
+  const { modelBindingDigest, ...visibleProgress } = progress.at(-1)
+  assert.deepEqual(visibleProgress, {
     requestId: 'request.runner.input-wait', generation: 1, runId: 'run.user.runner',
     attemptIdentity: job().attemptIdentity,
     attempt: 1, phase: 'reading_context', activity: false
   })
+  assert.match(modelBindingDigest, /^[a-f0-9]{64}$/)
   inputRead.resolve(await originalReadSessionInput())
   await pending
 })

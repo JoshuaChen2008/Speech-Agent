@@ -4,6 +4,9 @@ const { performance } = require('node:perf_hooks')
 const { canonicalize, sha256Canonical } = require('../../runtime/storage-worker/canonical-json')
 const runContract = require('../contracts/agent-run-ui')
 const c = require('../contracts/session-summary-run-ui')
+const diagnosticsContract = require('../contracts/agent-run-diagnostics')
+const { assertDiagnosticMetrics } = diagnosticsContract
+const { BUDGET_AXES } = require('../contracts/budget-axes')
 
 const SUMMARY_PROMPT = '请基于这场已结束的会话生成会话总结，包含主要内容、决定、待办和需要注意。'
 const SUMMARY_PROMPTS_BY_DIGEST = new Map([[sha256Canonical(SUMMARY_PROMPT), SUMMARY_PROMPT]])
@@ -21,7 +24,7 @@ function errorResponse (code, nextAction = 'retry') {
   }
 }
 
-function publicSnapshot (row, elapsedMs = row.elapsedMs) {
+function publicSnapshot (row, elapsedMs = row.elapsedMs, diagnosticsAvailable = row.diagnosticsAvailable) {
   const activityAge = row.lastActivityElapsedMs > 0 && elapsedMs >= row.lastActivityElapsedMs
     ? elapsedMs - row.lastActivityElapsedMs
     : null
@@ -43,7 +46,7 @@ function publicSnapshot (row, elapsedMs = row.elapsedMs) {
     freshness: 'fresh',
     cancel_requested: row.cancelRequested,
     resume_required: row.resumeRequired,
-    diagnostics_available: row.diagnosticsAvailable,
+    diagnostics_available: diagnosticsAvailable,
     route_run_id: row.routeRunId,
     target_run_id: row.targetRunId,
     interaction_id: row.targetInteractionId || null,
@@ -101,6 +104,20 @@ function stableErrorCode (error) {
   return 'AGENT_RUN_UNAVAILABLE'
 }
 
+function diagnosticUnitForAxis (axis) {
+  if (!axis) return null
+  if (axis.includes('Bytes')) return 'bytes'
+  if (axis.includes('WallClock') || axis === 'toolTimeoutMs') return 'duration_ms'
+  return 'count'
+}
+
+function diagnosticEventForProgress (event) {
+  if (diagnosticsContract.DIAGNOSTIC_EVENTS.includes(event.diagnosticEvent)) return event.diagnosticEvent
+  if (event.phase === 'retry_wait') return 'backoff'
+  if (event.phase === 'preparing') return 'planning'
+  return null
+}
+
 class SessionSummaryRunService {
   constructor (options = {}) {
     if (!options.storage || typeof options.storage.acceptSessionSummaryRequest !== 'function' ||
@@ -123,6 +140,7 @@ class SessionSummaryRunService {
     this.scheduler = options.scheduler || null
     this.getConfig = typeof options.getConfig === 'function' ? options.getConfig : null
     this.promptStore = options.promptStore instanceof Map ? options.promptStore : null
+    this.diagnostics = options.diagnostics && typeof options.diagnostics.record === 'function' ? options.diagnostics : null
     this.defer = typeof options.defer === 'function' ? options.defer : (callback) => setImmediate(callback)
     this.onChanged = typeof options.onChanged === 'function' ? options.onChanged : () => {}
     this.monotonicNow = typeof options.monotonicNow === 'function' ? options.monotonicNow : () => performance.now()
@@ -132,6 +150,133 @@ class SessionSummaryRunService {
     this.runRequests = new Map()
     this.progressClocks = new Map()
     this.progressQueues = new Map()
+    this.diagnosticRequests = new Map()
+    this.terminalDiagnosticKeys = new Map()
+  }
+
+  rememberDiagnosticRequest (row) {
+    if (!row || typeof row.requestId !== 'string') return
+    this.diagnosticRequests.delete(row.requestId)
+    this.diagnosticRequests.set(row.requestId, {
+      requestDigest: /^[a-f0-9]{64}$/.test(row.requestDigest || '') ? row.requestDigest : null,
+      generation: row.generation
+    })
+    while (this.diagnosticRequests.size > 256) this.diagnosticRequests.delete(this.diagnosticRequests.keys().next().value)
+  }
+
+  recordDiagnostic (row, event, options = {}) {
+    if (!this.diagnostics || !row || typeof row.requestId !== 'string') return false
+    const metadata = this.diagnosticRequests.get(row.requestId)
+    const budget = options.budget || row.budget || null
+    const elapsedMs = Number.isSafeInteger(options.elapsedMs)
+      ? options.elapsedMs
+      : this.elapsedFor(row)
+    const lastActivityAgeMs = row.lastActivityElapsedMs > 0 && elapsedMs >= row.lastActivityElapsedMs
+      ? elapsedMs - row.lastActivityElapsedMs
+      : null
+    const actual = Number.isSafeInteger(budget?.actual) && budget.actual >= 0 ? budget.actual : null
+    const limit = Number.isSafeInteger(budget?.limit) && budget.limit >= 0 ? budget.limit : null
+    const axis = budget && BUDGET_AXES.includes(budget.axis)
+      ? budget.axis
+      : null
+    const metrics = actual !== null && limit !== null
+      ? { actual, limit, unit: diagnosticUnitForAxis(axis) }
+      : { actual: null, limit: null, unit: null }
+    return this.diagnostics.record({
+      requestId: row.requestId,
+      requestDigest: metadata?.requestDigest || ( /^[a-f0-9]{64}$/.test(row.requestDigest || '') ? row.requestDigest : null),
+      runId: options.runId !== undefined ? options.runId : row.targetRunId || row.routeRunId || null,
+      attempt: Number.isSafeInteger(options.attempt) ? options.attempt : row.attempt,
+      phase: options.phase || row.phase,
+      event,
+      elapsedMs: elapsedMs ?? null,
+      lastActivityAgeMs,
+      errorCode: options.errorCode !== undefined ? options.errorCode : row.errorCode || null,
+      budgetAxis: options.budgetAxis !== undefined ? options.budgetAxis : axis,
+      metrics: options.metrics || metrics,
+      modelBindingDigest: options.modelBindingDigest || null,
+      planDigest: options.planDigest || null
+    })
+  }
+
+  async setDiagnosticsAvailability (available) {
+    if (typeof available !== 'boolean') return 0
+    let rows
+    try { rows = await this.storage.listRecoverableSessionSummaryRequests() } catch { return 0 }
+    let updatedCount = 0
+    const changedIds = new Set()
+    for (const row of rows) {
+      if (row.diagnosticsAvailable === available) continue
+      try {
+        const updated = await this.updateDiagnosticsAvailabilityForRow(row, available)
+        if (updated === row) continue
+        this.emitChanged(updated)
+        changedIds.add(row.requestId)
+        updatedCount += 1
+      } catch { /* terminal/cancelled or concurrently changed requests remain authoritative */ }
+    }
+    for (const [requestId, metadata] of this.diagnosticRequests) {
+      if (changedIds.has(requestId)) continue
+      try {
+        const row = await this.readRow(requestId)
+        if (row.generation === metadata.generation) this.emitChanged(row)
+      } catch { /* deleted requests have no visible diagnostic status */ }
+    }
+    return updatedCount
+  }
+
+  async updateDiagnosticsAvailabilityForRow (row, available) {
+    if (!row || row.diagnosticsAvailable === available || TERMINAL_STATES.has(row.state)) return row
+    try {
+      return await this.storage.updateSessionSummaryRequest({
+        requestId: row.requestId,
+        generation: row.generation,
+        expectedRevision: row.revision,
+        diagnosticsAvailable: available
+      })
+    } catch { return row }
+  }
+
+  recordTerminalDiagnostic (row) {
+    if (!row || !TERMINAL_STATES.has(row.state)) return false
+    const key = `${row.requestId}:${row.generation}:${row.revision}`
+    if (this.terminalDiagnosticKeys.has(key)) return false
+    this.terminalDiagnosticKeys.set(key, true)
+    while (this.terminalDiagnosticKeys.size > 256) this.terminalDiagnosticKeys.delete(this.terminalDiagnosticKeys.keys().next().value)
+    return this.recordDiagnostic(row, row.state === 'cancelled' ? 'cancelled' : 'terminal', {
+      phase: 'terminal',
+      errorCode: row.errorCode || null
+    })
+  }
+
+  recordProgressDiagnostic (event) {
+    if (!this.diagnostics) return false
+    const diagnosticEvent = diagnosticEventForProgress(event)
+    if (!diagnosticEvent) return false
+    const metadata = this.diagnosticRequests.get(event.requestId)
+    if (metadata && metadata.generation !== event.generation) return false
+    const elapsedMs = this.elapsedForRequest(event.requestId, event.generation)
+    const metrics = event.metrics || { actual: null, limit: null, unit: null }
+    try { assertDiagnosticMetrics(metrics) } catch { return false }
+    const errorCode = event.errorCode || null
+    const budgetAxis = event.budgetAxis || null
+    if (errorCode !== null && !c.ERROR_CODES.includes(errorCode) || budgetAxis !== null && !BUDGET_AXES.includes(budgetAxis)) return false
+    if (event.diagnosticEvent === 'budget_rejected' && errorCode === null) return false
+    return this.diagnostics.record({
+      requestId: event.requestId,
+      requestDigest: metadata?.requestDigest || null,
+      runId: event.runId,
+      attempt: event.attempt,
+      phase: event.phase,
+      event: diagnosticEvent,
+      elapsedMs,
+      lastActivityAgeMs: event.activity === true ? 0 : null,
+      errorCode,
+      budgetAxis,
+      metrics,
+      modelBindingDigest: event.modelBindingDigest || null,
+      planDigest: null
+    })
   }
 
   subscribeChanged (listener) {
@@ -165,12 +310,15 @@ class SessionSummaryRunService {
   async recoverAfterRestart () {
     const rows = await this.storage.recoverSessionSummaryRequests()
     for (const row of rows) {
+      this.rememberDiagnosticRequest(row)
+      this.recordDiagnostic(row, 'recovery', { phase: row.phase })
       if (row.action === 'summary' && row.resumeRequired && !SUMMARY_PROMPTS_BY_DIGEST.has(row.promptDigest)) {
         const failed = await this.storage.failUnrecoverableSessionSummaryRequest({
           requestId: row.requestId,
           generation: row.generation,
           expectedRevision: row.revision
         })
+        this.recordTerminalDiagnostic(failed)
         this.emitChanged(failed)
         continue
       }
@@ -236,6 +384,8 @@ class SessionSummaryRunService {
         generation: row.generation,
         expectedRevision: row.revision
       })
+      this.rememberDiagnosticRequest(resumed)
+      this.recordDiagnostic(resumed, 'recovery', { phase: resumed.phase })
       this.startClock(resumed)
       if (resumed.targetRunId) {
         this.runRequests.set(resumed.targetRunId, { requestId: resumed.requestId, generation: resumed.generation })
@@ -289,12 +439,19 @@ class SessionSummaryRunService {
   }
 
   snapshotFor (row) {
-    return publicSnapshot(row, this.elapsedFor(row))
+    const diagnosticsStatus = this.diagnostics?.getStatus?.()
+    const diagnosticsAvailable = typeof diagnosticsStatus?.available === 'boolean'
+      ? diagnosticsStatus.available
+      : row.diagnosticsAvailable
+    return publicSnapshot(row, this.elapsedFor(row), diagnosticsAvailable)
   }
 
   recordProgress (event, signal) {
     if (!event || typeof event !== 'object' || Array.isArray(event)) return Promise.resolve(null)
-    const allowed = new Set(['requestId', 'generation', 'runId', 'attemptIdentity', 'attempt', 'phase', 'state', 'activity', 'memoryState'])
+    const allowed = new Set([
+      'requestId', 'generation', 'runId', 'attemptIdentity', 'attempt', 'phase', 'state', 'activity', 'memoryState',
+      'diagnosticEvent', 'modelBindingDigest', 'errorCode', 'budgetAxis', 'metrics'
+    ])
     const actual = Object.keys(event)
     if (actual.some((key) => !allowed.has(key)) ||
         typeof event.requestId !== 'string' || !Number.isSafeInteger(event.generation) || event.generation < 1 ||
@@ -303,7 +460,17 @@ class SessionSummaryRunService {
         !c.PHASES.includes(event.phase) ||
         event.state !== undefined && !c.STATES.includes(event.state) ||
         event.activity !== undefined && typeof event.activity !== 'boolean' ||
-        event.memoryState !== undefined && !c.MEMORY_STATES.includes(event.memoryState)) return Promise.resolve(null)
+        event.memoryState !== undefined && !c.MEMORY_STATES.includes(event.memoryState) ||
+        event.diagnosticEvent !== undefined && !diagnosticsContract.DIAGNOSTIC_EVENTS.includes(event.diagnosticEvent) ||
+        event.modelBindingDigest !== undefined && !/^[a-f0-9]{64}$/.test(event.modelBindingDigest) ||
+        event.errorCode !== undefined && !c.ERROR_CODES.includes(event.errorCode) ||
+        event.budgetAxis !== undefined && event.budgetAxis !== null && !BUDGET_AXES.includes(event.budgetAxis)) return Promise.resolve(null)
+    if (event.metrics !== undefined) {
+      try { assertDiagnosticMetrics(event.metrics) } catch { return Promise.resolve(null) }
+    }
+    if (event.diagnosticEvent === 'budget_rejected' && (event.errorCode === undefined || event.metrics === undefined)) {
+      return Promise.resolve(null)
+    }
     if (event.runId !== null && event.attempt > 0) {
       const identity = event.attemptIdentity
       if (!identity || Object.keys(identity).sort().join(',') !== 'attempt,leaseExpiresAt,owner,runId' ||
@@ -313,7 +480,10 @@ class SessionSummaryRunService {
     const prior = this.progressQueues.get(event.requestId) || Promise.resolve()
     const task = prior.catch(() => null).then(() => {
       if (signal?.aborted) return null
-      return this.persistProgress(event, signal)
+      return this.persistProgress(event, signal).then((updated) => {
+        if (updated) this.recordProgressDiagnostic(event)
+        return updated
+      })
     })
     this.progressQueues.set(event.requestId, task)
     return task.finally(() => {
@@ -377,6 +547,8 @@ class SessionSummaryRunService {
     try {
       const row = await this.readRow(event.requestId)
       if (row.generation !== event.generation || (row.targetRunId !== event.runId && row.routeRunId !== event.runId)) return null
+      this.rememberDiagnosticRequest(row)
+      this.recordTerminalDiagnostic(row)
       this.emitChanged(row)
       return row
     } catch { return null }
@@ -416,6 +588,7 @@ class SessionSummaryRunService {
           })
         }
         const row = await this.readRow(identity.requestId)
+        this.rememberDiagnosticRequest(row)
         if (frozen && !row.cancelRequested && !row.resumeRequired && !TERMINAL_STATES.has(row.state)) {
           this.startClock(row)
           this.scheduleDispatch({
@@ -481,7 +654,13 @@ class SessionSummaryRunService {
         ...(request.resubmits_request_id ? { resubmitsRequestId: request.resubmits_request_id } : {}),
         ...frozenIdentity
       })
-      const row = await this.readRow(identity.requestId)
+      let row = await this.readRow(identity.requestId)
+      const diagnosticsStatus = this.diagnostics?.getStatus?.()
+      if (typeof diagnosticsStatus?.available === 'boolean') {
+        row = await this.updateDiagnosticsAvailabilityForRow(row, diagnosticsStatus.available)
+      }
+      this.rememberDiagnosticRequest(row)
+      if (accepted.replayed !== true) this.recordDiagnostic(row, 'accepted', { phase: 'accepted' })
       if (!row.cancelRequested && !TERMINAL_STATES.has(row.state)) this.startClock(row)
       const response = c.assertAcceptResponse({
         ...header(), ok: true, error: null,
@@ -531,7 +710,8 @@ class SessionSummaryRunService {
         attempt: 0,
         phase: 'preparing',
         state: input.action === 'question' ? 'routing' : 'preparing',
-        activity: false
+        activity: false,
+        diagnosticEvent: 'planning'
       })
       if (!this.routeOrchestrator) throw Object.assign(new Error('route unavailable'), { code: 'AGENT_RUN_UNAVAILABLE' })
       const routeInput = {
@@ -579,6 +759,26 @@ class SessionSummaryRunService {
     try {
       const row = await this.readRow(input.requestId)
       if (row.cancelRequested || TERMINAL_STATES.has(row.state)) return
+      this.rememberDiagnosticRequest(row)
+      const failureCode = stableErrorCode(error)
+      if (failureCode === 'AGENT_BUDGET_EXCEEDED' || failureCode === 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED') {
+        const suppliedBudget = error?.budget && typeof error.budget === 'object' ? error.budget : null
+        const suppliedAxis = BUDGET_AXES.includes(error?.budgetAxis) ? error.budgetAxis :
+          suppliedBudget && BUDGET_AXES.includes(suppliedBudget.axis) ? suppliedBudget.axis : null
+        const actual = Number.isSafeInteger(error?.actual) && error.actual >= 0 ? error.actual :
+          Number.isSafeInteger(suppliedBudget?.actual) && suppliedBudget.actual >= 0 ? suppliedBudget.actual : null
+        const limit = Number.isSafeInteger(error?.limit) && error.limit >= 0 ? error.limit :
+          Number.isSafeInteger(suppliedBudget?.limit) && suppliedBudget.limit >= 0 ? suppliedBudget.limit : null
+        const unit = diagnosticUnitForAxis(suppliedAxis) ||
+          (failureCode === 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED' && actual !== null && limit !== null ? 'bytes' : null)
+        this.recordDiagnostic(row, 'budget_rejected', {
+          errorCode: failureCode,
+          budgetAxis: suppliedAxis,
+          metrics: actual !== null && limit !== null
+            ? { actual, limit, unit }
+            : { actual: null, limit: null, unit: null }
+        })
+      }
       if (error?.code === 'AGENT_CANCELLED' && !row.cancelRequested) {
         this.emitChanged(row)
         return
@@ -603,9 +803,11 @@ class SessionSummaryRunService {
         expectedRevision: latest.revision,
         state: 'failed',
         phase: 'terminal',
-        errorCode: stableErrorCode(error)
+        errorCode: failureCode
       })
-      await this.readAndEmit(input.requestId)
+      const failed = await this.readRow(input.requestId)
+      this.recordTerminalDiagnostic(failed)
+      this.emitChanged(failed)
     } catch { /* cancellation, deletion, or a concurrent terminal write remains authoritative */ }
   }
 
@@ -637,6 +839,9 @@ class SessionSummaryRunService {
       const linkedRunId = row.targetRunId || row.routeRunId
       if (linkedRunId && this.scheduler && typeof this.scheduler.cancel === 'function') this.scheduler.cancel(linkedRunId)
       const latest = await this.readRow(request.request_id)
+      this.rememberDiagnosticRequest(latest)
+      this.recordDiagnostic(latest, 'cancel_requested', { phase: 'cancelling' })
+      this.recordTerminalDiagnostic(latest)
       this.emitChanged(latest)
       return c.assertCancelResponse({
         ...header(), ok: true, error: null,

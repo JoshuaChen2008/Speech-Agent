@@ -9,6 +9,8 @@ const vm = require('node:vm')
 
 const { AgentRunService } = require('../../src/agent/formal-run/agent-run-service')
 const { SessionSummaryRunService, SUMMARY_PROMPT } = require('../../src/agent/formal-run/session-summary-run-service')
+const { AgentRunDiagnostics } = require('../../src/main/services/agent-run-diagnostics')
+const { assertDiagnosticRecord } = require('../../src/agent/contracts/agent-run-diagnostics')
 const { AgentLoopExecutor, IntentRouteOrchestrator } = require('../../src/agent/execution-host')
 const { CredentialVault } = require('../../src/agent/model-access/credential-vault')
 const { ModelAccessRuntime } = require('../../src/agent/model-access/runtime')
@@ -148,6 +150,26 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'session-summary-j30-accept-'))
   const databasePath = path.join(root, 'speech-agent.sqlite3')
   const configPath = path.join(root, 'config.json')
+  const diagnosticDirectory = path.join(root, 'logs', 'agent-run-diagnostics')
+  let failDiagnosticWrites = false
+  let summaryRun = null
+  const diagnosticFsApi = new Proxy(fs.promises, {
+    get (target, property) {
+      if (property === 'appendFile') return async (...args) => {
+        if (failDiagnosticWrites) throw new Error('synthetic diagnostic write failure marker')
+        return target.appendFile(...args)
+      }
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    }
+  })
+  const diagnosticStore = new AgentRunDiagnostics({
+    directory: diagnosticDirectory,
+    appVersion: '0.1.0',
+    fsApi: diagnosticFsApi,
+    onAvailabilityChanged: (status) => { if (summaryRun) void summaryRun.setDiagnosticsAvailability(status.available) }
+  })
+  await diagnosticStore.initialization
   const storageService = new StorageWorkerService()
   const gateway = new StorageGateway({
     databasePath,
@@ -281,12 +303,13 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     }
   }
   let preloadBridge = null
-  let summaryRun = new SessionSummaryRunService({
+  summaryRun = new SessionSummaryRunService({
     storage: requestStorage,
     runService: requestRunService,
     routeOrchestrator,
     getConfig: () => config.get(),
     defer: (callback) => dispatchQueue.push(callback),
+    diagnostics: diagnosticStore,
     onChanged: (event) => preloadBridge?.emit(CHANNELS.SESSION_SUMMARY_RUN_CHANGED, event)
   })
   const handlers = new Map()
@@ -481,6 +504,7 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     scheduler: { wake: (reason) => wakeReasons.push(reason) },
     getConfig: () => config.get(),
     promptStore: restartedPromptStore,
+    diagnostics: diagnosticStore,
     defer: (callback) => dispatchQueue.push(callback),
     onChanged: (event) => preloadBridge?.emit(CHANNELS.SESSION_SUMMARY_RUN_CHANGED, event)
   })
@@ -544,6 +568,7 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     scheduler: { wake: () => {} },
     getConfig: () => config.get(),
     promptStore: new Map(),
+    diagnostics: diagnosticStore,
     defer: (callback) => dispatchQueue.push(callback),
     onChanged: (event) => preloadBridge?.emit(CHANNELS.SESSION_SUMMARY_RUN_CHANGED, event)
   })
@@ -588,5 +613,77 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   assert.equal(JSON.stringify(requestRows).includes('这个请求应在路由时取消'), false)
   assert.equal(JSON.stringify(requestRows).includes('原问题正文不应持久化'), false)
   assert.equal(JSON.stringify(requestRows).includes('重新提交后的问题'), false)
+  assert.equal(await diagnosticStore.drain(), true)
+  const diagnosticFiles = fs.readdirSync(diagnosticDirectory).filter((name) => name.endsWith('.jsonl')).sort()
+  const diagnosticRecords = diagnosticFiles.flatMap((name) => fs.readFileSync(path.join(diagnosticDirectory, name), 'utf8')
+    .split('\n').filter(Boolean).map((line) => assertDiagnosticRecord(JSON.parse(line))))
+  const diagnosticBytes = JSON.stringify(diagnosticRecords)
+  for (const event of ['accepted', 'planning', 'cancel_requested', 'cancelled', 'recovery']) {
+    assert.equal(diagnosticRecords.some((record) => record.event === event), true, `diagnostic event ${event}`)
+  }
+  for (const marker of [
+    'J30 合成会话正文 marker', '这个请求应在路由时取消', '原问题正文不应持久化',
+    '重新提交后的问题', 'j30-provider-secret', root
+  ]) assert.equal(diagnosticBytes.includes(marker), false)
+  const diagnosticsFailureRequest = request('summary', 'j30.summary.diagnostics-write-failure')
+  failDiagnosticWrites = true
+  const diagnosticsFailureAccepted = await summaryApi.accept(diagnosticsFailureRequest)
+  assert.equal(diagnosticsFailureAccepted.ok, true)
+  const eventCountBeforeDiagnosticFailure = changedEvents.length
+  await waitFor(() => diagnosticStore.getStatus().available === false, 'diagnostic write failure status')
+  await waitFor(async () => {
+    const current = await summaryApi.get({
+      contract_id: contract.CONTRACT_ID,
+      contract_version: contract.CONTRACT_VERSION,
+      request_id: diagnosticsFailureAccepted.result.snapshot.request_id
+    })
+    return current.ok && current.result.snapshot.diagnostics_available === false &&
+      changedEvents.slice(eventCountBeforeDiagnosticFailure).some((event) =>
+        event.request_id === diagnosticsFailureAccepted.result.snapshot.request_id &&
+        event.revision > diagnosticsFailureAccepted.result.snapshot.revision
+      )
+  }, 'diagnostic failure snapshot and change event')
+  const diagnosticsFailureSnapshot = await summaryApi.get({
+    contract_id: contract.CONTRACT_ID,
+    contract_version: contract.CONTRACT_VERSION,
+    request_id: diagnosticsFailureAccepted.result.snapshot.request_id
+  })
+  assert.equal(diagnosticsFailureSnapshot.result.snapshot.diagnostics_available, false)
+  assert.equal(diagnosticsFailureSnapshot.result.snapshot.state, 'accepted')
+  assert.ok(changedEvents.slice(eventCountBeforeDiagnosticFailure).some((event) =>
+    event.request_id === diagnosticsFailureAccepted.result.snapshot.request_id &&
+    event.revision > diagnosticsFailureAccepted.result.snapshot.revision
+  ))
+  const diagnosticsFailureCancelled = await summaryApi.cancel({
+    contract_id: contract.CONTRACT_ID,
+    contract_version: contract.CONTRACT_VERSION,
+    request_id: diagnosticsFailureAccepted.result.snapshot.request_id,
+    generation: diagnosticsFailureAccepted.result.snapshot.generation
+  })
+  assert.equal(diagnosticsFailureCancelled.ok, true)
+  assert.equal(diagnosticsFailureCancelled.result.snapshot.state, 'cancelled')
+
+  const independentSessionId = 'session.summary.diagnostics.failure.independent'
+  await recorder.openSession({ sessionId: independentSessionId, sourceId: 'mic', refinementEnabled: false })
+  await recorder.acceptCaption({
+    schemaVersion: 1,
+    sessionId: independentSessionId,
+    sourceId: 'mic',
+    segmentId: 'segment.summary.diagnostics.failure.independent',
+    sequence: 1,
+    revision: 1,
+    kind: 'final',
+    t0: 0,
+    t1: 10,
+    text: '诊断写入失败时字幕链路仍可运行',
+    translation: null
+  })
+  await recorder.closeSession({ sessionId: independentSessionId, sourceId: 'mic', state: 'closed' })
+  const independentTranscript = await gateway.getSessionTranscript(independentSessionId)
+  assert.equal(independentTranscript.segments.length, 1)
+  assert.equal(independentTranscript.segments[0].text, '诊断写入失败时字幕链路仍可运行')
+  const failedDiagnosticFiles = fs.readdirSync(diagnosticDirectory).filter((name) => name.endsWith('.jsonl'))
+  assert.equal(failedDiagnosticFiles.some((name) => fs.readFileSync(path.join(diagnosticDirectory, name), 'utf8')
+    .includes('synthetic diagnostic write failure marker')), false)
   unsubscribeSummaryChanges()
 })

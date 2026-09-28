@@ -2,7 +2,7 @@
 
 // @ts-check
 
-const { canonicalize } = require('../../runtime/storage-worker/canonical-json')
+const { canonicalize, sha256Canonical } = require('../../runtime/storage-worker/canonical-json')
 const { assertModelUsage } = require('../contracts/model-access-core')
 const { getRecipe, validateRecipeOutput } = require('../contracts/recipes')
 const { createControlledToolRuntime } = require('./controlled-tool-runtime')
@@ -104,11 +104,14 @@ function promptForInput (input, userPrompt, recipeId = 'summary.minutes', recipe
   }
   let prompt
   try { prompt = canonicalize(payload) } catch { throw codedError('AGENT_REQUEST_INVALID') }
-  if (Buffer.byteLength(prompt, 'utf8') > 15000) {
+  const promptBytes = Buffer.byteLength(prompt, 'utf8')
+  if (promptBytes > 15000) {
     const code = recipeId === 'summary.minutes' && recipeVersion === '1'
       ? 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED'
       : 'AGENT_BUDGET_EXCEEDED'
-    throw codedError(code)
+    const error = codedError(code)
+    error.diagnosticMetrics = { actual: promptBytes, limit: 15000, unit: 'bytes' }
+    throw error
   }
   return prompt
 }
@@ -128,6 +131,18 @@ function summaryMemoryReadError (error) {
     'AGENT_SESSION_NOT_FOUND', 'AGENT_BUDGET_EXCEEDED', 'AGENT_REQUEST_INVALID',
     'STORAGE_COMMAND_FAILED'
   ].includes(error?.code)
+}
+
+function diagnosticEventForProgress (event) {
+  if (event.type === 'budget_rejected') return 'budget_rejected'
+  if (event.phase === 'retry_wait') return 'backoff'
+  if (event.type === 'request_started') return 'model_request_started'
+  if (event.type === 'response_received' || event.type === 'request_failed') return 'model_request_ended'
+  if (event.type === 'tool_started') return 'tool_started'
+  if (event.type === 'tool_result_received' || event.type === 'tool_failed') return 'tool_ended'
+  if (event.type === 'plan_created') return 'planned'
+  if (event.phase === 'preparing') return 'planning'
+  return null
 }
 
 class FormalAgentRunRunner {
@@ -157,6 +172,7 @@ class FormalAgentRunRunner {
     this.onProgress = typeof options.onProgress === 'function' ? options.onProgress : () => {}
     this.now = typeof options.now === 'function' ? options.now : Date.now
     this.progressPhases = new Map()
+    this.bindingDigests = new Map()
     if (typeof options.loopFactory === 'function') {
       this.loopFactory = options.loopFactory
     } else if (typeof this.modelAccess.createLoopAdapter === 'function') {
@@ -205,6 +221,15 @@ class FormalAgentRunRunner {
       activity: event.activity === true || ['request_started', 'response_received', 'request_failed'].includes(event.type)
     }
     if (event.state === 'retry_wait') update.state = 'retry_wait'
+    const diagnosticEvent = diagnosticEventForProgress(event)
+    if (diagnosticEvent) update.diagnosticEvent = diagnosticEvent
+    if (diagnosticEvent === 'budget_rejected') {
+      update.errorCode = event.errorCode
+      update.budgetAxis = event.budgetAxis
+      update.metrics = event.metrics
+    }
+    const bindingDigest = this.bindingDigests.get(`${job.attemptIdentity.runId}:${job.attemptIdentity.attempt}`)
+    if (bindingDigest) update.modelBindingDigest = bindingDigest
     if (['not_read', 'not_used', 'empty', 'referenced', 'failed', 'unknown'].includes(event.memoryState)) {
       update.memoryState = event.memoryState
     }
@@ -271,6 +296,12 @@ class FormalAgentRunRunner {
         recipeVersion: recipe.recipeVersion,
         executionForm: 'agent_loop'
       }), job.signal)
+      try {
+        this.bindingDigests.set(
+          `${job.attemptIdentity.runId}:${job.attemptIdentity.attempt}`,
+          sha256Canonical(binding)
+        )
+      } catch { /* a diagnostic digest cannot change model execution */ }
       const useMemory = job.recipeId !== 'summary.minutes' || job.summaryUseMemory !== false
       await this.reportProgress(job, {
         phase: 'reading_context', activity: false,
@@ -363,6 +394,12 @@ class FormalAgentRunRunner {
       const code = job.signal?.reason?.code === 'AGENT_BUDGET_EXCEEDED'
         ? 'AGENT_BUDGET_EXCEEDED'
         : normalizedErrorCode(error)
+      if (error?.diagnosticMetrics && job.sessionSummaryRequest) {
+        await this.reportProgress(job, {
+          type: 'budget_rejected', phase: 'preparing', activity: false,
+          errorCode: code, budgetAxis: null, metrics: error.diagnosticMetrics
+        })
+      }
       const durationMs = Math.max(0, this.now() - startedAt)
       if (code === 'AGENT_CANCELLED') {
         await this.flushProgress(job)
@@ -409,6 +446,7 @@ class FormalAgentRunRunner {
       }
       return null
     } finally {
+      this.bindingDigests.delete(`${job.attemptIdentity.runId}:${job.attemptIdentity.attempt}`)
       if (job.sessionSummaryRequest) this.progressPhases.delete(`${job.sessionSummaryRequest.requestId}:${job.sessionSummaryRequest.generation}`)
       if (terminalReason) {
         try { this.onChanged({

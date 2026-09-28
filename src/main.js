@@ -51,6 +51,7 @@ const {
 const { HistoryService } = require('./main/services/history-service')
 const { RefinementFaultLog } = require('./main/services/refinement-fault-log')
 const { RefinementNoticeStore } = require('./main/services/refinement-notice')
+const { AgentRunDiagnostics } = require('./main/services/agent-run-diagnostics')
 const {
   broadcastPersonalContextChanged,
   registerPersonalContextIpc
@@ -136,6 +137,7 @@ let agentRendererReady = false
 let agentRequestedSessionId = null
 /** @type {SessionCoordinator | null} */ let coordinator = null
 /** @type {HistoryService | null} */ let historyService = null
+/** @type {AgentRunDiagnostics | null} */ let agentRunDiagnostics = null
 /** @type {PowerSessionGuard | null} */ let powerSessionGuard = null
 /** @type {OverlayStartupController | null} */ let overlayStartupController = null
 /** @type {null | { isAttached: Function, dispose: Function, matches: Function }} */ let captionNativeInputBinding = null
@@ -1372,6 +1374,13 @@ async function bootstrapApplication () {
   if (quitRequested) return false
   config.load()
   const userDataDir = app.getPath('userData')
+  agentRunDiagnostics = new AgentRunDiagnostics({
+    directory: path.join(userDataDir, 'logs', 'agent-run-diagnostics'),
+    appVersion: app.getVersion(),
+    onAvailabilityChanged: (status) => {
+      if (sessionSummaryRunService) void sessionSummaryRunService.setDiagnosticsAvailability(status.available)
+    }
+  })
   recognitionSettings = new RecognitionSettings({ directory: path.join(userDataDir, 'recognition'), safeStorage,
     isActive: () => coordinator?.getSnapshot().sessionId != null })
   refinementFaultLog = new RefinementFaultLog({
@@ -1579,8 +1588,10 @@ async function bootstrapApplication () {
       scheduler: formalAgentScheduler,
       getConfig: () => config.get(),
       promptStore: formalAgentPrompts,
+      diagnostics: agentRunDiagnostics,
       onChanged: broadcastSessionSummaryRunChanged
     })
+    await sessionSummaryRunService.setDiagnosticsAvailability(agentRunDiagnostics.getStatus().available)
     await sessionSummaryRunService.recoverAfterRestart()
     formalAgentScheduler?.start()
   } catch {

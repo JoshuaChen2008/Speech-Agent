@@ -126,7 +126,7 @@ async function createHarness (options = {}) {
           state: 'queued', phase: 'accepted', attempt: 0, elapsed_ms: 0,
           last_activity_age_ms: null, validated_chunk_count: null, total_chunk_count: null,
           memory_state: 'not_read', error_code: null, budget: null, freshness: 'fresh',
-          cancel_requested: false, resume_required: false, diagnostics_available: false,
+          cancel_requested: false, resume_required: false, diagnostics_available: true,
           route_run_id: null, target_run_id: `run.ui.${summaryRequestSequence + 2}`,
           interaction_id: 'interaction.ui.3', recipe_id: summary ? 'summary.minutes' : 'qa.answer',
           routing_mode: summary ? 'preset' : 'model'
@@ -279,6 +279,7 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: reopening shows a frozen summary scope and o
   t.after(() => harness.dispose())
   assert.equal(harness.recoverableSummaryQueries() >= 1, true)
   assert.match(document.querySelector('.recoverable-runs').textContent, /需要处理的请求/)
+  assert.match(document.querySelector('.recoverable-runs').textContent, /诊断记录不可用/)
   assert.match(document.querySelector('.recoverable-runs').textContent, /继续生成/)
   assert.equal(harness.resumeRequests.length, 0)
 
@@ -434,6 +435,50 @@ test('S5-UX/J22: reload subscribes before reading, selects a terminal session, a
   assert.equal(snapshot.route_run_id, null)
   assert.equal(document.querySelector('.run-card strong').textContent, '等待处理', 'the accepted request does not claim a completed result')
   assert.equal(document.body.textContent.includes('interaction.ui.2'), false)
+})
+
+test('SEM-F40/J30-DIAG: active summary shows when diagnostic records are unavailable', async (t) => {
+  const harness = await createHarness(); t.after(() => harness.dispose())
+  await act(async () => click(document.querySelector('[data-action="minutes"]')))
+  await flush()
+  assert.equal(document.body.textContent.includes('诊断记录不可用'), false)
+
+  const [requestId, snapshot] = [...harness.summarySnapshots.entries()][0]
+  const unavailable = { ...snapshot, revision: snapshot.revision + 1, diagnostics_available: false }
+  harness.summarySnapshots.set(requestId, unavailable)
+  await act(async () => harness.summaryChanged[0]({
+    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+    request_id: requestId, generation: unavailable.generation, revision: unavailable.revision
+  }))
+  await flush()
+  assert.equal(document.querySelector('[aria-label="当前会话总结请求状态"]').textContent.includes('诊断记录不可用'), true)
+})
+
+test('SEM-F40/J30-DIAG: a changed recoverable request refreshes its diagnostic availability', async (t) => {
+  const scope = { kind: 'session', reference: 'session.ui.diagnostics-recoverable' }
+  const snapshot = {
+    request_id: 'request.ui.diagnostics-recoverable', generation: 1, revision: 2, action: 'summary',
+    state: 'retry_wait', phase: 'retry_wait', attempt: 1, elapsed_ms: 1200,
+    last_activity_age_ms: null, validated_chunk_count: null, total_chunk_count: null,
+    memory_state: 'unknown', error_code: null, budget: null, freshness: 'fresh',
+    cancel_requested: false, resume_required: true, diagnostics_available: true,
+    route_run_id: null, target_run_id: 'run.ui.diagnostics-recoverable', interaction_id: 'interaction.ui.diagnostics-recoverable',
+    recipe_id: 'summary.minutes', routing_mode: 'preset'
+  }
+  const recoverableSummaryRuns = [{ scope, snapshot }]
+  const harness = await createHarness({ recoverableSummaryRuns }); t.after(() => harness.dispose())
+  assert.equal(document.querySelector('.recoverable-runs').textContent.includes('诊断记录不可用'), false)
+
+  const unavailable = { ...snapshot, revision: snapshot.revision + 1, diagnostics_available: false }
+  recoverableSummaryRuns[0] = { scope, snapshot: unavailable }
+  harness.summarySnapshots.set(snapshot.request_id, unavailable)
+  await act(async () => harness.summaryChanged[0]({
+    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+    request_id: snapshot.request_id, generation: snapshot.generation, revision: unavailable.revision
+  }))
+  await flush()
+  assert.match(document.querySelector('.recoverable-runs').textContent, /诊断记录不可用/)
+  assert.equal(harness.recoverableSummaryQueries() >= 2, true)
 })
 
 test('SEM-F38/J30-STATE/J31-SIZE: visible polling replaces stale running state with the terminal capacity failure', async (t) => {
