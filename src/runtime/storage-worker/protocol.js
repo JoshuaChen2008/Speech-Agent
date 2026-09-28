@@ -41,6 +41,7 @@ const OPERATIONS = Object.freeze({
   FORMAL_AGENT_CLAIM_RUN: 'formal-agent:claim-run',
   FORMAL_AGENT_NEXT_RUN_AT: 'formal-agent:next-run-at',
   FORMAL_AGENT_RENEW_RUN_LEASE: 'formal-agent:renew-run-lease',
+  FORMAL_AGENT_RESERVE_MODEL_REQUEST: 'formal-agent:reserve-model-request',
   FORMAL_AGENT_COMPLETE_RUN: 'formal-agent:complete-run',
   FORMAL_AGENT_FAIL_RUN: 'formal-agent:fail-run',
   MODEL_ACCESS_CATALOG: 'model-access:catalog',

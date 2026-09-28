@@ -534,6 +534,10 @@ class StorageWorkerHost {
     return this.perform(OPERATIONS.FORMAL_AGENT_RENEW_RUN_LEASE, { request }, undefined, { priorityControl: true })
   }
 
+  reserveFormalAgentModelRequest (request) {
+    return this.enqueue(OPERATIONS.FORMAL_AGENT_RESERVE_MODEL_REQUEST, { request })
+  }
+
   nextFormalAgentRunAt (request = {}) {
     return this.enqueue(OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT, request)
   }

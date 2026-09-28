@@ -7,6 +7,7 @@ const os = require('node:os')
 const path = require('node:path')
 
 const { AgentExecutionStore } = require('../../src/runtime/storage-worker/agent-execution-store')
+const { PersonalContextStore } = require('../../src/runtime/storage-worker/personal-context-store')
 const { canonicalize, sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
 const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
@@ -53,6 +54,18 @@ function insertRun (database, {
   const inputWatermark = { throughEventOrder: 3 }
   const inputDigest = sha256Canonical({ input: runId })
   const scopeDigest = sha256Canonical(scope)
+  const budget = {
+    maxTurns: recipeId === 'report.analysis' ? 6 : 3,
+    maxRequestInputTokens: 64000,
+    maxCumulativeInputTokens: 120000,
+    maxCumulativeOutputTokens: 4096,
+    maxWallClockMs: 60000,
+    maxToolCalls: 12,
+    toolTimeoutMs: 5000,
+    maxParallelTools: 1,
+    maxToolResultBytes: 256 * 1024,
+    maxSourceTextBytes: 128 * 1024
+  }
   database.prepare(`
     INSERT INTO formal_agent_runs(
       run_id, dedupe_key, client_idempotency_key, request_digest, recipe_id, recipe_version,
@@ -99,8 +112,22 @@ function insertRun (database, {
       supportsStreaming: true,
       usageReporting
     }),
-    canonicalize({ maxTurns: recipeId === 'report.analysis' ? 6 : 3 })
+    canonicalize(budget)
   )
+  if (sessionSummaryRequestId !== null && attempt > 0 && state === 'running') {
+    database.prepare(`
+      INSERT INTO formal_agent_run_budget_state(
+        run_id,policy_version,budget_digest,max_wall_clock_ms,max_requests_per_attempt,
+        settled_elapsed_ms,conservative_elapsed_ms,request_count,accounting_known,created_at,updated_at
+      ) VALUES(?,?,?,?,?,0,0,0,1,1000,1000)
+    `).run(runId, `${recipeId}@1`, sha256Canonical(budget), budget.maxWallClockMs, budget.maxTurns)
+    database.prepare(`
+      INSERT INTO formal_agent_run_attempt_budgets(
+        run_id,attempt,owner,state,reserved_elapsed_ms,settled_elapsed_ms,conservative_elapsed_ms,
+        request_count,request_limit,created_at,updated_at
+      ) VALUES(?,?,?,'active',30000,0,0,0,?,1000,1000)
+    `).run(runId, attempt, 'worker', budget.maxTurns)
+  }
   if (recipeId === 'summary.minutes' && typeof summaryUseMemory === 'boolean') {
     database.prepare('UPDATE formal_agent_runs SET summary_use_memory=? WHERE run_id=?').run(summaryUseMemory ? 1 : 0, runId)
   }
@@ -306,6 +333,78 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: restart fences a running summary and explici
   `).get('request.recovery.summary') }, {
     run_id: 'run.recovery.summary', state: 'retry_wait', attempt_count: 1, resume_required: 0
   })
+})
+
+test('SEM-F38/SEM-T04/J30-RECOVERY: request reservations and remaining wall budget survive restart without charging offline time', (t) => {
+  let now = 2000
+  const { subtitleStore, store } = fixture(t, { now: () => now })
+  const personalContext = new PersonalContextStore({ subtitleStore, now: () => now })
+  const requestId = 'request.recovery.budget'
+  const runId = 'run.recovery.budget'
+  acceptSummaryRequest(store, { requestId, sessionId: 'session.recovery.budget' })
+  insertRun(subtitleStore.database, {
+    runId, recipeId: 'summary.minutes', state: 'queued', attempt: 0,
+    summaryUseMemory: true, scopeReference: 'session.recovery.budget', sessionSummaryRequestId: requestId
+  })
+  attachSummaryTarget(subtitleStore.database, requestId, runId, { state: 'queued', attempt: 0 })
+
+  const first = personalContext.claimNextFormalRun({
+    claimIdempotencyKey: 'claim.recovery.budget.first', owner: 'owner.recovery.budget.first',
+    leaseMs: 30000, requestedBy: 'user'
+  })
+  assert.equal(first.runId, runId)
+  assert.equal(first.remainingWallClockMs, 60000)
+
+  now += 10000
+  const renewed = personalContext.renewFormalRunLease({
+    attemptIdentity: first.attemptIdentity, leaseMs: 30000, elapsedMs: 10000
+  })
+  assert.equal(renewed.remainingWallClockMs, 50000)
+  now = first.attemptIdentity.leaseExpiresAt + 1
+  const reservation = personalContext.reserveFormalAgentModelRequest({
+    attemptIdentity: first.attemptIdentity,
+    requestSequence: 1
+  })
+  assert.equal(reservation.reserved, true, 'a queued request may reserve against its lease token after renewal while the new lease is active')
+  assert.equal(personalContext.reserveFormalAgentModelRequest({
+    attemptIdentity: first.attemptIdentity,
+    requestSequence: 1
+  }).replayed, true)
+  assert.equal(subtitleStore.database.prepare(`
+    SELECT COUNT(*) AS count FROM formal_agent_model_request_reservations WHERE run_id=? AND attempt=1
+  `).get(runId).count, 1, 'the request reservation must be durable before provider egress')
+
+  now += 5000
+  const [recovered] = store.recoverSessionSummaryRequests()
+  assert.equal(recovered.state, 'retry_wait')
+  assert.equal(recovered.resumeRequired, true)
+  assert.throws(() => personalContext.reserveFormalAgentModelRequest({
+    attemptIdentity: renewed.attemptIdentity,
+    requestSequence: 2
+  }), (error) => error.code === 'AGENT_CONTEXT_OPERATION_FAILED')
+
+  const budgetAfterRestart = subtitleStore.database.prepare(`
+    SELECT settled_elapsed_ms,conservative_elapsed_ms,request_count,accounting_known
+    FROM formal_agent_run_budget_state WHERE run_id=?
+  `).get(runId)
+  assert.deepEqual({ ...budgetAfterRestart }, {
+    settled_elapsed_ms: 10000, conservative_elapsed_ms: 30000, request_count: 1, accounting_known: 1
+  })
+  now += 24 * 60 * 60 * 1000
+  const resumed = store.resumeSessionSummaryRequest({
+    requestId, generation: recovered.generation, expectedRevision: recovered.revision
+  })
+  assert.equal(resumed.resumeRequired, false)
+  const second = personalContext.claimNextFormalRun({
+    claimIdempotencyKey: 'claim.recovery.budget.second', owner: 'owner.recovery.budget.second',
+    leaseMs: 30000, requestedBy: 'user'
+  })
+  assert.equal(second.runId, runId)
+  assert.equal(second.attemptIdentity.attempt, 2)
+  assert.equal(second.remainingWallClockMs, 20000)
+  assert.equal(subtitleStore.database.prepare(`
+    SELECT request_count FROM formal_agent_run_attempt_budgets WHERE run_id=? AND attempt=2
+  `).get(runId).request_count, 0)
 })
 
 test('SEM-F38/SEM-T04/J30-RECOVERY: an unavailable fixed prompt terminalizes its run and interaction atomically', (t) => {

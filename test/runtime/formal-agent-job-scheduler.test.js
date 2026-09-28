@@ -200,6 +200,54 @@ test('SEM-F28/J30-RECOVERY: user scheduler renews the active owner lease every t
   releaseRun()
 })
 
+test('SEM-F38/SEM-T04/J30-RECOVERY: lease settlement deducts elapsed time and enforces the renewed deadline', async () => {
+  let monotonic = 1000
+  const timers = []
+  let signal
+  let renewal
+  const identity = { runId: 'run.budget.deadline', attempt: 1, owner: 'owner.budget', leaseExpiresAt: 30000 }
+  const scheduler = new FormalAgentJobScheduler({
+    owner: identity.owner,
+    requestedBy: 'user',
+    leaseRenewEveryMs: 20,
+    monotonicNow: () => monotonic,
+    storage: {
+      claimNextFormalAgentRun: async () => ({
+        runId: identity.runId,
+        recipeId: 'summary.minutes',
+        attemptIdentity: identity,
+        remainingWallClockMs: 900
+      }),
+      renewFormalAgentRun: async (request) => {
+        renewal = request
+        return {
+          runId: identity.runId,
+          attemptIdentity: { ...request.attemptIdentity, leaseExpiresAt: identity.leaseExpiresAt + request.leaseMs },
+          remainingWallClockMs: 700
+        }
+      },
+      nextFormalAgentRunAt: async () => null
+    },
+    runner: { run: async (job) => { signal = job.signal; await new Promise(() => {}) } },
+    setTimer: (callback, delay) => { timers.push({ callback, delay }); return timers.length },
+    clearTimer: () => {}
+  })
+  scheduler.start()
+  await settled()
+  await settled()
+  assert.equal(signal.aborted, false)
+  monotonic = 1200
+  timers.find((timer) => timer.delay === 20).callback()
+  await settled()
+  assert.equal(renewal.elapsedMs, 200)
+  assert.equal(timers.some((timer) => timer.delay === 700), true)
+  timers.find((timer) => timer.delay === 700).callback()
+  await settled()
+  assert.equal(signal.aborted, true)
+  assert.equal(signal.reason.code, 'AGENT_BUDGET_EXCEEDED')
+  await scheduler.stop()
+})
+
 test('SEM-F28/SEM-T04/J30-RECOVERY: failed renewal aborts the attempt and emits only a stable diagnostic', async () => {
   const timers = []
   const diagnostics = []

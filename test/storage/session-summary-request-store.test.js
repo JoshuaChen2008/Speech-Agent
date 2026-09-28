@@ -7,6 +7,7 @@ const os = require('node:os')
 const path = require('node:path')
 
 const { AgentExecutionStore } = require('../../src/runtime/storage-worker/agent-execution-store')
+const { PersonalContextStore } = require('../../src/runtime/storage-worker/personal-context-store')
 const { publicSnapshot } = require('../../src/agent/formal-run/session-summary-run-service')
 const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
@@ -294,10 +295,71 @@ test('DB1: migration v14 to v16 preserves existing rows and old checksums and ro
   subtitleStore = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS, now: () => 4000 })
   const upgradedHistory = subtitleStore.database.prepare('SELECT version,checksum FROM schema_migrations ORDER BY version').all()
   assert.deepEqual(upgradedHistory.slice(0, 14), priorHistory)
-  assert.equal(upgradedHistory.length, 16)
+  assert.equal(upgradedHistory.length, 17)
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM sessions WHERE session_id = ?').get('session.migration').count, 1)
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM sqlite_schema WHERE name = ?').get('formal_agent_requests').count, 1)
   assert.equal(subtitleStore.database.prepare("SELECT COUNT(*) AS count FROM pragma_table_info('session_deletion_tombstones') WHERE name = 'deleted_summary_request_count'").get().count, 1)
+})
+
+test('SEM-F38/DB1/SEM-T04/J30-RECOVERY: v17 marks an unaccounted running summary unknown and fails closed on continuation', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-budget-migration-'))
+  const databasePath = path.join(root, 'speech-agent.sqlite3')
+  let subtitleStore
+  t.after(() => {
+    try { subtitleStore?.close() } catch {}
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  const v16Migrations = FORMAL_AGENT_MIGRATIONS.slice(0, 16)
+  subtitleStore = new SqliteSubtitleStore({ databasePath, migrations: v16Migrations, now: () => 1000 })
+  const priorHistory = subtitleStore.database.prepare('SELECT version,checksum FROM schema_migrations ORDER BY version').all()
+  const priorRequestStore = new AgentExecutionStore({ subtitleStore, now: () => 2000 })
+  const accepted = acceptedRequest({
+    requestId: 'request.v16.budget', sessionId: 'session.v16.budget',
+    scopeDigest: sha256Canonical({ kind: 'session', reference: 'session.v16.budget' })
+  })
+  priorRequestStore.acceptSessionSummaryRequest(accepted)
+  priorRequestStore.createRun({
+    runId: 'run.v16.budget', recipeId: 'summary.minutes', recipeVersion: '1',
+    scope: { kind: 'session', reference: accepted.sessionId }, transcriptVersion: 'raw',
+    inputWatermark: accepted.inputWatermark, inputDigest: accepted.inputDigest,
+    requestedBy: 'user', clientIdempotencyKey: 'request.v16.budget',
+    requestId: accepted.requestId, requestGeneration: 1, summaryUseMemory: true
+  })
+  subtitleStore.database.prepare(`
+    UPDATE formal_agent_runs
+    SET state='running',attempt_count=1,lease_owner='owner.v16.budget',lease_expires_at=5000
+    WHERE run_id='run.v16.budget'
+  `).run()
+  subtitleStore.close()
+
+  subtitleStore = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS, now: () => 6000 })
+  const upgradedHistory = subtitleStore.database.prepare('SELECT version,checksum FROM schema_migrations ORDER BY version').all()
+  assert.deepEqual(upgradedHistory.slice(0, 16), priorHistory)
+  assert.equal(upgradedHistory.length, 17)
+  const budget = subtitleStore.database.prepare(`
+    SELECT policy_version,budget_digest,max_wall_clock_ms,max_requests_per_attempt,accounting_known
+    FROM formal_agent_run_budget_state WHERE run_id='run.v16.budget'
+  `).get()
+  assert.deepEqual({ ...budget }, {
+    policy_version: 'unknown', budget_digest: null, max_wall_clock_ms: null,
+    max_requests_per_attempt: null, accounting_known: 0
+  })
+
+  const requestStore = new AgentExecutionStore({ subtitleStore, now: () => 7000 })
+  const [recovered] = requestStore.recoverSessionSummaryRequests()
+  assert.equal(recovered.state, 'failed')
+  assert.equal(recovered.resumeRequired, false)
+  assert.equal(recovered.errorCode, 'AGENT_RUN_UNAVAILABLE')
+  const personalContext = new PersonalContextStore({ subtitleStore, now: () => 7000 })
+  assert.equal(personalContext.claimNextFormalRun({
+    claimIdempotencyKey: 'claim.v16.budget.resume', owner: 'owner.v16.budget.resume',
+    leaseMs: 30000, requestedBy: 'user'
+  }), null)
+  const run = subtitleStore.database.prepare('SELECT state,error_code,attempt_count FROM formal_agent_runs WHERE run_id=?').get('run.v16.budget')
+  assert.deepEqual({ ...run }, { state: 'failed', error_code: 'AGENT_INTERNAL_FAILURE', attempt_count: 1 })
+  assert.equal(requestStore.getSessionSummaryRequest({ requestId: accepted.requestId }).errorCode, 'AGENT_RUN_UNAVAILABLE')
+  assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_model_request_reservations WHERE run_id=?').get('run.v16.budget').count, 0)
 })
 
 test('DB1/J30-RECOVERY: v15 accepted requests without a linked run fail closed when v16 adds frozen input identity', (t) => {

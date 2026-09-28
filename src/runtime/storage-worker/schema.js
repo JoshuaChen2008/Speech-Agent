@@ -92,6 +92,67 @@ WHERE input_watermark_json IS NULL AND transcript_version IS NULL AND input_dige
   AND route_run_id IS NULL AND target_run_id IS NULL
   AND state IN ('accepted','preparing','routing','queued','retry_wait');
 `
+/* SEM-F38 / J30-RECOVERY: keep user summary execution budget accounting
+   separate from mutable request progress. Existing attempted runs have no
+   trustworthy accounting history and are therefore marked unknown. */
+const SESSION_SUMMARY_RUN_BUDGET_SQL = `
+CREATE TABLE formal_agent_run_budget_state (
+  run_id TEXT PRIMARY KEY NOT NULL,
+  policy_version TEXT NOT NULL CHECK (length(policy_version) BETWEEN 1 AND 80),
+  budget_digest TEXT CHECK (budget_digest IS NULL OR length(budget_digest) = 64),
+  max_wall_clock_ms INTEGER CHECK (max_wall_clock_ms IS NULL OR max_wall_clock_ms > 0),
+  max_requests_per_attempt INTEGER CHECK (max_requests_per_attempt IS NULL OR max_requests_per_attempt > 0),
+  settled_elapsed_ms INTEGER NOT NULL DEFAULT 0 CHECK (settled_elapsed_ms >= 0),
+  conservative_elapsed_ms INTEGER NOT NULL DEFAULT 0 CHECK (conservative_elapsed_ms >= 0),
+  request_count INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0),
+  accounting_known INTEGER NOT NULL CHECK (accounting_known IN (0,1)),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+  CHECK ((accounting_known = 0 AND max_wall_clock_ms IS NULL AND max_requests_per_attempt IS NULL) OR
+         (accounting_known = 1 AND max_wall_clock_ms IS NOT NULL AND max_requests_per_attempt IS NOT NULL AND budget_digest IS NOT NULL)),
+  FOREIGN KEY (run_id) REFERENCES formal_agent_runs(run_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE formal_agent_run_attempt_budgets (
+  run_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL CHECK (attempt > 0),
+  owner TEXT NOT NULL CHECK (length(owner) BETWEEN 1 AND 160),
+  state TEXT NOT NULL CHECK (state IN ('active','settled','interrupted')),
+  reserved_elapsed_ms INTEGER NOT NULL DEFAULT 0 CHECK (reserved_elapsed_ms >= 0),
+  settled_elapsed_ms INTEGER NOT NULL DEFAULT 0 CHECK (settled_elapsed_ms >= 0),
+  conservative_elapsed_ms INTEGER NOT NULL DEFAULT 0 CHECK (conservative_elapsed_ms >= 0),
+  request_count INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0),
+  request_limit INTEGER NOT NULL CHECK (request_limit > 0),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+  PRIMARY KEY (run_id, attempt),
+  FOREIGN KEY (run_id) REFERENCES formal_agent_runs(run_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE formal_agent_model_request_reservations (
+  reservation_id TEXT PRIMARY KEY NOT NULL CHECK (length(reservation_id) = 64),
+  run_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL CHECK (attempt > 0),
+  request_sequence INTEGER NOT NULL CHECK (request_sequence > 0),
+  owner TEXT NOT NULL CHECK (length(owner) BETWEEN 1 AND 160),
+  response_received_at INTEGER CHECK (response_received_at IS NULL OR response_received_at >= 0),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  UNIQUE (run_id, attempt, request_sequence),
+  FOREIGN KEY (run_id, attempt) REFERENCES formal_agent_run_attempt_budgets(run_id, attempt) ON DELETE CASCADE
+) STRICT;
+
+CREATE INDEX formal_agent_request_reservations_attempt
+  ON formal_agent_model_request_reservations(run_id, attempt, request_sequence);
+
+INSERT INTO formal_agent_run_budget_state(
+  run_id,policy_version,budget_digest,max_wall_clock_ms,max_requests_per_attempt,
+  settled_elapsed_ms,conservative_elapsed_ms,request_count,accounting_known,created_at,updated_at
+)
+SELECT run_id,'unknown',NULL,NULL,NULL,0,0,0,0,created_at,updated_at
+FROM formal_agent_runs
+WHERE session_summary_request_id IS NOT NULL AND attempt_count > 0
+  AND state IN ('running','retry_wait');
+`
 const FORMAL_AGENT_MIGRATIONS = Object.freeze([
   ...history.FORMAL_AGENT_MIGRATIONS,
   Object.freeze({ version: 10, sql: RETIREMENT_SQL, checksum: history.checksum(RETIREMENT_SQL) }),
@@ -100,7 +161,8 @@ const FORMAL_AGENT_MIGRATIONS = Object.freeze([
   Object.freeze({ version: 13, sql: RECOGNITION_SESSION_SQL, checksum: history.checksum(RECOGNITION_SESSION_SQL) }),
   Object.freeze({ version: 14, sql: SUMMARY_INPUT_LIMIT_ERROR_SQL, checksum: history.checksum(SUMMARY_INPUT_LIMIT_ERROR_SQL) }),
   Object.freeze({ version: 15, sql: SESSION_SUMMARY_REQUEST_SQL, checksum: history.checksum(SESSION_SUMMARY_REQUEST_SQL) }),
-  Object.freeze({ version: 16, sql: SESSION_SUMMARY_INPUT_IDENTITY_SQL, checksum: history.checksum(SESSION_SUMMARY_INPUT_IDENTITY_SQL) })
+  Object.freeze({ version: 16, sql: SESSION_SUMMARY_INPUT_IDENTITY_SQL, checksum: history.checksum(SESSION_SUMMARY_INPUT_IDENTITY_SQL) }),
+  Object.freeze({ version: 17, sql: SESSION_SUMMARY_RUN_BUDGET_SQL, checksum: history.checksum(SESSION_SUMMARY_RUN_BUDGET_SQL) })
 ])
 module.exports = {
   ...history,
@@ -109,6 +171,7 @@ module.exports = {
   SUMMARY_INPUT_LIMIT_ERROR_SQL,
   SESSION_SUMMARY_REQUEST_SQL,
   SESSION_SUMMARY_INPUT_IDENTITY_SQL,
+  SESSION_SUMMARY_RUN_BUDGET_SQL,
   FORMAL_AGENT_MIGRATIONS,
-  FORMAL_AGENT_SCHEMA_VERSION: 16
+  FORMAL_AGENT_SCHEMA_VERSION: 17
 }

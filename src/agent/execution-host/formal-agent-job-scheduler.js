@@ -1,6 +1,7 @@
 'use strict'
 
 const crypto = require('node:crypto')
+const { performance } = require('node:perf_hooks')
 
 const DIAGNOSTIC = Object.freeze({ code: 'AGENT_SCHEDULER_FAILED' })
 
@@ -23,6 +24,7 @@ class FormalAgentJobScheduler {
       : Math.max(1, Math.floor(this.leaseMs / 3))
     this.retryMs = Number.isSafeInteger(options.retryMs) && options.retryMs > 0 ? options.retryMs : 1000
     this.now = typeof options.now === 'function' ? options.now : Date.now
+    this.monotonicNow = typeof options.monotonicNow === 'function' ? options.monotonicNow : () => performance.now()
     this.setTimer = typeof options.setTimer === 'function' ? options.setTimer : setTimeout
     this.clearTimer = typeof options.clearTimer === 'function' ? options.clearTimer : clearTimeout
     this.queue = typeof options.queueMicrotask === 'function' ? options.queueMicrotask : queueMicrotask
@@ -35,6 +37,7 @@ class FormalAgentJobScheduler {
     this.queued = false
     this.timer = null
     this.leaseTimer = null
+    this.budgetTimer = null
     this.pendingClaim = null
     this.activeController = null
     this.activeRunId = null
@@ -69,6 +72,7 @@ class FormalAgentJobScheduler {
     this.activeController = null
     this.activeRunId = null
     this.cancelLeaseTimer()
+    this.cancelBudgetTimer()
     this.cancelTimer()
   }
 
@@ -129,6 +133,7 @@ class FormalAgentJobScheduler {
       while (this.active(generation)) {
         const observedEpoch = this.wakeEpoch
         let job
+        const claimStartedAt = this.monotonicNow()
         try {
           job = await this.storage.claimNextFormalAgentRun(this.nextClaimIdentity())
           this.pendingClaim = null
@@ -146,13 +151,38 @@ class FormalAgentJobScheduler {
           const controller = new AbortController()
           this.activeController = controller
           this.activeRunId = typeof job.runId === 'string' ? job.runId : job.attemptIdentity?.runId || null
-          this.armLeaseRenewal(job, controller, generation)
+          const budgetTracking = Number.isSafeInteger(job.remainingWallClockMs) && job.remainingWallClockMs >= 0
+            ? {
+                checkpointAt: claimStartedAt,
+                pendingLatencyMs: 0,
+                remainingWallClockMs: job.remainingWallClockMs
+              }
+            : null
+          this.activeBudgetTracking = budgetTracking
+          const executionJob = budgetTracking
+            ? {
+                ...job,
+                getRemainingWallClockMs: () => Math.max(0, Math.floor(
+                  budgetTracking.remainingWallClockMs - budgetTracking.pendingLatencyMs -
+                  Math.max(0, this.monotonicNow() - budgetTracking.checkpointAt)
+                )),
+                getWallClockElapsedMs: () => Math.max(0, Math.floor(
+                  budgetTracking.pendingLatencyMs + Math.max(0, this.monotonicNow() - budgetTracking.checkpointAt)
+                ))
+              }
+            : job
+          this.armLeaseRenewal(executionJob, controller, generation)
+          if (budgetTracking) this.armBudgetDeadline(executionJob, controller, generation)
           try {
-            await this.runner.run({ ...job, signal: controller.signal })
+            await this.runner.run({ ...executionJob, signal: controller.signal })
           } catch {
             this.diagnostic()
           } finally {
-            if (this.activeController === controller) this.cancelLeaseTimer()
+            if (this.activeController === controller) {
+              this.cancelLeaseTimer()
+              this.cancelBudgetTimer()
+              this.activeBudgetTracking = null
+            }
             if (this.activeController === controller) this.activeController = null
             if (this.activeController === null) this.activeRunId = null
           }
@@ -209,9 +239,16 @@ class FormalAgentJobScheduler {
       return
     }
     try {
+      const callStartedAt = this.monotonicNow()
+      const budgetTracking = this.activeBudgetTracking
       const renewed = await this.storage.renewFormalAgentRun({
         attemptIdentity: { ...attempt },
-        leaseMs: this.leaseMs
+        leaseMs: this.leaseMs,
+        ...(budgetTracking ? {
+          elapsedMs: Math.max(0, Math.floor(
+            budgetTracking.pendingLatencyMs + Math.max(0, callStartedAt - budgetTracking.checkpointAt)
+          ))
+        } : {})
       })
       if (!this.active(generation) || this.activeController !== controller || controller.signal.aborted) return
       const next = renewed?.attemptIdentity
@@ -221,6 +258,21 @@ class FormalAgentJobScheduler {
         return
       }
       attempt.leaseExpiresAt = next.leaseExpiresAt
+      if (budgetTracking) {
+        if (!Number.isSafeInteger(renewed.remainingWallClockMs) || renewed.remainingWallClockMs < 0) {
+          this.leaseLost(controller)
+          return
+        }
+        const responseAt = this.monotonicNow()
+        budgetTracking.pendingLatencyMs = Math.max(0, responseAt - callStartedAt)
+        budgetTracking.checkpointAt = responseAt
+        budgetTracking.remainingWallClockMs = renewed.remainingWallClockMs
+        if (job.getRemainingWallClockMs() <= 0) {
+          this.budgetExceeded(controller)
+          return
+        }
+        this.armBudgetDeadline(job, controller, generation)
+      }
       this.armLeaseRenewal(job, controller, generation)
     } catch {
       this.leaseLost(controller)
@@ -234,10 +286,44 @@ class FormalAgentJobScheduler {
     this.abortController(controller, 'AGENT_LEASE_LOST')
   }
 
+  armBudgetDeadline (job, controller, generation) {
+    this.cancelBudgetTimer()
+    if (!this.active(generation) || this.activeController !== controller || controller.signal.aborted ||
+        typeof job.getRemainingWallClockMs !== 'function') return
+    const remaining = job.getRemainingWallClockMs()
+    if (remaining <= 0) {
+      this.budgetExceeded(controller)
+      return
+    }
+    try {
+      this.budgetTimer = this.setTimer(() => {
+        this.budgetTimer = null
+        if (!this.active(generation) || this.activeController !== controller || controller.signal.aborted) return
+        this.budgetExceeded(controller)
+      }, remaining)
+    } catch {
+      this.budgetExceeded(controller)
+    }
+  }
+
+  budgetExceeded (controller) {
+    if (controller !== this.activeController || controller.signal.aborted) return false
+    this.cancelLeaseTimer()
+    this.cancelBudgetTimer()
+    this.abortController(controller, 'AGENT_BUDGET_EXCEEDED')
+    return true
+  }
+
   cancelLeaseTimer () {
     if (this.leaseTimer === null) return
     this.clearTimer(this.leaseTimer)
     this.leaseTimer = null
+  }
+
+  cancelBudgetTimer () {
+    if (this.budgetTimer === null) return
+    this.clearTimer(this.budgetTimer)
+    this.budgetTimer = null
   }
 
   arm (delay, generation) {

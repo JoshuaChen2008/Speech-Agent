@@ -268,6 +268,35 @@ test('SEM-F33/J25: production loop adapter maps redirects, provider failures, ma
   ])
 })
 
+test('SEM-F38/SEM-T04/J30-RECOVERY: a durable request reservation gates provider egress', async () => {
+  const order = []
+  const request = {
+    connection: { httpsOrigin: 'https://example.test', basePath: '/' },
+    credential: Buffer.from('secret'),
+    resolvedModel: { modelId: 'model.one', capabilities: {
+      maxOutputTokens: 1024, supportsToolCalling: false, supportsStructuredOutput: false, usageReporting: true
+    } },
+    prompt: 'prompt',
+    beforeRequest: async ({ turn }) => { order.push(`reserved:${turn}`) }
+  }
+  const adapter = new OpenAiCompatibleAdapter({
+    fetch: async () => {
+      order.push('provider-egress')
+      return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: 'ok' } }] }) }
+    }
+  })
+  await adapter.run(request)
+  assert.deepEqual(order, ['reserved:1', 'provider-egress'])
+
+  let fetchCount = 0
+  const blocked = new OpenAiCompatibleAdapter({ fetch: async () => { fetchCount += 1 } })
+  await assert.rejects(blocked.run({
+    ...request,
+    beforeRequest: async () => { throw Object.assign(new Error('reservation unavailable'), { code: 'AGENT_RUN_UNAVAILABLE' }) }
+  }), (error) => error.code === 'AGENT_RUN_UNAVAILABLE')
+  assert.equal(fetchCount, 0)
+})
+
 test('SEM-F33/J25: formal auth rejection invalidates only the bound profile credential', async (t) => {
   const { instance } = vault(t, true)
   const slot = 'slot.0123456789abcdef0123456789abcdef'

@@ -31,7 +31,7 @@
 - [x] 3.3 模型前返回持久身份；summary动作用preset，question保留真实路由器；取消阻止兜底/目标创建，未知回执同键收敛；覆盖取消写失败的重试路径（J30-ACCEPT/CANCEL）。
 - [x] 3.4 快照连接真实阶段事件，区分elapsed/activity、attempt/块计数及尚未读取记忆；不把心跳当进展（J30-PROGRESS）。
 - [x] 3.5 取消贯穿路由/分页/模型/工具，增加非合作provider期限及迟到回写屏障，覆盖永不settle、迟到reject、结果提交竞态（J30-CANCEL）。实现完成·尚未验收：路由、模型、工具、输入读取和期限屏障已有覆盖；StorageGateway 信号贯穿 128 段 keyset 页读取，worker 入口收到独立取消控制消息后中断当前读取，真实 SQLite/worker 入口合成旅程验证后续存储命令仍可执行。字节上限、长段 code point 范围读取与完整 J30-CANCEL 联合验收仍待 P2/阶段验收。
-- [ ] 3.6 实现续租/失租停止、owner/attempt写屏障、控制优先与有界退出；验证旧代次不得提交、跨重启剩余预算不清零（J30-RECOVERY）。
+- [x] 3.6 实现续租/失租停止、owner/attempt写屏障、控制优先与有界退出；验证旧代次不得提交、跨重启剩余预算不清零（J30-RECOVERY）。实现完成·尚未验收：追加 v17 预算账本，迁移时把无法可靠核算的既有活动总结标为 unknown 并在恢复时失败关闭；新领取持久化 attempt/time/request 预算，调度器按 monotonic elapsed 续租结算，崩溃恢复保守计入未结算租约，请求预留落库后才允许 provider 外发。真实 scheduler/runner/ModelAccess/StorageGateway/StorageWorkerService/SQLite 旅程验证续租→停止→同库重开→明确继续复用 run 和 binding、attempt 递增、旧 attempt 写入拒绝与字幕会话独立写入；v16→v17 迁移回归验证旧 checksum 保留。定向 177/177；正式 Electron 窗口、真实模型/公网和完整 J30-RECOVERY 联合验收仍待验证。
 - [x] 3.7 重启后明确继续总结：固定提示按版本重建，自由问题提示缺失要求重新提交；关闭窗口与取消分别处理（J30-RECOVERY）。实现完成·尚未验收：恢复列表显式提供继续/重新输入；固定总结按提示版本恢复到同一 target run，冻结来源复核后经 request revision CAS 继续；丢失问题重新输入期间锁定原会话范围，新请求成功受理时在同一 SQLite 事务清除旧待重新提交标记并保留旧失败事实；关闭 Agent 窗不触发取消。真实 storage worker/SQLite/preload/IPC/service 确定性旅程和 AgentView harness 已验证，完整 scheduler 生命周期与 J30 联合验收仍待后续任务。
 
 ## 4. P1 本地诊断

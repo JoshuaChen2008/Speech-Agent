@@ -692,6 +692,50 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: formal claims exclude resume-pending and exh
     requestedBy: 'user', clientIdempotencyKey: 'request.summary-resume-gate.generation.1',
     summaryUseMemory: true, requestId: 'request.summary-resume-gate', requestGeneration: 1
   })
+  const budget = {
+    maxTurns: 3,
+    maxRequestInputTokens: 64000,
+    maxCumulativeInputTokens: 120000,
+    maxCumulativeOutputTokens: 4096,
+    maxWallClockMs: 60000,
+    maxToolCalls: 12,
+    toolTimeoutMs: 5000,
+    maxParallelTools: 1,
+    maxToolResultBytes: 256 * 1024,
+    maxSourceTextBytes: 128 * 1024
+  }
+  subtitleStore.database.prepare(`
+    INSERT INTO agent_model_run_bindings(
+      run_id, execution_form, purpose, assignment_mode, profile_id, profile_revision,
+      adapter_id, api_style, https_origin, base_path, model_id, capability_json,
+      budget_json, provider_kind, credential_slot_id, created_at
+    ) VALUES (?, 'agent_loop', 'summary', 'direct', 'profile.test', 1,
+      'openai-compatible', 'chat-completions', 'https://provider.test', '/v1',
+      'model.test', ?, ?, 'cloud', 'slot.test.00000001', 1000)
+  `).run(
+    'run.summary-resume-gate',
+    canonicalize({
+      maxInputTokens: 64000,
+      maxOutputTokens: 4096,
+      supportsToolCalling: true,
+      supportsStructuredOutput: true,
+      supportsStreaming: true,
+      usageReporting: false
+    }),
+    canonicalize(budget)
+  )
+  subtitleStore.database.prepare(`
+    INSERT INTO formal_agent_run_budget_state(
+      run_id, policy_version, budget_digest, max_wall_clock_ms, max_requests_per_attempt,
+      settled_elapsed_ms, conservative_elapsed_ms, request_count, accounting_known, created_at, updated_at
+    ) VALUES (?, 'summary.minutes@1', ?, ?, ?, 10000, 0, 0, 1, 1000, 1000)
+  `).run('run.summary-resume-gate', sha256Canonical(budget), budget.maxWallClockMs, budget.maxTurns)
+  subtitleStore.database.prepare(`
+    INSERT INTO formal_agent_run_attempt_budgets(
+      run_id, attempt, owner, state, reserved_elapsed_ms, settled_elapsed_ms, conservative_elapsed_ms,
+      request_count, request_limit, created_at, updated_at
+    ) VALUES (?, 1, 'owner.summary.resume-gate', 'interrupted', 0, 10000, 0, 0, ?, 1000, 1000)
+  `).run('run.summary-resume-gate', budget.maxTurns)
   subtitleStore.database.prepare(`
     UPDATE formal_agent_runs SET state='retry_wait',attempt_count=1,resume_required=0,next_attempt_at=0
     WHERE run_id=?

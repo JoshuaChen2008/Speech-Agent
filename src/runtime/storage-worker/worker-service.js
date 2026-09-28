@@ -222,6 +222,10 @@ class StorageWorkerService {
       assertExactKeys(payload, ['request'])
       return this.requirePersonalContextStore().renewFormalRunLease(payload.request)
     }
+    if (operation === OPERATIONS.FORMAL_AGENT_RESERVE_MODEL_REQUEST) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().reserveFormalAgentModelRequest(payload.request)
+    }
     if (operation === OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT) {
       if (!payload || typeof payload !== 'object' || Array.isArray(payload) ||
           (Object.keys(payload).length !== 0 && Object.keys(payload).join(',') !== 'requestedBy')) {

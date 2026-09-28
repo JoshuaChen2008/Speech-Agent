@@ -8,6 +8,7 @@
 
 const { canonicalize, sha256Canonical } = require('./canonical-json')
 const { rollbackQuietly } = require('./sqlite-store')
+const { interruptActiveAttempt, remainingWallClockMs, settleActiveAttempt } = require('./session-summary-budget')
 const {
   StorageError,
   isPlainObject
@@ -936,6 +937,9 @@ class AgentExecutionStore {
         const interaction = run ? this.database.prepare(
           'SELECT * FROM formal_agent_interactions WHERE run_id=?'
         ).get(run.run_id) : null
+        if (run?.state === 'running' && typeof run.session_summary_request_id === 'string') {
+          interruptActiveAttempt(this.database, run.run_id, now)
+        }
         if (request.cancel_requested !== 0 || run?.cancel_requested_at !== null && run?.cancel_requested_at !== undefined) {
           if (run && ['queued', 'retry_wait', 'running'].includes(run.state)) {
             this.database.prepare(`
@@ -989,17 +993,25 @@ class AgentExecutionStore {
           continue
         }
 
-        if (run && Number(run.attempt_count) >= Number(run.max_attempts)) {
+        const budget = run && typeof run.session_summary_request_id === 'string'
+          ? this.database.prepare('SELECT * FROM formal_agent_run_budget_state WHERE run_id=?').get(run.run_id)
+          : null
+        const budgetIsUnaccounted = Boolean(run && typeof run.session_summary_request_id === 'string' &&
+          Number(run.attempt_count) > 0 && (!budget || Number(budget.accounting_known) !== 1))
+        const budgetIsExhausted = Boolean(budget && Number(budget.accounting_known) === 1 && remainingWallClockMs(budget) <= 0)
+        if (run && (Number(run.attempt_count) >= Number(run.max_attempts) || budgetIsUnaccounted || budgetIsExhausted)) {
+          const recoveryErrorCode = budgetIsUnaccounted ? 'AGENT_INTERNAL_FAILURE' : 'AGENT_BUDGET_EXCEEDED'
+          const requestErrorCode = budgetIsUnaccounted ? 'AGENT_RUN_UNAVAILABLE' : recoveryErrorCode
           this.database.prepare(`
-            UPDATE formal_agent_runs SET state='failed',error_code='AGENT_BUDGET_EXCEEDED',lease_owner=NULL,
+            UPDATE formal_agent_runs SET state='failed',error_code=?,lease_owner=NULL,
               lease_expires_at=NULL,lease_renewed_from_expires_at=NULL,resume_required=0,
               result_digest=NULL,result_summary_json=NULL,updated_at=? WHERE run_id=?
-          `).run(now, run.run_id)
+          `).run(recoveryErrorCode, now, run.run_id)
           if (interaction && interaction.terminal_reason === null) {
             this.database.prepare(`
-              UPDATE formal_agent_interactions SET terminal_reason='failed',error_code='AGENT_BUDGET_EXCEEDED',
+              UPDATE formal_agent_interactions SET terminal_reason='failed',error_code=?,
                 usage_json=NULL,result_json=NULL,result_digest=NULL,terminal_at=? WHERE interaction_id=? AND terminal_reason IS NULL
-            `).run(now, interaction.interaction_id)
+            `).run(recoveryErrorCode, now, interaction.interaction_id)
             this.database.prepare(`
               UPDATE formal_agent_tool_calls SET ended_offset_ms=started_offset_ms,status='cancelled',
                 error_code='TOOL_CANCELLED',result_json=NULL,result_digest=NULL
@@ -1008,8 +1020,8 @@ class AgentExecutionStore {
           }
           this.database.prepare(`
             UPDATE formal_agent_requests SET state='failed',phase='terminal',resume_required=0,
-              error_code='AGENT_BUDGET_EXCEEDED',revision=revision+1,updated_at=? WHERE request_id=?
-          `).run(now, request.request_id)
+              error_code=?,revision=revision+1,updated_at=? WHERE request_id=?
+          `).run(requestErrorCode, now, request.request_id)
           continue
         }
 
@@ -1138,10 +1150,11 @@ class AgentExecutionStore {
   }
 
   terminalizeInteraction (input) {
-    exactObject(input, ['interactionId', 'terminalReason', 'errorCode', 'result', 'usage', 'durationMs'], ['attemptIdentity'])
+    exactObject(input, ['interactionId', 'terminalReason', 'errorCode', 'result', 'usage', 'durationMs'], ['attemptIdentity', 'wallClockElapsedMs'])
     const interactionId = identifier(input.interactionId)
     if (!TERMINAL_REASONS.includes(input.terminalReason)) fail('AGENT_REQUEST_INVALID')
     nonNegativeInteger(input.durationMs)
+    if (input.wallClockElapsedMs !== undefined) nonNegativeInteger(input.wallClockElapsedMs)
     const terminalReason = input.terminalReason
     if (terminalReason === 'failed') {
       if (!TASK_ERROR_CODES.includes(input.errorCode)) fail('AGENT_REQUEST_INVALID')
@@ -1180,8 +1193,8 @@ class AgentExecutionStore {
         }
       }
       const binding = this.bindingForRun(run)
-      const storedError = storedErrorCode(input.errorCode)
-      const summaryMemoryError = input.errorCode === SUMMARY_MEMORY_ERROR ? 1 : 0
+      let storedError = storedErrorCode(input.errorCode)
+      let summaryMemoryError = input.errorCode === SUMMARY_MEMORY_ERROR ? 1 : 0
       if (row.terminal_reason === null && ['succeeded', 'failed', 'cancelled'].includes(run.state)) {
         fail('AGENT_INTERACTION_STATE_CONFLICT')
       }
@@ -1214,7 +1227,32 @@ class AgentExecutionStore {
         return rowInteraction(row, true)
       }
       if (now < Number(row.created_at)) fail('STORAGE_COMMAND_FAILED')
-      const summaryInputLimitError = input.errorCode === SUMMARY_INPUT_LIMIT_ERROR ? 1 : 0
+      const budgetState = typeof run.session_summary_request_id === 'string'
+        ? this.database.prepare('SELECT * FROM formal_agent_run_budget_state WHERE run_id=?').get(run.run_id)
+        : null
+      const inputLimitFailure = input.errorCode === SUMMARY_INPUT_LIMIT_ERROR
+      let budgetOverrodeFailure = false
+      if (budgetState) {
+        let settlement
+        if (input.wallClockElapsedMs === undefined) {
+          if (terminalReason === 'succeeded') fail('AGENT_RUN_UNAVAILABLE')
+          settlement = interruptActiveAttempt(this.database, run.run_id, now)
+        } else {
+          if (input.attemptIdentity === undefined) fail('AGENT_CONTEXT_OPERATION_FAILED')
+          settlement = settleActiveAttempt(this.database, {
+            attemptIdentity: input.attemptIdentity,
+            elapsedMs: input.wallClockElapsedMs,
+            now
+          })
+        }
+        if (settlement?.exhausted && terminalReason !== 'cancelled') {
+          if (terminalReason === 'succeeded') fail('AGENT_BUDGET_EXCEEDED')
+          storedError = 'AGENT_BUDGET_EXCEEDED'
+          summaryMemoryError = 0
+          budgetOverrodeFailure = true
+        }
+      }
+      const summaryInputLimitError = inputLimitFailure && !budgetOverrodeFailure ? 1 : 0
       this.database.prepare(`
         UPDATE formal_agent_interactions
         SET terminal_reason=?, error_code=?, summary_memory_error=?, summary_input_limit_error=?, usage_json=?, duration_ms=?, result_json=? ,
@@ -1247,7 +1285,9 @@ class AgentExecutionStore {
         `).run(now, row.run_id)
       }
       const summaryRequestState = terminalReason === 'succeeded' ? 'succeeded' : terminalReason
-      const summaryRequestError = terminalReason === 'failed' ? input.errorCode : null
+      const summaryRequestError = terminalReason === 'failed'
+        ? inputLimitFailure && !budgetOverrodeFailure ? SUMMARY_INPUT_LIMIT_ERROR : storedError
+        : null
       this.database.prepare(`
         UPDATE formal_agent_requests SET state=?,phase='terminal',error_code=?,revision=revision+1,updated_at=?
         WHERE target_run_id=? AND state NOT IN ('succeeded','failed','cancelled')

@@ -218,11 +218,12 @@ class FormalAgentRunRunner {
     if (phase) await this.reportProgress(job, { phase, activity: false })
   }
 
-  async terminalizeFailure (interactionId, attemptIdentity, code, durationMs, signal) {
+  async terminalizeFailure (interactionId, attemptIdentity, code, durationMs, signal, wallClockElapsedMs = undefined) {
     try {
       await this.interactions.terminalize({
         interactionId, attemptIdentity: { ...attemptIdentity }, terminalReason: 'failed', errorCode: code,
-        result: null, usage: null, durationMs
+        result: null, usage: null, durationMs,
+        ...(wallClockElapsedMs === undefined ? {} : { wallClockElapsedMs })
       }, signal)
       return true
     } catch {
@@ -231,11 +232,22 @@ class FormalAgentRunRunner {
   }
 
   async run (job) {
-    exactObject(job, ['recipeId', 'source', 'attemptIdentity'], ['interactionId', 'requestedBy', 'signal', 'runId', 'summaryUseMemory', 'sessionSummaryRequest'])
+    exactObject(job, ['recipeId', 'source', 'attemptIdentity'], [
+      'interactionId', 'requestedBy', 'signal', 'runId', 'summaryUseMemory', 'sessionSummaryRequest',
+      'getRemainingWallClockMs', 'getWallClockElapsedMs', 'remainingWallClockMs', 'requestCount', 'requestLimit'
+    ])
     if (!TARGET_RECIPES.has(job.recipeId) || job.requestedBy !== undefined && job.requestedBy !== 'user') {
       throw codedError('AGENT_REQUEST_INVALID')
     }
     if (job.summaryUseMemory !== undefined && typeof job.summaryUseMemory !== 'boolean') throw codedError('AGENT_REQUEST_INVALID')
+    if (job.requestCount !== undefined && (!Number.isSafeInteger(job.requestCount) || job.requestCount < 0) ||
+        job.requestLimit !== undefined && (!Number.isSafeInteger(job.requestLimit) || job.requestLimit < 1) ||
+        job.requestCount !== undefined && job.requestLimit !== undefined && job.requestCount > job.requestLimit) {
+      throw codedError('AGENT_REQUEST_INVALID')
+    }
+    if (job.remainingWallClockMs !== undefined && (!Number.isSafeInteger(job.remainingWallClockMs) || job.remainingWallClockMs < 0)) {
+      throw codedError('AGENT_REQUEST_INVALID')
+    }
     if (job.runId !== undefined && job.runId !== job.attemptIdentity.runId) throw codedError('AGENT_REQUEST_INVALID')
     if (job.sessionSummaryRequest !== undefined && (!job.sessionSummaryRequest || typeof job.sessionSummaryRequest !== 'object' ||
         Array.isArray(job.sessionSummaryRequest) || Object.keys(job.sessionSummaryRequest).sort().join(',') !== 'generation,requestId' ||
@@ -252,7 +264,7 @@ class FormalAgentRunRunner {
       const recipe = getRecipe(job.recipeId, '1')
       const userPrompt = this.promptProvider(job.attemptIdentity.runId)
       if (typeof userPrompt !== 'string' || userPrompt.length === 0) throw codedError('AGENT_REQUEST_INVALID')
-      if (job.signal?.aborted) throw codedError('AGENT_CANCELLED')
+      if (job.signal?.aborted) throw codedError(job.signal.reason?.code === 'AGENT_BUDGET_EXCEEDED' ? 'AGENT_BUDGET_EXCEEDED' : 'AGENT_CANCELLED')
       const binding = await awaitWithCancellation(() => this.modelAccess.bind({
         runId: job.attemptIdentity.runId,
         recipeId: recipe.recipeId,
@@ -286,6 +298,24 @@ class FormalAgentRunRunner {
       }
       const loop = await awaitWithCancellation(() => this.loopFactory(binding), job.signal)
       if (!loop || typeof loop.agentLoop !== 'function') throw codedError('AGENT_INTERNAL_FAILURE')
+      let requestSequence = Number.isSafeInteger(job.requestCount) ? job.requestCount : 0
+      const beforeRequest = async () => {
+        if (job.signal?.aborted) throw codedError(job.signal.reason?.code === 'AGENT_BUDGET_EXCEEDED' ? 'AGENT_BUDGET_EXCEEDED' : 'AGENT_CANCELLED')
+        if (typeof job.getRemainingWallClockMs === 'function' && job.getRemainingWallClockMs() <= 0) {
+          throw codedError('AGENT_BUDGET_EXCEEDED')
+        }
+        if (!job.sessionSummaryRequest) return
+        if (typeof this.storage.reserveFormalAgentModelRequest !== 'function') throw codedError('AGENT_RUN_UNAVAILABLE')
+        requestSequence += 1
+        await awaitWithCancellation(() => this.storage.reserveFormalAgentModelRequest({
+          attemptIdentity: { ...job.attemptIdentity },
+          requestSequence
+        }), job.signal)
+      }
+      const remainingWallClockMs = typeof job.getRemainingWallClockMs === 'function'
+        ? job.getRemainingWallClockMs()
+        : Number.isSafeInteger(job.remainingWallClockMs) ? job.remainingWallClockMs : binding.budget.maxWallClockMs
+      if (remainingWallClockMs <= 0) throw codedError('AGENT_BUDGET_EXCEEDED')
       const result = await loop.agentLoop({
         recipeId: recipe.recipeId,
         recipeVersion: recipe.recipeVersion,
@@ -293,6 +323,8 @@ class FormalAgentRunRunner {
         resolvedModel: binding,
         tools,
         signal: job.signal,
+        timeoutMs: Math.min(binding.budget.maxWallClockMs, remainingWallClockMs),
+        beforeRequest,
         onProgress: (event) => this.reportProgress(job, event),
         budget: binding.budget,
         usageReporting: binding?.capabilities?.usageReporting !== false
@@ -313,7 +345,10 @@ class FormalAgentRunRunner {
           errorCode: null,
           result: output,
           usage: usageValue(result?.usage, binding?.capabilities?.usageReporting),
-          durationMs
+          durationMs,
+          ...(typeof job.getWallClockElapsedMs === 'function'
+            ? { wallClockElapsedMs: job.getWallClockElapsedMs() }
+            : {})
         }, job.signal)
         terminalReason = 'succeeded'
         return terminal
@@ -325,7 +360,9 @@ class FormalAgentRunRunner {
       }
     } catch (error) {
       if (['AGENT_SCHEDULER_STOPPED', 'AGENT_LEASE_LOST'].includes(job.signal?.reason?.code)) return null
-      const code = normalizedErrorCode(error)
+      const code = job.signal?.reason?.code === 'AGENT_BUDGET_EXCEEDED'
+        ? 'AGENT_BUDGET_EXCEEDED'
+        : normalizedErrorCode(error)
       const durationMs = Math.max(0, this.now() - startedAt)
       if (code === 'AGENT_CANCELLED') {
         await this.flushProgress(job)
@@ -335,23 +372,37 @@ class FormalAgentRunRunner {
             interactionId: job.interactionId,
             attemptIdentity: { ...job.attemptIdentity },
             terminalReason: 'cancelled',
-            errorCode: null, result: null, usage: null, durationMs
+            errorCode: null, result: null, usage: null, durationMs,
+            ...(typeof job.getWallClockElapsedMs === 'function'
+              ? { wallClockElapsedMs: job.getWallClockElapsedMs() }
+              : {})
           }, job.signal?.reason?.code === 'AGENT_CANCELLED' ? undefined : job.signal)
           terminalReason = 'cancelled'
         } catch { /* cancelRun may have already terminalized the interaction */ }
       } else if (TERMINAL_ERRORS.has(code)) {
         await this.flushProgress(job)
         if (schedulerInterrupted(job.signal)) return null
-        if (await this.terminalizeFailure(job.interactionId, job.attemptIdentity, code, durationMs, job.signal)) terminalReason = 'failed'
+        const writeSignal = job.signal?.reason?.code === 'AGENT_BUDGET_EXCEEDED' ? undefined : job.signal
+        if (await this.terminalizeFailure(
+          job.interactionId, job.attemptIdentity, code, durationMs, writeSignal,
+          typeof job.getWallClockElapsedMs === 'function' ? job.getWallClockElapsedMs() : undefined
+        )) terminalReason = 'failed'
       } else {
         const settlement = await this.storage.failFormalAgentRun({
           attemptIdentity: job.attemptIdentity,
-          errorCode: code
-        }, job.signal).catch(() => null)
+          errorCode: code,
+          ...(typeof job.getWallClockElapsedMs === 'function'
+            ? { elapsedMs: job.getWallClockElapsedMs() }
+            : {})
+        }, job.signal?.reason?.code === 'AGENT_BUDGET_EXCEEDED' ? undefined : job.signal).catch(() => null)
         if (settlement?.state === 'failed') {
           await this.flushProgress(job)
           if (schedulerInterrupted(job.signal)) return null
-          if (await this.terminalizeFailure(job.interactionId, job.attemptIdentity, code, durationMs, job.signal)) terminalReason = 'failed'
+          if (await this.terminalizeFailure(
+            job.interactionId, job.attemptIdentity, settlement.errorCode || code, durationMs,
+            job.signal?.reason?.code === 'AGENT_BUDGET_EXCEEDED' ? undefined : job.signal,
+            typeof job.getWallClockElapsedMs === 'function' ? job.getWallClockElapsedMs() : undefined
+          )) terminalReason = 'failed'
         } else if (settlement?.state === 'retry_wait') {
           await this.reportProgress(job, { phase: 'retry_wait', state: 'retry_wait', activity: false })
         }

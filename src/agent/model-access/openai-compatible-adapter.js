@@ -220,6 +220,7 @@ class OpenAiCompatibleAdapter {
     timeoutMs = DEFAULT_TIMEOUT_MS,
     signal,
     onProgress,
+    beforeRequest,
     shouldStopAfterTurn = null,
     requestStrategy = 'openai-compatible@1',
     testMode = false
@@ -315,6 +316,10 @@ class OpenAiCompatibleAdapter {
           'content-type': 'application/json'
         }
         const requestTurn = turn + 1
+        if (typeof beforeRequest === 'function') await beforeRequest(Object.freeze({ turn: requestTurn }))
+        if (signal?.aborted) {
+          throw codedError(signal.reason?.code === 'AGENT_BUDGET_EXCEEDED' ? 'AGENT_BUDGET_EXCEEDED' : 'AGENT_CANCELLED', false)
+        }
         let responsePromise
         try {
           responsePromise = this.fetch(joinEndpoint(endpointConnection, '/chat/completions'), {

@@ -476,6 +476,10 @@ class StorageGateway {
     })
   }
 
+  reserveFormalAgentModelRequest (request) {
+    return this.enqueue('reserveFormalAgentModelRequest', request)
+  }
+
   nextFormalAgentRunAt (request = {}) {
     return this.enqueue('nextFormalAgentRunAt', request)
   }
@@ -602,6 +606,7 @@ class StorageGateway {
       case 'cancelPersonalContextInteractionIngest': return host.cancelPersonalContextInteractionIngest(item.payload)
       case 'claimNextFormalAgentRun': return host.claimNextFormalAgentRun(item.payload)
       case 'renewFormalAgentRun': return host.renewFormalAgentRun(item.payload)
+      case 'reserveFormalAgentModelRequest': return host.reserveFormalAgentModelRequest(item.payload)
       case 'nextFormalAgentRunAt': return host.nextFormalAgentRunAt(item.payload)
       case 'completeFormalAgentRun': return host.completeFormalAgentRun(item.payload, item.signal)
       case 'failFormalAgentRun': return host.failFormalAgentRun(item.payload, item.signal)

@@ -4,6 +4,14 @@ const crypto = require('node:crypto')
 const { canonicalize, sha256Canonical } = require('./canonical-json')
 const { rollbackQuietly } = require('./sqlite-store')
 const { StorageError, assertExactKeys, isPlainObject } = require('./protocol')
+const {
+  createRunBudgetAccount,
+  interruptActiveAttempt,
+  remainingWallClockMs,
+  reserveModelRequest,
+  settleActiveAttempt,
+  startAttemptBudget
+} = require('./session-summary-budget')
 const { FORMAL_AGENT_TASK_ERROR_CODES } = require('../../agent/contracts/personal-context-core')
 const { validateRecipeOutput } = require('../../agent/contracts/recipes')
 
@@ -2200,6 +2208,36 @@ class PersonalContextStore {
     }
   }
 
+  failUnaccountedSessionSummaryRun (run, now, errorCode = 'AGENT_RUN_UNAVAILABLE') {
+    const durableRunErrorCode = errorCode === 'AGENT_RUN_UNAVAILABLE' ? 'AGENT_INTERNAL_FAILURE' : errorCode
+    this.database.prepare(`
+      UPDATE formal_agent_runs SET state='failed',error_code=?,lease_owner=NULL,lease_expires_at=NULL,
+        lease_renewed_from_expires_at=NULL,resume_required=0,result_digest=NULL,result_summary_json=NULL,updated_at=?
+      WHERE run_id=? AND state IN ('queued','retry_wait','running')
+    `).run(durableRunErrorCode, now, run.run_id)
+    const interaction = this.database.prepare(`
+      SELECT interaction_id FROM formal_agent_interactions WHERE run_id=? AND terminal_reason IS NULL
+    `).get(run.run_id)
+    if (interaction) {
+      this.database.prepare(`
+        UPDATE formal_agent_interactions SET terminal_reason='failed',error_code=?,usage_json=NULL,
+          result_json=NULL,result_digest=NULL,terminal_at=? WHERE interaction_id=? AND terminal_reason IS NULL
+      `).run(durableRunErrorCode, now, interaction.interaction_id)
+      this.database.prepare(`
+        UPDATE formal_agent_tool_calls SET ended_offset_ms=started_offset_ms,status='cancelled',
+          error_code='TOOL_CANCELLED',result_json=NULL,result_digest=NULL
+        WHERE interaction_id=? AND status='started'
+      `).run(interaction.interaction_id)
+    }
+    if (typeof run.session_summary_request_id === 'string') {
+      this.database.prepare(`
+        UPDATE formal_agent_requests SET state='failed',phase='terminal',resume_required=0,
+          error_code=?,revision=revision+1,updated_at=?
+        WHERE request_id=? AND state NOT IN ('succeeded','failed','cancelled')
+      `).run(errorCode, now, run.session_summary_request_id)
+    }
+  }
+
 
   claimNextFormalRun (request) {
     if (!isPlainObject(request)) fail('AGENT_REQUEST_INVALID')
@@ -2306,6 +2344,20 @@ class PersonalContextStore {
             generation: Number(summaryRequest.generation)
           }
         }
+        const budget = this.database.prepare(`
+          SELECT * FROM formal_agent_run_budget_state WHERE run_id=?
+        `).get(row.run_id)
+        if (budget && Number(budget.accounting_known) === 1) {
+          result.remainingWallClockMs = remainingWallClockMs(budget)
+          const attemptBudget = this.database.prepare(`
+            SELECT request_count,request_limit FROM formal_agent_run_attempt_budgets
+            WHERE run_id=? AND attempt=?
+          `).get(row.run_id, Number(row.attempt_count))
+          if (attemptBudget) {
+            result.requestCount = Number(attemptBudget.request_count)
+            result.requestLimit = Number(attemptBudget.request_limit)
+          }
+        }
       }
       if (row.recipe_id === 'summary.minutes') {
         result.summaryUseMemory = row.summary_use_memory === undefined || row.summary_use_memory === null
@@ -2324,7 +2376,7 @@ class PersonalContextStore {
         this.database.exec('COMMIT')
         return receiptResult(prior)
       }
-      const row = this.database.prepare(`
+      let row = this.database.prepare(`
         SELECT * FROM formal_agent_runs
         WHERE requested_by = ? AND (
           (? = 'automatic' AND recipe_id IN ('context.ingest.session', 'context.ingest.interaction')) OR
@@ -2342,6 +2394,25 @@ class PersonalContextStore {
         ORDER BY next_attempt_at, run_order LIMIT 1
       `).get(requestedBy, requestedBy, requestedBy, automaticPolicyAllowed ? 1 : 0, now, now)
       let leaseExpiresAt = null
+      let budgetAccount = null
+      let budgetRemainingWallClockMs = null
+      if (row) {
+        if (requestedBy === 'user' && typeof row.session_summary_request_id === 'string') {
+          budgetAccount = createRunBudgetAccount(this.database, { run: row, now })
+          if (row.state === 'running') {
+            interruptActiveAttempt(this.database, row.run_id, now)
+            budgetAccount = this.database.prepare('SELECT * FROM formal_agent_run_budget_state WHERE run_id=?').get(row.run_id)
+          }
+          budgetRemainingWallClockMs = remainingWallClockMs(budgetAccount)
+          if (Number(budgetAccount.accounting_known) !== 1 || budgetRemainingWallClockMs === null) {
+            this.failUnaccountedSessionSummaryRun(row, now)
+            row = null
+          } else if (budgetRemainingWallClockMs <= 0) {
+            this.failUnaccountedSessionSummaryRun(row, now, 'AGENT_BUDGET_EXCEEDED')
+            row = null
+          }
+        }
+      }
       if (row) {
         leaseExpiresAt = now + request.leaseMs
         if (!Number.isSafeInteger(leaseExpiresAt)) fail('STORAGE_COMMAND_FAILED')
@@ -2352,6 +2423,17 @@ class PersonalContextStore {
             lease_renewed_from_expires_at = NULL, next_attempt_at = ?, error_code = NULL, updated_at = ?
           WHERE run_id = ?
         `).run(attempt, request.owner, leaseExpiresAt, now, now, row.run_id)
+        if (budgetAccount) {
+          const budgetAttempt = startAttemptBudget(this.database, {
+            runId: row.run_id,
+            attempt,
+            owner: request.owner,
+            leaseMs: request.leaseMs,
+            account: budgetAccount,
+            now
+          })
+          budgetRemainingWallClockMs = budgetAttempt.remainingWallClockMs
+        }
         if (typeof row.session_summary_request_id === 'string') {
           const summaryRequest = this.database.prepare(`
             SELECT summary_use_memory FROM formal_agent_requests WHERE request_id=?
@@ -2384,7 +2466,19 @@ class PersonalContextStore {
       `).get(request.claimIdempotencyKey)
       this.database.exec('COMMIT')
       if (requestedBy === 'automatic' && !this.automaticPolicy && requestPolicy) this.automaticPolicy = requestPolicy
-      return receiptResult(receipt)
+      const claimed = receiptResult(receipt)
+      if (claimed && budgetRemainingWallClockMs !== null) {
+        claimed.remainingWallClockMs = budgetRemainingWallClockMs
+        const attemptBudget = this.database.prepare(`
+          SELECT request_count,request_limit FROM formal_agent_run_attempt_budgets
+          WHERE run_id=? AND attempt=?
+        `).get(claimed.runId, claimed.attemptIdentity.attempt)
+        if (attemptBudget) {
+          claimed.requestCount = Number(attemptBudget.request_count)
+          claimed.requestLimit = Number(attemptBudget.request_limit)
+        }
+      }
+      return claimed
     } catch (error) {
       rollbackQuietly(this.database)
       throw error
@@ -2452,16 +2546,32 @@ class PersonalContextStore {
   }
 
   renewFormalRunLease (request) {
-    assertExactKeys(request, ['attemptIdentity', 'leaseMs'], 'AGENT_REQUEST_INVALID')
+    const requestKeys = Object.keys(request || {}).sort()
+    if (!(requestKeys.join(',') === 'attemptIdentity,leaseMs' || requestKeys.join(',') === 'attemptIdentity,elapsedMs,leaseMs')) {
+      fail('AGENT_REQUEST_INVALID')
+    }
     const attempt = this.assertAttempt(request.attemptIdentity)
     const leaseMs = safeInteger(request.leaseMs, 1)
     if (leaseMs > 60000) fail('AGENT_REQUEST_INVALID')
+    const elapsedMs = Object.hasOwn(request, 'elapsedMs') ? safeInteger(request.elapsedMs) : null
     const database = this.database
     database.exec('BEGIN IMMEDIATE')
     try {
       const now = this.nowValue()
       const row = database.prepare('SELECT * FROM formal_agent_runs WHERE run_id=?').get(attempt.runId)
       this.assertActiveFormalAttempt(row, attempt, now)
+      const budgetState = database.prepare('SELECT * FROM formal_agent_run_budget_state WHERE run_id=?').get(attempt.runId)
+      let remaining = null
+      if (budgetState) {
+        if (Number(budgetState.accounting_known) !== 1 || elapsedMs === null) fail('AGENT_RUN_UNAVAILABLE')
+        const settled = settleActiveAttempt(database, {
+          attemptIdentity: attempt,
+          elapsedMs,
+          now,
+          nextLeaseMs: leaseMs
+        })
+        remaining = settled.remainingWallClockMs
+      }
       const leaseExpiresAt = now + leaseMs
       if (!Number.isSafeInteger(leaseExpiresAt) || leaseExpiresAt <= attempt.leaseExpiresAt) {
         fail('AGENT_CONTEXT_OPERATION_FAILED')
@@ -2478,8 +2588,33 @@ class PersonalContextStore {
       database.exec('COMMIT')
       return {
         runId: attempt.runId,
-        attemptIdentity: { ...attempt, leaseExpiresAt }
+        attemptIdentity: { ...attempt, leaseExpiresAt },
+        ...(remaining === null ? {} : { remainingWallClockMs: remaining })
       }
+    } catch (error) {
+      rollbackQuietly(database)
+      throw error
+    }
+  }
+
+  reserveFormalAgentModelRequest (request) {
+    assertExactKeys(request, ['attemptIdentity', 'requestSequence'], 'AGENT_REQUEST_INVALID')
+    const attempt = this.assertAttempt(request.attemptIdentity)
+    safeInteger(request.requestSequence, 1)
+    const database = this.database
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const now = this.nowValue()
+      const run = database.prepare('SELECT * FROM formal_agent_runs WHERE run_id=?').get(attempt.runId)
+      this.assertActiveFormalAttempt(run, attempt, now, { allowPreviouslyRenewedLease: true })
+      if (typeof run.session_summary_request_id !== 'string') fail('AGENT_REQUEST_INVALID')
+      const result = reserveModelRequest(database, {
+        attemptIdentity: attempt,
+        requestSequence: request.requestSequence,
+        now
+      })
+      database.exec('COMMIT')
+      return result
     } catch (error) {
       rollbackQuietly(database)
       throw error
@@ -2509,31 +2644,56 @@ class PersonalContextStore {
   }
 
   failFormalRun (request) {
-    assertExactKeys(request, ['attemptIdentity', 'errorCode'], 'AGENT_REQUEST_INVALID')
+    assertExactKeys(request, ['attemptIdentity', 'errorCode'], ['elapsedMs'])
     const attempt = this.assertAttempt(request.attemptIdentity)
     const errors = new Set(FORMAL_AGENT_TASK_ERROR_CODES)
-    const row = this.database.prepare('SELECT * FROM formal_agent_runs WHERE run_id = ?').get(attempt.runId)
+    if (Object.hasOwn(request, 'elapsedMs')) safeInteger(request.elapsedMs)
     const summaryInputLimitError = request.errorCode === 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED'
     if (!errors.has(request.errorCode) && !summaryInputLimitError) fail('AGENT_REQUEST_INVALID')
-    if (summaryInputLimitError && row?.recipe_id !== 'summary.minutes') fail('AGENT_REQUEST_INVALID')
-    const now = this.nowValue()
-    this.assertActiveFormalAttempt(row, attempt, now, { allowPreviouslyRenewedLease: true })
-    const terminal = summaryInputLimitError || Number(row.attempt_count) >= Number(row.max_attempts)
-    const nextAttemptAt = terminal ? now : now + 1000
-    const storedErrorCode = request.errorCode === SUMMARY_MEMORY_ERROR ? 'AGENT_INTERNAL_FAILURE' : request.errorCode
-    const summaryMemoryError = request.errorCode === SUMMARY_MEMORY_ERROR ? 1 : 0
-    this.database.prepare(`
-      UPDATE formal_agent_runs SET state = ?, next_attempt_at = ?, lease_owner = NULL,
-        lease_expires_at = NULL, lease_renewed_from_expires_at=NULL, error_code = ?, summary_memory_error = ?, summary_input_limit_error = ?, updated_at = ?
-      WHERE run_id=? AND state='running' AND attempt_count=? AND lease_owner=? AND lease_expires_at=?
-    `).run(
-      terminal ? 'failed' : 'retry_wait', nextAttemptAt,
-      terminal ? (summaryInputLimitError ? 'AGENT_INTERNAL_FAILURE' : storedErrorCode) : null,
-      terminal ? summaryMemoryError : 0,
-      terminal && summaryInputLimitError ? 1 : 0,
-      now, attempt.runId, attempt.attempt, attempt.owner, Number(row.lease_expires_at)
-    )
-    return { runId: row.run_id, state: terminal ? 'failed' : 'retry_wait', nextAttemptAt }
+    const database = this.database
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const row = database.prepare('SELECT * FROM formal_agent_runs WHERE run_id = ?').get(attempt.runId)
+      if (summaryInputLimitError && row?.recipe_id !== 'summary.minutes') fail('AGENT_REQUEST_INVALID')
+      const now = this.nowValue()
+      this.assertActiveFormalAttempt(row, attempt, now, { allowPreviouslyRenewedLease: true })
+      const budgetState = database.prepare('SELECT * FROM formal_agent_run_budget_state WHERE run_id=?').get(attempt.runId)
+      let settlement = null
+      if (budgetState) {
+        if (Object.hasOwn(request, 'elapsedMs')) {
+          settlement = settleActiveAttempt(database, { attemptIdentity: attempt, elapsedMs: request.elapsedMs, now })
+        } else {
+          settlement = interruptActiveAttempt(database, attempt.runId, now)
+        }
+      }
+      const exhausted = settlement?.exhausted === true
+      const terminal = summaryInputLimitError || exhausted || Number(row.attempt_count) >= Number(row.max_attempts)
+      const nextAttemptAt = terminal ? now : now + 1000
+      const errorCode = exhausted ? 'AGENT_BUDGET_EXCEEDED' : request.errorCode
+      const storedErrorCode = errorCode === SUMMARY_MEMORY_ERROR ? 'AGENT_INTERNAL_FAILURE' : errorCode
+      const summaryMemoryError = errorCode === SUMMARY_MEMORY_ERROR ? 1 : 0
+      database.prepare(`
+        UPDATE formal_agent_runs SET state = ?, next_attempt_at = ?, lease_owner = NULL,
+          lease_expires_at = NULL, lease_renewed_from_expires_at=NULL, error_code = ?, summary_memory_error = ?, summary_input_limit_error = ?, updated_at = ?
+        WHERE run_id=? AND state='running' AND attempt_count=? AND lease_owner=? AND lease_expires_at=?
+      `).run(
+        terminal ? 'failed' : 'retry_wait', nextAttemptAt,
+        terminal ? (summaryInputLimitError ? 'AGENT_INTERNAL_FAILURE' : storedErrorCode) : null,
+        terminal ? summaryMemoryError : 0,
+        terminal && summaryInputLimitError && !exhausted ? 1 : 0,
+        now, attempt.runId, attempt.attempt, attempt.owner, Number(row.lease_expires_at)
+      )
+      database.exec('COMMIT')
+      return {
+        runId: row.run_id,
+        state: terminal ? 'failed' : 'retry_wait',
+        nextAttemptAt,
+        errorCode: terminal ? (summaryInputLimitError && !exhausted ? 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED' : storedErrorCode) : null
+      }
+    } catch (error) {
+      rollbackQuietly(database)
+      throw error
+    }
   }
 }
 

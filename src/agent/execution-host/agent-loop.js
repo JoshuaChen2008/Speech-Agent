@@ -28,8 +28,11 @@ async function runAdapterBounded (adapter, request, parentSignal, timeoutMs) {
     rejectControl(error)
   }
   const cancel = () => {
+    const reasonCode = parentSignal?.reason?.code === 'AGENT_BUDGET_EXCEEDED'
+      ? 'AGENT_BUDGET_EXCEEDED'
+      : 'AGENT_CANCELLED'
+    settleControl(executionError(reasonCode))
     try { controller?.abort() } catch {}
-    settleControl(executionError('AGENT_CANCELLED'))
   }
   if (parentSignal?.aborted) cancel()
   else if (parentSignal) {
@@ -86,7 +89,7 @@ class AgentLoopExecutor {
 
   async agentLoop (input) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw executionError('AGENT_REQUEST_INVALID')
-    const allowedKeys = new Set(['recipeId', 'recipeVersion', 'prompt', 'resolvedModel', 'tools', 'signal', 'timeoutMs', 'budget', 'usageReporting', 'onProgress'])
+    const allowedKeys = new Set(['recipeId', 'recipeVersion', 'prompt', 'resolvedModel', 'tools', 'signal', 'timeoutMs', 'budget', 'usageReporting', 'onProgress', 'beforeRequest'])
     if (Object.keys(input).some((key) => !allowedKeys.has(key))) throw executionError('AGENT_REQUEST_INVALID')
     let recipe
     try { recipe = getRecipe(input.recipeId, input.recipeVersion) } catch { throw executionError('AGENT_REQUEST_INVALID') }
@@ -123,6 +126,7 @@ class AgentLoopExecutor {
     const budget = input.budget && typeof input.budget === 'object' ? input.budget : {}
     const adapter = await this.resolveAdapter()
     const onProgress = typeof input.onProgress === 'function' ? input.onProgress : null
+    if (input.beforeRequest !== undefined && typeof input.beforeRequest !== 'function') throw executionError('AGENT_REQUEST_INVALID')
     const timeoutMs = Number.isSafeInteger(input.timeoutMs) && input.timeoutMs > 0
       ? input.timeoutMs
       : Number.isSafeInteger(budget.maxWallClockMs) && budget.maxWallClockMs > 0
@@ -146,6 +150,7 @@ class AgentLoopExecutor {
               try { return onProgress(Object.freeze({ type: event.type, turn: event.turn })) } catch { /* progress observers do not change model work */ }
             }
           : undefined,
+        beforeRequest: input.beforeRequest,
         shouldStopAfterTurn: ({ turn, toolCalls = 0, budgetExceeded = false } = {}) => shouldStopAfterTurn({
           maxTurns: recipe.maxTurns,
           turn,
@@ -155,7 +160,9 @@ class AgentLoopExecutor {
         })
       }, input.signal, timeoutMs)
     } catch (error) {
-      if (input.signal?.aborted && error?.code !== 'AGENT_CANCELLED') throw executionError('AGENT_CANCELLED')
+      if (input.signal?.aborted && error?.code !== input.signal?.reason?.code) {
+        throw executionError(input.signal?.reason?.code === 'AGENT_BUDGET_EXCEEDED' ? 'AGENT_BUDGET_EXCEEDED' : 'AGENT_CANCELLED')
+      }
       throw error
     }
     // The provider may resolve after the caller has cancelled its bounded run.
