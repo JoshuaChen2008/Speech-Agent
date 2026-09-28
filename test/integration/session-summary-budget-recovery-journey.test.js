@@ -25,7 +25,7 @@ const { StorageGateway } = require('../../src/main/services/storage-gateway')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
 const { CONTROL_MESSAGES, OPERATIONS, PROTOCOL_VERSION, StorageError, makeCaptionEventId, makeCloseSessionKey, makeOpenSessionKey } = require('../../src/runtime/storage-worker/protocol')
 const summaryContract = require('../../src/agent/contracts/session-summary-run-ui')
-const { assertDiagnosticRecord } = require('../../src/agent/contracts/agent-run-diagnostics')
+const { assertDiagnosticRecord, assertDiagnosticExportSnapshot } = require('../../src/agent/contracts/agent-run-diagnostics')
 
 const CAPABILITIES = Object.freeze({
   maxInputTokens: 64000,
@@ -34,6 +34,13 @@ const CAPABILITIES = Object.freeze({
   supportsStructuredOutput: true,
   supportsStreaming: true,
   usageReporting: false
+})
+const DIAGNOSTIC_PRIVACY_MARKERS = Object.freeze({
+  exceptionMessage: 'J30_PRIVACY_PROVIDER_EXCEPTION_MESSAGE_4_4',
+  exceptionStack: 'J30_PRIVACY_PROVIDER_EXCEPTION_STACK_4_4',
+  providerResponse: 'J30_PRIVACY_PROVIDER_EXCEPTION_RESPONSE_4_4',
+  toolArguments: 'J30_PRIVACY_PROVIDER_EXCEPTION_TOOL_ARGUMENTS_4_4',
+  toolResult: 'J30_PRIVACY_PROVIDER_EXCEPTION_TOOL_RESULT_4_4'
 })
 
 function serviceBackedHost (service, databasePath, onRenew) {
@@ -245,6 +252,9 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   const egress = []
   let runBeingExecuted = null
   let providerAttempt = 0
+  let rejectWithPrivacyMarkers = false
+  let resolvePrivacyFailureEgress
+  const privacyFailureEgress = new Promise((resolve) => { resolvePrivacyFailureEgress = resolve })
   let resolveFirstEgress
   const firstEgress = new Promise((resolve) => { resolveFirstEgress = resolve })
   let resolveSecondEgress
@@ -259,6 +269,17 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
       `).get(runBeingExecuted.runId, providerAttempt)
       assert.ok(reservation, 'model request reservation is durable before provider egress')
       egress.push({ attempt: providerAttempt, reservationPresent: true })
+      if (rejectWithPrivacyMarkers) {
+        resolvePrivacyFailureEgress({ runId: runBeingExecuted.runId, attempt: providerAttempt, reservationPresent: true })
+        const error = Object.assign(new Error(DIAGNOSTIC_PRIVACY_MARKERS.exceptionMessage), {
+          code: 'AGENT_PERMISSION_DENIED',
+          providerResponse: DIAGNOSTIC_PRIVACY_MARKERS.providerResponse,
+          toolArguments: DIAGNOSTIC_PRIVACY_MARKERS.toolArguments,
+          toolResult: DIAGNOSTIC_PRIVACY_MARKERS.toolResult
+        })
+        error.stack = `Error: ${DIAGNOSTIC_PRIVACY_MARKERS.exceptionMessage}\n  ${DIAGNOSTIC_PRIVACY_MARKERS.exceptionStack}`
+        throw error
+      }
       if (providerAttempt === 1) {
         resolveFirstEgress()
         return new Promise(() => {})
@@ -442,6 +463,49 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   `).get(runId)
   assert.equal(Number(currentBudget.max_wall_clock_ms) - Number(currentBudget.settled_elapsed_ms) - Number(currentBudget.conservative_elapsed_ms) <= 30000, true)
 
+  rejectWithPrivacyMarkers = true
+  const providerFailureAccepted = await system.summaryRuns.accept({
+    contract_id: summaryContract.CONTRACT_ID,
+    contract_version: summaryContract.CONTRACT_VERSION,
+    action: 'summary',
+    scope: { kind: 'session', reference: 'session.summary.budget' },
+    client_request_key: 'j30-budget-provider-error-privacy'
+  })
+  assert.equal(providerFailureAccepted.ok, true)
+  const providerFailureRequestId = providerFailureAccepted.result.snapshot.request_id
+  await waitFor(async () => (await gateway.getSessionSummaryRequest({ requestId: providerFailureRequestId })).targetRunId !== null, 'privacy error target run')
+  const providerFailureRequestBeforeRun = await gateway.getSessionSummaryRequest({ requestId: providerFailureRequestId })
+  const providerFailureRunId = providerFailureRequestBeforeRun.targetRunId
+  const providerFailureEgress = await privacyFailureEgress
+  assert.deepEqual(providerFailureEgress, { runId: providerFailureRunId, attempt: 1, reservationPresent: true })
+  await waitFor(async () => (await gateway.getSessionSummaryRequest({ requestId: providerFailureRequestId })).state === 'failed', 'provider exception request failure')
+  const providerFailureRequest = await gateway.getSessionSummaryRequest({ requestId: providerFailureRequestId })
+  assert.equal(providerFailureRequest.errorCode, 'AGENT_PERMISSION_DENIED')
+  assert.equal(diagnosticStore.getStatus().available, true)
+  assert.equal(await diagnosticStore.drain(), true)
+  const providerFailureDiagnostics = await diagnosticStore.recordsForRequestDigest(providerFailureRequest.requestDigest)
+  assert.equal(providerFailureDiagnostics.available, true)
+  assert.equal(providerFailureDiagnostics.records.some((record) => record.errorCode === 'AGENT_PERMISSION_DENIED'), true)
+  const providerFailureExportPath = path.join(root, 'selected-provider-error-diagnostics.json')
+  const providerFailureExport = await diagnosticStore.exportRequest({
+    requestDigest: providerFailureRequest.requestDigest,
+    showSaveDialog: async (_owner, options) => {
+      assert.equal(options.title, '导出 Agent 运行诊断')
+      return { canceled: false, filePath: providerFailureExportPath }
+    }
+  })
+  assert.deepEqual(providerFailureExport, {
+    status: 'saved',
+    recordCount: providerFailureDiagnostics.records.length,
+    available: true
+  })
+  const providerFailureExportBytes = fs.readFileSync(providerFailureExportPath, 'utf8')
+  const providerFailureExportSnapshot = assertDiagnosticExportSnapshot(JSON.parse(providerFailureExportBytes))
+  assert.equal(providerFailureExportSnapshot.available, true)
+  for (const marker of Object.values(DIAGNOSTIC_PRIVACY_MARKERS)) {
+    assert.equal(providerFailureExportBytes.includes(marker), false)
+  }
+
   const afterAgentRecorder = new SqliteSessionRecorder({ gateway, now: () => 1770000000000 })
   await afterAgentRecorder.openSession({ sessionId: 'session.subtitle.after-agent', sourceId: 'mic', refinementEnabled: false })
   await afterAgentRecorder.closeSession({ sessionId: 'session.subtitle.after-agent', sourceId: 'mic', state: 'closed' })
@@ -460,6 +524,7 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   assert.equal(diagnosticBytes.includes('synthetic committed caption'), false)
   assert.equal(diagnosticBytes.includes('synthetic-provider-credential'), false)
   assert.equal(diagnosticBytes.includes('合成会话总结'), false)
+  for (const marker of Object.values(DIAGNOSTIC_PRIVACY_MARKERS)) assert.equal(diagnosticBytes.includes(marker), false)
   assert.equal(diagnosticBytes.includes(requestId), false)
   assert.equal(diagnosticBytes.includes(runId), false)
   assert.equal(diagnosticBytes.includes(root), false)

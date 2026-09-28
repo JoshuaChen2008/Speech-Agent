@@ -15,9 +15,13 @@ const { AgentLoopExecutor, IntentRouteOrchestrator } = require('../../src/agent/
 const { CredentialVault } = require('../../src/agent/model-access/credential-vault')
 const { ModelAccessRuntime } = require('../../src/agent/model-access/runtime')
 const { ConfigStore } = require('../../src/main/services/config-store')
+const { HistoryService } = require('../../src/main/services/history-service')
 const { SqliteSessionRecorder } = require('../../src/main/services/sqlite-session-recorder')
 const { StorageGateway } = require('../../src/main/services/storage-gateway')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
+const { FakeRuntimeAdapter } = require('../../src/main/session/fake-runtime-adapter')
+const { SessionCoordinator } = require('../../src/main/session/session-coordinator')
+const { resolveRuntimeOptions, DEV_MODEL_VALUE } = require('../../src/main/runtime-options')
 const { OPERATIONS, PROTOCOL_VERSION, StorageError, makeCaptionEventId, makeCloseSessionKey, makeOpenSessionKey } = require('../../src/runtime/storage-worker/protocol')
 const contract = require('../../src/agent/contracts/session-summary-run-ui')
 const diagnosticsUI = require('../../src/agent/contracts/agent-run-diagnostics-ui')
@@ -72,6 +76,48 @@ const CAPABILITIES = Object.freeze({
   supportsStreaming: true,
   usageReporting: false
 })
+const PRIVACY_MARKERS = Object.freeze({
+  transcript: 'J30_PRIVACY_TRANSCRIPT_4_4',
+  prompt: 'J30_PRIVACY_PROMPT_4_4',
+  toolArguments: 'J30_PRIVACY_TOOL_ARGUMENTS_4_4',
+  toolResult: 'J30_PRIVACY_TOOL_RESULT_4_4',
+  providerEvent: 'J30_PRIVACY_PROVIDER_EVENT_4_4',
+  providerResponse: 'J30_PRIVACY_PROVIDER_RESPONSE_4_4',
+  exceptionMessage: 'J30_PRIVACY_EXCEPTION_MESSAGE_4_4',
+  exceptionStack: 'J30_PRIVACY_EXCEPTION_STACK_4_4'
+})
+
+function audioFilesUnder (directory) {
+  const found = []
+  const visit = (current) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const target = path.join(current, entry.name)
+      if (entry.isDirectory()) visit(target)
+      else if (/\.(?:wav|pcm|mp3|m4a|aac|flac|ogg|opus|webm)$/i.test(entry.name)) found.push(target)
+    }
+  }
+  visit(directory)
+  return found
+}
+
+function validationJsonFiles () {
+  const root = path.resolve(process.cwd(), 'docs', 'validation')
+  const found = []
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const target = path.join(directory, entry.name)
+      if (entry.isDirectory()) visit(target)
+      else if (entry.isFile() && entry.name.endsWith('.json')) found.push(target)
+    }
+  }
+  visit(root)
+  return found
+}
+
+function diagnosticFileSnapshot (directory) {
+  return fs.readdirSync(directory).filter((name) => name.endsWith('.jsonl')).sort()
+    .map((name) => [name, fs.readFileSync(path.join(directory, name))])
+}
 
 function serviceBackedHost (service, databasePath) {
   let sequence = 0
@@ -94,6 +140,8 @@ function serviceBackedHost (service, databasePath) {
     async appendCaption (event) { return call(OPERATIONS.APPEND_CAPTION, { event }, makeCaptionEventId(event)) },
     async closeSession (value) { return call(OPERATIONS.CLOSE_SESSION, value, makeCloseSessionKey(value.sessionId)) },
     async getSessionTranscript (sessionId) { return call(OPERATIONS.GET_SESSION, { sessionId }) },
+    async getSessionPage (value) { return call(OPERATIONS.GET_SESSION_PAGE, value) },
+    async listSessions (value) { return call(OPERATIONS.LIST_SESSIONS, value) },
     async derivePersonalContextSessionSource (request) { return call(OPERATIONS.PERSONAL_CONTEXT_DERIVE_SESSION_SOURCE, { request }) },
     async claimNextFormalAgentRun (request) { return call(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request }) },
     async createAgentRun (request) { return call(OPERATIONS.AGENT_CREATE_RUN, { request }) },
@@ -159,6 +207,9 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   let cancelDiagnosticSave = false
   let diagnosticSaveDialogCalls = 0
   let summaryRun = null
+  let independentCoordinator = null
+  let releaseLateRouteProvider = null
+  let lateRouteProviderSettled = false
   const diagnosticFsApi = new Proxy(fs.promises, {
     get (target, property) {
       if (property === 'appendFile') return async (...args) => {
@@ -201,7 +252,14 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
       async run ({ recipe, signal, onProgress }) {
         if (recipe.recipeId !== 'intent.route') throw new Error('unexpected target execution in acceptance journey')
         routeCalls += 1
-        await onProgress?.({ type: 'request_started', turn: 1 })
+        await onProgress?.({
+          type: 'request_started',
+          turn: 1,
+          providerEvent: PRIVACY_MARKERS.providerEvent,
+          toolArguments: PRIVACY_MARKERS.toolArguments,
+          toolResult: PRIVACY_MARKERS.toolResult,
+          exceptionMessage: PRIVACY_MARKERS.exceptionMessage
+        })
         if (routeBehavior === 'wait') {
           return new Promise((resolve, reject) => {
             const abort = () => {
@@ -213,8 +271,20 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
             signal?.addEventListener('abort', abort, { once: true })
           })
         }
-        await onProgress?.({ type: 'response_received', turn: 1 })
-        return { text: JSON.stringify({ recipeId: 'qa.answer', confidence: 0.95 }), usage: null }
+        if (routeBehavior === 'ignore-abort') {
+          return new Promise((resolve, reject) => {
+            releaseLateRouteProvider = {
+              resolve: (value) => { lateRouteProviderSettled = true; resolve(value) },
+              reject: (error) => { lateRouteProviderSettled = true; reject(error) }
+            }
+          })
+        }
+        await onProgress?.({ type: 'response_received', turn: 1, providerResponse: PRIVACY_MARKERS.providerResponse })
+        return {
+          text: JSON.stringify({ recipeId: 'qa.answer', confidence: 0.95 }),
+          usage: null,
+          providerResponse: PRIVACY_MARKERS.providerResponse
+        }
       }
     }
   })
@@ -242,7 +312,7 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     kind: 'final',
     t0: 0,
     t1: 10,
-    text: 'J30 合成会话正文 marker',
+    text: PRIVACY_MARKERS.transcript,
     translation: null
   })
   await recorder.closeSession({ sessionId: SCOPE.reference, sourceId: 'mic', state: 'closed' })
@@ -357,6 +427,7 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     exportDiagnostics: (request) => preloadBridge.api.exportSessionSummaryRunDiagnostics(request)
   }
   t.after(async () => {
+    await independentCoordinator?.dispose().catch(() => {})
     vault.close()
     await gateway.shutdown().catch(() => gateway.terminate())
     fs.rmSync(root, { recursive: true, force: true })
@@ -404,7 +475,7 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   assert.equal(summarySnapshot.result.snapshot.route_run_id, null)
   assert.equal(routeCalls, 0)
 
-  const questionRequest = request('question', 'j30.question.key', '这场会决定了什么？')
+  const questionRequest = request('question', 'j30.question.key', `这场会决定了什么？ ${PRIVACY_MARKERS.prompt}`)
   const questionAccepted = await summaryApi.accept(questionRequest)
   assert.equal(questionAccepted.ok, true)
   assert.equal(routeCalls, 0)
@@ -639,9 +710,16 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   })
   assert.equal(afterResubmissionList.result.requests.some((item) => item.snapshot.request_id === lostQuestionId), false)
 
+  /* Drain the durable resubmission route before enabling diagnostic failure so
+     the next non-cooperative request is the only live provider call. */
+  routeBehavior = 'qa'
+  while (dispatchQueue.length > 0) dispatchQueue.shift()()
+  await waitFor(() => summaryRun.dispatches.size === 0, 'resubmitted question route before diagnostic failure')
+
   const requestRows = database.prepare('SELECT action,prompt_digest,summary_use_memory FROM formal_agent_requests ORDER BY request_id').all()
   assert.equal(requestRows.length, 8)
-  assert.equal(JSON.stringify(requestRows).includes('J30 合成会话正文 marker'), false)
+  assert.equal(JSON.stringify(requestRows).includes(PRIVACY_MARKERS.transcript), false)
+  assert.equal(JSON.stringify(requestRows).includes(PRIVACY_MARKERS.prompt), false)
   assert.equal(JSON.stringify(requestRows).includes('这个请求应在路由时取消'), false)
   assert.equal(JSON.stringify(requestRows).includes('原问题正文不应持久化'), false)
   assert.equal(JSON.stringify(requestRows).includes('重新提交后的问题'), false)
@@ -655,19 +733,22 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   }
   for (const marker of [
     'J30 合成会话正文 marker', '这个请求应在路由时取消', '原问题正文不应持久化',
-    '重新提交后的问题', 'j30-provider-secret', root
+    '重新提交后的问题', 'j30-provider-secret', root,
+    ...Object.values(PRIVACY_MARKERS)
   ]) assert.equal(diagnosticBytes.includes(marker), false)
+  const evidenceBytes = Buffer.concat(validationJsonFiles().map((file) => fs.readFileSync(file))).toString('utf8')
+  for (const marker of Object.values(PRIVACY_MARKERS)) assert.equal(evidenceBytes.includes(marker), false)
   const diagnosticsRequest = {
     contract_id: diagnosticsUI.CONTRACT_ID,
     contract_version: diagnosticsUI.CONTRACT_VERSION,
-    request_id: summaryAccepted.result.snapshot.request_id,
+    request_id: questionAccepted.result.snapshot.request_id,
     before_sequence: null,
     limit: 50
   }
   const diagnosticsPage = await summaryApi.getDiagnostics(diagnosticsRequest)
   assert.equal(diagnosticsUI.assertQueryResponse(diagnosticsPage).ok, true)
   assert.equal(diagnosticsPage.result.records.some((record) => record.event === 'accepted'), true)
-  const diagnosticsRow = await gateway.getSessionSummaryRequest({ requestId: summaryAccepted.result.snapshot.request_id })
+  const diagnosticsRow = await gateway.getSessionSummaryRequest({ requestId: questionAccepted.result.snapshot.request_id })
   assert.match(diagnosticsRow.requestDigest, /^[a-f0-9]{64}$/)
   assert.equal((await diagnosticStore.recordsForRequestDigest(diagnosticsRow.requestDigest)).records.length > 0, true)
   assert.equal(typeof summaryRun.diagnostics.exportRequest, 'function')
@@ -675,7 +756,7 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   const exportedDiagnostics = await summaryApi.exportDiagnostics({
     contract_id: diagnosticsUI.CONTRACT_ID,
     contract_version: diagnosticsUI.CONTRACT_VERSION,
-    request_id: summaryAccepted.result.snapshot.request_id
+    request_id: questionAccepted.result.snapshot.request_id
   })
   assert.equal(exportedDiagnostics.ok, true, JSON.stringify({ response: exportedDiagnostics, diagnosticSaveDialogCalls, status: diagnosticStore.getStatus() }))
   assert.equal(diagnosticsUI.assertExportResponse(exportedDiagnostics).result.status, 'saved')
@@ -685,7 +766,10 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   const exportBytes = fs.readFileSync(diagnosticExportPath, 'utf8')
   const exportSnapshot = assertDiagnosticExportSnapshot(JSON.parse(exportBytes))
   assert.ok(exportSnapshot.records.length > 0)
-  for (const marker of ['J30 合成会话正文 marker', '这个请求应在路由时取消', '原问题正文不应持久化', '重新提交后的问题', 'j30-provider-secret', root]) {
+  for (const marker of [
+    'J30 合成会话正文 marker', '这个请求应在路由时取消', '原问题正文不应持久化',
+    '重新提交后的问题', 'j30-provider-secret', root, ...Object.values(PRIVACY_MARKERS)
+  ]) {
     assert.equal(exportBytes.includes(marker), false)
   }
   const priorExportBytes = fs.readFileSync(diagnosticExportPath)
@@ -698,6 +782,9 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   assert.deepEqual(cancelledDiagnosticsExport.result, { status: 'cancelled', record_count: 0, available: true })
   assert.deepEqual(fs.readFileSync(diagnosticExportPath), priorExportBytes, 'cancelled dialog must not write or replace the export')
   cancelDiagnosticSave = false
+
+  const diagnosticFilesBeforeFailure = diagnosticFileSnapshot(diagnosticDirectory)
+  const diagnosticsExportBeforeFailure = fs.readFileSync(diagnosticExportPath)
   const diagnosticsFailureRequest = request('summary', 'j30.summary.diagnostics-write-failure')
   failDiagnosticWrites = true
   const diagnosticsFailureAccepted = await summaryApi.accept(diagnosticsFailureRequest)
@@ -736,9 +823,63 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   assert.equal(diagnosticsFailureCancelled.ok, true)
   assert.equal(diagnosticsFailureCancelled.result.snapshot.state, 'cancelled')
 
+  /* Cancellation leaves the already-deferred acceptance callback in the test
+     queue. Run it while the provider is cooperative so it observes the
+     cancelled request before the non-cooperative scenario is queued. */
+  routeBehavior = 'qa'
+  while (dispatchQueue.length > 0) dispatchQueue.shift()()
+  await waitFor(() => summaryRun.dispatches.size === 0, 'cancelled diagnostic-failure route')
+
+  routeBehavior = 'ignore-abort'
+  const routeCallsBeforeNonCooperativeProvider = routeCalls
+  const nonCooperativeAccepted = await summaryApi.accept(request(
+    'question', 'j30.question.non-cooperative-cancel', `取消期间 provider 保持未结算。${PRIVACY_MARKERS.prompt}`
+  ))
+  assert.equal(nonCooperativeAccepted.ok, true)
+  dispatchQueue.shift()()
+  await waitFor(() => routeCalls === routeCallsBeforeNonCooperativeProvider + 1, 'non-cooperative provider request')
+  assert.equal(typeof releaseLateRouteProvider?.reject, 'function')
+  const nonCooperativeCancelled = await summaryApi.cancel({
+    contract_id: contract.CONTRACT_ID,
+    contract_version: contract.CONTRACT_VERSION,
+    request_id: nonCooperativeAccepted.result.snapshot.request_id,
+    generation: nonCooperativeAccepted.result.snapshot.generation
+  })
+  assert.equal(nonCooperativeCancelled.ok, true)
+  assert.equal(nonCooperativeCancelled.result.snapshot.state, 'cancelled')
+  await waitFor(() => summaryRun.dispatches.size === 0, 'cancelled non-cooperative provider request')
+  assert.equal(lateRouteProviderSettled, false, 'cancellation must return before the provider settles')
+  const nonCooperativeRow = await gateway.getSessionSummaryRequest({ requestId: nonCooperativeAccepted.result.snapshot.request_id })
+  assert.equal(nonCooperativeRow.state, 'cancelled')
+  assert.equal(nonCooperativeRow.targetRunId, null)
+  const unavailableDiagnostics = await summaryApi.getDiagnostics({
+    contract_id: diagnosticsUI.CONTRACT_ID,
+    contract_version: diagnosticsUI.CONTRACT_VERSION,
+    request_id: nonCooperativeAccepted.result.snapshot.request_id,
+    before_sequence: null,
+    limit: 50
+  })
+  assert.equal(diagnosticsUI.assertQueryResponse(unavailableDiagnostics).result.available, false)
+  assert.deepEqual(unavailableDiagnostics.result.records, [])
+
   const independentSessionId = 'session.summary.diagnostics.failure.independent'
-  await recorder.openSession({ sessionId: independentSessionId, sourceId: 'mic', refinementEnabled: false })
-  await recorder.acceptCaption({
+  const subtitleAdapter = new FakeRuntimeAdapter({ autoEmit: false })
+  independentCoordinator = new SessionCoordinator({
+    adapter: subtitleAdapter,
+    persistenceSink: recorder,
+    runtimeOptions: resolveRuntimeOptions({ LIVE_SUBTITLE_DEV_MODEL: DEV_MODEL_VALUE }),
+    configuration: {
+      onboardingCompleted: true,
+      onboardingPreset: 'dictation',
+      mic: true,
+      loopback: false,
+      refinementEnabled: false
+    },
+    idFactory: () => independentSessionId
+  })
+  assert.equal((await independentCoordinator.command('start')).ok, true)
+  assert.equal(independentCoordinator.getSnapshot().sessionId, independentSessionId)
+  subtitleAdapter.emitCaption({
     schemaVersion: 1,
     sessionId: independentSessionId,
     sourceId: 'mic',
@@ -748,15 +889,57 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     kind: 'final',
     t0: 0,
     t1: 10,
-    text: '诊断写入失败时字幕链路仍可运行',
+    text: PRIVACY_MARKERS.transcript,
     translation: null
   })
-  await recorder.closeSession({ sessionId: independentSessionId, sourceId: 'mic', state: 'closed' })
-  const independentTranscript = await gateway.getSessionTranscript(independentSessionId)
-  assert.equal(independentTranscript.segments.length, 1)
-  assert.equal(independentTranscript.segments[0].text, '诊断写入失败时字幕链路仍可运行')
+  assert.equal((await independentCoordinator.command('stop')).ok, true)
+  const historyExportPath = path.join(root, 'selected-transcript.txt')
+  const historyDialogOwners = []
+  const history = new HistoryService({
+    gateway,
+    showSaveDialog: async (owner, options) => {
+      historyDialogOwners.push(owner)
+      assert.equal(options.title, '导出字幕原文')
+      return { canceled: false, filePath: historyExportPath }
+    }
+  })
+  const historyWindow = { role: 'history-window' }
+  const historySessions = await history.listSessions({ limit: 100, cursor: null })
+  assert.equal(historySessions.items.some((item) => item.sessionId === independentSessionId), true)
+  const independentPage = await history.getSessionPage({ sessionId: independentSessionId, limit: 50, cursor: null })
+  assert.equal(independentPage.items.length, 1)
+  assert.equal(independentPage.items[0].text, PRIVACY_MARKERS.transcript)
+  const historyExport = await history.exportSession({ sessionId: independentSessionId, format: 'txt' }, historyWindow)
+  assert.deepEqual(historyExport, { status: 'saved', format: 'txt', version: 'original' })
+  assert.deepEqual(historyDialogOwners, [historyWindow])
+  assert.equal(JSON.stringify(historyExport).includes(historyExportPath), false)
+  assert.equal(fs.readFileSync(historyExportPath, 'utf8').includes(PRIVACY_MARKERS.transcript), true)
+  assert.deepEqual(audioFilesUnder(root), [])
+
+  const lateException = Object.assign(new Error(PRIVACY_MARKERS.exceptionMessage), {
+    code: 'AGENT_PROVIDER_UNAVAILABLE',
+    providerResponse: PRIVACY_MARKERS.providerResponse,
+    toolArguments: PRIVACY_MARKERS.toolArguments,
+    toolResult: PRIVACY_MARKERS.toolResult
+  })
+  lateException.stack = `Error: ${PRIVACY_MARKERS.exceptionMessage}\n  ${PRIVACY_MARKERS.exceptionStack}\n  at synthetic provider boundary`
+  releaseLateRouteProvider.reject(lateException)
+  await tick()
+  assert.equal(lateRouteProviderSettled, true)
+  const stillCancelled = await gateway.getSessionSummaryRequest({ requestId: nonCooperativeAccepted.result.snapshot.request_id })
+  assert.equal(stillCancelled.state, 'cancelled')
+  assert.equal(stillCancelled.targetRunId, null)
+  assert.deepEqual(diagnosticFileSnapshot(diagnosticDirectory), diagnosticFilesBeforeFailure)
+  assert.deepEqual(fs.readFileSync(diagnosticExportPath), diagnosticsExportBeforeFailure)
+  const persistedDiagnosticText = diagnosticFileSnapshot(diagnosticDirectory)
+    .map(([, bytes]) => bytes.toString('utf8')).join('\n')
+  for (const marker of [...Object.values(PRIVACY_MARKERS), root]) assert.equal(persistedDiagnosticText.includes(marker), false)
+  for (const marker of Object.values(PRIVACY_MARKERS)) {
+    assert.equal(fs.readFileSync(diagnosticExportPath, 'utf8').includes(marker), false)
+  }
   const failedDiagnosticFiles = fs.readdirSync(diagnosticDirectory).filter((name) => name.endsWith('.jsonl'))
   assert.equal(failedDiagnosticFiles.some((name) => fs.readFileSync(path.join(diagnosticDirectory, name), 'utf8')
     .includes('synthetic diagnostic write failure marker')), false)
+  assert.equal(summaryRun.dispatches.size, 0)
   unsubscribeSummaryChanges()
 })

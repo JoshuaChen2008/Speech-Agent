@@ -70,6 +70,59 @@ test('SEM-F16/SEM-F34/J22: tools outside a recipe grant are refused before adapt
   assert.equal(adapterCalls, 0)
 })
 
+test('SEM-F40/J30-DIAG/J12: tool bodies and raw provider progress are reduced to safe loop metadata', async () => {
+  const markers = {
+    prompt: 'J30_PRIVACY_LOOP_PROMPT_4_4',
+    toolArguments: 'J30_PRIVACY_LOOP_TOOL_ARGUMENTS_4_4',
+    toolResult: 'J30_PRIVACY_LOOP_TOOL_RESULT_4_4',
+    providerEvent: 'J30_PRIVACY_LOOP_PROVIDER_EVENT_4_4'
+  }
+  const progress = []
+  const toolCalls = []
+  let observedArguments = null
+  const executor = new AgentLoopExecutor({
+    adapter: {
+      run: async ({ tools, onProgress }) => {
+        await onProgress({
+          type: 'request_started',
+          turn: 1,
+          providerEvent: markers.providerEvent,
+          prompt: markers.prompt,
+          toolArguments: markers.toolArguments,
+          toolResult: markers.toolResult
+        })
+        const result = await tools[0].execute({ query: markers.toolArguments })
+        assert.equal(result.matches[0].text, markers.toolResult)
+        await onProgress({ type: 'response_received', turn: 1, rawProviderEvent: markers.providerEvent })
+        return { text: 'safe response', usage: null }
+      }
+    },
+    onToolCall: (event) => toolCalls.push(event)
+  })
+  const result = await executor.agentLoop({
+    recipeId: 'qa.answer',
+    recipeVersion: '1',
+    prompt: markers.prompt,
+    resolvedModel: { modelId: 'controlled-provider' },
+    tools: [{
+      name: 'search_context',
+      execute: async (input) => {
+        observedArguments = input
+        return { matches: [{ text: markers.toolResult }] }
+      }
+    }],
+    onProgress: (event) => progress.push(event)
+  })
+
+  assert.deepEqual(observedArguments, { query: markers.toolArguments })
+  assert.deepEqual(progress, [
+    { type: 'request_started', turn: 1 },
+    { type: 'response_received', turn: 1 }
+  ])
+  assert.deepEqual(toolCalls, [{ toolName: 'search_context' }])
+  assert.equal(JSON.stringify({ result, progress, toolCalls }).includes('J30_PRIVACY_LOOP_'), false)
+})
+
 test('SEM-F28/SEM-T10/J22: cancellation is propagated and no continuation API is exposed', async () => {
   const controller = new AbortController()
   let seenSignal

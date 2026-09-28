@@ -29,8 +29,12 @@ function record (overrides = {}) {
 
 test('SEM-F40/J30-DIAG: diagnostic record accepts only exact no-body metadata', () => {
   assert.equal(assertDiagnosticRecord(record()).event, 'model_request_started')
-  assert.throws(() => assertDiagnosticRecord(record({ prompt: 'private marker' })), /exact keys/)
-  assert.throws(() => assertDiagnosticRecord(record({ absolutePath: 'D:\\private\\file' })), /exact keys/)
+  for (const field of [
+    'prompt', 'transcript', 'transcriptText', 'toolArguments', 'toolResult',
+    'providerEvent', 'providerResponse', 'exceptionMessage', 'exceptionStack', 'absolutePath'
+  ]) {
+    assert.throws(() => assertDiagnosticRecord(record({ [field]: `J30_PRIVACY_${field}` })), /exact keys/)
+  }
   assert.throws(() => assertDiagnosticRecord(record({ event: 'provider_raw_event' })), /not registered/)
   assert.throws(() => assertDiagnosticRecord(record({ runDigest: 'private marker' })), /SHA-256 digest/)
   assert.throws(() => assertDiagnosticRecord(record({ elapsedMs: Number.POSITIVE_INFINITY })), /safe integer/)
