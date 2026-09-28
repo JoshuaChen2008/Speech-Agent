@@ -32,6 +32,46 @@ function waitForExit (child, timeoutMs) {
   })
 }
 
+function waitForOutput (child, marker, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let stdout = ''
+    let stderr = ''
+    const timer = setTimeout(() => {
+      child.kill()
+      reject(new Error(`formal Electron phase did not reach ${marker}: ${stdout.slice(-1000)} ${stderr.slice(-3000)}`))
+    }, timeoutMs)
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString('utf8')
+      if (!stdout.includes(marker)) return
+      clearTimeout(timer)
+      resolve({ stdout, stderr })
+    })
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8') })
+    child.once('error', (error) => {
+      clearTimeout(timer)
+      reject(error)
+    })
+    child.once('exit', (code, signal) => {
+      clearTimeout(timer)
+      reject(new Error(`formal Electron phase exited before ${marker} (${code}/${signal}): ${stdout.slice(-1000)} ${stderr.slice(-3000)}`))
+    })
+  })
+}
+
+function spawnFormalPhase (userData, phase) {
+  return spawn(electron, ['--disable-gpu', '--disable-gpu-compositing', '--disable-software-rasterizer', '--in-process-gpu', '--password-store=basic', FIXTURE], {
+    cwd: PROJECT_ROOT,
+    windowsHide: true,
+    env: {
+      ...process.env,
+      J25_FORMAL_USER_DATA: userData,
+      J25_FORMAL_PHASE: phase,
+      ELECTRON_DISABLE_LOGGING: 'false'
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+}
+
 test('SEM-F23/SEM-T04/SEM-F26/SEM-F30/SEM-F31/SEM-F32/SEM-F33/SEM-F34/SEM-F38/SEM-F40/J18/J21/J22/J24/J25/J30-ELECTRON: formal settings, Agent Bar summary cancellation/diagnostics, and history use the production Electron path', { timeout: 120000 }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-j25-formal-settings-'))
   const userData = path.join(root, 'user-data')
@@ -101,6 +141,9 @@ test('SEM-F23/SEM-T04/SEM-F26/SEM-F30/SEM-F31/SEM-F32/SEM-F33/SEM-F34/SEM-F38/SE
     assert.equal(report.detailRereadAfterFeedback, true)
     assert.equal(report.summaryCancelledWithinDeadline, true, JSON.stringify(report))
     assert.equal(report.summaryCancelElapsedMs <= 5000, true, JSON.stringify(report))
+    assert.equal(report.summaryWindowCloseDidNotCancel, true, JSON.stringify(report))
+    assert.equal(report.summaryWindowCloseRequestSucceeded, true, JSON.stringify(report))
+    assert.equal(report.summaryHeldNoFalseProgress, true, JSON.stringify(report))
     assert.equal(report.summaryDiagnosticsVisible, true, JSON.stringify(report))
     assert.equal(report.summaryDiagnosticsExported, true, JSON.stringify(report))
     assert.equal(report.summaryDiagnosticsPrivacyClean, true, JSON.stringify(report))
@@ -114,6 +157,48 @@ test('SEM-F23/SEM-T04/SEM-F26/SEM-F30/SEM-F31/SEM-F32/SEM-F33/SEM-F34/SEM-F38/SE
     assert.equal(report.systemCredential, false)
     assert.equal(/j25-local-provider-secret|j25-wizard-secret|请回答这场会的重点|J25 renderer feedback|J30-ELECTRON-PRIVACY-TRANSCRIPT-MARKER/.test(reportLine), false)
   } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('SEM-F38/SEM-F40/SEM-T01/SEM-T02/SEM-T04/J30-RECOVERY/J30-ELECTRON: a restarted Electron app waits for explicit continuation of the same summary run', { timeout: 180000 }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-j30-electron-restart-'))
+  const userData = path.join(root, 'user-data')
+  fs.mkdirSync(userData, { recursive: true })
+  let preparing = null
+  let resuming = null
+  try {
+    preparing = spawnFormalPhase(userData, 'restart-prepare')
+    const preparingExit = waitForExit(preparing, 75000)
+    const prepared = await waitForOutput(preparing, '"phase":"restart-pending"', 75000)
+    const prepareResult = await preparingExit
+    assert.deepEqual({ code: prepareResult.code, signal: prepareResult.signal }, { code: 0, signal: null }, prepareResult.stderr.slice(-4000))
+    const preparationLine = prepared.stdout.trim().split(/\r?\n/).find((line) => line.includes('"phase":"restart-pending"'))
+    assert.ok(preparationLine, 'restart preparation did not report a pending request')
+    const preparation = JSON.parse(preparationLine)
+    assert.equal(preparation.result, true)
+    assert.equal(preparation.requestStayedActive, true)
+    assert.equal(Number.isSafeInteger(preparation.attempt), true)
+    preparing = null
+
+    resuming = spawnFormalPhase(userData, 'restart-resume')
+    const result = await waitForExit(resuming, 75000)
+    assert.deepEqual({ code: result.code, signal: result.signal }, { code: 0, signal: null }, result.stderr.slice(-4000))
+    const reportLine = result.stdout.trim().split(/\r?\n/).find((line) => line.includes('"phase":"restart-resume"'))
+    assert.ok(reportLine, `formal restart report missing: ${result.stdout.slice(-1000)} ${result.stderr.slice(-4000)}`)
+    const report = JSON.parse(reportLine)
+    assert.equal(report.result, true, JSON.stringify(report))
+    assert.equal(report.requestStayedRecoverableUntilUserAction, true)
+    assert.equal(report.explicitContinuationVisible, true)
+    assert.equal(report.noProviderRequestBeforeContinue, true)
+    assert.equal(report.sameRequestAndRunResumed, true)
+    assert.equal(report.attemptAfterRestart > preparation.attempt, true)
+    assert.equal(report.terminalState, 'succeeded')
+    assert.equal(report.providerRequestCountAfterContinue > 0, true)
+    assert.equal(/J30-ELECTRON-PRIVACY-TRANSCRIPT-MARKER|[A-Z]:[\\/]/.test(reportLine), false)
+  } finally {
+    if (preparing && preparing.exitCode === null && preparing.signalCode === null) preparing.kill()
+    if (resuming && resuming.exitCode === null && resuming.signalCode === null) resuming.kill()
     fs.rmSync(root, { recursive: true, force: true })
   }
 })

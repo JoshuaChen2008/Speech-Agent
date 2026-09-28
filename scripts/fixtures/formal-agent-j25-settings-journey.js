@@ -21,7 +21,9 @@ const inputProbe = { pending: false, rejected: false, failureCode: null, invalid
 const submitReceipts = []
 const runControlProbe = {
   cancelElapsedMs: null, cancelState: null, diagnosticsExportStatus: null, summaryAcceptResults: [],
-  dropChangedRequestId: null, droppedChangedCount: 0, capacityRequestNotificationLossObserved: false
+  summaryCancelCommandCount: 0,
+  dropChangedRequestId: null, droppedChangedCount: 0,
+  capacityRequestNotificationLossObserved: false
 }
 const originalIpcHandle = ipcMain.handle.bind(ipcMain)
 ipcMain.handle = (channel, handler) => originalIpcHandle(channel, async (...args) => {
@@ -58,6 +60,7 @@ ipcMain.handle = (channel, handler) => originalIpcHandle(channel, async (...args
       errorCode: response?.error?.code || response?.result?.error_code || null
     })
   }
+  if (channel === 'session-summary-run:cancel') runControlProbe.summaryCancelCommandCount += 1
   if (channel === 'session-summary-run:accept' && response?.ok === true && response.result?.accepted === true) {
     const snapshot = response.result.snapshot
     if (snapshot.action === 'summary') runControlProbe.dropChangedRequestId = snapshot.request_id
@@ -208,6 +211,15 @@ function providerServer () {
   const state = {
     requestCount: 0, modelIds: [], requestShapes: [], credentialObserved: false, credentialExact: false,
     holdNextSummary: false,
+    heldSummarySockets: [],
+    heldSummaryResponders: [],
+    closeHeldSummary: () => {
+      for (const socket of state.heldSummarySockets.splice(0)) socket.destroy()
+    },
+    releaseHeldSummary: () => {
+      for (const respond of state.heldSummaryResponders.splice(0)) respond()
+      state.heldSummarySockets.length = 0
+    },
     summaryRequested: new Promise((resolve) => { markSummaryRequested = resolve })
   }
   const server = http.createServer((request, response) => {
@@ -240,15 +252,15 @@ function providerServer () {
         authorizationPresent: typeof request.headers.authorization === 'string' && request.headers.authorization.length > 0,
         authorizationExact: request.headers.authorization === 'Bearer j25-local-provider-secret'
       })
+      const holdSummaryResponse = summaryModelRequest && state.holdNextSummary
       if (summaryModelRequest) {
         markSummaryRequested()
-        if (state.holdNextSummary) {
-          state.holdNextSummary = false
-          return
-        }
+        if (holdSummaryResponse) state.holdNextSummary = false
       }
       const content = isRouteRequest
         ? JSON.stringify({ recipeId: isSummaryRequest ? 'summary.minutes' : 'qa.answer', confidence: 0.9 })
+        : summaryModelRequest
+          ? JSON.stringify({ schemaVersion: 1, overview: '受控恢复旅程结果。', conclusions: [], todos: [], risks: [] })
         : JSON.stringify({
             schemaVersion: 1,
             answer: '受控 provider 返回的正式 Agent 结果。',
@@ -265,8 +277,17 @@ function providerServer () {
         usage: { prompt_tokens: 13, completion_tokens: 7, total_tokens: 20 }
       }
       const encoded = JSON.stringify(payload)
-      response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(encoded) })
-      response.end(encoded)
+      const respond = () => {
+        if (response.destroyed || response.writableEnded) return
+        response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(encoded) })
+        response.end(encoded)
+      }
+      if (holdSummaryResponse) {
+        state.heldSummarySockets.push(request.socket)
+        state.heldSummaryResponders.push(respond)
+        return
+      }
+      respond()
     })
   })
   return { server, state }
@@ -675,7 +696,7 @@ async function configureThroughSettings (settings, port) {
 
 async function runAgentBar (toolbar, providerState) {
   await toolbar.webContents.executeJavaScript("window.shell.openAgent(); true")
-  const agent = await waitFor(() => windowFor('/agent/index.html'), 'Agent Bar window')
+  let agent = await waitFor(() => windowFor('/agent/index.html'), 'Agent Bar window')
   await waitFor(async () => agent.webContents.executeJavaScript("document.readyState === 'complete'"), 'Agent Bar renderer')
   await waitFor(async () => agent.webContents.executeJavaScript("Boolean(document.querySelector('.scope-card'))"), 'terminal scope')
   await agent.webContents.executeJavaScript(`(async () => {
@@ -908,6 +929,75 @@ async function runAgentBar (toolbar, providerState) {
   const diagnosticsExportSha256 = crypto.createHash('sha256').update(diagnosticBytes).digest('hex')
   const summaryCancelledWithinDeadline = cancelledSummary && runControlProbe.cancelState === 'cancelled' &&
     Number.isFinite(runControlProbe.cancelElapsedMs) && runControlProbe.cancelElapsedMs <= 5000
+  const summaryWindowCloseSubmitCount = submitReceipts.length
+  const summaryProviderShapeCountBeforeWindowClose = providerState.requestShapes.length
+  providerState.holdNextSummary = true
+  await agent.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const headers = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
+    const scopes = await window.agentApi.getScopes({ ...headers, limit: 50, cursor: null })
+    const index = scopes?.ok === true ? scopes.scopes.findIndex((item) => item.scope.reference === 'session.j25.formal') : -1
+    const card = index >= 0 ? document.querySelectorAll('.scope-card')[index] : null
+    if (!card) throw new Error('window-close summary scope missing')
+    card.click()
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const button = document.querySelector('[data-action="minutes"]')
+      if (card.getAttribute('aria-current') === 'true' && button && !button.disabled) {
+        button.click()
+        return true
+      }
+      await sleep(50)
+    }
+    throw new Error('window-close summary control did not become available')
+  })()`)
+  const windowCloseReceipt = await waitFor(
+    () => submitReceipts.slice(summaryWindowCloseSubmitCount).find((receipt) => receipt.recipeId === 'summary.minutes'),
+    'Agent window-close summary receipt'
+  )
+  await waitFor(() => providerState.requestShapes.slice(summaryProviderShapeCountBeforeWindowClose).some((shape) => shape.summaryModelRequest),
+    'Agent window-close summary provider request')
+  const activeSummaryBeforeWindowClose = await agent.webContents.executeJavaScript(`(async () => {
+    const response = await window.agentApi.getSessionSummaryRun({
+      contract_id: 'speech-agent.session-summary-run.ui',
+      contract_version: '1.0.0',
+      request_id: ${JSON.stringify(windowCloseReceipt.requestId)}
+    })
+    return response?.ok === true ? response.result.snapshot : null
+  })()`)
+  const heldSummaryNoFalseProgress = activeSummaryBeforeWindowClose?.request_id === windowCloseReceipt.requestId &&
+    !['succeeded', 'failed', 'cancelled'].includes(activeSummaryBeforeWindowClose.state) &&
+    activeSummaryBeforeWindowClose.validated_chunk_count === null &&
+    activeSummaryBeforeWindowClose.total_chunk_count === null &&
+    Number.isSafeInteger(activeSummaryBeforeWindowClose.elapsed_ms)
+  const cancellationCommandsBeforeWindowClose = runControlProbe.summaryCancelCommandCount
+  agent.close()
+  await waitFor(() => agent.isDestroyed(), 'Agent window close')
+  await wait(200)
+  const windowCloseDidNotSendCancellation = runControlProbe.summaryCancelCommandCount === cancellationCommandsBeforeWindowClose
+  await toolbar.webContents.executeJavaScript('window.shell.openAgent(); true')
+  agent = await waitFor(() => windowFor('/agent/index.html'), 'reopened Agent Bar window')
+  await waitFor(async () => agent.webContents.executeJavaScript("document.readyState === 'complete'"), 'reopened Agent Bar renderer')
+  const windowCloseSnapshot = await agent.webContents.executeJavaScript(`(async () => {
+    const response = await window.agentApi.getSessionSummaryRun({
+      contract_id: 'speech-agent.session-summary-run.ui',
+      contract_version: '1.0.0',
+      request_id: ${JSON.stringify(windowCloseReceipt.requestId)}
+    })
+    return response?.ok === true ? response.result.snapshot : null
+  })()`)
+  const windowCloseRequestStayedActive = windowCloseSnapshot?.request_id === windowCloseReceipt.requestId &&
+    !['succeeded', 'failed', 'cancelled'].includes(windowCloseSnapshot.state)
+  providerState.releaseHeldSummary()
+  const windowCloseTerminalSnapshot = await waitFor(async () => agent.webContents.executeJavaScript(`(async () => {
+    const response = await window.agentApi.getSessionSummaryRun({
+      contract_id: 'speech-agent.session-summary-run.ui',
+      contract_version: '1.0.0',
+      request_id: ${JSON.stringify(windowCloseReceipt.requestId)}
+    })
+    const snapshot = response?.ok === true ? response.result.snapshot : null
+    return snapshot?.state === 'succeeded' && snapshot.request_id === ${JSON.stringify(windowCloseReceipt.requestId)}
+      ? { state: snapshot.state, attempt: snapshot.attempt } : null
+  })()`), 'summary settlement after Agent window close')
   const providerShapeCountBeforeCapacity = providerState.requestShapes.length
   const droppedChangesBeforeCapacity = runControlProbe.droppedChangedCount
   const capacitySubmitCount = submitReceipts.length
@@ -991,6 +1081,9 @@ async function runAgentBar (toolbar, providerState) {
     ...feedback,
     ...ui,
     summaryCancelledWithinDeadline,
+    summaryWindowCloseDidNotCancel: windowCloseDidNotSendCancellation && windowCloseRequestStayedActive,
+    summaryWindowCloseRequestSucceeded: windowCloseTerminalSnapshot.state === 'succeeded',
+    summaryHeldNoFalseProgress: heldSummaryNoFalseProgress,
     summaryTerminalNotificationDropped: runControlProbe.capacityRequestNotificationLossObserved,
     summaryDiagnosticsVisible: diagnosticsVisible && diagnosticJson.records?.length > 0,
     summaryDiagnosticsExported: runControlProbe.diagnosticsExportStatus === 'saved' && diagnosticBytes.length > 0,
@@ -1014,6 +1107,166 @@ async function runAgentBar (toolbar, providerState) {
   }
 }
 
+async function prepareRestartRecovery (toolbar, providerState) {
+  await toolbar.webContents.executeJavaScript('window.shell.openAgent(); true')
+  const agent = await waitFor(() => windowFor('/agent/index.html'), 'restart preparation Agent Bar window')
+  await waitFor(async () => agent.webContents.executeJavaScript("document.readyState === 'complete'"), 'restart preparation Agent Bar renderer')
+  await waitFor(async () => agent.webContents.executeJavaScript("Boolean(document.querySelector('.scope-card'))"), 'restart preparation session scope')
+  await agent.webContents.executeJavaScript(`(async () => {
+    const headers = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
+    const scopes = await window.agentApi.getScopes({ ...headers, limit: 50, cursor: null })
+    const index = scopes?.ok === true ? scopes.scopes.findIndex((item) => item.scope.reference === 'session.j25.formal') : -1
+    const card = index >= 0 ? document.querySelectorAll('.scope-card')[index] : null
+    if (!card) throw new Error('restart preparation session is unavailable')
+    card.click()
+    return true
+  })()`)
+  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '配置已就绪，提交后检查输入容量'"), 'restart preparation eligibility')
+  providerState.holdNextSummary = true
+  const acceptedBefore = submitReceipts.length
+  await agent.webContents.executeJavaScript("document.querySelector('[data-action=\"minutes\"]')?.click(); true")
+  const receipt = await waitFor(
+    () => submitReceipts.slice(acceptedBefore).find((item) => item.recipeId === 'summary.minutes'),
+    'restart preparation summary receipt'
+  )
+  await waitFor(() => providerState.requestShapes.some((shape) => shape.summaryModelRequest), 'restart preparation provider request')
+  const snapshot = await agent.webContents.executeJavaScript(`(async () => {
+    const response = await window.agentApi.getSessionSummaryRun({
+      contract_id: 'speech-agent.session-summary-run.ui',
+      contract_version: '1.0.0',
+      request_id: ${JSON.stringify(receipt.requestId)}
+    })
+    return response?.ok === true ? response.result.snapshot : null
+  })()`)
+  const requestStayedActive = snapshot?.request_id === receipt.requestId &&
+    !['succeeded', 'failed', 'cancelled'].includes(snapshot.state) && typeof snapshot.target_run_id === 'string'
+  if (!requestStayedActive) throw new Error('restart preparation request was not durably active')
+  process.stdout.write(`${JSON.stringify({ schemaVersion: 1, phase: 'restart-pending', result: true, requestStayedActive, attempt: snapshot.attempt })}\n`)
+  providerState.closeHeldSummary()
+}
+
+async function configureRecoveryModel (settings, port) {
+  await waitFor(async () => settings.webContents.executeJavaScript("document.readyState === 'complete'"), 'recovery settings renderer')
+  const configured = await settings.webContents.executeJavaScript(`(async () => {
+    const waitFor = async (probe, label) => {
+      const deadline = Date.now() + 20000
+      while (Date.now() < deadline) {
+        const value = probe()
+        if (value) return value
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+      throw new Error(label + ' timed out')
+    }
+    const onboarding = await waitFor(() => document.querySelector('#onboarding'), 'recovery onboarding')
+    if (!onboarding.hidden) document.querySelector('[data-preset="meeting"]').click()
+    await waitFor(() => document.querySelector('#onboarding')?.hidden === true, 'recovery onboarding dismissal')
+    const modelNavigation = await waitFor(() => document.querySelector('[data-pane="agentModel"]'), 'recovery model navigation')
+    modelNavigation.click()
+    const toggle = await waitFor(() => document.querySelector('input[aria-label="启用 Agent 系统"]'), 'recovery Agent setting')
+    if (!toggle.checked) toggle.click()
+    await waitFor(() => document.querySelector('input[aria-label="启用 Agent 系统"]')?.checked === true, 'recovery Agent enabled')
+
+    const headers = { contractId: 'agent-model-ui', contractVersion: '1.0.0' }
+    const initial = await window.shell.getAgentModelCatalog(headers)
+    if (initial?.ok !== true || !Number.isSafeInteger(initial.snapshot?.revision)) throw new Error('recovery model catalog unavailable')
+    let expectedRevision = initial.snapshot.revision
+    const configure = async (command) => {
+      const response = await window.shell.configureAgentModel({
+        ...headers, command: { ...command, expectedRevision }
+      })
+      if (response?.ok !== true || !Number.isSafeInteger(response.revision)) {
+        throw new Error('recovery model configuration rejected: ' + (response?.error?.code || 'unavailable'))
+      }
+      expectedRevision = response.revision
+    }
+    await configure({
+      type: 'updateProfile', profileId: 'deepseek', label: 'DeepSeek',
+      httpsOrigin: 'https://127.0.0.1:${port}', basePath: '/v1'
+    })
+    await configure({
+      type: 'addModel', profileId: 'deepseek', modelId: 'j25-local-model',
+      capabilities: {
+        maxInputTokens: 64000, maxOutputTokens: 4096,
+        supportsToolCalling: true, supportsStructuredOutput: true,
+        supportsStreaming: true, usageReporting: true
+      }
+    })
+    await configure({ type: 'setCredential', profileId: 'deepseek', credential: 'j25-local-provider-secret' })
+    await configure({ type: 'assignPurpose', purpose: 'default', target: { profileId: 'deepseek', modelId: 'j25-local-model' } })
+    const latest = await window.shell.getAgentModelCatalog(headers)
+    return latest?.ok === true && latest.snapshot.readinessByPurpose.default.singleShot === 'ready' &&
+      latest.snapshot.readinessByPurpose.default.agentLoop === 'ready'
+  })()`)
+  if (configured !== true) throw new Error('recovery model is not ready')
+}
+
+async function continueRestartRecovery (toolbar, providerState) {
+  await toolbar.webContents.executeJavaScript('window.shell.openAgent(); true')
+  const agent = await waitFor(() => windowFor('/agent/index.html'), 'recovery Agent Bar window')
+  await waitFor(async () => agent.webContents.executeJavaScript("document.readyState === 'complete'"), 'recovery Agent Bar renderer')
+  await waitFor(async () => agent.webContents.executeJavaScript("Boolean(document.querySelector('.recoverable-runs li'))"), 'recoverable summary request')
+  const recovered = await agent.webContents.executeJavaScript(`(async () => {
+    const response = await window.agentApi.listRecoverableSessionSummaryRuns({
+      contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0'
+    })
+    if (response?.ok !== true || !Array.isArray(response.result?.requests)) return null
+    const item = response.result.requests.find((entry) => entry?.snapshot?.action === 'summary')
+    if (!item) return null
+    return {
+      requestId: item.snapshot.request_id,
+      generation: item.snapshot.generation,
+      revision: item.snapshot.revision,
+      targetRunId: item.snapshot.target_run_id,
+      state: item.snapshot.state,
+      resumeRequired: item.snapshot.resume_required
+    }
+  })()`)
+  if (!recovered || recovered.state !== 'retry_wait' || recovered.resumeRequired !== true ||
+      typeof recovered.targetRunId !== 'string') throw new Error('restarted summary was not held for explicit continuation')
+  const providerRequestsBeforeContinue = providerState.requestShapes.filter((shape) => shape.summaryModelRequest).length
+  const explicitActionVisible = await agent.webContents.executeJavaScript(`(() => {
+    const item = [...document.querySelectorAll('.recoverable-runs li')]
+      .find((node) => node.textContent.includes('会话总结已暂停'))
+    return Boolean(item && [...item.querySelectorAll('button')].some((button) => button.textContent === '继续生成'))
+  })()`)
+  if (!explicitActionVisible) throw new Error('recovery UI did not expose explicit continuation')
+  await agent.webContents.executeJavaScript(`(() => {
+    const item = [...document.querySelectorAll('.recoverable-runs li')]
+      .find((node) => node.textContent.includes('会话总结已暂停'))
+    const button = item && [...item.querySelectorAll('button')].find((entry) => entry.textContent === '继续生成')
+    if (!button) throw new Error('explicit continuation action missing')
+    button.click()
+    return true
+  })()`)
+  await waitFor(() => providerState.requestShapes.filter((shape) => shape.summaryModelRequest).length > providerRequestsBeforeContinue,
+    'provider request after explicit continuation')
+  const resumed = await waitFor(async () => agent.webContents.executeJavaScript(`(async () => {
+    const response = await window.agentApi.getSessionSummaryRun({
+      contract_id: 'speech-agent.session-summary-run.ui',
+      contract_version: '1.0.0',
+      request_id: ${JSON.stringify(recovered.requestId)}
+    })
+    const snapshot = response?.ok === true ? response.result.snapshot : null
+    return snapshot && ['succeeded', 'failed', 'cancelled'].includes(snapshot.state)
+      ? { state: snapshot.state, requestId: snapshot.request_id, targetRunId: snapshot.target_run_id,
+          attempt: snapshot.attempt, generation: snapshot.generation }
+      : null
+  })()`), 'restarted summary terminal state', 45000)
+  const result = {
+    result: resumed.state === 'succeeded' && resumed.requestId === recovered.requestId &&
+      resumed.targetRunId === recovered.targetRunId && resumed.attempt > 1,
+    requestStayedRecoverableUntilUserAction: recovered.state === 'retry_wait' && recovered.resumeRequired,
+    explicitContinuationVisible: explicitActionVisible,
+    noProviderRequestBeforeContinue: providerRequestsBeforeContinue === 0,
+    sameRequestAndRunResumed: resumed.requestId === recovered.requestId && resumed.targetRunId === recovered.targetRunId,
+    attemptAfterRestart: resumed.attempt,
+    terminalState: resumed.state,
+    providerRequestCountAfterContinue: providerState.requestShapes.filter((shape) => shape.summaryModelRequest).length
+  }
+  process.stdout.write(`${JSON.stringify({ schemaVersion: 1, phase: 'restart-resume', ...result })}\n`)
+  return result
+}
+
 async function main () {
   const rawUserDataDir = process.env.J25_FORMAL_USER_DATA
   if (typeof rawUserDataDir !== 'string' || rawUserDataDir.length === 0) throw new Error('J25_FORMAL_USER_DATA is required')
@@ -1021,6 +1274,7 @@ async function main () {
   if (userDataDir === path.parse(userDataDir).root || userDataDir === PROJECT_ROOT) throw new Error('J25_FORMAL_USER_DATA must be isolated')
   fs.mkdirSync(userDataDir, { recursive: true })
   app.setPath('userData', userDataDir)
+  const phase = process.env.J25_FORMAL_PHASE || 'full'
   dialog.showSaveDialog = async () => ({
     canceled: false,
     filePath: path.join(userDataDir, 'p1-summary-diagnostics.json')
@@ -1037,14 +1291,22 @@ async function main () {
       return send(channel, ...args)
     }
   })
-  await seedTerminalSession(userDataDir)
+  if (phase !== 'restart-resume') await seedTerminalSession(userDataDir)
 
   const provider = providerServer()
+  const providerPortFile = path.join(userDataDir, 'j30-provider-port.txt')
+  const requestedProviderPort = phase === 'restart-resume'
+    ? Number(fs.readFileSync(providerPortFile, 'utf8'))
+    : 0
+  if (!Number.isInteger(requestedProviderPort) || requestedProviderPort < 0 || requestedProviderPort > 65535) {
+    throw new Error('formal provider port control is invalid')
+  }
   await new Promise((resolve, reject) => {
     provider.server.once('error', reject)
-    provider.server.listen(0, '127.0.0.1', resolve)
+    provider.server.listen(requestedProviderPort, '127.0.0.1', resolve)
   })
   const port = provider.server.address().port
+  if (phase !== 'restart-resume') fs.writeFileSync(providerPortFile, String(port), { mode: 0o600 })
   const originalFetch = globalThis.fetch
   const localOrigin = `https://127.0.0.1:${port}`
   globalThis.fetch = (input, init) => {
@@ -1059,9 +1321,21 @@ async function main () {
   require(path.join(PROJECT_ROOT, 'src', 'main.js'))
   try {
     await app.whenReady()
-    const settings = await waitFor(() => windowFor('/settings/settings.html'), 'settings window')
+    const settings = phase === 'restart-resume'
+      ? null
+      : await waitFor(() => windowFor('/settings/settings.html'), 'settings window')
     const toolbar = await waitFor(() => windowFor('/toolbar/index.html'), 'toolbar window')
     await waitFor(async () => toolbar.webContents.executeJavaScript("document.readyState === 'complete'"), 'toolbar renderer')
+    if (phase === 'restart-resume') {
+      const recovery = await continueRestartRecovery(toolbar, provider.state)
+      if (!recovery.result) throw new Error(`formal restart recovery failed: ${JSON.stringify(recovery)}`)
+      return
+    }
+    if (phase === 'restart-prepare') {
+      await configureRecoveryModel(settings, port)
+      await prepareRestartRecovery(toolbar, provider.state)
+      return
+    }
     const settingsResult = await configureThroughSettings(settings, port)
     const nativePicker = await inspectNativePicker(settings)
     const inputAppearance = await inspectInputAppearance(settings)
@@ -1079,7 +1353,9 @@ async function main () {
         runResult.succeeded && runResult.historyVisible && runResult.modelVisible && runResult.signalAccepted &&
         runResult.signalReplayed && runResult.manualEligibilityRefresh && runResult.submitDisabledDuringEligibilityRefresh &&
         runResult.feedbackSubmittedThroughRenderer && runResult.detailRereadAfterFeedback &&
-        runResult.summaryCancelledWithinDeadline && runResult.summaryDiagnosticsVisible &&
+        runResult.summaryCancelledWithinDeadline && runResult.summaryWindowCloseDidNotCancel &&
+        runResult.summaryWindowCloseRequestSucceeded && runResult.summaryHeldNoFalseProgress &&
+        runResult.summaryDiagnosticsVisible &&
         runResult.summaryDiagnosticsExported && runResult.summaryDiagnosticsPrivacyClean &&
         runResult.summaryTerminalNotificationDropped &&
         runResult.summaryCapacityFailed && runResult.summaryCapacityErrorVisible && runResult.summaryCapacityRecoveryVisible &&
@@ -1124,6 +1400,9 @@ async function main () {
       detailRereadAfterFeedback: runResult.detailRereadAfterFeedback,
       summaryCancelledWithinDeadline: runResult.summaryCancelledWithinDeadline,
       summaryCancelElapsedMs: runControlProbe.cancelElapsedMs,
+      summaryWindowCloseDidNotCancel: runResult.summaryWindowCloseDidNotCancel,
+      summaryWindowCloseRequestSucceeded: runResult.summaryWindowCloseRequestSucceeded,
+      summaryHeldNoFalseProgress: runResult.summaryHeldNoFalseProgress,
       summaryDiagnosticsVisible: runResult.summaryDiagnosticsVisible,
       summaryDiagnosticsExported: runResult.summaryDiagnosticsExported,
       summaryDiagnosticsPrivacyClean: runResult.summaryDiagnosticsPrivacyClean,
