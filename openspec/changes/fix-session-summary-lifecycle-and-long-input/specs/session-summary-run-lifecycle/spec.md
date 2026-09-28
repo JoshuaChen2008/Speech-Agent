@@ -77,3 +77,22 @@
 #### Scenario: 取消不合作的provider时开始下一字幕会话
 - **WHEN** provider忽略abort且用户开始再停止一次字幕会话
 - **THEN** 真实SessionCoordinator、recorder、SQLite、历史和文本导出成立；取消不能终止audio、字幕或storage进程。
+
+### Requirement: P1 运行闭环通过正式Electron用户旅程验收
+系统 SHALL 在正式 Agent Bar 用户路径中组合验证 J30 受理、状态、取消、进展、恢复、诊断和字幕独立性。Electron main、preload、renderer、IPC、scheduler、runner、Model Access、storage worker 与 SQLite 使用产品实现；只允许在 provider/网络、声卡、系统权限和保存对话框等不可确定外部边界使用受控替身。服务级旅程不能替代此要求。
+
+#### Scenario: 通知丢失后界面读取持久终态
+- **WHEN** 正式 Agent Bar 已显示活动请求，main 在 SQLite 提交终态后丢失 changed 通知
+- **THEN** renderer 的周期校准、手动刷新、隐藏后恢复与 reload 都从持久快照收敛到正确终态；过期身份/revision 不覆盖当前选择或草稿，终态停止活动轮询。
+
+#### Scenario: 正式界面取消并等待持久收束
+- **WHEN** 用户从正式 Agent Bar 取消路由、provider、工具或分页读取中的请求
+- **THEN** main 到 SQLite 权威终态在 5 秒内收束；非合作 provider 的迟到结果不得提交。若取消存储失败，界面显示取消状态尚未确认且不谎报终态；已先提交的 succeeded/failed 原样返回。
+
+#### Scenario: 独立进程重启后明确继续
+- **WHEN** 活动会话总结进程退出，应用以同一隔离 userData 启动新进程
+- **THEN** 不自动外发模型请求；用户明确继续后，旧 run/绑定与剩余预算保持，attempt 递增，旧 owner 写入被拒绝；自由问题提示丢失时要求在原会话范围重新提交。
+
+#### Scenario: 诊断故障期间字幕旅程继续
+- **WHEN** 用户运行、取消或检查会话总结时诊断目录不可写，或诊断含敏感测试标记
+- **THEN** UI 明确报告诊断不可用，任务终态仍以 SQLite 为准，诊断/导出/证据不含标记；用户仍可开始并停止下一字幕会话、读取历史及导出首次稳定转写。

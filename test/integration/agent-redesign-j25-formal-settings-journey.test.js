@@ -32,11 +32,11 @@ function waitForExit (child, timeoutMs) {
   })
 }
 
-test('SEM-F23/SEM-T04/J18/SEM-F26/SEM-F30/SEM-F31/SEM-F32/SEM-F33/SEM-F34/J21/J22/J24/J25: formal settings appearance/failure → context management → Agent Bar run/feedback/refresh → history uses one production IPC/SQLite path', { timeout: 90000 }, async () => {
+test('SEM-F23/SEM-T04/SEM-F26/SEM-F30/SEM-F31/SEM-F32/SEM-F33/SEM-F34/SEM-F38/SEM-F40/J18/J21/J22/J24/J25/J30-ELECTRON: formal settings, Agent Bar summary cancellation/diagnostics, and history use the production Electron path', { timeout: 120000 }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-j25-formal-settings-'))
   const userData = path.join(root, 'user-data')
   fs.mkdirSync(userData, { recursive: true })
-  const child = spawn(electron, ['--disable-gpu', '--disable-gpu-compositing', '--disable-software-rasterizer', '--in-process-gpu', FIXTURE], {
+  const child = spawn(electron, ['--disable-gpu', '--disable-gpu-compositing', '--disable-software-rasterizer', '--in-process-gpu', '--password-store=basic', FIXTURE], {
     cwd: PROJECT_ROOT,
     windowsHide: true,
     env: {
@@ -99,10 +99,20 @@ test('SEM-F23/SEM-T04/J18/SEM-F26/SEM-F30/SEM-F31/SEM-F32/SEM-F33/SEM-F34/J21/J2
     assert.equal(report.eligibilityReadCount >= 2, true)
     assert.equal(report.feedbackSubmittedThroughRenderer, true)
     assert.equal(report.detailRereadAfterFeedback, true)
+    assert.equal(report.summaryCancelledWithinDeadline, true, JSON.stringify(report))
+    assert.equal(report.summaryCancelElapsedMs <= 5000, true, JSON.stringify(report))
+    assert.equal(report.summaryDiagnosticsVisible, true, JSON.stringify(report))
+    assert.equal(report.summaryDiagnosticsExported, true, JSON.stringify(report))
+    assert.equal(report.summaryDiagnosticsPrivacyClean, true, JSON.stringify(report))
+    assert.equal(report.summaryDiagnosticsRecordCount > 0, true, JSON.stringify(report))
+    assert.equal(report.summaryDiagnosticsExportBytes > 0, true, JSON.stringify(report))
+    assert.match(report.summaryDiagnosticsExportSha256, /^[a-f0-9]{64}$/)
+    assert.equal(report.summaryTerminalNotificationDropped, true, JSON.stringify(report))
+    assert.equal(report.summaryDroppedChangedCount > 0, true, JSON.stringify(report))
     assert.equal(report.transcriptAndPromptAbsentFromReport, true)
     assert.equal(report.publicProvider, false)
     assert.equal(report.systemCredential, false)
-    assert.equal(/j25-local-provider-secret|j25-wizard-secret|请回答这场会的重点|J25 renderer feedback|受控正式设置/.test(reportLine), false)
+    assert.equal(/j25-local-provider-secret|j25-wizard-secret|请回答这场会的重点|J25 renderer feedback|J30-ELECTRON-PRIVACY-TRANSCRIPT-MARKER/.test(reportLine), false)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

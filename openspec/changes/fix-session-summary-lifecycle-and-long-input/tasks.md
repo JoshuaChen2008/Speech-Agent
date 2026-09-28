@@ -69,3 +69,11 @@
 - [ ] 7.5 执行受影响focus、verify:renderer及相关lane；PR/阶段联合验收由当前revision完整三条lane承担，记录命令与未验证范围。
 - [ ] 7.6 已授权真实模型验证五小时来源规模输入的质量/耗时/真实网络取消；独立记录五小时实际字幕采集资源趋势、退出及历史，无音频落盘，不替代原I2/I3/I4门禁（J31实机）。
 - [ ] 7.7 更新语义表/旅程证据列及runtime/data说明、在途change交接链接；未验部分保持实现完成·尚未验收，不把文档校验算产品证据。
+
+## 8. P1 确定性联合验收收尾
+
+- [x] 8.1 建立 J30-ELECTRON 正式 Agent Bar 旅程，复用生产 Electron/main/preload/renderer/IPC、scheduler/runner/Model Access、utility storage worker 与 SQLite；只替代登记的外部不确定边界，报告仅含指标/布尔结果/稳定错误码/哈希（SEM-F38/F40、SEM-T01/T02/T04、J30-ELECTRON）。`agent-redesign-j25-formal-settings-journey.test.js` 已沿生产入口验证正式 UI 取消、5 秒期限、通知丢失后状态校准、诊断查询/导出与隐私负扫描；1/1。其余矩阵仍由 8.2–8.4 跟踪。
+- [ ] 8.2 在同一真实旅程覆盖通知丢失后的校准、取消与终态竞争、取消落库失败 UI、无虚假进展、关闭窗口不取消、失租屏障、进程重启后明确继续/自由问题重输、诊断导出和敏感标记负扫描（J30-STATE/ACCEPT/CANCEL/PROGRESS/RECOVERY/DIAG）。
+- [ ] 8.3 在非合作 provider 与诊断写失败期间，通过正式产品入口开始/停止下一字幕会话，验证SQLite、HistoryService与文本导出；外部取消从main受理到持久终态须≤5秒，音频替身不得产出或保存现场音频（SEM-F38/F40、SEM-F14、J12/J30-INDEPENDENCE）。
+- [ ] 8.4 修复或明确定位当前 revision 的 integration/evidence 阻塞；重建 I3 非音频证据并通过严格 verifier/隐私检查，执行受影响focus、renderer验证和最终完整 `npm test`；只有三条 lane 全部成功时记录 P1 确定性联合验收证据（SEM-T03/J9-CI、J30/J12）。本轮已定位但未解除：开发态 Vite Electron 旅程在当前宿主因 GPU 子进程退出（`-1073741515`）未加载页面；I3 strict reader 因工作区既有 `StorageGateway` 改动与跟踪报告 `storageGatewaySha256` 不一致而 fail closed。不得单独刷新该报告后把与之绑定的既有代码改动留在提交之外。
+- [ ] 8.5 同步语义合同、旅程矩阵、ADR/实施状态和本任务证据；仅在 J30-ELECTRON、适用 J29/J12 回归及完整三条 lane 都通过后，将 P1 标为「联合验收完成」，P2 保持未实施/未验收，change 保持开放（SEM-F38/F40、J30/J12/J24/J26）。

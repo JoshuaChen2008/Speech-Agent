@@ -24,6 +24,8 @@
 
 每片先补行为回归再改实现；所有新增语义已经登记，实施者仍须在任务回执中逐条引用SEM/gate。
 
+P1 收尾以新增 J30-ELECTRON 旅程补足正式产品边界：必须启动真实应用 main/preload/renderer 与 utility storage worker，使用隔离 userData 实际跨进程重启，并由 renderer 操作断言请求、取消、恢复和诊断状态。服务级旅程继续作为局部证据。当前轮次只做确定性联合验收；真实模型、公网取消与五小时字幕采集依旧单独留证。若 Electron/GPU/凭据环境使正式旅程无法运行，报告为环境阻塞并保留「实现完成·尚未验收」，不得通过跳过旅程、伪造状态或放宽退出断言晋级。
+
 ### 2. 请求身份先于模型请求
 
 新增只含元数据的受理记录，由 storage worker 唯一写入，逻辑字段为 requestId/clientKeyDigest/requestDigest/scopeDigest/promptDigest、动作、冻结记忆政策、可空routeRunId/targetRunId、state/revision/generation、cancelRequested、相对时间累计。用户文本留在既有受控提示内存中，终态清理；不新增持久提示正文。明确总结的固定提示可由版本重建，自然语言问题在重启后若提示已丢失，明确要求重新提交，不能空提示自动恢复；重新提交期间固定原会话范围，新问题成功受理时通过同一存储事务清除旧问题的待重新提交标记。

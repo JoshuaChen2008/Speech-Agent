@@ -47,7 +47,10 @@ test('SEM-F00/SEM-F31/SEM-F34/J22/J24: production renderer, preload, exact IPC a
       AGENT_BAR_JOURNEY_USER_DATA: path.join(workDirectory, 'user-data')
     }
     delete environment.ELECTRON_RUN_AS_NODE
-    child = spawn(electronExecutable, ['--disable-gpu', FIXTURE], {
+    child = spawn(electronExecutable, [
+      '--disable-gpu', '--disable-gpu-compositing', '--disable-software-rasterizer',
+      '--in-process-gpu', '--password-store=basic', FIXTURE
+    ], {
       cwd: PROJECT_ROOT,
       env: environment,
       stdio: ['ignore', 'pipe', 'pipe'],

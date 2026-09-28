@@ -12,12 +12,17 @@
 const http = require('node:http')
 const fs = require('node:fs')
 const path = require('node:path')
-const { app, BrowserWindow, ipcMain } = require('electron')
+const crypto = require('node:crypto')
+const { app, BrowserWindow, dialog, ipcMain } = require('electron')
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
 const eligibilityProbe = { count: 0, nextHold: null }
 const inputProbe = { pending: false, rejected: false, failureCode: null, invalidCommands: 0 }
 const submitReceipts = []
+const runControlProbe = {
+  cancelElapsedMs: null, cancelState: null, diagnosticsExportStatus: null, summaryAcceptResults: [],
+  dropChangedRequestId: null, droppedChangedCount: 0, capacityRequestNotificationLossObserved: false
+}
 const originalIpcHandle = ipcMain.handle.bind(ipcMain)
 ipcMain.handle = (channel, handler) => originalIpcHandle(channel, async (...args) => {
   // Pause the real command, inspect its renderer, then retain its real result.
@@ -45,14 +50,29 @@ ipcMain.handle = (channel, handler) => originalIpcHandle(channel, async (...args
     eligibilityProbe.nextHold = null
     if (hold) await hold.promise
   }
+  const startedAt = channel === 'session-summary-run:cancel' ? process.hrtime.bigint() : null
   const response = await handler(...args)
+  if (channel === 'session-summary-run:accept') {
+    runControlProbe.summaryAcceptResults.push({
+      accepted: response?.ok === true && response.result?.accepted === true,
+      errorCode: response?.error?.code || response?.result?.error_code || null
+    })
+  }
   if (channel === 'session-summary-run:accept' && response?.ok === true && response.result?.accepted === true) {
     const snapshot = response.result.snapshot
+    if (snapshot.action === 'summary') runControlProbe.dropChangedRequestId = snapshot.request_id
     submitReceipts.push({
       requestId: snapshot.request_id,
       generation: snapshot.generation,
       recipeId: snapshot.action === 'question' ? 'qa.answer' : 'summary.minutes'
     })
+  }
+  if (startedAt !== null) {
+    runControlProbe.cancelElapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6
+    runControlProbe.cancelState = response?.result?.snapshot?.state || null
+  }
+  if (channel === 'session-summary-run:diagnostics-export') {
+    runControlProbe.diagnosticsExportStatus = response?.ok === true ? response.result?.status || null : null
   }
   return response
 })
@@ -143,7 +163,7 @@ async function seedTerminalSession (userDataDir) {
     kind: 'final',
     t0: 0,
     t1: 10,
-    text: '受控正式设置到历史旅程输入',
+    text: 'J30-ELECTRON-PRIVACY-TRANSCRIPT-MARKER',
     translation: null
   })
   await gateway.closeSession({
@@ -184,7 +204,12 @@ async function seedTerminalSession (userDataDir) {
 }
 
 function providerServer () {
-  const state = { requestCount: 0, modelIds: [], requestShapes: [], credentialObserved: false, credentialExact: false }
+  let markSummaryRequested
+  const state = {
+    requestCount: 0, modelIds: [], requestShapes: [], credentialObserved: false, credentialExact: false,
+    holdNextSummary: false,
+    summaryRequested: new Promise((resolve) => { markSummaryRequested = resolve })
+  }
   const server = http.createServer((request, response) => {
     const chunks = []
     request.on('data', (chunk) => chunks.push(chunk))
@@ -207,13 +232,21 @@ function providerServer () {
         ? body.messages.find((message) => message?.role === 'user')?.content
         : null
       const isSummaryRequest = isRouteRequest && typeof userMessage === 'string' && userMessage.includes('生成会话总结')
+      const summaryModelRequest = Array.isArray(body?.tools) && body.tools.length === 1 && typeof userMessage === 'string' && userMessage.includes('请基于这场已结束的会话生成会话总结')
       state.requestShapes.push({
         toolCount: Array.isArray(body?.tools) ? body.tools.length : null,
         messageCount: Array.isArray(body?.messages) ? body.messages.length : null,
-        summaryModelRequest: Array.isArray(body?.tools) && body.tools.length === 1 && typeof userMessage === 'string' && userMessage.includes('请基于这场已结束的会话生成会话总结'),
+        summaryModelRequest,
         authorizationPresent: typeof request.headers.authorization === 'string' && request.headers.authorization.length > 0,
         authorizationExact: request.headers.authorization === 'Bearer j25-local-provider-secret'
       })
+      if (summaryModelRequest) {
+        markSummaryRequested()
+        if (state.holdNextSummary) {
+          state.holdNextSummary = false
+          return
+        }
+      }
       const content = isRouteRequest
         ? JSON.stringify({ recipeId: isSummaryRequest ? 'summary.minutes' : 'qa.answer', confidence: 0.9 })
         : JSON.stringify({
@@ -811,7 +844,72 @@ async function runAgentBar (toolbar, providerState) {
       credentialAbsent: !visible.includes('j25-local-provider-secret')
     }
   })()`)
+  const summarySubmitCount = submitReceipts.length
+  const summaryShapeCount = providerState.requestShapes.length
+  providerState.holdNextSummary = true
+  await agent.webContents.executeJavaScript(`(async () => {
+    const headers = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
+    const result = await window.agentApi.getScopes({ ...headers, limit: 50, cursor: null })
+    const index = result?.ok === true ? result.scopes.findIndex((item) => item.scope.reference === 'session.j25.formal') : -1
+    const card = index >= 0 ? document.querySelectorAll('.scope-card')[index] : null
+    if (!card) throw new Error('J30 formal summary scope missing')
+    card.click()
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const button = document.querySelector('[data-action="minutes"]')
+      if (card.getAttribute('aria-current') === 'true' && button && !button.disabled) {
+        button.click()
+        return true
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    throw new Error('J30 summary control did not become available')
+  })()`)
+  const summaryReceipt = await waitFor(
+    () => submitReceipts.slice(summarySubmitCount).find((receipt) => receipt.recipeId === 'summary.minutes'),
+    `formal J30 summary acceptance ${JSON.stringify(runControlProbe.summaryAcceptResults.slice(-2))}`
+  )
+  await waitFor(() => providerState.requestShapes.slice(summaryShapeCount).some((shape) => shape.summaryModelRequest), 'summary provider request is pending')
+  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.run-card button')?.textContent === '取消生成'"), 'formal summary cancel action')
+  await agent.webContents.executeJavaScript("document.querySelector('.run-card button').click(); true")
+  await waitFor(() => runControlProbe.cancelState === 'cancelled', 'formal summary cancellation receipt')
+  const cancelledSummary = await agent.webContents.executeJavaScript(`(async () => {
+    const headers = { contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0' }
+    const response = await window.agentApi.getSessionSummaryRun({ ...headers, request_id: ${JSON.stringify(summaryReceipt.requestId)} })
+    const snapshot = response?.ok === true ? response.result.snapshot : null
+    return snapshot?.state === 'cancelled' && snapshot?.resume_required === false
+  })()`)
+  await agent.webContents.executeJavaScript(`(() => {
+    const panel = document.querySelector('.diagnostics-panel')
+    if (!panel) throw new Error('formal summary diagnostics panel missing')
+    panel.querySelector('summary').click()
+    const actions = [...panel.querySelectorAll('button')]
+    const read = actions.find((button) => button.textContent === '查看诊断')
+    if (!read) throw new Error('diagnostic query action missing')
+    read.click()
+    return true
+  })()`)
+  const diagnosticsVisible = await waitFor(async () => agent.webContents.executeJavaScript(
+    "document.querySelector('.diagnostics-panel [aria-label=\"诊断记录\"] [role=\"status\"]')?.textContent.includes('已读取')"
+  ), 'formal summary diagnostics query')
+  await agent.webContents.executeJavaScript(`(() => {
+    const panel = document.querySelector('.diagnostics-panel')
+    const button = [...panel.querySelectorAll('button')].find((item) => item.textContent === '导出诊断')
+    if (!button) throw new Error('diagnostic export action missing')
+    button.click()
+    return true
+  })()`)
+  await waitFor(() => runControlProbe.diagnosticsExportStatus === 'saved', 'formal summary diagnostics export')
+  const diagnosticFile = path.join(process.env.J25_FORMAL_USER_DATA, 'p1-summary-diagnostics.json')
+  const diagnosticBytes = fs.readFileSync(diagnosticFile)
+  const diagnosticText = diagnosticBytes.toString('utf8')
+  const diagnosticJson = JSON.parse(diagnosticText)
+  const diagnosticsPrivacyClean = !diagnosticText.includes('J30-ELECTRON-PRIVACY-TRANSCRIPT-MARKER') &&
+    !diagnosticText.includes('j25-local-provider-secret') && !/[A-Z]:[\\/]/.test(diagnosticText)
+  const diagnosticsExportSha256 = crypto.createHash('sha256').update(diagnosticBytes).digest('hex')
+  const summaryCancelledWithinDeadline = cancelledSummary && runControlProbe.cancelState === 'cancelled' &&
+    Number.isFinite(runControlProbe.cancelElapsedMs) && runControlProbe.cancelElapsedMs <= 5000
   const providerShapeCountBeforeCapacity = providerState.requestShapes.length
+  const droppedChangesBeforeCapacity = runControlProbe.droppedChangedCount
   const capacitySubmitCount = submitReceipts.length
   await agent.webContents.executeJavaScript(`(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -883,11 +981,23 @@ async function runAgentBar (toolbar, providerState) {
       requestState: requestSnapshot?.state || 'unavailable'
     }
   })()`)
+  runControlProbe.capacityRequestNotificationLossObserved =
+    runControlProbe.dropChangedRequestId === capacityReceipt.requestId &&
+    runControlProbe.droppedChangedCount > droppedChangesBeforeCapacity
+  runControlProbe.dropChangedRequestId = null
   const capacityProviderShapes = providerState.requestShapes.slice(providerShapeCountBeforeCapacity)
   return {
     ...result,
     ...feedback,
     ...ui,
+    summaryCancelledWithinDeadline,
+    summaryTerminalNotificationDropped: runControlProbe.capacityRequestNotificationLossObserved,
+    summaryDiagnosticsVisible: diagnosticsVisible && diagnosticJson.records?.length > 0,
+    summaryDiagnosticsExported: runControlProbe.diagnosticsExportStatus === 'saved' && diagnosticBytes.length > 0,
+    summaryDiagnosticsPrivacyClean: diagnosticsPrivacyClean,
+    summaryDiagnosticsRecordCount: Array.isArray(diagnosticJson.records) ? diagnosticJson.records.length : 0,
+    summaryDiagnosticsExportBytes: diagnosticBytes.length,
+    summaryDiagnosticsExportSha256: diagnosticsExportSha256,
     summaryCapacityFailed: capacityFeedback.failed && capacityFeedback.dedicatedError,
     summaryCapacityErrorVisible: capacityFeedback.exactFeedback,
     summaryCapacityRecoveryVisible: capacityFeedback.recoveryFeedback,
@@ -911,6 +1021,22 @@ async function main () {
   if (userDataDir === path.parse(userDataDir).root || userDataDir === PROJECT_ROOT) throw new Error('J25_FORMAL_USER_DATA must be isolated')
   fs.mkdirSync(userDataDir, { recursive: true })
   app.setPath('userData', userDataDir)
+  dialog.showSaveDialog = async () => ({
+    canceled: false,
+    filePath: path.join(userDataDir, 'p1-summary-diagnostics.json')
+  })
+  const channels = require(path.join(PROJECT_ROOT, 'src', 'main', 'ipc', 'channels'))
+  app.on('browser-window-created', (_event, win) => {
+    const send = win.webContents.send.bind(win.webContents)
+    win.webContents.send = (channel, ...args) => {
+      if (channel === channels.SESSION_SUMMARY_RUN_CHANGED &&
+          args[0]?.request_id === runControlProbe.dropChangedRequestId) {
+        runControlProbe.droppedChangedCount += 1
+        return true
+      }
+      return send(channel, ...args)
+    }
+  })
   await seedTerminalSession(userDataDir)
 
   const provider = providerServer()
@@ -953,6 +1079,9 @@ async function main () {
         runResult.succeeded && runResult.historyVisible && runResult.modelVisible && runResult.signalAccepted &&
         runResult.signalReplayed && runResult.manualEligibilityRefresh && runResult.submitDisabledDuringEligibilityRefresh &&
         runResult.feedbackSubmittedThroughRenderer && runResult.detailRereadAfterFeedback &&
+        runResult.summaryCancelledWithinDeadline && runResult.summaryDiagnosticsVisible &&
+        runResult.summaryDiagnosticsExported && runResult.summaryDiagnosticsPrivacyClean &&
+        runResult.summaryTerminalNotificationDropped &&
         runResult.summaryCapacityFailed && runResult.summaryCapacityErrorVisible && runResult.summaryCapacityRecoveryVisible &&
         runResult.summaryCapacityToolCalls === 0 && runResult.summaryCapacityNoSummaryModelRequest &&
         runResult.promptAbsent && runResult.credentialAbsent && runResult.providerRequestCount > 0 &&
@@ -993,6 +1122,16 @@ async function main () {
       eligibilityReadCount: runResult.eligibilityReadCount,
       feedbackSubmittedThroughRenderer: runResult.feedbackSubmittedThroughRenderer,
       detailRereadAfterFeedback: runResult.detailRereadAfterFeedback,
+      summaryCancelledWithinDeadline: runResult.summaryCancelledWithinDeadline,
+      summaryCancelElapsedMs: runControlProbe.cancelElapsedMs,
+      summaryDiagnosticsVisible: runResult.summaryDiagnosticsVisible,
+      summaryDiagnosticsExported: runResult.summaryDiagnosticsExported,
+      summaryDiagnosticsPrivacyClean: runResult.summaryDiagnosticsPrivacyClean,
+      summaryDiagnosticsRecordCount: runResult.summaryDiagnosticsRecordCount,
+      summaryDiagnosticsExportBytes: runResult.summaryDiagnosticsExportBytes,
+      summaryDiagnosticsExportSha256: runResult.summaryDiagnosticsExportSha256,
+      summaryTerminalNotificationDropped: runControlProbe.capacityRequestNotificationLossObserved,
+      summaryDroppedChangedCount: runControlProbe.droppedChangedCount,
       transcriptAndPromptAbsentFromReport: true,
       publicProvider: false,
       systemCredential: false

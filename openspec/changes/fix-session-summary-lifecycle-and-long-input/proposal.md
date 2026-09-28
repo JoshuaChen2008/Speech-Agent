@@ -27,4 +27,4 @@
 
 涉及 Agent Bar/preload/exact IPC、main 组合根、AgentRunService、scheduler/runner/Agent Loop、个人上下文分页读取、模型接入预算、storage worker/SQLite 追加迁移、诊断与导出。没有新 provider 或框架依赖，不改变字幕采集、ASR 或字幕事实。
 
-本次仅实施 P0，状态为「实现完成·尚未验收」；J30/J31 全矩阵、P1 运行控制与诊断、P2 长输入仍为「已决定」。现有本地证据及未验证范围见 [测试策略](../../../docs/testing-strategy.md)。本次不表示支持 4–5 小时长输入或 J29/J30/J31 联合验收成立。数值是本产品拟实施的容量与时限，不是对任意云端模型质量、响应时间或无限输入的承诺。权威要求见 [语义合同](../../../docs/semantic-contract.md)，方案与任务见本目录 design.md 和 tasks.md。
+P0 与 P1 的实现和局部回归已有证据；P1 的正式 Electron J30 联合验收仍待收尾计划执行。P2 仅有 `summary.minutes@2` 预算策略登记，其余长输入执行链尚未实施。状态和证据按阶段分别记录于[测试策略](../../../docs/testing-strategy.md)及任务表；本 change 在 P1 收尾后仍不能归档，直至 P2 范围另行实施和验收。当前不宣称支持 4–5 小时长输入，也不把本次确定性验收映射为真实模型、公网或实机结论。容量和时限承诺见[语义合同](../../../docs/semantic-contract.md)。

@@ -2,6 +2,7 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const { spawn } = require('node:child_process')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -45,6 +46,10 @@ async function runFixture (mode, overrides = {}) {
     reportPath,
     cwd: PROJECT_ROOT,
     env: environment,
+    spawnProcess: (executablePath, args, options) => spawn(executablePath, [
+      '--disable-gpu', '--disable-gpu-compositing', '--disable-software-rasterizer', '--in-process-gpu',
+      ...args
+    ], options),
     lastAbnormalReportPath: overrides.lastAbnormalReportPath,
     reportWriter: overrides.reportWriter,
     strictReport: overrides.strictReport
