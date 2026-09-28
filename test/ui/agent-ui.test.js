@@ -72,6 +72,8 @@ async function createHarness (options = {}) {
   const summarySnapshots = new Map()
   const summarySnapshotByKey = new Map()
   const summaryCancelRequests = []
+  const summaryDiagnosticsQueries = []
+  const summaryDiagnosticsExports = []
   const resumeRequests = []
   let recoverableSummaryQueries = 0
   let summaryRequestSequence = 0
@@ -148,6 +150,28 @@ async function createHarness (options = {}) {
       const snapshot = summarySnapshots.get(request.request_id)
       return snapshot ? { ok: true, result: { snapshot } } : { ok: false, error: { code: 'AGENT_RUN_UNAVAILABLE', next_action: 'retry' }, result: null }
     },
+    async getSessionSummaryRunDiagnostics (request) {
+      summaryDiagnosticsQueries.push(request)
+      if (options.getSessionSummaryRunDiagnostics) return options.getSessionSummaryRunDiagnostics(request)
+      return {
+        ok: true, error: null,
+        result: {
+          available: true,
+          records: [{
+            schemaVersion: 1, appVersion: '0.1.0', requestDigest: 'a'.repeat(64), runDigest: null,
+            attempt: 1, sequence: 2, phase: 'waiting_model', event: 'model_request_started',
+            elapsedMs: 420, lastActivityAgeMs: 0, errorCode: null, budgetAxis: null,
+            metrics: { actual: null, limit: null, unit: null }, modelBindingDigest: null, planDigest: null
+          }],
+          next_before_sequence: null
+        }
+      }
+    },
+    async exportSessionSummaryRunDiagnostics (request) {
+      summaryDiagnosticsExports.push(request)
+      if (options.exportSessionSummaryRunDiagnostics) return options.exportSessionSummaryRunDiagnostics(request)
+      return { ok: true, error: null, result: { status: 'cancelled', record_count: 0, available: true } }
+    },
     async cancelSessionSummaryRun (request) {
       summaryCancelRequests.push(request)
       if (options.cancelSessionSummaryRun) return options.cancelSessionSummaryRun(request)
@@ -207,7 +231,7 @@ async function createHarness (options = {}) {
   await act(async () => reactRoot.render(React.createElement(AgentView)))
   await flush()
   return {
-    calls, changed, configChanged, cancelRequests, detailRequests, dom, exportRequests, historyItem, scopeItem, signalRequests, submitRequests, summaryCancelRequests, summaryChanged, summarySnapshots, resumeRequests, closeRequests: () => closeRequests,
+    calls, changed, configChanged, cancelRequests, detailRequests, dom, exportRequests, historyItem, scopeItem, signalRequests, submitRequests, summaryCancelRequests, summaryDiagnosticsExports, summaryDiagnosticsQueries, summaryChanged, summarySnapshots, resumeRequests, closeRequests: () => closeRequests,
     recoverableSummaryQueries: () => recoverableSummaryQueries,
     activeIntervals: () => intervals.size,
     async tickIntervals (milliseconds) {
@@ -452,6 +476,56 @@ test('SEM-F40/J30-DIAG: active summary shows when diagnostic records are unavail
   }))
   await flush()
   assert.equal(document.querySelector('[aria-label="当前会话总结请求状态"]').textContent.includes('诊断记录不可用'), true)
+})
+
+test('SEM-F40/J30-DIAG: active summary can inspect diagnostics and cancelled export stays silent', async (t) => {
+  const diagnosticRecord = (sequence, event, phase) => ({
+    schemaVersion: 1, appVersion: '0.1.0', requestDigest: 'a'.repeat(64), runDigest: null,
+    attempt: 1, sequence, phase, event, elapsedMs: sequence * 210, lastActivityAgeMs: 0,
+    errorCode: null, budgetAxis: null, metrics: { actual: null, limit: null, unit: null },
+    modelBindingDigest: null, planDigest: null
+  })
+  const harness = await createHarness({
+    getSessionSummaryRunDiagnostics: async (request) => ({
+      ok: true, error: null,
+      result: {
+        available: true,
+        records: request.before_sequence === null
+          ? [diagnosticRecord(3, 'model_request_started', 'waiting_model')]
+          : [diagnosticRecord(1, 'accepted', 'accepted')],
+        next_before_sequence: request.before_sequence === null ? 3 : null
+      }
+    })
+  }); t.after(() => harness.dispose())
+  await act(async () => click(document.querySelector('[data-action="minutes"]')))
+  await flush()
+  const [requestId] = [...harness.summarySnapshots.keys()]
+  await act(async () => click(document.querySelector('.diagnostics-panel summary')))
+  await act(async () => click([...document.querySelectorAll('.diagnostics-panel button')].find((button) => button.textContent === '查看诊断')))
+  await flush()
+
+  assert.equal(harness.summaryDiagnosticsQueries.length, 1)
+  assert.deepEqual(JSON.parse(JSON.stringify(harness.summaryDiagnosticsQueries[0])), {
+    contract_id: 'speech-agent.agent-run-diagnostics.ui',
+    contract_version: '1.0.0',
+    request_id: requestId,
+    before_sequence: null,
+    limit: 50
+  })
+  assert.match(document.querySelector('[aria-label="诊断记录"]').textContent, /模型请求已发送/)
+  assert.equal(document.querySelector('.diagnostics-panel').textContent.includes('读取更早记录'), true)
+  await act(async () => click([...document.querySelectorAll('.diagnostics-panel button')].find((button) => button.textContent === '读取更早记录')))
+  await flush()
+  assert.equal(harness.summaryDiagnosticsQueries.length, 2)
+  assert.equal(harness.summaryDiagnosticsQueries[1].before_sequence, 3)
+  assert.equal(document.querySelector('[aria-label="诊断记录"] ol').children.length, 2)
+  const statusBeforeCancelledExport = document.querySelector('.agent-titlebar .status').textContent
+  await act(async () => click([...document.querySelectorAll('.diagnostics-panel button')].find((button) => button.textContent === '导出诊断')))
+  await flush()
+  assert.equal(harness.summaryDiagnosticsExports.length, 1)
+  assert.equal(harness.summaryDiagnosticsExports[0].request_id, requestId)
+  assert.equal(document.querySelector('.agent-titlebar .status').textContent, statusBeforeCancelledExport)
+  assert.equal(document.body.textContent.includes('已导出'), false)
 })
 
 test('SEM-F40/J30-DIAG: a changed recoverable request refreshes its diagnostic availability', async (t) => {

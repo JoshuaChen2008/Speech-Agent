@@ -20,6 +20,8 @@ const { StorageGateway } = require('../../src/main/services/storage-gateway')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
 const { OPERATIONS, PROTOCOL_VERSION, StorageError, makeCaptionEventId, makeCloseSessionKey, makeOpenSessionKey } = require('../../src/runtime/storage-worker/protocol')
 const contract = require('../../src/agent/contracts/session-summary-run-ui')
+const diagnosticsUI = require('../../src/agent/contracts/agent-run-diagnostics-ui')
+const { assertDiagnosticExportSnapshot } = require('../../src/agent/contracts/agent-run-diagnostics')
 const CHANNELS = require('../../src/main/ipc/channels')
 const { registerSessionSummaryRunIpc } = require('../../src/main/ipc/session-summary-run-ipc')
 
@@ -48,6 +50,7 @@ function createAgentPreloadApi (handlers, event) {
     if (specifier === '../main/ipc/channels') return CHANNELS
     if (specifier === '../agent/contracts/agent-run-ui') return require('../../src/agent/contracts/agent-run-ui')
     if (specifier === '../agent/contracts/session-summary-run-ui') return contract
+    if (specifier === '../agent/contracts/agent-run-diagnostics-ui') return diagnosticsUI
     if (specifier === '../agent/contracts/agent-context-ui') return require('../../src/agent/contracts/agent-context-ui')
     throw new Error(`unexpected preload dependency: ${specifier}`)
   }
@@ -151,7 +154,10 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   const databasePath = path.join(root, 'speech-agent.sqlite3')
   const configPath = path.join(root, 'config.json')
   const diagnosticDirectory = path.join(root, 'logs', 'agent-run-diagnostics')
+  const diagnosticExportPath = path.join(root, 'selected-diagnostics.json')
   let failDiagnosticWrites = false
+  let cancelDiagnosticSave = false
+  let diagnosticSaveDialogCalls = 0
   let summaryRun = null
   const diagnosticFsApi = new Proxy(fs.promises, {
     get (target, property) {
@@ -310,6 +316,13 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     getConfig: () => config.get(),
     defer: (callback) => dispatchQueue.push(callback),
     diagnostics: diagnosticStore,
+    showDiagnosticSaveDialog: async (_ownerWindow, options) => {
+      diagnosticSaveDialogCalls += 1
+      assert.equal(options.title, '导出 Agent 运行诊断')
+      if (cancelDiagnosticSave) return { canceled: true }
+      return { canceled: false, filePath: diagnosticExportPath }
+    },
+    getOwnerWindow: (sender) => sender,
     onChanged: (event) => preloadBridge?.emit(CHANNELS.SESSION_SUMMARY_RUN_CHANGED, event)
   })
   const handlers = new Map()
@@ -317,7 +330,8 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
     authorize: (_event, channel) => {
       if (![CHANNELS.SESSION_SUMMARY_RUN_ACCEPT, CHANNELS.SESSION_SUMMARY_RUN_GET, CHANNELS.SESSION_SUMMARY_RUN_CANCEL,
-        CHANNELS.SESSION_SUMMARY_RUN_RESUME, CHANNELS.SESSION_SUMMARY_RUN_LIST_RECOVERABLE].includes(channel)) {
+        CHANNELS.SESSION_SUMMARY_RUN_RESUME, CHANNELS.SESSION_SUMMARY_RUN_LIST_RECOVERABLE,
+        CHANNELS.SESSION_SUMMARY_RUN_DIAGNOSTICS_QUERY, CHANNELS.SESSION_SUMMARY_RUN_DIAGNOSTICS_EXPORT].includes(channel)) {
         throw new Error('unexpected summary IPC channel')
       }
     },
@@ -326,7 +340,9 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
       get: (...args) => summaryRun.get(...args),
       cancel: (...args) => summaryRun.cancel(...args),
       resume: (...args) => summaryRun.resume(...args),
-      listRecoverable: (...args) => summaryRun.listRecoverable(...args)
+      listRecoverable: (...args) => summaryRun.listRecoverable(...args),
+      getDiagnostics: (...args) => summaryRun.getDiagnostics(...args),
+      exportDiagnostics: (...args) => summaryRun.exportDiagnostics(...args)
     }
   })
   const ipcEvent = { sender: { id: 101 }, role: 'agent' }
@@ -336,7 +352,9 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     get: (request) => preloadBridge.api.getSessionSummaryRun(request),
     cancel: (request) => preloadBridge.api.cancelSessionSummaryRun(request),
     resume: (request) => preloadBridge.api.resumeSessionSummaryRun(request),
-    listRecoverable: (request) => preloadBridge.api.listRecoverableSessionSummaryRuns(request)
+    listRecoverable: (request) => preloadBridge.api.listRecoverableSessionSummaryRuns(request),
+    getDiagnostics: (request) => preloadBridge.api.getSessionSummaryRunDiagnostics(request),
+    exportDiagnostics: (request) => preloadBridge.api.exportSessionSummaryRunDiagnostics(request)
   }
   t.after(async () => {
     vault.close()
@@ -505,6 +523,13 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     getConfig: () => config.get(),
     promptStore: restartedPromptStore,
     diagnostics: diagnosticStore,
+    showDiagnosticSaveDialog: async (_ownerWindow, options) => {
+      diagnosticSaveDialogCalls += 1
+      assert.equal(options.title, '导出 Agent 运行诊断')
+      if (cancelDiagnosticSave) return { canceled: true }
+      return { canceled: false, filePath: diagnosticExportPath }
+    },
+    getOwnerWindow: (sender) => sender,
     defer: (callback) => dispatchQueue.push(callback),
     onChanged: (event) => preloadBridge?.emit(CHANNELS.SESSION_SUMMARY_RUN_CHANGED, event)
   })
@@ -569,6 +594,13 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     getConfig: () => config.get(),
     promptStore: new Map(),
     diagnostics: diagnosticStore,
+    showDiagnosticSaveDialog: async (_ownerWindow, options) => {
+      diagnosticSaveDialogCalls += 1
+      assert.equal(options.title, '导出 Agent 运行诊断')
+      if (cancelDiagnosticSave) return { canceled: true }
+      return { canceled: false, filePath: diagnosticExportPath }
+    },
+    getOwnerWindow: (sender) => sender,
     defer: (callback) => dispatchQueue.push(callback),
     onChanged: (event) => preloadBridge?.emit(CHANNELS.SESSION_SUMMARY_RUN_CHANGED, event)
   })
@@ -625,6 +657,47 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     'J30 合成会话正文 marker', '这个请求应在路由时取消', '原问题正文不应持久化',
     '重新提交后的问题', 'j30-provider-secret', root
   ]) assert.equal(diagnosticBytes.includes(marker), false)
+  const diagnosticsRequest = {
+    contract_id: diagnosticsUI.CONTRACT_ID,
+    contract_version: diagnosticsUI.CONTRACT_VERSION,
+    request_id: summaryAccepted.result.snapshot.request_id,
+    before_sequence: null,
+    limit: 50
+  }
+  const diagnosticsPage = await summaryApi.getDiagnostics(diagnosticsRequest)
+  assert.equal(diagnosticsUI.assertQueryResponse(diagnosticsPage).ok, true)
+  assert.equal(diagnosticsPage.result.records.some((record) => record.event === 'accepted'), true)
+  const diagnosticsRow = await gateway.getSessionSummaryRequest({ requestId: summaryAccepted.result.snapshot.request_id })
+  assert.match(diagnosticsRow.requestDigest, /^[a-f0-9]{64}$/)
+  assert.equal((await diagnosticStore.recordsForRequestDigest(diagnosticsRow.requestDigest)).records.length > 0, true)
+  assert.equal(typeof summaryRun.diagnostics.exportRequest, 'function')
+  assert.equal(typeof summaryRun.showDiagnosticSaveDialog, 'function')
+  const exportedDiagnostics = await summaryApi.exportDiagnostics({
+    contract_id: diagnosticsUI.CONTRACT_ID,
+    contract_version: diagnosticsUI.CONTRACT_VERSION,
+    request_id: summaryAccepted.result.snapshot.request_id
+  })
+  assert.equal(exportedDiagnostics.ok, true, JSON.stringify({ response: exportedDiagnostics, diagnosticSaveDialogCalls, status: diagnosticStore.getStatus() }))
+  assert.equal(diagnosticsUI.assertExportResponse(exportedDiagnostics).result.status, 'saved')
+  assert.ok(exportedDiagnostics.result.record_count > 0)
+  assert.equal(exportedDiagnostics.result.available, true)
+  assert.equal(JSON.stringify(exportedDiagnostics).includes(root), false)
+  const exportBytes = fs.readFileSync(diagnosticExportPath, 'utf8')
+  const exportSnapshot = assertDiagnosticExportSnapshot(JSON.parse(exportBytes))
+  assert.ok(exportSnapshot.records.length > 0)
+  for (const marker of ['J30 合成会话正文 marker', '这个请求应在路由时取消', '原问题正文不应持久化', '重新提交后的问题', 'j30-provider-secret', root]) {
+    assert.equal(exportBytes.includes(marker), false)
+  }
+  const priorExportBytes = fs.readFileSync(diagnosticExportPath)
+  cancelDiagnosticSave = true
+  const cancelledDiagnosticsExport = await summaryApi.exportDiagnostics({
+    contract_id: diagnosticsUI.CONTRACT_ID,
+    contract_version: diagnosticsUI.CONTRACT_VERSION,
+    request_id: summaryAccepted.result.snapshot.request_id
+  })
+  assert.deepEqual(cancelledDiagnosticsExport.result, { status: 'cancelled', record_count: 0, available: true })
+  assert.deepEqual(fs.readFileSync(diagnosticExportPath), priorExportBytes, 'cancelled dialog must not write or replace the export')
+  cancelDiagnosticSave = false
   const diagnosticsFailureRequest = request('summary', 'j30.summary.diagnostics-write-failure')
   failDiagnosticWrites = true
   const diagnosticsFailureAccepted = await summaryApi.accept(diagnosticsFailureRequest)

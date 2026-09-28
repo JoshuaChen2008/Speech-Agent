@@ -6,7 +6,7 @@ const fs = require('node:fs/promises')
 const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
-const { assertDiagnosticRecord } = require('../../src/agent/contracts/agent-run-diagnostics')
+const { assertDiagnosticRecord, assertDiagnosticExportSnapshot } = require('../../src/agent/contracts/agent-run-diagnostics')
 const {
   AgentRunDiagnostics,
   MAX_BUFFERED_RECORDS,
@@ -74,6 +74,55 @@ test('SEM-F40/J30-DIAG: main diagnostic store persists digests and rejects free-
   assert.equal(bytes.includes('caption private marker'), false)
   assert.equal(bytes.includes(root), false)
   assert.ok(Buffer.byteLength(bytes.split('\n')[0] + '\n', 'utf8') <= MAX_RECORD_BYTES)
+})
+
+test('SEM-F40/J30-DIAG: request queries page newest-first and export writes a validated atomic snapshot', async (t) => {
+  const root = await temporaryDirectory(t)
+  const directory = path.join(root, 'diagnostics')
+  const requestId = 'request.private-export-marker'
+  const requestDigest = crypto.createHash('sha256').update(requestId, 'utf8').digest('hex')
+  const diagnostics = new AgentRunDiagnostics({ directory, appVersion: '0.1.0' })
+  await diagnostics.initialization
+  for (let sequence = 1; sequence <= 4; sequence += 1) {
+    assert.equal(diagnostics.record(input({ requestId, requestDigest, elapsedMs: sequence })), true)
+  }
+
+  const firstPage = await diagnostics.queryRequest({ requestDigest, limit: 2 })
+  assert.equal(firstPage.available, true)
+  assert.deepEqual(firstPage.records.map((item) => item.sequence), [4, 3])
+  assert.equal(firstPage.nextBeforeSequence, 3)
+  const secondPage = await diagnostics.queryRequest({ requestDigest, beforeSequence: firstPage.nextBeforeSequence, limit: 2 })
+  assert.deepEqual(secondPage.records.map((item) => item.sequence), [2, 1])
+  assert.equal(secondPage.nextBeforeSequence, null)
+
+  const outputPath = path.join(root, 'chosen-diagnostics.json')
+  let saveDialogRequest = null
+  const saved = await diagnostics.exportRequest({
+    requestDigest,
+    ownerWindow: { id: 7 },
+    showSaveDialog: async (ownerWindow, options) => {
+      saveDialogRequest = { ownerWindow, options }
+      return { canceled: false, filePath: outputPath }
+    }
+  })
+  assert.deepEqual(saved, { status: 'saved', recordCount: 4, available: true })
+  assert.equal(saveDialogRequest.ownerWindow.id, 7)
+  assert.equal(saveDialogRequest.options.title, '导出 Agent 运行诊断')
+  const snapshot = assertDiagnosticExportSnapshot(JSON.parse(await fs.readFile(outputPath, 'utf8')))
+  assert.deepEqual(snapshot.records.map((item) => item.sequence), [1, 2, 3, 4])
+  const bytes = await fs.readFile(outputPath, 'utf8')
+  assert.equal(bytes.includes(requestId), false)
+  assert.equal(bytes.includes(root), false)
+  assert.equal(bytes.includes('private-run-marker'), false)
+
+  let writes = 0
+  const cancelled = await diagnostics.exportRequest({
+    requestDigest,
+    showSaveDialog: async () => ({ canceled: true }),
+    writeAtomic: async () => { writes += 1 }
+  })
+  assert.deepEqual(cancelled, { status: 'cancelled', recordCount: 0, available: true })
+  assert.equal(writes, 0)
 })
 
 test('SEM-F40/J30-DIAG: rolling store removes aged/oversized files and rotates at five files and one MiB', async (t) => {

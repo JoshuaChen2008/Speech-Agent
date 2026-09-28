@@ -5,6 +5,7 @@ const { canonicalize, sha256Canonical } = require('../../runtime/storage-worker/
 const runContract = require('../contracts/agent-run-ui')
 const c = require('../contracts/session-summary-run-ui')
 const diagnosticsContract = require('../contracts/agent-run-diagnostics')
+const diagnosticsUI = require('../contracts/agent-run-diagnostics-ui')
 const { assertDiagnosticMetrics } = diagnosticsContract
 const { BUDGET_AXES } = require('../contracts/budget-axes')
 
@@ -21,6 +22,18 @@ function errorResponse (code, nextAction = 'retry') {
   const safeCode = c.ERROR_CODES.includes(code) ? code : 'AGENT_RUN_UNAVAILABLE'
   return {
     ...header(), ok: false, error: { code: safeCode, next_action: nextAction }, result: null
+  }
+}
+
+function diagnosticsHeader () {
+  return { contract_id: diagnosticsUI.CONTRACT_ID, contract_version: diagnosticsUI.CONTRACT_VERSION }
+}
+
+function diagnosticsErrorResponse (code) {
+  const safeCode = diagnosticsUI.ERROR_CODES.includes(code) ? code : 'AGENT_RUN_UNAVAILABLE'
+  return {
+    ...diagnosticsHeader(), ok: false,
+    error: { code: safeCode, next_action: 'retry' }, result: null
   }
 }
 
@@ -141,6 +154,8 @@ class SessionSummaryRunService {
     this.getConfig = typeof options.getConfig === 'function' ? options.getConfig : null
     this.promptStore = options.promptStore instanceof Map ? options.promptStore : null
     this.diagnostics = options.diagnostics && typeof options.diagnostics.record === 'function' ? options.diagnostics : null
+    this.showDiagnosticSaveDialog = typeof options.showDiagnosticSaveDialog === 'function' ? options.showDiagnosticSaveDialog : null
+    this.getOwnerWindow = typeof options.getOwnerWindow === 'function' ? options.getOwnerWindow : () => null
     this.defer = typeof options.defer === 'function' ? options.defer : (callback) => setImmediate(callback)
     this.onChanged = typeof options.onChanged === 'function' ? options.onChanged : () => {}
     this.monotonicNow = typeof options.monotonicNow === 'function' ? options.monotonicNow : () => performance.now()
@@ -299,6 +314,54 @@ class SessionSummaryRunService {
 
   async readRow (requestId) {
     return this.storage.getSessionSummaryRequest({ requestId })
+  }
+
+  async getDiagnostics (input) {
+    try {
+      diagnosticsUI.assertQueryRequest(input)
+      const row = await this.readRow(input.request_id)
+      if (!row || row.requestId !== input.request_id) return diagnosticsUI.assertQueryResponse(diagnosticsErrorResponse('AGENT_REQUEST_INVALID'))
+      if (!this.diagnostics || typeof this.diagnostics.queryRequest !== 'function') {
+        return diagnosticsUI.assertQueryResponse(diagnosticsErrorResponse('AGENT_DIAGNOSTICS_UNAVAILABLE'))
+      }
+      const page = await this.diagnostics.queryRequest({
+        requestDigest: row.requestDigest,
+        beforeSequence: input.before_sequence,
+        limit: input.limit
+      })
+      return diagnosticsUI.assertQueryResponse({
+        ...diagnosticsHeader(), ok: true, error: null,
+        result: {
+          available: page.available,
+          records: page.records,
+          next_before_sequence: page.nextBeforeSequence
+        }
+      })
+    } catch (error) {
+      return diagnosticsUI.assertQueryResponse(diagnosticsErrorResponse(error?.code || 'AGENT_RUN_UNAVAILABLE'))
+    }
+  }
+
+  async exportDiagnostics (input, context = {}) {
+    try {
+      diagnosticsUI.assertExportRequest(input)
+      const row = await this.readRow(input.request_id)
+      if (!row || row.requestId !== input.request_id) return diagnosticsUI.assertExportResponse(diagnosticsErrorResponse('AGENT_REQUEST_INVALID'))
+      if (!this.diagnostics || typeof this.diagnostics.exportRequest !== 'function' || !this.showDiagnosticSaveDialog) {
+        return diagnosticsUI.assertExportResponse(diagnosticsErrorResponse('AGENT_DIAGNOSTICS_UNAVAILABLE'))
+      }
+      const result = await this.diagnostics.exportRequest({
+        requestDigest: row.requestDigest,
+        ownerWindow: this.getOwnerWindow(context.sender),
+        showSaveDialog: this.showDiagnosticSaveDialog
+      })
+      return diagnosticsUI.assertExportResponse({
+        ...diagnosticsHeader(), ok: true, error: null,
+        result: { status: result.status, record_count: result.recordCount, available: result.available }
+      })
+    } catch (error) {
+      return diagnosticsUI.assertExportResponse(diagnosticsErrorResponse(error?.code || 'AGENT_DIAGNOSTIC_EXPORT_FAILED'))
+    }
   }
 
   async readAndEmit (requestId) {

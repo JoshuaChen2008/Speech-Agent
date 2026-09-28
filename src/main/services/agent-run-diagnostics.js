@@ -7,10 +7,12 @@ const readline = require('node:readline')
 const { performance } = require('node:perf_hooks')
 const { BUDGET_AXES } = require('../../agent/contracts/budget-axes')
 const sessionSummary = require('../../agent/contracts/session-summary-run-ui')
+const { writeAtomic: defaultWriteAtomic } = require('../../agent/formal-run/agent-interaction-exporter')
 const {
   DIAGNOSTIC_EVENTS,
   DIAGNOSTIC_SCHEMA_VERSION,
   METRIC_UNITS,
+  assertDiagnosticExportSnapshot,
   assertDiagnosticRecord
 } = require('../../agent/contracts/agent-run-diagnostics')
 
@@ -298,6 +300,82 @@ class AgentRunDiagnostics {
     await this.fs.appendFile(file.path, line, { encoding: 'utf8' })
     file.size += bytes
   }
+
+  async recordsForRequestDigest (requestDigest) {
+    if (!isDigest(requestDigest)) throw new TypeError('diagnostic request digest is invalid')
+    await this.initialization
+    if (this.state === 'available') await this.drain()
+    const maximumSequence = this.sequence
+    const found = []
+    try {
+      for (const file of [...this.files]) {
+        const stats = await this.fs.lstat(file.path)
+        if (!stats.isFile() || stats.isSymbolicLink() || stats.size > MAX_FILE_BYTES) {
+          throw new Error('diagnostic file is unavailable')
+        }
+        const content = await this.fs.readFile(file.path, 'utf8')
+        for (const line of String(content).split(/\r?\n/u)) {
+          if (!line) continue
+          try {
+            const record = assertDiagnosticRecord(JSON.parse(line))
+            if (record.requestDigest === requestDigest && record.sequence <= maximumSequence) found.push(record)
+          } catch { /* malformed or partial log lines are not exportable */ }
+        }
+      }
+    } catch {
+      this.markUnavailable('read_failed')
+      const error = new Error('AGENT_DIAGNOSTICS_UNAVAILABLE')
+      error.code = 'AGENT_DIAGNOSTICS_UNAVAILABLE'
+      throw error
+    }
+    found.sort((left, right) => left.sequence - right.sequence)
+    return { available: this.state === 'available', records: found }
+  }
+
+  async queryRequest ({ requestDigest, beforeSequence = null, limit = 50 } = {}) {
+    if (beforeSequence !== null && (!Number.isSafeInteger(beforeSequence) || beforeSequence < 1)) {
+      throw new TypeError('diagnostic sequence cursor is invalid')
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new TypeError('diagnostic page size is invalid')
+    const all = await this.recordsForRequestDigest(requestDigest)
+    const eligible = all.records.filter((record) => beforeSequence === null || record.sequence < beforeSequence)
+    const descending = eligible.slice(-limit).reverse()
+    const hasMore = eligible.length > descending.length
+    return {
+      available: all.available,
+      records: descending,
+      nextBeforeSequence: hasMore ? descending[descending.length - 1].sequence : null
+    }
+  }
+
+  async exportRequest ({ requestDigest, ownerWindow = null, showSaveDialog, writeAtomic = defaultWriteAtomic } = {}) {
+    if (typeof showSaveDialog !== 'function') throw new TypeError('diagnostic save dialog is required')
+    if (typeof writeAtomic !== 'function') throw new TypeError('atomic diagnostic writer is required')
+    const loaded = await this.recordsForRequestDigest(requestDigest)
+    const snapshot = assertDiagnosticExportSnapshot({
+      schemaVersion: DIAGNOSTIC_SCHEMA_VERSION,
+      available: loaded.available,
+      records: loaded.records
+    })
+    const bytes = Buffer.from(`${JSON.stringify(snapshot, null, 2)}\n`, 'utf8')
+    const dialogResult = await showSaveDialog(ownerWindow, {
+      title: '导出 Agent 运行诊断',
+      defaultPath: `agent-run-diagnostics-${requestDigest.slice(0, 16)}.json`,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      properties: ['createDirectory', 'showOverwriteConfirmation']
+    })
+    if (!dialogResult || dialogResult.canceled === true || typeof dialogResult.filePath !== 'string' || dialogResult.filePath.length === 0) {
+      return { status: 'cancelled', recordCount: 0, available: loaded.available }
+    }
+    try {
+      await writeAtomic(dialogResult.filePath, bytes)
+    } catch {
+      const error = new Error('AGENT_DIAGNOSTIC_EXPORT_FAILED')
+      error.code = 'AGENT_DIAGNOSTIC_EXPORT_FAILED'
+      throw error
+    }
+    return { status: 'saved', recordCount: snapshot.records.length, available: snapshot.available }
+  }
 }
 
 module.exports = Object.freeze({
@@ -306,5 +384,6 @@ module.exports = Object.freeze({
   MAX_FILE_AGE_MS,
   MAX_FILE_BYTES,
   MAX_FILES,
-  MAX_RECORD_BYTES
+  MAX_RECORD_BYTES,
+  defaultWriteAtomic
 })

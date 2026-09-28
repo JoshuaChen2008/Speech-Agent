@@ -8,6 +8,7 @@ const vm = require('node:vm')
 
 const CHANNELS = require('../../src/main/ipc/channels')
 const contract = require('../../src/agent/contracts/session-summary-run-ui')
+const diagnosticsUI = require('../../src/agent/contracts/agent-run-diagnostics-ui')
 
 function loadAgentPreload () {
   const exposed = {}
@@ -28,6 +29,13 @@ function loadAgentPreload () {
     error: null,
     result: { accepted: true, replayed: false, snapshot }
   }
+  const diagnosticsResponse = {
+    contract_id: diagnosticsUI.CONTRACT_ID,
+    contract_version: diagnosticsUI.CONTRACT_VERSION,
+    ok: true,
+    error: null,
+    result: { available: true, records: [], next_before_sequence: null }
+  }
   const source = fs.readFileSync(path.join(process.cwd(), 'src', 'preload', 'agent.js'), 'utf8')
   const localRequire = (specifier) => {
     if (specifier === 'electron') return { contextBridge: { exposeInMainWorld: (name, value) => { exposed[name] = value } } }
@@ -43,6 +51,13 @@ function loadAgentPreload () {
             if (channel === CHANNELS.SESSION_SUMMARY_RUN_RESUME) {
               return { ...response, result: { snapshot: { ...snapshot, generation: 2, revision: 1, state: 'accepted' } } }
             }
+            if (channel === CHANNELS.SESSION_SUMMARY_RUN_DIAGNOSTICS_QUERY) return diagnosticsResponse
+            if (channel === CHANNELS.SESSION_SUMMARY_RUN_DIAGNOSTICS_EXPORT) {
+              return {
+                ...diagnosticsResponse,
+                result: { status: 'cancelled', record_count: 0, available: true }
+              }
+            }
             return response
           },
           on: (channel, callback) => listeners.set(channel, callback),
@@ -55,6 +70,7 @@ function loadAgentPreload () {
     if (specifier === '../main/ipc/channels') return CHANNELS
     if (specifier === '../agent/contracts/agent-run-ui') return require('../../src/agent/contracts/agent-run-ui')
     if (specifier === '../agent/contracts/session-summary-run-ui') return contract
+    if (specifier === '../agent/contracts/agent-run-diagnostics-ui') return diagnosticsUI
     if (specifier === '../agent/contracts/agent-context-ui') return require('../../src/agent/contracts/agent-context-ui')
     throw new Error(`unexpected preload dependency: ${specifier}`)
   }
@@ -87,6 +103,25 @@ test('SEM-F38/J30-ACCEPT: agent preload validates and forwards summary request c
   assert.equal(resumed.result.snapshot.generation, 2)
   assert.equal(calls[1].channel, CHANNELS.SESSION_SUMMARY_RUN_LIST_RECOVERABLE)
   assert.equal(calls[2].channel, CHANNELS.SESSION_SUMMARY_RUN_RESUME)
+  const diagnosticsRequest = {
+    contract_id: diagnosticsUI.CONTRACT_ID,
+    contract_version: diagnosticsUI.CONTRACT_VERSION,
+    request_id: 'request.summary.preload',
+    before_sequence: null,
+    limit: 50
+  }
+  const queriedDiagnostics = await api.getSessionSummaryRunDiagnostics(diagnosticsRequest)
+  assert.equal(queriedDiagnostics.result.available, true)
+  const exportedDiagnostics = await api.exportSessionSummaryRunDiagnostics({
+    contract_id: diagnosticsUI.CONTRACT_ID,
+    contract_version: diagnosticsUI.CONTRACT_VERSION,
+    request_id: 'request.summary.preload'
+  })
+  assert.equal(exportedDiagnostics.result.status, 'cancelled')
+  assert.equal(calls[3].channel, CHANNELS.SESSION_SUMMARY_RUN_DIAGNOSTICS_QUERY)
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[3].request)), diagnosticsRequest)
+  assert.equal(calls[4].channel, CHANNELS.SESSION_SUMMARY_RUN_DIAGNOSTICS_EXPORT)
+  assert.throws(() => api.getSessionSummaryRunDiagnostics({ ...diagnosticsRequest, file_path: 'D:\\private' }), /exact keys/)
   assert.throws(() => api.getSessionSummaryRun({
     contract_id: contract.CONTRACT_ID,
     contract_version: contract.CONTRACT_VERSION,

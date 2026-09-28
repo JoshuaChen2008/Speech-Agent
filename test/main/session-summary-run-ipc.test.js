@@ -5,6 +5,7 @@ const test = require('node:test')
 
 const CHANNELS = require('../../src/main/ipc/channels')
 const contract = require('../../src/agent/contracts/session-summary-run-ui')
+const diagnosticsUI = require('../../src/agent/contracts/agent-run-diagnostics-ui')
 const { registerSessionSummaryRunIpc } = require('../../src/main/ipc/session-summary-run-ipc')
 
 function snapshot (overrides = {}) {
@@ -23,6 +24,16 @@ function ok (result) {
   return {
     contract_id: contract.CONTRACT_ID,
     contract_version: contract.CONTRACT_VERSION,
+    ok: true,
+    error: null,
+    result
+  }
+}
+
+function diagnosticsOk (result) {
+  return {
+    contract_id: diagnosticsUI.CONTRACT_ID,
+    contract_version: diagnosticsUI.CONTRACT_VERSION,
     ok: true,
     error: null,
     result
@@ -55,6 +66,14 @@ test('SEM-F38/J30-ACCEPT: exact request, query, and cancel contracts cross the m
       async listRecoverable (request, context) {
         calls.push({ method: 'listRecoverable', request, sender: context.sender })
         return ok({ requests: [{ scope: { kind: 'session', reference: 'session.ipc' }, snapshot: snapshot({ state: 'retry_wait', phase: 'retry_wait', resume_required: true }) }] })
+      },
+      async getDiagnostics (request, context) {
+        calls.push({ method: 'getDiagnostics', request, sender: context.sender })
+        return diagnosticsOk({ available: true, records: [], next_before_sequence: null })
+      },
+      async exportDiagnostics (request, context) {
+        calls.push({ method: 'exportDiagnostics', request, sender: context.sender })
+        return diagnosticsOk({ status: 'cancelled', record_count: 0, available: true })
       }
     }
   })
@@ -94,8 +113,32 @@ test('SEM-F38/J30-ACCEPT: exact request, query, and cancel contracts cross the m
     contract_version: contract.CONTRACT_VERSION
   })
   assert.equal(contract.assertListRecoverableResponse(recoverable).result.requests[0].scope.reference, 'session.ipc')
-  assert.deepEqual(calls.map((call) => call.method), ['accept', 'get', 'cancel', 'resume', 'listRecoverable'])
+  const diagnosticsRequest = {
+    contract_id: diagnosticsUI.CONTRACT_ID,
+    contract_version: diagnosticsUI.CONTRACT_VERSION,
+    request_id: 'request.summary.ipc',
+    before_sequence: null,
+    limit: 50
+  }
+  const diagnosticsPage = await handlers.get(CHANNELS.SESSION_SUMMARY_RUN_DIAGNOSTICS_QUERY)(event, diagnosticsRequest)
+  assert.equal(diagnosticsUI.assertQueryResponse(diagnosticsPage).result.available, true)
+  const diagnosticsExport = await handlers.get(CHANNELS.SESSION_SUMMARY_RUN_DIAGNOSTICS_EXPORT)(event, {
+    contract_id: diagnosticsUI.CONTRACT_ID,
+    contract_version: diagnosticsUI.CONTRACT_VERSION,
+    request_id: 'request.summary.ipc'
+  })
+  assert.equal(diagnosticsUI.assertExportResponse(diagnosticsExport).result.status, 'cancelled')
+  assert.deepEqual(calls.map((call) => call.method), ['accept', 'get', 'cancel', 'resume', 'listRecoverable', 'getDiagnostics', 'exportDiagnostics'])
   assert.deepEqual(calls[0].sender, event.sender)
+  assert.deepEqual(calls[5].sender, event.sender)
+  await assert.rejects(
+    () => handlers.get(CHANNELS.SESSION_SUMMARY_RUN_DIAGNOSTICS_QUERY)({ role: 'history' }, diagnosticsRequest),
+    /IPC_ACCESS_DENIED/
+  )
+  await assert.rejects(
+    () => handlers.get(CHANNELS.SESSION_SUMMARY_RUN_DIAGNOSTICS_QUERY)(event, { ...diagnosticsRequest, absolute_path: 'D:\\private' }),
+    /exact keys/
+  )
   await assert.rejects(
     () => handlers.get(CHANNELS.SESSION_SUMMARY_RUN_ACCEPT)(event, { ...request, prompt: 'caller override' }),
     /exact keys/

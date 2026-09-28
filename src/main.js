@@ -67,6 +67,7 @@ const { registerAgentRunIpc } = require('./main/ipc/agent-run-ipc')
 const { registerSessionSummaryRunIpc } = require('./main/ipc/session-summary-run-ipc')
 const agentRunUi = require('./agent/contracts/agent-run-ui')
 const sessionSummaryRunUi = require('./agent/contracts/session-summary-run-ui')
+const agentRunDiagnosticsUi = require('./agent/contracts/agent-run-diagnostics-ui')
 const { AgentRunService } = require('./agent/formal-run/agent-run-service')
 const { SessionSummaryRunService } = require('./agent/formal-run/session-summary-run-service')
 const { AgentInteractionSignalService } = require('./agent/formal-run/agent-interaction-signal-service')
@@ -460,6 +461,16 @@ function unavailableSessionSummaryRunResponse () {
   }
 }
 
+function unavailableAgentRunDiagnosticsResponse (code = 'AGENT_DIAGNOSTICS_UNAVAILABLE') {
+  return {
+    contract_id: agentRunDiagnosticsUi.CONTRACT_ID,
+    contract_version: agentRunDiagnosticsUi.CONTRACT_VERSION,
+    ok: false,
+    error: { code, next_action: 'retry' },
+    result: null
+  }
+}
+
 registerSessionSummaryRunIpc({
   ipcMain,
   authorize: requireSender,
@@ -468,7 +479,9 @@ registerSessionSummaryRunIpc({
     async get (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.get(request, context) : unavailableSessionSummaryRunResponse() },
     async cancel (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.cancel(request, context) : unavailableSessionSummaryRunResponse() },
     async resume (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.resume(request, context) : unavailableSessionSummaryRunResponse() },
-    async listRecoverable (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.listRecoverable(request, context) : unavailableSessionSummaryRunResponse() }
+    async listRecoverable (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.listRecoverable(request, context) : unavailableSessionSummaryRunResponse() },
+    async getDiagnostics (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.getDiagnostics(request, context) : unavailableAgentRunDiagnosticsResponse() },
+    async exportDiagnostics (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.exportDiagnostics(request, context) : unavailableAgentRunDiagnosticsResponse() }
   }
 })
 
@@ -1589,6 +1602,12 @@ async function bootstrapApplication () {
       getConfig: () => config.get(),
       promptStore: formalAgentPrompts,
       diagnostics: agentRunDiagnostics,
+      showDiagnosticSaveDialog: (ownerWindow, options) => ownerWindow
+        ? dialog.showSaveDialog(ownerWindow, options)
+        : dialog.showSaveDialog(options),
+      getOwnerWindow: (sender) => {
+        try { return sender ? BrowserWindow.fromWebContents(sender) : null } catch { return null }
+      },
       onChanged: broadcastSessionSummaryRunChanged
     })
     await sessionSummaryRunService.setDiagnosticsAvailability(agentRunDiagnostics.getStatus().available)

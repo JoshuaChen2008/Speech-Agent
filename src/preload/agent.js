@@ -4,6 +4,7 @@ const CHANNELS = require('../main/ipc/channels')
 const { ipcRenderer, createWindowInteractionBridge, subscribe } = require('./shared')
 const c = require('../agent/contracts/agent-run-ui')
 const summaryRun = require('../agent/contracts/session-summary-run-ui')
+const summaryDiagnostics = require('../agent/contracts/agent-run-diagnostics-ui')
 const context = require('../agent/contracts/agent-context-ui')
 const interaction = createWindowInteractionBridge('agent')
 let requestedScope = null
@@ -89,5 +90,7 @@ contextBridge.exposeInMainWorld('agentApi', {
   cancelSessionSummaryRun: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_CANCEL, summaryRun.assertCancelRequest, summaryRun.assertCancelResponse, request),
   resumeSessionSummaryRun: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_RESUME, summaryRun.assertResumeRequest, summaryRun.assertResumeResponse, request),
   listRecoverableSessionSummaryRuns: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_LIST_RECOVERABLE, summaryRun.assertListRecoverableRequest, summaryRun.assertListRecoverableResponse, request),
+  getSessionSummaryRunDiagnostics: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_DIAGNOSTICS_QUERY, summaryDiagnostics.assertQueryRequest, summaryDiagnostics.assertQueryResponse, request),
+  exportSessionSummaryRunDiagnostics: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_DIAGNOSTICS_EXPORT, summaryDiagnostics.assertExportRequest, summaryDiagnostics.assertExportResponse, request),
   onSessionSummaryRunChanged
 })

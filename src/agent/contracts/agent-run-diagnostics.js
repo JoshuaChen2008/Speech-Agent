@@ -30,6 +30,7 @@ const RECORD_KEYS = Object.freeze([
   'phase', 'event', 'elapsedMs', 'lastActivityAgeMs', 'errorCode', 'budgetAxis',
   'metrics', 'modelBindingDigest', 'planDigest'
 ])
+const EXPORT_KEYS = Object.freeze(['schemaVersion', 'available', 'records'])
 
 function fail (path, reason) {
   throw new TypeError(`${path}: ${reason}`)
@@ -94,11 +95,31 @@ function assertDiagnosticRecord (record) {
   return record
 }
 
+function assertDiagnosticExportSnapshot (snapshot) {
+  exactObject(snapshot, EXPORT_KEYS, 'diagnosticExport')
+  if (snapshot.schemaVersion !== DIAGNOSTIC_SCHEMA_VERSION) fail('diagnosticExport.schemaVersion', 'is unsupported')
+  if (typeof snapshot.available !== 'boolean') fail('diagnosticExport.available', 'must be boolean')
+  if (!Array.isArray(snapshot.records)) fail('diagnosticExport.records', 'must be an array')
+  for (const [index, record] of snapshot.records.entries()) assertDiagnosticRecord(record)
+  if (snapshot.records.some((record, index) => index > 0 && record.sequence <= snapshot.records[index - 1].sequence)) {
+    fail('diagnosticExport.records', 'must be ordered by ascending sequence')
+  }
+  if (snapshot.records.length > 1) {
+    const requestDigest = snapshot.records[0].requestDigest
+    if (snapshot.records.some((record) => record.requestDigest !== requestDigest)) {
+      fail('diagnosticExport.records', 'must belong to one request digest')
+    }
+  }
+  return snapshot
+}
+
 module.exports = Object.freeze({
   DIAGNOSTIC_EVENTS,
   DIAGNOSTIC_SCHEMA_VERSION,
+  EXPORT_KEYS,
   METRIC_UNITS,
   RECORD_KEYS,
   assertDiagnosticMetrics,
+  assertDiagnosticExportSnapshot,
   assertDiagnosticRecord
 })

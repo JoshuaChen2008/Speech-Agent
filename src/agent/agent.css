@@ -54,6 +54,14 @@ textarea { min-height: 96px; resize: vertical; padding: 10px; color: rgb(var(--f
 .run-card span { color: rgba(var(--fg), .68); font-size: 11px; }
 .run-card strong { font-size: 13px; }
 .run-card button { padding: 5px 9px; }
+.diagnostics-panel { display: grid; gap: 8px; padding: 10px; border: 1px solid rgba(var(--fg), .12); border-radius: var(--radius-control); background: rgba(var(--fg), .04); }
+.diagnostics-panel summary { cursor: pointer; font-size: 12px; font-weight: 600; }
+.diagnostics-actions { display: flex; gap: 8px; }
+.diagnostics-actions button { padding: 5px 9px; }
+.diagnostics-panel p { margin: 0; color: rgba(var(--fg), .68); font-size: 11px; }
+.diagnostics-panel ol { display: grid; gap: 5px; max-height: 220px; overflow: auto; margin: 0; padding-left: 22px; }
+.diagnostics-panel li { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; font-size: 11px; }
+.diagnostics-panel li > span { color: rgba(var(--fg), .68); }
 .recoverable-runs { display: grid; gap: 8px; padding: 10px; border: 1px solid rgba(var(--fg), .12); border-radius: var(--radius-control); background: rgba(var(--fg), .04); }
 .recoverable-runs .panel-heading { margin: 0; }
 .recoverable-runs h2 { margin: 0; font-size: 13px; }
