@@ -29,22 +29,26 @@ const expectedIds = [
   'text.translate'
 ]
 
-test('SEM-F16/J22/J24: recipe catalog is the exact eleven-entry frozen registry', () => {
+test('SEM-F16/J22/J24: eleven recipe ids map to a frozen versioned registry', () => {
   assert.deepEqual(RECIPE_IDS, expectedIds)
-  assert.equal(RECIPE_CATALOG.length, 11)
+  assert.equal(RECIPE_CATALOG.length, 12)
   assert.equal(Object.isFrozen(RECIPE_CATALOG), true)
-  assert.deepEqual(RECIPE_CATALOG.map((recipe) => recipe.recipeId), expectedIds)
+  assert.deepEqual([...new Set(RECIPE_CATALOG.map((recipe) => recipe.recipeId))], expectedIds)
   for (const recipe of RECIPE_CATALOG) {
     assert.deepEqual(Object.keys(recipe).sort(), [
       'artifactType', 'failurePolicy', 'inputScopes', 'maxTurns', 'modelPurpose',
       'outputSchemaId', 'persistence', 'recipeId', 'recipeVersion', 'toolGrants'
     ])
-    assert.equal(recipe.recipeVersion, '1')
+    assert.ok(['1', ...(recipe.recipeId === 'summary.minutes' ? ['2'] : [])].includes(recipe.recipeVersion))
     assert.equal(Object.isFrozen(recipe), true)
-    assert.equal(getRecipe(recipe.recipeId, '1'), recipe)
+    assert.equal(getRecipe(recipe.recipeId, recipe.recipeVersion), recipe)
   }
   assert.deepEqual(getRecipe('intent.route', '1').toolGrants, [])
   assert.equal(getRecipe('qa.answer', '1').maxTurns, 3)
+  const summaryV1 = getRecipe('summary.minutes', '1')
+  const summaryV2 = getRecipe('summary.minutes', '2')
+  assert.deepEqual({ ...summaryV2, recipeVersion: '1' }, summaryV1)
+  assert.deepEqual(summaryV2.toolGrants, ['search_context'])
   assert.deepEqual(getRecipe('report.analysis', '1').toolGrants, ['search_context', 'read_sources'])
   assert.throws(() => getRecipe('unknown', '1'), /AGENT_REQUEST_INVALID/)
   assert.throws(() => getRecipe('qa.answer', '2'), /AGENT_REQUEST_INVALID/)

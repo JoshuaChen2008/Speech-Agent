@@ -9,7 +9,7 @@ const {
   assertConfigureCommand,
   assertRunRequest
 } = require('../../agent/contracts/model-access-core')
-const { deriveBudget } = require('../../agent/contracts/budget-axes')
+const { deriveRecipeBudget } = require('../../agent/contracts/budget-axes')
 const { getRecipe } = require('../../agent/contracts/recipes')
 const { canonicalizeConnection, providerKindForOrigin } = require('../../agent/model-access/connection')
 const {
@@ -193,7 +193,7 @@ class ModelAccessStore {
       if (recipe.toolGrants.length > 0 && capabilities.supportsToolCalling !== true) fail('AGENT_REQUEST_INVALID')
       const credentialPresent = availableSlotIds.includes(resolved.profile.credential_slot_id)
       if (!credentialPresent) fail('AGENT_REQUEST_INVALID')
-      const budget = deriveBudget(capabilities, recipe.maxTurns, recipe.toolGrants, run.requested_by)
+      const budget = deriveRecipeBudget(capabilities, request.recipeId, request.recipeVersion, run.requested_by)
       const now = this.now()
       this.database.prepare(`INSERT INTO agent_model_run_bindings(
         run_id,execution_form,purpose,assignment_mode,profile_id,profile_revision,adapter_id,

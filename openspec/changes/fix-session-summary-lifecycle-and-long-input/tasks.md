@@ -44,7 +44,7 @@
 
 ## 5. P2 预算与存储
 
-- [ ] 5.1 登记summary.minutes@2策略和十轴作用域，v1/v2并存；bind四字段不扩充，调用者不能指定预算（SEM-F39/J31-COMPAT）。
+- [x] 5.1 登记summary.minutes@2策略和十轴作用域，v1/v2并存；bind四字段不扩充，调用者不能指定预算（SEM-F39/J31-COMPAT）。实现完成·尚未验收：冻结recipe目录保留summary.minutes@1并注册@2；模型接入层按run中的recipe版本派生精确十轴预算，@1与其它recipe仍用原策略；真实SQLite bind拒绝调用方预算字段，v2预算经ToolAudit策略校验。相关focus 52/52，`npm run test:core` 1084/1084（含renderer类型检查与生产构建）；P2剩余执行链、迁移、长输入和完整J31仍未验收。
 - [ ] 5.2 盘点runner/Loop/runtime/adapter/HTTP/tool/IPC/SQLite/export限制与version=1硬编码，统一政策并覆盖非总结recipe不变（J31-SIZE/COMPAT）。
 - [ ] 5.3 追加计划/策略摘要和累计时长/调用数迁移，不存中间正文；版本按最新schema顺延，验证既有库升级及失败回滚（DB1/J31-COMPAT）。
 - [ ] 5.4 增加冻结raw keyset分页和超长段code point范围读取，验证first_event_order、身份变化与删除拒绝（J31-COVERAGE）。

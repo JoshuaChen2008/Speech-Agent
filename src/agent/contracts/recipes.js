@@ -26,6 +26,7 @@ const RECIPE_DEFINITIONS = [
   ['qa.answer', ['selection', 'session', 'date_range', 'project'], 'default', 3, ['search_context'], 'QaAnswerV1', 'interaction', null],
   ['extract.items', ['selection', 'session'], 'information_extraction', 3, ['search_context'], 'ExtractItemsV1', 'interaction', null],
   ['summary.minutes', ['session'], 'summary', 3, ['search_context'], 'SummaryMinutesV1', 'artifact', 'meeting-minutes'],
+  ['summary.minutes', ['session'], 'summary', 3, ['search_context'], 'SummaryMinutesV1', 'artifact', 'meeting-minutes', '2'],
   ['report.analysis', ['selection', 'session', 'date_range', 'project'], 'analysis_planning', 6, ['search_context', 'read_sources'], 'ReportAnalysisV1', 'artifact', 'analysis-report'],
   ['plan.proposal', ['selection', 'session', 'date_range', 'project'], 'analysis_planning', 6, ['search_context', 'read_sources'], 'PlanProposalV1', 'artifact', 'planning-proposal'],
   ['text.enhance', ['session'], 'summary', 3, ['search_context'], 'TextEnhanceV1', 'artifact', 'enhanced-transcript'],
@@ -33,10 +34,10 @@ const RECIPE_DEFINITIONS = [
   ['text.translate', ['selection', 'session'], 'default', 1, [], 'TextTranslateV1', 'interaction', null]
 ]
 
-function freezeDefinition ([recipeId, inputScopes, modelPurpose, maxTurns, toolGrants, outputSchemaId, persistence, artifactType]) {
+function freezeDefinition ([recipeId, inputScopes, modelPurpose, maxTurns, toolGrants, outputSchemaId, persistence, artifactType, recipeVersion = '1']) {
   return Object.freeze({
     recipeId,
-    recipeVersion: '1',
+    recipeVersion,
     inputScopes: Object.freeze([...inputScopes]),
     modelPurpose,
     maxTurns,
@@ -49,7 +50,7 @@ function freezeDefinition ([recipeId, inputScopes, modelPurpose, maxTurns, toolG
 }
 
 const RECIPE_CATALOG = Object.freeze(RECIPE_DEFINITIONS.map(freezeDefinition))
-const RECIPE_BY_ID = new Map(RECIPE_CATALOG.map((recipe) => [recipe.recipeId, recipe]))
+const RECIPE_BY_IDENTITY = new Map(RECIPE_CATALOG.map((recipe) => [`${recipe.recipeId}\u0000${recipe.recipeVersion}`, recipe]))
 
 function codedError (code, message) {
   const error = new TypeError(`${code}: ${message}`)
@@ -356,8 +357,8 @@ const OUTPUT_VALIDATORS = Object.freeze({
 })
 
 function getRecipe (recipeId, recipeVersion = '1') {
-  const recipe = RECIPE_BY_ID.get(recipeId)
-  if (!recipe || recipe.recipeVersion !== recipeVersion) requestFail('recipe identity is not registered')
+  const recipe = RECIPE_BY_IDENTITY.get(`${recipeId}\u0000${recipeVersion}`)
+  if (!recipe) requestFail('recipe identity is not registered')
   return recipe
 }
 

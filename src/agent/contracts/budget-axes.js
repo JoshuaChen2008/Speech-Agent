@@ -35,6 +35,51 @@ const TOOL_PAYLOAD_LIMITS = Object.freeze({
   maxResultBytes: 64 * 1024
 })
 
+const LEGACY_BUDGET_POLICY = Object.freeze({
+  policyId: 'legacy-fixed-recipe@1',
+  maxRequestInputTokens: LIMITS.maxCumulativeInputTokens,
+  maxCumulativeInputTokens: LIMITS.maxCumulativeInputTokens,
+  maxCumulativeOutputTokens: LIMITS.maxCumulativeOutputTokens,
+  cumulativeOutputUsesModelCeiling: true,
+  maxWallClockMsByRequestedBy: Object.freeze({ user: LIMITS.interactiveWallClockMs, automatic: LIMITS.automaticWallClockMs }),
+  maxToolCalls: LIMITS.maxToolCalls,
+  toolTimeoutMs: LIMITS.toolTimeoutMs,
+  maxParallelTools: LIMITS.maxParallelTools,
+  maxToolResultBytes: LIMITS.maxToolResultBytes,
+  maxSourceTextBytes: LIMITS.maxSourceTextBytes,
+  axisScopes: null
+})
+
+const SUMMARY_MINUTES_V2_AXIS_SCOPES = Object.freeze({
+  maxTurns: 'agent_loop',
+  maxRequestInputTokens: 'model_request',
+  maxCumulativeInputTokens: 'run',
+  maxCumulativeOutputTokens: 'run',
+  maxWallClockMs: 'attempt',
+  maxToolCalls: 'attempt',
+  toolTimeoutMs: 'tool_call',
+  maxParallelTools: 'attempt',
+  maxToolResultBytes: 'attempt',
+  maxSourceTextBytes: 'attempt'
+})
+
+const SUMMARY_MINUTES_V2_BUDGET_POLICY = Object.freeze({
+  policyId: 'summary.minutes@2',
+  recipeId: 'summary.minutes',
+  recipeVersion: '2',
+  maxRequestInputTokens: 120000,
+  maxCumulativeInputTokens: 16000000,
+  maxCumulativeOutputTokens: 1000000,
+  cumulativeOutputUsesModelCeiling: false,
+  maxWallClockMsByRequestedBy: Object.freeze({ user: 60 * 60 * 1000, automatic: 60 * 60 * 1000 }),
+  maxToolCalls: LIMITS.maxToolCalls,
+  toolTimeoutMs: LIMITS.toolTimeoutMs,
+  maxParallelTools: LIMITS.maxParallelTools,
+  maxToolResultBytes: LIMITS.maxToolResultBytes,
+  maxSourceTextBytes: LIMITS.maxSourceTextBytes,
+  axisScopes: SUMMARY_MINUTES_V2_AXIS_SCOPES
+})
+
 const BUDGET_AXIS_STATES = Object.freeze(['within', 'exhausted', 'not_evaluated'])
 const BUDGET_EXCEEDED_ERROR_CODE = 'AGENT_BUDGET_EXCEEDED'
 
@@ -81,7 +126,15 @@ function assertRegisteredToolGrantCombination (maxTurns, toolGrants) {
   return toolGrants
 }
 
-function deriveBudget (capabilities, maxTurns, toolGrants, requestedBy) {
+function getBudgetPolicy (recipeId, recipeVersion) {
+  const recipe = getRecipe(recipeId, recipeVersion)
+  return recipe.recipeId === SUMMARY_MINUTES_V2_BUDGET_POLICY.recipeId &&
+    recipe.recipeVersion === SUMMARY_MINUTES_V2_BUDGET_POLICY.recipeVersion
+    ? SUMMARY_MINUTES_V2_BUDGET_POLICY
+    : LEGACY_BUDGET_POLICY
+}
+
+function deriveBudgetWithPolicy (capabilities, maxTurns, toolGrants, requestedBy, policy) {
   if (!capabilities || !Number.isSafeInteger(capabilities.maxInputTokens) || capabilities.maxInputTokens < 1 ||
       !Number.isSafeInteger(capabilities.maxOutputTokens) || capabilities.maxOutputTokens < 1) {
     throw new TypeError('model capabilities are required')
@@ -90,37 +143,47 @@ function deriveBudget (capabilities, maxTurns, toolGrants, requestedBy) {
   if (!['automatic', 'user'].includes(requestedBy)) throw new TypeError('requestedBy is invalid')
   return Object.freeze({
     maxTurns,
-    maxRequestInputTokens: Math.min(capabilities.maxInputTokens, LIMITS.maxCumulativeInputTokens),
-    maxCumulativeInputTokens: LIMITS.maxCumulativeInputTokens,
-    maxCumulativeOutputTokens: Math.min(capabilities.maxOutputTokens, LIMITS.maxCumulativeOutputTokens),
-    maxWallClockMs: requestedBy === 'automatic' ? LIMITS.automaticWallClockMs : LIMITS.interactiveWallClockMs,
-    maxToolCalls: LIMITS.maxToolCalls,
-    toolTimeoutMs: LIMITS.toolTimeoutMs,
-    maxParallelTools: LIMITS.maxParallelTools,
-    maxToolResultBytes: LIMITS.maxToolResultBytes,
-    maxSourceTextBytes: LIMITS.maxSourceTextBytes
+    maxRequestInputTokens: Math.min(capabilities.maxInputTokens, policy.maxRequestInputTokens),
+    maxCumulativeInputTokens: policy.maxCumulativeInputTokens,
+    maxCumulativeOutputTokens: policy.cumulativeOutputUsesModelCeiling
+      ? Math.min(capabilities.maxOutputTokens, policy.maxCumulativeOutputTokens)
+      : policy.maxCumulativeOutputTokens,
+    maxWallClockMs: policy.maxWallClockMsByRequestedBy[requestedBy],
+    maxToolCalls: policy.maxToolCalls,
+    toolTimeoutMs: policy.toolTimeoutMs,
+    maxParallelTools: policy.maxParallelTools,
+    maxToolResultBytes: policy.maxToolResultBytes,
+    maxSourceTextBytes: policy.maxSourceTextBytes
   })
+}
+
+function deriveBudget (capabilities, maxTurns, toolGrants, requestedBy) {
+  return deriveBudgetWithPolicy(capabilities, maxTurns, toolGrants, requestedBy, LEGACY_BUDGET_POLICY)
 }
 
 function deriveRecipeBudget (capabilities, recipeId, recipeVersion, requestedBy) {
   const recipe = getRecipe(recipeId, recipeVersion)
-  return deriveBudget(capabilities, recipe.maxTurns, recipe.toolGrants, requestedBy)
+  return deriveBudgetWithPolicy(capabilities, recipe.maxTurns, recipe.toolGrants, requestedBy, getBudgetPolicy(recipeId, recipeVersion))
 }
 
-function assertBudgetSnapshot (budget, label = 'budget') {
+function assertBudgetSnapshot (budget, label = 'budget', policy = LEGACY_BUDGET_POLICY) {
   exactObject(budget, BUDGET_AXES, label)
   if (![1, 3, 6].includes(budget.maxTurns)) throw budgetError(`${label}.maxTurns is invalid`)
   positiveInteger(budget.maxRequestInputTokens, `${label}.maxRequestInputTokens`)
-  if (budget.maxRequestInputTokens > LIMITS.maxCumulativeInputTokens) throw budgetError(`${label}.maxRequestInputTokens exceeds policy`)
-  if (budget.maxCumulativeInputTokens !== LIMITS.maxCumulativeInputTokens) throw budgetError(`${label}.maxCumulativeInputTokens diverges from policy`)
+  if (budget.maxRequestInputTokens > policy.maxRequestInputTokens) throw budgetError(`${label}.maxRequestInputTokens exceeds policy`)
+  if (budget.maxCumulativeInputTokens !== policy.maxCumulativeInputTokens) throw budgetError(`${label}.maxCumulativeInputTokens diverges from policy`)
   positiveInteger(budget.maxCumulativeOutputTokens, `${label}.maxCumulativeOutputTokens`)
-  if (budget.maxCumulativeOutputTokens > LIMITS.maxCumulativeOutputTokens) throw budgetError(`${label}.maxCumulativeOutputTokens exceeds policy`)
-  if (![LIMITS.interactiveWallClockMs, LIMITS.automaticWallClockMs].includes(budget.maxWallClockMs)) throw budgetError(`${label}.maxWallClockMs diverges from policy`)
-  if (budget.maxToolCalls !== LIMITS.maxToolCalls) throw budgetError(`${label}.maxToolCalls diverges from policy`)
-  if (budget.toolTimeoutMs !== LIMITS.toolTimeoutMs) throw budgetError(`${label}.toolTimeoutMs diverges from policy`)
-  if (budget.maxParallelTools !== LIMITS.maxParallelTools) throw budgetError(`${label}.maxParallelTools diverges from policy`)
-  if (budget.maxToolResultBytes !== LIMITS.maxToolResultBytes) throw budgetError(`${label}.maxToolResultBytes diverges from policy`)
-  if (budget.maxSourceTextBytes !== LIMITS.maxSourceTextBytes || budget.maxSourceTextBytes >= budget.maxToolResultBytes) {
+  if (policy.cumulativeOutputUsesModelCeiling) {
+    if (budget.maxCumulativeOutputTokens > policy.maxCumulativeOutputTokens) throw budgetError(`${label}.maxCumulativeOutputTokens exceeds policy`)
+  } else if (budget.maxCumulativeOutputTokens !== policy.maxCumulativeOutputTokens) {
+    throw budgetError(`${label}.maxCumulativeOutputTokens diverges from policy`)
+  }
+  if (!Object.values(policy.maxWallClockMsByRequestedBy).includes(budget.maxWallClockMs)) throw budgetError(`${label}.maxWallClockMs diverges from policy`)
+  if (budget.maxToolCalls !== policy.maxToolCalls) throw budgetError(`${label}.maxToolCalls diverges from policy`)
+  if (budget.toolTimeoutMs !== policy.toolTimeoutMs) throw budgetError(`${label}.toolTimeoutMs diverges from policy`)
+  if (budget.maxParallelTools !== policy.maxParallelTools) throw budgetError(`${label}.maxParallelTools diverges from policy`)
+  if (budget.maxToolResultBytes !== policy.maxToolResultBytes) throw budgetError(`${label}.maxToolResultBytes diverges from policy`)
+  if (budget.maxSourceTextBytes !== policy.maxSourceTextBytes || budget.maxSourceTextBytes >= budget.maxToolResultBytes) {
     throw budgetError(`${label}.maxSourceTextBytes diverges from policy`)
   }
   return budget
@@ -131,7 +194,7 @@ function assertRecipeBudgetSnapshot (recipeId, recipeVersion, toolGrants, budget
   if (!Array.isArray(toolGrants) || !sameArray(toolGrants, recipe.toolGrants)) {
     throw budgetError('tool grants do not match the registered recipe')
   }
-  assertBudgetSnapshot(budget)
+  assertBudgetSnapshot(budget, 'budget', getBudgetPolicy(recipeId, recipeVersion))
   if (budget.maxTurns !== recipe.maxTurns) throw budgetError('maxTurns does not match the registered recipe')
   return budget
 }
@@ -167,8 +230,13 @@ function assertBudgetObservation (observation, label = 'observation') {
   return observation
 }
 
-function evaluateBudgetAxes (budget, observation) {
-  assertBudgetSnapshot(budget)
+function evaluateBudgetAxes (budget, observation, recipeId, recipeVersion) {
+  if (recipeId === undefined && recipeVersion === undefined) assertBudgetSnapshot(budget)
+  else {
+    if (typeof recipeId !== 'string' || typeof recipeVersion !== 'string') throw budgetError('recipe identity is invalid')
+    const recipe = getRecipe(recipeId, recipeVersion)
+    assertRecipeBudgetSnapshot(recipeId, recipeVersion, recipe.toolGrants, budget)
+  }
   assertBudgetObservation(observation)
   const axisStates = {
     maxTurns: observation.turnCount >= budget.maxTurns ? 'exhausted' : 'within',
@@ -200,11 +268,14 @@ module.exports = Object.freeze({
   BUDGET_AXIS_STATES,
   BUDGET_EXCEEDED_ERROR_CODE,
   LIMITS,
+  SUMMARY_MINUTES_V2_AXIS_SCOPES,
+  SUMMARY_MINUTES_V2_BUDGET_POLICY,
   TOOL_PAYLOAD_LIMITS,
   assertBudgetObservation,
   assertBudgetSnapshot,
   assertRecipeBudgetSnapshot,
   deriveBudget,
   deriveRecipeBudget,
-  evaluateBudgetAxes
+  evaluateBudgetAxes,
+  getBudgetPolicy
 })

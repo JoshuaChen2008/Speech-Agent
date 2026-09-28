@@ -43,15 +43,15 @@ function addProfileModel (store, profileId = 'profile.one', modelId = 'model-one
   return profile.credential_slot_id
 }
 
-function insertRun (database, runId = 'run.bind.one', recipeId = 'context.ingest.session', requestedBy = 'automatic') {
+function insertRun (database, runId = 'run.bind.one', recipeId = 'context.ingest.session', requestedBy = 'automatic', recipeVersion = '1') {
   const clientIdempotencyKey = requestedBy === 'user' ? `client.${runId}` : null
   database.prepare(`INSERT INTO formal_agent_runs(
     run_id,dedupe_key,client_idempotency_key,request_digest,recipe_id,recipe_version,
     scope_json,scope_digest,transcript_version,input_watermark_json,input_digest,requested_by,
     state,attempt_count,max_attempts,next_attempt_at,created_at,updated_at
-  ) VALUES(?,?,?, ?,?,'1',?,?, 'raw',?,?, ?,
+  ) VALUES(?,?,?, ?,?,?,?, ?, 'raw',?,?, ?,
     'queued',0,3,0,1000,1000)`).run(
-    runId, sha256Canonical({ runId }), clientIdempotencyKey, sha256Canonical({ request: runId }), recipeId,
+    runId, sha256Canonical({ runId }), clientIdempotencyKey, sha256Canonical({ request: runId }), recipeId, recipeVersion,
     canonicalize({ kind: 'session', reference: 'session-one' }), sha256Canonical({ scope: runId }),
     canonicalize({ throughEventOrder: 1 }), sha256Canonical({ input: runId }), requestedBy
   )
@@ -126,6 +126,36 @@ test('SEM-F33/J25: bind validates an existing v5 run and replays one immutable s
   assert.throws(() => subtitleStore.database.prepare("UPDATE agent_model_run_bindings SET model_id='other' WHERE run_id='run.bind.one'").run(), /immutable/i)
   subtitleStore.database.prepare("DELETE FROM formal_agent_runs WHERE run_id='run.bind.one'").run()
   assert.equal(subtitleStore.database.prepare("SELECT COUNT(*) AS count FROM agent_model_run_bindings WHERE run_id='run.bind.one'").get().count, 0)
+})
+
+test('SEM-F39/J31-COMPAT: SQLite bind derives the summary budget from recipe version', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  const roomyCapabilities = {
+    maxInputTokens: 200000, maxOutputTokens: 1100000, supportsToolCalling: true,
+    supportsStructuredOutput: true, supportsStreaming: true, usageReporting: true
+  }
+  command(store, { type: 'createProfile', profileId: 'summary.profile', label: 'Summary', httpsOrigin: 'https://summary.test', basePath: '/v1' })
+  command(store, { type: 'addModel', profileId: 'summary.profile', modelId: 'summary-model', capabilities: roomyCapabilities })
+  const profile = store.internalCatalog().profiles.find((item) => item.profile_id === 'summary.profile')
+  store.configure({
+    command: { type: 'setCredential', expectedRevision: store.revision(), profileId: 'summary.profile', credential: 'synthetic' },
+    credentialState: { scope: 'persistent', generation: 'generation.0000000000000001' }
+  })
+  command(store, { type: 'assignPurpose', purpose: 'summary', target: { profileId: 'summary.profile', modelId: 'summary-model' } })
+  insertRun(subtitleStore.database, 'run.summary.v1', 'summary.minutes', 'user', '1')
+  insertRun(subtitleStore.database, 'run.summary.v2', 'summary.minutes', 'user', '2')
+
+  const v1Request = { runId: 'run.summary.v1', recipeId: 'summary.minutes', recipeVersion: '1', executionForm: 'agent_loop' }
+  const v2Request = { runId: 'run.summary.v2', recipeId: 'summary.minutes', recipeVersion: '2', executionForm: 'agent_loop' }
+  const v1 = store.bind(v1Request, [profile.credential_slot_id])
+  const v2 = store.bind(v2Request, [profile.credential_slot_id])
+  assert.equal(v1.budget.maxCumulativeInputTokens, 120000)
+  assert.equal(v1.budget.maxCumulativeOutputTokens, 8000)
+  assert.equal(v2.budget.maxCumulativeInputTokens, 16000000)
+  assert.equal(v2.budget.maxCumulativeOutputTokens, 1000000)
+  assert.deepEqual(Object.keys(v1Request).sort(), ['executionForm', 'recipeId', 'recipeVersion', 'runId'])
+  assert.throws(() => store.bind({ ...v2Request, budget: v2.budget }, [profile.credential_slot_id]), /exactly|runRequest/i)
+  assert.deepEqual(store.bind(v2Request), v2)
 })
 
 test('SEM-F36/J25: preset strategy identity is persisted for matching preset profiles and custom tuples stay compatible', (t) => {

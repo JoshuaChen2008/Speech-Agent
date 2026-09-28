@@ -294,7 +294,22 @@ SEM-F01/F04/F06/F12/F14/F21/F25、SEM-T06：按 [ADR 0020](adr/0020-nls-realtime
 | 工具预算 | 每 attempt 累计工具调用≤12、并行1、单工具≤5秒、工具结果<256 KiB、来源正文<128 KiB、单次参数≤8 KiB、返回≤64 KiB | 所有分块共用计数；不能每块重置工具预算，亦不能用工具正文通道运送整场字幕 |
 | 内存与读取 | 输入采用 keyset 分页；单页正文≤256 KiB且≤500段，超长段走 code point 范围读取；正文/请求/中间结果缓冲总计≤128 MiB，诊断记录缓冲计数峰值 | 宿主显式释放已消费缓冲；不把 50,000 段完整载荷送给 renderer，不持续独占 storage worker |
 
-`summary.minutes@2` 追加版本化策略：十轴的累计输入、累计输出和墙钟轴作用于上表规定的 run/attempt；`maxTurns` 作用于每次 Agent Loop，计划调用上限是额外的宿主确定性约束。其余 recipe/version 与既有不可变绑定仍按旧策略解释。新增元数据存入追加表，不修改旧迁移/checksum，不把 v1 预算改成 v2。此项明确修订 SEM-F28、ADR 0016 §5/§9 的统一旧数值，不恢复执行形态二分、不增加 recipe ID、不递归委派。精确 token 计数可用时使用受控 tokenizer；未知 tokenizer 时以 UTF-8 字节数作保守输入单位并留固定 envelope 余量，不能把字节数当实际计费用量。
+`summary.minutes@2` 追加版本化策略，十轴按下列作用域解释；计划调用上限是额外的宿主确定性约束，不扩充十轴快照：
+
+| 预算轴 | `summary.minutes@2` 作用域 |
+|---|---|
+| `maxTurns` | 每次 Agent Loop，静态为 3 |
+| `maxRequestInputTokens` | 单个实际模型请求，受已确认模型能力与 120,000 上限共同约束 |
+| `maxCumulativeInputTokens` | 整个 run，跨 attempt 累计已知 provider 用量 |
+| `maxCumulativeOutputTokens` | 整个 run，跨 attempt 累计已知 provider 用量 |
+| `maxWallClockMs` | 单个 attempt，最多 60 分钟；单次 Loop 180 秒另设 Loop 期限，整个 run 另设 120 分钟宿主期限上限 |
+| `maxToolCalls` | 单个 attempt，所有计划节点共用 |
+| `toolTimeoutMs` | 单次工具调用 |
+| `maxParallelTools` | 单个 attempt，所有计划节点共用 |
+| `maxToolResultBytes` | 单个 attempt 的工具结果累计字节数 |
+| `maxSourceTextBytes` | 单个 attempt 的工具来源正文累计字节数 |
+
+其余 recipe/version 与既有不可变绑定仍按旧策略解释。新增元数据存入追加表，不修改旧迁移/checksum，不把 v1 预算改成 v2；不改变原绑定的四字段输入合同，也不接受调用方提交预算。此项明确修订 SEM-F28、ADR 0016 §5/§9 的统一旧数值，不恢复执行形态二分、不增加 recipe ID、不递归委派。精确 token 计数可用时使用受控 tokenizer；未知 tokenizer 时以 UTF-8 字节数作保守输入单位并留固定 envelope 余量，不能把字节数当实际计费用量。
 
 ### 运行、取消与恢复表
 

@@ -6,7 +6,7 @@ const {
   assertRecipeToolAuthorization,
   deriveToolResultMetadata
 } = require('../contracts/controlled-tools')
-const { assertBudgetSnapshot, evaluateBudgetAxes } = require('../contracts/budget-axes')
+const { assertRecipeBudgetSnapshot, evaluateBudgetAxes } = require('../contracts/budget-axes')
 
 function toolError (code) {
   const error = new Error(code)
@@ -44,7 +44,7 @@ class ToolAuditRuntime {
         !Number.isSafeInteger(attemptIdentity.leaseExpiresAt)) throw new TypeError('attemptIdentity is invalid')
     this.attemptIdentity = attemptIdentity
     this.interactions = options.interactions
-    this.budget = assertBudgetSnapshot(options.budget)
+    this.budget = assertRecipeBudgetSnapshot(this.recipe.recipeId, this.recipe.recipeVersion, this.recipe.toolGrants, options.budget)
     this.toolsByName = new Map()
     for (const tool of options.tools) {
       if (!tool || typeof tool !== 'object' || typeof tool.name !== 'string' || typeof tool.execute !== 'function' || this.toolsByName.has(tool.name)) {
@@ -87,7 +87,7 @@ class ToolAuditRuntime {
       activeToolElapsedMs,
       cumulativeToolResultBytes: this.resultBytes,
       cumulativeSourceTextBytes: this.sourceTextBytes
-    })
+    }, this.recipe.recipeId, this.recipe.recipeVersion)
   }
 
   tools () {

@@ -40,6 +40,27 @@ test('SEM-F28/SEM-F34/J22/J24: tool audit records an ordered successful call wit
   assert.equal(calls[1][1].sourceRefs[0].sessionId, 'session.tool.audit')
 })
 
+test('SEM-F39/J31-COMPAT: summary.minutes@2 budget snapshot passes policy-aware tool enforcement', async () => {
+  const calls = []
+  const controlled = createControlledToolRuntime({ context })
+  const audit = createToolAuditRuntime({
+    interactionId: 'interaction.summary.v2', recipeId: 'summary.minutes', recipeVersion: '2', attempt: 1,
+    attemptIdentity: { ...attemptIdentity, runId: 'run.summary.v2' },
+    tools: controlled.toolsForRecipe('summary.minutes', '2'),
+    budget: deriveRecipeBudget({ maxInputTokens: 64000, maxOutputTokens: 4096 }, 'summary.minutes', '2', 'user'),
+    interactions: {
+      startToolCall: async (value) => { calls.push(['start', value]); return value },
+      finishToolCall: async (value) => { calls.push(['finish', value]); return value }
+    },
+    now: () => 10
+  })
+
+  const result = await audit.tools()[0].execute({ schemaVersion: 1, aliasKeys: ['decision'] })
+  assert.equal(result.matches[0].entries[0].displayText, 'A bounded decision.')
+  assert.equal(calls[0][1].callOrder, 1)
+  assert.equal(calls[1][1].status, 'succeeded')
+})
+
 test('SEM-F28/SEM-F34/SEM-T04/J22: tool audit closes a failed call with a registered tool error', async () => {
   const calls = []
   const audit = createToolAuditRuntime({

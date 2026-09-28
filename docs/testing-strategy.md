@@ -30,7 +30,7 @@ S5-Integration 采用 main-owned `AgentRunService`。submit 的公开载荷只�
 
 ### 2026-09-27 起会话总结运行与长输入旅程（P0/P1 局部实现证据）
 
-P0 与 P1 各子切片为**实现完成·尚未验收**；P1.5 的关联确定性旅程和 renderer 检查已运行，完整 Electron 联合旅程、公网模型与实机范围仍未验收；P2 长输入已决定待实施。以下记录子集证据，不沿用 J29 路由修复或旧 PluginHost 资格宣称 J30/J31 全面验收。数值唯一权威见[语义合同增量](semantic-contract.md#会话总结运行与长输入增量2026-09-27)，实施顺序见[任务表](../openspec/changes/fix-session-summary-lifecycle-and-long-input/tasks.md)。以下为 J30/J31 子项，不新增 test lane。
+P0 与 P1 各子切片为**实现完成·尚未验收**；P1.5 的关联确定性旅程和 renderer 检查已运行，完整 Electron 联合旅程、公网模型与实机范围仍未验收。P2.1 版本化预算注册有局部实现证据，其余 P2 长输入任务仍为已决定待实施。以下记录子集证据，不沿用 J29 路由修复或旧 PluginHost 资格宣称 J30/J31 全面验收。数值唯一权威见[语义合同增量](semantic-contract.md#会话总结运行与长输入增量2026-09-27)，实施顺序见[任务表](../openspec/changes/fix-session-summary-lifecycle-and-long-input/tasks.md)。以下为 J30/J31 子项，不新增 test lane。
 
 | 旅程/子项 | 用户路径与可观察结果 | 必须真实的内部边界与失败矩阵 | 当前证据 |
 |---|---|---|---|
@@ -47,7 +47,7 @@ P0 与 P1 各子切片为**实现完成·尚未验收**；P1.5 的关联确定�
 | J31-BUDGET | 多节点/attempt共享预算→触线收束 | 真版本化预算/绑定；逐轴边界、usage缺失、旧attempt消耗、运行中改模型 | 已决定 |
 | J31-RESOURCE | 上沿输入下UI/字幕响应、取消、释放缓冲 | 真分页/序列化/调度；缓冲峰值、取消耗时、main事件循环影响；文本容量不替代采集长稳 | 已决定 |
 | J31-RECOVERY | 中断后同run/绑定新attempt整次重跑 | 真SQLite/计划digest/剩余预算；中间正文零持久、取消不复活、来源撤销、删除 | 已决定 |
-| J31-COMPAT | 既有库升级→旧结果/绑定/导出→新v2总结 | 真追加迁移、v1/v2 validator/导出/原始历史；旧SQL/checksum及导出字节不变、删除级联、其它recipe预算不变 | 已决定 |
+| J31-COMPAT | 既有库升级→旧结果/绑定/导出→新v2总结 | 真追加迁移、v1/v2 validator/导出/原始历史；旧SQL/checksum及导出字节不变、删除级联、其它recipe预算不变；5.1先验证 v1/v2 recipe 解析、十轴作用域、同一四字段 bind 输入及调用方预算字段拒绝 | 5.1 实现完成·尚未验收：recipe contract、十轴策略快照、真实 SQLite bind 与 v2 ToolAudit 关联 focus 52/52；`npm run test:core` 1084/1084（含 renderer 类型检查与构建）。迁移、导出、旧库升级及完整 J31 尚未验证 |
 
 2026-09-27 P1受理子切片：`formal_agent_requests` 的幂等受理、记忆参考偏好冻结、原始输入身份冻结、排队目标取消、会话删除收据、run 输入身份写屏障、无输入身份的 v15 活动行升级收束及 v14→v16 回滚/升级已有定向和 core 证据；服务层 J30-ACCEPT 真实 SQLite 旅程覆盖未知回执重放及取消写失败重试，状态为**实现完成·尚未验收**。完整 J30-ACCEPT 仍待 main/preload/renderer 接线和正式窗口旅程。
 
