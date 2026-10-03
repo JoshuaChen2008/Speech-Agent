@@ -223,7 +223,7 @@ function isTerminal (state) {
 }
 
 function isSupportedExecutionScope (scope) {
-  return scope?.kind === 'session'
+  return ['session', 'date_range', 'project'].includes(scope?.kind)
 }
 
 function mapErrorCode (error) {
@@ -243,6 +243,8 @@ class AgentRunService {
     this.modelAccess = options.modelAccess || null
     this.scheduler = options.scheduler || null
     this.routeOrchestrator = options.routeOrchestrator || null
+    this.questionRecipeVersion = options.questionRecipeVersion || '4'
+    if (!['3', '4', '5'].includes(this.questionRecipeVersion)) throw new TypeError('unsupported question recipe version')
     this.promptStore = options.promptStore instanceof Map ? options.promptStore : null
     this.exporter = options.exporter || null
     this.getConfig = typeof options.getConfig === 'function' ? options.getConfig : null
@@ -275,6 +277,15 @@ class AgentRunService {
       c.assertGetScopesRequest(request)
       const retirement = this.storage.getRetirementFailure?.()
       if (retirement) return c.assertGetScopesResponse({ ...header(), ok: false, error: { category: retirement, code: c.ERROR_CODES.unavailable, next_action: 'restart_application' }, scopes: [], next_cursor: null, default_scope: null, revision: this.revision })
+      if (request.kind === 'project') {
+        const after = request.cursor === null ? '' : Buffer.from(request.cursor, 'base64url').toString('utf8')
+        if (request.cursor !== null && Buffer.from(after).toString('base64url') !== request.cursor) throw new TypeError('AGENT_REQUEST_INVALID')
+        const page = await this.storage.personalContextQuestionEvidence({ action: 'projects', after, limit: request.limit })
+        const scopes = page.items.map(item => ({ scope: { kind: 'project', reference: item.scope_id }, display_name: `${item.label} · ${item.scope_id}`,
+          started_at: null, ended_at: null, state: 'ready' }))
+        return c.assertGetScopesResponse({ ...header(), ok: true, error: null, scopes, default_scope: scopes[0]?.scope || null,
+          next_cursor: page.next ? Buffer.from(page.next).toString('base64url') : null, revision: this.revision })
+      }
       let cursor = decodeCursor(request.cursor)
       const items = []
       let nextCursor = null
@@ -332,19 +343,22 @@ class AgentRunService {
         const settings = this.getConfig()
         if (!settings || settings.agentEnabled !== true) return publicEligibility(request.scope, 'agent_disabled', this.revision)
       }
-      const transcript = await this.storage.getSessionTranscript(request.scope.reference)
+      const transcript = request.scope.kind === 'session' ? await this.storage.getSessionTranscript(request.scope.reference) : null
       const session = transcript?.session
-      if (!session || !isTerminal(session.state)) return publicEligibility(request.scope, 'session_not_terminal', this.revision)
-      if (!Array.isArray(transcript.segments) || transcript.segments.length === 0) return publicEligibility(request.scope, 'no_committed_transcript', this.revision)
+      if (request.scope.kind === 'session') {
+        if (!session || !isTerminal(session.state)) return publicEligibility(request.scope, 'session_not_terminal', this.revision)
+        if (!Array.isArray(transcript.segments) || transcript.segments.length === 0) return publicEligibility(request.scope, 'no_committed_transcript', this.revision)
+      } else await this.storage.personalContextQuestionEvidence({ action: 'freeze', scope: request.scope })
       if (!this.modelAccess || typeof this.modelAccess.catalog !== 'function') return publicEligibility(request.scope, 'provider_not_configured', this.revision)
       const catalog = await this.modelAccess.catalog()
-      const readiness = catalog?.snapshot?.readinessByPurpose?.summary?.agentLoop
+      const readiness = catalog?.snapshot?.readinessByPurpose?.[request.scope.kind === 'session' ? 'summary' : 'default']?.agentLoop
       if (readiness === 'credential_unavailable') return publicEligibility(request.scope, 'credential_unavailable', this.revision)
       if (readiness !== 'ready') return publicEligibility(request.scope, 'provider_not_configured', this.revision)
       return publicEligibility(request.scope, 'ready', this.revision)
     } catch (error) {
       if (error?.code === 'SESSION_ACTIVE') return publicEligibility(request.scope, 'session_not_terminal', this.revision)
       if (error?.code === 'SESSION_NOT_FOUND') return publicEligibility(request.scope, 'no_committed_transcript', this.revision)
+      if (error?.code === 'AGENT_INPUT_EMPTY') return publicEligibility(request.scope, 'no_committed_transcript', this.revision)
       if (error?.message === 'AGENT_REQUEST_INVALID' || error?.code === 'AGENT_REQUEST_INVALID') return { ...header(), ok: false, error: { category: 'invalid', code: c.ERROR_CODES.invalid, next_action: 'correct_input' }, snapshot: null }
       return publicEligibilityFailure('retry')
     }
@@ -358,7 +372,8 @@ class AgentRunService {
       if (!eligibility.ok || eligibility.snapshot?.eligibility !== 'ready') {
         return publicFailure(c.ERROR_CODES.unavailable, eligibility.error?.next_action || 'retry')
       }
-      const route = deterministicRoute({ scope: request.scope, prompt: request.prompt })
+      const route = request.scope.kind === 'session' ? deterministicRoute({ scope: request.scope, prompt: request.prompt })
+        : { recipeId: 'qa.answer', routingMode: 'preset' }
       if (!['summary.minutes', 'qa.answer'].includes(route.recipeId)) {
         return publicFailure(c.ERROR_CODES.unavailable, 'choose_supported_recipe')
       }
@@ -370,8 +385,10 @@ class AgentRunService {
       const summaryUseMemory = route.recipeId === 'summary.minutes'
         ? (request.summary_use_memory === false ? false : globalSummaryUseMemory)
         : false
-      const transcript = await this.storage.getSessionTranscript(request.scope.reference)
-      const frozen = typeof this.storage.derivePersonalContextSessionSource === 'function'
+      const transcript = request.scope.kind === 'session' ? await this.storage.getSessionTranscript(request.scope.reference) : null
+      const frozen = request.scope.kind !== 'session'
+        ? await this.storage.personalContextQuestionEvidence({ action: 'freeze', scope: request.scope })
+        : typeof this.storage.derivePersonalContextSessionSource === 'function'
         ? await this.storage.derivePersonalContextSessionSource({ sessionId: request.scope.reference, transcriptVersion: 'raw' })
         : freezeSourceFromTranscript(request.scope.reference, transcript)
       const inputWatermark = Number.isSafeInteger(frozen.inputWatermark)
@@ -383,7 +400,7 @@ class AgentRunService {
       const requestKeyDigest = sha256Canonical(request.client_idempotency_key)
       const runId = `run.user.${requestKeyDigest.slice(0, 48)}`
       const interactionId = `interaction.user.${requestKeyDigest.slice(0, 44)}`
-      if (this.routeOrchestrator && typeof this.routeOrchestrator.submit === 'function') {
+      if (request.scope.kind === 'session' && this.routeOrchestrator && typeof this.routeOrchestrator.submit === 'function') {
         let routed
         try {
           const routeRequest = {
@@ -413,10 +430,14 @@ class AgentRunService {
         if (routed.replayed !== true) this.emitChanged()
         return projectSubmit(routed, routed.interactionId, routed.recipeId, routed.routingMode, this.revision)
       }
+      // New summary and question targets adopt their registered v2 window capacity;
+      // other targets keep their frozen v1 interpretation.
+      const recipeVersion = route.recipeId === 'qa.answer' && frozen.transcriptVersion === 'raw'
+        ? (request.scope.kind === 'session' ? this.questionRecipeVersion : this.questionRecipeVersion === '5' ? '5' : '4') : ['summary.minutes', 'qa.answer'].includes(route.recipeId) ? '2' : '1'
       const runRequest = {
         runId,
         recipeId: route.recipeId,
-        recipeVersion: '1',
+        recipeVersion,
         scope: request.scope,
         transcriptVersion: frozen.transcriptVersion,
         inputWatermark,
@@ -439,7 +460,7 @@ class AgentRunService {
         return publicFailure(c.ERROR_CODES.unavailable, 'settings')
       }
       try {
-        await this.modelAccess.bind({ runId: run.runId, recipeId: route.recipeId, recipeVersion: '1', executionForm: 'agent_loop' })
+        await this.modelAccess.bind({ runId: run.runId, recipeId: route.recipeId, recipeVersion, executionForm: 'agent_loop' })
         await this.storage.createAgentInteraction({
           runId: run.runId,
           interactionId,
@@ -509,7 +530,9 @@ class AgentRunService {
     try {
       c.assertHistoryRequest(request)
       if (typeof this.storage.listAgentInteractions !== 'function') return c.assertHistoryResponse({ ...header(), ok: true, error: null, result: { items: [], has_more: false, next_cursor: null } })
-      const page = await this.storage.listAgentInteractions({ limit: request.limit, cursor: request.cursor })
+      const page = await this.storage.listAgentInteractions({ limit: request.limit, cursor: request.cursor,
+        ...(request.scope ? { scope: request.scope } : {}),
+        ...(request.recipe_id ? { recipeId: request.recipe_id } : {}) })
       const items = (page?.items || []).map((item) => {
         const usage = publicUsage(item.usage)
         return {
@@ -548,6 +571,7 @@ class AgentRunService {
       const detail = await this.storage.getAgentInteraction({ interactionId: request.interaction_id })
       const item = detail?.interaction
       if (!item) return publicFailure()
+      if (!['summary.minutes', 'qa.answer'].includes(item.recipeId)) return publicFailure()
       const binding = detail.binding
       if (!binding || typeof binding.adapterId !== 'string' || typeof binding.modelId !== 'string' ||
           typeof binding.profileId !== 'string' || !Number.isSafeInteger(binding.profileRevision) ||
@@ -584,6 +608,25 @@ class AgentRunService {
         })),
         usage: usage.usage,
         usage_state: usage.usage_state
+      }
+      if (item.recipeId === 'qa.answer' && ['4', '5'].includes(item.recipeVersion) && item.terminalReason === 'succeeded') {
+        result.source_positions = await this.storage.personalContextQuestionEvidence({ action: 'positions', runId: item.runId })
+      }
+      if (item.recipeId === 'summary.minutes' && detail.summaryUseMemory === true && typeof this.storage.personalContextManage === 'function') {
+        const refs = new Map()
+        for (const call of detail.toolCalls || []) {
+          if (call.toolName !== 'search_context' || call.status !== 'succeeded') continue
+          for (const match of call.result?.matches || []) for (const entry of match.entries || []) {
+            if (entry.memoryRef) refs.set(canonicalize(entry.memoryRef), entry.memoryRef)
+          }
+        }
+        const settings = this.getConfig?.()
+        result.memory_inputs = []; result.memory_inputs_error = null
+        if (settings && (settings.agentEnabled !== true || settings.memoryEnabled !== true)) result.memory_inputs_error = 'suspended'
+        else {
+          try { result.memory_inputs = await this.storage.personalContextManage({ type: 'memory_inputs', refs: [...refs.values()].slice(0, 20), sessionId: item.scope?.kind === 'session' ? item.scope.reference : null }) }
+          catch { result.memory_inputs_error = 'unavailable' }
+        }
       }
       return c.assertInteractionResponse({ ...header(), ok: true, error: null, result })
     } catch (error) {

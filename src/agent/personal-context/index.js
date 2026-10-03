@@ -38,11 +38,14 @@ function createPersonalContextExecutionAdapter (options = {}) {
       ? (request) => storage.personalContextResolve(request)
       : undefined,
     readSessionInput: (source, signal) => storage.readPersonalContextSessionInput(source, signal),
+    readSessionRangePage: (request, signal) => storage.readPersonalContextSessionRangePage(request, signal),
     readInteractionInput: typeof storage.readPersonalContextInteractionInput === 'function'
       ? (source, ephemeral, signal) => storage.readPersonalContextInteractionInput(source, ephemeral, signal)
       : undefined,
     readToolContext: (request, signal) => storage.readPersonalContextToolContext(request, signal),
     commitSessionIngest: (request, signal) => storage.commitPersonalContextSessionIngest(request, signal),
+    sessionExperiences: (request, signal) => storage.personalContextSessionExperiences(request, signal),
+    questionEvidence: (request, signal) => storage.personalContextQuestionEvidence(request, signal),
     commitInteractionIngest: typeof storage.commitPersonalContextInteractionIngest === 'function'
       ? (request, signal) => storage.commitPersonalContextInteractionIngest(request, signal)
       : undefined

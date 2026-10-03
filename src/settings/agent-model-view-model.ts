@@ -27,12 +27,12 @@ export const PURPOSE_LABELS: Record<ModelPurpose, string> = {
 
 export const ASSIGNMENT_LABELS: Record<AssignmentMode, string> = {
   direct: '已单独配置',
-  fallback_default: '回落到默认',
+  fallback_default: '使用默认模型',
   unconfigured: '未配置'
 }
 
 export const READINESS_LABELS: Record<Readiness, string> = {
-  ready: '配置充分',
+  ready: '所需设置已填写',
   provider_not_configured: '未配置可用的模型',
   credential_unavailable: '缺少可用的 API 密钥'
 }
@@ -44,22 +44,22 @@ export const CREDENTIAL_LABELS: Record<CredentialScope, string> = {
 }
 
 export const REMOTE_STATUS_LABELS: Record<RemoteStatus, string> = {
-  success: '已获取模型建议',
-  revision_conflict: '配置已在别处更新，请重新载入后再试',
-  invalid_request: '请求无效，未获取建议',
+  success: '已获取模型列表',
+  revision_conflict: '配置已在其他地方更新，请重新载入后再试',
+  invalid_request: '请求无效，未获取模型列表',
   credential_unavailable: '缺少 API 密钥，无法获取建议',
   redirect_rejected: '服务器返回了不受信任的跳转，已拒绝',
   remote_unavailable: '暂时无法连接服务器'
 }
 
 export const MODEL_TEST_STATUS_LABELS: Record<ModelTestStatus, string> = {
-  success: '模型测试成功：本次协议响应有效',
+  success: '模型已正常响应本次测试',
   invalid_request: '模型测试请求无效，请检查连接与模型名称',
   revision_conflict: '配置已更新，请重新载入后再测试',
   credential_unavailable: '未设置可用的 API 密钥',
   auth_failed: 'API 密钥未被服务接受，请检查密钥后重试',
   timeout: '服务响应超时，可以稍后重试',
-  rate_limited: '服务暂时限流，可以稍后重试',
+  rate_limited: '服务请求过多，请稍后重试',
   redirect_rejected: '服务器跳转未被信任，已拒绝本次测试',
   response_invalid: '服务返回格式无法识别，请检查模型名称或能力设置',
   remote_unavailable: '暂时无法连接服务，可以稍后重试',
@@ -202,8 +202,8 @@ export function capabilityFormToCapabilities (form: CapabilityForm): Capabilitie
 export function capabilitySummary (capabilities: CapabilitiesV1): string {
   const bool = (value: boolean, label: string): string => `${label}：${value ? '支持' : '不支持'}`
   const usage = capabilities.usageReporting
-    ? '用量上报：支持'
-    : '用量上报：不支持（交互不会显示 token，也无法参与用量比较）'
+    ? '返回用量：支持'
+    : '返回用量：不支持（无法显示或比较 token 用量）'
   return [
     `输入上限 ${capabilities.maxInputTokens.toLocaleString('zh-CN')} token`,
     `输出上限 ${capabilities.maxOutputTokens.toLocaleString('zh-CN')} token`,

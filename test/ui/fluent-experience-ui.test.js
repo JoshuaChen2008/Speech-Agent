@@ -37,7 +37,7 @@ test('SEM-F23/J18: React views and the direct toolbar expose native keyboard con
   assert.match(settings, /role="radiogroup" aria-label="监听模式"/)
   assert.match(settings, /aria-busy=\{corePending \|\| coreBusy\}/)
   assert.match(settings, /role="status" aria-live="polite"/)
-  assert.match(history, /role="radiogroup" aria-label="转写版本"/)
+  assert.match(history, /role="radiogroup" aria-label="字幕版本"/)
   assert.match(history, /aria-posinset=/)
   assert.match(history, /aria-setsize=/)
   assert.match(history, /role="status" aria-live="polite"/)

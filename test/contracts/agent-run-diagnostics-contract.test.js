@@ -63,6 +63,14 @@ test('SEM-F40/J30-DIAG: budget diagnostics preserve only registered axis and fin
     event: 'budget_rejected', errorCode: 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED', budgetAxis: null,
     metrics: { actual: 15001, limit: 15000, unit: 'bytes' }
   })).metrics.actual, 15001)
+  assert.equal(assertDiagnosticRecord(record({
+    event: 'budget_rejected', errorCode: 'AGENT_QA_INPUT_LIMIT_EXCEEDED', budgetAxis: null,
+    metrics: { actual: 50001, limit: 50000, unit: 'count' }
+  })).metrics.unit, 'count')
+  assert.throws(() => assertDiagnosticRecord(record({
+    event: 'budget_rejected', errorCode: 'AGENT_BUDGET_EXCEEDED', budgetAxis: null,
+    metrics: { actual: 50001, limit: 50000, unit: 'count' }
+  })), /known metrics without an axis/)
   assert.throws(() => assertDiagnosticRecord(record({
     metrics: { actual: 2, limit: 1, unit: 'tokens' }
   })), /not registered/)

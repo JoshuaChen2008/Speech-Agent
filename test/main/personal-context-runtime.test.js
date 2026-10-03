@@ -529,7 +529,7 @@ test('SEM-F32/SEM-F35/SEM-T10/J21: explicit interaction signal is prepared only 
     prepared: { runId: 'run.interaction', recipeId: 'context.ingest.interaction', replayed: false }
   })
   await nextTurn()
-  assert.deepEqual(prepared, [{ interactionId: 'interaction.runtime', signalKind: 'accept', payloadDigest: null }])
+  assert.deepEqual(prepared, [{ interactionId: 'interaction.runtime', signalKind: 'accept', payloadDigest: null, ingestRecipeVersion: '2' }])
   assert.equal(runtime.scheduler.started, true)
   assert.equal(claims > 0, true)
 

@@ -1,7 +1,9 @@
 'use strict'
+const { createContextSourceBridge } = require('./context-source')
 const { contextBridge } = require('electron')
 const CHANNELS = require('../main/ipc/channels')
 const { ipcRenderer, createWindowInteractionBridge, subscribe } = require('./shared')
+const contextSource = createContextSourceBridge(ipcRenderer)
 const c = require('../agent/contracts/agent-run-ui')
 const summaryRun = require('../agent/contracts/session-summary-run-ui')
 const summaryDiagnostics = require('../agent/contracts/agent-run-diagnostics-ui')
@@ -55,6 +57,7 @@ function invoke (channel, validator, responseValidator, value) {
   return ipcRenderer.invoke(channel, value).then((response) => responseValidator(response))
 }
 contextBridge.exposeInMainWorld('agentApi', {
+  ...contextSource,
   dragStart: interaction.dragStart,
   dragEnd: interaction.dragEnd,
   onInteractionSync: interaction.onInteractionSync,

@@ -166,7 +166,7 @@ async function runCommand (name: string): Promise<void> {
     const result = await bridge.command(name)
     if (!result.ok) commandFailure = result
   } catch {
-    commandFailure = { message: '命令未送达' }
+    commandFailure = { message: '操作未成功，请重试' }
   } finally {
     commandPending = false
     render()
@@ -190,7 +190,7 @@ const SUPPORTED: Record<string, () => unknown> = {
         agentOpenStatus = {
           schemaVersion: 1,
           phase: 'failed',
-          message: '暂时无法打开会话总结，请重试'
+          message: '暂时无法打开字幕助手，请重试'
         }
         render()
       })
@@ -205,7 +205,7 @@ const SUPPORTED: Record<string, () => unknown> = {
   minimize: () => bridge.action('minimize'),
   close: () => bridge.action('close')
 }
-const UNSUPPORTED_REASON = '功能尚未接入'
+const UNSUPPORTED_REASON = '此功能暂不支持'
 
 // ---------------------------------------------------------------------------
 // DOM 小工具
@@ -245,7 +245,7 @@ function commandButton (spec: any, extraClass?: string | null): HTMLButtonElemen
   const runtimeCommand = ['start', 'pause', 'resume', 'stop', 'retry'].includes(spec.act)
   const disabled = spec.disabled || !supported || (runtimeCommand && commandPending)
   const reason = commandPending && runtimeCommand
-    ? '命令处理中'
+    ? '正在处理'
     : (spec.disabled ? spec.reason : (supported ? null : UNSUPPORTED_REASON))
 
   button.disabled = disabled
@@ -291,7 +291,7 @@ function renderStatus (view: any): void {
     if (['waiting', 'failed'].includes(agentOpenStatus.phase)) {
       statusHost.appendChild(commandButton({
         act: 'agent', icon: 'agent', label: '重试', showLabel: true,
-        ariaLabel: '重试打开会话总结', disabled: false, reason: null
+        ariaLabel: '重试打开字幕助手', disabled: false, reason: null
       }, 'notice-history'))
     }
   } else if (refinementNotice) {
@@ -367,8 +367,8 @@ function renderCommands (view: any): void {
 }
 
 const WINDOW_CONTROLS = [
-  { act: 'history', icon: 'history', label: '历史记录' },
-  { act: 'agent', icon: 'agent', label: '会话总结' },
+  { act: 'history', icon: 'history', label: '字幕记录' },
+  { act: 'agent', icon: 'agent', label: '字幕助手' },
   { act: 'lock', icon: 'unlock', label: '锁定字幕', toggle: true },
   { act: 'settings', icon: 'settings', label: '设置' },
   { act: 'minimize', icon: 'minimize', label: '最小化' },

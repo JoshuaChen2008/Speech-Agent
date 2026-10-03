@@ -39,6 +39,8 @@ const READ_ONLY_OPERATIONS = new Set([
    只拒绝该请求，绝不能熔断字幕事实 FIFO。队满时这些低优先级请求也不占用
    为字幕 durable write 保留的溢出槽。未知传输结果仍以同一幂等身份重放。 */
 const ISOLATED_AGENT_OPERATIONS = new Set([
+  'personalMemoryFiles',
+  'personalMemoryIndex',
   'personalContextIngest',
   'personalContextResolve',
   'personalContextManage',
@@ -49,13 +51,18 @@ const ISOLATED_AGENT_OPERATIONS = new Set([
   'cancelPersonalContextSessionIngest',
   'preparePersonalContextSessionIngest',
   'readPersonalContextSessionInput',
+  'readPersonalContextSessionRangePage',
   'commitPersonalContextSessionIngest',
+  'personalContextSessionExperiences',
+  'personalContextQuestionEvidence',
   'preparePersonalContextInteractionIngest',
   'readPersonalContextInteractionInput',
   'commitPersonalContextInteractionIngest',
   'cancelPersonalContextInteractionIngest',
   'claimNextFormalAgentRun',
   'renewFormalAgentRun',
+  'reserveFormalAgentModelRequest',
+  'summaryInputPlan',
   'nextFormalAgentRunAt',
   'completeFormalAgentRun',
   'failFormalAgentRun',
@@ -260,6 +267,9 @@ class StorageGateway {
   }
 
   enqueue (operation, value, options = {}) {
+    if (this.personalMemoryRuntime && !options.memoryPrepared && this.personalMemoryRuntime.handles(operation)) {
+      return this.personalMemoryRuntime.dispatch(operation, value, options, payload => this.enqueue(operation, payload, { ...options, memoryPrepared: true }))
+    }
     if (!this.accepting || this.stopped) return Promise.reject(new StorageError('SHUTTING_DOWN'))
     if (options.signal?.aborted) return Promise.reject(new StorageError('AGENT_CANCELLED'))
     const durableWrite = DURABLE_WRITE_OPERATIONS.has(operation)
@@ -435,12 +445,26 @@ class StorageGateway {
     return this.enqueue('readPersonalContextSessionInput', source, { signal })
   }
 
+  readPersonalContextSessionRangePage (request, signal) {
+    return this.enqueue('readPersonalContextSessionRangePage', request, { signal })
+  }
+
   readPersonalContextToolContext (request, signal) {
     return this.enqueue('readPersonalContextToolContext', request, { signal })
   }
 
   commitPersonalContextSessionIngest (request, signal) {
     return this.enqueue('commitPersonalContextSessionIngest', request, { signal })
+  }
+  personalMemoryFiles (command) { return this.enqueue('personalMemoryFiles', command) }
+  personalMemoryIndex (command) { return this.enqueue('personalMemoryIndex', command) }
+
+  personalContextSessionExperiences (request, signal) {
+    return this.enqueue('personalContextSessionExperiences', request, { signal })
+  }
+
+  personalContextQuestionEvidence (request, signal) {
+    return this.enqueue('personalContextQuestionEvidence', request, { signal })
   }
 
   preparePersonalContextInteractionIngest (request) {
@@ -474,6 +498,10 @@ class StorageGateway {
       if (isTransportFailure(error) && this.host === host) this.hostInvalid = true
       throw error
     })
+  }
+
+  summaryInputPlan (request) {
+    return this.enqueue('summaryInputPlan', request)
   }
 
   reserveFormalAgentModelRequest (request) {
@@ -592,20 +620,26 @@ class StorageGateway {
       case 'personalContextIngest': return host.personalContextIngest(item.payload)
       case 'personalContextResolve': return host.personalContextResolve(item.payload)
       case 'personalContextManage': return host.personalContextManage(item.payload)
+      case 'personalMemoryFiles': return host.personalMemoryFiles(item.payload)
+      case 'personalMemoryIndex': return host.personalMemoryIndex(item.payload)
       case 'deletePersonalContextSessionData': return host.deletePersonalContextSessionData(item.payload)
       case 'preparePersonalContextSessionIngest': return host.preparePersonalContextSessionIngest(item.payload)
       case 'applyPersonalContextAutomaticPolicy': return host.applyPersonalContextAutomaticPolicy(item.payload)
       case 'cancelPersonalContextSessionIngest': return host.cancelPersonalContextSessionIngest(item.payload)
       case 'derivePersonalContextSessionSource': return host.derivePersonalContextSessionSource(item.payload)
       case 'readPersonalContextSessionInput': return host.readPersonalContextSessionInput(item.payload, item.signal)
+      case 'readPersonalContextSessionRangePage': return host.readPersonalContextSessionRangePage(item.payload, item.signal)
       case 'readPersonalContextToolContext': return host.readPersonalContextToolContext(item.payload, item.signal)
       case 'commitPersonalContextSessionIngest': return host.commitPersonalContextSessionIngest(item.payload, item.signal)
+      case 'personalContextSessionExperiences': return host.personalContextSessionExperiences(item.payload, item.signal)
+      case 'personalContextQuestionEvidence': return host.personalContextQuestionEvidence(item.payload, item.signal)
       case 'preparePersonalContextInteractionIngest': return host.preparePersonalContextInteractionIngest(item.payload)
       case 'readPersonalContextInteractionInput': return host.readPersonalContextInteractionInput(item.payload.source, item.payload.ephemeral, item.signal)
       case 'commitPersonalContextInteractionIngest': return host.commitPersonalContextInteractionIngest(item.payload, item.signal)
       case 'cancelPersonalContextInteractionIngest': return host.cancelPersonalContextInteractionIngest(item.payload)
       case 'claimNextFormalAgentRun': return host.claimNextFormalAgentRun(item.payload)
       case 'renewFormalAgentRun': return host.renewFormalAgentRun(item.payload)
+      case 'summaryInputPlan': return host.summaryInputPlan(item.payload)
       case 'reserveFormalAgentModelRequest': return host.reserveFormalAgentModelRequest(item.payload)
       case 'nextFormalAgentRunAt': return host.nextFormalAgentRunAt(item.payload)
       case 'completeFormalAgentRun': return host.completeFormalAgentRun(item.payload, item.signal)

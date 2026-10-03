@@ -28,9 +28,9 @@ class StorageWorkerService {
     this.storeFactory = options.storeFactory || ((storeOptions) => {
       return new SqliteSubtitleStore({ ...storeOptions, migrations: FORMAL_AGENT_MIGRATIONS })
     })
-    this.agentExecutionStoreFactory = options.agentExecutionStoreFactory || ((subtitleStore) => {
+    this.agentExecutionStoreFactory = options.agentExecutionStoreFactory || ((subtitleStore, personalContextStore) => {
       const { AgentExecutionStore } = require('./agent-execution-store')
-      return new AgentExecutionStore({ subtitleStore })
+      return new AgentExecutionStore({ subtitleStore, personalContextStore })
     })
     this.personalContextStoreFactory = options.personalContextStoreFactory || ((subtitleStore) => {
       const { PersonalContextStore } = require('./personal-context-store')
@@ -77,7 +77,7 @@ class StorageWorkerService {
     this.assertAgentAvailable()
     const store = this.requireStore()
     if (store.agentExecutionUnavailable === true) throw new StorageError('AGENT_EXECUTION_UNAVAILABLE')
-    if (!this.agentExecutionStore) this.agentExecutionStore = this.agentExecutionStoreFactory(store)
+    if (!this.agentExecutionStore) this.agentExecutionStore = this.agentExecutionStoreFactory(store, this.requirePersonalContextStore())
     return this.agentExecutionStore
   }
 
@@ -160,11 +160,27 @@ class StorageWorkerService {
     }
     if (operation === OPERATIONS.PERSONAL_CONTEXT_RESOLVE) {
       assertExactKeys(payload, ['request'])
+      if (payload.request?.schemaVersion === 2) {
+        const { PersonalMemoryIndexStore } = require('./personal-memory-index-store')
+        const request = payload.request
+        if (!Object.hasOwn(request, 'vectorRanks')) assertExactKeys(request, ['schemaVersion', 'scope', 'query', 'semantic_keys', 'aliases'])
+        return new PersonalMemoryIndexStore(this.requirePersonalContextStore()).resolve({ vectorRanks: [], degradation: 'embedding_disabled', ...request })
+      }
       return this.requirePersonalContextStore().resolve(payload.request)
     }
     if (operation === OPERATIONS.PERSONAL_CONTEXT_MANAGE) {
       assertExactKeys(payload, ['command'])
       return this.requirePersonalContextStore().manage(payload.command)
+    }
+    if (operation === OPERATIONS.PERSONAL_MEMORY_FILES) {
+      assertExactKeys(payload, ['command'])
+      const { PersonalMemoryFileStore } = require('./personal-memory-file-store')
+      return new PersonalMemoryFileStore(this.requirePersonalContextStore()).operate(payload.command)
+    }
+    if (operation === OPERATIONS.PERSONAL_MEMORY_INDEX) {
+      assertExactKeys(payload, ['command'])
+      const { PersonalMemoryIndexStore } = require('./personal-memory-index-store')
+      return new PersonalMemoryIndexStore(this.requirePersonalContextStore()).operate(payload.command)
     }
     if (operation === OPERATIONS.PERSONAL_CONTEXT_DELETE_SESSION_DATA) {
       assertExactKeys(payload, ['sessionId', 'deletionIdempotencyKey'])
@@ -190,6 +206,10 @@ class StorageWorkerService {
       assertExactKeys(payload, ['source'])
       return this.readSessionInputRequest(request.requestId, payload.source)
     }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_RANGE_PAGE) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().readSessionInputRangePage(payload.request)
+    }
     if (operation === OPERATIONS.PERSONAL_CONTEXT_READ_TOOL_CONTEXT) {
       assertExactKeys(payload, ['request'])
       return this.readToolContextRequest(request.requestId, payload.request)
@@ -197,6 +217,14 @@ class StorageWorkerService {
     if (operation === OPERATIONS.PERSONAL_CONTEXT_COMMIT_SESSION_INGEST) {
       assertExactKeys(payload, ['request'])
       return this.requirePersonalContextStore().commitSessionIngest(payload.request)
+    }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_SESSION_EXPERIENCES) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().sessionExperiences(payload.request)
+    }
+    if (operation === OPERATIONS.PERSONAL_CONTEXT_QUESTION_EVIDENCE) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().questionEvidence(payload.request)
     }
     if (operation === OPERATIONS.PERSONAL_CONTEXT_PREPARE_INTERACTION_INGEST) {
       assertExactKeys(payload, ['request'])
@@ -222,13 +250,17 @@ class StorageWorkerService {
       assertExactKeys(payload, ['request'])
       return this.requirePersonalContextStore().renewFormalRunLease(payload.request)
     }
+    if (operation === OPERATIONS.SUMMARY_INPUT_PLAN) {
+      assertExactKeys(payload, ['request'])
+      return this.requirePersonalContextStore().summaryInputPlan(payload.request)
+    }
     if (operation === OPERATIONS.FORMAL_AGENT_RESERVE_MODEL_REQUEST) {
       assertExactKeys(payload, ['request'])
       return this.requirePersonalContextStore().reserveFormalAgentModelRequest(payload.request)
     }
     if (operation === OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT) {
       if (!payload || typeof payload !== 'object' || Array.isArray(payload) ||
-          (Object.keys(payload).length !== 0 && Object.keys(payload).join(',') !== 'requestedBy')) {
+          (Object.keys(payload).length !== 0 && !['requestedBy', 'automaticPolicy'].includes(Object.keys(payload).join(',')))) {
         throw new StorageError('AGENT_REQUEST_INVALID')
       }
       return this.requirePersonalContextStore().nextFormalRunAt(payload)

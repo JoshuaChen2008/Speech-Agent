@@ -11,7 +11,9 @@ const { FakeRuntimeAdapter } = require('../../src/main/session/fake-runtime-adap
 const { SessionCoordinator } = require('../../src/main/session/session-coordinator')
 const { DEV_MODEL_VALUE, resolveRuntimeOptions } = require('../../src/main/runtime-options')
 const { AgentRunService } = require('../../src/agent/formal-run/agent-run-service')
+const { SessionSummaryRunService } = require('../../src/agent/formal-run/session-summary-run-service')
 const { registerAgentRunIpc } = require('../../src/main/ipc/agent-run-ipc')
+const { registerSessionSummaryRunIpc } = require('../../src/main/ipc/session-summary-run-ipc')
 const CHANNELS = require('../../src/main/ipc/channels')
 
 const origin = process.env.AGENT_BAR_JOURNEY_ORIGIN
@@ -191,6 +193,13 @@ async function runJourney () {
       if (!state.agent || state.agent.isDestroyed() || event.sender !== state.agent.webContents) throw new Error('fixture IPC sender denied')
     }
   })
+  registerSessionSummaryRunIpc({
+    ipcMain,
+    service: new SessionSummaryRunService({ storage: gateway, runService: agentService }),
+    authorize: (event) => {
+      if (!state.agent || state.agent.isDestroyed() || event.sender !== state.agent.webContents) throw new Error('fixture IPC sender denied')
+    }
+  })
 
   state.caption = createWindow({ width: 800, height: 420, webPreferences: { preload: captionPreload } })
   await state.caption.loadURL(`${origin}/caption/index.html`)
@@ -202,7 +211,7 @@ async function runJourney () {
   await state.toolbar.webContents.executeJavaScript("window.shell.openAgent(); true", true)
   if (!await waitFor(() => state.agent && !state.agent.isDestroyed())) throw new Error('Agent window did not open')
   if (!await waitForRenderer(state.agent, "Boolean(window.agentApi && document.querySelector('.agent-shell'))")) throw new Error('Agent preload bridge did not initialize')
-  if (!await waitForRenderer(state.agent, "(document.querySelector('.eligibility')?.textContent || '').includes('先设置模型')")) throw new Error('Agent eligibility did not cross exact IPC')
+  if (!await waitForRenderer(state.agent, "(document.querySelector('.eligibility')?.textContent || '').includes('请先在设置中选择助手模型')")) throw new Error('Agent eligibility did not cross exact IPC')
 
   const submitResponse = await state.agent.webContents.executeJavaScript(`window.agentApi.submit(${JSON.stringify({
     contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',

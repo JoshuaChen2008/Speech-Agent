@@ -35,32 +35,32 @@ function metadata (value: Dict | null): Dict | null {
 function refinementText (value: Dict | null): string {
   if (!value) return ''
   const { segmentCount: total, refinedSegmentCount: refined, refinementFaultCode: fault, refinementResultStatus: result } = value
-  let text = total === 0 ? (fault ? '精修进程异常结束；本会话未产生可精修的已定稿字幕' : '')
+  let text = total === 0 ? (fault ? '精修意外停止；本会话未产生可精修的已保存字幕' : '')
     : refined === 0 ? '本会话未生成精修稿'
-      : fault && refined === total ? `精修进程异常结束，但本次已生成 ${refined}/${total} 段精修稿`
-        : refined < total ? `已精修 ${refined}/${total} 段，${total - refined} 段使用原始版` : `已精修 ${refined}/${total} 段`
-  if (fault && total > 0 && refined !== total) text = `精修进程异常结束；${text}`
-  if (result === 'not_recorded') text = text ? `${text}；未记录精修运行状态` : '未记录精修运行状态'
+      : fault && refined === total ? `精修意外停止，但本次已生成 ${refined}/${total} 段精修稿`
+        : refined < total ? `已精修 ${refined}/${total} 段，${total - refined} 段使用原文` : `已精修 ${refined}/${total} 段`
+  if (fault && total > 0 && refined !== total) text = `精修意外停止；${text}`
+  if (result === 'not_recorded') text = text ? `${text}；未记录精修状态` : '未记录精修状态'
   return text
 }
 const RECOGNITION_FAILURE_TEXT: Record<string, string> = {
-  NLS_AUTH_FAILED: '云端鉴权失败', NLS_PROJECT_INVALID: '云端项目配置无效',
+  NLS_AUTH_FAILED: '云端身份验证失败', NLS_PROJECT_INVALID: '云端项目配置无效',
   NLS_CONNECTION_FAILED: '云端连接失败', NLS_CONNECTION_CLOSED: '云端连接断开',
   NLS_SERVICE_FAILED: '云端服务异常', NLS_INVALID_RESPONSE: '云端响应无效',
-  NLS_HEARTBEAT_TIMEOUT: '云端连接存活检测超时', NLS_START_TIMEOUT: '云端启动超时',
-  NLS_STOP_TIMEOUT: '云端收尾超时', NLS_BUFFER_EXCEEDED: '云端待发音频超过上限',
-  NLS_CANCELLED: '云端识别已取消', RECOGNITION_BUFFER_LIMIT: '音频缓冲超过上限',
-  RECOGNITION_AUDIO_GAP: '音频交接范围缺失', RECOGNITION_FALLBACK_FAILED: '本地降级失败'
+  NLS_HEARTBEAT_TIMEOUT: '云端长时间未响应', NLS_START_TIMEOUT: '云端启动超时',
+  NLS_STOP_TIMEOUT: '云端识别未能及时结束', NLS_BUFFER_EXCEEDED: '等待发送到云端的音频过多',
+  NLS_CANCELLED: '云端识别已取消', RECOGNITION_BUFFER_LIMIT: '待处理的音频过多',
+  RECOGNITION_AUDIO_GAP: '切换识别方式时有音频缺失', RECOGNITION_FALLBACK_FAILED: '未能切换为本地识别'
 }
 function RecognitionDetails ({ value }: { value: Dict | undefined }): ReactElement {
-  if (!value || value.resultStatus !== 'known') return <p className="detail-recognition" id="detailRecognition">未记录识别策略</p>
+  if (!value || value.resultStatus !== 'known') return <p className="detail-recognition" id="detailRecognition">未记录识别方式</p>
   const cloud = value.binding.strategy === 'cloud-primary'
   const reason = (code: string) => RECOGNITION_FAILURE_TEXT[code] || '识别异常'
   return <div className="detail-recognition" id="detailRecognition" aria-label="会话识别状态">
-    <p>{cloud ? '云端主力识别与本地降级 · NLS 上海' : '纯本地权威识别'}；实际识别：{value.actualProvider === 'nls' ? 'NLS 云端' : cloud ? '本地降级' : '本地'}</p>
-    {cloud && <p>项目模型说明（用户填写）：{value.binding.modelLabel || '未填写'}。记录的是项目选择与请求参数，云端模型可能变化。</p>}
-    {value.fallbackCode && <p>本地降级 · 会话开始后 {clock(value.fallbackAtMs)} · {reason(value.fallbackCode)}；交接切点附近可能漏字或重复。</p>}
-    {value.faultCode && <p>识别故障 · 会话开始后 {clock(value.faultAtMs)} · {reason(value.faultCode)}；已提交的首次稳定转写保留。</p>}
+    <p>{cloud ? '云端识别（断连后转为本地）· 阿里云上海' : '本地识别'}；实际识别：{value.actualProvider === 'nls' ? 'NLS 云端' : cloud ? '已转为本地识别' : '本地'}</p>
+    {cloud && <p>项目模型备注：{value.binding.modelLabel || '未填写'}。记录的是项目选择与请求参数，云端模型可能变化。</p>}
+    {value.fallbackCode && <p>已转为本地识别 · 会话开始后 {clock(value.fallbackAtMs)} · {reason(value.fallbackCode)}；切换前后的字幕可能漏字或重复。</p>}
+    {value.faultCode && <p>识别故障 · 会话开始后 {clock(value.faultAtMs)} · {reason(value.faultCode)}；已保存的字幕原文仍会保留。</p>}
   </div>
 }
 function assertPage (value: Dict, sessionId: string): Dict {
@@ -87,6 +87,7 @@ export function HistoryView (): ReactElement {
   const [refinement, setRefinement] = useState<Dict | null>(null); const [globalStatus, setGlobalStatus] = useState('')
   const [exportPending, setExportPending] = useState(false); const [exportStatus, setExportStatus] = useState('')
   const generation = useRef(0); const exportGeneration = useRef(0)
+  const [sourceLocation, setSourceLocation] = useState<Dict | null>(null)
 
   const clearDetail = useCallback(() => {
     generation.current += 1; exportGeneration.current += 1; setSelected(null); setVersion('original'); setPage(null); setPageIndex(0)
@@ -140,6 +141,16 @@ export function HistoryView (): ReactElement {
     void loadSessions(true); return () => { if (typeof dispose === 'function') dispose() }
   }, []) // initial subscription and first keyset page only
   useEffect(() => {
+    if (typeof api.onAgentContextSourceRequested !== 'function') return
+    return api.onAgentContextSourceRequested((location: Dict) => {
+      if (location.target.kind !== 'session') return
+      const stack = [{ cursor: location.cursor, offset: location.offset }]
+      setSourceLocation(location); setSelected(location.target.reference); setCursors(stack)
+      setVersion(location.target.transcript_version === 'refined' ? 'refined' : 'original')
+      void loadPage(location.target.reference, 0, stack)
+    })
+  }, [api, loadPage])
+  useEffect(() => {
     const drag = window.ManualWindowDrag; if (!drag || !titlebar.current) return
     const controller = drag.bindManualWindowDrag({ handle: titlebar.current, canStart: (event: Event) => !drag.isInteractiveDragEvent(event), onStart: () => api.dragStart(), onEnd: () => api.dragEnd() })
     const dispose = typeof api.onInteractionSync === 'function'
@@ -152,28 +163,34 @@ export function HistoryView (): ReactElement {
   const canRefine = refinement !== null && refinement.refinedSegmentCount > 0
   const controlsDisabled = detailPending || exportPending || page === null
   const offset = cursors[pageIndex]?.offset ?? 0
-  const body = (item: Dict) => version === 'refined' ? (typeof item.refinedText === 'string' && item.refinedText.length > 0 ? item.refinedText : `[原始版回退] ${item.text}`) : item.text
+  const body = (item: Dict) => version === 'refined' ? (typeof item.refinedText === 'string' && item.refinedText.length > 0 ? item.refinedText : `[此段使用原文] ${item.text}`) : item.text
   const openSummary = (sessionId: string) => {
     selectSession(sessionId)
     if (typeof api.openSummary === 'function') api.openSummary(sessionId)
   }
 
-  return <><header className="titlebar" id="titlebar" ref={titlebar}><div className="title-group"><strong>字幕历史</strong><span>文本复盘，不保存音频</span></div>
+  return <><header className="titlebar" id="titlebar" ref={titlebar}><div className="title-group"><strong>字幕记录</strong><span>查看以往字幕，不保存音频</span></div>
     <div className="title-actions"><div className="global-status" id="globalStatus" role="status" aria-live="polite">{globalStatus}</div>
+      {sourceLocation && <button className="text-button" type="button" onClick={() => void api.returnToAgentContext().then((result: Dict) => { if (!result.ok) setGlobalStatus('来源界面已关闭。') })}>返回上一页面</button>}
       <button className="text-button" id="refresh" disabled={listPending} aria-busy={listPending} onClick={() => void loadSessions(true)}>刷新</button>
       <button className="icon-button close-button" id="close" title="关闭" aria-label="关闭历史记录" onClick={() => api.close()}><Icon name="close" /></button></div></header>
     <main className="history-layout"><aside className="session-panel" aria-label="历史会话"><div className="panel-heading"><div><h1>会话</h1><p id="sessionCount">{listPending ? '正在读取…' : sessions.length === 0 ? '暂无会话' : `已显示 ${sessions.length} 条会话`}</p></div></div>
-      <div className="session-list" id="sessionList" role="list">{sessions.length === 0 && !listPending ? <div className="session-list-item" role="listitem"><p className="list-message">还没有可复盘的字幕会话。完成一次监听后，它会自动出现在这里。</p></div> : sessions.map((item) => <div className="session-list-item" role="listitem" key={item.sessionId}><button className="session-card" data-session-id={item.sessionId} aria-current={item.sessionId === selected} onClick={() => selectSession(item.sessionId)}><strong>{date(item.startedAt)}</strong><span className="summary">{sourceLabel(item.sourceId)} · {durationText(item.startedAt, item.endedAt)}</span><span className="state">{stateLabel(item.state)} · {item.segmentCount} 条字幕</span></button><button className="summary-action" data-summary-session-id={item.sessionId} type="button" onClick={() => openSummary(item.sessionId)} aria-label={`总结此会话：${date(item.startedAt, true)}`}>总结此会话</button></div>)}</div>
+      <div className="session-list" id="sessionList" role="list">{sessions.length === 0 && !listPending ? <div className="session-list-item" role="listitem"><p className="list-message">还没有字幕记录。停止一次会话后，已保存的字幕会出现在这里。</p></div> : sessions.map((item) => <div className="session-list-item" role="listitem" key={item.sessionId}><button className="session-card" data-session-id={item.sessionId} aria-current={item.sessionId === selected} onClick={() => selectSession(item.sessionId)}><strong>{date(item.startedAt)}</strong><span className="summary">{sourceLabel(item.sourceId)} · {durationText(item.startedAt, item.endedAt)}</span><span className="state">{stateLabel(item.state)} · {item.segmentCount} 条字幕</span></button><button className="summary-action" data-summary-session-id={item.sessionId} type="button" onClick={() => openSummary(item.sessionId)} aria-label={`总结此会话：${date(item.startedAt, true)}`}>总结此会话</button></div>)}</div>
       <button className="load-more" id="loadMore" hidden={nextCursor === null} disabled={listPending} onClick={() => void loadSessions(false)}>加载更多</button></aside>
-      <section className="detail-panel" aria-label="字幕时间线"><div className="empty-state" id="emptyState" hidden={selected !== null}><h2>选择一条会话开始复盘</h2><p>这里只显示已经结束或被中断的字幕原文。临时字幕、译文和音频都不会进入历史。</p></div>
-        <div className="session-detail" id="sessionDetail" hidden={selected === null}><header className="detail-heading"><div><div className="eyebrow" id="detailSource">{selectedSession ? `${sourceLabel(selectedSession.sourceId)} · ${stateLabel(selectedSession.state)}` : ''}</div><h2 id="detailTitle">{selectedSession ? date(selectedSession.startedAt, true) : '字幕会话'}</h2><p id="detailMeta">{selectedSession ? `${durationText(selectedSession.startedAt, selectedSession.endedAt)} · ${page?.totalCount ?? selectedSession.segmentCount} 条已定稿字幕` : ''}</p>{page && <RecognitionDetails value={page.recognition} />}<p className="detail-refinement" id="detailRefinement" role="status">{refinementText(refinement)}</p></div>
-          <div className="version-actions" role="radiogroup" aria-label="转写版本">{(['original', 'refined'] as Version[]).map((item) => <button key={item} data-version={item} role="radio" aria-checked={version === item} aria-disabled={controlsDisabled || (item === 'refined' && !canRefine)} disabled={controlsDisabled || (item === 'refined' && !canRefine)} onClick={() => { setVersion(item); setExportStatus('') }}>{item === 'original' ? '原始版' : '精修稿'}</button>)}</div>
-          <div className="export-actions" aria-label="导出当前所选转写版本">{[['txt', 'TXT'], ['md', 'Markdown'], ['srt', 'SRT']].map(([format, label]) => <button key={format} data-export={format} disabled={controlsDisabled || (version === 'refined' && !canRefine)} onClick={() => void exportSelected(format)}>导出 {label}</button>)}</div></header>
+      <section className="detail-panel" aria-label="字幕时间线"><div className="empty-state" id="emptyState" hidden={selected !== null}><h2>选择一场会话查看字幕</h2><p>这里可以查看已结束或被中断会话的字幕原文，以及已生成的精修稿。不保存临时字幕和音频。</p></div>
+        <div className="session-detail" id="sessionDetail" hidden={selected === null}><header className="detail-heading"><div><div className="eyebrow" id="detailSource">{selectedSession ? `${sourceLabel(selectedSession.sourceId)} · ${stateLabel(selectedSession.state)}` : ''}</div><h2 id="detailTitle">{selectedSession ? date(selectedSession.startedAt, true) : '字幕会话'}</h2><p id="detailMeta">{selectedSession ? `${durationText(selectedSession.startedAt, selectedSession.endedAt)} · ${page?.totalCount ?? selectedSession.segmentCount} 条已保存字幕` : ''}</p>{page && <RecognitionDetails value={page.recognition} />}<p className="detail-refinement" id="detailRefinement" role="status">{refinementText(refinement)}</p></div>
+          <div className="version-actions" role="radiogroup" aria-label="字幕版本">{(['original', 'refined'] as Version[]).map((item) => <button key={item} data-version={item} role="radio" aria-checked={version === item} aria-disabled={controlsDisabled || (item === 'refined' && !canRefine)} disabled={controlsDisabled || (item === 'refined' && !canRefine)} onClick={() => { setVersion(item); setExportStatus('') }}>{item === 'original' ? '原文' : '精修稿'}</button>)}</div>
+          <div className="export-actions" aria-label="导出当前所选字幕版本">{[['txt', 'TXT'], ['md', 'Markdown'], ['srt', 'SRT']].map(([format, label]) => <button key={format} data-export={format} disabled={controlsDisabled || (version === 'refined' && !canRefine)} onClick={() => void exportSelected(format)}>导出 {label}</button>)}</div></header>
           <div className="export-status" id="exportStatus" role="status" aria-live="polite">{exportStatus}</div>
-          <nav className="timeline-navigation" aria-label="字幕批次导航"><button id="previousPage" aria-controls="timeline" disabled={detailPending || pageIndex === 0} onClick={() => selected && void loadPage(selected, pageIndex - 1, cursors)}>上一批</button>
-            <div className="range-status" id="rangeStatus" role="status" aria-live="polite" aria-atomic="true">{detailError ? '读取失败，请重试' : detailPending ? '正在读取字幕批次…' : page ? (page.items.length === 0 ? (page.totalCount === 0 ? '共 0 条已定稿字幕' : `当前批次为空，共 ${page.totalCount} 条已定稿字幕`) : `第 ${offset + 1}–${offset + page.items.length} 条，共 ${page.totalCount} 条`) : ''}</div>
-            <button id="nextPage" aria-controls="timeline" disabled={detailPending || !page?.nextCursor} onClick={() => selected && void loadPage(selected, pageIndex + 1, cursors)}>下一批</button>
+          <nav className="timeline-navigation" aria-label="字幕分页导航"><button id="previousPage" aria-controls="timeline" disabled={detailPending || pageIndex === 0} onClick={() => selected && void loadPage(selected, pageIndex - 1, cursors)}>上一页</button>
+            <div className="range-status" id="rangeStatus" role="status" aria-live="polite" aria-atomic="true">{detailError ? '读取失败，请重试' : detailPending ? '正在加载字幕…' : page ? (page.items.length === 0 ? (page.totalCount === 0 ? '共 0 条已保存字幕' : `当前页没有字幕，共 ${page.totalCount} 条已保存字幕`) : `第 ${offset + 1}–${offset + page.items.length} 条，共 ${page.totalCount} 条`) : ''}</div>
+            <button id="nextPage" aria-controls="timeline" disabled={detailPending || !page?.nextCursor} onClick={() => selected && void loadPage(selected, pageIndex + 1, cursors)}>下一页</button>
             <button id="retryPage" aria-controls="timeline" hidden={!detailError} disabled={detailPending} onClick={() => selected && void loadPage(selected, pageIndex, cursors)}>重试</button></nav>
-          <ol className="timeline" id="timeline" role="list" tabIndex={0} aria-busy={detailPending} aria-describedby="rangeStatus">{page?.items.length === 0 ? <li className="timeline-empty" role="listitem">这个会话没有已定稿字幕。</li> : page?.items.map((item: Dict, index: number) => <li className="timeline-item" role="listitem" aria-posinset={offset + index + 1} aria-setsize={page.totalCount} key={item.segmentId}><div className="time-code"><strong>{clock(item.t0Ms)}</strong><span>{new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(page.session.startedAt + item.t0Ms))}</span></div><div className="caption-text">{body(item)}</div></li>)}</ol>
+          <ol className="timeline" id="timeline" role="list" tabIndex={0} aria-busy={detailPending} aria-describedby="rangeStatus">{page?.items.length === 0 ? <li className="timeline-empty" role="listitem">这个会话没有已保存字幕。</li> : page?.items.map((item: Dict, index: number) => {
+            const highlighted = sourceLocation?.target.reference === selected &&
+              (sourceLocation.target.transcript_version === 'raw' ? 'original' : 'refined') === version &&
+              sourceLocation.highlightedSegmentIds?.includes(item.segmentId)
+            return <li className={`timeline-item${highlighted ? ' source-highlight' : ''}`} role="listitem" aria-current={highlighted ? 'location' : undefined} aria-posinset={offset + index + 1} aria-setsize={page.totalCount} key={item.segmentId}><div className="time-code"><strong>{clock(item.t0Ms)}</strong><span>{new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(page.session.startedAt + item.t0Ms))}</span></div><div className="caption-text">{highlighted && <strong>引用段落 · </strong>}{body(item)}</div></li>
+          })}</ol>
         </div></section></main></>
 }

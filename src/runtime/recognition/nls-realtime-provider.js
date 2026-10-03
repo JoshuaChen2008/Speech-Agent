@@ -89,22 +89,20 @@ class NlsRealtimeProvider {
     this.writes.add(item)
     const send = async () => {
       if (!['active', 'finishing'].includes(this.state)) throw failure('NLS_CONNECTION_CLOSED')
-      const sendDeadline = this.nextSendAt === null ? this.now() : this.nextSendAt
+      const sendDeadline = Math.max(this.nextSendAt ?? this.now(), this.earliestSendAt ?? 0)
       const waitMs = Math.max(0, sendDeadline - this.now())
       if (waitMs) await new Promise(resolve => { item.wake = resolve; item.timer = this.setTimer(resolve, waitMs) })
       if (!['active', 'finishing'].includes(this.state)) throw failure('NLS_CONNECTION_CLOSED')
       const frameDurationMs = copy.length / 32
+      const sentAt = this.now()
       await new Promise((resolve, reject) => {
         item.rejectSend = reject
         try { this.socket.send(copy, { binary: true }, error => error ? reject(failure('NLS_CONNECTION_FAILED')) : resolve()) } catch { reject(failure('NLS_CONNECTION_FAILED')) }
       })
-      const sentAt = this.now()
-      // Preserve the audio-time schedule across small timer delays. If the
-      // sender missed a complete frame interval, re-anchor once so queued
-      // audio does not escape as an unbounded catch-up burst.
-      this.nextSendAt = sentAt - sendDeadline >= frameDurationMs
-        ? sentAt + frameDurationMs
-        : sendDeadline + frameDurationMs
+      // Keep audio-time debt across delayed callbacks, but drain it at no
+      // more than 1.25x real time. Idle input never accumulates burst credit.
+      this.nextSendAt = (this.nextSendAt ?? sentAt) + frameDurationMs
+      this.earliestSendAt = sentAt + frameDurationMs * 0.8
     }
     this.tail = this.tail.then(send).then(() => done.resolve(), error => { done.reject(error); this.fail(error.code || 'NLS_CONNECTION_FAILED') }).finally(() => { this.outstanding -= copy.length; copy.fill(0); this.writes.delete(item) })
     return done.promise

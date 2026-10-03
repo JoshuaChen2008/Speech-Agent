@@ -49,6 +49,9 @@ function publicSnapshot (row, elapsedMs = row.elapsedMs, diagnosticsAvailable = 
     state: row.state,
     phase: row.phase,
     attempt: row.attempt,
+    ...(row.state === 'running' && row.phase === 'retry_wait' && row.retry
+      ? { retry: { request_attempt: row.retry.requestAttempt, wait_ms: row.retry.waitMs, reason: row.retry.reason } }
+      : {}),
     elapsed_ms: elapsedMs,
     last_activity_age_ms: activityAge,
     validated_chunk_count: row.validatedChunkCount,
@@ -513,7 +516,7 @@ class SessionSummaryRunService {
     if (!event || typeof event !== 'object' || Array.isArray(event)) return Promise.resolve(null)
     const allowed = new Set([
       'requestId', 'generation', 'runId', 'attemptIdentity', 'attempt', 'phase', 'state', 'activity', 'memoryState',
-      'diagnosticEvent', 'modelBindingDigest', 'errorCode', 'budgetAxis', 'metrics'
+      'diagnosticEvent', 'modelBindingDigest', 'errorCode', 'budgetAxis', 'metrics', 'retry', 'validatedChunkCount', 'totalChunkCount'
     ])
     const actual = Object.keys(event)
     if (actual.some((key) => !allowed.has(key)) ||
@@ -530,6 +533,12 @@ class SessionSummaryRunService {
         event.budgetAxis !== undefined && event.budgetAxis !== null && !BUDGET_AXES.includes(event.budgetAxis)) return Promise.resolve(null)
     if (event.metrics !== undefined) {
       try { assertDiagnosticMetrics(event.metrics) } catch { return Promise.resolve(null) }
+    }
+    if (event.retry !== undefined && (event.phase !== 'retry_wait' || !event.retry ||
+        !Number.isSafeInteger(event.retry.requestAttempt) || event.retry.requestAttempt < 2 || event.retry.requestAttempt > 5 ||
+        !Number.isSafeInteger(event.retry.waitMs) || event.retry.waitMs < 0 || event.retry.waitMs > 1000 ||
+        !['AGENT_PROVIDER_RATE_LIMITED', 'AGENT_PROVIDER_UNAVAILABLE', 'AGENT_PROVIDER_TIMEOUT'].includes(event.retry.reason))) {
+      return Promise.resolve(null)
     }
     if (event.diagnosticEvent === 'budget_rejected' && (event.errorCode === undefined || event.metrics === undefined)) {
       return Promise.resolve(null)
@@ -588,10 +597,16 @@ class SessionSummaryRunService {
         memoryState
       }
       if (event.state !== undefined) update.state = event.state
+      if (event.retry !== undefined) update.retry = { ...event.retry }
       if (event.attemptIdentity !== undefined) update.attemptIdentity = { ...event.attemptIdentity }
       if (newAttempt) {
         update.validatedChunkCount = null
         update.totalChunkCount = null
+      }
+      if (Number.isSafeInteger(event.validatedChunkCount) && Number.isSafeInteger(event.totalChunkCount) &&
+          event.validatedChunkCount >= 0 && event.validatedChunkCount <= event.totalChunkCount && event.totalChunkCount <= 256) {
+        update.validatedChunkCount = event.validatedChunkCount
+        update.totalChunkCount = event.totalChunkCount
       }
       try {
         const updated = await this.storage.updateSessionSummaryRequest(update, signal)
@@ -824,7 +839,7 @@ class SessionSummaryRunService {
       if (row.cancelRequested || TERMINAL_STATES.has(row.state)) return
       this.rememberDiagnosticRequest(row)
       const failureCode = stableErrorCode(error)
-      if (failureCode === 'AGENT_BUDGET_EXCEEDED' || failureCode === 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED') {
+      if (['AGENT_BUDGET_EXCEEDED', 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED', 'AGENT_QA_INPUT_LIMIT_EXCEEDED'].includes(failureCode)) {
         const suppliedBudget = error?.budget && typeof error.budget === 'object' ? error.budget : null
         const suppliedAxis = BUDGET_AXES.includes(error?.budgetAxis) ? error.budgetAxis :
           suppliedBudget && BUDGET_AXES.includes(suppliedBudget.axis) ? suppliedBudget.axis : null
@@ -833,7 +848,7 @@ class SessionSummaryRunService {
         const limit = Number.isSafeInteger(error?.limit) && error.limit >= 0 ? error.limit :
           Number.isSafeInteger(suppliedBudget?.limit) && suppliedBudget.limit >= 0 ? suppliedBudget.limit : null
         const unit = diagnosticUnitForAxis(suppliedAxis) ||
-          (failureCode === 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED' && actual !== null && limit !== null ? 'bytes' : null)
+          (['AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED', 'AGENT_QA_INPUT_LIMIT_EXCEEDED'].includes(failureCode) && actual !== null && limit !== null ? 'bytes' : null)
         this.recordDiagnostic(row, 'budget_rejected', {
           errorCode: failureCode,
           budgetAxis: suppliedAxis,
@@ -902,6 +917,7 @@ class SessionSummaryRunService {
       const linkedRunId = row.targetRunId || row.routeRunId
       if (linkedRunId && this.scheduler && typeof this.scheduler.cancel === 'function') this.scheduler.cancel(linkedRunId)
       const latest = await this.readRow(request.request_id)
+      if (latest.state === 'cancelled' && linkedRunId) this.promptStore?.delete(linkedRunId)
       this.rememberDiagnosticRequest(latest)
       this.recordDiagnostic(latest, 'cancel_requested', { phase: 'cancelling' })
       this.recordTerminalDiagnostic(latest)

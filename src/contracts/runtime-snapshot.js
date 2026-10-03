@@ -3,7 +3,7 @@
 // @ts-check
 
 const { PROFILES, assertCapabilities } = require('./capabilities')
-const { assertRecognitionMetadata } = require('./recognition')
+const { assertRecognitionMetadata, assertRecognitionProgress } = require('./recognition')
 const {
   assertArray,
   assertBoolean,
@@ -148,6 +148,14 @@ function assertPhaseInvariants (snapshot, path) {
 
 function assertRuntimeSnapshot (value, path = 'RuntimeSnapshot') {
   if (value?.recognition !== undefined) assertRecognitionMetadata(value.recognition)
+  if (value?.recognitionProgress !== undefined) {
+    assertRecognitionProgress(value.recognitionProgress)
+    if (value.recognitionProgress.sessionId !== value.sessionId || value.phase !== 'listening' ||
+        value.recognition?.binding?.strategy !== 'cloud-primary' ||
+        (value.recognitionProgress.phase === 'loading') !== (value.recognition.actualProvider === 'nls')) {
+      fail(`${path}.recognitionProgress`, 'must describe the active cloud fallback')
+    }
+  }
   assertSchemaVersion(value, path)
   assertInteger(value.revision, `${path}.revision`, { min: 0 })
   assertNullableString(value.sessionId, `${path}.sessionId`, { nonEmpty: true })

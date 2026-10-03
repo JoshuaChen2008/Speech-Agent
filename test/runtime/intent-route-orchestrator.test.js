@@ -412,3 +412,35 @@ test('SEM-F31/SEM-F32/J22: replayed route recovery blocks target creation when c
   assert.equal(calls.some(([name]) => name === 'interaction.create'), false)
   assert.equal(calls.some(([name]) => name === 'loop'), false)
 })
+
+test('SEM-F39/SEM-F31/J22-QA-RETRIEVAL: new raw-session QA freezes version 4 while summary and routing retain their versions', async () => {
+  const { orchestrator, calls } = harness()
+  await orchestrator.submitFixedTarget({
+    ...base,
+    requestId: 'request.fixed.v2',
+    requestGeneration: 1,
+    summaryUseMemory: false
+  })
+  const target = calls.find(([name, request]) => name === 'run.create' && request.recipeId === 'summary.minutes')
+  assert.equal(target[1].recipeVersion, '2')
+  const summaryBinds = calls.filter(([name, request]) => name === 'bind' && request.recipeId === 'summary.minutes')
+  assert.equal(summaryBinds.length, 1)
+  assert.equal(summaryBinds[0][1].recipeVersion, '2')
+
+  const routed = harness()
+  await routed.orchestrator.submit(base)
+  const routeRun = routed.calls.find(([name, request]) => name === 'run.create' && request.recipeId === 'intent.route')
+  assert.equal(routeRun[1].recipeVersion, '1')
+
+  const qa = harness()
+  await qa.orchestrator.createTarget({ ...base }, 'qa.answer', 'preset', 'ready', new Set(['qa.answer']))
+  const qaRun = qa.calls.find(([name, request]) => name === 'run.create')
+  assert.equal(qaRun[1].recipeId, 'qa.answer')
+  assert.equal(qaRun[1].recipeVersion, '4')
+  const qaBinds = qa.calls.filter(([name, request]) => name === 'bind')
+  assert.equal(qaBinds.length, 1)
+  assert.equal(qaBinds[0][1].recipeVersion, '4')
+  const refined = harness()
+  await refined.orchestrator.createTarget({ ...base, transcriptVersion: 'refined' }, 'qa.answer', 'preset', 'ready', new Set(['qa.answer']))
+  assert.equal(refined.calls.find(([name]) => name === 'run.create')[1].recipeVersion, '2')
+})

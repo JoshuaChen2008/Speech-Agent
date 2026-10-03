@@ -1,0 +1,278 @@
+{
+  "schemaVersion": 1,
+  "scope": "summary_first_session_question",
+  "status": "实现完成·尚未验收",
+  "evidenceKind": "current_worktree_deterministic",
+  "validation": {
+    "rendererTypecheckAndBuild": true,
+    "command": "npm_test",
+    "core": {
+      "tests": 1156,
+      "passed": 1156,
+      "failed": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "integration": {
+      "tests": 148,
+      "passed": 148,
+      "failed": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "evidence": {
+      "tests": 249,
+      "passed": 248,
+      "failed": 0,
+      "cancelled": 0,
+      "skipped": 1,
+      "todo": 0
+    },
+    "total": {
+      "tests": 1553,
+      "passed": 1552,
+      "failed": 0,
+      "cancelled": 0,
+      "skipped": 1,
+      "todo": 0
+    },
+    "skippedBoundary": "nls_native_qualification_not_requested",
+    "strictI3Reader": true
+  },
+  "versions": {
+    "ingest": 3,
+    "question": 4,
+    "synthesis": 2,
+    "appendedMigrations": [
+      25,
+      26,
+      27,
+      28
+    ],
+    "readableExports": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "runUi": "1.1.0",
+    "readableLegacyRunUi": "1.0.0"
+  },
+  "limits": {
+    "frozenRawBytes": 4194304,
+    "canonicalBytes": 8388608,
+    "segments": 50000,
+    "evidencePages": 256,
+    "loopNodes": 384,
+    "outboundRequests": 512,
+    "highlightedSegments": 50
+  },
+  "boundaries": {
+    "controlledProvider": true,
+    "realProviderContentQuality": false,
+    "actualProviderTokenUsage": null,
+    "physicalAudio": false,
+    "realTwoHourAudio": false,
+    "cleanMachine": false,
+    "releaseQualification": false
+  },
+  "i3NonAudio": {
+    "result": "pass",
+    "gateStatus": "partial",
+    "segmentCount": 3600,
+    "historyPageCount": 72,
+    "virtualDurationMs": 7200000,
+    "productPayloadSha256": "4ef6968d884602a05d97fe9158f9aaec5c1fd253c2c0770d56a70dc92888a0d4",
+    "reportSha256": "b786c358916c0218daf4f3248faa9bc2c004fb0f15360bfac3d1d800c82fde47",
+    "precedingReportSha256": "9c8b14145b26ac1f3bbdebf5a185d006ddd7511fdcd7cd75131f6bd0c2d8e288"
+  },
+  "sourceProvenance": {
+    "recipes": "dc18f2baaf797f0516949a3c8100e2140052c6e24379b51f22cf380656ef1936",
+    "budgetAxes": "c519ed23df036b0b1e07191f405c30169a9f65f48c1c40c37fcb020dd1b0dbd4",
+    "runUi": "b27e0fa36d06a5807dafc5cfef4610d6ecf751034cd3034b2f4d9724b1bbdd63",
+    "schema": "6acb3a3b1ff13af208a1f1d270ee4cca2a5476022aaf5d86a461fc739b0c1be6",
+    "experienceSchema": "6ac573138068aa6617af6cf083483dbb0ce839f243f440f2bb09ebf6e05b41e6",
+    "retrievalSchema": "8020ca88a86106e6cdd1919a720e2382094f4755fcba386e26c5f440a120a4d5",
+    "scopeSchema": "1f19d6cfb55af512d531b94e09a2ad20a5dbdc976994a7109afc9fbf9df02db4",
+    "candidateBatchSchema": "aa4bdff8fc81f034504cfacea91fc029d404ce4233daab75c3597ca69ec2bab5",
+    "experienceStore": "9e0420b724ea4764da9fea134cf48f96302143310fb6513e4ee6f34579c6083e",
+    "retrievalStore": "79b1065ca652dcaf026a27efb2780c876f6b96db0e7dab5b5473d95e07561c49",
+    "scopeStore": "c9a7d117ba1447783beb08ee7786b4ee043760b30387492e3a6aeb6caf7f3a95",
+    "personalContextStore": "7724d349ee1548a977069b661113909c53a50e6a336c9b6a4d76ac6c7170bae8",
+    "overviewStore": "254fd2f8dffcb1faf1caa570905571776e84bfdc9d8b01f74805bf0911ec5ead",
+    "experienceExecutor": "163f316ed51bc5120ea3fa7b70b4f7f71f35899444ac7d948c3535e28f154a6f",
+    "evidenceExecutor": "275d784ca6ffc59c58f854fcc37ab141cc5333750a9ff328b5f6ef31e829caa9",
+    "formalRunner": "093044440942903381c39acaeaedf9425687c29a8975ba269469c160e37eab6e",
+    "ingestRunner": "9a7b67e0422d68ee1c0a7ae7b497f2b87987530f84fd9afcfe483872fecdd0b8",
+    "formalRunService": "1191987faa759cdaff4afdf474e55a728b00f35ff57fd651988e0726a783563a",
+    "exporter": "20bc36882802d79ea01539e99237ef121cbafb213d7299ae6ec4dd847e593ac0",
+    "contextRuntime": "4e702a3e7ece48b592d8ec698ecd6295a9d2b6eed46dd21f43c5b53e90dafa7c",
+    "agentView": "80d56670f1f2687b2081553d3974d42528e63b359089c3d0e988eda0bbc1f0ff",
+    "historyView": "7e6e82e9e8a67b9a991d5a0084c1996877e8f369610ef18da29e20a9de66c9c5",
+    "sourceIpc": "c4291202063ba803afac089ad6d9b6033595f12aec56c879810929b628839cfe",
+    "sourcePreload": "079963f61c65aac7fedb618694dd9f4da4f042e51c504424f2c0928cffa6f815",
+    "modelPane": "b1e145f3121b2392a8116c11129f7def4f00bec4926cb9035c1c170924cb0f56",
+    "experienceJourney": "75618068ba5dd62f59d2473d0e10bcfc6ff0bbeb7236ca40bb689cac18db0f4c",
+    "personalMemoryJourney": "9e4f611f1bc7b4e81b9c717bf0f590089e479bbd253546ff46a75cb3b9708506",
+    "formalSurface": "d0f721e54b64fa4c56a62a03eb43cdc5143575f00a4417c3759b7a7e7107c85b",
+    "sourcePreloadContract": "b428cde9187333872b21b37f18ca89452f77848d7bd179f0816c837bf009684b",
+    "modelSettingsUi": "a2ccc74ecd85498e32453df7f3293130cfa0ced054d533a4d85f72c3b1ff763b"
+  },
+  "strategyComparison": {
+    "schemaVersion": 1,
+    "provider": "controlled",
+    "contentQualityEvaluated": false,
+    "knownTokenUsage": null,
+    "summaryOnlyEvaluation": "source_availability_ablation",
+    "cases": [
+      {
+        "caseIndex": 0,
+        "questionDigest": "f7d0cc90d8dc59e2239851af8c6785660cdb2e8097b5c8d535bc45a6541236c5",
+        "whole": {
+          "requests": 13,
+          "serializedPromptBytes": 324534,
+          "maxSerializedPromptBytes": 50892,
+          "sourceRecall": true
+        },
+        "summaryOnly": {
+          "hintCount": 7,
+          "hintBytes": 273,
+          "sourceRecall": false,
+          "requests": null
+        },
+        "combined": {
+          "requests": 1,
+          "serializedPromptBytes": 4087,
+          "maxSerializedPromptBytes": 4087,
+          "sourceRecall": true,
+          "summaryComplete": true,
+          "sourceTextComplete": false
+        }
+      },
+      {
+        "caseIndex": 1,
+        "questionDigest": "268f2c3bac79173b14e7a8c24f2eedc7324e7fd30a66d161ee4e9939d1b9f274",
+        "whole": {
+          "requests": 13,
+          "serializedPromptBytes": 324521,
+          "maxSerializedPromptBytes": 50892,
+          "sourceRecall": true
+        },
+        "summaryOnly": {
+          "hintCount": 7,
+          "hintBytes": 273,
+          "sourceRecall": false,
+          "requests": null
+        },
+        "combined": {
+          "requests": 1,
+          "serializedPromptBytes": 4086,
+          "maxSerializedPromptBytes": 4086,
+          "sourceRecall": true,
+          "summaryComplete": true,
+          "sourceTextComplete": false
+        }
+      },
+      {
+        "caseIndex": 2,
+        "questionDigest": "6b9df6402709e9e818c2543649efa60495b29313d05ce6e8eacc7ac607078444",
+        "whole": {
+          "requests": 13,
+          "serializedPromptBytes": 324586,
+          "maxSerializedPromptBytes": 50893,
+          "sourceRecall": true
+        },
+        "summaryOnly": {
+          "hintCount": 7,
+          "hintBytes": 273,
+          "sourceRecall": false,
+          "requests": null
+        },
+        "combined": {
+          "requests": 1,
+          "serializedPromptBytes": 4091,
+          "maxSerializedPromptBytes": 4091,
+          "sourceRecall": true,
+          "summaryComplete": true,
+          "sourceTextComplete": false
+        }
+      },
+      {
+        "caseIndex": 3,
+        "questionDigest": "28380feb8724d669bc8d4cf5b5a5bb1adbdc61b81ebd06f3fabc567b4f3b0fc5",
+        "whole": {
+          "requests": 13,
+          "serializedPromptBytes": 324521,
+          "maxSerializedPromptBytes": 50892,
+          "sourceRecall": true
+        },
+        "summaryOnly": {
+          "hintCount": 7,
+          "hintBytes": 273,
+          "sourceRecall": false,
+          "requests": null
+        },
+        "combined": {
+          "requests": 1,
+          "serializedPromptBytes": 4086,
+          "maxSerializedPromptBytes": 4086,
+          "sourceRecall": true,
+          "summaryComplete": true,
+          "sourceTextComplete": false
+        }
+      },
+      {
+        "caseIndex": 4,
+        "questionDigest": "a1f064fd05a4c3bb5cdad1d6dd04b3afecf8a11e7053cb6c33d318e7f47a61a3",
+        "whole": {
+          "requests": 13,
+          "serializedPromptBytes": 324534,
+          "maxSerializedPromptBytes": 50892,
+          "sourceRecall": true
+        },
+        "summaryOnly": {
+          "hintCount": 7,
+          "hintBytes": 273,
+          "sourceRecall": false,
+          "requests": null
+        },
+        "combined": {
+          "requests": 1,
+          "serializedPromptBytes": 4087,
+          "maxSerializedPromptBytes": 4087,
+          "sourceRecall": true,
+          "summaryComplete": true,
+          "sourceTextComplete": false
+        }
+      },
+      {
+        "caseIndex": 5,
+        "questionDigest": "f7d0cc90d8dc59e2239851af8c6785660cdb2e8097b5c8d535bc45a6541236c5",
+        "whole": {
+          "requests": 13,
+          "serializedPromptBytes": 324534,
+          "maxSerializedPromptBytes": 50892,
+          "sourceRecall": true
+        },
+        "summaryOnly": {
+          "hintCount": 7,
+          "hintBytes": 273,
+          "sourceRecall": false,
+          "requests": null
+        },
+        "combined": {
+          "requests": 1,
+          "serializedPromptBytes": 4087,
+          "maxSerializedPromptBytes": 4087,
+          "sourceRecall": true,
+          "summaryComplete": true,
+          "sourceTextComplete": false
+        }
+      }
+    ]
+  }
+}

@@ -1,5 +1,6 @@
 'use strict'
 
+const { AgentLoopExecutor } = require('./agent-loop')
 const { ContextIngestSessionRunner } = require('./context-ingest-session-runner')
 const { FormalAgentRunRunner } = require('./formal-agent-run-runner')
 const { IntentRouteOrchestrator } = require('./intent-route-orchestrator')
@@ -9,6 +10,7 @@ const { S1TerminalSessionReconciler } = require('./s1-terminal-session-reconcile
 const { ToolAuditRuntime, createToolAuditRuntime } = require('./tool-audit-runtime')
 
 module.exports = {
+  AgentLoopExecutor,
   ContextIngestSessionRunner,
   FormalAgentRunRunner,
   IntentRouteOrchestrator,

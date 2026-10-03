@@ -1,11 +1,15 @@
 'use strict'
 
+
+
+
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const { AgentLoopExecutor } = require('../../src/agent/execution-host/agent-loop')
-const { FormalAgentRunRunner } = require('../../src/agent/execution-host/formal-agent-run-runner')
-const { deriveRecipeBudget } = require('../../src/agent/contracts/budget-axes')
+const { FormalAgentRunRunner, promptForInput } = require('../../src/agent/execution-host/formal-agent-run-runner')
+const { deriveRecipeBudget, deriveSummaryMinutesV2RequestCapacity, deriveRecipeRequestCapacity } = require('../../src/agent/contracts/budget-axes')
+const { canonicalize } = require('../../src/runtime/storage-worker/canonical-json')
 
 function deferred () {
   let resolve
@@ -20,6 +24,97 @@ const capabilities = {
   supportsStructuredOutput: true,
   supportsStreaming: true,
   usageReporting: true
+}
+
+test('SEM-F31/F33/J22-QA-SIZE: qa.answer@2 checks exact UTF-8 bytes without dropping frozen events', () => {
+  const caps = { maxInputTokens: 12000, maxOutputTokens: 4096 }
+  const capacity = deriveRecipeRequestCapacity({ recipeId: 'qa.answer', recipeVersion: '2', capabilities: caps,
+    budget: deriveRecipeBudget(caps, 'qa.answer', '2', 'user') })
+  for (const bytes of [capacity.promptByteLimit - 1, capacity.promptByteLimit]) {
+    const input = syntheticSessionInput(bytes)
+    const prompt = promptForInput(input, '总结', 'qa.answer', '2', capacity)
+    assert.equal(Buffer.byteLength(prompt, 'utf8'), bytes)
+    assert.equal(JSON.parse(prompt).transcript.events[0].text, input.events[0].text)
+  }
+  assert.throws(() => promptForInput(syntheticSessionInput(capacity.promptByteLimit + 1), '总结', 'qa.answer', '2', capacity),
+    (error) => {
+      assert.equal(error.code, 'AGENT_QA_INPUT_LIMIT_EXCEEDED')
+      assert.deepEqual(error.diagnosticMetrics, { actual: 3809, limit: 3808, unit: 'bytes' })
+      return true
+    })
+  assert.throws(() => promptForInput(syntheticSessionInput(1000), '总结', 'qa.answer', '2'), { code: 'AGENT_REQUEST_INVALID' })
+  assert.throws(() => promptForInput(syntheticSessionInput(1000), '总结', 'qa.answer', '2',
+    { promptByteLimit: 0, requestOutputTokens: 4096 }), { code: 'AGENT_QA_INPUT_LIMIT_EXCEEDED' })
+})
+
+test('SEM-F39/J31-SIZE/J31-COMPAT: summary prompt policy preserves legacy qa.answer@1', () => {
+  const input = {
+    sessionId: 'session.capacity', transcriptVersion: 'raw', inputWatermark: 1,
+    inputDigest: 'a'.repeat(64), events: [{ eventOrder: 1, segmentId: 'segment.capacity', text: '中'.repeat(6000) }]
+  }
+  assert.throws(() => promptForInput(input, '总结', 'summary.minutes', '1'),
+    (error) => error.code === 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED')
+  assert.throws(() => promptForInput(input, '问答', 'qa.answer', '1'),
+    (error) => error.code === 'AGENT_BUDGET_EXCEEDED')
+  const capacity = deriveSummaryMinutesV2RequestCapacity({
+    capabilities, budget: deriveRecipeBudget(capabilities, 'summary.minutes', '2', 'user')
+  })
+  assert.equal(typeof promptForInput(input, '总结', 'summary.minutes', '2', capacity), 'string')
+  assert.throws(() => promptForInput(input, '总结', 'summary.minutes', '2'),
+    (error) => error.code === 'AGENT_REQUEST_INVALID')
+})
+
+test('SEM-F39/J31-SIZE: a 86,914-byte windowed session passes the v2 precheck with the full frozen event range', () => {
+  const input = syntheticSessionInput(86914)
+  const atBoundary = deriveSummaryMinutesV2RequestCapacity({
+    capabilities: { maxInputTokens: 95106, maxOutputTokens: 8192 },
+    budget: deriveRecipeBudget({ maxInputTokens: 95106, maxOutputTokens: 8192 }, 'summary.minutes', '2', 'user')
+  })
+  const prompt = promptForInput(input, '总结', 'summary.minutes', '2', atBoundary)
+  assert.equal(typeof prompt, 'string')
+  assert.equal(prompt.includes(input.events[0].text), true)
+})
+
+test('SEM-F39/J31-SIZE: the same session one input-token step below the boundary is rejected before any model call', () => {
+  const input = syntheticSessionInput(86914)
+  const belowBoundary = deriveSummaryMinutesV2RequestCapacity({
+    capabilities: { maxInputTokens: 95105, maxOutputTokens: 8192 },
+    budget: deriveRecipeBudget({ maxInputTokens: 95105, maxOutputTokens: 8192 }, 'summary.minutes', '2', 'user')
+  })
+  assert.throws(() => promptForInput(input, '总结', 'summary.minutes', '2', belowBoundary),
+    (error) => {
+      assert.equal(error.code, 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED')
+      assert.deepEqual(error.diagnosticMetrics, { actual: 86914, limit: 86913, unit: 'bytes' })
+      return true
+    })
+})
+
+function syntheticSessionInput (targetPromptBytes) {
+  const sessionId = 'session.window'
+  const segmentId = 'segment.window'
+  const userPrompt = '总结'
+  const skeleton = {
+    userPrompt,
+    transcript: {
+      sourceKind: 'session', sessionId, transcriptVersion: 'raw', inputWatermark: 1,
+      inputDigest: 'b'.repeat(64), events: [{ eventOrder: 1, segmentId, text: '' }]
+    }
+  }
+  const overhead = Buffer.byteLength(canonicalize(skeleton), 'utf8')
+  const remaining = targetPromptBytes - overhead
+  assert.equal(remaining > 0, true)
+  const cjk = Math.floor(remaining / 3)
+  const ascii = remaining - cjk * 3
+  const text = `${'中'.repeat(cjk)}${'a'.repeat(ascii)}`
+  const filled = {
+    ...skeleton,
+    transcript: { ...skeleton.transcript, events: [{ eventOrder: 1, segmentId, text }] }
+  }
+  assert.equal(Buffer.byteLength(canonicalize(filled), 'utf8'), targetPromptBytes)
+  return {
+    sessionId, transcriptVersion: 'raw', inputWatermark: 1, inputDigest: 'b'.repeat(64),
+    events: [{ eventOrder: 1, segmentId, text }]
+  }
 }
 
 function harness ({ adapterRun, failResult = { state: 'retry_wait' }, recipeId = 'qa.answer', toolContext = null, readSessionInput = null, readToolContext = null } = {}) {
@@ -471,7 +566,7 @@ test('SEM-F28/SEM-F34/J22/J24: budget exhaustion terminalizes with the task erro
   assert.equal(terminal.result, null)
 })
 
-test('SEM-F28/SEM-F34/J22/J24: provider timeout terminalizes only after the retry budget is exhausted', async () => {
+test('SEM-F28/SEM-F34/J22/J24: provider timeout relies on atomic storage settlement after retry exhaustion', async () => {
   const { runner, calls } = harness({
     failResult: [{ state: 'retry_wait' }, { state: 'failed' }],
     adapterRun: async () => { const error = new Error('timeout'); error.code = 'AGENT_PROVIDER_TIMEOUT'; throw error }
@@ -481,8 +576,124 @@ test('SEM-F28/SEM-F34/J22/J24: provider timeout terminalizes only after the retr
   assert.equal(calls.find(([kind]) => kind === 'fail')[1].attemptIdentity.attempt, 1)
   assert.equal(await runner.run(job({ attemptIdentity: { runId: 'run.user.runner', attempt: 2, owner: 'scheduler.user', leaseExpiresAt: 1100 } })), null)
   assert.equal(calls.filter(([kind]) => kind === 'fail').length, 2)
-  const terminal = calls.find(([kind]) => kind === 'terminalize')[1]
-  assert.equal(terminal.errorCode, 'AGENT_PROVIDER_TIMEOUT')
-  assert.equal(terminal.result, null)
+  assert.equal(calls.filter(([kind]) => kind === 'terminalize').length, 0)
+  assert.equal(calls.filter(([kind]) => kind === 'fail')[1][1].errorCode, 'AGENT_PROVIDER_TIMEOUT')
   assert.deepEqual(calls.filter(([kind]) => kind === 'bind').map(([, request]) => request.runId), ['run.user.runner', 'run.user.runner'])
+})
+
+test('SEM-F38/SEM-T04/J30-STATE: credential rejection keeps its stable error and does not retry', async () => {
+  const { runner, calls } = harness({
+    adapterRun: async () => { const error = new Error('synthetic credential failure'); error.code = 'AGENT_PROVIDER_AUTH_FAILED'; throw error }
+  })
+  assert.equal(await runner.run(job()), null)
+  assert.equal(calls.filter(([kind]) => kind === 'fail').length, 0)
+  assert.equal(calls.find(([kind]) => kind === 'terminalize')[1].errorCode, 'AGENT_PROVIDER_AUTH_FAILED')
+})
+
+test('SEM-F38/SEM-T04/J30-STATE: failed durable settlement is surfaced to scheduler diagnostics', async () => {
+  const { runner, calls } = harness({
+    failResult: () => { throw Object.assign(new Error('synthetic storage failure'), { code: 'STORAGE_COMMAND_FAILED' }) },
+    adapterRun: async () => { throw Object.assign(new Error('synthetic provider failure'), { code: 'AGENT_PROVIDER_UNAVAILABLE' }) }
+  })
+  await assert.rejects(runner.run(job()), (error) => error.code === 'AGENT_RUN_UNAVAILABLE')
+  assert.equal(calls.filter(([kind]) => kind === 'terminalize').length, 0)
+})
+
+test('SEM-F39/F40/J31-SIZE: zero capacity and oversized input reject before provider egress', async () => {
+  for (const [maxInputTokens, bytes] of [[4096, 1000], [8192, 1000], [128000, 173827]]) {
+    let providerCalls = 0
+    const { runner, calls, binding } = harness({ recipeId: 'summary.minutes',
+      readSessionInput: () => syntheticSessionInput(bytes),
+      adapterRun: async () => { providerCalls++; throw new Error('unexpected provider egress') } })
+    binding.capabilities = { ...capabilities, maxInputTokens }
+    binding.budget = deriveRecipeBudget(binding.capabilities, 'summary.minutes', '2', 'user')
+    await runner.run(job({ recipeId: 'summary.minutes', recipeVersion: '2' }))
+    assert.equal(providerCalls, 0)
+    assert.equal(calls.find(([kind]) => kind === 'terminalize')[1].errorCode, 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED')
+  }
+})
+
+test('SEM-F39/J31-SIZE/J31-COMPAT: the runner hands the frozen request capacity to the loop for v2 only', async () => {
+  const seen = []
+  const minutesResult = () => ({
+    text: JSON.stringify({
+      schemaVersion: 1, overview: '容量接线验证。',
+      conclusions: [], todos: [], risks: []
+    }),
+    usage: null
+  })
+  const { runner, binding } = harness({ recipeId: 'summary.minutes' })
+  binding.capabilities = { ...capabilities }
+  binding.budget = deriveRecipeBudget(binding.capabilities, 'summary.minutes', '2', 'user')
+  runner.loopFactory = () => {
+    const inner = new AgentLoopExecutor({ adapter: { run: minutesResult } })
+    return { agentLoop: async (input) => { seen.push(input); return inner.agentLoop(input) } }
+  }
+  const result = await runner.run(job({ recipeId: 'summary.minutes', recipeVersion: '2' }))
+  assert.equal(result.terminalReason, 'succeeded')
+  assert.equal(seen.length, 1)
+  assert.equal(Number.isSafeInteger(seen[0].requestCapacity.requestOutputTokens) && seen[0].requestCapacity.requestOutputTokens > 0, true)
+  assert.equal(Number.isSafeInteger(seen[0].requestCapacity.promptByteLimit), true)
+
+  seen.length = 0
+  binding.budget = deriveRecipeBudget(binding.capabilities, 'summary.minutes', '1', 'user')
+  await runner.run(job({ recipeId: 'summary.minutes' }))
+  assert.equal(seen.length, 1)
+  assert.equal(Object.hasOwn(seen[0], 'requestCapacity'), false, 'the legacy binding keeps its own capacity interpretation')
+})
+
+test('SEM-F38/SEM-F39/J29/J31: transcript references outside the frozen input range are invalid output', async () => {
+  const cases = [
+    ['beyond the frozen watermark', { sessionId: 'session.runner', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 3 }],
+    ['before the frozen start', { sessionId: 'session.runner', transcriptVersion: 'raw', fromEventOrder: 0, throughEventOrder: 2 }],
+    ['another session identity', { sessionId: 'session.other', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 2 }],
+    ['another transcript version', { sessionId: 'session.runner', transcriptVersion: 'refined', fromEventOrder: 1, throughEventOrder: 2 }]
+  ]
+  for (const [label, ref] of cases) {
+    const { runner, calls } = harness({
+      recipeId: 'summary.minutes',
+      adapterRun: async () => ({
+        text: JSON.stringify({
+          schemaVersion: 1, overview: '越界来源验证。',
+          conclusions: [{ text: '结论。', sourceRefs: [ref] }],
+          todos: [], risks: []
+        }),
+        usage: null
+      })
+    })
+    const result = await runner.run(job({ recipeId: 'summary.minutes' }))
+    assert.equal(result, null, label)
+    const terminal = calls.find(([kind]) => kind === 'terminalize')[1]
+    assert.equal(terminal.terminalReason, 'failed', label)
+    assert.equal(terminal.errorCode, 'AGENT_OUTPUT_INVALID', label)
+    assert.equal(terminal.result, null, label)
+    assert.equal(calls.some(([kind]) => kind === 'fail'), false, label)
+  }
+})
+
+test('SEM-F28/SEM-F39/J31: structurally invalid minutes results fail closed without repair or partial commit', async () => {
+  const insideSource = { sessionId: 'session.runner', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 2 }
+  const cases = [
+    ['missing risks', { schemaVersion: 1, overview: '缺少风险栏。', conclusions: [], todos: [] }],
+    ['extra field', { schemaVersion: 1, overview: '多出字段。', conclusions: [], todos: [], risks: [], extra: 1 }],
+    ['overlong overview', { schemaVersion: 1, overview: '长'.repeat(2001), conclusions: [], todos: [], risks: [] }],
+    ['overlong item text', {
+      schemaVersion: 1, overview: '条目超长。',
+      conclusions: [{ text: '长'.repeat(301), sourceRefs: [insideSource] }],
+      todos: [], risks: []
+    }]
+  ]
+  for (const [label, output] of cases) {
+    const { runner, calls } = harness({
+      recipeId: 'summary.minutes',
+      adapterRun: async () => ({ text: JSON.stringify(output), usage: null })
+    })
+    const result = await runner.run(job({ recipeId: 'summary.minutes' }))
+    assert.equal(result, null, label)
+    const terminal = calls.find(([kind]) => kind === 'terminalize')[1]
+    assert.equal(terminal.terminalReason, 'failed', label)
+    assert.equal(terminal.errorCode, 'AGENT_OUTPUT_INVALID', label)
+    assert.equal(terminal.result, null, label)
+    assert.equal(calls.some(([kind]) => kind === 'fail'), false, label)
+  }
 })

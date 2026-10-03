@@ -288,7 +288,6 @@ class RealtimeRuntimeAdapter {
       /* realtime 与 refine worker 并行配置（各自同步载模型，串行会翻倍
          start 时长）；精修配置失败只降级，不失败会话。 */
       const workerStart = session.worker.start({
-        ...this.workerConfiguration(context),
         sessionId: session.sessionId,
         sourceIds: session.sourceIds,
         recognizerProfile,
@@ -300,7 +299,8 @@ class RealtimeRuntimeAdapter {
         refinement: session.refineWorker !== null,
         vadOptions: this.vadOptions,
         attempt: resume ? resume.attempt : 0,
-        sequenceBases: resume ? resume.sourceSequences : {}
+        sequenceBases: resume ? resume.sourceSequences : {},
+        ...this.workerConfiguration(context)
       })
       const refineStartOptions = { model: this.refinement }
       if (this.acceptanceRefineResponseDelayMs !== null) {
@@ -600,6 +600,7 @@ class RealtimeRuntimeAdapter {
     session.refineWorker = null
     const promise = Promise.all([
       this.shutdownWorker(session.worker, mode, 'realtime ASR'),
+      this.shutdownWorker(session.fallbackWorker, mode, 'local fallback ASR'),
       this.shutdownWorker(refineWorker, mode, 'offline refinement')
     ]).catch((error) => {
       /* An unconfirmed old native generation must make this adapter unusable;

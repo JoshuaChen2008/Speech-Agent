@@ -11,7 +11,9 @@ test('SEM-F31/J22: production main routes the toolbar Agent action to a reusable
   const source = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'main.js'), 'utf8')
   assert.match(source, /action === 'agent'\) openAgentWindow\(\)/)
   assert.match(source, /preloadPath\('agent'\)/)
-  assert.match(source, /agentWin\.show\(\)\s*;\s*agentWin\.focus\(\)/)
+  assert.match(source, /showAuxiliaryWindow\(agentWin, 'agent'\)/)
+  assert.match(source, /bindAuxiliaryWindow\(agentWin, 'agent'\)/)
+  assert.match(source, /bindForegroundWindow\(agentWin, 'agent'\)/)
   assert.match(source, /ipcMain\.on\(CHANNELS\.AGENT_CLOSE[\s\S]*win\.close\(\)/)
 })
 

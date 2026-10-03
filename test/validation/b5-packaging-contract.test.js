@@ -264,7 +264,8 @@ test('release package uses an explicit ASAR allowlist, hardened fuses and per-us
   ])
   assert.deepEqual(releaseConfig.asarUnpack, [
     'node_modules/sherpa-onnx-win-x64/**/*',
-    'src/native/caption-input/caption_input_native.node'
+    'src/native/caption-input/caption_input_native.node',
+    'src/native/memory-file/memory_file_native.node'
   ])
   assert.deepEqual(releaseConfig.electronFuses, {
     runAsNode: false,

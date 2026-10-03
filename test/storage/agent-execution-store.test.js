@@ -27,7 +27,7 @@ function fixture (t, options = {}) {
   const now = typeof options.now === 'function' ? options.now : () => 2000
   const subtitleStore = new SqliteSubtitleStore({
     databasePath: path.join(root, 'speech-agent.sqlite3'),
-    migrations: FORMAL_AGENT_MIGRATIONS,
+    migrations: options.migrations || FORMAL_AGENT_MIGRATIONS,
     now: () => 1000
   })
   const store = new AgentExecutionStore({ subtitleStore, now })
@@ -41,6 +41,7 @@ function fixture (t, options = {}) {
 function insertRun (database, {
   runId,
   recipeId = 'qa.answer',
+  recipeVersion = '1',
   requestedBy = 'user',
   attempt = 1,
   state = 'running',
@@ -72,13 +73,14 @@ function insertRun (database, {
       scope_json, scope_digest, transcript_version, input_watermark_json, input_digest,
       requested_by, state, attempt_count, max_attempts, next_attempt_at,
       lease_owner, lease_expires_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, '1', ?, ?, 'raw', ?, ?, ?, ?, ?, 3, 0, ?, ?, 1, 1)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'raw', ?, ?, ?, ?, ?, 3, 0, ?, ?, 1, 1)
   `).run(
     runId,
     sha256Canonical({ runId }),
     requestedBy === 'user' ? `client.${runId}` : null,
     sha256Canonical({ request: runId }),
     recipeId,
+    recipeVersion,
     canonicalize(scope),
     scopeDigest,
     canonicalize(inputWatermark),
@@ -120,7 +122,7 @@ function insertRun (database, {
         run_id,policy_version,budget_digest,max_wall_clock_ms,max_requests_per_attempt,
         settled_elapsed_ms,conservative_elapsed_ms,request_count,accounting_known,created_at,updated_at
       ) VALUES(?,?,?,?,?,0,0,0,1,1000,1000)
-    `).run(runId, `${recipeId}@1`, sha256Canonical(budget), budget.maxWallClockMs, budget.maxTurns)
+    `).run(runId, `${recipeId}@${recipeVersion}`, sha256Canonical(budget), budget.maxWallClockMs, budget.maxTurns)
     database.prepare(`
       INSERT INTO formal_agent_run_attempt_budgets(
         run_id,attempt,owner,state,reserved_elapsed_ms,settled_elapsed_ms,conservative_elapsed_ms,
@@ -165,6 +167,83 @@ function qaResult () {
 function attemptIdentity (runId, attempt = 1, owner = 'worker', leaseExpiresAt = 5000) {
   return { runId, attempt, owner, leaseExpiresAt }
 }
+
+
+test('SEM-F31/F33/DB1/J24-QA-COMPAT: v21 preserves v20 migrations, QA@1 binding, budget and export bytes', (t) => {
+  const { subtitleStore, store } = fixture(t, { migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 20) })
+  const databasePath = subtitleStore.database.prepare('PRAGMA database_list').get().file
+  const database = subtitleStore.database
+  insertRun(database, { runId: 'run.qa.legacy' })
+  store.createInteraction({ runId: 'run.qa.legacy', interactionId: 'interaction.qa.legacy', routingMode: 'model', promptDigest: 'd'.repeat(64) })
+  // Seed the previous version's terminal facts; new writers require v21.
+  const summary = { interactionId: 'interaction.qa.legacy', resultDigest: sha256Canonical(qaResult()) }
+  database.prepare("UPDATE formal_agent_runs SET state='succeeded',lease_owner=NULL,lease_expires_at=NULL,result_digest=?,result_summary_json=? WHERE run_id=?")
+    .run(sha256Canonical(summary), canonicalize(summary), 'run.qa.legacy')
+  database.prepare("UPDATE formal_agent_interactions SET terminal_reason='succeeded',result_json=?,result_digest=?,duration_ms=0,terminal_at=2000 WHERE interaction_id=?")
+    .run(canonicalize(qaResult()), sha256Canonical(qaResult()), 'interaction.qa.legacy')
+  const checksums = database.prepare('SELECT version,checksum FROM schema_migrations ORDER BY version').all()
+  const binding = database.prepare('SELECT * FROM agent_model_run_bindings WHERE run_id=?').get('run.qa.legacy')
+  const before = canonicalize(buildExportSnapshot(store.getInteraction({ interactionId: 'interaction.qa.legacy' })))
+  subtitleStore.close()
+  const upgraded = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS, now: () => 3000 })
+  try {
+  const execution = new AgentExecutionStore({ subtitleStore: upgraded, now: () => 3000 })
+  assert.deepEqual(upgraded.database.prepare('SELECT version,checksum FROM schema_migrations ORDER BY version').all().slice(0, 20), checksums)
+  assert.deepEqual(upgraded.database.prepare('SELECT * FROM agent_model_run_bindings WHERE run_id=?').get('run.qa.legacy'), binding)
+  assert.equal(canonicalize(buildExportSnapshot(execution.getInteraction({ interactionId: 'interaction.qa.legacy' }))), before)
+  assert.equal(upgraded.database.prepare('SELECT qa_input_limit_error FROM formal_agent_runs WHERE run_id=?').get('run.qa.legacy').qa_input_limit_error, 0)
+  } finally { upgraded.close() }
+})
+
+test('SEM-F31/F33/J22-QA-SIZE/J24-QA-COMPAT: the precise QA error is persisted and only qa.answer@2 can produce it', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  const database = subtitleStore.database
+  for (const [recipeVersion, suffix] of [['1', 'legacy'], ['2', 'window']]) {
+    const runId = 'run.qa.' + suffix
+    const interactionId = 'interaction.qa.' + suffix
+    insertRun(database, { runId, recipeVersion })
+    store.createInteraction({ runId, interactionId, routingMode: 'model', promptDigest: 'd'.repeat(64) })
+    const request = { interactionId, attemptIdentity: attemptIdentity(runId), terminalReason: 'failed',
+      errorCode: 'AGENT_QA_INPUT_LIMIT_EXCEEDED', result: null, usage: null, durationMs: 0 }
+    if (recipeVersion === '1') {
+      assert.throws(() => store.terminalizeInteraction(request), { code: 'AGENT_REQUEST_INVALID' })
+    } else {
+      assert.equal(store.terminalizeInteraction(request).errorCode, request.errorCode)
+      const row = database.prepare('SELECT error_code,summary_input_limit_error,qa_input_limit_error FROM formal_agent_runs WHERE run_id=?').get(runId)
+      assert.equal(row.error_code, 'AGENT_INTERNAL_FAILURE')
+      assert.equal(row.qa_input_limit_error, 1)
+      assert.equal(row.summary_input_limit_error, 0)
+      assert.equal(buildExportSnapshot(store.getInteraction({ interactionId })).error_code, request.errorCode)
+      assert.equal(store.listInteractions({ limit: 10, cursor: null }).items[0].errorCode, request.errorCode)
+    }
+  }
+})
+
+test('SEM-F31/F33/J24-QA-BUDGET: generic budget exhaustion clears the QA flag and the fallback writer preserves input failure', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  const database = subtitleStore.database
+  const personal = new PersonalContextStore({ subtitleStore, now: () => 2000 })
+  for (const exhausted of [false, true]) {
+    const suffix = exhausted ? 'exhausted' : 'input'
+    const runId = 'run.qa.fallback.' + suffix
+    const requestId = 'request.qa.fallback.' + suffix
+    const sessionId = 'session.qa.fallback.' + suffix
+    acceptSummaryRequest(store, { requestId, sessionId, action: 'question' })
+    insertRun(database, { runId, recipeVersion: '2', sessionSummaryRequestId: requestId, scopeReference: sessionId })
+    const interactionId = 'interaction.qa.fallback.' + suffix
+    store.createInteraction({ runId, interactionId, routingMode: 'model', promptDigest: 'd'.repeat(64) })
+    attachSummaryTarget(database, requestId, runId)
+    const failed = personal.failFormalRun({ attemptIdentity: attemptIdentity(runId),
+      errorCode: 'AGENT_QA_INPUT_LIMIT_EXCEEDED', elapsedMs: exhausted ? 60000 : 10 })
+    const expected = exhausted ? 'AGENT_BUDGET_EXCEEDED' : 'AGENT_QA_INPUT_LIMIT_EXCEEDED'
+    assert.equal(failed.state, 'failed')
+    assert.equal(failed.errorCode, expected)
+    assert.equal(store.getInteraction({ interactionId }).interaction.errorCode, expected)
+    assert.equal(store.getSessionSummaryRequest({ requestId }).errorCode, expected)
+    assert.equal(database.prepare('SELECT qa_input_limit_error FROM formal_agent_runs WHERE run_id=?').get(runId).qa_input_limit_error, exhausted ? 0 : 1)
+  }
+})
+
 
 test('SEM-F28/SEM-F34/J22/J24: interaction writer derives the recipe snapshot and rejects caller-owned facts', (t) => {
   const { subtitleStore, store } = fixture(t)
@@ -682,6 +761,41 @@ test('SEM-F28/SEM-F34/J22: tool calls enforce grants, exact state/error binding,
   assert.equal(subtitleStore.database.prepare("SELECT COUNT(*) AS count FROM formal_agent_tool_calls WHERE interaction_id='interaction.tools'").get().count, 4)
 })
 
+test('SEM-F38/J30-RECOVERY: new policy reserves at most five executions for the same model or tool operation', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  const personal = new PersonalContextStore({ subtitleStore, now: () => 2000 })
+  const runId = 'run.operation.cap'
+  insertRun(subtitleStore.database, { runId })
+  subtitleStore.database.prepare("UPDATE formal_agent_runs SET retry_policy_version='agent-retry@1',max_attempts=5 WHERE run_id=?").run(runId)
+  const identity = attemptIdentity(runId)
+  const operationDigest = sha256Canonical({ turn: 1, input: 'synthetic' })
+  for (let sequence = 1; sequence <= 3; sequence++) {
+    assert.equal(personal.reserveFormalAgentModelRequest({
+      attemptIdentity: identity, requestSequence: sequence, operationDigest
+    }).reserved, true)
+  }
+  subtitleStore.database.prepare("UPDATE formal_agent_runs SET attempt_count=2,lease_owner='worker.retry',lease_expires_at=7000 WHERE run_id=?").run(runId)
+  const resumed = attemptIdentity(runId, 2, 'worker.retry', 7000)
+  for (let sequence = 1; sequence <= 2; sequence++) {
+    assert.equal(personal.reserveFormalAgentModelRequest({
+      attemptIdentity: resumed, requestSequence: sequence, operationDigest
+    }).reserved, true)
+  }
+  assert.throws(() => personal.reserveFormalAgentModelRequest({
+    attemptIdentity: resumed, requestSequence: 3, operationDigest
+  }), (error) => error.code === 'AGENT_BUDGET_EXCEEDED')
+  assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_model_operation_attempts WHERE run_id=?').get(runId).count, 5)
+  store.createInteraction({ runId, interactionId: 'interaction.operation.cap', routingMode: 'model', promptDigest: 'd'.repeat(64) })
+  for (let order = 1; order <= 5; order++) {
+    store.startToolCall({ callId: `call.operation.${order}`, interactionId: 'interaction.operation.cap',
+      attemptIdentity: resumed, attempt: 2, callOrder: order, toolName: 'search_context',
+      startedOffsetMs: order, args: { query: 'synthetic' } })
+  }
+  assert.throws(() => store.startToolCall({ callId: 'call.operation.6', interactionId: 'interaction.operation.cap',
+    attemptIdentity: resumed, attempt: 2, callOrder: 6, toolName: 'search_context',
+    startedOffsetMs: 6, args: { query: 'synthetic' } }), (error) => error.code === 'TOOL_BUDGET_EXCEEDED')
+})
+
 test('SEM-F28/SEM-F34/J22: presentations are one receipt per session and history is opaque keyset pagination', (t) => {
   const { subtitleStore, store } = fixture(t)
   insertRun(subtitleStore.database, { runId: 'run.presentation', recipeId: 'summary.minutes', requestedBy: 'automatic', state: 'queued', attempt: 0, scopeReference: 'session.report' })
@@ -733,4 +847,20 @@ test('SEM-F33/J22: usageReporting=false rejects provider usage instead of estima
   const row = subtitleStore.database.prepare("SELECT usage_json, terminal_reason FROM formal_agent_interactions WHERE interaction_id='interaction.unknown-usage'").get()
   assert.equal(row.usage_json, null)
   assert.equal(row.terminal_reason, null)
+})
+
+test('SEM-F31/J29: history scope and recipe filters apply before pagination', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  for (const name of ['a', 'b', 'c']) {
+    insertRun(subtitleStore.database, { runId: `run.${name}`, scopeReference: name === 'b' ? 'session.other' : 'session.selected' })
+    store.createInteraction({ runId: `run.${name}`, interactionId: `interaction.${name}`, routingMode: 'preset', promptDigest: 'a'.repeat(64) })
+    store.terminalizeInteraction({ interactionId: `interaction.${name}`, attemptIdentity: attemptIdentity(`run.${name}`), terminalReason: 'succeeded', errorCode: null, result: qaResult(), usage: null, durationMs: 1 })
+  }
+  const scope = { kind: 'session', reference: 'session.selected' }
+  const first = store.listInteractions({ limit: 1, cursor: null, scope, recipeId: 'qa.answer' })
+  assert.equal(first.items[0].interactionId, 'interaction.a')
+  const second = store.listInteractions({ limit: 1, cursor: first.nextCursor, scope, recipeId: 'qa.answer' })
+  assert.deepEqual(second.items.map(item => item.interactionId), ['interaction.c'])
+  assert.equal(second.hasMore, false)
+  assert.equal(store.listInteractions({ limit: 10, cursor: null, scope, recipeId: 'summary.minutes' }).items.length, 0)
 })

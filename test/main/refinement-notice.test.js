@@ -28,11 +28,11 @@ test('notice copy reports a fault independently from whole-session coverage', ()
   })
   assert.equal(
     buildRefinementNotice('session-1', refinement({ refinedSegmentCount: 100 })).message,
-    '精修进程异常结束，但本次已生成 100/100 段精修稿'
+    '精修意外停止，但本次已生成 100/100 段精修稿'
   )
   assert.equal(
     buildRefinementNotice('session-1', refinement({ segmentCount: 0, refinedSegmentCount: 0 })).message,
-    '精修进程异常结束；本会话未产生可精修的已定稿字幕'
+    '精修意外停止；本会话未产生可精修的已保存字幕'
   )
   assert.equal(buildRefinementNotice('session-1', refinement({ refinementFaultCode: null })), null)
   assert.equal(buildRefinementNotice('session-1', refinement({ refinementResultStatus: 'not_recorded' })), null)

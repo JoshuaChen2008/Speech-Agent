@@ -54,6 +54,10 @@ function hostFactory (service, databasePath) {
     async getSessionTranscript (value) { return call(OPERATIONS.GET_SESSION, { sessionId: value }) },
     async personalContextResolve (request) { return call(OPERATIONS.PERSONAL_CONTEXT_RESOLVE, { request }) },
     async derivePersonalContextSessionSource (request) { return call(OPERATIONS.PERSONAL_CONTEXT_DERIVE_SESSION_SOURCE, { request }) },
+    async summaryInputPlan (request) { return call(OPERATIONS.SUMMARY_INPUT_PLAN, { request }) },
+    async personalContextQuestionEvidence (request) { return call(OPERATIONS.PERSONAL_CONTEXT_QUESTION_EVIDENCE, { request }) },
+    async readPersonalContextSessionRangePage (request) { return call(OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_RANGE_PAGE, { request }) },
+    async reserveFormalAgentModelRequest (request) { return call(OPERATIONS.FORMAL_AGENT_RESERVE_MODEL_REQUEST, { request }) },
     async readPersonalContextSessionInput (source) { return call(OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT, { source }) },
     async readPersonalContextToolContext (request) { return call(OPERATIONS.PERSONAL_CONTEXT_READ_TOOL_CONTEXT, { request }) },
     async claimNextFormalAgentRun (request) { return call(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request }) },
@@ -142,8 +146,9 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
         }
         assert.equal(recipe.recipeId, 'qa.answer')
         return { text: JSON.stringify({
-          schemaVersion: 1,
+          schemaVersion: 2,
           answer: '这是一次受控的会话回答。',
+          claims: [{ text: '这是一次受控的会话回答。', sourceRefs: [{ sessionId: 'session.s5.target', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }], memoryRefs: [] }], coverage: null,
           sourceRefs: [{ sessionId: 'session.s5.target', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }],
           memoryRefs: [], unresolved: []
         }) }
@@ -160,7 +165,9 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
   const executionAdapter = {
     resolve: (request) => gateway.personalContextResolve(request),
     readSessionInput: (source) => gateway.readPersonalContextSessionInput(source),
-    readToolContext: (request) => gateway.readPersonalContextToolContext(request)
+    readSessionRangePage: (request, signal) => gateway.readPersonalContextSessionRangePage(request, signal),
+    readToolContext: (request) => gateway.readPersonalContextToolContext(request),
+    questionEvidence: (request, signal) => gateway.personalContextQuestionEvidence(request, signal)
   }
   const prompts = new Map()
   const runner = new FormalAgentRunRunner({
@@ -305,6 +312,14 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
   assert.equal(history.result.items.length, 2)
   assert.equal(history.result.items.some((item) => item.interaction_id === submitted.result.interaction_id), true)
   assert.equal(history.result.items.some((item) => item.interaction_id === minutesSubmitted.result.interaction_id), true)
+  const scopedHistory = await agent.getHistory({ contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
+    limit: 1, cursor: null, scope: { kind: 'session', reference: 'session.s5.target' }, recipe_id: 'summary.minutes' })
+  assert.equal(scopedHistory.ok, true)
+  assert.deepEqual(scopedHistory.result.items.map(item => item.interaction_id), [minutesSubmitted.result.interaction_id])
+  const otherHistory = await agent.getHistory({ contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0',
+    limit: 1, cursor: null, scope: { kind: 'session', reference: 'session.without.results' } })
+  assert.equal(otherHistory.ok, true)
+  assert.deepEqual(otherHistory.result.items, [])
   const database = service.requireStore().database
   assert.equal(database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get(submitted.result.run_id).state, 'succeeded')
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM formal_agent_interactions WHERE run_id=? AND terminal_reason=\'succeeded\'').get(submitted.result.run_id).count, 1)
@@ -411,7 +426,7 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
       kind: 'final',
       t0: index * 10,
       t1: index * 10 + 9,
-      text: '合成字幕内容用于容量边界验证。'.repeat(5),
+      text: '合成字幕内容用于容量边界验证。'.repeat(80),
       translation: null
     })
   }
@@ -438,6 +453,7 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
   })
   assert.equal(largeDetail.ok, true)
   assert.equal(largeDetail.result.state, 'failed')
+  // Input above the whole-run text limit is rejected before model requests.
   assert.equal(largeDetail.result.error_code, 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED')
   assert.equal(providerCalls, providerCallsBeforeCapacityCheck, 'over-limit input must fail before the summary model is called')
   assert.equal(largeDetail.result.tool_calls.length, 0)

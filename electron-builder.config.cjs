@@ -30,7 +30,8 @@ module.exports = {
   ],
   asarUnpack: [
     'node_modules/sherpa-onnx-win-x64/**/*',
-    'src/native/caption-input/caption_input_native.node'
+    'src/native/caption-input/caption_input_native.node',
+    'src/native/memory-file/memory_file_native.node'
   ],
   win: {
     executableName: 'LiveSubtitle',

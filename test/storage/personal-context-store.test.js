@@ -9,6 +9,7 @@ const test = require('node:test')
 const { canonicalize, sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
 const { createPersonalContextModule } = require('../../src/agent/personal-context')
 const { ContextIngestSessionRunner } = require('../../src/agent/execution-host')
+const { readFrozenSummaryInput } = require('../../src/agent/execution-host/summary-input-source')
 const {
   PersonalContextStore,
   normalizeSemanticKey
@@ -84,6 +85,43 @@ function frozenSource (database, sessionId = 'session-1', transcriptVersion = 'r
   }
 }
 
+test('SEM-F39/J31-COVERAGE: raw range pages bound text and retain code point offsets across a long segment', async (t) => {
+  const { subtitleStore, store } = fixture(t)
+  const longText = '字幕 😀 e\u0301'.repeat(40000)
+  subtitleStore.openSession({ sessionId: 'session-1', sourceId: 'mic', startedAt: 10, refinementEnabled: false })
+  for (const [index, text] of [longText, '结尾'].entries()) {
+    subtitleStore.appendCaption({
+      schemaVersion: 1, sessionId: 'session-1', sourceId: 'mic',
+      segmentId: `segment-${index + 1}`, sequence: index + 1, revision: 1,
+      kind: 'final', t0: index * 10, t1: (index + 1) * 10, text, translation: null
+    })
+  }
+  subtitleStore.closeSession({ sessionId: 'session-1', sourceId: 'mic', endedAt: 40, state: 'closed' })
+  const source = frozenSource(subtitleStore.database)
+  let cursor = { afterEventOrder: 0, codePointOffset: 0, utf16Offset: 0 }
+  const fragments = []
+  for (let index = 0; index < 10; index += 1) {
+    const page = store.readSessionInputRangePage({ source, cursor })
+    assert.ok(page.events.length <= 500)
+    assert.ok(page.textBytes <= 256 * 1024)
+    fragments.push(...page.events)
+    if (page.done) break
+    assert.notDeepEqual(page.nextCursor, cursor)
+    cursor = page.nextCursor
+  }
+  const first = fragments.filter((item) => item.segmentId === 'segment-1')
+  assert.ok(first.length > 1)
+  assert.equal(first.map((part) => part.text).join(''), longText)
+  assert.equal(first.at(-1).codePointEnd, Array.from(longText).length)
+  assert.equal(fragments.some((item) => item.segmentId === 'segment-2'), true)
+  const input = await readFrozenSummaryInput({
+    readSessionRangePage: (request) => store.readSessionInputRangePage(request)
+  }, source)
+  assert.equal(input.inputDigest, source.inputDigest)
+  assert.equal(input.events[0].text, longText)
+  assert.equal(input.events[1].text, '结尾')
+})
+
 function entry (displayText) {
   return {
     display_text: displayText,
@@ -116,6 +154,9 @@ test('SEM-F26/SEM-F30/J21: ingest rereads a terminal source and replays one boun
       (SELECT COUNT(*) FROM personal_context_episodes) AS episodes,
       (SELECT COUNT(*) FROM personal_context_items) AS memories
   `).get() }, { runs: 1, episodes: 1, memories: 0 })
+  assert.deepEqual({ ...subtitleStore.database.prepare(`
+    SELECT max_attempts,retry_policy_version FROM formal_agent_runs WHERE run_id=?
+  `).get(first.runId) }, { max_attempts: 5, retry_policy_version: 'agent-retry@1' })
   const summary = subtitleStore.database.prepare('SELECT summary_json FROM personal_context_episodes').get().summary_json
   assert.ok(Buffer.byteLength(summary, 'utf8') < 8192)
   assert.doesNotMatch(summary, /synthetic committed/)
@@ -617,7 +658,7 @@ test('SEM-F28/J30-RECOVERY: renewal keeps the active attempt writable and reclai
   now = first.attemptIdentity.leaseExpiresAt + 1
   assert.ok(now < renewedAgain.attemptIdentity.leaseExpiresAt, 'the renewed database lease remains active after the original token expires')
   assert.equal(store.failFormalRun({
-    attemptIdentity: first.attemptIdentity, errorCode: 'AGENT_PROVIDER_UNAVAILABLE'
+    attemptIdentity: first.attemptIdentity, errorCode: 'AGENT_PROVIDER_UNAVAILABLE', elapsedMs: 12
   }).state, 'retry_wait')
 
   now = renewedAgain.attemptIdentity.leaseExpiresAt + 1

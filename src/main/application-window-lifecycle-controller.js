@@ -6,9 +6,9 @@ const {
   toolbarWindowViewportBounds
 } = require('./toolbar-dock-invariant')
 
-const PRIMARY_WINDOW_TITLE = 'Live Subtitle'
+const PRIMARY_WINDOW_TITLE = 'Speech-Agent'
 const WINDOWS_APP_USER_MODEL_ID = 'com.live-subtitle.desktop'
-const AUXILIARY_ROLES = Object.freeze(['settings', 'history'])
+const AUXILIARY_ROLES = Object.freeze(['settings', 'history', 'agent'])
 const AUXILIARY_BOUNDS_TOLERANCE_DIP = 1
 const POST_RESTORE_QUIET_MS = 250
 const POST_RESTORE_MAX_MS = 1000
@@ -87,6 +87,7 @@ class ApplicationWindowLifecycleController {
     getToolbarWindow,
     getSettingsWindow,
     getHistoryWindow,
+    getAgentWindow = () => null,
     stopInteractions,
     beginInteractionTransaction,
     resumeInteractions,
@@ -104,6 +105,7 @@ class ApplicationWindowLifecycleController {
       getToolbarWindow,
       getSettingsWindow,
       getHistoryWindow,
+      getAgentWindow,
       stopInteractions,
       beginInteractionTransaction,
       resumeInteractions,
@@ -125,6 +127,7 @@ class ApplicationWindowLifecycleController {
     this.getToolbarWindow = getToolbarWindow
     this.getSettingsWindow = getSettingsWindow
     this.getHistoryWindow = getHistoryWindow
+    this.getAgentWindow = getAgentWindow
     this.stopInteractions = stopInteractions
     this.beginInteractionTransaction = beginInteractionTransaction
     this.resumeInteractions = resumeInteractions
@@ -214,7 +217,8 @@ class ApplicationWindowLifecycleController {
     const caption = this.readWindowState(this.getCaptionWindow(), 'caption')
     const auxiliaries = [
       this.readWindowState(this.getSettingsWindow(), 'settings'),
-      this.readWindowState(this.getHistoryWindow(), 'history')
+      this.readWindowState(this.getHistoryWindow(), 'history'),
+      this.readWindowState(this.getAgentWindow(), 'agent')
     ]
     const focused = auxiliaries.find((entry) => entry.focused) ||
       (typeof primary.isFocused === 'function' && primary.isFocused()
@@ -240,7 +244,7 @@ class ApplicationWindowLifecycleController {
     })
     const caption = cloneEntry(state.caption, this.getCaptionWindow())
     const auxiliaries = state.auxiliaries.map((entry) => {
-      const win = entry.role === 'settings' ? this.getSettingsWindow() : this.getHistoryWindow()
+      const win = entry.role === 'settings' ? this.getSettingsWindow() : entry.role === 'agent' ? this.getAgentWindow() : this.getHistoryWindow()
       if (!isUsableWindow(win)) {
         return { ...entry, win, visible: false, focused: false, bounds: null }
       }

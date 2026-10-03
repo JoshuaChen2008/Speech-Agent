@@ -80,6 +80,8 @@ function serviceBackedHost (service, databasePath, onRenew) {
       onRenew?.(response.result)
       return response.result
     },
+    async summaryInputPlan (request) { return call(OPERATIONS.SUMMARY_INPUT_PLAN, { request }) },
+    async readPersonalContextSessionRangePage (request) { return call(OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_RANGE_PAGE, { request }) },
     async reserveFormalAgentModelRequest (request) { return call(OPERATIONS.FORMAL_AGENT_RESERVE_MODEL_REQUEST, { request }) },
     async nextFormalAgentRunAt (request) { return call(OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT, request) },
     async failFormalAgentRun (request) { return call(OPERATIONS.FORMAL_AGENT_FAIL_RUN, { request }) },
@@ -120,9 +122,10 @@ function createVault (directory) {
 function tick () { return new Promise((resolve) => setImmediate(resolve)) }
 
 async function waitFor (predicate, description) {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+  const deadline = Date.now() + 5000
+  while (Date.now() < deadline) {
     if (await predicate()) return
-    await tick()
+    await new Promise((resolve) => setTimeout(resolve, 10))
   }
   throw new Error(`timed out waiting for ${description}`)
 }
@@ -244,7 +247,10 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   const renewalResults = []
   let gateway = new StorageGateway({ databasePath, hostFactory: () => serviceBackedHost(service, databasePath, (result) => renewalResults.push(result)), maxRestarts: 0 })
   let activeVault = createVault(vaultPath)
+  let system = null
   t.after(async () => {
+    await system?.scheduler.stop()
+    await diagnosticStore.drain()
     if (activeVault) activeVault.close()
     if (gateway) await gateway.shutdown().catch(() => gateway.terminate())
     fs.rmSync(root, { recursive: true, force: true })
@@ -253,6 +259,8 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   let runBeingExecuted = null
   let providerAttempt = 0
   let rejectWithPrivacyMarkers = false
+  let providerFailureCode = null
+  let exhaustNextRun = false
   let resolvePrivacyFailureEgress
   const privacyFailureEgress = new Promise((resolve) => { resolvePrivacyFailureEgress = resolve })
   let resolveFirstEgress
@@ -269,16 +277,12 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
       `).get(runBeingExecuted.runId, providerAttempt)
       assert.ok(reservation, 'model request reservation is durable before provider egress')
       egress.push({ attempt: providerAttempt, reservationPresent: true })
+      if (providerFailureCode) {
+        return { ok: false, status: providerFailureCode === 'AGENT_PROVIDER_AUTH_FAILED' ? 401 : 503 }
+      }
       if (rejectWithPrivacyMarkers) {
         resolvePrivacyFailureEgress({ runId: runBeingExecuted.runId, attempt: providerAttempt, reservationPresent: true })
-        const error = Object.assign(new Error(DIAGNOSTIC_PRIVACY_MARKERS.exceptionMessage), {
-          code: 'AGENT_PERMISSION_DENIED',
-          providerResponse: DIAGNOSTIC_PRIVACY_MARKERS.providerResponse,
-          toolArguments: DIAGNOSTIC_PRIVACY_MARKERS.toolArguments,
-          toolResult: DIAGNOSTIC_PRIVACY_MARKERS.toolResult
-        })
-        error.stack = `Error: ${DIAGNOSTIC_PRIVACY_MARKERS.exceptionMessage}\n  ${DIAGNOSTIC_PRIVACY_MARKERS.exceptionStack}`
-        throw error
+        return { ok: false, status: 400, text: async () => DIAGNOSTIC_PRIVACY_MARKERS.providerResponse }
       }
       if (providerAttempt === 1) {
         resolveFirstEgress()
@@ -289,7 +293,7 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
         ok: true,
         status: 200,
         headers: { get: () => null },
-        text: async () => JSON.stringify({ choices: [{ message: { content: JSON.stringify(output) } }] })
+        text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(output) } }] })
       }
     }
   })
@@ -328,7 +332,7 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   })
   await recorder.closeSession({ sessionId: 'session.summary.budget', sourceId: 'mic', state: 'closed' })
 
-  let system = createExecutionSystem({
+  system = createExecutionSystem({
     gateway, modelAccess, config, promptStore: new Map(), owner: 'owner.j30.budget.first',
     diagnosticStore,
     leaseRenewEveryMs: 10,
@@ -404,7 +408,14 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   system = createExecutionSystem({
     gateway, modelAccess, config, promptStore: new Map(), owner: 'owner.j30.budget.restarted',
     diagnosticStore,
-    onJob: (job) => { runBeingExecuted = job.attemptIdentity; providerAttempt = job.attemptIdentity.attempt }
+    onJob: (job) => {
+      runBeingExecuted = job.attemptIdentity
+      providerAttempt = job.attemptIdentity.attempt
+      if (exhaustNextRun) {
+        service.requireStore().database.prepare('UPDATE formal_agent_runs SET max_attempts=1 WHERE run_id=?').run(job.runId)
+        exhaustNextRun = false
+      }
+    }
   })
   assert.equal(await system.summaryRuns.recoverAfterRestart(), 1)
   const recoveredRequest = await gateway.getSessionSummaryRequest({ requestId })
@@ -461,7 +472,12 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
     SELECT max_wall_clock_ms,settled_elapsed_ms,conservative_elapsed_ms
     FROM formal_agent_run_budget_state WHERE run_id=?
   `).get(runId)
-  assert.equal(Number(currentBudget.max_wall_clock_ms) - Number(currentBudget.settled_elapsed_ms) - Number(currentBudget.conservative_elapsed_ms) <= 30000, true)
+  // summary.minutes@2 runs keep the registered 120-minute run limit (2026-09-29
+  // light plan); restart and explicit continuation must still preserve the
+  // accumulated accounting instead of resetting it.
+  assert.equal(Number(currentBudget.max_wall_clock_ms), 120 * 60 * 1000)
+  assert.equal(Number(currentBudget.conservative_elapsed_ms), 30000)
+  assert.equal(Number(currentBudget.max_wall_clock_ms) - Number(currentBudget.settled_elapsed_ms) - Number(currentBudget.conservative_elapsed_ms) > 0, true)
 
   rejectWithPrivacyMarkers = true
   const providerFailureAccepted = await system.summaryRuns.accept({
@@ -480,12 +496,12 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   assert.deepEqual(providerFailureEgress, { runId: providerFailureRunId, attempt: 1, reservationPresent: true })
   await waitFor(async () => (await gateway.getSessionSummaryRequest({ requestId: providerFailureRequestId })).state === 'failed', 'provider exception request failure')
   const providerFailureRequest = await gateway.getSessionSummaryRequest({ requestId: providerFailureRequestId })
-  assert.equal(providerFailureRequest.errorCode, 'AGENT_PERMISSION_DENIED')
+  assert.equal(providerFailureRequest.errorCode, 'AGENT_REQUEST_INVALID')
   assert.equal(diagnosticStore.getStatus().available, true)
   assert.equal(await diagnosticStore.drain(), true)
   const providerFailureDiagnostics = await diagnosticStore.recordsForRequestDigest(providerFailureRequest.requestDigest)
   assert.equal(providerFailureDiagnostics.available, true)
-  assert.equal(providerFailureDiagnostics.records.some((record) => record.errorCode === 'AGENT_PERMISSION_DENIED'), true)
+  assert.equal(providerFailureDiagnostics.records.some((record) => record.errorCode === 'AGENT_REQUEST_INVALID'), true)
   const providerFailureExportPath = path.join(root, 'selected-provider-error-diagnostics.json')
   const providerFailureExport = await diagnosticStore.exportRequest({
     requestDigest: providerFailureRequest.requestDigest,
@@ -505,6 +521,73 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   for (const marker of Object.values(DIAGNOSTIC_PRIVACY_MARKERS)) {
     assert.equal(providerFailureExportBytes.includes(marker), false)
   }
+
+  rejectWithPrivacyMarkers = false
+  providerFailureCode = 'AGENT_PROVIDER_UNAVAILABLE'
+  const retryableAccepted = await system.summaryRuns.accept({
+    contract_id: summaryContract.CONTRACT_ID,
+    contract_version: summaryContract.CONTRACT_VERSION,
+    action: 'summary',
+    scope: { kind: 'session', reference: 'session.summary.budget' },
+    client_request_key: 'j30-retryable-provider-error'
+  })
+  assert.equal(retryableAccepted.ok, true)
+  const retryableRequestId = retryableAccepted.result.snapshot.request_id
+  await waitFor(async () => {
+    const request = await gateway.getSessionSummaryRequest({ requestId: retryableRequestId })
+    return request.state === 'running' && request.phase === 'retry_wait' && request.retry?.requestAttempt >= 2
+  }, 'provider retry wait')
+  const retryableBeforeCancel = await gateway.getSessionSummaryRequest({ requestId: retryableRequestId })
+  assert.equal(retryableBeforeCancel.errorCode, null)
+  const retryableRunId = retryableBeforeCancel.targetRunId
+  const cancelledRetryable = await system.summaryRuns.cancel({
+    contract_id: summaryContract.CONTRACT_ID,
+    contract_version: summaryContract.CONTRACT_VERSION,
+    request_id: retryableRequestId,
+    generation: retryableBeforeCancel.generation
+  })
+  assert.equal(cancelledRetryable.result.snapshot.state, 'cancelled')
+  const retryableRun = service.requireStore().database.prepare('SELECT state,lease_owner FROM formal_agent_runs WHERE run_id=?').get(retryableRunId)
+  assert.equal(retryableRun.state, 'cancelled')
+  assert.equal(retryableRun.lease_owner, null)
+
+  exhaustNextRun = true
+  const exhaustedAccepted = await system.summaryRuns.accept({
+    contract_id: summaryContract.CONTRACT_ID,
+    contract_version: summaryContract.CONTRACT_VERSION,
+    action: 'summary',
+    scope: { kind: 'session', reference: 'session.summary.budget' },
+    client_request_key: 'j30-exhausted-provider-error'
+  })
+  assert.equal(exhaustedAccepted.ok, true)
+  const exhaustedRequestId = exhaustedAccepted.result.snapshot.request_id
+  await waitFor(async () => (await gateway.getSessionSummaryRequest({ requestId: exhaustedRequestId })).targetRunId !== null, 'exhausted target creation')
+  const exhaustedRunId = (await gateway.getSessionSummaryRequest({ requestId: exhaustedRequestId })).targetRunId
+  await waitFor(async () => (await gateway.getSessionSummaryRequest({ requestId: exhaustedRequestId })).state === 'failed', 'retry exhaustion settlement')
+  const exhaustedRun = service.requireStore().database.prepare('SELECT state,error_code FROM formal_agent_runs WHERE run_id=?').get(exhaustedRunId)
+  const exhaustedInteraction = service.requireStore().database.prepare('SELECT terminal_reason,error_code,result_json FROM formal_agent_interactions WHERE run_id=?').get(exhaustedRunId)
+  // 2026-09-29 light plan: summary.minutes@2 reserves up to 512 requests per
+  // attempt, so the five transport retries settle honestly as the provider
+  // error instead of tripping the legacy per-attempt request cap; the run and
+  // interaction still share the same failure with zero minutes.
+  assert.deepEqual({ ...exhaustedRun }, { state: 'failed', error_code: 'AGENT_PROVIDER_UNAVAILABLE' })
+  assert.deepEqual({ ...exhaustedInteraction }, { terminal_reason: 'failed', error_code: 'AGENT_PROVIDER_UNAVAILABLE', result_json: null })
+
+  providerFailureCode = 'AGENT_PROVIDER_AUTH_FAILED'
+  const authAccepted = await system.summaryRuns.accept({
+    contract_id: summaryContract.CONTRACT_ID,
+    contract_version: summaryContract.CONTRACT_VERSION,
+    action: 'summary',
+    scope: { kind: 'session', reference: 'session.summary.budget' },
+    client_request_key: 'j30-auth-provider-error'
+  })
+  assert.equal(authAccepted.ok, true)
+  const authRequestId = authAccepted.result.snapshot.request_id
+  await waitFor(async () => (await gateway.getSessionSummaryRequest({ requestId: authRequestId })).state === 'failed', 'credential rejection terminal state')
+  const authRequest = await gateway.getSessionSummaryRequest({ requestId: authRequestId })
+  assert.equal(authRequest.errorCode, 'AGENT_PROVIDER_AUTH_FAILED')
+  const authRun = service.requireStore().database.prepare('SELECT attempt_count,state FROM formal_agent_runs WHERE run_id=?').get(authRequest.targetRunId)
+  assert.deepEqual({ ...authRun }, { attempt_count: 1, state: 'failed' })
 
   const afterAgentRecorder = new SqliteSessionRecorder({ gateway, now: () => 1770000000000 })
   await afterAgentRecorder.openSession({ sessionId: 'session.subtitle.after-agent', sourceId: 'mic', refinementEnabled: false })
@@ -532,4 +615,274 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   assert.deepEqual(sequences, [...sequences].sort((left, right) => left - right))
   assert.equal(new Set(sequences).size, sequences.length)
   gateway = null
+})
+
+test('SEM-F38/SEM-F39/J30-CANCEL/J31-SIZE: the production chain commits exactly one minutes and never on cancel or late success', { timeout: 60000 }, async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'session-summary-minutes-j30-'))
+  const databasePath = path.join(root, 'speech-agent.sqlite3')
+  const config = new ConfigStore(path.join(root, 'config.json'), { now: () => 1770000000000 })
+  config.load()
+  config.updateAgentSettings({
+    expectedRevision: config.get().agentSettingsRevision,
+    agentEnabled: true,
+    memoryEnabled: false,
+    cloudDisclosureAccepted: false
+  })
+  const service = new StorageWorkerService()
+  const gateway = new StorageGateway({ databasePath, hostFactory: () => serviceBackedHost(service, databasePath), maxRestarts: 0 })
+  const vault = createVault(path.join(root, 'vault'))
+  t.after(async () => {
+    await system?.scheduler.stop()
+    vault.close()
+    await gateway.shutdown().catch(() => gateway.terminate())
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  const sourceRef = { sessionId: 'session.summary.minutes', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }
+  const minutes = {
+    schemaVersion: 1,
+    overview: '真实链路生成的受控纪要。',
+    conclusions: [{ text: '形成一个受控结论。', sourceRefs: [sourceRef] }],
+    todos: [], risks: []
+  }
+  const captured = []
+  let holdEgress = null
+  let releaseEgress = null
+  let respondWith = () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(minutes) } }] })
+  })
+  const adapter = new OpenAiCompatibleAdapter({
+    fetch: async (_url, options) => {
+      captured.push(JSON.parse(options.body))
+      if (holdEgress) await holdEgress
+      return respondWith()
+    }
+  })
+  await gateway.start()
+  const modelAccess = new ModelAccessRuntime({ gateway, vault, adapter })
+  await modelAccess.initialize()
+  const configureModel = async () => {
+    const commands = [
+      { type: 'createProfile', profileId: 'summary-provider', label: 'Summary Test Provider', httpsOrigin: 'https://provider.test', basePath: '/v1' },
+      { type: 'addModel', profileId: 'summary-provider', modelId: 'summary-test-model', capabilities: CAPABILITIES },
+      { type: 'setCredential', profileId: 'summary-provider', credential: 'synthetic-provider-credential' },
+      { type: 'assignPurpose', purpose: 'summary', target: { profileId: 'summary-provider', modelId: 'summary-test-model' } }
+    ]
+    for (const command of commands) {
+      const catalog = await modelAccess.catalog()
+      const result = await modelAccess.configure({ ...command, expectedRevision: catalog.snapshot.revision })
+      assert.equal(result.ok, true)
+    }
+  }
+  await configureModel(modelAccess)
+  const recorder = new SqliteSessionRecorder({ gateway, now: () => 1770000000000 })
+  await recorder.openSession({ sessionId: 'session.summary.minutes', sourceId: 'mic', refinementEnabled: false })
+  await recorder.acceptCaption({
+    schemaVersion: 1,
+    sessionId: 'session.summary.minutes',
+    sourceId: 'mic',
+    segmentId: 'segment.summary.minutes',
+    sequence: 1,
+    revision: 1,
+    kind: 'final',
+    t0: 0,
+    t1: 10,
+    text: 'synthetic committed caption',
+    translation: null
+  })
+  await recorder.closeSession({ sessionId: 'session.summary.minutes', sourceId: 'mic', state: 'closed' })
+
+  let system = null
+  const acceptSummary = async (clientKey) => {
+    const accepted = await system.summaryRuns.accept({
+      contract_id: summaryContract.CONTRACT_ID,
+      contract_version: summaryContract.CONTRACT_VERSION,
+      action: 'summary',
+      scope: { kind: 'session', reference: 'session.summary.minutes' },
+      client_request_key: clientKey
+    })
+    assert.equal(accepted.ok, true)
+    const requestId = accepted.result.snapshot.request_id
+    await waitFor(async () => (await gateway.getSessionSummaryRequest({ requestId })).targetRunId !== null, 'target run creation')
+    return { requestId, runId: (await gateway.getSessionSummaryRequest({ requestId })).targetRunId }
+  }
+  const interactionRowsFor = (runId) => service.requireStore().database.prepare(`
+    SELECT terminal_reason, error_code, result_json FROM formal_agent_interactions WHERE run_id=?
+  `).all(runId)
+
+  system = createExecutionSystem({
+    gateway, modelAccess, config, promptStore: new Map(), owner: 'owner.j30.minutes'
+  })
+
+  // A successful v2 summary request sends the JSON output directive as the
+  // system prompt, the derived output quota, and the full frozen input, and
+  // commits exactly one minutes row.
+  const success = await acceptSummary('j30-minutes-success')
+  system.scheduler.start()
+  await waitFor(async () => (await gateway.getSessionSummaryRequest({ requestId: success.requestId })).state === 'succeeded', 'success settlement')
+  assert.equal(captured.length, 1)
+  assert.equal(captured[0].messages[0].role, 'system')
+  assert.equal(captured[0].messages[0].content.includes('只输出一个 JSON 对象'), true)
+  assert.equal(captured[0].messages[0].content.includes('schemaVersion'), true)
+  assert.equal(captured[0].messages[0].content.includes('不得编造'), true)
+  assert.equal(captured[0].max_tokens, 4096, 'the 4096 output capability caps the derived 8192 target')
+  assert.equal(captured[0].messages[1].role, 'user')
+  assert.equal(captured[0].messages[1].content.includes('session.summary.minutes'), true)
+  assert.equal(captured[0].messages[1].content.includes('"inputDigest"'), true)
+  const successRows = interactionRowsFor(success.runId)
+  assert.equal(successRows.length, 1)
+  assert.equal(successRows[0].terminal_reason, 'succeeded')
+  assert.deepEqual(JSON.parse(successRows[0].result_json), minutes)
+
+  // Cancelling an already succeeded request returns the succeeded fact and
+  // keeps the committed minutes.
+  const lateCancel = await system.summaryRuns.cancel({
+    contract_id: summaryContract.CONTRACT_ID,
+    contract_version: summaryContract.CONTRACT_VERSION,
+    request_id: success.requestId,
+    generation: (await gateway.getSessionSummaryRequest({ requestId: success.requestId })).generation
+  })
+  assert.equal(lateCancel.ok, true)
+  assert.equal(lateCancel.result.snapshot.state, 'succeeded')
+  assert.equal(JSON.parse(interactionRowsFor(success.runId)[0].result_json).overview, minutes.overview)
+
+  // A cancel that wins the race keeps the late provider success from committing
+  // any minutes.
+  holdEgress = new Promise((resolve) => { releaseEgress = resolve })
+  const cancelled = await acceptSummary('j30-minutes-cancelled')
+  await waitFor(() => captured.length === 2, 'cancelled scenario egress')
+  const cancelOutcome = await system.summaryRuns.cancel({
+    contract_id: summaryContract.CONTRACT_ID,
+    contract_version: summaryContract.CONTRACT_VERSION,
+    request_id: cancelled.requestId,
+    generation: (await gateway.getSessionSummaryRequest({ requestId: cancelled.requestId })).generation
+  })
+  assert.equal(cancelOutcome.ok, true)
+  assert.equal(cancelOutcome.result.snapshot.state, 'cancelled')
+  await waitFor(async () => {
+    const run = service.requireStore().database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get(cancelled.runId)
+    return run && run.state === 'cancelled'
+  }, 'cancelled run settlement')
+  releaseEgress()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  const cancelledRows = interactionRowsFor(cancelled.runId)
+  assert.equal(cancelledRows.some((row) => row.terminal_reason === 'succeeded'), false)
+  assert.equal(cancelledRows.every((row) => row.result_json === null), true)
+  const cancelledRun = service.requireStore().database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get(cancelled.runId)
+  assert.equal(cancelledRun.state, 'cancelled')
+
+  // The subtitle session stays independent and the model request never widens
+  // beyond the frozen binding capability.
+  assert.equal((await gateway.getSessionTranscript('session.summary.minutes')).session.state, 'closed')
+  await system.scheduler.stop()
+  system = null
+})
+
+
+test('SEM-F39/J31-COVERAGE/MERGE/BUDGET: long input traverses real storage, planner, Loop and atomic publication', { timeout: 20000 }, async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'j31-long-'))
+  const databasePath = path.join(root, 'speech-agent.sqlite3')
+  const service = new StorageWorkerService()
+  const gateway = new StorageGateway({ databasePath, hostFactory: () => serviceBackedHost(service, databasePath), maxRestarts: 0 })
+  const vault = createVault(path.join(root, 'vault'))
+  const config = new ConfigStore(path.join(root, 'config.json'), { now: () => 1770000000000 })
+  config.load()
+  config.updateAgentSettings({ expectedRevision: config.get().agentSettingsRevision, agentEnabled: true, memoryEnabled: false, cloudDisclosureAccepted: false })
+  let system
+  t.after(async () => {
+    await system?.scheduler.stop()
+    vault.close()
+    await gateway.shutdown().catch(() => gateway.terminate())
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  let mode = 'success'
+  const sent = []
+  const minutes = { schemaVersion: 1, overview: '合成纪要', conclusions: [], todos: [], risks: [] }
+  const adapter = new OpenAiCompatibleAdapter({ fetch: async (_url, options) => {
+    const body = JSON.parse(options.body)
+    const node = JSON.parse(body.messages[1].content).summaryPlan
+    sent.push(node)
+    assert.ok(Buffer.byteLength(options.body) <= 512 * 1024)
+    if (mode === 'failure' && sent.length === 2) return { ok: false, status: 400 }
+    return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({
+      choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(minutes) } }],
+      ...(mode === 'unknown' ? {} : { usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 } })
+    }) }
+  } })
+  await gateway.start()
+  const modelAccess = new ModelAccessRuntime({ gateway, vault, adapter })
+  await modelAccess.initialize()
+  for (const command of [
+    { type: 'createProfile', profileId: 'long-provider', label: 'Long input', httpsOrigin: 'https://provider.test', basePath: '/v1' },
+    { type: 'addModel', profileId: 'long-provider', modelId: 'long-model', capabilities: { ...CAPABILITIES, maxInputTokens: 65536, usageReporting: true } },
+    { type: 'setCredential', profileId: 'long-provider', credential: 'synthetic-credential' },
+    { type: 'assignPurpose', purpose: 'summary', target: { profileId: 'long-provider', modelId: 'long-model' } }
+  ]) {
+    const catalog = await modelAccess.catalog()
+    assert.equal((await modelAccess.configure({ ...command, expectedRevision: catalog.snapshot.revision })).ok, true)
+  }
+  const sessionId = 'session.j31.long'
+  const recorder = new SqliteSessionRecorder({ gateway, now: () => 1770000000000 })
+  await recorder.openSession({ sessionId, sourceId: 'mic', refinementEnabled: false })
+  const original = []
+  for (let index = 0; index < 128; index++) {
+    const text = 'a'.repeat(index === 127 ? 173827 - 127 * 1358 : 1358)
+    original.push(text)
+    await recorder.acceptCaption({ schemaVersion: 1, sessionId, sourceId: 'mic', segmentId: `segment.${index}`, sequence: index + 1,
+      revision: 1, kind: 'final', t0: index * 140000, t1: index * 140000 + 100, text, translation: null })
+  }
+  await recorder.closeSession({ sessionId, sourceId: 'mic', state: 'closed' })
+  system = createExecutionSystem({ gateway, modelAccess, config, promptStore: new Map(), owner: 'owner.j31.long' })
+  const run = async (key, legacy = false) => {
+    const accepted = await system.summaryRuns.accept({ contract_id: summaryContract.CONTRACT_ID, contract_version: summaryContract.CONTRACT_VERSION,
+      action: 'summary', scope: { kind: 'session', reference: sessionId }, client_request_key: key })
+    assert.equal(accepted.ok, true)
+    const requestId = accepted.result.snapshot.request_id
+    if (legacy) {
+      await waitFor(async () => (await gateway.getSessionSummaryRequest({ requestId })).targetRunId !== null, 'legacy run prepared')
+      assert.equal(service.requireStore().database.prepare("UPDATE formal_agent_runs SET summary_input_policy=NULL,max_attempts=5 WHERE session_summary_request_id=?").run(requestId).changes, 1)
+    }
+    system.scheduler.start()
+    await waitFor(async () => ['succeeded', 'failed'].includes((await gateway.getSessionSummaryRequest({ requestId })).state), 'long summary terminal')
+    const request = await gateway.getSessionSummaryRequest({ requestId })
+    const db = service.requireStore().database
+    const interaction = db.prepare('SELECT * FROM formal_agent_interactions WHERE run_id=?').get(request.targetRunId)
+    return { request, interaction, db }
+  }
+  const legacy = await run('j31-long-legacy', true)
+  assert.equal(legacy.request.state, 'failed')
+  assert.equal(legacy.interaction.summary_input_limit_error, 1)
+  assert.equal(sent.length, 0)
+  const success = await run('j31-long-success')
+  assert.equal(success.request.state, 'succeeded', success.interaction.error_code)
+  const leaves = sent.filter(node => node.stage === 'leaf')
+  assert.ok(leaves.length > 1)
+  assert.equal(leaves.flatMap(node => node.parts).map(part => part.text).join(''), original.join(''))
+  assert.equal(sent.at(-1).stage, 'merge')
+  assert.deepEqual(JSON.parse(success.interaction.result_json), minutes)
+  assert.equal(JSON.parse(success.interaction.usage_json).inputTokens, sent.length * 100)
+  const plan = success.db.prepare('SELECT * FROM formal_agent_run_input_plans WHERE run_id=?').get(success.request.targetRunId)
+  assert.equal(plan.policy_version, 'summary-long-input@1')
+  assert.equal(plan.raw_text_bytes, 173827)
+  assert.equal(plan.leaf_count, leaves.length)
+  assert.equal(success.request.validatedChunkCount, leaves.length)
+  assert.equal(success.db.prepare('SELECT max_attempts FROM formal_agent_runs WHERE run_id=?').get(success.request.targetRunId).max_attempts, 2)
+  const { buildExportSnapshot } = require('../../src/agent/formal-run/agent-interaction-exporter')
+  const detail = await gateway.getAgentInteraction({ interactionId: success.interaction.interaction_id })
+  const exported = buildExportSnapshot(detail, success.interaction.interaction_id)
+  assert.equal(exported.schema_version, 3)
+  assert.equal(exported.summary_input_plan.plan_digest, plan.plan_digest)
+  assert.equal(exported.summary_input_policy, 'summary-long-input@1')
+  mode = 'unknown'; sent.length = 0
+  const unknown = await run('j31-long-unknown')
+  assert.equal(unknown.request.state, 'succeeded')
+  assert.equal(unknown.interaction.usage_json, null)
+  mode = 'failure'; sent.length = 0
+  const failure = await run('j31-long-failure')
+  assert.equal(failure.request.state, 'failed')
+  assert.equal(failure.interaction.result_json, null)
+  assert.equal(sent.length, 2)
 })

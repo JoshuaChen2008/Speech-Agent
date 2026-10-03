@@ -52,6 +52,7 @@ PLAN 或 README 落后于语义合同时，以语义合同为准，并把差异�
 
 | 改动类型 | 必读（本文 + `CONTEXT.md` + 以下） | 主要代码 | 明确跳过 |
 |---|---|---|---|
+| **会话总结 / Agent 运行反馈 / 取消 / 长输入 / 诊断** | SEM-F28/F31/F33/F38/F39/F40 及「会话总结运行与长输入增量」；ADR 0009/0016/0021；testing-strategy 的 J29/J30/J31；`openspec/changes/fix-session-summary-lifecycle-and-long-input/design.md`（实施边界与既有缺口） | `src/agent/agent-view.tsx`、`formal-run/*`、`execution-host/*`、`contracts/budget-axes.js`、main/preload、storage worker；存储改动另走下一行存储路由 | PLAN、handoff、字幕排版与音频实现细节 |
 | **字幕窗显示 / 排版 / 溢出** | SEM-F03/F04/F11/F20 四行；`subtitle-flow-and-transcript-versions.md` 全文（6KB）；`subtitle-window.md` §3 §5 §6；testing-strategy 的 J15 行 | `src/caption/*`、`src/ui/shared/caption-reducer.js`、`appearance.js`、`tokens.css`（只看 `--fs` `--lh-caption` `--line-gap` `--fs-caption-ratio-prev`）、`src/preload/caption.js` | PLAN、handoff、data-architecture、runtime-architecture |
 | **字幕事件 / 状态契约** | SEM-F03/F04/F06；`runtime-architecture.md` §6 | `src/contracts/caption-event.js`、`caption-state.js`、`src/contracts/fixtures/` | PLAN、README、UI 文档 |
 | **存储 / 投影 / 历史 / 导出** | SEM-F07/F11/T08；`data-architecture.md` §3 §4 §5 §6；ADR 0001；testing-strategy 的 J10 行 | `src/runtime/storage-worker/{schema,subtitle-store,protocol,worker-service}.js`、`storage-gateway.js`、`sqlite-session-recorder.js`、`history-service.js`、`src/history/history.js` | subtitle-window、ui-design-brief |

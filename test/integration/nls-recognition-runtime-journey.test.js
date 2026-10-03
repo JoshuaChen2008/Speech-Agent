@@ -20,6 +20,7 @@ const { SqliteSessionRecorder } = require('../../src/main/services/sqlite-sessio
 const { HistoryService } = require('../../src/main/services/history-service')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
 const { OPERATIONS } = require('../../src/runtime/storage-worker/protocol')
+const { buildRuntimeView } = require('../../src/ui/shared/runtime-view')
 
 const turn = () => new Promise(resolve => setImmediate(resolve))
 async function until (predicate) {
@@ -57,6 +58,8 @@ function boundaries () {
   const sockets = []; const captures = []; const children = []
   let rejectOpen = false
   let storageUnavailable = false
+  let holdLocalConfiguration = false
+  let failLocalConfiguration = false
   class Socket extends EventEmitter {
     constructor () { super(); this.bufferedAmount = 0; this.bytes = 0; this.commands = []; sockets.push(this); setImmediate(() => this.emit('open')) }
     send (data, options, callback) {
@@ -86,7 +89,11 @@ function boundaries () {
     const a = new EventEmitter(); const b = new EventEmitter()
     for (const [port, peer] of [[a, b], [b, a]]) {
       port.postMessage = data => setImmediate(() => { if (!peer.closed) peer.emit('message', { data: structuredClone(data) }) })
-      port.start = () => {}; port.close = () => { port.closed = true; port.removeAllListeners() }
+      port.start = () => {}; port.close = () => {
+        if (port.closed) return
+        port.closed = true; port.removeAllListeners()
+        setImmediate(() => { if (!peer.closed) peer.emit('close') })
+      }
     }
     this.port1 = a; this.port2 = b
   }
@@ -94,6 +101,7 @@ function boundaries () {
     MessageChannelMain,
     utilityProcess: { fork (workerPath) {
       const child = new EventEmitter(); children.push(child)
+      child.once('exit', code => { child.exitCode = code })
       if (workerPath.includes('storage-worker')) {
         const service = new StorageWorkerService()
         child.storage = true
@@ -111,7 +119,38 @@ function boundaries () {
         const parentPort = new EventEmitter(); const timers = new Set()
         parentPort.postMessage = data => setImmediate(() => child.emit('message', structuredClone(data)))
         const processBoundary = { parentPort, exit: code => { for (const timer of timers) clearInterval(timer); setImmediate(() => child.emit('exit', code)) } }
-        child.postMessage = (data, ports = []) => setImmediate(() => parentPort.emit('message', { data: structuredClone(data), ports }))
+        const deliver = (data, ports) => setImmediate(() => parentPort.emit('message', { data: structuredClone(data), ports }))
+        child.frames = []
+        child.postMessage = (data, ports = []) => {
+          if (data.type === 'configure') {
+            child.configuration = structuredClone(data)
+            if (!data.cloudAudio && failLocalConfiguration) {
+              failLocalConfiguration = false
+              setImmediate(() => processBoundary.exit(1))
+              return
+            }
+            if (!data.cloudAudio && holdLocalConfiguration) {
+              holdLocalConfiguration = false
+              const held = []
+              child.releaseConfiguration = () => {
+                child.releaseConfiguration = null
+                deliver(data, ports)
+                for (const [request, requestPorts] of held) deliver(request, requestPorts)
+              }
+              child.held = held
+              return
+            }
+          }
+          if (data.type === 'shutdown' && child.releaseConfiguration) { child.held.push([data, ports]); return }
+          if (data.type === 'pcm-port') {
+            child.pcmPort = ports[0]
+            ports[0].on('message', ({ data: message }) => {
+              if (message.type === 'frame') child.frames.push({ sequence: message.sequence,
+                timestampSeconds: message.timestampSeconds, sampleCount: message.sampleCount })
+            })
+          }
+          deliver(data, ports)
+        }
         child.kill = () => processBoundary.exit(0)
         const execute = new Function('require', 'process', 'setInterval', fs.readFileSync(workerPath, 'utf8'))
         execute(createRequire(workerPath), processBoundary, (...args) => { const timer = setInterval(...args); timers.add(timer); return timer })
@@ -149,10 +188,12 @@ function boundaries () {
     }
   }
   return { electron, Socket, sockets, captures, children, rejectOpen: () => { rejectOpen = true },
+    holdLocalConfiguration: () => { holdLocalConfiguration = true },
+    failLocalConfiguration: () => { failLocalConfiguration = true },
     setStorageUnavailable: value => { storageUnavailable = value } }
 }
 
-async function fixture (t, sourceId = 'mic', providerOptions = {}) {
+async function fixture (t, sourceId = 'mic', providerOptions = {}, adapterOptions = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nls-runtime-'))
   const b = boundaries()
   let coordinator
@@ -166,13 +207,178 @@ async function fixture (t, sourceId = 'mic', providerOptions = {}) {
   gateway.hostFactory = options => new StorageWorkerHost({ ...options, electron: b.electron })
   const recorder = new SqliteSessionRecorder({ gateway })
   const adapter = new RecognitionRuntimeAdapter({ electron: b.electron, recognitionSettings: settings,
-    providerFactory: options => new NlsRealtimeProvider({ ...options, WebSocket: b.Socket, timeoutMs: 300, ...providerOptions }) })
+    providerFactory: options => new NlsRealtimeProvider({ ...options, WebSocket: b.Socket, timeoutMs: 300, ...providerOptions }), ...adapterOptions })
   coordinator = new SessionCoordinator({ adapter, recognitionSettings: settings, persistenceSink: recorder,
     runtimeOptions: resolveRuntimeOptions({ LIVE_SUBTITLE_DEV_MODEL: DEV_MODEL_VALUE }),
     configuration: { onboardingCompleted: true, onboardingPreset: sourceId === 'mic' ? 'dictation' : 'meeting', mic: sourceId === 'mic', loopback: sourceId === 'loopback' } })
   t.after(async () => { await coordinator.dispose(); await gateway.shutdown(); settings.close(); fs.rmSync(directory, { recursive: true, force: true }) })
   return { ...b, coordinator, adapter, settings, gateway, history: new HistoryService({ gateway, showSaveDialog: async () => ({ canceled: true }) }) }
 }
+
+test('SEM-F17/F21/J20 cloud start excludes local model and VAD configuration until explicit failure', async t => {
+  const f = await fixture(t, 'mic', {}, {
+    profileMap: { balanced: 'must-not-load' }, recognizer: { modelDir: 'unavailable' },
+    draftRecognizer: { modelDir: 'unavailable' }, vad: { modelPath: 'unavailable' }
+  })
+  assert.equal((await f.coordinator.command('start')).ok, true)
+  const worker = f.children.find(child => !child.storage)
+  assert.equal(worker.configuration.cloudAudio, true)
+  assert.equal(worker.configuration.recognizer, undefined)
+  assert.equal(worker.configuration.draftRecognizer, undefined)
+  assert.equal(worker.configuration.vad, undefined)
+  assert.equal(f.children.filter(child => !child.storage).length, 1)
+  assert.equal(f.adapter.session.fallbackWorker, undefined)
+  f.captures[0].feed()
+  await until(() => f.sockets[0].bytes === 3200)
+  assert.equal((await f.coordinator.command('stop')).ok, true)
+  assert.equal(worker.exitCode, 0)
+})
+
+for (const sourceId of ['mic', 'loopback']) test(`SEM-F06/F12/F21/J20 ${sourceId} cold loading retains ordered audio after the committed cut and releases both workers`, async t => {
+  const f = await fixture(t, sourceId)
+  const progress = []
+  f.coordinator.onSnapshot(snapshot => {
+    if (snapshot.recognitionProgress) progress.push(snapshot.recognitionProgress.phase)
+  })
+  assert.equal((await f.coordinator.command('start')).ok, true)
+  const sessionId = f.coordinator.getSnapshot().sessionId
+  f.captures[0].feed(); f.captures[0].feed()
+  await until(() => f.sockets[0].bytes === 6400)
+  f.sockets[0].result('SentenceEnd', { index: 1, begin_time: 0, time: 150, result: '保留原文' })
+  f.holdLocalConfiguration()
+  f.sockets[0].close()
+  await until(() => f.children.some(child => child.releaseConfiguration))
+  const local = f.children.find(child => child.releaseConfiguration)
+  const snapshot = f.coordinator.getSnapshot() // Reload can retrieve the same state.
+  assert.equal(snapshot.sessionId, sessionId)
+  assert.equal(snapshot.recognition.actualProvider, 'nls')
+  assert.equal(snapshot.recognitionProgress.phase, 'loading')
+  assert.match(buildRuntimeView(snapshot).status.message, /正在加载本地模型/)
+  for (let index = 0; index < 30; index++) { f.captures[0].feed(); await turn() }
+  assert.equal(f.captures.length, 1)
+  assert.equal(f.captures[0].stopped, false)
+  assert.equal(local.frames.length, 0)
+  f.sockets[0].result('SentenceEnd', { index: 2, begin_time: 150, time: 200, result: '迟到云端结果' })
+  local.releaseConfiguration()
+  await until(() => f.coordinator.getSnapshot().recognitionProgress?.phase === 'local')
+  assert.equal(f.coordinator.getSnapshot().recognition.actualProvider, 'local')
+  assert.equal(local.frames.length, 31)
+  assert.deepEqual(local.frames[0], { sequence: 1, timestampSeconds: 0.15, sampleCount: 800 })
+  assert.deepEqual(local.frames.map(frame => frame.sequence), Array.from({ length: 31 }, (_, index) => index + 1))
+  assert.deepEqual([...new Set(progress)], ['loading', 'replaying', 'local'])
+  f.captures[0].feed()
+  await until(() => local.frames.length === 32)
+  assert.equal((await f.coordinator.command('stop')).ok, true)
+  assert.ok(f.children.filter(child => !child.storage).every(child => child.exitCode === 0))
+  const page = await f.history.getSessionPage({ sessionId, limit: 20, cursor: null })
+  assert.equal(page.items.length, 1)
+  assert.equal(page.items[0].text, '保留原文')
+  assert.equal(page.recognition.actualProvider, 'local')
+  assert.equal(page.recognitionProgress, undefined)
+  assert.equal((await f.coordinator.command('start')).ok, true)
+  assert.equal(f.adapter.session.fallbackWorker, undefined)
+  assert.equal(f.coordinator.getSnapshot().recognitionProgress, undefined)
+  assert.equal(f.coordinator.getSnapshot().recognition.actualProvider, 'nls')
+  assert.equal((await f.coordinator.command('stop')).ok, true)
+})
+
+for (const operation of ['stop', 'quit']) test(`SEM-F06/F12/J20 ${operation} cancels cold loading and waits for exact child exit despite late configuration`, async t => {
+  const f = await fixture(t)
+  assert.equal((await f.coordinator.command('start')).ok, true)
+  const sessionId = f.coordinator.getSnapshot().sessionId
+  f.captures[0].feed()
+  await until(() => f.sockets[0].bytes === 3200)
+  f.sockets[0].result('SentenceEnd', { index: 1, begin_time: 0, time: 100, result: '保留原文' })
+  f.holdLocalConfiguration(); f.sockets[0].close()
+  await until(() => f.children.some(child => child.releaseConfiguration))
+  const local = f.children.find(child => child.releaseConfiguration)
+  let retired = false
+  const retiring = (operation === 'stop' ? f.coordinator.command('stop') : f.coordinator.shutdownForAppQuit()).then(value => { retired = true; return value })
+  await until(() => local.held.length > 0)
+  assert.equal(f.captures[0].stopped, true)
+  assert.equal(retired, false)
+  local.releaseConfiguration()
+  await retiring
+  assert.equal(local.exitCode, 0)
+  assert.equal(local.frames.length, 0)
+  assert.equal(f.captures.length, 1)
+  assert.equal(f.adapter.router.actualProvider, 'nls')
+  if (operation === 'stop') assert.equal((await f.coordinator.command('stop')).ok, true)
+  await f.coordinator.persistenceSink.flush()
+  const page = await f.history.getSessionPage({ sessionId, limit: 20, cursor: null })
+  assert.equal(page.items[0].text, '保留原文')
+  assert.equal(page.recognition.actualProvider, 'nls')
+  assert.equal(page.recognition.faultCode, 'RECOGNITION_FALLBACK_FAILED')
+})
+
+test('SEM-F12/F14/J20 cold loading cannot silently roll past sixty seconds of unconsumed audio', async t => {
+  const f = await fixture(t)
+  assert.equal((await f.coordinator.command('start')).ok, true)
+  f.holdLocalConfiguration(); f.sockets[0].close()
+  await until(() => f.children.some(child => child.releaseConfiguration))
+  const local = f.children.find(child => child.releaseConfiguration)
+  for (let index = 0; index < 601; index++) { f.captures[0].feed(); await turn() }
+  await until(() => f.coordinator.getSnapshot().phase === 'error' && f.captures[0].stopped)
+  assert.equal(f.coordinator.getSnapshot().lastError.code, 'RECOGNITION_BUFFER_LIMIT')
+  assert.equal(f.coordinator.getSnapshot().recognition.actualProvider, 'nls')
+  local.releaseConfiguration()
+  assert.equal((await f.coordinator.command('stop')).ok, true)
+  assert.equal(local.frames.length, 0)
+  assert.equal(local.exitCode, 0)
+})
+
+test('SEM-F12/J20 cold loading timeout releases capture without claiming local takeover', async t => {
+  const f = await fixture(t, 'mic', {}, { takeoverTimeoutMs: 80 })
+  assert.equal((await f.coordinator.command('start')).ok, true)
+  f.holdLocalConfiguration(); f.sockets[0].close()
+  await until(() => f.children.some(child => child.releaseConfiguration))
+  const local = f.children.find(child => child.releaseConfiguration)
+  await until(() => f.coordinator.getSnapshot().phase === 'error' && f.captures[0].stopped)
+  assert.equal(f.coordinator.getSnapshot().lastError.code, 'RECOGNITION_FALLBACK_FAILED')
+  assert.equal(f.coordinator.getSnapshot().recognition.actualProvider, 'nls')
+  local.releaseConfiguration()
+  assert.equal((await f.coordinator.command('stop')).ok, true)
+  assert.equal(local.exitCode, 0)
+})
+
+test('SEM-F12/J20 native startup exit rejects cold loading and preserves cloud provider facts', async t => {
+  const f = await fixture(t)
+  assert.equal((await f.coordinator.command('start')).ok, true)
+  f.failLocalConfiguration(); f.sockets[0].close()
+  await until(() => f.coordinator.getSnapshot().phase === 'error' && f.captures[0].stopped)
+  assert.equal(f.coordinator.getSnapshot().lastError.code, 'RECOGNITION_FALLBACK_FAILED')
+  assert.equal(f.coordinator.getSnapshot().recognition.actualProvider, 'nls')
+  assert.equal((await f.coordinator.command('stop')).ok, true)
+  assert.ok(f.children.some(child => child.exitCode === 1))
+})
+
+test('SEM-F12/J20 local port closure after cold takeover stops capture with an explicit fault', async t => {
+  const f = await fixture(t)
+  assert.equal((await f.coordinator.command('start')).ok, true)
+  f.sockets[0].close()
+  await until(() => f.coordinator.getSnapshot().recognition.actualProvider === 'local')
+  const local = f.children.find(child => child.configuration && !child.configuration.cloudAudio)
+  local.pcmPort.close()
+  await until(() => f.coordinator.getSnapshot().phase === 'error' && f.captures[0].stopped)
+  assert.equal(f.coordinator.getSnapshot().lastError.code, 'RECOGNITION_FALLBACK_FAILED')
+  assert.equal((await f.coordinator.command('stop')).ok, true)
+})
+
+test('SEM-F06/F12/J20 stop at the first loading snapshot prevents even a late local fork', async t => {
+  const f = await fixture(t)
+  assert.equal((await f.coordinator.command('start')).ok, true)
+  let retiring
+  f.coordinator.onSnapshot(snapshot => {
+    if (snapshot.recognitionProgress?.phase === 'loading' && !retiring) retiring = f.coordinator.command('stop')
+  })
+  f.sockets[0].close()
+  await until(() => !!retiring)
+  assert.equal((await retiring).ok, false)
+  assert.equal(f.children.filter(child => !child.storage).length, 1)
+  assert.equal(f.captures[0].stopped, true)
+  assert.equal(f.adapter.router.actualProvider, 'nls')
+  assert.equal((await f.coordinator.command('stop')).ok, true)
+})
 
 test('SEM-F12/F14/J20 100ms loopback PCM stays within the pending bound under repeated timer jitter', async t => {
   const clock = createJitteredClock()
@@ -364,4 +570,52 @@ test('SEM-F04/J20 completion without SentenceEnd rejects stop and removes the ab
   assert.equal(result.ok, false)
   assert.equal(f.coordinator.getSnapshot().recognition.faultCode, 'NLS_INVALID_RESPONSE')
   assert.equal((await f.gateway.getStats()).captionEvents, 0)
+})
+
+test('SEM-F12/F14/J20 repeated slow sends remain continuous for three minutes', async t => {
+  const clock = createJitteredClock()
+  const f = await fixture(t, 'loopback', { now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer })
+  assert.equal((await f.coordinator.command('start')).ok, true)
+  const socket = f.sockets[0]
+  const send = socket.send.bind(socket)
+  socket.send = (data, options, callback) => {
+    if (typeof data !== 'string' && (socket.bytes + data.byteLength) % 320000 === 0) {
+      send(data, options, () => clock.setTimer(callback, 150))
+    } else send(data, options, callback)
+  }
+  for (let i = 0; i < 1800; i++) {
+    f.captures[0].feed()
+    await clock.advanceTo(i * 100)
+    assert.equal(f.coordinator.getSnapshot().phase, 'listening')
+  }
+  await clock.advanceTo(183000)
+  await until(() => socket.bytes === 1800 * 3200)
+  assert.equal(f.coordinator.getSnapshot().recognition.actualProvider, 'nls')
+  assert.equal((await f.coordinator.command('stop')).ok, true)
+})
+
+test('SEM-F12/F21/J20 healthy three-minute cloud segment remains cloud and commits once', async t => {
+  const clock = createJitteredClock()
+  const f = await fixture(t, 'loopback', { now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer })
+  assert.equal((await f.coordinator.command('start')).ok, true)
+  const sessionId = f.coordinator.getSnapshot().sessionId
+  f.captures[0].feed(); await clock.advanceTo(100)
+  await until(() => f.sockets[0].bytes === 3200)
+  f.sockets[0].result('SentenceBegin', { index: 1, time: 0 })
+  f.sockets[0].result('TranscriptionResultChanged', { index: 1, time: 100, result: '临时字幕' })
+  for (let i = 1; i < 1800; i++) {
+    f.captures[0].feed(); await clock.advanceTo((i + 1) * 100)
+  }
+  await clock.advanceTo(183000)
+  await until(() => f.sockets[0].bytes === 1800 * 3200)
+  assert.equal(f.coordinator.getSnapshot().recognition.actualProvider, 'nls')
+  assert.equal(f.coordinator.getSnapshot().phase, 'listening')
+  assert.equal(f.coordinator.getSnapshot().sessionId, sessionId)
+  assert.equal(f.coordinator.getSnapshot().recognition.fallbackCode, null)
+  assert.equal((await f.coordinator.command('stop')).ok, true)
+  const page = await f.history.getSessionPage({ sessionId, limit: 20, cursor: null })
+  assert.equal(page.items.length, 1)
+  assert.equal(page.recognition.actualProvider, 'nls')
+  assert.equal(page.recognition.fallbackCode, null)
+  assert.equal(page.recognition.faultCode, null)
 })

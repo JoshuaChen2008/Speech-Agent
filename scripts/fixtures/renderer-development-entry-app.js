@@ -68,8 +68,11 @@ async function inspectRenderer (role, page) {
   }
 }
 
+let inspectingRole = 'app'
 app.whenReady().then(async () => {
+  inspectingRole = 'caption'
   await inspectRenderer('caption', 'caption/index.html')
+  inspectingRole = 'toolbar'
   await inspectRenderer('toolbar', 'toolbar/index.html')
   app.exit(0)
-}).catch(() => app.exit(1))
+}).catch(error => { process.stdout.write(`renderer fixture ${inspectingRole}: ${error.code || error.name}\n`); app.exit(1) })

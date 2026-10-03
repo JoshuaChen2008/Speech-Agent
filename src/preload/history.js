@@ -1,8 +1,10 @@
 'use strict'
+const { createContextSourceBridge } = require('./context-source')
 
 const { contextBridge } = require('electron')
 const CHANNELS = require('../main/ipc/channels')
 const { createWindowInteractionBridge, ipcRenderer, subscribe } = require('./shared')
+const contextSource = createContextSourceBridge(ipcRenderer)
 const interaction = createWindowInteractionBridge('history')
 const {
   assertChangedEvent,
@@ -22,6 +24,7 @@ function onAgentContextChanged (callback) {
 }
 
 contextBridge.exposeInMainWorld('historyApi', {
+  ...contextSource,
   dragStart: interaction.dragStart,
   dragEnd: interaction.dragEnd,
   onInteractionSync: interaction.onInteractionSync,

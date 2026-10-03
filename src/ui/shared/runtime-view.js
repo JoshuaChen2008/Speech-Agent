@@ -120,9 +120,9 @@
       case 'listening':
         return joinLabels(sourcesInState(snapshot, ['active']))
       case 'paused':
-        return '会话保留中'
+        return '点击继续可恢复识别'
       case 'stopping':
-        return '正在写入会话'
+        return '正在保存字幕'
       case 'recovering':
         return joinLabels(sourcesInState(snapshot, ['recovering', 'error']))
       case 'error':
@@ -294,9 +294,15 @@
     const notice = buildNotice(snapshot)
     const recognition = snapshot.recognition
     const showRecognition = recognition?.binding?.strategy === 'cloud-primary' && ['listening', 'paused'].includes(snapshot.phase)
-    const recognitionMessage = showRecognition ? (recognition.actualProvider === 'nls' ? '云端识别' : '本地降级') : ''
+    const fallbackMessages = {
+      loading: '云端连接中断，正在加载本地模型…',
+      replaying: '正在处理临时缓冲中的音频…',
+      local: '已切换为本地识别'
+    }
+    const recognitionMessage = showRecognition
+      ? (fallbackMessages[snapshot.recognitionProgress?.phase] || (recognition.actualProvider === 'nls' ? '云端识别' : '已切换为本地识别')) : ''
     const recognitionDetail = showRecognition && recognition.actualProvider === 'local'
-      ? '已按供应商时间戳交接；切点附近可能漏字或重复' : recognitionMessage
+      ? recognitionMessage + '；切换前后的字幕可能漏字或重复' : recognitionMessage
     const secondary = buildSecondary(snapshot)
     let nextAction = buildNextAction(snapshot)
     /* 次按钮里已经有「重试」时，下一步不再重复给一个重试入口 */

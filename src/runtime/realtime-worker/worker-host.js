@@ -255,7 +255,7 @@ class RealtimeWorkerHost {
     }
     assertSingleSourceIds(config.sourceIds)
     const child = this.electron.utilityProcess.fork(WORKER_PATH, [], {
-      serviceName: SERVICE_NAME,
+      serviceName: config.cloudAudio === true ? 'Speech Agent cloud audio' : SERVICE_NAME,
       ...(this.childEnvironment ? { env: { ...this.childEnvironment } } : {})
     })
     this.child = child
@@ -278,8 +278,12 @@ class RealtimeWorkerHost {
         else this.droppedCaptionCount += 1
         return
       }
-      if (message?.type === 'recognition-local-ready') {
+      if (['recognition-local-ready', 'recognition-local-loading'].includes(message?.type)) {
         this.emit(this.controlListeners, Object.freeze({ type: message.type }))
+        return
+      }
+      if (message?.type === 'recognition-local-progress' && ['replaying', 'local'].includes(message.phase)) {
+        this.emit(this.controlListeners, Object.freeze({ type: message.type, phase: message.phase }))
         return
       }
       if (message?.type === 'recognition-fault') {
@@ -364,6 +368,11 @@ class RealtimeWorkerHost {
   attachCloudPort (port) {
     if (!this.child) throw new Error('worker is not running')
     this.child.postMessage({ type: 'cloud-port' }, [port])
+  }
+
+  attachFallbackPort (port) {
+    if (!this.child) throw new Error('worker is not running')
+    this.child.postMessage({ type: 'fallback-port' }, [port])
   }
 
   /** 把精修 MessagePortMain 转移给 worker（B3：与 refine worker 直连）。 */

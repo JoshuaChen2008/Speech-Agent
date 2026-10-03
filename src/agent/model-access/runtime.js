@@ -76,7 +76,8 @@ class ModelAccessRuntime {
     return this
   }
 
-  async catalog () {
+  async catalog (request) {
+    if (request?.kind === 'embedding') return this.embeddingAccess?.catalog()
     try { return { ok: true, snapshot: publicCatalog(await this.internal(), this.vault), error: null } } catch {
       return { ok: false, snapshot: null, error: { code: 'MODEL_ACCESS_UNAVAILABLE' } }
     }
@@ -169,6 +170,10 @@ class ModelAccessRuntime {
   }
 
   configure (rawCommand) {
+    if (require('./embedding-access').EMBEDDING_COMMANDS.has(rawCommand?.type)) {
+      if (!this.embeddingAccess) return Promise.reject(new Error('MODEL_ACCESS_UNAVAILABLE'))
+      return this.embeddingAccess.configure(rawCommand)
+    }
     return this.serial(async () => {
       let command
       try { command = assertConfigureCommand(rawCommand) } catch { return this.failure('MODEL_CONFIG_INVALID') }
@@ -224,6 +229,10 @@ class ModelAccessRuntime {
   }
 
   async bind (runRequest) {
+    if (runRequest?.kind === 'embedding') {
+      if (!this.embeddingAccess) throw new Error('MODEL_ACCESS_UNAVAILABLE')
+      return this.embeddingAccess.bind(runRequest)
+    }
     try {
       assertRunRequest(runRequest)
       const internal = await this.internal()

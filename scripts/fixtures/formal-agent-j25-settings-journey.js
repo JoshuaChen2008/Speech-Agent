@@ -193,7 +193,7 @@ async function seedTerminalSession (userDataDir) {
       kind: 'final',
       t0: sequence * 10,
       t1: sequence * 10 + 9,
-      text: '合成字幕内容用于容量边界验证。'.repeat(5),
+      text: '合成字幕内容用于容量边界验证。'.repeat(80),
       translation: null
     })
   }
@@ -262,14 +262,16 @@ function providerServer () {
         : summaryModelRequest
           ? JSON.stringify({ schemaVersion: 1, overview: '受控恢复旅程结果。', conclusions: [], todos: [], risks: [] })
         : JSON.stringify({
-            schemaVersion: 1,
+            schemaVersion: 2,
             answer: '受控 provider 返回的正式 Agent 结果。',
+            claims: [{ text: '受控 provider 返回的正式 Agent 结果。', sourceRefs: [{ sessionId: 'session.j25.formal', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }], memoryRefs: [] }], coverage: null,
             sourceRefs: [{ sessionId: 'session.j25.formal', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }],
             memoryRefs: [],
             unresolved: []
           })
       const payload = {
         choices: [{
+          finish_reason: 'stop',
           message: {
             content
           }
@@ -300,10 +302,10 @@ async function inspectInputAppearance (settings) {
   wc.debugger.attach('1.3')
   try {
     await evaluate(`document.querySelector('.nav-item[data-pane="agentModel"]').click()`)
-    await waitFor(() => evaluate(`Boolean(document.querySelector('input[aria-label="新服务名称"]'))`), 'new profile inputs')
-    await evaluate(`document.querySelector('.agent-model-new-profile > summary').click()`)
-    await waitFor(() => evaluate(`document.querySelector('input[aria-label="新服务名称"]').getBoundingClientRect().height > 0`), 'expanded input geometry')
-    const selector = 'input[aria-label="新服务名称"]'
+    await waitFor(() => evaluate(`Boolean(document.querySelector('.agent-model-profiles'))`), 'service manager')
+    await evaluate(`document.querySelector('.agent-model-profiles').open = true; [...document.querySelectorAll('.agent-model-profiles button')].find(b => b.textContent === '新增服务').click()`)
+    await waitFor(() => evaluate(`document.querySelector('#agent-url')?.getBoundingClientRect().height > 0`), 'expanded input geometry')
+    const selector = '#agent-url'
     const dimensions = () => evaluate(`(() => { const r = document.querySelector('${selector}').getBoundingClientRect(); return [r.width, r.height] })()`)
     const before = await dimensions()
     settings.show()
@@ -312,10 +314,10 @@ async function inspectInputAppearance (settings) {
     await waitFor(() => evaluate(`(() => { const e = document.querySelector('${selector}'); e.focus(); return document.activeElement === e })()`), 'input focus before Tab')
     wc.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' })
     wc.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' })
-    await waitFor(() => evaluate(`document.activeElement.getAttribute('aria-label') === '新服务 API 服务器地址'`), 'Tab reaches next input')
+    await waitFor(() => evaluate(`document.activeElement.id === 'agent-key'`), 'Tab reaches next input')
     const keyboardFocus = await evaluate(`(() => {
       const field = document.activeElement, css = getComputedStyle(field)
-      return field.getAttribute('aria-label') === '新服务 API 服务器地址' && field.matches(':focus-visible') &&
+      return field.id === 'agent-key' && field.matches(':focus-visible') &&
         css.outlineStyle === 'solid' && parseFloat(css.outlineWidth) > 0
     })()`)
     const point = await evaluate(`(() => { const e = document.querySelector('${selector}'); e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect(); return { x: r.x + 10, y: r.y + 10 } })()`)
@@ -328,16 +330,18 @@ async function inspectInputAppearance (settings) {
       await evaluate(`document.querySelector('.nav-item[data-pane="display"]').click()`)
       await evaluate(`document.querySelector('[data-seg="theme"] [data-val="${theme}"]').click()`)
       await evaluate(`document.querySelector('.nav-item[data-pane="agentModel"]').click()`)
-      await waitFor(() => evaluate(`Boolean(document.querySelector('${selector}'))`), 'theme profile remount')
+      await waitFor(() => evaluate(`Boolean(document.querySelector('.agent-model-profiles'))`), 'theme profile remount')
+      await evaluate(`document.querySelector('.agent-model-profiles').open = true; [...document.querySelectorAll('.agent-model-profiles button')].find(b => b.textContent === '新增服务').click()`)
+      await waitFor(() => evaluate(`Boolean(document.querySelector('${selector}'))`), 'theme editor remount')
       const style = await evaluate(`(() => {
-        const e = document.querySelector('input[aria-label="新服务名称"]'), s = getComputedStyle(e)
+        const e = document.querySelector('${selector}'), s = getComputedStyle(e)
         return { background: s.backgroundColor, foreground: s.color, radius: s.borderRadius }
       })()`)
       themes.push(style)
     }
     const themeReadable = themes.every(s => s.background !== 'rgba(0, 0, 0, 0)' && s.radius === '8px') &&
       themes[0].foreground !== themes[1].foreground
-    await evaluate(`document.querySelector('.nav-item[data-pane="agentModel"]').click(); document.querySelector('.agent-model-new-profile').open = true`)
+    await evaluate(`document.querySelector('.nav-item[data-pane="agentModel"]').click()`)
     const controlledStates = await evaluate(`(() => {
       const e = document.querySelector('${selector}')
       const normal = getComputedStyle(e)
@@ -392,30 +396,21 @@ async function inspectInputAppearance (settings) {
     })()`)
     await evaluate(`document.getElementById('barColorReset').click()`)
     await waitFor(() => evaluate(`document.getElementById('barColorVal').textContent === '跟随主题'`), 'color reset')
-    // Resume the real first-run wizard to inspect its password/model/number controls.
+    // Inspect the production shared add/edit form after returning to Agent settings.
     await evaluate(`document.querySelector('.nav-item[data-pane="agentModel"]').click()`)
-    await waitFor(() => evaluate(`Boolean(document.querySelector('.agent-model-preset-launcher'))`), 'wizard launcher')
-    await evaluate(`document.querySelector('.agent-model-preset-launcher').click()`)
-    await waitFor(() => evaluate(`Boolean(document.querySelector('[data-wizard-step="connection"]'))`), 'wizard connection')
-    await evaluate(`document.querySelector('[data-wizard-step="connection"] .primary-btn').click()`)
-    await waitFor(() => evaluate(`Boolean(document.querySelector('input[aria-label="首次配置 API 密钥"]'))`), 'wizard password')
-    const wizardPassword = await evaluate(`(() => {
-      const e = document.querySelector('input[aria-label="首次配置 API 密钥"]'), css = getComputedStyle(e)
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(e, 'j25-wizard-secret')
-      e.dispatchEvent(new Event('input', { bubbles: true }))
-      return parseFloat(css.minHeight) >= 36 && css.borderRadius === '8px'
-    })()`)
-    await waitFor(() => evaluate(`document.querySelector('[data-wizard-step="credential"] .primary-btn')?.disabled === false`), 'wizard credential editable')
-    await evaluate(`document.querySelector('[data-wizard-step="credential"] .primary-btn').click()`)
-    await waitFor(() => evaluate(`Boolean(document.querySelector('[data-wizard-step="model"] input[type="number"]'))`), 'wizard model')
-    const wizardInputs = wizardPassword && await evaluate(`(() => {
-      const fields = [...document.querySelectorAll('[data-wizard-step="model"] input')]
+    await waitFor(() => evaluate(`Boolean(document.querySelector('.agent-model-profiles'))`), 'service manager')
+    await evaluate(`document.querySelector('.agent-model-profiles').open = true; [...document.querySelectorAll('.agent-model-profiles button')].find(b => b.textContent === '新增服务').click()`)
+    await waitFor(() => evaluate(`Boolean(document.querySelector('.agent-model-editor details'))`), 'shared editor')
+    await evaluate(`document.querySelector('.agent-model-editor details').open = true`)
+    await waitFor(() => evaluate(`Boolean(document.querySelector('.agent-model-editor input[type="number"]'))`), 'editor capabilities')
+    const wizardInputs = await evaluate(`(() => {
+      const fields = [...document.querySelectorAll('.agent-model-editor input')]
       return fields.length >= 3 && fields.every(e => {
         const css = getComputedStyle(e)
-        return parseFloat(css.minHeight) >= 36 && css.borderRadius === '8px' && css.fontFamily === getComputedStyle(document.body).fontFamily
+        return e.type === 'checkbox' || (parseFloat(css.minHeight) >= 36 && css.borderRadius === '8px' && css.fontFamily === getComputedStyle(document.body).fontFamily)
       })
     })()`)
-    await evaluate(`document.querySelector('.wizard-exit').click()`)
+    await evaluate(`[...document.querySelectorAll('.agent-model-editor button')].find(b => b.textContent === '取消').click()`)
     return { keyboardFocus, stableGeometry, themeReadable, controlledStates, systemPreferences, fits, specialized, wizardInputs }
   } finally {
     wc.setZoomFactor(1)
@@ -432,9 +427,11 @@ async function inspectNativePicker (settings) {
   const wc = settings.webContents
   const evaluate = (source) => wc.executeJavaScript(source)
   await evaluate(`document.querySelector('.nav-item[data-pane="agentModel"]')?.click()`)
-  await waitFor(() => evaluate(`Boolean(document.querySelector('[data-purpose="default"] select'))`), 'native select picker target')
+  await waitFor(() => evaluate(`Boolean(document.querySelector('.agent-model-profiles'))`), 'service manager')
+  await evaluate(`document.querySelector('.agent-model-profiles').open = true; [...document.querySelectorAll('.agent-model-profiles button')].find(b => b.textContent === '新增服务').click()`)
+  await waitFor(() => evaluate(`Boolean(document.querySelector('#agent-preset'))`), 'native select picker target')
   const before = await evaluate(`(() => {
-    const select = document.querySelector('[data-purpose="default"] select')
+    const select = document.querySelector('#agent-preset')
     window.__nativeSelectChanges = 0
     select.addEventListener('change', () => { window.__nativeSelectChanges += 1 }, { once: false })
     select.focus()
@@ -457,7 +454,7 @@ async function inspectNativePicker (settings) {
   wc.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 })
   await wait(150)
   const opened = await evaluate(`(() => {
-    try { return document.querySelector('[data-purpose="default"] select').matches(':open') } catch { return false }
+    try { return document.querySelector('#agent-preset').matches(':open') } catch { return false }
   })()`)
   if (opened) {
     wc.sendInputEvent({ type: 'keyDown', keyCode: 'ARROWDOWN' })
@@ -468,11 +465,12 @@ async function inspectNativePicker (settings) {
   wc.sendInputEvent({ type: 'keyUp', keyCode: 'ESC' })
   await wait(150)
   const after = await evaluate(`(() => {
-    const select = document.querySelector('[data-purpose="default"] select')
+    const select = document.querySelector('#agent-preset')
     let open = false
     try { open = select.matches(':open') } catch {}
     return { open, value: select.value, changes: window.__nativeSelectChanges }
   })()`)
+  await evaluate(`[...document.querySelectorAll('.agent-model-editor button')].find(b => b.textContent === '取消')?.click()`)
   return {
     attempted: true,
     opened,
@@ -521,11 +519,14 @@ async function configureThroughSettings (settings, port) {
     await waitFor(() => document.querySelector('#onboarding').hidden, 'settings onboarding dismissed')
     const nav = await waitFor(() => document.querySelector('[data-pane="agentModel"]'), 'agent model navigation')
     nav.click()
-    const agentToggle = await waitFor(() => document.querySelector('input[aria-label="启用 Agent 系统"]'), 'Agent system toggle')
+    const agentToggle = await waitFor(() => document.querySelector('input[aria-label="启用 AI 助手"]'), 'Agent system toggle')
     setChecked(agentToggle, true)
-    await waitFor(() => document.querySelector('input[aria-label="启用 Agent 系统"]')?.checked === true, 'Agent system enabled')
-    const cardFor = () => document.querySelector('[data-profile-id="deepseek"]')
-    await waitFor(cardFor, 'deepseek profile')
+    await waitFor(() => document.querySelector('input[aria-label="启用 AI 助手"]')?.checked === true, 'Agent system enabled')
+    const cardFor = () => document.querySelector('.agent-model-profiles')
+    const editButton = () => [...cardFor().querySelectorAll('.agent-model-managed button')].find((item) => item.textContent === '编辑')
+    await waitFor(cardFor, 'model service management')
+    cardFor().open = true
+    await waitFor(editButton, 'deepseek profile')
     let failedInputRetained = false
     let failedConfigUnchanged = false
     let uncredentialedFailureObserved = false
@@ -535,16 +536,16 @@ async function configureThroughSettings (settings, port) {
     const unsubscribeModelChanged = window.shell.onAgentModelChanged((event) => {
       modelChangedRevisions.push(event.revision)
     })
-    clickText(cardFor(), '编辑连接')
-    const uncredentialedAddress = await waitFor(() => cardFor()?.querySelector('input[aria-label="API 服务器地址"]'), 'uncredentialed connection editor')
+    editButton().click()
+    const uncredentialedAddress = await waitFor(() => document.querySelector('#agent-url'), 'uncredentialed connection editor')
     const beforeUncredentialedCatalog = await window.shell.getAgentModelCatalog({ contractId: 'agent-model-ui', contractVersion: '1.0.0' })
     const beforeUncredentialedRevision = beforeUncredentialedCatalog.snapshot?.revision
     const changedCountBeforeFailure = modelChangedRevisions.length
     setInput(uncredentialedAddress, 'http://invalid.example')
     await sleep(0)
-    clickText(cardFor(), '保存修改')
+    clickText(document.querySelector('.agent-model-editor'), '保存')
     await waitFor(() => document.querySelector('section[data-pane="agentModel"] [role="alert"]') && !uncredentialedAddress.disabled, 'uncredentialed connection restored')
-    failedInputRetained = uncredentialedAddress.value === 'http://invalid.example'
+    failedInputRetained = uncredentialedAddress.value === 'http://invalid.example' && document.activeElement === uncredentialedAddress
     const uncredentialedCatalog = await window.shell.getAgentModelCatalog({ contractId: 'agent-model-ui', contractVersion: '1.0.0' })
     const uncredentialedProfile = uncredentialedCatalog.snapshot?.profiles?.find(p => p.profileId === 'deepseek')
     uncredentialedFailureObserved = uncredentialedCatalog.ok === true &&
@@ -554,11 +555,12 @@ async function configureThroughSettings (settings, port) {
       uncredentialedCatalog.snapshot.revision === beforeUncredentialedRevision
     failedChangedNotBroadcast = modelChangedRevisions.length === changedCountBeforeFailure
     failedConfigUnchanged = uncredentialedFailureObserved && failedRevisionUnchanged && failedChangedNotBroadcast
-    clickText(uncredentialedAddress.closest('.group'), '取消')
-    await waitFor(() => !cardFor()?.querySelector('input[aria-label="API 服务器地址"]'), 'uncredentialed editor closed')
-    clickText(cardFor(), '编辑连接')
-    await waitFor(() => cardFor()?.querySelector('input[aria-label="API 服务器地址"]'), 'connection editor')
-    const address = cardFor().querySelector('input[aria-label="API 服务器地址"]')
+    clickText(document.querySelector('.agent-model-editor'), '取消')
+    await waitFor(() => !document.querySelector('#agent-url'), 'uncredentialed editor closed')
+    cardFor().open = true
+    editButton().click()
+    await waitFor(() => document.querySelector('#agent-url'), 'connection editor')
+    const address = document.querySelector('#agent-url')
     const styled = (element) => {
       const css = getComputedStyle(element)
       return css.fontFamily === getComputedStyle(document.body).fontFamily &&
@@ -566,41 +568,38 @@ async function configureThroughSettings (settings, port) {
         parseFloat(css.minHeight) >= 36 && css.backgroundColor !== 'rgba(0, 0, 0, 0)'
     }
     const textStyled = styled(address)
-    setInput(cardFor().querySelector('input[aria-label="API 服务器地址"]'), 'https://127.0.0.1:${port}')
+    setInput(address, 'https://127.0.0.1:${port}')
     await sleep(0)
-    clickText(cardFor(), '保存修改')
-    await waitFor(() => [...cardFor().querySelectorAll('button')].some((item) => item.textContent === '编辑连接'), 'connection saved')
-
-    clickText(cardFor(), '添加模型')
-    const modelId = await waitFor(() => cardFor()?.querySelector('input[aria-label="模型名称（Model ID）"]'), 'model form')
+    const modelId = document.querySelector('#agent-model')
     setInput(modelId, 'j25-local-model')
-    setInput(cardFor().querySelector('input[aria-label="最大输入 token"]'), '64000')
-    setInput(cardFor().querySelector('input[aria-label="最大输出 token"]'), '4096')
-    const numberStyled = styled(cardFor().querySelector('input[type="number"]'))
-    for (const label of ['工具调用', '结构化输出', '流式输出', '用量上报']) {
-      const group = await waitFor(() => cardFor()?.querySelector('[aria-label="' + label + '"]'), label + ' capability group')
-      clickText(group, '支持')
-      await waitFor(() => cardFor()?.querySelector('[aria-label="' + label + '"] button[aria-pressed="true"]'), label + ' capability selected')
-    }
-    await waitFor(() => [...cardFor().querySelectorAll('button')].some((item) => item.textContent === '保存模型' && !item.disabled), 'model form valid')
-    clickText(cardFor(), '保存模型')
-    await waitFor(() => cardFor()?.querySelector('[data-model-id="j25-local-model"]'), 'model saved')
-
-    const credential = cardFor().querySelector('input[type="password"]')
+    const credential = document.querySelector('#agent-key')
     const passwordStyled = styled(credential)
     setInput(credential, 'j25-local-provider-secret')
-    clickText(cardFor(), '设置新的 API 密钥')
-    await waitFor(() => credential.value === '', 'credential cleared')
-
-    const purpose = document.querySelector('[data-purpose="default"] select')
-    await waitFor(() => purpose && [...purpose.options].some((option) => option.value === 'deepseek::j25-local-model'), 'purpose target')
+    document.querySelector('.agent-model-editor details').open = true
+    setInput(document.querySelector('#maxInputTokens'), '64000')
+    setInput(document.querySelector('#maxOutputTokens'), '4096')
+    const numberStyled = styled(document.querySelector('#maxInputTokens'))
+    for (const label of ['工具调用', '结构化输出', '流式输出', '返回用量']) {
+      const group = await waitFor(() => document.querySelector('.agent-model-editor [aria-label="' + label + '"]'), label + ' capability group')
+      clickText(group, '支持')
+      await waitFor(() => document.querySelector('.agent-model-editor [aria-label="' + label + '"] button[aria-pressed="true"]'), label + ' capability selected')
+    }
+    const defaultCheck = document.querySelector('.agent-model-editor input[type="checkbox"]')
+    setChecked(defaultCheck, true)
+    clickText(document.querySelector('.agent-model-editor'), '保存')
+    await waitFor(() => !document.querySelector('.agent-model-editor'), 'model saved')
+    const savedCatalog = await window.shell.getAgentModelCatalog({ contractId: 'agent-model-ui', contractVersion: '1.0.0' })
+    const savedProfile = savedCatalog.snapshot?.profiles?.find((item) => item.profileId === 'deepseek')
+    const credentialCleared = document.querySelector('input[type="password"]') === null
+    const defaultReady = savedCatalog.snapshot?.readinessByPurpose?.default?.target?.modelId === 'j25-local-model'
+    cardFor().open = true
+    clickText(cardFor(), '新增服务')
+    const purpose = await waitFor(() => document.querySelector('#agent-preset'), 'provider selector')
     let selectStyled = styled(purpose) && [...purpose.options].every((option) => {
       const css = getComputedStyle(option)
       return css.backgroundColor !== 'rgba(0, 0, 0, 0)' && css.color !== css.backgroundColor
     })
-    select(purpose, 'deepseek::j25-local-model')
-    await waitFor(() => document.querySelector('[data-purpose="default"]').textContent.includes('普通请求：配置充分'), 'purpose assigned')
-    const defaultReady = document.querySelector('[data-purpose="default"]').textContent.includes('普通请求：配置充分')
+    clickText(document.querySelector('.agent-model-editor'), '取消')
 
     const contextNav = await waitFor(() => document.querySelector('[data-pane="agentContext"]'), 'personal context navigation')
     contextNav.click()
@@ -619,7 +618,7 @@ async function configureThroughSettings (settings, port) {
     const memoryLabel = memory.getAttribute('aria-label') || ''
     const contextSection = () => document.querySelector('section[data-pane="agentContext"]')
     const memoryRow = () => document.querySelector('[data-memory-id="' + memoryId + '"]')
-    const forgetButton = await waitFor(() => memoryRow()?.querySelector('button[aria-label^="忘记个人记忆："]'), 'forget action')
+    const forgetButton = await waitFor(() => memoryRow()?.querySelector('button[aria-label^="停止使用个人记忆："]'), 'forget action')
     forgetButton.click()
     const forgetDialog = await waitFor(() => contextSection()?.querySelector('[role="alertdialog"]'), 'forget confirmation')
     clickText(forgetDialog, '确认')
@@ -628,7 +627,7 @@ async function configureThroughSettings (settings, port) {
       if (!row) return false
       const expand = row.querySelector('.agent-context-expand')
       if (expand && expand.getAttribute('aria-expanded') !== 'true') expand.click()
-      return row.textContent.includes('已退出检索')
+      return row.textContent.includes('已停用，不再引用')
     }, 'forgotten memory')
     const deleteButton = await waitFor(() => memoryRow()?.querySelector('button[aria-label^="删除个人记忆："]'), 'delete action')
     deleteButton.click()
@@ -636,19 +635,19 @@ async function configureThroughSettings (settings, port) {
     clickText(deleteDialog, '确认')
     await waitFor(() => memoryRow() === null, 'deleted memory')
     const contextHeader = { contract_id: 'speech-agent.personal-context.ui', contract_version: '1.1.0' }
-    const processingToggle = await waitFor(() => document.querySelector('input[aria-label="个人记忆自动处理"]'), 'memory processing toggle')
+    const processingToggle = await waitFor(() => document.querySelector('input[aria-label="添加和使用记忆"]'), 'memory processing toggle')
     processingToggle.click()
     const suspendDialog = await waitFor(() => contextSection()?.querySelector('[role="alertdialog"]'), 'suspend confirmation')
     clickText(suspendDialog, '确认')
-    await waitFor(() => document.querySelector('input[aria-label="个人记忆自动处理"]')?.checked === false, 'memory processing suspended')
-    const processingSuspended = document.querySelector('input[aria-label="个人记忆自动处理"]')?.checked === false &&
-      contextSection()?.textContent.includes('已休眠')
-    document.querySelector('input[aria-label="个人记忆自动处理"]')?.click()
+    await waitFor(() => document.querySelector('input[aria-label="添加和使用记忆"]')?.checked === false, 'memory processing suspended')
+    const processingSuspended = document.querySelector('input[aria-label="添加和使用记忆"]')?.checked === false &&
+      contextSection()?.textContent.includes('已暂停')
+    document.querySelector('input[aria-label="添加和使用记忆"]')?.click()
     const enableDialog = await waitFor(() => contextSection()?.querySelector('[role="alertdialog"]'), 're-enable confirmation')
     clickText(enableDialog, '确认')
-    await waitFor(() => document.querySelector('input[aria-label="个人记忆自动处理"]')?.checked === true, 'memory processing re-enabled')
-    const processingReenabled = document.querySelector('input[aria-label="个人记忆自动处理"]')?.checked === true &&
-      contextSection()?.textContent.includes('处理中')
+    await waitFor(() => document.querySelector('input[aria-label="添加和使用记忆"]')?.checked === true, 'memory processing re-enabled')
+    const processingReenabled = document.querySelector('input[aria-label="添加和使用记忆"]')?.checked === true &&
+      contextSection()?.textContent.includes('已开启')
     const overview = await window.shell.getAgentContextOverview(contextHeader)
     const currentRevision = Number(overview?.snapshot?.revision)
     const staleResponse = currentRevision > 0
@@ -667,9 +666,8 @@ async function configureThroughSettings (settings, port) {
     nav.click()
     await waitFor(() => document.querySelector('[data-pane="agentModel"]'), 'model pane after context management')
     await waitFor(cardFor, 'model profile after context management')
-    const profileConnection = cardFor()?.textContent.includes('https://127.0.0.1:${port}') === true
-    const modelVisible = cardFor()?.querySelector('[data-model-id="j25-local-model"]') !== null
-    const credentialCleared = credential.value === ''
+    const profileConnection = savedProfile?.httpsOrigin === 'https://127.0.0.1:${port}'
+    const modelVisible = savedProfile?.models?.some((item) => item.modelId === 'j25-local-model') === true
     contextNav.click()
     await waitFor(() => document.querySelector('textarea[aria-label="记住个人记忆"]'), 'context pane after context management')
     unsubscribeModelChanged()
@@ -694,6 +692,23 @@ async function configureThroughSettings (settings, port) {
   })()`)
 }
 
+async function selectSessionFunction (agent, label) {
+  await waitFor(async () => agent.webContents.executeJavaScript(`(async () => {
+    const response = await window.agentApi.getScopes({ contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0', limit: 50, cursor: null })
+    const index = response?.ok === true ? response.scopes.findIndex((item) => item.scope.reference === 'session.j25.formal') : -1
+    const card = index >= 0 ? document.querySelectorAll('.scope-card')[index] : null
+    if (!card) return false
+    card.click()
+    return true
+  })()`), 'session scope navigation')
+  await waitFor(async () => agent.webContents.executeJavaScript(`(() => {
+    const button = [...document.querySelectorAll('.session-functions button')].find((item) => item.textContent === ${JSON.stringify(label)})
+    if (!button || button.disabled) return false
+    button.click()
+    return true
+  })()`), 'session function navigation')
+}
+
 async function runAgentBar (toolbar, providerState) {
   await toolbar.webContents.executeJavaScript("window.shell.openAgent(); true")
   let agent = await waitFor(() => windowFor('/agent/index.html'), 'Agent Bar window')
@@ -708,7 +723,7 @@ async function runAgentBar (toolbar, providerState) {
     card.click()
     return true
   })()`)
-  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '配置已就绪，提交后检查输入容量'"), 'provider eligibility')
+  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '可以提交；提交后会检查内容是否超出处理上限'"), 'provider eligibility')
   const readsBeforeManualRefresh = eligibilityProbe.count
   const eligibilityHold = deferred()
   eligibilityProbe.nextHold = eligibilityHold
@@ -716,10 +731,11 @@ async function runAgentBar (toolbar, providerState) {
   await waitFor(() => eligibilityProbe.count > readsBeforeManualRefresh, 'manual eligibility refresh')
   const submitDisabledDuringEligibilityRefresh = await agent.webContents.executeJavaScript("document.querySelector('[data-action=\"qa\"]')?.disabled === true && document.querySelector('[data-action=\"minutes\"]')?.disabled === true")
   eligibilityHold.resolve()
-  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '配置已就绪，提交后检查输入容量'"), 'refreshed provider eligibility')
+  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '可以提交；提交后会检查内容是否超出处理上限'"), 'refreshed provider eligibility')
   const providerShapeCountAtSubmit = providerState.requestShapes.length
   const providerModelCountAtSubmit = providerState.modelIds.length
   const qaSubmitCount = submitReceipts.length
+  await selectSessionFunction(agent, '会话问答')
   await agent.webContents.executeJavaScript(`(() => {
     const setInput = (input, value) => {
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
@@ -729,9 +745,13 @@ async function runAgentBar (toolbar, providerState) {
     }
     const prompt = document.querySelector('#agentPrompt')
     setInput(prompt, '请回答这场会的重点')
-    document.querySelector('[data-action="qa"]').click()
     return true
   })()`)
+  // React commits the controlled input before the user can press the button.
+  await waitFor(async () => agent.webContents.executeJavaScript(
+    "document.querySelector('[data-action=\"qa\"]')?.disabled === false"
+  ), 'QA prompt committed and submit enabled')
+  await agent.webContents.executeJavaScript("document.querySelector('[data-action=\"qa\"]').click(); true")
   const qaReceipt = await waitFor(() => submitReceipts.slice(qaSubmitCount).find((receipt) => receipt.recipeId === 'qa.answer'), 'QA session-summary acceptance')
   const result = await agent.webContents.executeJavaScript(`(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -784,6 +804,7 @@ async function runAgentBar (toolbar, providerState) {
   if (!result.succeeded) throw new Error(`production Agent Bar request ended ${result.terminalState}/${result.terminalErrorCode} at ${result.requestState} ${JSON.stringify({ historyItems: result.historyItems, providerRequestCount: runProviderShapes.length, requestShapes: runProviderShapes })}`)
   await agent.webContents.reload()
   await waitFor(async () => agent.webContents.executeJavaScript("document.readyState === 'complete'"), 'reloaded Agent Bar renderer')
+  await selectSessionFunction(agent, '会话问答')
   await waitFor(async () => agent.webContents.executeJavaScript("Boolean(document.querySelector('.history-card'))"), 'history renderer')
   const feedback = await agent.webContents.executeJavaScript(`(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -805,7 +826,7 @@ async function runAgentBar (toolbar, providerState) {
     const interactionId = ${JSON.stringify(result.interactionId)}
     const resultDigest = ${JSON.stringify(result.resultDigest)}
     const exactDetail = await window.agentApi.getInteraction({ ...headers, interaction_id: interactionId })
-    const historySnapshot = await window.agentApi.getHistory({ ...headers, limit: 50, cursor: null })
+    const historySnapshot = await window.agentApi.getHistory({ ...headers, scope: { kind: 'session', reference: 'session.j25.formal' }, recipe_id: 'qa.answer', limit: 50, cursor: null })
     const historyIndex = historySnapshot?.ok === true ? historySnapshot.result.items.findIndex((item) => item.interaction_id === interactionId) : -1
     const expectedHistoryCard = historyIndex >= 0 ? document.querySelectorAll('.history-card')[historyIndex] : null
     if (!expectedHistoryCard) throw new Error('expected interaction missing from rendered history ' + JSON.stringify({
@@ -831,9 +852,10 @@ async function runAgentBar (toolbar, providerState) {
       }
       return document.querySelector('#agentEdit')
     }, 'edit feedback form').catch(() => { throw new Error('feedback state mismatch ' + JSON.stringify(feedbackState)) })
+    document.querySelector('.signal-actions summary').click()
     setInput(editor, 'J25 renderer feedback')
     document.querySelector('[data-signal="edit"]').click()
-    const feedbackSubmittedThroughRenderer = Boolean(await waitFor(() => document.querySelector('.signal-status')?.textContent.includes('已记录交互反馈'), 'renderer feedback receipt'))
+    const feedbackSubmittedThroughRenderer = Boolean(await waitFor(() => document.querySelector('.signal-status')?.textContent.includes('已记录反馈'), 'renderer feedback receipt'))
     const detailAfterFeedback = await window.agentApi.getInteraction({ ...headers, interaction_id: interactionId })
     const signal = await window.agentApi.recordSignal({
       ...headers, interaction_id: interactionId, signal_kind: 'accept', payload: null,
@@ -855,6 +877,7 @@ async function runAgentBar (toolbar, providerState) {
   })()`)
   await agent.webContents.reload()
   await waitFor(async () => agent.webContents.executeJavaScript("document.readyState === 'complete'"), 'feedback-reloaded Agent Bar renderer')
+  await selectSessionFunction(agent, '会话问答')
   await waitFor(async () => agent.webContents.executeJavaScript("Boolean(document.querySelector('.history-card'))"), 'feedback history renderer')
   const ui = await agent.webContents.executeJavaScript(`(() => {
     const visible = document.body.textContent
@@ -868,6 +891,7 @@ async function runAgentBar (toolbar, providerState) {
   const summarySubmitCount = submitReceipts.length
   const summaryShapeCount = providerState.requestShapes.length
   providerState.holdNextSummary = true
+  await selectSessionFunction(agent, '会话总结')
   await agent.webContents.executeJavaScript(`(async () => {
     const headers = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
     const result = await window.agentApi.getScopes({ ...headers, limit: 50, cursor: null })
@@ -966,8 +990,8 @@ async function runAgentBar (toolbar, providerState) {
   })()`)
   const heldSummaryNoFalseProgress = activeSummaryBeforeWindowClose?.request_id === windowCloseReceipt.requestId &&
     !['succeeded', 'failed', 'cancelled'].includes(activeSummaryBeforeWindowClose.state) &&
-    activeSummaryBeforeWindowClose.validated_chunk_count === null &&
-    activeSummaryBeforeWindowClose.total_chunk_count === null &&
+    activeSummaryBeforeWindowClose.validated_chunk_count === 0 &&
+    activeSummaryBeforeWindowClose.total_chunk_count === 1 &&
     Number.isSafeInteger(activeSummaryBeforeWindowClose.elapsed_ms)
   const cancellationCommandsBeforeWindowClose = runControlProbe.summaryCancelCommandCount
   agent.close()
@@ -1018,7 +1042,7 @@ async function runAgentBar (toolbar, providerState) {
     if (!capacityCard) throw new Error('synthetic capacity session missing from renderer scope list')
     capacityCard.click()
     await waitFor(() => capacityCard.getAttribute('aria-current') === 'true', 'synthetic capacity scope selection')
-    await waitFor(() => document.querySelector('.eligibility')?.textContent === '配置已就绪，提交后检查输入容量', 'synthetic capacity eligibility')
+    await waitFor(() => document.querySelector('.eligibility')?.textContent === '可以提交；提交后会检查内容是否超出处理上限', 'synthetic capacity eligibility')
     document.querySelector('[data-action="minutes"]').click()
     return true
   })()`)
@@ -1058,14 +1082,14 @@ async function runAgentBar (toolbar, providerState) {
     }
     await waitFor(() => {
       const message = document.querySelector('.result-card [role="alert"]')?.textContent || ''
-      return message.includes('会话总结输入超过当前上限；总结模型尚未调用。')
+      return message.includes('会话内容超过当前处理上限，这次没有调用总结模型。')
     }, 'capacity failure feedback in Agent Bar')
     const alertText = document.querySelector('.result-card [role="alert"]')?.textContent || ''
     const recoveryText = document.querySelector('.result-card .empty')?.textContent || ''
     return {
       failed: detail?.ok === true && detail.result.state === 'failed',
       dedicatedError: detail?.ok === true && detail.result.error_code === 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED',
-      exactFeedback: alertText.includes('会话总结输入超过当前上限；总结模型尚未调用。'),
+      exactFeedback: alertText.includes('会话内容超过当前处理上限，这次没有调用总结模型。'),
       recoveryFeedback: recoveryText.includes('可缩短输入，或选择内容较少的会话后重试。'),
       summaryToolCalls: detail?.ok === true ? detail.result.tool_calls.length : -1,
       requestState: requestSnapshot?.state || 'unavailable'
@@ -1121,7 +1145,7 @@ async function prepareRestartRecovery (toolbar, providerState) {
     card.click()
     return true
   })()`)
-  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '配置已就绪，提交后检查输入容量'"), 'restart preparation eligibility')
+  await waitFor(async () => agent.webContents.executeJavaScript("document.querySelector('.eligibility')?.textContent === '可以提交；提交后会检查内容是否超出处理上限'"), 'restart preparation eligibility')
   providerState.holdNextSummary = true
   const acceptedBefore = submitReceipts.length
   await agent.webContents.executeJavaScript("document.querySelector('[data-action=\"minutes\"]')?.click(); true")
@@ -1162,9 +1186,9 @@ async function configureRecoveryModel (settings, port) {
     await waitFor(() => document.querySelector('#onboarding')?.hidden === true, 'recovery onboarding dismissal')
     const modelNavigation = await waitFor(() => document.querySelector('[data-pane="agentModel"]'), 'recovery model navigation')
     modelNavigation.click()
-    const toggle = await waitFor(() => document.querySelector('input[aria-label="启用 Agent 系统"]'), 'recovery Agent setting')
+    const toggle = await waitFor(() => document.querySelector('input[aria-label="启用 AI 助手"]'), 'recovery Agent setting')
     if (!toggle.checked) toggle.click()
-    await waitFor(() => document.querySelector('input[aria-label="启用 Agent 系统"]')?.checked === true, 'recovery Agent enabled')
+    await waitFor(() => document.querySelector('input[aria-label="启用 AI 助手"]')?.checked === true, 'recovery Agent enabled')
 
     const headers = { contractId: 'agent-model-ui', contractVersion: '1.0.0' }
     const initial = await window.shell.getAgentModelCatalog(headers)
@@ -1346,7 +1370,7 @@ async function main () {
         settingsResult.uncredentialedFailureObserved &&
         settingsResult.failedRevisionUnchanged && settingsResult.failedChangedNotBroadcast &&
         nativePicker.opened && nativePicker.cancelValuePreserved && nativePicker.noChangeAfterCancel &&
-        inputProbe.pending && inputProbe.rejected && inputProbe.failureCode === 'MODEL_CONFIG_INVALID' && inputProbe.invalidCommands === 1 &&
+        !inputProbe.pending && inputProbe.invalidCommands === 0 &&
         settingsResult.profileConnection && settingsResult.modelVisible && settingsResult.credentialCleared &&
         settingsResult.defaultReady && settingsResult.agentEnabled && settingsResult.memoryManaged &&
         settingsResult.processingSuspended && settingsResult.processingReenabled && settingsResult.revisionConflict &&

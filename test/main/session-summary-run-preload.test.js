@@ -68,6 +68,7 @@ function loadAgentPreload () {
       }
     }
     if (specifier === '../main/ipc/channels') return CHANNELS
+    if (specifier === './context-source') return require('../../src/preload/context-source')
     if (specifier === '../agent/contracts/agent-run-ui') return require('../../src/agent/contracts/agent-run-ui')
     if (specifier === '../agent/contracts/session-summary-run-ui') return contract
     if (specifier === '../agent/contracts/agent-run-diagnostics-ui') return diagnosticsUI

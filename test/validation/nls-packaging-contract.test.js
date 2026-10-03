@@ -16,9 +16,9 @@ test('SEM-F18/T12 J20 B5 NLS dependency entries are required and pinned as produ
   }
 })
 
-test('SEM-F18/T12 J20 B5 packaged load probe exercises NLS transitive dependency imports without connections', () => {
+test('SEM-F18/F41/T12 J20 B5 packaged load probe exercises NLS and memory dependencies without connections', () => {
   const source = fs.readFileSync(path.join(__dirname, '../../scripts/packaged-native-load-probe.js'), 'utf8')
-  for (const missing of [null, 'ws', '@alicloud/pop-core']) {
+  for (const missing of [null, 'ws', '@alicloud/pop-core', '../src/native/memory-file/memory_file_native.node', 'yaml']) {
     let result; let exitCode
     const imports = []
     vm.runInNewContext(source, {
@@ -27,6 +27,9 @@ test('SEM-F18/T12 J20 B5 packaged load probe exercises NLS transitive dependency
         if (name === missing) throw new Error('missing package fixture')
         if (name === '../src/main/caption-input-native') return { loadCaptionInputNative: () => ({ attach () {}, isAttached () {}, detach () {} }) }
         if (name === 'sherpa-onnx-node') return { OnlineRecognizer () {}, OfflineRecognizer () {}, Vad () {} }
+        // Physical Win32 loading is an OS boundary; the Electron journey and
+        // packaged utility probe exercise the actual native binary on Windows.
+        if (name === '../src/native/memory-file/memory_file_native.node') return { open () {}, read () {}, write () {}, close () {}, remove () {} }
         return require(name)
       },
       process: { parentPort: { postMessage: value => { result = value } }, exit: code => { exitCode = code } },

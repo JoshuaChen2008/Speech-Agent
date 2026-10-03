@@ -83,6 +83,7 @@ test('main bridge reduces renderer, audio host and utility details to fixed role
 
 test('service names map only fixed application utilities and keep Chromium roles honest', () => {
   assert.equal(roleForChildProcess({ serviceName: 'Speech Agent realtime ASR', type: 'Utility' }), 'realtime')
+  assert.equal(roleForChildProcess({ serviceName: 'Speech Agent cloud audio', type: 'Utility' }), 'realtime')
   assert.equal(roleForChildProcess({ serviceName: 'Speech Agent offline refinement', type: 'Utility' }), 'refine')
   assert.equal(roleForChildProcess({ serviceName: 'Speech Agent subtitle storage', type: 'Utility' }), 'storage')
   assert.equal(roleForChildProcess({ serviceName: 'Audio Service', type: 'Utility' }), 'chromium-other')

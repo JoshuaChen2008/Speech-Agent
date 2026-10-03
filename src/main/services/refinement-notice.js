@@ -46,9 +46,9 @@ function buildRefinementNotice (sessionId, result) {
   const refined = result.refinedSegmentCount
   let message
   if (total === 0) {
-    message = '精修进程异常结束；本会话未产生可精修的已定稿字幕'
+    message = '精修意外停止；本会话未产生可精修的已保存字幕'
   } else if (refined === total) {
-    message = `精修进程异常结束，但本次已生成 ${refined}/${total} 段精修稿`
+    message = `精修意外停止，但本次已生成 ${refined}/${total} 段精修稿`
   } else {
     message = `精修异常，已精修 ${refined}/${total} 段，其余保留原字幕`
   }

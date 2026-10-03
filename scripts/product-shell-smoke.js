@@ -528,7 +528,7 @@ async function exerciseApplicationLifecycle ({ caption, toolbar, settings, rawSe
     },
     evidence: {
       primaryWindowMinimizable: toolbar.isMinimizable(),
-      primaryWindowTitleStable: toolbar.getTitle() === 'Live Subtitle',
+      primaryWindowTitleStable: toolbar.getTitle() === 'Speech-Agent',
       minimizeControlVisible,
       activeSessionContinuedWhileMinimized,
       captionHiddenWhileMinimized,

@@ -18,7 +18,7 @@ function canonicalizeConnection (httpsOrigin, basePath = '/v1') {
 }
 
 function joinEndpoint (connection, endpointSegment) {
-  if (!['/chat/completions', '/models'].includes(endpointSegment)) throw new TypeError('endpoint is not registered')
+  if (!['/chat/completions', '/models', '/embeddings'].includes(endpointSegment)) throw new TypeError('endpoint is not registered')
   const base = connection.basePath === '/' ? '' : connection.basePath
   return `${connection.httpsOrigin}${base}${endpointSegment}`
 }

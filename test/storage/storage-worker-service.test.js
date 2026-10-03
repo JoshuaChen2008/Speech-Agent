@@ -538,3 +538,42 @@ test('SEM-F33/J25: model configuration revision conflict survives the real worke
   assert.equal(response.error.code, 'MODEL_CONFIG_REVISION_CONFLICT')
   service.handle(request(OPERATIONS.SHUTDOWN))
 })
+
+test('SEM-F28/SEM-F30/SEM-T04/J24: next run queries accept automatic policy and reject invalid fields', (t) => {
+  const service = new StorageWorkerService()
+  const databasePath = tempDatabase(t)
+  assert.equal(service.handle(request(OPERATIONS.INITIALIZE, { databasePath })).ok, true)
+  const automaticPolicy = {
+    agentEnabled: true, automaticProcessingSince: 1000, memoryEnabled: true, memoryProcessingSince: 1000
+  }
+  try {
+    for (const payload of [{}, { requestedBy: 'automatic' }, { requestedBy: 'user' }, { automaticPolicy }]) {
+      const response = service.handle(request(OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT, payload))
+      assert.equal(response.ok, true)
+      assert.equal(response.result, null)
+    }
+    assert.deepEqual(service.requirePersonalContextStore().automaticPolicy, automaticPolicy)
+
+    for (const payload of [
+      { unexpected: true },
+      { requestedBy: 'invalid' },
+      { automaticPolicy: null },
+      { automaticPolicy: [] },
+      { automaticPolicy: {} },
+      { automaticPolicy: { ...automaticPolicy, agentEnabled: 'true' } },
+      { automaticPolicy: { ...automaticPolicy, unexpected: true } },
+      { automaticPolicy, requestedBy: 'automatic' },
+      { automaticPolicy, requestedBy: 'user' }
+    ]) {
+      const response = service.handle(request(OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT, payload))
+      assert.equal(response.ok, false)
+      assert.equal(response.error.code, 'AGENT_REQUEST_INVALID')
+    }
+    assert.deepEqual(service.requirePersonalContextStore().automaticPolicy, automaticPolicy)
+    assert.equal(service.requireStore().database.prepare(
+      'SELECT COUNT(*) AS count FROM formal_agent_run_claim_receipts'
+    ).get().count, 0)
+  } finally {
+    service.handle(request(OPERATIONS.SHUTDOWN))
+  }
+})

@@ -12,6 +12,11 @@ async function createModelAccess (options = {}) {
     createLoopAdapter: runtime.createLoopAdapter.bind(runtime)
   }
   Object.defineProperties(facade, {
+    embeddingAccess: { get: () => runtime.embeddingAccess || null, enumerable: false },
+    attachEmbeddingAccess: { value: access => {
+      if (runtime.embeddingAccess || !access || ['catalog', 'configure', 'bind', 'run', 'cancel', 'close'].some(key => typeof access[key] !== 'function')) throw new TypeError('embedding access interface is invalid')
+      runtime.embeddingAccess = access
+    }, enumerable: false },
     presetCatalog: { value: runtime.presetCatalog.bind(runtime), enumerable: false },
     testSavedModel: { value: runtime.testSavedModel.bind(runtime), enumerable: false },
     cancelSavedModel: { value: runtime.cancelSavedModel.bind(runtime), enumerable: false },

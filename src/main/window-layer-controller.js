@@ -1,6 +1,6 @@
 'use strict'
 
-const FOREGROUND_ROLES = Object.freeze(['settings', 'history'])
+const FOREGROUND_ROLES = Object.freeze(['settings', 'history', 'agent'])
 
 function isUsableWindow (win) {
   return !!(win && typeof win.isDestroyed === 'function' && !win.isDestroyed())

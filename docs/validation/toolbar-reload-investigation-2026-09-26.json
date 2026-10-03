@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "kind": "toolbar-reload-investigation",
+  "gateStatus": "diagnostic-only",
+  "rootCauseIdentified": false,
+  "remote": {
+    "runId": 35504490662,
+    "artifactId": 10602993827,
+    "revision": "b49a940b395942787152809a23a8608a53a690ce",
+    "archiveSha256": "be87bb81e9774994a7f76b5594d0a05a2a7db66d749a71323d17b87ed2147caa",
+    "reportSha256": "5e96fd60d25256a190ed3e3a0c061ba6203a7b178331e002999d1ad3f88392b8",
+    "exitEvidenceSha256": "0a8c3a81c2685253139df688b3943b01cbfdd9da2e5013fc9f62a3b2110b6f5a",
+    "phaseDiagnosticPresent": false,
+    "productResult": "fail",
+    "crashEventCount": 0,
+    "mainExitStatusClass": "other-nonzero",
+    "cleanIntentObserved": true,
+    "counters": {
+      "incidentCount": 1,
+      "droppedIncidentCount": 0,
+      "rendererGoneCount": 0,
+      "utilityGoneCount": 0,
+      "mainExitCount": 1,
+      "fatalV8Count": 0,
+      "preloadErrorCount": 0,
+      "unresponsiveCount": 0,
+      "rejectedIpcCount": 0
+    }
+  },
+  "local": {
+    "revision": "120430c",
+    "productPayloadSha256": "e4e0f26678910d75983bee8a3000b988ff24b30d8e2e0f4be70785a5da5214ac",
+    "baselineFacts": {
+      "rendererSentObserved": true,
+      "mainReceivedObserved": true,
+      "senderRejectedObserved": false,
+      "layoutRejectedObserved": false,
+      "generationMismatchObserved": false,
+      "targetLayoutAcceptedObserved": true
+    },
+    "baselineProductResult": "pass",
+    "baselineExitOutcome": "clean-exit",
+    "repeatedReloadCount": 100,
+    "recoveredCount": 100,
+    "rejectedCount": 0,
+    "overflowCount": 0,
+    "repeatedExitOutcome": "clean-exit",
+    "harnessSha256": "40ca1e8fa49753030228f2c00e04b0f82f0a5076c1b13eaa0273a17df389a25f",
+    "diagnosticSetSha256": "e7d5a2a005a8054b1a1ba462597c34ecc97cee9c4fcb4a2ad38b553e59a32b50"
+  }
+}

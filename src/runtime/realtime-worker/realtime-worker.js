@@ -17,6 +17,7 @@ const {
 const { RefinementController } = require('./refinement-controller')
 const { performance } = require('node:perf_hooks')
 const { CloudAudioBuffer } = require('../recognition/cloud-audio-buffer')
+const { LocalAudioSink } = require('../recognition/local-audio-sink')
 
 const UTILITY_CLOCK_ID = 'realtime-utility-performance-v1'
 
@@ -107,6 +108,11 @@ function reportStats () {
         ? state.refine.metrics()
         : null,
       sources: state.core ? state.core.metrics() : {},
+      cloudAudio: state.cloudAudio ? {
+        retainedSamples: state.cloudAudio.queuedSamples,
+        pendingSamples: state.cloudAudio.pendingSamples,
+        localActive: state.cloudAudio.localActive
+      } : null,
       timing
     }
   })
@@ -143,9 +149,11 @@ function onPortMessage (message) {
       }
     })
     reportStats()
+    // Same PCM port as credits; flush is observable after all accepted frames.
+    state.port?.postMessage({ type: 'end-received' })
     return
   }
-  if (message?.type !== 'frame' || !state.core) return
+  if (message?.type !== 'frame' || (!state.core && !state.cloudAudio)) return
   const sourceId = String(message.sourceId || '')
   if (!state.config.sourceIds.includes(sourceId)) return
   const ingressUtilityClockMs = performance.now()
@@ -305,7 +313,7 @@ process.parentPort.on('message', (event) => {
   } else if (message?.type === 'configure') {
     /* 二次 configure 会把 sequence/segmentId 归零，旧游标下所有新事件都会
        被 coordinator 拒绝——按编程错误拒绝，重配置应当重启 worker。 */
-    if (state.core) {
+    if (state.core || state.cloudAudio) {
       publish({ type: 'configure-failed', message: 'worker is already configured; fork a new worker instead' })
       return
     }
@@ -322,6 +330,18 @@ process.parentPort.on('message', (event) => {
       if (Number.isInteger(message[key]) && message[key] > 0) config[key] = message[key]
     }
     try {
+      if (message.cloudAudio === true) {
+        // Cloud mode must not construct WorkerCore or touch native libraries,
+        // even if the caller supplied local model configuration.
+        state.cloudAudio = new CloudAudioBuffer({
+          send: value => { if (!state.cloudPort) throw new Error('cloud port unavailable'); state.cloudPort.postMessage(value) },
+          emit: captionEvent => publish({ type: 'caption', event: captionEvent }),
+          fault: recognitionFault,
+          progress: phase => publish({ type: 'recognition-local-progress', phase })
+        })
+        publish({ type: 'configured' })
+        return
+      }
       /* 真实模型：先注册（内部同步载入模型），后建 WorkerCore；失败走
          configure-failed。null profile 不 require 原生模块。 */
       let adapterFactory
@@ -392,14 +412,6 @@ process.parentPort.on('message', (event) => {
         attempt: config.attempt,
         sequenceBases: config.sequenceBases
       })
-      if (message.cloudAudio === true) {
-        state.cloudAudio = new CloudAudioBuffer({
-          core: state.core,
-          send: (value) => { if (!state.cloudPort) throw new Error('cloud port unavailable'); state.cloudPort.postMessage(value) },
-          emit: (captionEvent) => publish({ type: 'caption', event: captionEvent }),
-          fault: recognitionFault
-        })
-      }
       publish({ type: 'configured' })
     } catch (error) {
       const code = error?.code === 'DRAFT_RECOGNIZER_START_FAILED' ? error.code : undefined
@@ -419,12 +431,24 @@ process.parentPort.on('message', (event) => {
           else if (data?.type === 'commit') state.cloudAudio.commit(data.sample)
           else if (data?.type === 'takeover') {
             state.cloudAudio.takeover(data.sample)
-            // Same parent channel as local captions: confirmation precedes text.
-            if (!state.cloudAudio.failed) publish({ type: 'recognition-local-ready' })
+            if (!state.cloudAudio.failed) publish({ type: 'recognition-local-loading' })
+          } else if (data?.type === 'local-start') {
+            if (!state.cloudAudio.startLocal()) state.cloudAudio.fail('RECOGNITION_FALLBACK_FAILED')
+          } else if (data?.type === 'local-cancel') {
+            state.cloudAudio.dispose()
           }
         } catch { state.cloudAudio.fail('RECOGNITION_FALLBACK_FAILED') }
       })
       state.cloudPort.start()
+    }
+  } else if (message?.type === 'fallback-port') {
+    if (event.ports?.[0] && state.cloudAudio) {
+      try {
+        const sink = new LocalAudioSink({ port: event.ports[0], sessionId: state.config.sessionId,
+          sourceIds: state.config.sourceIds, fault: code => state.cloudAudio.fail(code),
+          ready: () => { if (!state.cloudAudio.failed) publish({ type: 'recognition-local-ready' }) } })
+        state.cloudAudio.attachLocal(sink)
+      } catch { state.cloudAudio.fail('RECOGNITION_FALLBACK_FAILED') }
     }
   } else if (message?.type === 'pcm-port') {
     if (event.ports && event.ports[0]) attachPort(event.ports[0])

@@ -1,13 +1,18 @@
 'use strict'
+const { executeQuestionEvidence, nodeCount: questionNodeCount } = require('./question-evidence-executor')
 
 // @ts-check
 
 const { canonicalize, sha256Canonical } = require('../../runtime/storage-worker/canonical-json')
 const { assertModelUsage } = require('../contracts/model-access-core')
 const { getRecipe, validateRecipeOutput } = require('../contracts/recipes')
+const { deriveRecipeRequestCapacity, usesModelWindowCapacity } = require('../contracts/budget-axes')
 const { createControlledToolRuntime } = require('./controlled-tool-runtime')
 const { createToolAuditRuntime } = require('./tool-audit-runtime')
 const { AgentLoopExecutor } = require('./agent-loop')
+const { readFrozenSummaryInput, readFrozenQuestionInput } = require('./summary-input-source')
+const { planSummaryInputAsync, planQuestionInputAsync } = require('./summary-input-plan')
+const { executeInputPlan } = require('./summary-plan-executor')
 
 const TARGET_RECIPES = new Set(['summary.minutes', 'qa.answer'])
 const RETRYABLE_ERRORS = new Set([
@@ -15,8 +20,8 @@ const RETRYABLE_ERRORS = new Set([
   'AGENT_WORKER_EXITED', 'AGENT_INTERNAL_FAILURE'
 ])
 const TERMINAL_ERRORS = new Set([
-  'AGENT_OUTPUT_INVALID', 'AGENT_BUDGET_EXCEEDED', 'AGENT_PERMISSION_DENIED', 'AGENT_REQUEST_INVALID',
-  'AGENT_SUMMARY_MEMORY_READ_FAILED', 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED'
+  'AGENT_PROVIDER_AUTH_FAILED', 'AGENT_OUTPUT_INVALID', 'AGENT_BUDGET_EXCEEDED', 'AGENT_PERMISSION_DENIED', 'AGENT_REQUEST_INVALID',
+  'AGENT_SUMMARY_MEMORY_READ_FAILED', 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED', 'AGENT_QA_INPUT_LIMIT_EXCEEDED'
 ])
 
 function codedError (code) {
@@ -83,9 +88,53 @@ function usageValue (value, enabled) {
   }
 }
 
-function promptForInput (input, userPrompt, recipeId = 'summary.minutes', recipeVersion = '1') {
+function collectSourceRefs (value, found = []) {
+  if (!value || typeof value !== 'object') return found
+  if (Array.isArray(value)) {
+    for (const item of value) collectSourceRefs(item, found)
+    return found
+  }
+  if (Object.keys(value).length === 4 &&
+      ['fromEventOrder', 'sessionId', 'throughEventOrder', 'transcriptVersion']
+        .every((key) => Object.hasOwn(value, key))) {
+    found.push(value)
+    return found
+  }
+  for (const key of Object.keys(value)) collectSourceRefs(value[key], found)
+  return found
+}
+
+// Every transcript reference in a target-recipe result must stay inside the
+// frozen session input range with the same session identity — the same rule
+// the storage layer enforces for ingest evidence. A reference outside the
+// authorized range is invalid output, never a repairable result.
+function assertAuthorizedSourceRefs (input, output) {
+  if (!Number.isSafeInteger(input.fromEventOrder) || !Number.isSafeInteger(input.throughEventOrder)) {
+    throw codedError('AGENT_REQUEST_INVALID')
+  }
+  for (const ref of collectSourceRefs(output)) {
+    if (ref.sessionId !== input.sessionId || ref.transcriptVersion !== input.transcriptVersion ||
+        ref.fromEventOrder < input.fromEventOrder || ref.throughEventOrder > input.throughEventOrder) {
+      throw codedError('AGENT_OUTPUT_INVALID')
+    }
+  }
+}
+
+function promptForInput (input, userPrompt, recipeId = 'summary.minutes', recipeVersion = '1', requestCapacity = null) {
   if (!input || typeof input !== 'object' || !Array.isArray(input.events) || typeof userPrompt !== 'string') {
     throw codedError('AGENT_REQUEST_INVALID')
+  }
+  const windowedInput = usesModelWindowCapacity(recipeId, recipeVersion)
+  let promptLimit
+  if (windowedInput) {
+    // The v2 window precheck enforces the registered request capacity derived
+    // once from the frozen binding. Missing derivation fails closed.
+    if (!requestCapacity || !Number.isSafeInteger(requestCapacity.promptByteLimit) || requestCapacity.promptByteLimit < 0) {
+      throw codedError('AGENT_REQUEST_INVALID')
+    }
+    promptLimit = requestCapacity.promptByteLimit
+  } else {
+    promptLimit = 15000
   }
   const payload = {
     userPrompt,
@@ -105,18 +154,22 @@ function promptForInput (input, userPrompt, recipeId = 'summary.minutes', recipe
   let prompt
   try { prompt = canonicalize(payload) } catch { throw codedError('AGENT_REQUEST_INVALID') }
   const promptBytes = Buffer.byteLength(prompt, 'utf8')
-  if (promptBytes > 15000) {
-    const code = recipeId === 'summary.minutes' && recipeVersion === '1'
+  if (promptBytes > promptLimit) {
+    // Both summary versions reject oversized frozen input with the dedicated
+    // stable code: the window precheck is an input-capacity rejection before
+    // any model call, not a generic budget-axis exhaustion.
+    const code = recipeId === 'summary.minutes'
       ? 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED'
-      : 'AGENT_BUDGET_EXCEEDED'
+      : windowedInput ? 'AGENT_QA_INPUT_LIMIT_EXCEEDED' : 'AGENT_BUDGET_EXCEEDED'
     const error = codedError(code)
-    error.diagnosticMetrics = { actual: promptBytes, limit: 15000, unit: 'bytes' }
+    error.diagnosticMetrics = { actual: promptBytes, limit: promptLimit, unit: 'bytes' }
     throw error
   }
   return prompt
 }
 
 function normalizedErrorCode (error) {
+  if (['AGENT_INPUT_CHANGED', 'AGENT_REQUEST_IDENTITY_CONFLICT', 'AGENT_INPUT_EMPTY'].includes(error?.code)) return 'AGENT_REQUEST_INVALID'
   if (error?.code === 'AGENT_CANCELLED' || error?.code === 'TOOL_CANCELLED') return 'AGENT_CANCELLED'
   if (error?.code === 'TOOL_BUDGET_EXCEEDED') return 'AGENT_BUDGET_EXCEEDED'
   if (error?.code === 'TOOL_SCOPE_DENIED') return 'AGENT_PERMISSION_DENIED'
@@ -135,7 +188,7 @@ function summaryMemoryReadError (error) {
 
 function diagnosticEventForProgress (event) {
   if (event.type === 'budget_rejected') return 'budget_rejected'
-  if (event.phase === 'retry_wait') return 'backoff'
+  if (event.type === 'retry_wait' || event.phase === 'retry_wait') return 'backoff'
   if (event.type === 'request_started') return 'model_request_started'
   if (event.type === 'response_received' || event.type === 'request_failed') return 'model_request_ended'
   if (event.type === 'tool_started') return 'tool_started'
@@ -184,9 +237,9 @@ class FormalAgentRunRunner {
     }
   }
 
-  async toolsForRun (recipe, binding, interactionId, attemptIdentity, signal, contextOverride = undefined, onProgress = undefined) {
+  async toolsForRun (recipe, binding, interactionId, attemptIdentity, signal, contextOverride = undefined, onProgress = undefined, onResult = undefined, memoryQuery = undefined) {
     const context = contextOverride === undefined
-      ? await awaitWithCancellation(() => this.personalContext.readToolContext({ runId: attemptIdentity.runId }, signal), signal)
+      ? await awaitWithCancellation(() => this.personalContext.readToolContext({ runId: attemptIdentity.runId, ...(recipe.recipeVersion === '5' && recipe.recipeId === 'qa.answer' ? { schemaVersion: 2, query: memoryQuery } : {}) }, signal), signal)
       : contextOverride
     const controlled = createControlledToolRuntime({ context, signal })
     const audited = createToolAuditRuntime({
@@ -202,7 +255,12 @@ class FormalAgentRunRunner {
       onProgress,
       now: this.now
     })
-    return audited.tools()
+    const tools = audited.tools()
+    return typeof onResult !== 'function' ? tools : tools.map(tool => ({ ...tool, execute: async (args) => {
+      const result = await tool.execute(args)
+      onResult(result)
+      return result
+    } }))
   }
 
   async reportProgress (job, event = {}) {
@@ -220,6 +278,10 @@ class FormalAgentRunRunner {
       phase,
       activity: event.activity === true || ['request_started', 'response_received', 'request_failed'].includes(event.type)
     }
+    if (Number.isSafeInteger(event.validatedChunkCount) && Number.isSafeInteger(event.totalChunkCount)) {
+      update.validatedChunkCount = event.validatedChunkCount
+      update.totalChunkCount = event.totalChunkCount
+    }
     if (event.state === 'retry_wait') update.state = 'retry_wait'
     const diagnosticEvent = diagnosticEventForProgress(event)
     if (diagnosticEvent) update.diagnosticEvent = diagnosticEvent
@@ -227,6 +289,16 @@ class FormalAgentRunRunner {
       update.errorCode = event.errorCode
       update.budgetAxis = event.budgetAxis
       update.metrics = event.metrics
+    }
+    if (diagnosticEvent === 'backoff' && event.type === 'retry_wait') {
+      if (RETRYABLE_ERRORS.has(event.reason)) update.errorCode = event.reason
+      if (Number.isSafeInteger(event.nextAttempt) && event.nextAttempt >= 2 && event.nextAttempt <= 5) {
+        update.metrics = { actual: event.nextAttempt, limit: 5, unit: 'count' }
+        if (['AGENT_PROVIDER_RATE_LIMITED', 'AGENT_PROVIDER_UNAVAILABLE', 'AGENT_PROVIDER_TIMEOUT'].includes(event.reason) &&
+            Number.isSafeInteger(event.waitMs) && event.waitMs >= 0 && event.waitMs <= 1000) {
+          update.retry = { requestAttempt: event.nextAttempt, waitMs: event.waitMs, reason: event.reason }
+        }
+      }
     }
     const bindingDigest = this.bindingDigests.get(`${job.attemptIdentity.runId}:${job.attemptIdentity.attempt}`)
     if (bindingDigest) update.modelBindingDigest = bindingDigest
@@ -251,13 +323,15 @@ class FormalAgentRunRunner {
         ...(wallClockElapsedMs === undefined ? {} : { wallClockElapsedMs })
       }, signal)
       return true
-    } catch {
-      return false
+    } catch (error) {
+      if (error?.code === 'AGENT_INTERACTION_STATE_CONFLICT' || error?.code === 'AGENT_CANCELLED') return false
+      throw codedError('AGENT_RUN_UNAVAILABLE')
     }
   }
 
   async run (job) {
     exactObject(job, ['recipeId', 'source', 'attemptIdentity'], [
+      'recipeVersion', 'summaryInputPolicy',
       'interactionId', 'requestedBy', 'signal', 'runId', 'summaryUseMemory', 'sessionSummaryRequest',
       'getRemainingWallClockMs', 'getWallClockElapsedMs', 'remainingWallClockMs', 'requestCount', 'requestLimit'
     ])
@@ -282,11 +356,14 @@ class FormalAgentRunRunner {
       await this.storage.failFormalAgentRun({ attemptIdentity: job.attemptIdentity, errorCode: 'AGENT_REQUEST_INVALID' }, job.signal)
       return null
     }
+    if (job.summaryInputPolicy !== undefined && job.summaryInputPolicy !== 'summary-long-input@1') throw codedError('AGENT_REQUEST_INVALID')
     const startedAt = this.now()
+    const startedMonotonic = performance.now()
+    let activePlan = null
     let terminalReason = null
     try {
       await this.reportProgress(job, { phase: 'preparing', activity: false })
-      const recipe = getRecipe(job.recipeId, '1')
+      const recipe = getRecipe(job.recipeId, job.recipeVersion || '1')
       const userPrompt = this.promptProvider(job.attemptIdentity.runId)
       if (typeof userPrompt !== 'string' || userPrompt.length === 0) throw codedError('AGENT_REQUEST_INVALID')
       if (job.signal?.aborted) throw codedError(job.signal.reason?.code === 'AGENT_BUDGET_EXCEEDED' ? 'AGENT_BUDGET_EXCEEDED' : 'AGENT_CANCELLED')
@@ -296,21 +373,48 @@ class FormalAgentRunRunner {
         recipeVersion: recipe.recipeVersion,
         executionForm: 'agent_loop'
       }), job.signal)
+      const remaining = () => typeof job.getRemainingWallClockMs === 'function' ? job.getRemainingWallClockMs()
+        : Math.max(0, (job.remainingWallClockMs ?? binding.budget.maxWallClockMs) - Math.floor(performance.now() - startedMonotonic))
       try {
         this.bindingDigests.set(
           `${job.attemptIdentity.runId}:${job.attemptIdentity.attempt}`,
           sha256Canonical(binding)
         )
       } catch { /* a diagnostic digest cannot change model execution */ }
-      const useMemory = job.recipeId !== 'summary.minutes' || job.summaryUseMemory !== false
+      let useMemory = job.recipeId !== 'summary.minutes' || job.summaryUseMemory !== false
       await this.reportProgress(job, {
         phase: 'reading_context', activity: false,
         ...(job.recipeId === 'summary.minutes' && !useMemory ? { memoryState: 'not_used' } : {})
       })
-      const input = await awaitWithCancellation(() => this.personalContext.readSessionInput(job.source, job.signal), job.signal)
+      const longQuestion = recipe.recipeId === 'qa.answer' && recipe.recipeVersion === '3'
+      const retrievalQuestion = recipe.recipeId === 'qa.answer' && ['4', '5'].includes(recipe.recipeVersion)
+      const longInput = job.summaryInputPolicy === 'summary-long-input@1' || longQuestion
+      const readInput = longQuestion ? readFrozenQuestionInput : readFrozenSummaryInput
+      const requestCapacity = usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)
+        ? deriveRecipeRequestCapacity({ recipeId: recipe.recipeId, recipeVersion: recipe.recipeVersion, capabilities: binding.capabilities, budget: binding.budget }) : null
+      if (retrievalQuestion && requestCapacity.promptByteLimit < 1024) throw codedError('AGENT_BUDGET_EXCEEDED')
+      const retrieved = retrievalQuestion ? await awaitWithCancellation(() => this.personalContext.questionEvidence({ action: 'retrieve',
+        attemptIdentity: job.attemptIdentity, query: userPrompt, maxPromptBytes: Math.min(256 * 1024, requestCapacity.promptByteLimit) }, job.signal), job.signal) : null
+      if (retrieved?.memoryAllowed === false) useMemory = false
+      const input = retrieved ? { ...job.source, fromEventOrder: 1, throughEventOrder: job.source.inputWatermark, events: [] } : await awaitWithCancellation(() => longInput
+        ? readInput(this.personalContext, job.source, job.signal)
+        : this.personalContext.readSessionInput(job.source, job.signal), job.signal)
 
-      const prompt = promptForInput(input, userPrompt, recipe.recipeId, recipe.recipeVersion)
+      const windowedInput = usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)
+      const planInput = longQuestion ? planQuestionInputAsync : planSummaryInputAsync
+      const plan = retrieved ? { ...retrieved, policyVersion: 'question-retrieval@1', bindingDigest: sha256Canonical(binding),
+        planDigest: sha256Canonical({ evidenceDigest: retrieved.evidenceDigest, bindingDigest: sha256Canonical(binding) }),
+        leaves: retrieved.leaves || [{ prompt: retrieved.prompt }], nodeCount: retrieved.leaves ? questionNodeCount(retrieved.leaves.length) : 1 } : longInput ? await planInput(input, userPrompt, binding, job.signal) : null
+      activePlan = plan
+      let prompt = plan ? plan.leaves[0].prompt : promptForInput(input, userPrompt, recipe.recipeId, recipe.recipeVersion, requestCapacity)
+      if (plan) {
+        const { planDigest, inputDigest, bindingDigest, nodeCount, segmentCount, rawTextBytes, canonicalBytes } = plan
+        await this.storage.summaryInputPlan({ action: 'register', attemptIdentity: job.attemptIdentity,
+          plan: { planDigest, inputDigest, bindingDigest, nodeCount, segmentCount, rawTextBytes, canonicalBytes, leafCount: plan.leaves.length } })
+        await this.reportProgress(job, { type: 'plan_created', phase: 'preparing', validatedChunkCount: 0, totalChunkCount: plan.leaves.length })
+      }
       let tools
+      const readMemoryRefs = new Set()
       try {
         tools = await this.toolsForRun(
           recipe, binding, job.interactionId, job.attemptIdentity, job.signal,
@@ -318,7 +422,10 @@ class FormalAgentRunRunner {
           (event) => this.reportProgress(job, {
             ...event,
             ...(job.recipeId === 'summary.minutes' && !useMemory ? { memoryState: 'not_used' } : {})
-          })
+          }),
+          longQuestion || retrievalQuestion ? (result) => {
+            for (const match of result.matches || []) for (const entry of match.entries) readMemoryRefs.add(canonicalize(entry.memoryRef))
+          } : undefined, userPrompt
         )
       } catch (error) {
         if (job.recipeId === 'summary.minutes' && useMemory && summaryMemoryReadError(error)) {
@@ -330,40 +437,72 @@ class FormalAgentRunRunner {
       const loop = await awaitWithCancellation(() => this.loopFactory(binding), job.signal)
       if (!loop || typeof loop.agentLoop !== 'function') throw codedError('AGENT_INTERNAL_FAILURE')
       let requestSequence = Number.isSafeInteger(job.requestCount) ? job.requestCount : 0
-      const beforeRequest = async () => {
+      const beforeRequest = async ({ turn } = {}) => {
         if (job.signal?.aborted) throw codedError(job.signal.reason?.code === 'AGENT_BUDGET_EXCEEDED' ? 'AGENT_BUDGET_EXCEEDED' : 'AGENT_CANCELLED')
-        if (typeof job.getRemainingWallClockMs === 'function' && job.getRemainingWallClockMs() <= 0) {
+        if (remaining() <= 0) {
           throw codedError('AGENT_BUDGET_EXCEEDED')
         }
-        if (!job.sessionSummaryRequest) return
         if (typeof this.storage.reserveFormalAgentModelRequest !== 'function') throw codedError('AGENT_RUN_UNAVAILABLE')
         requestSequence += 1
         await awaitWithCancellation(() => this.storage.reserveFormalAgentModelRequest({
           attemptIdentity: { ...job.attemptIdentity },
-          requestSequence
+          requestSequence,
+          operationDigest: sha256Canonical({ recipeId: recipe.recipeId, recipeVersion: recipe.recipeVersion,
+            input: prompt, turn: Number.isSafeInteger(turn) ? turn : 1 })
         }), job.signal)
       }
-      const remainingWallClockMs = typeof job.getRemainingWallClockMs === 'function'
-        ? job.getRemainingWallClockMs()
-        : Number.isSafeInteger(job.remainingWallClockMs) ? job.remainingWallClockMs : binding.budget.maxWallClockMs
+      const remainingWallClockMs = remaining()
       if (remainingWallClockMs <= 0) throw codedError('AGENT_BUDGET_EXCEEDED')
-      const result = await loop.agentLoop({
-        recipeId: recipe.recipeId,
-        recipeVersion: recipe.recipeVersion,
-        prompt,
-        resolvedModel: binding,
-        tools,
-        signal: job.signal,
-        timeoutMs: Math.min(binding.budget.maxWallClockMs, remainingWallClockMs),
-        beforeRequest,
-        onProgress: (event) => this.reportProgress(job, event),
-        budget: binding.budget,
-        usageReporting: binding?.capabilities?.usageReporting !== false
-      })
+      const invoke = async (nodePrompt) => {
+        prompt = nodePrompt
+        return loop.agentLoop({
+          recipeId: recipe.recipeId,
+          recipeVersion: recipe.recipeVersion,
+          prompt,
+          resolvedModel: binding,
+          tools,
+          signal: job.signal,
+          timeoutMs: Math.min(plan ? 180000 : binding.budget.maxWallClockMs, Math.max(1, remaining())),
+          beforeRequest,
+          ...(plan ? {
+            getRunUsage: () => this.storage.summaryInputPlan({ action: 'read', attemptIdentity: job.attemptIdentity }),
+            onRequestUsage: (usage) => this.storage.summaryInputPlan({ action: 'receipt', attemptIdentity: job.attemptIdentity, requestSequence, usage })
+          } : {}),
+          onProgress: (event) => this.reportProgress(job, event),
+          budget: binding.budget,
+          ...(windowedInput ? { requestCapacity } : {}),
+          usageReporting: binding?.capabilities?.usageReporting !== false
+        })
+      }
+      const result = retrieved?.leaves ? await executeQuestionEvidence({ evidence: retrieved, invoke, signal: job.signal,
+        promptByteLimit: requestCapacity.promptByteLimit, validateMemoryRefs: output => {
+          if (output.memoryRefs.some(ref => !readMemoryRefs.has(canonicalize(ref)))) throw codedError('AGENT_OUTPUT_INVALID')
+        } }) : plan && !retrievalQuestion ? await executeInputPlan({ input, plan, invoke, signal: job.signal,
+        ...(longQuestion ? { validateReferences: (output) => {
+          if (output.memoryRefs.some(ref => !readMemoryRefs.has(canonicalize(ref)))) throw codedError('AGENT_OUTPUT_INVALID')
+        } } : {}),
+        onProgress: event => this.reportProgress(job, event) }) : await invoke(prompt)
+      if (plan) {
+        if (retrievalQuestion) await awaitWithCancellation(() => this.personalContext.questionEvidence({ action: 'verify', attemptIdentity: job.attemptIdentity }, job.signal), job.signal)
+        else await readInput(this.personalContext, job.source, job.signal, { collect: false })
+        if (longQuestion || retrievalQuestion && useMemory) await awaitWithCancellation(() => this.personalContext.readToolContext({ runId: job.attemptIdentity.runId, ...(recipe.recipeVersion === '5' ? { schemaVersion: 2, query: userPrompt } : {}) }, job.signal), job.signal)
+        const totals = await this.storage.summaryInputPlan({ action: 'read', attemptIdentity: job.attemptIdentity })
+        result.usage = totals.known ? { inputTokens: totals.inputTokens, outputTokens: totals.outputTokens,
+          usageSource: 'provider', cacheHitInputTokens: totals.cacheHitInputTokens ?? null,
+          cacheMissInputTokens: totals.cacheMissInputTokens ?? null } : null
+      }
       if (job.signal?.aborted) throw codedError('AGENT_CANCELLED')
+      if (remaining() <= 0) throw codedError('AGENT_BUDGET_EXCEEDED')
       await this.reportProgress(job, { phase: 'validating', activity: false })
       const output = outputValue(result)
       validateRecipeOutput(recipe.recipeId, recipe.recipeVersion, output)
+      if (retrievalQuestion) {
+        if (output.coverage !== null || output.memoryRefs.some(ref => !readMemoryRefs.has(canonicalize(ref))) ||
+            output.sourceRefs.some(ref => !retrieved.sourceRefs.some(allowed => canonicalize(allowed) === canonicalize(ref)))) throw codedError('AGENT_OUTPUT_INVALID')
+        output.coverage = retrieved.coverage
+        validateRecipeOutput(recipe.recipeId, recipe.recipeVersion, output)
+      }
+      if (!retrievalQuestion) assertAuthorizedSourceRefs(input, output)
       if (job.signal?.aborted) throw codedError('AGENT_CANCELLED')
       await this.flushProgress(job)
       if (schedulerInterrupted(job.signal)) return null
@@ -416,7 +555,7 @@ class FormalAgentRunRunner {
           }, job.signal?.reason?.code === 'AGENT_CANCELLED' ? undefined : job.signal)
           terminalReason = 'cancelled'
         } catch { /* cancelRun may have already terminalized the interaction */ }
-      } else if (TERMINAL_ERRORS.has(code)) {
+      } else if (TERMINAL_ERRORS.has(code) || error?.retryExhausted === true) {
         await this.flushProgress(job)
         if (schedulerInterrupted(job.signal)) return null
         const writeSignal = job.signal?.reason?.code === 'AGENT_BUDGET_EXCEEDED' ? undefined : job.signal
@@ -425,27 +564,29 @@ class FormalAgentRunRunner {
           typeof job.getWallClockElapsedMs === 'function' ? job.getWallClockElapsedMs() : undefined
         )) terminalReason = 'failed'
       } else {
-        const settlement = await this.storage.failFormalAgentRun({
+        let settlement
+        try { settlement = await this.storage.failFormalAgentRun({
           attemptIdentity: job.attemptIdentity,
           errorCode: code,
           ...(typeof job.getWallClockElapsedMs === 'function'
             ? { elapsedMs: job.getWallClockElapsedMs() }
             : {})
-        }, job.signal?.reason?.code === 'AGENT_BUDGET_EXCEEDED' ? undefined : job.signal).catch(() => null)
+        }, job.signal?.reason?.code === 'AGENT_BUDGET_EXCEEDED' ? undefined : job.signal) } catch {
+          // Let the scheduler report an unconfirmed settlement. The lease can
+          // be reconciled later; this attempt cannot claim a terminal result.
+          throw codedError('AGENT_RUN_UNAVAILABLE')
+        }
         if (settlement?.state === 'failed') {
           await this.flushProgress(job)
           if (schedulerInterrupted(job.signal)) return null
-          if (await this.terminalizeFailure(
-            job.interactionId, job.attemptIdentity, settlement.errorCode || code, durationMs,
-            job.signal?.reason?.code === 'AGENT_BUDGET_EXCEEDED' ? undefined : job.signal,
-            typeof job.getWallClockElapsedMs === 'function' ? job.getWallClockElapsedMs() : undefined
-          )) terminalReason = 'failed'
+          terminalReason = 'failed'
         } else if (settlement?.state === 'retry_wait') {
           await this.reportProgress(job, { phase: 'retry_wait', state: 'retry_wait', activity: false })
         }
       }
       return null
     } finally {
+      if (activePlan) for (const leaf of activePlan.leaves) leaf.prompt = ''
       this.bindingDigests.delete(`${job.attemptIdentity.runId}:${job.attemptIdentity.attempt}`)
       if (job.sessionSummaryRequest) this.progressPhases.delete(`${job.sessionSummaryRequest.requestId}:${job.sessionSummaryRequest.generation}`)
       if (terminalReason) {

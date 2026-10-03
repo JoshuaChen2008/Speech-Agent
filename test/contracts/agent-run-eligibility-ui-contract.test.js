@@ -26,7 +26,7 @@ const header = Object.freeze({
 
 test('SEM-F28/SEM-F31/J22/J24: Agent Bar eligibility and changed use a bounded exact public contract', () => {
   assert.equal(CONTRACT_ID, header.contract_id)
-  assert.equal(CONTRACT_VERSION, header.contract_version)
+  assert.equal(CONTRACT_VERSION, '1.1.0')
   assert.deepEqual(ALLOWED_ROLES, ['agent', 'history'])
   assert.deepEqual(IPC_CHANNELS, {
     changed: 'agent-run:changed',

@@ -6,8 +6,8 @@ const { LANGUAGE_TAG_PATTERN, assertCaptionEvent, assertSingleSourceIds } = requ
 
 const DEFAULT_SCRIPT = Object.freeze([
   Object.freeze({
-    text: '欢迎使用 Live Subtitle Agent 实时字幕',
-    translation: 'Welcome to Live Subtitle Agent.',
+    text: '欢迎使用 Speech-Agent 实时字幕',
+    translation: 'Welcome to Speech-Agent.',
     language: 'en'
   }),
   Object.freeze({

@@ -1064,3 +1064,18 @@ test('SEM-F24/J19: main routes primary close, renderer minimize and second insta
   assert.match(source, /if \(captionPassThroughPrepared\) createdCaption\.show\(\)/)
   assert.doesNotMatch(source, /(?:captionWin|toolbarWin)\.once\('ready-to-show'/)
 })
+
+test('SEM-F22/F24/J17: Agent restores from minimize and joins the application window set', () => {
+  const harness = createHarness()
+  const agent = new FakeWindow('agent', harness.calls, { visible: true, minimized: true, bounds: { x: 50, y: 60, width: 720, height: 640 } })
+  harness.controller.getAgentWindow = () => agent
+  harness.controller.bindAuxiliaryWindow(agent, 'agent')
+  assert.equal(harness.controller.showAuxiliaryWindow(agent, 'agent'), true)
+  assert.equal(agent.isMinimized(), false)
+  assert.equal(agent.isVisible(), true)
+  assert.equal(harness.controller.minimize(), true)
+  assert.equal(agent.isMinimized(), true)
+  assert.equal(harness.controller.restore(), true)
+  assert.equal(agent.isMinimized(), false)
+  assert.equal(agent.isVisible(), true)
+})

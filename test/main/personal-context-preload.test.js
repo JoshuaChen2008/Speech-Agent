@@ -10,6 +10,20 @@ const CHANNELS = require('../../src/main/ipc/channels')
 const { CONTRACT_ID, CONTRACT_VERSION } = require('../../src/agent/contracts/agent-context-ui')
 const agentSettings = require('../../src/agent/contracts/agent-settings-ui')
 
+test('SEM-F31/F39/J29-QA-SOURCE: source bridge accepts bounded highlight IDs and drops malformed metadata', () => {
+  const { api, listeners } = loadPreload('history')
+  const received = []
+  api.onAgentContextSourceRequested(value => received.push(value))
+  const location = { target: { kind: 'session', reference: 'session.source', transcript_version: 'raw', from_event_order: 1, through_event_order: 2 },
+    scope: { kind: 'session', reference: 'session.source' }, cursor: null, offset: 0 }
+  const deliver = listeners.get(CHANNELS.AGENT_CONTEXT_SOURCE_REQUESTED)
+  for (const highlightedSegmentIds of [Array(51).fill('segment.a'), ['segment.a', 'segment.a'], [''], [1], 'segment.a']) deliver({}, { ...location, highlightedSegmentIds })
+  assert.equal(received.length, 0)
+  deliver({}, location)
+  deliver({}, { ...location, highlightedSegmentIds: Array.from({ length: 50 }, (_value, index) => `segment.${index}`) })
+  assert.equal(received.length, 2)
+})
+
 function loadPreload (role, options = {}) {
   const exposed = {}
   const listeners = new Map()
@@ -29,8 +43,10 @@ function loadPreload (role, options = {}) {
       }
     }
     if (specifier === '../main/ipc/channels') return CHANNELS
+    if (specifier === './context-source') return require('../../src/preload/context-source')
     if (specifier === '../contracts/recognition-settings') return require('../../src/contracts/recognition-settings')
     if (specifier === '../agent/contracts/agent-context-ui') return require('../../src/agent/contracts/agent-context-ui')
+    if (specifier === '../agent/contracts/personal-memory-file-ui') return require('../../src/agent/contracts/personal-memory-file-ui')
     if (specifier === '../agent/contracts/agent-model-ui') return require('../../src/agent/contracts/agent-model-ui')
     if (specifier === '../agent/contracts/agent-model-presets-ui') return require('../../src/agent/contracts/agent-model-presets-ui')
     if (specifier === '../agent/contracts/agent-model-test-ui') return require('../../src/agent/contracts/agent-model-test-ui')

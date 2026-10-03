@@ -138,3 +138,18 @@ test('SEM-F22/J17 and SEM-F24/J19: main routes z-order and app visibility throug
   assert.match(main, /applicationWindowLifecycleController\.showAuxiliaryWindow\(settingsWin, 'settings'\)/)
   assert.match(main, /applicationWindowLifecycleController\.showAuxiliaryWindow\(historyWin, 'history'\)/)
 })
+
+test('SEM-F22/J17: Agent participates in foreground handoff and demotes on blur', () => {
+  const { calls, controller, history } = fixture()
+  const agent = new FakeWindow('agent', calls)
+  controller.bindForegroundWindow(agent, 'agent')
+  history.emit('focus')
+  agent.emit('focus')
+  assert.equal(controller.getActiveRole(), 'agent')
+  assert.deepEqual(calls.slice(-3), [['history', 'always-on-top', false, null], ['agent', 'always-on-top', true, 'screen-saver'], ['agent', 'move-top']])
+  history.emit('focus')
+  agent.emit('blur')
+  assert.equal(controller.getActiveRole(), 'history')
+  history.emit('blur')
+  assert.equal(controller.getActiveRole(), null)
+})

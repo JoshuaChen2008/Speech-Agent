@@ -72,6 +72,12 @@ test('SEM-F38/J30-PROGRESS: snapshot rejects fabricated progress and non-finite 
   assert.equal(contract.assertRequestSnapshot(snapshot), snapshot)
   assert.throws(() => contract.assertRequestSnapshot({ ...snapshot, progress_percent: 40 }), /exact/)
   assert.throws(() => contract.assertRequestSnapshot({ ...snapshot, last_activity_age_ms: Infinity }), /safe integer/)
+  const waiting = { ...snapshot, phase: 'retry_wait', retry: {
+    request_attempt: 3, wait_ms: 200, reason: 'AGENT_PROVIDER_RATE_LIMITED'
+  } }
+  assert.equal(contract.assertRequestSnapshot(waiting), waiting)
+  assert.throws(() => contract.assertRequestSnapshot({ ...waiting, retry: { ...waiting.retry, response_body: 'private' } }), /exact/)
+  assert.throws(() => contract.assertRequestSnapshot({ ...waiting, retry: { ...waiting.retry, request_attempt: 6 } }), /policy/)
 })
 
 test('SEM-F38/SEM-T04/J30-RECOVERY: frozen scope and explicit continuation use exact versioned contracts', () => {

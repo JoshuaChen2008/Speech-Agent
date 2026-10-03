@@ -1,8 +1,11 @@
 'use strict'
 
 const { contextBridge } = require('electron')
+const { createContextSourceBridge } = require('./context-source')
 const CHANNELS = require('../main/ipc/channels')
 const { createWindowInteractionBridge, ipcRenderer, subscribe } = require('./shared')
+const contextSource = createContextSourceBridge(ipcRenderer)
+const memoryFileContract = require('../agent/contracts/personal-memory-file-ui')
 const interaction = createWindowInteractionBridge('settings')
 const { assertUpdateRequest: assertRecognitionUpdateRequest, assertResponse: assertRecognitionResponse } = require('../contracts/recognition-settings')
 const {
@@ -60,6 +63,17 @@ function onAgentModelChanged (callback) {
 }
 
 contextBridge.exposeInMainWorld('shell', {
+  personalMemoryFiles: request => {
+    memoryFileContract.assertRequest(request)
+    return ipcRenderer.invoke(CHANNELS.PERSONAL_MEMORY_FILES, request).then(memoryFileContract.assertResponse)
+  },
+  onPersonalMemoryFilesChanged: callback => {
+    if (typeof callback !== 'function') throw new TypeError('callback must be a function')
+    const handler = (_event, value) => { if (value?.changed === true && Object.keys(value).length === 1) callback({ changed: true }) }
+    ipcRenderer.on(CHANNELS.PERSONAL_MEMORY_FILES_CHANGED, handler)
+    return () => ipcRenderer.removeListener(CHANNELS.PERSONAL_MEMORY_FILES_CHANGED, handler)
+  },
+  ...contextSource,
   getRecognitionSettings: () => ipcRenderer.invoke(CHANNELS.RECOGNITION_GET).then(response => assertRecognitionResponse(response)),
   updateRecognitionSettings: request => {
     assertRecognitionUpdateRequest(request)

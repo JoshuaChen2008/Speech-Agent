@@ -2,7 +2,7 @@
 
 const { canonicalize } = require('../../runtime/storage-worker/canonical-json')
 const { normalizeDeepSeekUsage } = require('../contracts/model-access-core')
-const { TOOL_PAYLOAD_LIMITS } = require('../contracts/budget-axes')
+const { TOOL_PAYLOAD_LIMITS, deriveRecipeRequestCapacity, deriveRecipeOutboundQuota, usesModelWindowCapacity } = require('../contracts/budget-axes')
 const { canonicalizeConnection, joinEndpoint } = require('./connection')
 
 const MAX_CATALOG_RESPONSE_BYTES = 256 * 1024
@@ -24,9 +24,11 @@ function codedError (code, retryable = undefined) {
 
 function providerResponseError (status) {
   if (status === 401 || status === 403) return codedError('AGENT_PROVIDER_AUTH_FAILED', false)
+  if ([400, 404, 422].includes(status)) return codedError('AGENT_REQUEST_INVALID', false)
   if (status === 408 || status === 504) return codedError('AGENT_PROVIDER_TIMEOUT', true)
   if (status === 429) return codedError('AGENT_PROVIDER_RATE_LIMITED', true)
-  return codedError('AGENT_PROVIDER_UNAVAILABLE', true)
+  if ([409, 425].includes(status) || status >= 500) return codedError('AGENT_PROVIDER_UNAVAILABLE', true)
+  return codedError('AGENT_REQUEST_INVALID', false)
 }
 
 function responseStatus (response) {
@@ -82,6 +84,26 @@ function boundedText (value, maximum, code = 'AGENT_REQUEST_INVALID') {
     throw codedError(code, code === 'AGENT_REQUEST_INVALID' ? false : undefined)
   }
   return value
+}
+
+// The windowed direct-summary request capacity is a host-internal parameter
+// derived by the runner from the frozen binding. summary.minutes@2 fails
+// closed without it rather than falling back to the raw model output
+// capability; no other recipe may carry it.
+function assertRequestCapacity (value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      Object.keys(value).sort().join(',') !== 'promptByteLimit,requestOutputTokens' ||
+      !Number.isSafeInteger(value.requestOutputTokens) || value.requestOutputTokens < 1 ||
+      !Number.isSafeInteger(value.promptByteLimit) || value.promptByteLimit < 0) {
+    throw codedError('AGENT_REQUEST_INVALID')
+  }
+  return value
+}
+
+function inputCapacityError (actual, limit) {
+  const error = codedError('AGENT_QA_INPUT_LIMIT_EXCEEDED', false)
+  error.diagnosticMetrics = { actual, limit, unit: 'bytes' }
+  return error
 }
 
 function modelIdFor (resolvedModel) {
@@ -213,6 +235,7 @@ class OpenAiCompatibleAdapter {
     connection,
     credential,
     resolvedModel,
+    recipe,
     systemPrompt = '',
     prompt,
     tools = [],
@@ -221,7 +244,10 @@ class OpenAiCompatibleAdapter {
     signal,
     onProgress,
     beforeRequest,
+    getRunUsage,
+    onRequestUsage,
     shouldStopAfterTurn = null,
+    requestCapacity,
     requestStrategy = 'openai-compatible@1',
     testMode = false
   } = {}) {
@@ -232,7 +258,21 @@ class OpenAiCompatibleAdapter {
     const maxOutputTokens = resolvedModel?.capabilities?.maxOutputTokens
     if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) throw codedError('AGENT_REQUEST_INVALID')
     boundedText(systemPrompt, 16 * 1024)
-    boundedText(prompt, 16 * 1024)
+    const windowedInput = usesModelWindowCapacity(recipe?.recipeId, recipe?.recipeVersion)
+    const windowedQuestion = recipe?.recipeId === 'qa.answer' && usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)
+    if (windowedInput) assertRequestCapacity(requestCapacity)
+    else if (requestCapacity !== undefined) throw codedError('AGENT_REQUEST_INVALID')
+    boundedText(prompt, windowedInput
+      ? 256 * 1024
+      : 16 * 1024)
+    if (windowedQuestion) {
+      const expected = deriveRecipeRequestCapacity({ recipeId: recipe.recipeId, recipeVersion: recipe.recipeVersion,
+        capabilities: resolvedModel.capabilities, budget: resolvedModel.budget })
+      if (expected.promptByteLimit !== requestCapacity.promptByteLimit ||
+          expected.requestOutputTokens !== requestCapacity.requestOutputTokens) throw codedError('AGENT_REQUEST_INVALID')
+      const actual = Buffer.byteLength(prompt, 'utf8')
+      if (actual > expected.promptByteLimit) throw inputCapacityError(actual, expected.promptByteLimit)
+    }
     if (!Array.isArray(tools) || tools.length > 16) throw codedError('AGENT_REQUEST_INVALID')
     const declarations = tools.map(toolDeclaration)
     const toolByName = new Map(tools.map((tool) => [tool.name, tool]))
@@ -260,10 +300,28 @@ class OpenAiCompatibleAdapter {
       if (signal?.aborted) throw codedError('AGENT_CANCELLED', false)
       const remaining = deadline - Date.now()
       if (remaining <= 0) throw codedError('AGENT_PROVIDER_TIMEOUT', true)
+      // Every outbound — first request, retry, and post-tool follow-up —
+      // re-derives the v2 output quota and input window from one budget-axes
+      // rule. Known consumption accumulates from provider usage; unknown usage
+      // keeps the remaining budget unconstrained instead of assuming zero. A
+      // zero output balance rejects here with no further egress.
+      let maxTokensForRequest = maxOutputTokens
+      let inputWindowBytes = null
+      const runUsage = typeof getRunUsage === 'function' ? await getRunUsage() : null
+      if (windowedInput) {
+        const quota = deriveRecipeOutboundQuota({
+          recipeId: recipe.recipeId, recipeVersion: recipe.recipeVersion,
+          capabilities: resolvedModel.capabilities,
+          budget: resolvedModel.budget,
+          knownCumulativeOutputTokens: runUsage ? (runUsage.known ? runUsage.outputTokens : null) : (usageKnown ? outputTokens : null)
+        })
+        maxTokensForRequest = quota.requestOutputTokens
+        inputWindowBytes = quota.requestInputByteWindow
+      }
       const body = {
         model,
         messages,
-        max_tokens: maxOutputTokens,
+        max_tokens: maxTokensForRequest,
         ...(declarations.length > 0 ? { tools: declarations, tool_choice: 'auto' } : {}),
         ...(testMode || resolvedModel?.capabilities?.supportsStructuredOutput === true
           ? { response_format: { type: 'json_object' } }
@@ -274,6 +332,16 @@ class OpenAiCompatibleAdapter {
       let requestBody
       try { requestBody = canonicalize(body) } catch { throw codedError('AGENT_REQUEST_INVALID') }
       if (Buffer.byteLength(requestBody, 'utf8') > MAX_COMPLETION_REQUEST_BYTES) throw codedError('AGENT_BUDGET_EXCEEDED')
+      // The fixed envelope reserve only covers wrapper overhead; growing tool
+      // messages and declarations must still fit the registered input window.
+      if (inputWindowBytes !== null) {
+        const inputPortion = canonicalize(declarations.length > 0 ? { messages, tools: declarations } : { messages })
+        const actual = Buffer.byteLength(inputPortion, 'utf8')
+        if (actual > inputWindowBytes) {
+          if (windowedQuestion && turn === 0) throw inputCapacityError(actual, inputWindowBytes)
+          throw codedError('AGENT_BUDGET_EXCEEDED')
+        }
+      }
       let controller
       let timedOut = false
       let timeoutHandle
@@ -316,35 +384,58 @@ class OpenAiCompatibleAdapter {
           'content-type': 'application/json'
         }
         const requestTurn = turn + 1
-        if (typeof beforeRequest === 'function') await beforeRequest(Object.freeze({ turn: requestTurn }))
-        if (signal?.aborted) {
-          throw codedError(signal.reason?.code === 'AGENT_BUDGET_EXCEEDED' ? 'AGENT_BUDGET_EXCEEDED' : 'AGENT_CANCELLED', false)
-        }
-        let responsePromise
-        try {
-          responsePromise = this.fetch(joinEndpoint(endpointConnection, '/chat/completions'), {
-            method: 'POST',
-            redirect: 'manual',
-            headers: requestHeaders,
-            body: requestBody,
-            signal: requestSignal
+        let payload
+        const maximum = testMode || typeof beforeRequest !== 'function' ? 1 : 5
+        for (let requestAttempt = 1; requestAttempt <= maximum; requestAttempt++) {
+          if (typeof beforeRequest === 'function') await beforeRequest(Object.freeze({ turn: requestTurn, requestAttempt }))
+          if (signal?.aborted) {
+            throw codedError(signal.reason?.code === 'AGENT_BUDGET_EXCEEDED' ? 'AGENT_BUDGET_EXCEEDED' : 'AGENT_CANCELLED', false)
+          }
+          responseReceived = false
+          let responsePromise
+          try {
+            responsePromise = this.fetch(joinEndpoint(endpointConnection, '/chat/completions'), {
+              method: 'POST', redirect: 'manual', headers: requestHeaders,
+              body: requestBody, signal: requestSignal
+            })
+          } catch (error) {
+            if (error?.name === 'AbortError') throw error
+            responsePromise = Promise.reject(codedError('AGENT_PROVIDER_UNAVAILABLE', true))
+          } finally {
+            notifyProgress(onProgress, { type: 'request_started', turn: requestTurn })
+          }
+          const responseProcessing = Promise.resolve(responsePromise).catch((error) => {
+            if (error?.name === 'AbortError') throw error
+            throw codedError('AGENT_PROVIDER_UNAVAILABLE', true)
+          }).then(async (response) => {
+            responseReceived = true
+            notifyProgress(onProgress, { type: 'response_received', turn: requestTurn })
+            const status = responseStatus(response)
+            if (status >= 300 && status < 400) throw codedError(testMode ? 'REDIRECT_REJECTED' : 'AGENT_REQUEST_INVALID', false)
+            if (!responseOk(response)) throw providerResponseError(status)
+            return boundedJson(response, testMode ? MAX_TEST_RESPONSE_BYTES : MAX_COMPLETION_RESPONSE_BYTES, 'AGENT_OUTPUT_INVALID')
           })
-        } finally {
-          notifyProgress(onProgress, { type: 'request_started', turn: requestTurn })
+          // A non-cooperative fetch or body read must not retain the host run.
+          responseProcessing.catch(() => {})
+          try {
+            payload = await Promise.race([responseProcessing, requestControl])
+            break
+          } catch (error) {
+            // A failed outbound request has no trustworthy usage receipt.
+            // Later successful requests cannot make the run total known again.
+            usageKnown = false
+            if (typeof onRequestUsage === 'function') await onRequestUsage(null)
+            const retryable = error?.retryable === true || (!responseReceived && !error?.code && error?.name !== 'AbortError')
+            if (!retryable || requestAttempt >= maximum || signal?.aborted || timedOut) {
+              if (retryable && requestAttempt >= maximum && maximum === 5 && error) error.retryExhausted = true
+              throw error
+            }
+            const delayMs = Math.min(1000, 100 * (2 ** (requestAttempt - 1)))
+            notifyProgress(onProgress, { type: 'retry_wait', phase: 'waiting_model', activity: false, turn: requestTurn,
+              requestAttempt, nextAttempt: requestAttempt + 1, reason: error?.code || 'AGENT_PROVIDER_UNAVAILABLE', waitMs: delayMs })
+            await Promise.race([new Promise((resolve) => setTimeout(resolve, delayMs)), requestControl])
+          }
         }
-        const responseProcessing = Promise.resolve(responsePromise).then(async (response) => {
-          responseReceived = true
-          notifyProgress(onProgress, { type: 'response_received', turn: requestTurn })
-          const status = responseStatus(response)
-          if (status >= 300 && status < 400) throw codedError(testMode ? 'REDIRECT_REJECTED' : 'AGENT_PROVIDER_UNAVAILABLE', true)
-          if (!responseOk(response)) throw providerResponseError(status)
-          const payload = await boundedJson(response, testMode ? MAX_TEST_RESPONSE_BYTES : MAX_COMPLETION_RESPONSE_BYTES, 'AGENT_OUTPUT_INVALID')
-          return { response, payload }
-        })
-        // A fetch or response body may ignore AbortSignal. The host deadline
-        // still releases this run, while this handler consumes a late reject.
-        responseProcessing.catch(() => {})
-        const { response, payload } = await Promise.race([responseProcessing, requestControl])
         // The request deadline bounds fetch and response decoding. Tool calls
         // use their own bounded race against the same overall deadline.
         clearTimeout(timeoutHandle)
@@ -352,7 +443,17 @@ class OpenAiCompatibleAdapter {
         const choice = payload?.choices?.[0]
         const message = choice?.message
         if (!message || typeof message !== 'object' || Array.isArray(message)) throw codedError('AGENT_OUTPUT_INVALID')
+        // Closed finish_reason set, checked before any tool execution or
+        // content hand-off: length, content_filter, a missing or unknown
+        // reason, a stop/tool_calls contradiction, and tool_calls without
+        // calls all fail closed as invalid output with no tool side effects
+        // and no automatic retry.
+        const finishReason = choice.finish_reason
+        if (finishReason !== 'stop' && finishReason !== 'tool_calls') throw codedError('AGENT_OUTPUT_INVALID')
         const calls = Array.isArray(message.tool_calls) ? message.tool_calls.map(toolCallProjection) : []
+        if (finishReason === 'stop' && calls.length > 0) throw codedError('AGENT_OUTPUT_INVALID')
+        if (finishReason === 'tool_calls' && calls.length === 0) throw codedError('AGENT_OUTPUT_INVALID')
+        if (typeof onRequestUsage === 'function') await onRequestUsage(normalizeDeepSeekUsage(payload.usage, resolvedModel?.capabilities?.usageReporting !== false))
         turn += 1
         const usage = normalizeDeepSeekUsage(payload.usage, resolvedModel?.capabilities?.usageReporting !== false)
         if (!usage) usageKnown = false
@@ -367,6 +468,7 @@ class OpenAiCompatibleAdapter {
         }
         if (calls.length === 0) {
           if (typeof message.content !== 'string' || message.content.length === 0 ||
+              /^\s*$/u.test(message.content) ||
               Buffer.byteLength(message.content, 'utf8') > MAX_COMPLETION_RESPONSE_BYTES) {
             throw codedError('AGENT_OUTPUT_INVALID')
           }
@@ -421,7 +523,7 @@ class OpenAiCompatibleAdapter {
         if (signal?.aborted) throw codedError('AGENT_CANCELLED', false)
         if (timedOut || error?.name === 'AbortError') throw codedError('AGENT_PROVIDER_TIMEOUT', true)
         if (error?.code) throw error
-        throw codedError('AGENT_PROVIDER_UNAVAILABLE', true)
+        throw codedError('AGENT_INTERNAL_FAILURE', false)
       } finally {
         clearTimeout(timeoutHandle)
         if (requestHeaders) requestHeaders.authorization = ''

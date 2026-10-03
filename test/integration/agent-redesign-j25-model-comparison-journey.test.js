@@ -52,7 +52,11 @@ function hostFactory (service, databasePath) {
     async personalContextResolve (request) { return call(OPERATIONS.PERSONAL_CONTEXT_RESOLVE, { request }) },
     async derivePersonalContextSessionSource (request) { return call(OPERATIONS.PERSONAL_CONTEXT_DERIVE_SESSION_SOURCE, { request }) },
     async readPersonalContextSessionInput (source) { return call(OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT, { source }) },
+    async readPersonalContextSessionRangePage (request) { return call(OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_RANGE_PAGE, { request }) },
+    async summaryInputPlan (request) { return call(OPERATIONS.SUMMARY_INPUT_PLAN, { request }) },
+    async reserveFormalAgentModelRequest (request) { return call(OPERATIONS.FORMAL_AGENT_RESERVE_MODEL_REQUEST, { request }) },
     async readPersonalContextToolContext (request) { return call(OPERATIONS.PERSONAL_CONTEXT_READ_TOOL_CONTEXT, { request }) },
+    async personalContextQuestionEvidence (request) { return call(OPERATIONS.PERSONAL_CONTEXT_QUESTION_EVIDENCE, { request }) },
     async claimNextFormalAgentRun (request) { return call(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request }) },
     async nextFormalAgentRunAt (request = {}) { return call(OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT, request) },
     async failFormalAgentRun (request) { return call(OPERATIONS.FORMAL_AGENT_FAIL_RUN, { request }) },
@@ -113,25 +117,29 @@ test('SEM-F31/SEM-F33/J25: Agent Bar model switch creates immutable sibling bind
     gateway,
     vault,
     adapter: {
-      async run ({ resolvedModel }) {
+      async run ({ resolvedModel, beforeRequest, onRequestUsage }) {
+        if (beforeRequest) await beforeRequest({ turn: 1 })
         providerCalls.push({ profileId: resolvedModel.profileId, modelId: resolvedModel.modelId })
         const isFirst = resolvedModel.modelId === 'model-a'
         providerClock += isFirst ? 40 : 20
+        const usage = {
+          inputTokens: isFirst ? 100 : 80,
+          outputTokens: isFirst ? 20 : 10,
+          usageSource: 'provider',
+          cacheHitInputTokens: isFirst ? 40 : null,
+          cacheMissInputTokens: isFirst ? 60 : null
+        }
+        if (onRequestUsage) await onRequestUsage(usage)
         return {
           text: JSON.stringify({
-            schemaVersion: 1,
+            schemaVersion: 2,
             answer: `受控模型 ${resolvedModel.modelId} 的回答`,
+            claims: [{ text: `受控模型 ${resolvedModel.modelId} 的回答`, sourceRefs: [sourceRef], memoryRefs: [] }], coverage: null,
             sourceRefs: [sourceRef],
             memoryRefs: [],
             unresolved: []
           }),
-          usage: {
-            inputTokens: isFirst ? 100 : 80,
-            outputTokens: isFirst ? 20 : 10,
-            usageSource: 'provider',
-            cacheHitInputTokens: isFirst ? 40 : null,
-            cacheMissInputTokens: isFirst ? 60 : null
-          }
+          usage
         }
       }
     }
@@ -153,7 +161,9 @@ test('SEM-F31/SEM-F33/J25: Agent Bar model switch creates immutable sibling bind
     personalContext: {
       resolve: (request) => gateway.personalContextResolve(request),
       readSessionInput: (source) => gateway.readPersonalContextSessionInput(source),
-      readToolContext: (request) => gateway.readPersonalContextToolContext(request)
+      readSessionRangePage: (request) => gateway.readPersonalContextSessionRangePage(request),
+      readToolContext: (request) => gateway.readPersonalContextToolContext(request),
+      questionEvidence: (request, signal) => gateway.personalContextQuestionEvidence(request, signal)
     },
     modelAccess,
     promptProvider: (runId) => prompts.get(runId) || null,

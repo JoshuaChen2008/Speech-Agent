@@ -80,7 +80,117 @@ const SUMMARY_MINUTES_V2_BUDGET_POLICY = Object.freeze({
   axisScopes: SUMMARY_MINUTES_V2_AXIS_SCOPES
 })
 
+const QA_ANSWER_V3_BUDGET_POLICY = Object.freeze({
+  ...SUMMARY_MINUTES_V2_BUDGET_POLICY,
+  policyId: 'qa.answer@3', recipeId: 'qa.answer', recipeVersion: '3'
+})
+
+const CONTEXT_INGEST_V3_BUDGET_POLICY = Object.freeze({
+  ...SUMMARY_MINUTES_V2_BUDGET_POLICY,
+  policyId: 'context.ingest.session@3', recipeId: 'context.ingest.session', recipeVersion: '3'
+})
+const QA_ANSWER_V4_BUDGET_POLICY = Object.freeze({
+  ...SUMMARY_MINUTES_V2_BUDGET_POLICY,
+  policyId: 'qa.answer@4', recipeId: 'qa.answer', recipeVersion: '4'
+})
+const QA_ANSWER_V5_BUDGET_POLICY = Object.freeze({ ...QA_ANSWER_V4_BUDGET_POLICY, policyId: 'qa.answer@5', recipeVersion: '5' })
+
+function usesLongInputBudget (recipeId, recipeVersion) {
+  return (recipeId === 'summary.minutes' && recipeVersion === '2') ||
+    (recipeId === 'qa.answer' && ['3', '4', '5'].includes(recipeVersion)) ||
+    (recipeId === 'context.ingest.session' && recipeVersion === '3')
+}
+
+// Window capacity for summary@2 and qa.answer@2/@3 (ADR 0021/0022/0023). With no controlled
+// tokenizer, use UTF-8 bytes as conservative input units; do not divide by an
+// assumed average token size. Values are a host-side derivation, not a
+// registered budget axis, and never rewrite model capability configuration.
+const SUMMARY_MINUTES_V2_CONTEXT_TOKEN_TARGET = 256000
+const SUMMARY_MINUTES_V2_REQUEST_OUTPUT_TOKEN_TARGET = 8192
+const SUMMARY_MINUTES_V2_REQUEST_ENVELOPE_TOKENS = 8192
+const SUMMARY_MINUTES_V2_PROMPT_BYTE_LIMIT = 256 * 1024
+const SUMMARY_MINUTES_V2_TOKEN_ESTIMATE_BYTES_PER_TOKEN = 1
+
+function usesModelWindowCapacity (recipeId, recipeVersion) {
+  return usesLongInputBudget(recipeId, recipeVersion) || (recipeId === 'qa.answer' && recipeVersion === '2')
+}
+
+function deriveRecipeRequestCapacity ({ recipeId, recipeVersion, capabilities, budget, remainingCumulativeOutputTokens = null }) {
+  if (!usesModelWindowCapacity(recipeId, recipeVersion)) throw budgetError('recipe has no model-window capacity')
+  if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities) ||
+      !Number.isSafeInteger(capabilities.maxInputTokens) || capabilities.maxInputTokens < 1 ||
+      !Number.isSafeInteger(capabilities.maxOutputTokens) || capabilities.maxOutputTokens < 1) {
+    throw budgetError('model capabilities are required')
+  }
+  assertRecipeBudgetSnapshot(recipeId, recipeVersion, getRecipe(recipeId, recipeVersion).toolGrants, budget)
+  const remaining = remainingCumulativeOutputTokens === null || remainingCumulativeOutputTokens === undefined
+    ? null
+    : nonNegativeInteger(remainingCumulativeOutputTokens, 'remainingCumulativeOutputTokens')
+  const outputTarget = usesLongInputBudget(recipeId, recipeVersion)
+    ? SUMMARY_MINUTES_V2_REQUEST_OUTPUT_TOKEN_TARGET
+    : budget.maxCumulativeOutputTokens
+  const requestOutputTokens = Math.min(
+    outputTarget,
+    capabilities.maxOutputTokens,
+    remaining === null ? outputTarget : remaining
+  )
+  const perToken = SUMMARY_MINUTES_V2_TOKEN_ESTIMATE_BYTES_PER_TOKEN
+  const promptByteLimit = Math.max(0, Math.min(
+    SUMMARY_MINUTES_V2_PROMPT_BYTE_LIMIT,
+    (Math.min(capabilities.maxInputTokens, budget.maxRequestInputTokens) -
+      SUMMARY_MINUTES_V2_REQUEST_ENVELOPE_TOKENS) * perToken,
+    (SUMMARY_MINUTES_V2_CONTEXT_TOKEN_TARGET -
+      requestOutputTokens - SUMMARY_MINUTES_V2_REQUEST_ENVELOPE_TOKENS) * perToken
+  ))
+  return Object.freeze({ requestOutputTokens, promptByteLimit })
+}
+
+// Per-outbound derivation for registered windowed requests. The adapter calls this before every request,
+// including retries and post-tool follow-up turns, so output quota and the
+// serialized input window always come from this one rule. Known consumption
+// accumulates from provider usage only; any missing usage keeps the remaining
+// budget unknown (never assumed zero) and never rewrites model capabilities.
+function deriveRecipeOutboundQuota ({ recipeId, recipeVersion, capabilities, budget, knownCumulativeOutputTokens }) {
+  if (!usesModelWindowCapacity(recipeId, recipeVersion)) throw budgetError('recipe has no model-window capacity')
+  if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities) ||
+      !Number.isSafeInteger(capabilities.maxInputTokens) || capabilities.maxInputTokens < 1 ||
+      !Number.isSafeInteger(capabilities.maxOutputTokens) || capabilities.maxOutputTokens < 1) {
+    throw budgetError('model capabilities are required')
+  }
+  assertRecipeBudgetSnapshot(recipeId, recipeVersion, getRecipe(recipeId, recipeVersion).toolGrants, budget)
+  const known = knownCumulativeOutputTokens === null || knownCumulativeOutputTokens === undefined
+    ? null
+    : nonNegativeInteger(knownCumulativeOutputTokens, 'knownCumulativeOutputTokens')
+  const remaining = known === null ? null : budget.maxCumulativeOutputTokens - known
+  if (remaining !== null && remaining < 1) {
+    const error = budgetError('the remaining output budget is exhausted')
+    error.code = BUDGET_EXCEEDED_ERROR_CODE
+    throw error
+  }
+  const capacity = deriveRecipeRequestCapacity({
+    recipeId, recipeVersion, capabilities, budget, remainingCumulativeOutputTokens: remaining
+  })
+  const requestInputByteWindow = Math.max(0, Math.min(
+    capabilities.maxInputTokens,
+    budget.maxRequestInputTokens,
+    SUMMARY_MINUTES_V2_CONTEXT_TOKEN_TARGET - capacity.requestOutputTokens
+  ))
+  return Object.freeze({
+    requestOutputTokens: capacity.requestOutputTokens,
+    requestInputByteWindow
+  })
+}
+
 const BUDGET_AXIS_STATES = Object.freeze(['within', 'exhausted', 'not_evaluated'])
+
+// Preserve the frozen summary@2 API and values used by its input planner.
+function deriveSummaryMinutesV2RequestCapacity (input) {
+  return deriveRecipeRequestCapacity({ ...input, recipeId: 'summary.minutes', recipeVersion: '2' })
+}
+
+function deriveSummaryMinutesV2OutboundQuota (input) {
+  return deriveRecipeOutboundQuota({ ...input, recipeId: 'summary.minutes', recipeVersion: '2' })
+}
 const BUDGET_EXCEEDED_ERROR_CODE = 'AGENT_BUDGET_EXCEEDED'
 
 function budgetError (message) {
@@ -128,6 +238,10 @@ function assertRegisteredToolGrantCombination (maxTurns, toolGrants) {
 
 function getBudgetPolicy (recipeId, recipeVersion) {
   const recipe = getRecipe(recipeId, recipeVersion)
+  if (recipe.recipeId === 'qa.answer' && recipe.recipeVersion === '3') return QA_ANSWER_V3_BUDGET_POLICY
+  if (recipe.recipeId === 'qa.answer' && recipe.recipeVersion === '4') return QA_ANSWER_V4_BUDGET_POLICY
+  if (recipe.recipeId === 'qa.answer' && recipe.recipeVersion === '5') return QA_ANSWER_V5_BUDGET_POLICY
+  if (recipe.recipeId === 'context.ingest.session' && recipe.recipeVersion === '3') return CONTEXT_INGEST_V3_BUDGET_POLICY
   return recipe.recipeId === SUMMARY_MINUTES_V2_BUDGET_POLICY.recipeId &&
     recipe.recipeVersion === SUMMARY_MINUTES_V2_BUDGET_POLICY.recipeVersion
     ? SUMMARY_MINUTES_V2_BUDGET_POLICY
@@ -270,12 +384,22 @@ module.exports = Object.freeze({
   LIMITS,
   SUMMARY_MINUTES_V2_AXIS_SCOPES,
   SUMMARY_MINUTES_V2_BUDGET_POLICY,
+  QA_ANSWER_V3_BUDGET_POLICY,
+  CONTEXT_INGEST_V3_BUDGET_POLICY,
+  QA_ANSWER_V4_BUDGET_POLICY,
+  SUMMARY_MINUTES_V2_REQUEST_OUTPUT_TOKEN_TARGET,
   TOOL_PAYLOAD_LIMITS,
   assertBudgetObservation,
   assertBudgetSnapshot,
   assertRecipeBudgetSnapshot,
   deriveBudget,
   deriveRecipeBudget,
+  deriveRecipeRequestCapacity,
+  deriveRecipeOutboundQuota,
+  deriveSummaryMinutesV2OutboundQuota,
+  deriveSummaryMinutesV2RequestCapacity,
   evaluateBudgetAxes,
-  getBudgetPolicy
+  getBudgetPolicy,
+  usesLongInputBudget,
+  usesModelWindowCapacity
 })

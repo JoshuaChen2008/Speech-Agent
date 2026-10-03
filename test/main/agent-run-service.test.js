@@ -135,7 +135,7 @@ test('S5-1/J22: unsupported non-session scopes fail closed before transcript or 
     throw new Error('unsupported scope should not create a run')
   }
   const service = new AgentRunService({ storage })
-  for (const kind of ['selection', 'date_range', 'project']) {
+  for (const kind of ['selection']) {
     const scope = { kind, reference: `${kind}.unsupported` }
     const eligibility = await service.getEligibility(header({ scope }))
     assert.equal(eligibility.ok, false)
@@ -392,4 +392,39 @@ test('SEM-F38/J30-CANCEL: failed terminal-race readback stays unavailable and em
   assert.equal(reads, 2)
   assert.equal(schedulerCancels, 0)
   assert.deepEqual(events, [])
+})
+
+test('SEM-F39/J31-SIZE: the preset submit path freezes summary.minutes recipeVersion 2 and binds the same version', async () => {
+  const h = header({ scope: { kind: 'session', reference: 'session.preset-v2' }, prompt: '请生成这场会话的总结', client_idempotency_key: 'client.preset-v2' })
+  const created = []
+  const binds = []
+  const storage = storageWith([], {
+    sessionId: 'session.preset-v2',
+    value: { session: { state: 'closed' }, segments: [{ segmentId: 'segment.1', firstEventOrder: 1, text: 'hello' }] }
+  })
+  storage.createAgentRun = async (request) => {
+    created.push(request)
+    return { runId: request.runId, recipeId: request.recipeId, state: 'queued', replayed: false }
+  }
+  storage.createAgentInteraction = async (request) => ({
+    interactionId: request.interactionId, runId: request.runId, promptDigest: request.promptDigest
+  })
+  storage.derivePersonalContextSessionSource = async () => ({
+    sourceKind: 'session', sessionId: 'session.preset-v2', transcriptVersion: 'raw', inputWatermark: 1,
+    inputDigest: 'd'.repeat(64)
+  })
+  const service = new AgentRunService({
+    storage,
+    modelAccess: {
+      catalog: async () => ({ ok: true, snapshot: { readinessByPurpose: { summary: { agentLoop: 'ready' } } } }),
+      bind: async (request) => { binds.push(request); return { runId: request.runId } }
+    }
+  })
+  const result = await service.submit(h)
+  assert.equal(result.ok, true)
+  assert.equal(created.length, 1)
+  assert.equal(created[0].recipeId, 'summary.minutes')
+  assert.equal(created[0].recipeVersion, '2')
+  assert.equal(binds.length, 1)
+  assert.equal(binds[0].recipeVersion, '2')
 })

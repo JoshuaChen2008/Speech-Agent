@@ -94,6 +94,8 @@ class IntentRouteOrchestrator {
     }
     this.runs = options.runs
     this.modelAccess = options.modelAccess
+    this.questionRecipeVersion = options.questionRecipeVersion || '4'
+    if (!['3', '4', '5'].includes(this.questionRecipeVersion)) throw new TypeError('unsupported question recipe version')
     this.interactions = options.interactions
     this.loop = options.loop || null
     this.loopFactory = typeof options.loopFactory === 'function' ? options.loopFactory : null
@@ -342,8 +344,12 @@ class IntentRouteOrchestrator {
     }
     const runId = this.nextId('run.target', input.clientIdempotencyKey)
     const interactionId = this.nextId('interaction.target', input.clientIdempotencyKey)
+    // New summary and question targets adopt their registered v2 window capacity;
+    // other targets keep their frozen v1 interpretation.
+    const recipeVersion = recipeId === 'qa.answer' && input.scope.kind === 'session' && input.transcriptVersion === 'raw'
+      ? this.questionRecipeVersion : ['summary.minutes', 'qa.answer'].includes(recipeId) ? '2' : '1'
     const runRequest = {
-      runId, recipeId, recipeVersion: '1', scope: input.scope,
+      runId, recipeId, recipeVersion, scope: input.scope,
       transcriptVersion: input.transcriptVersion, inputWatermark: input.inputWatermark,
       inputDigest: input.inputDigest, requestedBy: 'user', clientIdempotencyKey: input.clientIdempotencyKey
     }
@@ -365,7 +371,7 @@ class IntentRouteOrchestrator {
           throw invalid('client idempotency key was reused with a different prompt')
         }
       }
-      const binding = await awaitWithCancellation(() => this.modelAccess.bind({ runId: run.runId, recipeId, recipeVersion: '1', executionForm: 'agent_loop' }), input.signal)
+      const binding = await awaitWithCancellation(() => this.modelAccess.bind({ runId: run.runId, recipeId, recipeVersion, executionForm: 'agent_loop' }), input.signal)
       if (input.signal?.aborted) throw cancelledError()
       await awaitWithCancellation(() => this.interactions.create({ runId: run.runId, interactionId, routingMode, promptDigest: sha256Canonical(input.prompt) }), input.signal)
       if (input.signal?.aborted) throw cancelledError()

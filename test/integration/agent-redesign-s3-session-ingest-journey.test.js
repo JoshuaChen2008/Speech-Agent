@@ -66,6 +66,7 @@ test('SEM-F28/SEM-F30/SEM-T10/SEM-T15/J21/J22/J24: terminal session ingest uses 
   const calls = []
   const runtime = new PersonalContextRuntime({
     gateway,
+    ingestRecipeVersion: '1',
     config: { get: () => config.get(), updateAgentSettings: (request) => config.updateAgentSettings(request) },
     modelAccess: { bind: async (request) => { calls.push(['bind', request]); return { capabilities: { usageReporting: false } } } },
     loop: { agentLoop: async () => { calls.push(['loop']); return { text: JSON.stringify({ schemaVersion: 1, experiences: [], memoryCandidates: [] }) } } },
@@ -83,7 +84,9 @@ test('SEM-F28/SEM-F30/SEM-T10/SEM-T15/J21/J22/J24: terminal session ingest uses 
   await recorder.closeSession({ sessionId: 'session.s3.journey', sourceId: 'mic', state: 'closed' })
   recorder.notifyTerminalCommitted('session.s3.journey')
   for (let i = 0; i < 200 && !calls.some(([name]) => name === 'loop'); i++) await tick()
-  assert.equal(calls.some(([name]) => name === 'bind'), true)
+  const runState = service.requireStore().database.prepare('SELECT state,error_code FROM formal_agent_runs LIMIT 1').get()
+  assert.equal(calls.some(([name]) => name === 'bind'), true,
+    `expected model bind; observed calls=${JSON.stringify(calls.map(([name]) => name))} run=${JSON.stringify(runState || null)}`)
   assert.equal(calls.some(([name]) => name === 'loop'), true)
   const database = service.requireStore().database
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM formal_agent_runs').get().count, 1)
@@ -106,4 +109,41 @@ test('SEM-F28/SEM-F30/SEM-T10/SEM-T15/J21/J22/J24: terminal session ingest uses 
     input_digest_length: 64,
     lifecycle: 'active'
   })
+})
+
+test('SEM-F28/SEM-F30/J24: personal context automatic policy lets the empty queue stay idle', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 's3-scheduler-idle-'))
+  const databasePath = path.join(root, 'speech-agent.sqlite3')
+  const service = new StorageWorkerService()
+  const gateway = new StorageGateway({ databasePath, hostFactory: () => hostFactory(service, databasePath), maxRestarts: 0 })
+  await gateway.start()
+  const config = new ConfigStore(path.join(root, 'config.json'), { now: () => 1000 })
+  config.load()
+  config.updateAgentSettings({
+    expectedRevision: 0, agentEnabled: true, memoryEnabled: true, cloudDisclosureAccepted: false
+  })
+  const diagnostics = []
+  const runtime = new PersonalContextRuntime({ gateway, config, onDiagnostic: (value) => diagnostics.push(value) })
+  t.after(async () => {
+    await runtime.stop()
+    await gateway.shutdown().catch(() => gateway.terminate())
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  runtime.start(new SqliteSessionRecorder({ gateway, now: () => 1000 }))
+  await runtime.policyPromise
+  assert.equal(runtime.policyReady, true)
+  runtime.scheduler.start()
+  await new Promise((resolve) => setImmediate(resolve))
+
+  const receiptCount = () => service.requireStore().database.prepare(
+    'SELECT COUNT(*) AS count FROM formal_agent_run_claim_receipts'
+  ).get().count
+  assert.deepEqual(diagnostics, [], 'empty queue must not emit AGENT_SCHEDULER_FAILED')
+  assert.equal(runtime.scheduler.draining, false)
+  assert.equal(runtime.scheduler.timer, null)
+  assert.equal(receiptCount(), 1)
+  await new Promise((resolve) => setTimeout(resolve, 1100))
+  assert.deepEqual(diagnostics, [])
+  assert.equal(runtime.scheduler.timer, null)
+  assert.equal(receiptCount(), 1, 'idle queue must not keep writing empty claim receipts')
 })

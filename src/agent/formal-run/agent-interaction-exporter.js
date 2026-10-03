@@ -332,6 +332,70 @@ function buildExportSnapshot (detail, requestedInteractionId = null) {
     snapshot.summary_use_memory = frozenSummaryPolicy
     snapshot.memory_reference_count = summaryMemoryReferenceCount
   }
+  if (detail.summaryInputPolicy !== undefined) {
+    if (detail.summaryInputPolicy !== 'summary-long-input@1' || item.recipeId !== 'summary.minutes' || item.recipeVersion !== '2') fail('invalid summary policy')
+    snapshot.schema_version = 3
+    snapshot.summary_input_policy = detail.summaryInputPolicy
+    snapshot.summary_input_plan = null
+    if (detail.summaryPlan !== null) {
+      const plan = plain(detail.summaryPlan, 'summary plan')
+      if (Object.keys(plan).sort().join(',') !== 'binding_digest,canonical_bytes,input_digest,leaf_count,node_count,plan_digest,policy_version,raw_text_bytes,segment_count') fail('invalid summary plan fields')
+      if (plan.policy_version !== detail.summaryInputPolicy || plan.input_digest !== item.inputDigest) fail('invalid summary plan identity')
+      for (const key of ['plan_digest', 'input_digest', 'binding_digest']) digest(plan[key], key)
+      for (const [key, max] of Object.entries({ leaf_count: 256, node_count: 384, segment_count: 50000, raw_text_bytes: 4194304, canonical_bytes: 8388608 })) {
+        boundedInteger(plan[key], key, max)
+        if (plan[key] < 1) fail('invalid summary plan count')
+      }
+      snapshot.summary_input_plan = cloneCanonical(plan, 'summary plan')
+    } else if (terminalReason === 'succeeded') fail('successful long summary has no plan')
+  }
+  if (item.recipeId === 'qa.answer' && ['3', '4', '5'].includes(item.recipeVersion) && detail.questionInputPolicy === undefined) fail('question policy is missing')
+  if (detail.questionInputPolicy !== undefined) {
+    const retrieval = ['4', '5'].includes(item.recipeVersion)
+    if (detail.questionInputPolicy !== (retrieval ? 'question-retrieval@1' : 'qa-long-input@1') || item.recipeId !== 'qa.answer' || !['3', '4', '5'].includes(item.recipeVersion)) fail('invalid question policy')
+    snapshot.schema_version = retrieval ? 5 : 4
+    snapshot.question_input_policy = detail.questionInputPolicy
+    snapshot.question_input_plan = null
+    if (detail.questionPlan !== null) {
+      const plan = plain(detail.questionPlan, 'question plan')
+      if (Object.keys(plan).sort().join(',') !== 'binding_digest,canonical_bytes,input_digest,leaf_count,node_count,plan_digest,policy_version,raw_text_bytes,segment_count') fail('invalid question plan fields')
+      if (plan.policy_version !== detail.questionInputPolicy || plan.input_digest !== item.inputDigest) fail('invalid question plan identity')
+      for (const key of ['plan_digest', 'input_digest', 'binding_digest']) digest(plan[key], key)
+      for (const [key, max] of Object.entries({ leaf_count: 256, node_count: 384, segment_count: 50000, raw_text_bytes: 4194304, canonical_bytes: 8388608 })) {
+        boundedInteger(plan[key], key, max)
+        if (plan[key] < 1) fail('invalid question plan count')
+      }
+      if (plan.node_count < plan.leaf_count) fail('invalid question node count')
+      snapshot.question_input_plan = cloneCanonical(plan, 'question plan')
+    } else if (terminalReason === 'succeeded') fail('successful long question has no plan')
+    if (retrieval) {
+      snapshot.question_evidence = null
+      if (detail.questionEvidence !== null && detail.questionEvidence !== undefined) {
+        const evidence = plain(detail.questionEvidence, 'question evidence')
+        if (Object.keys(evidence).sort().join(',') !== 'coverage_json,descriptor_json,evidence_digest,source_refs_json') fail('invalid evidence fields')
+        digest(evidence.evidence_digest, 'evidence digest')
+        let descriptor, sourceRefs, coverage
+        try { descriptor = JSON.parse(evidence.descriptor_json); sourceRefs = JSON.parse(evidence.source_refs_json); coverage = JSON.parse(evidence.coverage_json) } catch { fail('invalid question evidence') }
+        if (!Array.isArray(sourceRefs)) fail('invalid question references')
+        sourceRefs.forEach(assertSourceRef)
+        if (terminalReason === 'succeeded' && canonicalize(item.result.coverage) !== canonicalize(coverage)) fail('question coverage mismatch')
+        snapshot.question_evidence = { evidence_digest: evidence.evidence_digest, descriptor, source_refs: sourceRefs, coverage }
+        if (descriptor.pages) {
+          if (!Array.isArray(detail.questionEvidencePages) || detail.questionEvidencePages.length !== descriptor.pages.length) fail('question evidence pages are missing')
+          const pages = detail.questionEvidencePages.map((page, ordinal) => {
+            if (Object.keys(page).sort().join(',') !== 'descriptor_json,evidence_digest,ordinal' || Number(page.ordinal) !== ordinal ||
+                page.evidence_digest !== descriptor.pages[ordinal].evidenceDigest) fail('question evidence page mismatch')
+            digest(page.evidence_digest, 'evidence page digest')
+            if (descriptor.pages[ordinal].descriptorDigest !== undefined &&
+                sha256Canonical(JSON.parse(page.descriptor_json)) !== descriptor.pages[ordinal].descriptorDigest) fail('question evidence descriptor mismatch')
+            return { ordinal, evidence_digest: page.evidence_digest, descriptor: JSON.parse(page.descriptor_json) }
+          })
+          snapshot.schema_version = 6
+          snapshot.question_evidence.pages = pages
+        }
+      } else if (terminalReason === 'succeeded') fail('successful retrieval question has no evidence')
+    }
+  }
   try { assertExportPrivacy(snapshot) } catch { fail('snapshot violates privacy boundary') }
   return snapshot
 }

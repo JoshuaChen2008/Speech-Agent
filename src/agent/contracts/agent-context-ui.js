@@ -3,7 +3,7 @@
 // @ts-check
 
 const CONTRACT_ID = 'speech-agent.personal-context.ui'
-const CONTRACT_VERSION = '1.1.0'
+const CONTRACT_VERSION = '1.2.0'
 const MAX_SCOPE_DIRECTORY_ITEMS = 50
 
 const ALLOWED_ROLES = Object.freeze(['agent', 'history', 'settings'])
@@ -28,7 +28,9 @@ const MANAGE_COMMANDS = Object.freeze([
   'remember',
   'set_processing',
   'update',
-  'view'
+  'view',
+  'view_item',
+  'refresh_overview'
 ])
 const ELIGIBILITY_STATES = Object.freeze([
   'ready',
@@ -158,11 +160,11 @@ function assertTimestamp (value, path) {
 
 function assertContractHeader (value, path) {
   if (value.contract_id !== CONTRACT_ID) fail(`${path}.contract_id`, `must equal ${CONTRACT_ID}`)
-  if (value.contract_version !== CONTRACT_VERSION) fail(`${path}.contract_version`, `must equal ${CONTRACT_VERSION}`)
+  if (!['1.1.0', CONTRACT_VERSION].includes(value.contract_version)) fail(`${path}.contract_version`, `must equal a registered version`)
 }
 
 function isSupportedContract (contractId, contractVersion) {
-  return contractId === CONTRACT_ID && contractVersion === CONTRACT_VERSION
+  return contractId === CONTRACT_ID && ['1.1.0', CONTRACT_VERSION].includes(contractVersion)
 }
 
 function assertScopeInput (value, path) {
@@ -204,6 +206,33 @@ function assertScopeDirectory (value, path) {
   })
 }
 
+function assertSourceTarget (value, path = 'target') {
+  assertExactObject(value, ['kind', 'reference', 'transcript_version', 'from_event_order', 'through_event_order'], [], path)
+  assertEnum(value.kind, ['session', 'interaction'], `${path}.kind`)
+  assertId(value.reference, `${path}.reference`)
+  if (value.kind === 'interaction') {
+    if (value.transcript_version !== null || value.from_event_order !== null || value.through_event_order !== null) fail(path, 'interaction has no transcript range')
+  } else {
+    assertEnum(value.transcript_version, ['raw', 'refined'], `${path}.transcript_version`)
+    assertInteger(value.from_event_order, `${path}.from_event_order`, { min: 1 })
+    assertInteger(value.through_event_order, `${path}.through_event_order`, { min: value.from_event_order })
+  }
+  return value
+}
+
+function assertSources (value, path) {
+  assertArray(value, path, { max: 8 })
+  value.forEach((source, index) => {
+    const p = `${path}[${index}]`
+    assertExactObject(source, ['occurred_at', 'summary', 'summary_kind', 'availability', 'target'], [], p)
+    assertTimestamp(source.occurred_at, `${p}.occurred_at`)
+    assertString(source.summary, `${p}.summary`, { nonEmpty: true, maxBytes: 2048 })
+    assertEnum(source.summary_kind, ['question_summary', 'transcript_excerpt', 'user_statement', 'missing_summary'], `${p}.summary_kind`)
+    assertEnum(source.availability, ['accessible', 'missing', 'removed'], `${p}.availability`)
+    if (source.target !== null) assertSourceTarget(source.target, `${p}.target`)
+  })
+}
+
 function assertMemoryItem (value, path) {
   assertExactObject(value, [
     'display_text',
@@ -215,16 +244,17 @@ function assertMemoryItem (value, path) {
     'scope',
     'source_reference_count',
     'updated_at'
-  ], [], path)
+  ], ['sources'], path)
   assertString(value.display_text, `${path}.display_text`, { nonEmpty: true, maxBytes: 2048 })
   assertEnum(value.kind, MEMORY_KINDS, `${path}.kind`)
-  assertEnum(value.lifecycle, ['active', 'forgotten'], `${path}.lifecycle`)
+  assertEnum(value.lifecycle, ['active', 'forgotten', 'conflicted', 'inactive'], `${path}.lifecycle`)
   assertId(value.memory_id, `${path}.memory_id`)
   assertEnum(value.origin, ['explicit', 'inferred'], `${path}.origin`)
   assertInteger(value.revision, `${path}.revision`, { min: 1 })
   assertScopeProjection(value.scope, `${path}.scope`)
   assertInteger(value.source_reference_count, `${path}.source_reference_count`, { min: 0 })
   assertTimestamp(value.updated_at, `${path}.updated_at`)
+  if (Object.hasOwn(value, 'sources')) assertSources(value.sources, `${path}.sources`)
 }
 
 function assertEpisode (value, path) {
@@ -239,7 +269,7 @@ function assertEpisode (value, path) {
     'source_reference_count',
     'summary',
     'updated_at'
-  ], [], path)
+  ], ['sources', 'associations'], path)
   assertId(value.episode_id, `${path}.episode_id`)
   assertEnum(value.lifecycle, ['active'], `${path}.lifecycle`)
   assertInteger(value.occurred_from_offset_ms, `${path}.occurred_from_offset_ms`, { min: 0 })
@@ -264,6 +294,18 @@ function assertEpisode (value, path) {
     assertString(item, `${path}.summary.bullets[${index}]`, { nonEmpty: true, maxBytes: 1024 })
   })
   assertTimestamp(value.updated_at, `${path}.updated_at`)
+  if (Object.hasOwn(value, 'sources')) assertSources(value.sources, `${path}.sources`)
+  if (Object.hasOwn(value, 'associations')) {
+    assertArray(value.associations, `${path}.associations`, { max: 32 })
+    value.associations.forEach((association, index) => {
+      const p = `${path}.associations[${index}]`
+      assertExactObject(association, ['memory_id', 'relation', 'match_keys'], [], p)
+      assertId(association.memory_id, `${p}.memory_id`)
+      assertString(association.relation, `${p}.relation`, { nonEmpty: true, maxBytes: 1200 })
+      assertArray(association.match_keys, `${p}.match_keys`, { max: 8 })
+      association.match_keys.forEach((key, i) => assertString(key, `${p}.match_keys[${i}]`, { nonEmpty: true, maxBytes: 256 }))
+    })
+  }
 }
 
 function assertMemoryProcessing (value, path) {
@@ -275,8 +317,33 @@ function assertMemoryProcessing (value, path) {
   }
 }
 
+function assertOverviewProjection (value, path) {
+  assertExactObject(value, ['scope_key', 'state', 'current', 'previous', 'revision'], ['section_sources'], path)
+  if (Object.hasOwn(value, 'section_sources')) { assertArray(value.section_sources, `${path}.section_sources`, { max: 12 }); value.section_sources.forEach((sources, index) => assertSources(sources, `${path}.section_sources[${index}]`)) }
+  assertId(value.scope_key, `${path}.scope_key`)
+  assertEnum(value.state, ['empty', 'updating', 'failed', 'stale', 'ready'], `${path}.state`)
+  assertInteger(value.revision, `${path}.revision`, { min: 0 })
+  for (const key of ['current', 'previous']) {
+    const projection = value[key]
+    if (projection === null) continue
+    const p = `${path}.${key}`
+    assertExactObject(projection, ['input_revision', 'input_digest', 'updated_at', 'sections', 'coverage'], ['revoked'], p)
+    assertInteger(projection.input_revision, `${p}.input_revision`, { min: 0 })
+    assertString(projection.input_digest, `${p}.input_digest`, { pattern: /^[a-f0-9]{64}$/ })
+    assertTimestamp(projection.updated_at, `${p}.updated_at`)
+    require('./recipes').validateRecipeOutput('context.synthesize', '1', { schemaVersion: 1, sections: projection.sections })
+    assertExactObject(projection.coverage, ['memories', 'episodes', 'has_more', 'omissions'], [], `${p}.coverage`)
+    assertInteger(projection.coverage.memories, `${p}.coverage.memories`, { min: 0 }); assertInteger(projection.coverage.episodes, `${p}.coverage.episodes`, { min: 0 })
+    assertBoolean(projection.coverage.has_more, `${p}.coverage.has_more`)
+    assertArray(projection.coverage.omissions, `${p}.coverage.omissions`, { max: 1 })
+    projection.coverage.omissions.forEach((item) => assertEnum(item, ['budget'], `${p}.coverage.omissions`))
+    if (Object.hasOwn(projection, 'revoked')) assertBoolean(projection.revoked, `${p}.revoked`)
+  }
+}
+
 function assertOverviewSnapshot (value, path) {
-  assertExactObject(value, ['counts', 'eligibility', 'memory_processing', 'revision', 'scope_directory'], [], path)
+  assertExactObject(value, ['counts', 'eligibility', 'memory_processing', 'revision', 'scope_directory'], ['overview'], path)
+  if (Object.hasOwn(value, 'overview')) assertOverviewProjection(value.overview, `${path}.overview`)
   assertExactObject(value.counts, ['personal_memories', 'session_episodes'], [], `${path}.counts`)
   assertInteger(value.counts.personal_memories, `${path}.counts.personal_memories`, { min: 0 })
   assertInteger(value.counts.session_episodes, `${path}.counts.session_episodes`, { min: 0 })
@@ -302,7 +369,8 @@ function assertPublicError (value, path) {
 }
 
 function assertGetOverviewRequest (value, path = 'GetOverviewRequest') {
-  assertExactObject(value, ['contract_id', 'contract_version'], [], path)
+  assertExactObject(value, ['contract_id', 'contract_version'], ['scope_key'], path)
+  if (Object.hasOwn(value, 'scope_key')) assertId(value.scope_key, `${path}.scope_key`)
   assertContractHeader(value, path)
   return value
 }
@@ -336,6 +404,10 @@ function assertManageCommand (value, path) {
   assertRecord(value, path)
   assertEnum(value.type, MANAGE_COMMANDS, `${path}.type`)
   switch (value.type) {
+    case 'view_item':
+      assertExactObject(value, ['type', 'item_id'], [], path); assertId(value.item_id, `${path}.item_id`); break
+    case 'refresh_overview':
+      assertExactObject(value, ['type', 'expected_revision'], [], path); assertWriteRevision(value, path); break
     case 'view':
       assertViewCommand(value, path)
       break
@@ -400,6 +472,9 @@ function assertManageResult (value, path) {
   assertRecord(value, path)
   assertString(value.kind, `${path}.kind`, { nonEmpty: true })
   switch (value.kind) {
+    case 'overview_refresh':
+      assertExactObject(value, ['kind', 'operation', 'scheduled'], [], path)
+      assertEnum(value.operation, ['refresh_overview'], `${path}.operation`); assertBoolean(value.scheduled, `${path}.scheduled`); break
     case 'memory_page':
       assertPageResult(value, path, 'personal_memories')
       break
@@ -566,5 +641,7 @@ module.exports = {
   assertGetOverviewResponse,
   assertManageRequest,
   assertManageResponse,
+  assertSourceTarget,
+  assertSources,
   isSupportedContract
 }

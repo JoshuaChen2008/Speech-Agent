@@ -24,7 +24,7 @@ const ERROR_CODES = Object.freeze([
   'AGENT_PROVIDER_TIMEOUT', 'AGENT_OUTPUT_INVALID', 'AGENT_PERMISSION_DENIED',
   'AGENT_REQUEST_INVALID', 'AGENT_WORKER_EXITED', 'AGENT_INTERNAL_FAILURE',
   'AGENT_BUDGET_EXCEEDED', 'AGENT_SUMMARY_MEMORY_READ_FAILED',
-  'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED'
+  'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED', 'AGENT_QA_INPUT_LIMIT_EXCEEDED'
 ])
 
 const IPC_CHANNELS = Object.freeze({
@@ -139,13 +139,23 @@ function assertRequestSnapshot (snapshot) {
     'elapsed_ms', 'last_activity_age_ms', 'validated_chunk_count', 'total_chunk_count',
     'memory_state', 'error_code', 'budget', 'freshness', 'cancel_requested', 'resume_required',
     'diagnostics_available', 'route_run_id', 'target_run_id', 'interaction_id', 'recipe_id', 'routing_mode'
-  ], 'snapshot')
+  ], 'snapshot', ['retry'])
   id(snapshot.request_id, 'snapshot.request_id')
   integer(snapshot.generation, 'snapshot.generation', 1)
   integer(snapshot.revision, 'snapshot.revision')
   if (!ACTIONS.includes(snapshot.action)) fail('snapshot.action', 'is not registered')
   if (!STATES.includes(snapshot.state)) fail('snapshot.state', 'is not registered')
   if (!PHASES.includes(snapshot.phase)) fail('snapshot.phase', 'is not registered')
+  if (snapshot.retry !== undefined && snapshot.retry !== null) {
+    exact(snapshot.retry, ['request_attempt', 'wait_ms', 'reason'], 'snapshot.retry')
+    integer(snapshot.retry.request_attempt, 'snapshot.retry.request_attempt', 2)
+    if (snapshot.retry.request_attempt > 5) fail('snapshot.retry.request_attempt', 'exceeds policy')
+    integer(snapshot.retry.wait_ms, 'snapshot.retry.wait_ms')
+    if (snapshot.retry.wait_ms > 1000) fail('snapshot.retry.wait_ms', 'exceeds policy')
+    if (!['AGENT_PROVIDER_RATE_LIMITED', 'AGENT_PROVIDER_UNAVAILABLE', 'AGENT_PROVIDER_TIMEOUT'].includes(snapshot.retry.reason)) {
+      fail('snapshot.retry.reason', 'is not a retryable category')
+    }
+  }
   integer(snapshot.attempt, 'snapshot.attempt')
   integer(snapshot.elapsed_ms, 'snapshot.elapsed_ms')
   if (snapshot.last_activity_age_ms !== null) integer(snapshot.last_activity_age_ms, 'snapshot.last_activity_age_ms')

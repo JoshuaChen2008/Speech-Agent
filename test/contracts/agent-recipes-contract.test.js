@@ -14,11 +14,13 @@ const {
   assertInteractionSignalRef,
   comparisonGroupId
 } = require('../../src/agent/contracts/recipes')
+const { outputDirectiveFor } = require('../../src/agent/contracts/recipe-output-directives')
 
 const expectedIds = [
   'intent.route',
   'context.ingest.session',
   'context.ingest.interaction',
+  'context.synthesize',
   'qa.answer',
   'extract.items',
   'summary.minutes',
@@ -29,9 +31,9 @@ const expectedIds = [
   'text.translate'
 ]
 
-test('SEM-F16/J22/J24: eleven recipe ids map to a frozen versioned registry', () => {
+test('SEM-F16/J22/J24: twelve recipe ids map to a frozen versioned registry', () => {
   assert.deepEqual(RECIPE_IDS, expectedIds)
-  assert.equal(RECIPE_CATALOG.length, 12)
+  assert.equal(RECIPE_CATALOG.length, 21)
   assert.equal(Object.isFrozen(RECIPE_CATALOG), true)
   assert.deepEqual([...new Set(RECIPE_CATALOG.map((recipe) => recipe.recipeId))], expectedIds)
   for (const recipe of RECIPE_CATALOG) {
@@ -39,7 +41,9 @@ test('SEM-F16/J22/J24: eleven recipe ids map to a frozen versioned registry', ()
       'artifactType', 'failurePolicy', 'inputScopes', 'maxTurns', 'modelPurpose',
       'outputSchemaId', 'persistence', 'recipeId', 'recipeVersion', 'toolGrants'
     ])
-    assert.ok(['1', ...(recipe.recipeId === 'summary.minutes' ? ['2'] : [])].includes(recipe.recipeVersion))
+    assert.ok(['1', ...(['summary.minutes', 'qa.answer', 'context.ingest.session', 'context.ingest.interaction', 'context.synthesize'].includes(recipe.recipeId) ? ['2'] : []),
+      ...(['qa.answer', 'context.ingest.session'].includes(recipe.recipeId) ? ['3'] : []),
+      ...(recipe.recipeId === 'qa.answer' ? ['4', '5'] : [])].includes(recipe.recipeVersion))
     assert.equal(Object.isFrozen(recipe), true)
     assert.equal(getRecipe(recipe.recipeId, recipe.recipeVersion), recipe)
   }
@@ -51,7 +55,11 @@ test('SEM-F16/J22/J24: eleven recipe ids map to a frozen versioned registry', ()
   assert.deepEqual(summaryV2.toolGrants, ['search_context'])
   assert.deepEqual(getRecipe('report.analysis', '1').toolGrants, ['search_context', 'read_sources'])
   assert.throws(() => getRecipe('unknown', '1'), /AGENT_REQUEST_INVALID/)
-  assert.throws(() => getRecipe('qa.answer', '2'), /AGENT_REQUEST_INVALID/)
+  assert.deepEqual({ ...getRecipe('qa.answer', '2'), recipeVersion: '1' }, getRecipe('qa.answer', '1'))
+  assert.deepEqual(getRecipe('qa.answer', '3').inputScopes, ['session'])
+  assert.deepEqual({ ...getRecipe('qa.answer', '3'), recipeVersion: '2', inputScopes: getRecipe('qa.answer', '2').inputScopes }, getRecipe('qa.answer', '2'))
+  assert.deepEqual({ ...getRecipe('qa.answer', '5'), recipeVersion: '4' }, getRecipe('qa.answer', '4'))
+  assert.throws(() => getRecipe('qa.answer', '6'), /AGENT_REQUEST_INVALID/)
   assert.throws(() => assertRecipeRequest({ recipeId: 'qa.answer', recipeVersion: '1', maxTurns: 99 }), /AGENT_REQUEST_INVALID/)
 })
 
@@ -83,6 +91,7 @@ const memory = { memoryId: 'memory.1', revisionId: 'revision.1' }
 test('SEM-F16/J22/J24: every registered output schema has an exact minimal valid shape', () => {
   const outputs = {
     'intent.route': { recipeId: 'qa.answer', confidence: 1 },
+    'context.synthesize': { schemaVersion: 1, sections: [] },
     'context.ingest.session': {
       schemaVersion: 1, experiences: [{ kind: 'topic', text: 'topic', evidence: source, confidence: 'medium' }],
       memoryCandidates: [{ scopeKind: 'session', scopeKeyProposal: null, kind: 'experience', content: 'fact', confidence: 'low', salience: 'low', evidence: source }]
@@ -129,4 +138,54 @@ test('SEM-F16/J22/J24: output validators reject sensitive fields, invalid refs, 
   assert.throws(() => validateRecipeOutput('text.translate', '1', {
     schemaVersion: 1, targetLanguage: 'zh-hans', basedOnRevision: 'revision.1', segments: []
   }), /AGENT_OUTPUT_INVALID/)
+})
+
+test('SEM-F39/SEM-F28/J31-SIZE: every registered recipe identity carries a single-line JSON output directive', () => {
+  for (const recipe of RECIPE_CATALOG) {
+    const directive = outputDirectiveFor(recipe)
+    assert.equal(typeof directive.systemPrompt, 'string')
+    assert.equal(/[\u0000-\u001f\u007f]/u.test(directive.systemPrompt), false, `${recipe.recipeId}@${recipe.recipeVersion} must stay on one line`)
+    assert.equal(Buffer.byteLength(directive.systemPrompt, 'utf8') <= 16 * 1024, true)
+    assert.equal(directive.systemPrompt.includes('只输出一个 JSON 对象'), true)
+    assert.equal(directive.systemPrompt.includes('不要 Markdown'), true)
+    assert.equal(directive.systemPrompt.includes('不可信数据'), true)
+    assert.equal(directive.systemPrompt.includes(JSON.stringify(directive.example)), true)
+    assert.doesNotThrow(() => validateRecipeOutput(recipe.recipeId, recipe.recipeVersion, directive.example))
+  }
+  assert.throws(() => outputDirectiveFor({ recipeId: 'summary.minutes', recipeVersion: '3' }), /AGENT_REQUEST_INVALID/)
+})
+
+test('SEM-F39/J31-SIZE: the summary directive pins the minutes structure without inventing source identity', () => {
+  const directive = outputDirectiveFor(getRecipe('summary.minutes', '2'))
+  assert.equal(directive.systemPrompt.includes('schemaVersion'), true)
+  assert.equal(directive.systemPrompt.includes('overview'), true)
+  assert.equal(directive.systemPrompt.includes('todos'), true)
+  assert.equal(directive.systemPrompt.includes('2000'), true)
+  assert.equal(directive.systemPrompt.includes('不得编造'), true)
+  assert.deepEqual(directive.example.sourceRefs, undefined)
+  for (const item of [...directive.example.conclusions, ...directive.example.todos, ...directive.example.risks]) {
+    assert.deepEqual(item.sourceRefs, [])
+  }
+  const v1Directive = outputDirectiveFor(getRecipe('summary.minutes', '1'))
+  assert.equal(v1Directive.systemPrompt, directive.systemPrompt)
+})
+
+test('SEM-F39/SEM-F28/J31-SIZE: routing, ingest, and remaining recipes keep their own output structures', () => {
+  const route = outputDirectiveFor(getRecipe('intent.route', '1')).systemPrompt
+  assert.equal(route.includes('qa.answer'), true)
+  assert.equal(route.includes('summary.minutes'), true)
+  assert.equal(route.includes('confidence'), true)
+  assert.equal(route.includes('overview'), false, 'routing must not adopt the minutes structure')
+
+  const ingest = outputDirectiveFor(getRecipe('context.ingest.session', '1')).systemPrompt
+  assert.equal(ingest.includes('experiences'), true)
+  assert.equal(ingest.includes('memoryCandidates'), true)
+  assert.equal(ingest.includes('semanticKey'), true, 'storage ownership must stay explicit')
+  const interaction = outputDirectiveFor(getRecipe('context.ingest.interaction', '1')).systemPrompt
+  assert.equal(interaction.includes('interactionId'), true)
+  assert.equal(interaction.includes('signalKind'), true)
+
+  const answer = outputDirectiveFor(getRecipe('qa.answer', '1')).systemPrompt
+  assert.equal(answer.includes('memoryRefs'), true)
+  assert.equal(answer.includes('ownerHint'), false, 'qa.answer must not adopt todo fields')
 })

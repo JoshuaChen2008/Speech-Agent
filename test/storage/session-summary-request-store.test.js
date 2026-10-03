@@ -9,12 +9,35 @@ const path = require('node:path')
 const { AgentExecutionStore } = require('../../src/runtime/storage-worker/agent-execution-store')
 const { PersonalContextStore } = require('../../src/runtime/storage-worker/personal-context-store')
 const { publicSnapshot } = require('../../src/agent/formal-run/session-summary-run-service')
-const { FORMAL_AGENT_MIGRATIONS } = require('../../src/runtime/storage-worker/schema')
+const { FORMAL_AGENT_MIGRATIONS, FORMAL_AGENT_SCHEMA_VERSION } = require('../../src/runtime/storage-worker/schema')
 const { SqliteSubtitleStore } = require('../../src/runtime/storage-worker/subtitle-store')
 const { sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
 const { SessionDeletionStore } = require('../../src/runtime/storage-worker/session-deletion-store')
 
 const SESSION_SUMMARY_MIGRATIONS = FORMAL_AGENT_MIGRATIONS.filter((migration) => migration.version < 15)
+
+test('SEM-F14/SEM-F39/DB1/J31-COMPAT: v18 appends digest-only input plan metadata and preserves prior checksums', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-plan-migration-'))
+  const databasePath = path.join(root, 'speech-agent.sqlite3')
+  let subtitleStore
+  t.after(() => {
+    try { subtitleStore?.close() } catch {}
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  subtitleStore = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 17), now: () => 1000 })
+  const prior = subtitleStore.database.prepare('SELECT version,checksum FROM schema_migrations ORDER BY version').all()
+  subtitleStore.close()
+  subtitleStore = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS, now: () => 2000 })
+  const upgraded = subtitleStore.database.prepare('SELECT version,checksum FROM schema_migrations ORDER BY version').all()
+  assert.deepEqual(upgraded.slice(0, 17), prior)
+  assert.equal(upgraded.length, FORMAL_AGENT_SCHEMA_VERSION)
+  const columns = subtitleStore.database.prepare("PRAGMA table_info('formal_agent_run_input_plans')").all().map((row) => row.name)
+  assert.deepEqual(columns, [
+    'run_id', 'policy_version', 'plan_digest', 'input_digest', 'binding_digest',
+    'leaf_count', 'node_count', 'segment_count', 'raw_text_bytes', 'canonical_bytes',
+    'usage_known', 'input_tokens', 'output_tokens', 'created_at', 'updated_at'
+  ])
+})
 
 function fixture (t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-request-store-'))
@@ -111,6 +134,27 @@ test('SEM-F38/DB1/J30-PROGRESS: request revisions reject stale phase updates', (
     requestId: accepted.requestId, generation: 1, expectedRevision: 0,
     state: 'routing', phase: 'waiting_model'
   }), (error) => error.code === 'AGENT_CONTEXT_REVISION_CONFLICT')
+})
+
+test('SEM-F38/SEM-T04/DB1/J30-PROGRESS: retry wait metadata survives a snapshot read and clears on progress', (t) => {
+  const { store } = fixture(t)
+  const accepted = store.acceptSessionSummaryRequest(acceptedRequest())
+  const waiting = store.updateSessionSummaryRequest({
+    requestId: accepted.requestId, generation: 1, expectedRevision: accepted.revision,
+    state: 'running', phase: 'retry_wait', attempt: 1,
+    retry: { requestAttempt: 3, waitMs: 200, reason: 'AGENT_PROVIDER_RATE_LIMITED' }
+  })
+  assert.deepEqual(publicSnapshot(store.getSessionSummaryRequest({ requestId: accepted.requestId })).retry,
+    { request_attempt: 3, wait_ms: 200, reason: 'AGENT_PROVIDER_RATE_LIMITED' })
+  assert.throws(() => store.updateSessionSummaryRequest({
+    requestId: accepted.requestId, generation: 1, expectedRevision: waiting.revision,
+    state: 'running', phase: 'retry_wait', retry: { requestAttempt: 6, waitMs: 200, reason: 'AGENT_PROVIDER_RATE_LIMITED' }
+  }), (error) => error.code === 'AGENT_REQUEST_INVALID')
+  const continued = store.updateSessionSummaryRequest({
+    requestId: accepted.requestId, generation: 1, expectedRevision: waiting.revision,
+    state: 'running', phase: 'waiting_model'
+  })
+  assert.equal(publicSnapshot(continued).retry, undefined)
 })
 
 test('SEM-F28/SEM-F38/DB1/J30-RECOVERY: a replaced lease attempt cannot update summary progress', (t) => {
@@ -226,7 +270,7 @@ test('SEM-F38/DB1/J30-CANCEL: cancelling a queued target prevents it from remain
   assert.notEqual(run.cancel_requested_at, null)
 })
 
-test('SEM-F38/DB1/J30-CANCEL: repeated cancellation while a target is running replays one control fact', (t) => {
+test('SEM-F38/DB1/J30-CANCEL: running target cancellation settles durably without a live executor', (t) => {
   const { subtitleStore, store } = fixture(t)
   const accepted = acceptedRequest({ action: 'question', summaryUseMemory: null })
   store.acceptSessionSummaryRequest(accepted)
@@ -239,18 +283,18 @@ test('SEM-F38/DB1/J30-CANCEL: repeated cancellation while a target is running re
   subtitleStore.database.prepare("UPDATE formal_agent_runs SET state='running',attempt_count=1,lease_owner='worker.test',lease_expires_at=5000 WHERE run_id=?").run('run.running.request')
   const first = store.cancelSessionSummaryRequest({ requestId: accepted.requestId, generation: 1, elapsedMs: 321 })
   const activeReplay = store.cancelSessionSummaryRequest({ requestId: accepted.requestId, generation: 1, elapsedMs: 999 })
-  assert.equal(first.state, 'cancelling')
+  assert.equal(first.state, 'cancelled')
   assert.equal(first.elapsedMs, 321)
   assert.equal(activeReplay.revision, first.revision)
   assert.equal(activeReplay.elapsedMs, 321)
   assert.equal(activeReplay.replayed, true)
 
-  subtitleStore.database.prepare("UPDATE formal_agent_runs SET state='cancelled',lease_owner=NULL,lease_expires_at=NULL,updated_at=2001 WHERE run_id=?").run('run.running.request')
   const terminalReplay = store.cancelSessionSummaryRequest({ requestId: accepted.requestId, generation: 1, elapsedMs: 1500 })
   assert.equal(terminalReplay.state, 'cancelled')
   assert.equal(terminalReplay.elapsedMs, 321)
-  assert.ok(terminalReplay.revision > first.revision)
+  assert.equal(terminalReplay.revision, first.revision)
   assert.equal(subtitleStore.database.prepare('SELECT cancel_requested_at FROM formal_agent_runs WHERE run_id=?').get('run.running.request').cancel_requested_at, 2000)
+  assert.equal(subtitleStore.database.prepare('SELECT state,lease_owner FROM formal_agent_runs WHERE run_id=?').get('run.running.request').state, 'cancelled')
 })
 
 test('SEM-F38/DB1/J30-CANCEL: cancellation after route failure preserves the failed terminal fact', (t) => {
@@ -268,6 +312,27 @@ test('SEM-F38/DB1/J30-CANCEL: cancellation after route failure preserves the fai
   assert.equal(result.state, 'failed')
   assert.equal(result.errorCode, 'AGENT_INTERNAL_FAILURE')
   assert.equal(result.cancelRequested, false)
+})
+
+test('SEM-F38/DB1/J30-CANCEL: an older cancelling request can be cancelled again after its executor exits', (t) => {
+  const { subtitleStore, store } = fixture(t)
+  const accepted = acceptedRequest({ action: 'question', summaryUseMemory: null })
+  store.acceptSessionSummaryRequest(accepted)
+  store.createRun({
+    runId: 'run.stale.cancelling', recipeId: 'qa.answer', recipeVersion: '1',
+    scope: { kind: 'session', reference: accepted.sessionId }, transcriptVersion: 'raw',
+    inputWatermark: accepted.inputWatermark, inputDigest: accepted.inputDigest,
+    requestedBy: 'user', clientIdempotencyKey: 'request.stale.cancelling', requestId: accepted.requestId,
+    requestGeneration: 1
+  })
+  subtitleStore.database.prepare("UPDATE formal_agent_runs SET state='running',attempt_count=1,lease_owner='old.executor',lease_expires_at=5000,cancel_requested_at=2000 WHERE run_id='run.stale.cancelling'").run()
+  subtitleStore.database.prepare("UPDATE formal_agent_requests SET state='cancelling',phase='cancelling',cancel_requested=1 WHERE request_id=?").run(accepted.requestId)
+  const settled = store.cancelSessionSummaryRequest({ requestId: accepted.requestId, generation: 1 })
+  assert.equal(settled.state, 'cancelled')
+  assert.equal(store.cancelSessionSummaryRequest({ requestId: accepted.requestId, generation: 1 }).replayed, true)
+  assert.deepEqual({ ...subtitleStore.database.prepare("SELECT state,lease_owner FROM formal_agent_runs WHERE run_id='run.stale.cancelling'").get() }, {
+    state: 'cancelled', lease_owner: null
+  })
 })
 
 test('DB1: migration v14 to v16 preserves existing rows and old checksums and rolls back failed application', (t) => {
@@ -295,7 +360,7 @@ test('DB1: migration v14 to v16 preserves existing rows and old checksums and ro
   subtitleStore = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS, now: () => 4000 })
   const upgradedHistory = subtitleStore.database.prepare('SELECT version,checksum FROM schema_migrations ORDER BY version').all()
   assert.deepEqual(upgradedHistory.slice(0, 14), priorHistory)
-  assert.equal(upgradedHistory.length, 17)
+  assert.equal(upgradedHistory.length, FORMAL_AGENT_SCHEMA_VERSION)
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM sessions WHERE session_id = ?').get('session.migration').count, 1)
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM sqlite_schema WHERE name = ?').get('formal_agent_requests').count, 1)
   assert.equal(subtitleStore.database.prepare("SELECT COUNT(*) AS count FROM pragma_table_info('session_deletion_tombstones') WHERE name = 'deleted_summary_request_count'").get().count, 1)
@@ -336,7 +401,7 @@ test('SEM-F38/DB1/SEM-T04/J30-RECOVERY: v17 marks an unaccounted running summary
   subtitleStore = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS, now: () => 6000 })
   const upgradedHistory = subtitleStore.database.prepare('SELECT version,checksum FROM schema_migrations ORDER BY version').all()
   assert.deepEqual(upgradedHistory.slice(0, 16), priorHistory)
-  assert.equal(upgradedHistory.length, 17)
+  assert.equal(upgradedHistory.length, FORMAL_AGENT_SCHEMA_VERSION)
   const budget = subtitleStore.database.prepare(`
     SELECT policy_version,budget_digest,max_wall_clock_ms,max_requests_per_attempt,accounting_known
     FROM formal_agent_run_budget_state WHERE run_id='run.v16.budget'
@@ -389,4 +454,33 @@ test('DB1/J30-RECOVERY: v15 accepted requests without a linked run fail closed w
   assert.equal(row.error_code, 'AGENT_RUN_UNAVAILABLE')
   assert.equal(row.revision, 1)
   assert.equal(row.input_digest, null)
+})
+
+
+test('SEM-F39/DB1/J31-COMPAT: v20 preserves old summary policy and attempts while new runs freeze chunking', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-v20-'))
+  const databasePath = path.join(root, 'speech-agent.sqlite3')
+  let store
+  t.after(() => { store?.close(); fs.rmSync(root, { recursive: true, force: true }) })
+  store = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS.slice(0, 19), now: () => 1000 })
+  const command = {
+    runId: 'run.legacy.v2', recipeId: 'summary.minutes', recipeVersion: '2',
+    scope: { kind: 'session', reference: 'session.compat' }, transcriptVersion: 'raw',
+    inputWatermark: { throughEventOrder: 1 }, inputDigest: 'a'.repeat(64), requestedBy: 'user',
+    clientIdempotencyKey: 'legacy.v2', summaryUseMemory: false
+  }
+  new AgentExecutionStore({ subtitleStore: store, now: () => 1000 }).createRun(command)
+  const checksums = store.database.prepare('SELECT version,checksum FROM schema_migrations ORDER BY version').all()
+  store.close()
+  store = new SqliteSubtitleStore({ databasePath, migrations: FORMAL_AGENT_MIGRATIONS, now: () => 2000 })
+  assert.deepEqual(store.database.prepare('SELECT version,checksum FROM schema_migrations ORDER BY version').all().slice(0, 19), checksums)
+  const execution = new AgentExecutionStore({ subtitleStore: store, now: () => 2000 })
+  execution.createRun(command)
+  const legacy = store.database.prepare('SELECT summary_input_policy,max_attempts FROM formal_agent_runs WHERE run_id=?').get(command.runId)
+  assert.equal(legacy.summary_input_policy, null)
+  assert.equal(legacy.max_attempts, 5)
+  execution.createRun({ ...command, runId: 'run.chunked.v2', clientIdempotencyKey: 'chunked.v2' })
+  const chunked = store.database.prepare('SELECT summary_input_policy,max_attempts FROM formal_agent_runs WHERE run_id=?').get('run.chunked.v2')
+  assert.equal(chunked.summary_input_policy, 'summary-long-input@1')
+  assert.equal(chunked.max_attempts, 2)
 })

@@ -3,6 +3,8 @@
 // @ts-check
 
 const { getRecipe } = require('../contracts/recipes')
+const { outputDirectiveFor } = require('../contracts/recipe-output-directives')
+const { deriveRecipeRequestCapacity, usesModelWindowCapacity } = require('../contracts/budget-axes')
 
 const TOOL_ERROR_CODES = new Set([
   'TOOL_ARGS_INVALID', 'TOOL_SCOPE_DENIED', 'TOOL_NOT_AVAILABLE_FOR_RECIPE',
@@ -67,8 +69,48 @@ function shouldStopAfterTurn ({ maxTurns, turn, toolCalls = 0, maxToolCalls = Nu
     (Number.isSafeInteger(maxTurns) && Number.isSafeInteger(turn) && turn >= maxTurns)
 }
 
-function assertPrompt (value) {
-  if (typeof value !== 'string' || value.length < 1 || value.length > 16000 || /[\u0000-\u001f\u007f]/u.test(value)) {
+function assertPrompt (value, recipe, requestCapacity) {
+  const windowedInput = usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)
+  if (typeof value !== 'string' || value.length < 1 ||
+      (windowedInput ? Buffer.byteLength(value, 'utf8') > 256 * 1024 : value.length > 16000) ||
+      /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw executionError('AGENT_REQUEST_INVALID')
+  }
+  if (recipe.recipeId === 'qa.answer' && usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)) {
+    const actual = Buffer.byteLength(value, 'utf8')
+    if (actual > requestCapacity.promptByteLimit) {
+      const error = executionError('AGENT_QA_INPUT_LIMIT_EXCEEDED')
+      error.diagnosticMetrics = { actual, limit: requestCapacity.promptByteLimit, unit: 'bytes' }
+      throw error
+    }
+  }
+  return value
+}
+
+// The windowed direct-summary request capacity is a host-internal parameter
+// derived once by the runner from the frozen binding (2026-09-29 light plan).
+// Only registered windowed summary and QA versions may carry it; other versions keep their frozen
+// version capacity interpretation, and a malformed value fails closed before
+// any adapter execution.
+function validatedRequestCapacity (recipe, value, resolvedModel) {
+  const windowedQuestion = recipe.recipeId === 'qa.answer' && usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)
+  if (value === undefined) {
+    if (windowedQuestion) throw executionError('AGENT_REQUEST_INVALID')
+    return undefined
+  }
+  if (!usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)) {
+    throw executionError('AGENT_REQUEST_INVALID')
+  }
+  if (windowedQuestion) {
+    const expected = deriveRecipeRequestCapacity({ recipeId: recipe.recipeId, recipeVersion: recipe.recipeVersion,
+      capabilities: resolvedModel?.capabilities, budget: resolvedModel?.budget })
+    if (expected.promptByteLimit !== value.promptByteLimit ||
+        expected.requestOutputTokens !== value.requestOutputTokens) throw executionError('AGENT_REQUEST_INVALID')
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      Object.keys(value).sort().join(',') !== 'promptByteLimit,requestOutputTokens' ||
+      !Number.isSafeInteger(value.requestOutputTokens) || value.requestOutputTokens < 1 ||
+      !Number.isSafeInteger(value.promptByteLimit) || value.promptByteLimit < 0) {
     throw executionError('AGENT_REQUEST_INVALID')
   }
   return value
@@ -89,11 +131,12 @@ class AgentLoopExecutor {
 
   async agentLoop (input) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw executionError('AGENT_REQUEST_INVALID')
-    const allowedKeys = new Set(['recipeId', 'recipeVersion', 'prompt', 'resolvedModel', 'tools', 'signal', 'timeoutMs', 'budget', 'usageReporting', 'onProgress', 'beforeRequest'])
+    const allowedKeys = new Set(['recipeId', 'recipeVersion', 'prompt', 'resolvedModel', 'tools', 'signal', 'timeoutMs', 'budget', 'usageReporting', 'onProgress', 'beforeRequest', 'requestCapacity', 'getRunUsage', 'onRequestUsage'])
     if (Object.keys(input).some((key) => !allowedKeys.has(key))) throw executionError('AGENT_REQUEST_INVALID')
     let recipe
     try { recipe = getRecipe(input.recipeId, input.recipeVersion) } catch { throw executionError('AGENT_REQUEST_INVALID') }
-    assertPrompt(input.prompt)
+    const requestCapacity = validatedRequestCapacity(recipe, input.requestCapacity, input.resolvedModel)
+    assertPrompt(input.prompt, recipe, requestCapacity)
     if (!input.resolvedModel || typeof input.resolvedModel !== 'object' || Array.isArray(input.resolvedModel)) {
       throw executionError('AGENT_REQUEST_INVALID')
     }
@@ -137,20 +180,28 @@ class AgentLoopExecutor {
       result = await runAdapterBounded(adapter, {
         resolvedModel: input.resolvedModel,
         recipe,
-        systemPrompt: '',
+        systemPrompt: outputDirectiveFor(recipe).systemPrompt,
         prompt: input.prompt,
+        ...(requestCapacity === undefined ? {} : { requestCapacity }),
         tools: wrappedTools,
         maxTurns: recipe.maxTurns,
         timeoutMs,
         onProgress: onProgress
           ? (event) => {
               if (!event || typeof event !== 'object' || Array.isArray(event) ||
-                  !['request_started', 'response_received', 'request_failed'].includes(event.type) ||
+                  !['request_started', 'response_received', 'request_failed', 'retry_wait'].includes(event.type) ||
                   !Number.isSafeInteger(event.turn) || event.turn < 1) return
-              try { return onProgress(Object.freeze({ type: event.type, turn: event.turn })) } catch { /* progress observers do not change model work */ }
+              const progress = event.type === 'retry_wait'
+                ? { type: 'retry_wait', turn: event.turn, phase: 'retry_wait',
+                    requestAttempt: event.requestAttempt, nextAttempt: event.nextAttempt,
+                    reason: event.reason, waitMs: event.waitMs }
+                : { type: event.type, turn: event.turn }
+              try { return onProgress(Object.freeze(progress)) } catch { /* progress observers do not change model work */ }
             }
           : undefined,
         beforeRequest: input.beforeRequest,
+        getRunUsage: input.getRunUsage,
+        onRequestUsage: input.onRequestUsage,
         shouldStopAfterTurn: ({ turn, toolCalls = 0, budgetExceeded = false } = {}) => shouldStopAfterTurn({
           maxTurns: recipe.maxTurns,
           turn,

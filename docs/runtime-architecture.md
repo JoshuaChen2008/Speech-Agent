@@ -1,11 +1,27 @@
 # Live Subtitle + Agent · 运行后端与契约
 
+> 2026-10-02 个人记忆文件增量（实现完成·尚未验收）：SEM-F41/F42、ADR0025。新建问答为 `qa.answer@5`，通过 resolve@2 冻结同一范围的关键词与向量召回；旧工具/recipe绑定保留。个人上下文模块统一编排文件核验、确认、来源及混合检索；独立文件Worker持有Win32句柄直至FlushFileBuffers与SQLite提交，SQLite仍由storage worker独占。表征请求独立配置/披露、在模型接入层借用专属凭据，派生索引工作不成为固定recipe第二条执行路径。Agent缺失、目录失联、原生模块或云端故障时字幕仍沿独立链路运行。管理与恢复说明见[指南](personal-memory-guide.md)，实际验证见[交付记录](validation/personal-memory-files-2026-10-02.md)。
+
+> **2026-10-02 总结检索优先增量（历史切片；实现完成·尚未验收）**：此切片登记时终态会话摄取为 `context.ingest.session@3`，问答为 `qa.answer@4`；当前新建问答版本见上段。既有 @1/@2/@3/@4 问答运行继续原解释。依据 SEM-F28/F30/F31/F33/F39/F40、J21/J22/J24/J29/J30/J31 与 [ADR0024](adr/0024-summary-first-session-question.md)。
+
+摄取执行宿主按冻结模型运行绑定和完整来源形成 `experience-input@1`，逐范围调用同一 Agent Loop。每个经过校验的范围形成独立最终会话经历记录，存储事务提交范围、候选、关联与连续进度；取消、失租或输出无效保留既有前缀，不推进缺口。自动重试复用原绑定与计划，跳过已提交范围。整场覆盖回执由宿主生成，模型只输出范围内容。后台自动边界及休眠规则沿既有个人上下文模块治理。
+
+问答由个人上下文模块组织 `question-retrieval@1`：经历/纪要检索与独立原文召回共同形成有界证据，保留中文短词、数字日期、否定与较晚修订入口。纪要概要只作线索，结论只能引用实际供应的原文或真实工具返回的个人记忆。系统提示、序列化问题/证据/工具消息与输出额度经过请求容量预检；容量不足在 provider 请求前拒绝。全部节点和 attempt 共用持久请求/用量账本与单调时限，未知实际 token 用量不估算。
+
+日期引用为 `date.<fromMs>.<throughMs>`，按会话开始时间左闭右开；项目只能使用已登记 scope ID 及当前有效已确认记忆的会话关联。目录逐页冻结全部符合资格的会话，新来源不加入既有运行。普通事项联合检索；全局问题遍历全部有效经历并分批归并；清单、次数及否定存在性读取完整来源。节点中间正文仅在内存。宿主区分原文覆盖与整理覆盖，缺失经历不能推断为没有发生。跨会话首版冻结原文总上界仍为4 MiB/50,000段，canonical 上界8 MiB，256证据页/384节点/512请求；超界明确拒绝，不静默缩小目录。
+
+`agent-run.ui@1.1.0` 通过既有 main/preload 提供日期/项目选择，兼容旧1.0请求；项目目录分页并显示 ID 区分同名标签。逐结论按钮显示来源日期与相对位置，既有 context-source IPC 校验后打开历史，精确定位、标记引用段落并返回结果；失败保留答案，查看零模型调用。来源、许可与冻结证据页在最终提交前重新核验，迟到结果不恢复删除/撤销内容。
+
+`context.synthesize@2` 只消费冻结候选批次，期间新增候选由下一批处理；明确个人记忆不被自动候选覆盖。进行中的事项从有效明确待办派生，只有完整明确日期用于过期过滤，没有日期显示截止时间未确认；不推测履行，不删除原事实。Agent失败不影响下一字幕会话及历史读取。
+
 > 状态：Rev.4 · 2026-07-31
 > 目的：定义可独立运行的字幕系统、后置 Agent 系统及 Electron 壳层的责任；视觉/UI 只消费本文对外发布的契约。
 > 功能与验收语义以 [`semantic-contract.md`](semantic-contract.md) 为准；目标数据层见
 > [`data-architecture.md`](data-architecture.md)。
 
 ## 1. 架构目标
+
+2026-09-30 会话问答窗口内输入容量：新建用户问答由两个正式受理入口冻结 `qa.answer@2`，runner 从完整冻结会话输入和模型运行绑定派生容量，Loop 与生产 adapter 复核同一容量。每次外发还检查序列化系统/用户/工具消息，输出预留受已知累计余额约束。旧 `qa.answer@1`、意图收敛及总结输入计划保持原解释。超窗口问答在问答生成模型调用前终止，公开 `AGENT_QA_INPUT_LIMIT_EXCEEDED` 与仅含字节指标的 Agent 运行诊断；工具后续轮或 HTTP 保护仍使用通用预算错误。第一步保留问答60秒和旧累计/工具预算，分块执行另行登记。详见 [ADR 0022](adr/0022-windowed-session-question-input.md)；状态为实现完成·尚未验收。
 
 - 纯本地路径的高频 PCM 不经过主进程；NLS 路径按 ADR 0020 由 worker 经有界端口交给 main 转发。
 - CPU 密集推理不在主进程或可见 renderer 中执行。
@@ -317,6 +333,8 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 
 ### 11.1 权威识别路由
 
+2026-09-30 修订（SEM-F12/F14/F21、J20、ADR 0020）：正常云端不预加载本地模型/VAD/native。明确运行期故障才创建独立本地 worker 冷加载；轻量 worker 持续接收并有界留存，以独立 credit 端口按切点后顺序交接。接管最多 30 秒、总留存最多 60 秒，任一限界先到即显式失败。停止取消未就绪的接管并等待全部 exact child 退出。以下旧文中允许本地预加载的表述被本修订替代。
+
 ```text
 单路 AudioHost + 有界 PCM
 └─ RecognitionSessionRouter（会话策略冻结）
@@ -356,6 +374,8 @@ exit-bound 权威 bundle 让 loopback/mic 各 5 轮完整通过采集、online A
 - Agent 模型 provider 不可用、凭据失效、限流、超时或 worker 退出只改变后台 Agent 任务与调试聊天的 Agent 能力状态。字幕会话、SQLite 字幕事实、历史和导出保持独立。
 
 ### 11.3 后台 Agent 任务与专用子 Agent
+
+> 历史实现留档：本节的旧 PluginHost、三项自动任务及环境凭据接线不代表当前正式 Agent。会话总结运行/取消/长输入的新目标以 SEM-F38/F39/F40、[ADR 0021](adr/0021-summary-lifecycle-and-long-input.md) 和 [实施设计](../openspec/changes/fix-session-summary-lifecycle-and-long-input/design.md) 为准，状态为已决定。不要从本节复制旧产品组合根。
 
 > 当前实现投影（2026-08-10）：D3–D6 的正式存储、三项 UI-free 后端纵切与 production `StorageWorkerHost` utility-process transport，D8 的 `MemoryReader → StorageWorkerService/FormalAgentStore` 有界读取，以及 D9–D14 的 main-only provider bootstrap/catalog、registry/Gateway/Pi 内部路径、ConfigStore v2 Agent 设置、UI-free `MeetingStopped`/`AgentJobReconciler`、正式任务 `StorageGateway` 接线和正式 Agent utility 进程边界，均为实现完成·尚未验收。D14 已让真实 `AgentPluginHost`、输入规划、registry/Gateway/Pi 进入独立 Agent utility，并保留 main-owned runner/readers/writers/storage port；正式 main/preload/renderer、真实 DeepSeek HTTP、确认关键词、资源仲裁与正式打包仍为已决定。
 
@@ -406,3 +426,18 @@ Agent MVP 全局只运行一个 Agent Loop，后台 Agent 任务 FIFO 排队。�
 ## 12. NLS 首期运行边界（2026-09-21，已决定）
 
 [ADR 0020](adr/0020-nls-realtime-recognition.md) 优先修订 §5/§7/§11：只有云端识别分支允许 worker 将有界 PCM 转交 main-owned 鉴权连接；main 不推理。云端分段、同会话单向降级、时间戳交接及限界错误均由该 ADR 定义。§7/§11 中确认关键词集合、关键词能力探针和“关键词未应用”已被 ADR 0017 取消，不得实现。纯本地高频路径和 SEM-F12 exact-child 生命周期继续保持。
+
+
+## 会话总结长输入执行（2026-09-30）
+
+状态：**实现完成·尚未验收**（SEM-F39/F40，J31）。新 raw `summary.minutes@2` 依据持久化 `summary-long-input@1` 选择分页读取→确定性 Agent 输入计划→顺序分块→连续归并；旧运行继续单次容量预检。分页核对首次稳定转写、来源身份、水位及 digest；规划按 Unicode code point 切分，计入 HTTP JSON 字符串转义，并证明每段文字无遗漏无重复。计划受整次输入、段数、叶节点和总节点上限约束。
+
+同一 attempt 的节点复用冻结模型绑定、Agent Loop 和工具调用记录运行时；每个节点最多三轮，外发次数、用量及时间通过 SQLite 账本累计。归并扇入按冻结容量取 2–4；末尾单节点直接传到下一层，不发无效归并请求。中间结果必须满足 SummaryMinutesV1、来源范围与 8 KiB 上限。分块/归并间让出执行并响应取消，已消费提示和中间结果及时释放。最终再次读取核对输入，再沿既有终态事务只发布一个会后结构化纪要；节点失败不保存部分结果。
+
+J31 合成旅程覆盖 173,827 字节完整分块、归并、未知用量、失败零部分结果、旧策略拒绝与 schema 3 导出；v19→v20 验证旧 checksum/策略/attempt 保留。正式 Electron 覆盖单块执行、取消、关闭窗口及重启后明确继续。全部容量轴边界、128 MiB 峰值测量、正式 Electron 长文本与真实五小时采集/公网模型仍需验收。
+
+## 会话问答长输入执行（2026-09-30）
+
+状态：**实现完成·尚未验收**（SEM-F28/F31/F39/F40，J22-QA-LONG/J24-QA-LONG/J30-QA-RECOVERY）。新建 raw 单会话问答冻结 `qa.answer@3`，由 recipe 身份选择 `qa-long-input@1`，复用上述真实分页、完整覆盖规划与串行归并。其它范围及旧问答运行保留 `@2/@1`。每个节点携带原问题并执行同一问答 recipe，返回 `QaAnswerV1`；叶节点不得把局部证据当成整场事实，归并按连续来源顺序保留否定、较晚修订与待确认事项。
+
+节点校验除 schema、8 KiB 中间输出和所在来源范围外，还核对个人记忆引用是否由本次真实 `search_context` 返回。全部节点共享 attempt 工具预算、冻结模型绑定及持久请求回执；已知用量跨节点和 attempt 累计，缺失用量保持未知。最终重新核对冻结字幕与个人上下文修订，提交事务再次校验修订和取消事实，拒绝撤回后的迟到回答。失败或取消不发布部分回答；原问题与中间输出不持久化，重启后固定原会话范围要求重新输入并创建新请求。参数边界与兼容见 [ADR 0023](adr/0023-chunked-session-question-input.md)，当前证据见 testing-strategy 同日第二步旅程。

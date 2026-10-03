@@ -60,7 +60,8 @@ function memoryProjection (item) {
     revision: checkedRevision(item.item_revision),
     scope: scopeProjection(item.scope),
     source_reference_count: checkedRevision(item.sourceReferenceCount),
-    updated_at: timestamp(item.updatedAt)
+    updated_at: timestamp(item.updatedAt),
+    sources: item.sources || []
   }
 }
 
@@ -75,7 +76,8 @@ function episodeProjection (episode) {
     source_kind: episode.sourceKind,
     source_reference_count: checkedRevision(episode.sourceReferenceCount),
     summary: episode.summary,
-    updated_at: timestamp(episode.updatedAt)
+    updated_at: timestamp(episode.updatedAt),
+    sources: episode.sources || [], associations: episode.associations || []
   }
 }
 
@@ -116,6 +118,7 @@ class PersonalContextController {
     }
     this.module = options.module
     this.readScopeDirectory = options.readScopeDirectory
+    this.readOverview = typeof options.readOverview === 'function' ? options.readOverview : null
     this.getConfig = options.getConfig
     this.updateAgentSettings = options.updateAgentSettings
     this.onChanged = typeof options.onChanged === 'function' ? options.onChanged : () => {}
@@ -163,6 +166,9 @@ class PersonalContextController {
       try {
         assertGetOverviewRequest(request)
         const state = await this.state()
+        const scopeKey = request.scope_key || 'global'
+        if (scopeKey !== 'global' && !state.scopes.rows.some((item) => item.scopeId === scopeKey && ['project', 'topic'].includes(item.kind))) throw new TypeError('unregistered scope')
+        const overview = this.readOverview ? await this.readOverview(scopeKey) : null
         const response = {
           ...header(), ok: true, error: null,
           snapshot: {
@@ -173,7 +179,8 @@ class PersonalContextController {
             eligibility: 'provider_not_configured',
             memory_processing: processingProjection(state.config),
             revision: state.publicRevision,
-            scope_directory: scopeDirectoryProjection(state.scopes)
+            scope_directory: scopeDirectoryProjection(state.scopes),
+            ...(overview ? { overview } : {})
           }
         }
         return assertGetOverviewResponse(response)
@@ -193,7 +200,7 @@ class PersonalContextController {
       }
       try {
         const command = request.command
-        if (command.type === 'view') return await this.view(command)
+        if (command.type === 'view' || command.type === 'view_item') return await this.view(command)
         const state = await this.state()
 
         if (command.expected_revision !== state.publicRevision) {
@@ -207,10 +214,11 @@ class PersonalContextController {
         }
 
         if (command.type === 'set_processing') return await this.setProcessing(command, state)
+        if (command.type === 'refresh_overview' && (state.config.agentEnabled !== true || state.config.memoryEnabled !== true)) return this.failure(ERROR_CODES.operationFailed, null)
         const result = await this.storageManage({ ...command, expected_revision: state.contentRevision })
         const publicRevision = sumRevisions(result.revision, state.config.agentSettingsRevision)
         const response = this.success(command, result, publicRevision)
-        if (!result.replayed && publicRevision > state.publicRevision) this.changed(publicRevision)
+        if (!result.replayed && (publicRevision > state.publicRevision || command.type === 'refresh_overview')) this.changed(publicRevision)
         return response
       } catch (error) {
         if (error?.code === 'AGENT_CONTEXT_REVISION_CONFLICT') {
@@ -224,12 +232,13 @@ class PersonalContextController {
   async view (command) {
     const page = await this.storageManage(command)
     const config = this.getConfig()
-    const items = page.rows.map(command.resource === 'personal_memories' ? memoryProjection : episodeProjection)
+    const isMemory = command.resource === 'personal_memories' || command.type === 'view_item'
+    const items = page.rows.map(isMemory ? memoryProjection : episodeProjection)
     return assertManageResponse({
       ...header(), ok: true, error: null,
       revision: sumRevisions(page.revision, config.agentSettingsRevision),
       result: {
-        kind: command.resource === 'personal_memories' ? 'memory_page' : 'episode_page',
+        kind: isMemory ? 'memory_page' : 'episode_page',
         items,
         has_more: page.hasMore,
         next_cursor: page.nextCursor
@@ -262,7 +271,9 @@ class PersonalContextController {
 
   success (command, result, publicRevision) {
     let projected
-    if (command.type === 'delete') {
+    if (command.type === 'refresh_overview') {
+      projected = { kind: 'overview_refresh', operation: 'refresh_overview', scheduled: result.scheduled }
+    } else if (command.type === 'delete') {
       projected = { kind: 'deletion', operation: 'delete', replayed: result.replayed, deleted: result.deleted }
     } else {
       projected = { kind: 'memory_item', operation: command.type, item: memoryProjection(result.item) }

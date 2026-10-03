@@ -13,7 +13,7 @@ const { JSDOM } = require('jsdom')
 const { loadRendererModule } = require('./load-renderer-module')
 
 const root = path.resolve(__dirname, '..', '..')
-const CONTRACT = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0' }
+const CONTRACT = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.1.0' }
 const { deriveToolResultMetadata } = require('../../src/agent/contracts/controlled-tools')
 const { sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
 const toolSourceRef = { sessionId:'session.ui', transcriptVersion:'raw', fromEventOrder:1, throughEventOrder:1 }
@@ -268,10 +268,55 @@ test('S5-UX/J22/J24: formal Agent renderer consumes the exact facade and keeps p
   assert.match(view, /生成总结/)
   assert.match(view, /详细信息/)
   for (const signal of ['提交修改', '有帮助', '不准确', '记住其中一条', '不再使用']) assert.match(view, new RegExp(signal))
-  assert.match(view, /正在读取处理资格/)
+  assert.match(view, /正在检查是否可以生成/)
   assert.doesNotMatch(view, /data-(?:scope|interaction)-id/)
   assert.doesNotMatch(`${source('src/agent/index.html')}\n${view}`, /<audio\b|reasoning|provider_event|apiKey|absolute_path/i)
 })
+
+
+test('SEM-F31/F33/J22-QA-SIZE: QA input failure is actionable and generic budget failure makes no preflight claim', async () => {
+  for (const code of ['AGENT_QA_INPUT_LIMIT_EXCEEDED', 'AGENT_BUDGET_EXCEEDED']) {
+    const harness = await createHarness()
+    try {
+      harness.setDetail({ ...harness.historyItem, recipe_version: '2', run_id: 'run.ui.1',
+        state: 'failed', terminal_reason: 'failed', terminal_at: 4, duration_ms: 0,
+        error_code: code, result: null, result_digest: null, source_refs: [], tool_calls: [] })
+      await act(async () => click(document.querySelector('.history-card')))
+      await flush()
+      const alert = document.querySelector('.result-card [role="alert"]').textContent
+      assert.equal(alert.includes('没有调用问答模型'), code === 'AGENT_QA_INPUT_LIMIT_EXCEEDED')
+      if (code === 'AGENT_QA_INPUT_LIMIT_EXCEEDED') assert.match(alert, /请选择较小的会话范围/)
+      assert.match(document.querySelector('.result-card .empty').textContent, /这次问答没有生成/)
+      assert.equal(document.querySelector('.result-card .empty').textContent.includes('这次总结'), false)
+    } finally { await harness.dispose() }
+  }
+})
+
+test('SEM-F40/J30-DIAG/J22-QA-SIZE: QA diagnostic preflight displays byte metrics without inventing a budget axis', async (t) => {
+  const harness = await createHarness({
+    getHistory: async () => ({ ok: true, result: { items: [], has_more: false, next_cursor: null } }),
+    getSessionSummaryRunDiagnostics: async () => ({ ok: true, error: null, result: {
+      available: true, next_before_sequence: null, records: [{
+        schemaVersion: 1, appVersion: '0.1.0', requestDigest: 'a'.repeat(64), runDigest: null,
+        attempt: 1, sequence: 1, phase: 'preparing', event: 'budget_rejected', elapsedMs: 20, lastActivityAgeMs: null,
+        errorCode: 'AGENT_QA_INPUT_LIMIT_EXCEEDED', budgetAxis: null, metrics: { actual: 18600, limit: 3808, unit: 'bytes' },
+        modelBindingDigest: null, planDigest: null
+      }]
+    } })
+  })
+  t.after(() => harness.dispose())
+  await act(async () => click([...document.querySelectorAll('.session-functions button')].find((button) => button.textContent === '会话问答')))
+  await flush()
+  await act(async () => input(document.querySelector('#agentPrompt'), '这场会话的结论是什么？'))
+  await act(async () => click(document.querySelector('[data-action="qa"]')))
+  await flush()
+  assert.equal(harness.submitRequests.length, 1)
+  await act(async () => click(document.querySelector('.diagnostics-panel summary')))
+  await act(async () => click([...document.querySelectorAll('.diagnostics-panel button')].find((button) => button.textContent === '查看诊断')))
+  await flush()
+  assert.match(document.querySelector('[aria-label="诊断记录"]').textContent, /输入容量：18600\/3808 bytes/)
+})
+
 
 test('SEM-F38/J29: beginner copy states the actual summary memory policy and keeps QA wording separate', async (t) => {
   const withMemory = await createHarness({
@@ -316,9 +361,19 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: reopening shows a frozen summary scope and o
   })
   assert.equal(document.querySelector('[aria-label="当前会话总结请求状态"] strong').textContent, '等待处理')
   assert.equal(document.querySelector('.recoverable-runs'), null)
-  await act(async () => click(document.querySelector('[aria-label="关闭会话总结"]')))
+  await act(async () => click(document.querySelector('[aria-label="关闭字幕助手"]')))
   assert.equal(harness.closeRequests(), 1)
   assert.equal(harness.summaryCancelRequests.length, 0)
+})
+
+test('SEM-F23/J18: Agent applies initial and live themes independently of Agent settings revision', async (t) => {
+  const harness = await createHarness({ getConfig: async () => ({ theme: 'light', agentSettingsRevision: 2 }) })
+  t.after(() => harness.dispose())
+  assert.equal(document.documentElement.dataset.theme, 'light')
+  await act(async () => harness.configChanged[0]({ theme: 'auto', systemDark: true, agentSettingsRevision: 2 }))
+  assert.equal(document.documentElement.dataset.theme, 'dark')
+  await act(async () => harness.configChanged[0]({ theme: 'auto', systemDark: false, agentSettingsRevision: 2 }))
+  assert.equal(document.documentElement.dataset.theme, 'light')
 })
 
 test('SEM-F38/SEM-T04/J30-RECOVERY: a lost question is left empty and can be submitted again', async (t) => {
@@ -384,6 +439,7 @@ test('SEM-F38/J30-CANCEL: a terminal cancel receipt remains visible and stops po
   const harness = await createHarness({
     cancel: async (request) => ({ ok: true, result: { interaction_id: request.interaction_id, revision: 4, state: 'failed' } }),
     getInteraction: async (request, { detailById }) => {
+      if (request.interaction_id !== 'interaction.ui.1') return { ok: true, result: detailById.get(request.interaction_id) }
       detailReadCount += 1
       if (detailReadCount === 1) return { ok: true, result: detailById.get(request.interaction_id) }
       return { ok: false, error: { category: 'unavailable', code: 'AGENT_UNAVAILABLE', next_action: 'retry' } }
@@ -425,7 +481,7 @@ test('SEM-F38/J30-CANCEL: a stale running detail cannot replace a terminal cance
   assert.equal(document.querySelector('.run-card strong').textContent, '已取消')
   assert.equal(document.querySelector('.run-card button').disabled, true)
   assert.equal(document.querySelector('.result-card'), null)
-  assert.match(document.querySelector('.request-panel [role="alert"]').textContent, /交互详情暂时不可用/)
+  assert.match(document.querySelector('.request-panel [role="alert"]').textContent, /暂时无法读取结果详情/)
   assert.equal(harness.activeIntervals(), 0)
 })
 
@@ -445,9 +501,11 @@ test('SEM-F38/J30-STATE: a terminal history state stops polling when its first d
 test('S5-UX/J22: reload subscribes before reading, selects a terminal session, and submits without optimistic success', async (t) => {
   const harness = await createHarness(); t.after(() => harness.dispose())
   assert.equal(harness.calls[0], 'subscribe')
-  assert.deepEqual(harness.calls.slice(1, 3).map((item) => item[0]), ['scopes', 'history'])
+  const reads = harness.calls.filter(Array.isArray)
+  assert.equal(reads[0][0], 'scopes')
+  assert.ok(reads.some(item => item[0] === 'history'))
   assert.equal(document.querySelector('.scope-card').getAttribute('aria-current'), 'true')
-  assert.equal(document.querySelector('.eligibility').textContent, '配置已就绪，提交后检查输入容量')
+  assert.equal(document.querySelector('.eligibility').textContent, '可以提交；提交后会检查内容是否超出处理上限')
 
   await act(async () => click(document.querySelector('[data-action="minutes"]')))
   await flush()
@@ -519,12 +577,12 @@ test('SEM-F40/J30-DIAG: active summary can inspect diagnostics and cancelled exp
   assert.equal(harness.summaryDiagnosticsQueries.length, 2)
   assert.equal(harness.summaryDiagnosticsQueries[1].before_sequence, 3)
   assert.equal(document.querySelector('[aria-label="诊断记录"] ol').children.length, 2)
-  const statusBeforeCancelledExport = document.querySelector('.agent-titlebar .status').textContent
+  const statusBeforeCancelledExport = document.querySelector('.agent-shell > .status').textContent
   await act(async () => click([...document.querySelectorAll('.diagnostics-panel button')].find((button) => button.textContent === '导出诊断')))
   await flush()
   assert.equal(harness.summaryDiagnosticsExports.length, 1)
   assert.equal(harness.summaryDiagnosticsExports[0].request_id, requestId)
-  assert.equal(document.querySelector('.agent-titlebar .status').textContent, statusBeforeCancelledExport)
+  assert.equal(document.querySelector('.agent-shell > .status').textContent, statusBeforeCancelledExport)
   assert.equal(document.body.textContent.includes('已导出'), false)
 })
 
@@ -596,8 +654,8 @@ test('SEM-F38/J30-STATE/J31-SIZE: visible polling replaces stale running state w
 
   assert.equal(document.querySelector('.run-card strong').textContent, '生成失败')
   assert.equal(document.querySelector('.result-card header strong').textContent, '生成失败')
-  assert.equal(document.querySelector('.result-card small').textContent.includes('0 ms'), true)
-  assert.match(document.querySelector('.result-card [role="alert"]').textContent, /会话总结输入超过当前上限；总结模型尚未调用/)
+  assert.equal(document.querySelector('.result-run-details').textContent.includes('0 ms'), true)
+  assert.match(document.querySelector('.result-card [role="alert"]').textContent, /会话内容超过当前处理上限，这次没有调用总结模型/)
   assert.match(document.querySelector('.result-card .empty').textContent, /缩短输入，或选择内容较少的会话后重试/)
   assert.match(document.querySelector('.result-card footer').textContent, /尚未读取记忆/)
   assert.equal(document.querySelector('.run-card button').disabled, true)
@@ -654,7 +712,7 @@ test('SEM-F38/J31-SIZE: generic budget failures do not claim oversized transcrip
   }
   await harness.tickIntervals(2000)
   const message = document.querySelector('.result-card [role="alert"]').textContent
-  assert.match(message, /已达到预算限制/)
+  assert.match(message, /已达到限制/)
   assert.equal(message.includes('总结模型尚未调用'), false)
   assert.match(document.querySelector('.result-card .empty').textContent, /请重试/)
 })
@@ -778,10 +836,10 @@ test('SEM-F31/J22: an older eligibility response cannot replace a newer refresh 
   }); t.after(() => harness.dispose())
   await act(async () => click(document.querySelector('.scope-panel .panel-heading button')))
   await flush()
-  assert.equal(document.querySelector('.eligibility').textContent, '配置已就绪，提交后检查输入容量')
+  assert.equal(document.querySelector('.eligibility').textContent, '可以提交；提交后会检查内容是否超出处理上限')
   oldRead.resolve({ ok: true, snapshot: { scope: { kind: 'session', reference: 'session.ui.1' }, eligibility: 'provider_not_configured', next_action: null, revision: 1 } })
   await flush()
-  assert.equal(document.querySelector('.eligibility').textContent, '配置已就绪，提交后检查输入容量')
+  assert.equal(document.querySelector('.eligibility').textContent, '可以提交；提交后会检查内容是否超出处理上限')
 })
 
 test('SEM-F31/J22: scope and history pagination complete independently and deduplicate stable identities', async (t) => {
@@ -795,7 +853,7 @@ test('SEM-F31/J22: scope and history pagination complete independently and dedup
   const historyMore = document.querySelector('.history-panel .more-button')
   await act(async () => { click(scopeMore); click(historyMore) })
   await flush()
-  scopePage.resolve({ ok: true, scopes: [harness.scopeItem, { ...harness.scopeItem, scope: { kind: 'session', reference: 'session.ui.2' }, display_name: '第二场终态会话' }], next_cursor: null, default_scope: null, revision: 2 })
+  scopePage.resolve({ ok: true, scopes: [harness.scopeItem, { ...harness.scopeItem, scope: { kind: 'session', reference: 'session.ui.2' }, display_name: '第二场已结束的会话' }], next_cursor: null, default_scope: null, revision: 2 })
   await flush()
   assert.equal(document.querySelector('.scope-panel').textContent.includes('正在读取…'), false)
   assert.equal(document.querySelector('.history-panel').textContent.includes('正在读取…'), true)
@@ -898,18 +956,18 @@ test('SEM-F31/J24/J26: late feedback and export receipts do not update a newly s
   await act(async () => click(document.querySelectorAll('.history-card')[1]))
   await flush()
   await act(async () => click(document.querySelector('[data-signal="accept"]')))
-  await act(async () => click([...document.querySelectorAll('button')].find((item) => item.textContent === '导出结果 JSON')))
+  await act(async () => click([...document.querySelectorAll('button')].find((item) => item.textContent === '导出详细记录（JSON）')))
   await act(async () => click(document.querySelectorAll('.history-card')[0]))
   await flush()
   signal.resolve({ ok: true, error: null, result: { accepted: true, interaction_id: 'interaction.ui.2', replayed: false, signal_kind: 'accept' } })
   exported.resolve({ ok: true, error: null, result: { bytes_sha256: 'c'.repeat(64), interaction_id: 'interaction.ui.2', schema_version: 1, snapshot: {} } })
   await flush()
-  assert.equal(document.body.textContent.includes('已记录交互反馈'), false)
-  assert.equal(document.body.textContent.includes('已导出交互 JSON'), false)
+  assert.equal(document.body.textContent.includes('已记录反馈'), false)
+  assert.equal(document.body.textContent.includes('详细记录已导出为 JSON'), false)
   await act(async () => click(document.querySelectorAll('.history-card')[1]))
   await flush()
-  assert.equal(document.body.textContent.includes('已记录交互反馈'), true)
-  assert.equal(document.querySelector('.status').textContent.includes('已导出交互 JSON'), true)
+  assert.equal(document.body.textContent.includes('已记录反馈'), true)
+  assert.equal(document.querySelector('.status').textContent.includes('详细记录已导出为 JSON'), true)
 })
 
 test('SEM-F31/J24: a late cancellation receipt remains attached to its original interaction', async (t) => {
@@ -917,9 +975,9 @@ test('SEM-F31/J24: a late cancellation receipt remains attached to its original 
   const harness = await createHarness({ cancel: async () => cancelled.promise }); t.after(() => harness.dispose())
   await act(async () => click(document.querySelectorAll('.history-card')[1]))
   await flush()
-  await act(async () => click([...document.querySelectorAll('button')].find((item) => item.textContent === '导出结果 JSON')))
+  await act(async () => click([...document.querySelectorAll('button')].find((item) => item.textContent === '导出详细记录（JSON）')))
   await flush()
-  assert.equal(document.querySelector('.status').textContent, '已导出交互 JSON')
+  assert.equal(document.querySelector('.status').textContent, '详细记录已导出为 JSON')
   const secondDetail = deferred()
   harness.setDetailResponse('interaction.ui.2', secondDetail)
   await act(async () => click(document.querySelectorAll('.history-card')[0]))
@@ -932,7 +990,7 @@ test('SEM-F31/J24: a late cancellation receipt remains attached to its original 
   secondDetail.resolve({ ok: true, result: { ...harness.historyItem, interaction_id: 'interaction.ui.2', run_id: 'run.ui.2', result_digest: 'b'.repeat(64), routing_mode: 'model', state: 'succeeded', terminal_reason: 'succeeded', source_refs: [], tool_calls: [] } })
   await flush()
   assert.equal(document.querySelector('.run-card strong').textContent, '已生成')
-  assert.equal(document.querySelector('.status').textContent, '已导出交互 JSON')
+  assert.equal(document.querySelector('.status').textContent, '详细记录已导出为 JSON')
 })
 
 test('SEM-F38/J30-ACCEPT/J22: an unknown acceptance response retains input and reuses its request key only for the same payload', async (t) => {
@@ -1050,6 +1108,22 @@ test('SEM-F38/J30-PROGRESS: a recent authoritative snapshot remains the last kno
   assert.equal(document.querySelector('.run-card').textContent.includes('上次确认状态'), false)
 })
 
+test('SEM-F38/F40/J30-STATE: a failed summary snapshot shows the stored provider reason', async (t) => {
+  const harness = await createHarness(); t.after(() => harness.dispose())
+  await act(async () => click(document.querySelector('[data-action="minutes"]')))
+  await flush()
+  const [requestId, snapshot] = [...harness.summarySnapshots.entries()][0]
+  const failed = { ...snapshot, revision: snapshot.revision + 1, state: 'failed', phase: 'terminal', error_code: 'AGENT_PROVIDER_AUTH_FAILED' }
+  harness.summarySnapshots.set(requestId, failed)
+  await act(async () => harness.summaryChanged[0]({
+    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+    request_id: requestId, generation: failed.generation, revision: failed.revision
+  }))
+  await flush()
+  assert.match(document.querySelector('.run-card').textContent, /API 密钥未能通过验证/)
+  assert.equal(document.querySelector('.run-card').textContent.includes('AGENT_PROVIDER_AUTH_FAILED'), false)
+})
+
 test('SEM-F38/J30-PROGRESS: summary status separates attempts, actual activity and memory not used', async (t) => {
   const harness = await createHarness(); t.after(() => harness.dispose())
   await act(async () => click(document.querySelector('[data-action="minutes"]')))
@@ -1074,7 +1148,7 @@ test('SEM-F38/J30-PROGRESS: summary status separates attempts, actual activity a
 
   const card = document.querySelector('.run-card')
   assert.match(card.textContent, /第 2 次尝试/)
-  assert.match(card.textContent, /尚无实际活动记录/)
+  assert.match(card.textContent, /尚未收到处理进度/)
   assert.match(card.textContent, /本次未读取记忆/)
 
   const found = { ...progress, revision: progress.revision + 1, memory_state: 'referenced' }
@@ -1176,23 +1250,23 @@ test('SEM-F35/J22/J26: command errors and next actions use fixed Chinese copy, a
 
   await act(async () => click(document.querySelectorAll('.history-card')[1]))
   await flush()
-  assert.match(document.querySelector('.export-privacy').textContent, /导出内容可能包含字幕或个人上下文/)
-  await act(async () => click([...document.querySelectorAll('button')].find((item) => item.textContent === '导出结果 JSON')))
+  assert.match(document.querySelector('.export-privacy').textContent, /导出包含结果和读取记录，可能包含字幕或记忆/)
+  await act(async () => click([...document.querySelectorAll('button')].find((item) => item.textContent === '导出详细记录（JSON）')))
   await flush()
   assert.match(document.querySelector('.status').textContent, /已取消导出/)
-  assert.equal(document.querySelector('.status').textContent.includes('已导出交互 JSON'), false)
+  assert.equal(document.querySelector('.status').textContent.includes('详细记录已导出为 JSON'), false)
 })
 
 test('S5-UX/J26: terminal detail exports by interaction ID and does not expose a target path', async (t) => {
   const harness = await createHarness(); t.after(() => harness.dispose())
   await act(async () => click(document.querySelectorAll('.history-card')[1]))
   await flush()
-  const button = [...document.querySelectorAll('button')].find((item) => item.textContent === '导出结果 JSON')
+  const button = [...document.querySelectorAll('button')].find((item) => item.textContent === '导出详细记录（JSON）')
   assert.ok(button)
   await act(async () => click(button))
   await flush()
   assert.deepEqual(harness.exportRequests, [{ ...CONTRACT, interaction_id: 'interaction.ui.2' }])
-  assert.equal(document.body.textContent.includes('已导出交互 JSON'), true)
+  assert.equal(document.body.textContent.includes('详细记录已导出为 JSON'), true)
   assert.equal(JSON.stringify(harness.exportRequests).includes('filePath'), false)
 })
 
@@ -1223,7 +1297,7 @@ test('SEM-F35/J24: interaction and tool error codes render fixed Chinese explana
   await act(async () => click(document.querySelectorAll('.history-card')[1]))
   await flush()
   assert.match(document.body.textContent, /模型响应超时/)
-  assert.match(document.body.textContent, /工具调用超时/)
+  assert.match(document.body.textContent, /读取超时/)
   assert.equal(document.body.textContent.includes('AGENT_PROVIDER_TIMEOUT'), false)
   assert.equal(document.body.textContent.includes('TOOL_TIMEOUT'), false)
 })
@@ -1277,4 +1351,66 @@ test('SEM-F23/J29: summary result memory selectors share native option semantics
   })
   assert.equal(harness.signalRequests.length, 0, '展开或选择本身不得产生交互记忆信号')
   assert.equal(harness.submitRequests.length, 0, '展开或选择本身不得触发 Agent 请求')
+})
+
+test('SEM-F31/F38/J29: switching sessions replaces results and keeps source metadata outside prose', async (t) => {
+  const scopes = ['a', 'b', 'empty'].map((reference) => ({ scope: { kind: 'session', reference: `session.${reference}` }, display_name: reference, ended_at: '2026-09-30T00:00:00.000Z', state: 'terminal' }))
+  const late = deferred()
+  let delayA = false
+  const harness = await createHarness({
+    getScopes: async () => ({ ok: true, scopes, next_cursor: null, default_scope: scopes[0].scope, revision: 1 }),
+    getHistory: async (request) => {
+      if (delayA && request.scope?.reference === 'session.a') return late.promise
+      const name = request.scope?.reference?.split('.').at(-1) || 'a'
+      return { ok: true, result: { items: name === 'empty' ? [] : [{ interaction_id: `interaction.${name}`, recipe_id: 'summary.minutes', terminal_reason: 'succeeded' }], next_cursor: null, has_more: false } }
+    },
+    getInteraction: async (request) => ({ ok: true, result: { interaction_id: request.interaction_id, recipe_id: 'summary.minutes', state: 'succeeded', result: { overview: request.interaction_id, conclusions: [{ text: 'decision', sourceRefs: [{ sessionId: 'session.a', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }] }], todos: [{ text: 'task', ownerHint: 'Alice', dueHint: 'Friday', sourceRefs: [] }], risks: [] }, tool_calls: [], source_refs: [], usage: null } })
+  }); t.after(() => harness.dispose())
+  await flush()
+  assert.match(document.querySelector('.result-card').textContent, /interaction.a/)
+  assert.doesNotMatch(document.querySelector('.result-content').textContent, /sourceRefs|sessionId|fromEventOrder/)
+  assert.match(document.querySelector('.result-content').textContent, /Alice/)
+  await act(async () => click(document.querySelector('.session-functions button'))); await flush()
+  assert.match(document.querySelector('.result-card').textContent, /interaction.a/)
+  assert.equal(document.querySelector('.result-sources').open, false)
+  assert.equal(document.querySelector('.result-run-details').open, false)
+  await act(async () => click(document.querySelectorAll('.scope-card')[1])); await flush()
+  assert.match(document.querySelector('.result-card').textContent, /interaction.b/)
+  assert.doesNotMatch(document.querySelector('.result-card').textContent, /interaction.a/)
+  delayA = true
+  await act(async () => click(document.querySelectorAll('.scope-card')[0])); await flush()
+  await act(async () => click(document.querySelectorAll('.scope-card')[2])); await flush()
+  await act(async () => late.resolve({ ok: true, result: { items: [{ interaction_id: 'interaction.a', recipe_id: 'summary.minutes', terminal_reason: 'succeeded' }], next_cursor: null } })); await flush()
+  assert.equal(document.querySelector('.result-card'), null)
+  assert.match(document.querySelector('.request-panel').textContent, /还没有生成/)
+})
+
+test('SEM-F31/J29: session function navigation preserves question drafts and rejects late details', async (t) => {
+  const scopes = ['a', 'b'].map(reference => ({ scope: { kind: 'session', reference: `session.${reference}` }, display_name: reference, ended_at: '2026-09-30T00:00:00.000Z', state: 'terminal' }))
+  const pending = deferred()
+  let slow = false
+  const requests = []
+  const harness = await createHarness({
+    getScopes: async () => ({ ok: true, scopes, next_cursor: null, default_scope: scopes[0].scope, revision: 1 }),
+    getHistory: async request => {
+      requests.push(request)
+      return { ok: true, result: { items: [{ interaction_id: `${request.scope.reference}.${request.recipe_id}`, recipe_id: request.recipe_id, terminal_reason: 'succeeded' }], next_cursor: null } }
+    },
+    getInteraction: async request => {
+      if (slow && request.interaction_id.startsWith('session.a')) return pending.promise
+      return { ok: true, result: { interaction_id: request.interaction_id, recipe_id: 'qa.answer', state: 'succeeded', result: { answer: request.interaction_id }, tool_calls: [], source_refs: [] } }
+    }
+  }); t.after(() => harness.dispose())
+  await act(async () => click(document.querySelectorAll('.session-functions button')[1])); await flush()
+  assert.equal(requests.at(-1).recipe_id, 'qa.answer')
+  await act(async () => input(document.querySelector('#agentPrompt'), 'question for A'))
+  slow = true
+  await act(async () => click(document.querySelector('.history-card'))); await flush()
+  await act(async () => click(document.querySelectorAll('.scope-card')[1])); await flush()
+  assert.equal(document.querySelector('#agentPrompt').value, '')
+  await act(async () => pending.resolve({ ok: true, result: { interaction_id: 'old', state: 'succeeded', result: { answer: 'STALE_A' } } })); await flush()
+  assert.doesNotMatch(document.querySelector('.result-card').textContent, /STALE_A/)
+  slow = false
+  await act(async () => click(document.querySelectorAll('.scope-card')[0])); await flush()
+  assert.equal(document.querySelector('#agentPrompt').value, 'question for A')
 })

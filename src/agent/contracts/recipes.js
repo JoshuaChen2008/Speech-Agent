@@ -9,6 +9,7 @@ const RECIPE_IDS = Object.freeze([
   'intent.route',
   'context.ingest.session',
   'context.ingest.interaction',
+  'context.synthesize',
   'qa.answer',
   'extract.items',
   'summary.minutes',
@@ -23,7 +24,16 @@ const RECIPE_DEFINITIONS = [
   ['intent.route', ['selection', 'session', 'date_range', 'project'], 'default', 1, [], 'IntentRouteV1', 'interaction', null],
   ['context.ingest.session', ['session'], 'information_extraction', 3, [], 'ContextIngestV1', 'context', null],
   ['context.ingest.interaction', ['interaction'], 'information_extraction', 3, [], 'ContextIngestV1', 'context', null],
+  ['context.ingest.session', ['session'], 'information_extraction', 3, [], 'ContextIngestV2', 'context', null, '2'],
+  ['context.ingest.session', ['session'], 'information_extraction', 3, [], 'ContextIngestV3', 'context', null, '3'],
+  ['context.ingest.interaction', ['interaction'], 'information_extraction', 3, [], 'ContextIngestV2', 'context', null, '2'],
+  ['context.synthesize', ['global', 'project', 'topic'], 'summary', 3, [], 'ContextSynthesisV1', 'context', null],
+  ['context.synthesize', ['global', 'project', 'topic'], 'summary', 3, [], 'ContextSynthesisV1', 'context', null, '2'],
   ['qa.answer', ['selection', 'session', 'date_range', 'project'], 'default', 3, ['search_context'], 'QaAnswerV1', 'interaction', null],
+  ['qa.answer', ['selection', 'session', 'date_range', 'project'], 'default', 3, ['search_context'], 'QaAnswerV1', 'interaction', null, '2'],
+  ['qa.answer', ['session'], 'default', 3, ['search_context'], 'QaAnswerV1', 'interaction', null, '3'],
+  ['qa.answer', ['session', 'date_range', 'project'], 'default', 3, ['search_context'], 'QaAnswerV2', 'interaction', null, '4'],
+  ['qa.answer', ['session', 'date_range', 'project'], 'default', 3, ['search_context'], 'QaAnswerV2', 'interaction', null, '5'],
   ['extract.items', ['selection', 'session'], 'information_extraction', 3, ['search_context'], 'ExtractItemsV1', 'interaction', null],
   ['summary.minutes', ['session'], 'summary', 3, ['search_context'], 'SummaryMinutesV1', 'artifact', 'meeting-minutes'],
   ['summary.minutes', ['session'], 'summary', 3, ['search_context'], 'SummaryMinutesV1', 'artifact', 'meeting-minutes', '2'],
@@ -167,7 +177,7 @@ function refs (value, maximum, label, validator) {
 
 function assertIntentRoute (value) {
   exact(value, ['recipeId', 'confidence'])
-  enumValue(value.recipeId, RECIPE_IDS.filter((id) => id !== 'intent.route'), 'recipeId')
+  enumValue(value.recipeId, RECIPE_IDS.filter((id) => !['intent.route', 'context.synthesize'].includes(id)), 'recipeId')
   finiteRatio(value.confidence, 'confidence')
   return value
 }
@@ -202,6 +212,49 @@ function assertIngest (value, evidenceValidator) {
   return checkCanonicalBytes(value, 'ingest output')
 }
 
+function assertIngestV2 (value, sourceKind) {
+  exact(value, ['schemaVersion', 'questionSummary', 'experiences', 'memoryCandidates', 'associations'], 'ContextIngestV2')
+  if (value.schemaVersion !== 2) fail('ContextIngestV2.schemaVersion is invalid')
+  nullableString(value.questionSummary, 512, 'questionSummary')
+  if (value.questionSummary !== null && Buffer.byteLength(value.questionSummary, 'utf8') > 2048) fail('questionSummary exceeds its byte bound')
+  if (sourceKind === 'session' && value.questionSummary !== null) fail('a session cannot have a question summary')
+  const memoryCandidates = boundedArray(value.memoryCandidates, 128, 'memoryCandidates').map((item) => {
+    exact(item, ['scopeKind', 'scopeKeyProposal', 'kind', 'content', 'confidence', 'salience', 'evidence', 'attribution', 'entityKeys', 'userEvidence'], 'memoryCandidate')
+    enumValue(item.attribution, sourceKind === 'session' ? ['session_context'] : [
+      'self_statement', 'long_term_requirement', 'repeated_pattern', 'temporary_requirement',
+      'hypothetical', 'quoted', 'third_party', 'question', 'accepted_content'
+    ], 'memoryCandidate.attribution')
+    boundedArray(item.entityKeys, 8, 'memoryCandidate.entityKeys').forEach((key) => stringValue(key, 64, 'entityKey'))
+    noDuplicate(item.entityKeys, 'entityKeys')
+    if (item.userEvidence !== null) {
+      if (sourceKind !== 'interaction') fail('session candidates cannot cite user text')
+      exact(item.userEvidence, ['fromCodePoint', 'throughCodePoint'], 'userEvidence')
+      integer(item.userEvidence.fromCodePoint, 0, 'userEvidence.fromCodePoint')
+      integer(item.userEvidence.throughCodePoint, item.userEvidence.fromCodePoint + 1, 'userEvidence.throughCodePoint')
+      if (item.userEvidence.throughCodePoint - item.userEvidence.fromCodePoint > 512) fail('userEvidence exceeds its bound')
+    } else if (sourceKind === 'interaction' && ['self_statement', 'long_term_requirement', 'repeated_pattern'].includes(item.attribution)) {
+      fail('personal candidates require user evidence')
+    }
+    if (sourceKind === 'session' && !['session', 'project'].includes(item.scopeKind)) fail('session candidates must stay in session or project scope')
+    const { attribution, entityKeys, userEvidence, ...legacy } = item
+    return legacy
+  })
+  assertIngest({ schemaVersion: 1, experiences: value.experiences, memoryCandidates },
+    sourceKind === 'interaction' ? assertInteractionSignalRef : assertSourceRef)
+  boundedArray(value.associations, 32, 'associations').forEach((item) => {
+    if (sourceKind !== 'session') fail('interaction ingest cannot create session associations')
+    exact(item, ['memoryRef', 'matchKeys', 'relation', 'evidence'], 'association')
+    assertMemoryRef(item.memoryRef)
+    const keys = boundedArray(item.matchKeys, 8, 'association.matchKeys')
+    if (keys.length === 0) fail('association requires a structured match key')
+    keys.forEach((key) => stringValue(key, 64, 'matchKey'))
+    noDuplicate(keys, 'matchKeys')
+    stringValue(item.relation, 300, 'association.relation')
+    assertSourceRef(item.evidence)
+  })
+  return checkCanonicalBytes(value, 'ingest output')
+}
+
 function assertQaAnswer (value) {
   root(value, ['answer', 'sourceRefs', 'memoryRefs', 'unresolved'])
   stringValue(value.answer, 4000, 'answer')
@@ -209,6 +262,53 @@ function assertQaAnswer (value) {
   refs(value.memoryRefs, 16, 'memoryRefs', assertMemoryRef)
   boundedArray(value.unresolved, 5, 'unresolved').forEach((item) => stringValue(item, 300, 'unresolved item'))
   return checkCanonicalBytes(value, 'qa answer')
+}
+
+// A range is an independently published experience product. Only the host
+// creates the final coverage receipt; model range output never advances it.
+function assertIngestV3 (value) {
+  plainObject(value, 'ContextIngestV3')
+  if (value.schemaVersion !== 3) fail('ContextIngestV3.schemaVersion is invalid')
+  if (value.stage === 'range') {
+    exact(value, ['schemaVersion', 'stage', 'content'], 'ContextIngestV3')
+    assertIngestV2(value.content, 'session')
+  } else if (value.stage === 'receipt') {
+    exact(value, ['schemaVersion', 'stage', 'rangeCount', 'completedRanges', 'experienceCount', 'inputDigest'], 'ContextIngestV3')
+    integer(value.rangeCount, 1, 'rangeCount')
+    integer(value.completedRanges, 0, 'completedRanges')
+    integer(value.experienceCount, 0, 'experienceCount')
+    if (value.rangeCount > 256 || value.completedRanges !== value.rangeCount || value.experienceCount > 16384 ||
+        !/^[a-f0-9]{64}$/.test(value.inputDigest)) fail('invalid coverage receipt')
+  } else fail('ContextIngestV3.stage is invalid')
+  return checkCanonicalBytes(value, 'ingest range output')
+}
+
+function assertQaAnswerV2 (value) {
+  exact(value, ['schemaVersion', 'answer', 'claims', 'sourceRefs', 'memoryRefs', 'unresolved', 'coverage'], 'QaAnswerV2')
+  if (value.schemaVersion !== 2) fail('QaAnswerV2.schemaVersion is invalid')
+  assertQaAnswer({ schemaVersion: 1, answer: value.answer, sourceRefs: value.sourceRefs, memoryRefs: value.memoryRefs, unresolved: value.unresolved })
+  boundedArray(value.claims, 30, 'claims').forEach(claim => {
+    exact(claim, ['text', 'sourceRefs', 'memoryRefs'], 'claim')
+    stringValue(claim.text, 600, 'claim.text')
+    refs(claim.sourceRefs, 4, 'claim.sourceRefs', assertSourceRef)
+    refs(claim.memoryRefs, 4, 'claim.memoryRefs', assertMemoryRef)
+    if (claim.sourceRefs.length + claim.memoryRefs.length === 0) fail('claims require evidence')
+    if (claim.sourceRefs.some(ref => !value.sourceRefs.some(root => canonicalize(root) === canonicalize(ref))) ||
+        claim.memoryRefs.some(ref => !value.memoryRefs.some(root => canonicalize(root) === canonicalize(ref)))) fail('claim evidence is absent from root references')
+  })
+  if (value.claims.length === 0 && value.unresolved.length === 0) fail('an answer without supported claims must disclose missing evidence')
+  if (value.coverage !== null) {
+    const cover = value.coverage
+    exact(cover, ['mode', 'scopeSessionCount', 'visitedSessionCount', 'omittedSessionCount', 'experienceRangeCount', 'experienceCompletedRangeCount', 'sourceTextComplete', 'summaryComplete'], 'coverage')
+    enumValue(cover.mode, ['retrieval', 'full_scan', 'global'], 'coverage.mode')
+    for (const key of ['scopeSessionCount', 'visitedSessionCount', 'omittedSessionCount']) integer(cover[key], 0, `coverage.${key}`)
+    if (cover.scopeSessionCount < 1 || cover.visitedSessionCount + cover.omittedSessionCount !== cover.scopeSessionCount) fail('invalid session coverage')
+    for (const key of ['experienceRangeCount', 'experienceCompletedRangeCount']) if (cover[key] !== null) integer(cover[key], 0, `coverage.${key}`)
+    if ((cover.experienceRangeCount === null) !== (cover.experienceCompletedRangeCount === null) ||
+        (cover.experienceRangeCount !== null && cover.experienceCompletedRangeCount > cover.experienceRangeCount) ||
+        typeof cover.sourceTextComplete !== 'boolean' || typeof cover.summaryComplete !== 'boolean') fail('invalid range coverage')
+  }
+  return checkCanonicalBytes(value, 'retrieval answer')
 }
 
 function assertExtractItems (value) {
@@ -343,10 +443,32 @@ function assertTextTranslate (value) {
   return checkCanonicalBytes(value, 'translate output')
 }
 
+function assertSynthesis (value) {
+  root(value, ['sections'])
+  boundedArray(value.sections, 12, 'sections')
+  for (const section of value.sections) {
+    exact(section, ['category', 'title', 'text', 'memoryRefs', 'episodeRefs'], 'section')
+    enumValue(section.category, ['facts', 'changes', 'candidates', 'conflicts'], 'category')
+    stringValue(section.title, 64, 'title'); stringValue(section.text, 600, 'text')
+    refs(section.memoryRefs, 8, 'memoryRefs', assertMemoryRef)
+    refs(section.episodeRefs, 8, 'episodeRefs', (ref) => {
+      exact(ref, ['episodeId', 'inputDigest'], 'episodeRef')
+      stringValue(ref.episodeId, 160, 'episodeId')
+      if (typeof ref.inputDigest !== 'string' || !/^[a-f0-9]{64}$/.test(ref.inputDigest)) fail('episode inputDigest is invalid')
+    })
+    if (section.memoryRefs.length + section.episodeRefs.length === 0 || (section.category === 'facts' && section.memoryRefs.length === 0)) fail('section lacks its required evidence')
+  }
+  return checkCanonicalBytes(value, 'synthesis output', 16384)
+}
+
 const OUTPUT_VALIDATORS = Object.freeze({
   IntentRouteV1: assertIntentRoute,
   ContextIngestV1: (value) => assertIngest(value, assertSourceRef),
+  ContextIngestV2: (value) => assertIngestV2(value, 'session'),
+  ContextIngestV3: assertIngestV3,
+  ContextSynthesisV1: assertSynthesis,
   QaAnswerV1: assertQaAnswer,
+  QaAnswerV2: assertQaAnswerV2,
   ExtractItemsV1: assertExtractItems,
   SummaryMinutesV1: assertSummaryMinutes,
   ReportAnalysisV1: assertReportAnalysis,
@@ -373,7 +495,9 @@ function validateRecipeOutput (recipeId, recipeVersion, value) {
   const validator = OUTPUT_VALIDATORS[recipe.outputSchemaId]
   if (typeof validator !== 'function') requestFail('recipe output validator is missing')
   try {
-    if (recipeId === 'context.ingest.interaction') return assertIngest(value, assertInteractionSignalRef)
+    if (recipeId === 'context.ingest.interaction') {
+      return recipeVersion === '2' ? assertIngestV2(value, 'interaction') : assertIngest(value, assertInteractionSignalRef)
+    }
     return validator(value)
   } catch (error) {
     if (error.code === INVALID) throw error

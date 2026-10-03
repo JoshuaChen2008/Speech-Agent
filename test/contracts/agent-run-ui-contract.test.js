@@ -5,6 +5,17 @@ const c = require('../../src/agent/contracts/agent-run-ui')
 const { deriveToolResultMetadata } = require('../../src/agent/contracts/controlled-tools')
 const { sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
 const h = { contract_id: c.CONTRACT_ID, contract_version: c.CONTRACT_VERSION }
+test('SEM-F31/F39/J22-QA-SCOPE: project directory fields are versioned and exact while legacy requests remain accepted', () => {
+  const request = { ...h, limit: 20, cursor: null }
+  assert.doesNotThrow(() => c.assertGetScopesRequest({ ...request, kind: 'project' }))
+  assert.doesNotThrow(() => c.assertGetScopesRequest({ ...request, contract_version: '1.0.0' }))
+  assert.throws(() => c.assertGetScopesRequest({ ...request, contract_version: '1.0.0', kind: 'project' }))
+  assert.throws(() => c.assertGetScopesRequest({ ...request, kind: 'date_range' }))
+  assert.throws(() => c.assertGetScopesRequest({ ...request, sql: 'SELECT 1' }))
+  const scope = { kind: 'project', reference: 'scope.project.a' }
+  assert.doesNotThrow(() => c.assertGetScopesResponse({ ...h, ok: true, error: null, scopes: [{ scope, display_name: '项目 · scope.project.a', started_at: null, ended_at: null, state: 'ready' }],
+    default_scope: scope, next_cursor: null, revision: 1 }))
+})
 const sourceRef = { sessionId:'session.ui', transcriptVersion:'raw', fromEventOrder:1, throughEventOrder:1 }
 const toolArgs = { schemaVersion:1, sourceRefs:[sourceRef] }
 const toolResult = { schemaVersion:1, sources:[{ sourceRef, text:'受控来源' }] }
@@ -49,6 +60,16 @@ test('S5-1 exact Agent run channels and fail-closed contracts', () => {
   assert.throws(() => c.assertExportResponse({ ...h, ok:true, error:null, result:{ bytes_sha256:'a'.repeat(64), interaction_id:'interaction.demo', schema_version:1, snapshot:{ result:{ local_path:'/tmp/agent.json' } } } }), /forbidden/)
   assert.throws(() => c.assertGetEligibilityRequest({ ...h, contract_version:'9.0.0', scope }), /unsupported/)
   assert.throws(() => c.assertHistoryRequest({ ...h, limit:101, cursor:null }), /range/)
+})
+
+test('SEM-F31/F35/J24-QA-COMPAT: export receipts accept registered versions and reject future schemas', () => {
+  const response = { ...h, ok: true, error: null, result: {
+    bytes_sha256: 'a'.repeat(64), interaction_id: 'interaction.export', schema_version: 1, snapshot: {}
+  } }
+  for (const schema_version of [1, 2, 3, 4, 5, 6]) {
+    assert.doesNotThrow(() => c.assertExportResponse({ ...response, result: { ...response.result, schema_version } }))
+  }
+  assert.throws(() => c.assertExportResponse({ ...response, result: { ...response.result, schema_version: 7 } }), /unsupported export schema/)
 })
 
 test('SEM-F31/SEM-F33/J25: history keeps frozen model identity and comparison group without prompt fields', () => {
@@ -100,4 +121,12 @@ test('SEM-F34/J24: running tool records expose zeroed counts and tool-call order
   assert.doesNotThrow(() => c.assertInteractionResponse({ ...h, ok:true, error:null, result }))
   const outOfOrder = { ...toolCall, call_id:'call.ui.3', call_order:3 }
   assert.throws(() => c.assertInteractionResponse({ ...h, ok:true, error:null, result: { ...result, tool_calls:[toolCall, outOfOrder] } }), /ToolCallSequenceV1|callOrder/)
+})
+
+test('SEM-F31/J29: history accepts optional bounded navigation filters and rejects unknown fields', () => {
+  const request = { contract_id: c.CONTRACT_ID, contract_version: c.CONTRACT_VERSION, limit: 10, cursor: null }
+  assert.doesNotThrow(() => c.assertHistoryRequest(request))
+  assert.doesNotThrow(() => c.assertHistoryRequest({ ...request, scope: { kind: 'session', reference: 'session.a' }, recipe_id: 'summary.minutes' }))
+  assert.throws(() => c.assertHistoryRequest({ ...request, scope: { kind: 'session', reference: 'session.a', extra: true } }))
+  assert.throws(() => c.assertHistoryRequest({ ...request, recipe_id: 'arbitrary.recipe' }))
 })

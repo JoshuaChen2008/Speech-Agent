@@ -139,7 +139,7 @@ test('SEM-F07/SEM-F11/J10: React history exposes bounded text review and version
   assert.match(view, /api\.getSessionPage\(sessionId, PAGE_SIZE, cursorEntry\.cursor\)/)
   assert.match(view, /value\.items\.length > PAGE_SIZE/)
   assert.match(view, /api\.exportSession\(sessionId, format, version\)/)
-  assert.match(view, /\[原始版回退\]/)
+  assert.match(view, /\[此段使用原文\]/)
   assert.match(view, /aria-posinset=/)
   assert.match(view, /aria-setsize=/)
   assert.doesNotMatch(`${html}\n${entry}\n${view}`, /<audio\b|audioPath|require\(['"](?:node:)?fs|require\(['"]electron/i)
@@ -189,9 +189,9 @@ test('SEM-F11/J10: whole-session refinement metadata controls fallback and persi
   await act(async () => harness.pageRequests[0].request.resolve(pageValue(session, 51, firstItems,
     { t0Ms: 50000, firstEventOrder: 51 }, refinement(51, 50, { refinementFaultCode: 'worker_exit' }))))
   await flush()
-  assert.equal(document.querySelector('#detailRefinement').textContent, '精修进程异常结束；已精修 50/51 段，1 段使用原始版')
+  assert.equal(document.querySelector('#detailRefinement').textContent, '精修意外停止；已精修 50/51 段，1 段使用原文')
   await act(async () => click(document.querySelector('[data-version="refined"]')))
-  assert.match(document.querySelector('#timeline').textContent, /\[原始版回退\] mix 字幕 1/)
+  assert.match(document.querySelector('#timeline').textContent, /\[此段使用原文\] mix 字幕 1/)
   await act(async () => click(document.querySelector('#nextPage')))
   assert.equal(harness.pageRequests[1].cursor.t0Ms, 50000)
   await act(async () => harness.pageRequests[1].request.resolve(pageValue(session, 51, [segment('mix', 50)], null,

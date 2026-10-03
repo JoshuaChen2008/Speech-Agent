@@ -8,7 +8,7 @@
 
 const { canonicalize, sha256Canonical } = require('./canonical-json')
 const { rollbackQuietly } = require('./sqlite-store')
-const { interruptActiveAttempt, remainingWallClockMs, settleActiveAttempt } = require('./session-summary-budget')
+const { interruptActiveAttempt, isLongInputRun, remainingWallClockMs, settleActiveAttempt } = require('./session-summary-budget')
 const {
   StorageError,
   isPlainObject
@@ -36,7 +36,8 @@ const TASK_ERROR_CODES = Object.freeze([
   'AGENT_INTERNAL_FAILURE',
   'AGENT_BUDGET_EXCEEDED',
   'AGENT_SUMMARY_MEMORY_READ_FAILED',
-  'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED'
+  'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED',
+  'AGENT_QA_INPUT_LIMIT_EXCEEDED'
 ])
 
 const TOOL_ERROR_CODES = Object.freeze([
@@ -55,6 +56,7 @@ const TERMINAL_REASONS = Object.freeze(['succeeded', 'failed', 'cancelled'])
 const TOOL_STATUSES = Object.freeze(['started', 'succeeded', 'failed', 'cancelled'])
 const SUMMARY_MEMORY_ERROR = 'AGENT_SUMMARY_MEMORY_READ_FAILED'
 const SUMMARY_INPUT_LIMIT_ERROR = 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED'
+const QA_INPUT_LIMIT_ERROR = 'AGENT_QA_INPUT_LIMIT_EXCEEDED'
 const MAX_INTERACTION_PAGE = 100
 const MAX_SOURCE_REFS = 8
 const MAX_ARGS_BYTES = 8192
@@ -116,6 +118,7 @@ function publicErrorCode (error, fallback = 'AGENT_REQUEST_INVALID') {
 }
 
 function visibleErrorCode (row) {
+  if (row?.qa_input_limit_error === 1) return QA_INPUT_LIMIT_ERROR
   if (row?.summary_input_limit_error === 1) return SUMMARY_INPUT_LIMIT_ERROR
   return row?.summary_memory_error === 1 ? SUMMARY_MEMORY_ERROR : row?.error_code
 }
@@ -140,7 +143,7 @@ function memoryReferenceCountFromRows (rows, recipeId) {
 }
 
 function storedErrorCode (code) {
-  return code === SUMMARY_MEMORY_ERROR || code === SUMMARY_INPUT_LIMIT_ERROR ? 'AGENT_INTERNAL_FAILURE' : code
+  return [SUMMARY_MEMORY_ERROR, SUMMARY_INPUT_LIMIT_ERROR, QA_INPUT_LIMIT_ERROR].includes(code) ? 'AGENT_INTERNAL_FAILURE' : code
 }
 
 function runScope (row) {
@@ -315,6 +318,7 @@ class AgentExecutionStore {
     if (!options.subtitleStore?.database) throw new TypeError('subtitleStore is required')
     this.database = options.subtitleStore.database
     this.now = typeof options.now === 'function' ? options.now : () => Date.now()
+    this.personalContextStore = options.personalContextStore || null
   }
 
   nowValue () {
@@ -482,6 +486,7 @@ class AgentExecutionStore {
       if (!Number.isSafeInteger(personalContextRevision) || personalContextRevision < 0) {
         fail('STORAGE_COMMAND_FAILED')
       }
+      const hasRetryPolicy = this.database.prepare("SELECT 1 FROM pragma_table_info('formal_agent_runs') WHERE name='retry_policy_version'").get() !== undefined
       this.database.prepare(`
         INSERT INTO formal_agent_runs(
           run_id, dedupe_key, client_idempotency_key, request_digest,
@@ -490,15 +495,24 @@ class AgentExecutionStore {
         input_watermark_json, input_digest, personal_context_revision, summary_use_memory, requested_by, state, attempt_count,
           max_attempts, next_attempt_at, lease_owner, lease_expires_at,
           lease_renewed_from_expires_at, cancel_requested_at, error_code,
-          result_digest, result_summary_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, 3, ?, NULL, NULL,
-          NULL, NULL, NULL, NULL, NULL, ?, ?)
+          result_digest, result_summary_json, created_at, updated_at${hasRetryPolicy ? ', retry_policy_version' : ''}
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, NULL, NULL,
+          NULL, NULL, NULL, NULL, NULL, ?, ?${hasRetryPolicy ? ", 'agent-retry@1'" : ''})
       `).run(
         runId, dedupeKey, input.clientIdempotencyKey, requestDigest, requestId,
         recipe.recipeId, recipe.recipeVersion, canonicalize(scope), scopeDigest,
         input.transcriptVersion, canonicalize(inputWatermark), input.inputDigest,
-        personalContextRevision, summaryUseMemory === null ? null : (summaryUseMemory ? 1 : 0), input.requestedBy, now, now, now
+        personalContextRevision, summaryUseMemory === null ? null : (summaryUseMemory ? 1 : 0), input.requestedBy,
+        hasRetryPolicy ? 5 : (recipe.recipeVersion === '2' ? 2 : 3), now, now, now
       )
+      if (recipe.recipeId === 'summary.minutes' && recipe.recipeVersion === '2' && input.transcriptVersion === 'raw' &&
+          this.database.prepare("SELECT 1 FROM pragma_table_info('formal_agent_runs') WHERE name='summary_input_policy'").get()) {
+        this.database.prepare("UPDATE formal_agent_runs SET summary_input_policy='summary-long-input@1',max_attempts=2 WHERE run_id=?").run(runId)
+      }
+      if (recipe.recipeId === 'qa.answer' && recipe.recipeVersion === '3') {
+        if (scope.kind !== 'session' || input.transcriptVersion !== 'raw') fail('AGENT_REQUEST_INVALID')
+        this.database.prepare('UPDATE formal_agent_runs SET max_attempts=2 WHERE run_id=?').run(runId)
+      }
       const run = this.database.prepare('SELECT * FROM formal_agent_runs WHERE run_id=?').get(runId)
       if (requestId !== null) {
         const isRoute = recipe.recipeId === 'intent.route'
@@ -582,6 +596,9 @@ class AgentExecutionStore {
       lastActivityElapsedMs: Number(row.last_activity_elapsed_ms),
       validatedChunkCount: row.validated_chunk_count === null ? null : Number(row.validated_chunk_count),
       totalChunkCount: row.total_chunk_count === null ? null : Number(row.total_chunk_count),
+      retry: row.retry_request_attempt === null || row.retry_request_attempt === undefined ? null : {
+        requestAttempt: Number(row.retry_request_attempt), waitMs: Number(row.retry_wait_ms), reason: row.retry_reason
+      },
       memoryState: row.memory_state,
       errorCode: row.error_code,
       budget,
@@ -684,7 +701,7 @@ class AgentExecutionStore {
   updateSessionSummaryRequest (input) {
     exactObject(input, ['requestId', 'generation', 'expectedRevision'], [
       'state', 'phase', 'attempt', 'elapsedMs', 'lastActivityElapsedMs', 'validatedChunkCount',
-      'totalChunkCount', 'memoryState', 'errorCode', 'budget', 'resumeRequired', 'diagnosticsAvailable', 'attemptIdentity'
+      'totalChunkCount', 'memoryState', 'errorCode', 'budget', 'resumeRequired', 'diagnosticsAvailable', 'attemptIdentity', 'retry'
     ])
     const requestId = identifier(input.requestId)
     boundedInteger(input.generation, 1, Number.MAX_SAFE_INTEGER)
@@ -725,6 +742,19 @@ class AgentExecutionStore {
     }
     const resumeRequired = input.resumeRequired === undefined ? Number(current.resume_required) : (input.resumeRequired ? 1 : 0)
     const diagnosticsAvailable = input.diagnosticsAvailable === undefined ? Number(current.diagnostics_available) : (input.diagnosticsAvailable ? 1 : 0)
+    const retry = input.retry === undefined
+      ? phase === 'retry_wait' && current.retry_request_attempt != null
+        ? { requestAttempt: Number(current.retry_request_attempt), waitMs: Number(current.retry_wait_ms), reason: current.retry_reason }
+        : null
+      : input.retry
+    if (retry !== null) {
+      exactObject(retry, ['requestAttempt', 'waitMs', 'reason'])
+      if (phase !== 'retry_wait' || !Number.isSafeInteger(retry.requestAttempt) || retry.requestAttempt < 2 || retry.requestAttempt > 5 ||
+          !Number.isSafeInteger(retry.waitMs) || retry.waitMs < 0 || retry.waitMs > 1000 ||
+          !['AGENT_PROVIDER_RATE_LIMITED', 'AGENT_PROVIDER_UNAVAILABLE', 'AGENT_PROVIDER_TIMEOUT'].includes(retry.reason)) {
+        fail('AGENT_REQUEST_INVALID')
+      }
+    }
     return this.transaction(() => {
       if (input.attemptIdentity !== undefined) {
         const attemptIdentity = input.attemptIdentity
@@ -735,12 +765,13 @@ class AgentExecutionStore {
       const result = this.database.prepare(`
         UPDATE formal_agent_requests SET state=?,phase=?,attempt=?,elapsed_ms=?,last_activity_elapsed_ms=?,
           validated_chunk_count=?,total_chunk_count=?,memory_state=?,error_code=?,budget_axis=?,budget_actual=?,budget_limit=?,
-          resume_required=?,diagnostics_available=?,revision=revision+1,updated_at=?
+          resume_required=?,diagnostics_available=?,retry_request_attempt=?,retry_wait_ms=?,retry_reason=?,revision=revision+1,updated_at=?
         WHERE request_id=? AND generation=? AND revision=? AND cancel_requested=0
           AND state NOT IN ('succeeded','failed','cancelled')
       `).run(
         state, phase, attempt, elapsedMs, activity, validated, total, memoryState, errorCode,
         budget?.axis ?? null, budget?.actual ?? null, budget?.limit ?? null, resumeRequired, diagnosticsAvailable,
+        retry?.requestAttempt ?? null, retry?.waitMs ?? null, retry?.reason ?? null,
         this.nowValue(), requestId, input.generation, input.expectedRevision
       )
       if (Number(result.changes) !== 1) fail('AGENT_CONTEXT_REVISION_CONFLICT')
@@ -758,9 +789,6 @@ class AgentExecutionStore {
       if (Number(row.generation) !== input.generation) fail('AGENT_CONTEXT_REVISION_CONFLICT')
       if (['succeeded', 'failed', 'cancelled'].includes(row.state)) return this.sessionSummaryRequestProjection(row, true)
       const linkedRunId = row.target_run_id || row.route_run_id
-      if (row.cancel_requested !== 0 && linkedRunId && ['queued', 'retry_wait', 'running'].includes(this.runRow(linkedRunId).state)) {
-        return this.sessionSummaryRequestProjection(row, true)
-      }
       const now = this.nowValue()
       if (row.cancel_requested === 0 && input.elapsedMs !== undefined && input.elapsedMs > Number(row.elapsed_ms)) {
         this.database.prepare(`
@@ -776,19 +804,23 @@ class AgentExecutionStore {
         `).run(now, requestId)
       } else {
         const linkedRun = this.runRow(linkedRunId)
-        if (['queued', 'retry_wait'].includes(linkedRun.state)) {
+        if (['queued', 'retry_wait', 'running'].includes(linkedRun.state)) {
+          if (linkedRun.state === 'running' && typeof linkedRun.session_summary_request_id === 'string') {
+            interruptActiveAttempt(this.database, linkedRunId, now)
+          }
           this.database.prepare(`
             UPDATE formal_agent_runs SET state='cancelled', cancel_requested_at=COALESCE(cancel_requested_at,?),
-              lease_owner=NULL,lease_expires_at=NULL,lease_renewed_from_expires_at=NULL,updated_at=?
-            WHERE run_id=? AND state IN ('queued','retry_wait')
+              lease_owner=NULL,lease_expires_at=NULL,lease_renewed_from_expires_at=NULL,
+              resume_required=0,error_code=NULL,result_digest=NULL,result_summary_json=NULL,updated_at=?
+            WHERE run_id=? AND state IN ('queued','retry_wait','running')
           `).run(now, now, linkedRunId)
           const interaction = this.database.prepare('SELECT * FROM formal_agent_interactions WHERE run_id=?').get(linkedRunId)
           if (interaction && interaction.terminal_reason === null) {
             this.database.prepare(`
               UPDATE formal_agent_interactions SET terminal_reason='cancelled',error_code=NULL,usage_json=NULL,
-                duration_ms=0,result_json=NULL,result_digest=NULL,terminal_at=?
+                duration_ms=?,result_json=NULL,result_digest=NULL,terminal_at=?
               WHERE interaction_id=? AND terminal_reason IS NULL
-            `).run(now, interaction.interaction_id)
+            `).run(Number(row.elapsed_ms), now, interaction.interaction_id)
             this.database.prepare(`
               UPDATE formal_agent_tool_calls SET ended_offset_ms=started_offset_ms,status='cancelled',
                 error_code='TOOL_CANCELLED',result_json=NULL,result_digest=NULL
@@ -797,17 +829,8 @@ class AgentExecutionStore {
           }
           this.database.prepare(`
             UPDATE formal_agent_requests SET state='cancelled',phase='terminal',cancel_requested=1,
-              revision=revision+1,updated_at=? WHERE request_id=?
+              resume_required=0,error_code=NULL,revision=revision+1,updated_at=? WHERE request_id=?
           `).run(now, requestId)
-        } else if (linkedRun.state === 'running') {
-          this.database.prepare(`
-            UPDATE formal_agent_requests SET state='cancelling',phase='cancelling',cancel_requested=1,
-              revision=revision+1,updated_at=? WHERE request_id=?
-          `).run(now, requestId)
-          this.database.prepare(`
-            UPDATE formal_agent_runs SET cancel_requested_at=COALESCE(cancel_requested_at,?),updated_at=?
-            WHERE run_id=? AND state='running'
-          `).run(now, now, linkedRunId)
         } else if (linkedRun.state === 'failed' && !row.target_run_id) {
           this.database.prepare(`
             UPDATE formal_agent_requests SET state='failed',phase='terminal',cancel_requested=0,error_code=?,
@@ -1194,6 +1217,8 @@ class AgentExecutionStore {
       }
       const binding = this.bindingForRun(run)
       let storedError = storedErrorCode(input.errorCode)
+      if (input.errorCode === QA_INPUT_LIMIT_ERROR &&
+          (run.recipe_id !== 'qa.answer' || !['2', '3'].includes(run.recipe_version))) fail('AGENT_REQUEST_INVALID')
       let summaryMemoryError = input.errorCode === SUMMARY_MEMORY_ERROR ? 1 : 0
       if (row.terminal_reason === null && ['succeeded', 'failed', 'cancelled'].includes(run.state)) {
         fail('AGENT_INTERACTION_STATE_CONFLICT')
@@ -1204,7 +1229,7 @@ class AgentExecutionStore {
            requested cancellation.  The cancellation fact is authoritative;
            do not allow that late result to rewrite the run into success. */
         if (run.cancel_requested_at !== null) fail('AGENT_INTERACTION_STATE_CONFLICT')
-        if (row.recipe_id === 'summary.minutes' && run.summary_use_memory !== 0) {
+        if ((row.recipe_id === 'summary.minutes' && run.summary_use_memory !== 0) || (run.recipe_id === 'qa.answer' && run.recipe_version === '3')) {
           const currentRevision = Number(this.database.prepare(`
             SELECT content_revision FROM personal_context_projection_state WHERE singleton_key = 1
           `).get()?.content_revision)
@@ -1217,6 +1242,20 @@ class AgentExecutionStore {
           if (error.code === 'AGENT_OUTPUT_INVALID') fail('AGENT_OUTPUT_INVALID')
           fail('AGENT_OUTPUT_INVALID')
         }
+        if (run.recipe_id === 'context.ingest.session' && run.recipe_version === '3') {
+          const plan = this.database.prepare('SELECT leaf_count,input_digest FROM formal_agent_run_input_plans WHERE run_id=?').get(run.run_id)
+          const totals = this.database.prepare(`SELECT COUNT(*) AS ranges,COALESCE(SUM(experience_count),0) AS experiences
+            FROM personal_context_experience_ranges WHERE run_id=?`).get(run.run_id)
+          if (!plan || input.result.stage !== 'receipt' || input.result.rangeCount !== Number(plan.leaf_count) ||
+              input.result.completedRanges !== Number(totals.ranges) || input.result.experienceCount !== Number(totals.experiences) ||
+              input.result.inputDigest !== plan.input_digest) fail('AGENT_OUTPUT_INVALID')
+        }
+        if (run.recipe_id === 'qa.answer' && ['4', '5'].includes(run.recipe_version)) {
+          if (!this.personalContextStore || input.attemptIdentity === undefined) fail('AGENT_RUN_UNAVAILABLE')
+          const evidence = this.personalContextStore.questionEvidence({ action: 'verify', attemptIdentity: input.attemptIdentity })
+          if (canonicalize(input.result.coverage) !== canonicalize(evidence.coverage) ||
+              input.result.sourceRefs.some(ref => !evidence.sourceRefs.some(allowed => canonicalize(allowed) === canonicalize(ref)))) fail('AGENT_OUTPUT_INVALID')
+        }
         resultEncoded = canonicalize(input.result)
         resultDigest = sha256Canonical(input.result)
       }
@@ -1227,10 +1266,10 @@ class AgentExecutionStore {
         return rowInteraction(row, true)
       }
       if (now < Number(row.created_at)) fail('STORAGE_COMMAND_FAILED')
-      const budgetState = typeof run.session_summary_request_id === 'string'
+      const budgetState = typeof run.session_summary_request_id === 'string' || run.summary_input_policy === 'summary-long-input@1' || isLongInputRun(run)
         ? this.database.prepare('SELECT * FROM formal_agent_run_budget_state WHERE run_id=?').get(run.run_id)
         : null
-      const inputLimitFailure = input.errorCode === SUMMARY_INPUT_LIMIT_ERROR
+      const inputLimitFailure = [SUMMARY_INPUT_LIMIT_ERROR, QA_INPUT_LIMIT_ERROR].includes(input.errorCode)
       let budgetOverrodeFailure = false
       if (budgetState) {
         let settlement
@@ -1252,41 +1291,42 @@ class AgentExecutionStore {
           budgetOverrodeFailure = true
         }
       }
-      const summaryInputLimitError = inputLimitFailure && !budgetOverrodeFailure ? 1 : 0
+      const summaryInputLimitError = input.errorCode === SUMMARY_INPUT_LIMIT_ERROR && !budgetOverrodeFailure ? 1 : 0
+      const qaInputLimitError = input.errorCode === QA_INPUT_LIMIT_ERROR && !budgetOverrodeFailure ? 1 : 0
       this.database.prepare(`
         UPDATE formal_agent_interactions
-        SET terminal_reason=?, error_code=?, summary_memory_error=?, summary_input_limit_error=?, usage_json=?, duration_ms=?, result_json=? ,
+        SET terminal_reason=?, error_code=?, summary_memory_error=?, summary_input_limit_error=?, qa_input_limit_error=?, usage_json=?, duration_ms=?, result_json=? ,
             result_digest=?, terminal_at=?
         WHERE interaction_id=? AND terminal_reason IS NULL
-      `).run(terminalReason, storedError, summaryMemoryError, summaryInputLimitError, usageEncoded, input.durationMs, resultEncoded, resultDigest, now, interactionId)
+      `).run(terminalReason, storedError, summaryMemoryError, summaryInputLimitError, qaInputLimitError, usageEncoded, input.durationMs, resultEncoded, resultDigest, now, interactionId)
       const summary = terminalReason === 'succeeded'
         ? { interactionId, resultDigest }
         : null
       if (terminalReason === 'succeeded') {
         this.database.prepare(`
           UPDATE formal_agent_runs SET state='succeeded', lease_owner=NULL, lease_expires_at=NULL,
-            lease_renewed_from_expires_at=NULL, error_code=NULL, summary_memory_error=0, summary_input_limit_error=0,
+            lease_renewed_from_expires_at=NULL, error_code=NULL, summary_memory_error=0, summary_input_limit_error=0, qa_input_limit_error=0,
             result_digest=?, result_summary_json=?, updated_at=?
           WHERE run_id=? AND state NOT IN ('succeeded','failed','cancelled')
         `).run(sha256Canonical(summary), canonicalize(summary), now, row.run_id)
       } else if (terminalReason === 'failed') {
         this.database.prepare(`
           UPDATE formal_agent_runs SET state='failed', lease_owner=NULL, lease_expires_at=NULL,
-            lease_renewed_from_expires_at=NULL, error_code=?, summary_memory_error=?, summary_input_limit_error=?,
+            lease_renewed_from_expires_at=NULL, error_code=?, summary_memory_error=?, summary_input_limit_error=?, qa_input_limit_error=?,
             result_digest=NULL, result_summary_json=NULL, updated_at=?
           WHERE run_id=? AND state NOT IN ('succeeded','failed','cancelled')
-        `).run(storedError, summaryMemoryError, summaryInputLimitError, now, row.run_id)
+        `).run(storedError, summaryMemoryError, summaryInputLimitError, qaInputLimitError, now, row.run_id)
       } else {
         this.database.prepare(`
           UPDATE formal_agent_runs SET state='cancelled', lease_owner=NULL, lease_expires_at=NULL,
-            lease_renewed_from_expires_at=NULL, error_code=NULL, summary_memory_error=0, summary_input_limit_error=0,
+            lease_renewed_from_expires_at=NULL, error_code=NULL, summary_memory_error=0, summary_input_limit_error=0, qa_input_limit_error=0,
             result_digest=NULL, result_summary_json=NULL, updated_at=?
           WHERE run_id=? AND state NOT IN ('succeeded','failed','cancelled')
         `).run(now, row.run_id)
       }
       const summaryRequestState = terminalReason === 'succeeded' ? 'succeeded' : terminalReason
       const summaryRequestError = terminalReason === 'failed'
-        ? inputLimitFailure && !budgetOverrodeFailure ? SUMMARY_INPUT_LIMIT_ERROR : storedError
+        ? inputLimitFailure && !budgetOverrodeFailure ? input.errorCode : storedError
         : null
       this.database.prepare(`
         UPDATE formal_agent_requests SET state=?,phase='terminal',error_code=?,revision=revision+1,updated_at=?
@@ -1325,6 +1365,14 @@ class AgentExecutionStore {
       this.guardTombstone(run)
       this.assertActiveAttempt(run, input.attemptIdentity, this.nowValue())
       if (row.terminal_reason !== null) fail('AGENT_INTERACTION_STATE_CONFLICT')
+      if (run.retry_policy_version === 'agent-retry@1') {
+        const previous = this.database.prepare(`
+          SELECT COUNT(*) AS count FROM formal_agent_tool_calls AS calls
+          JOIN formal_agent_interactions AS interactions ON interactions.interaction_id=calls.interaction_id
+          WHERE interactions.run_id=? AND calls.tool_name=? AND calls.args_digest=?
+        `).get(run.run_id, input.toolName, sha256Canonical(input.args))
+        if (Number(previous.count) >= 5) fail('TOOL_BUDGET_EXCEEDED')
+      }
       const orderConflict = this.database.prepare(`
         SELECT 1 FROM formal_agent_tool_calls WHERE interaction_id=? AND attempt=? AND call_order=?
       `).get(interactionId, input.attempt, input.callOrder)
@@ -1479,12 +1527,21 @@ class AgentExecutionStore {
   }
 
   listInteractions (input) {
-    exactObject(input, ['limit', 'cursor'])
+    exactObject(input, ['limit', 'cursor'], 'AGENT_REQUEST_INVALID', ['scope', 'recipeId'])
     const limit = boundedInteger(input.limit, 1, Number.MAX_SAFE_INTEGER)
     const cursor = decodeCursor(input.cursor)
     const pageLimit = Math.min(limit, MAX_INTERACTION_PAGE)
     const params = []
     let where = "i.terminal_at IS NOT NULL AND i.recipe_id <> 'intent.route'"
+    if (Object.hasOwn(input, 'scope')) {
+      where += ' AND i.scope_digest = ?'
+      params.push(sha256Canonical(validateRunScope(input.scope)))
+    }
+    if (Object.hasOwn(input, 'recipeId')) {
+      if (!['summary.minutes', 'qa.answer'].includes(input.recipeId)) fail('AGENT_REQUEST_INVALID')
+      where += ' AND i.recipe_id = ?'
+      params.push(input.recipeId)
+    }
     if (cursor) {
       where += ' AND (i.terminal_at < ? OR (i.terminal_at = ? AND i.interaction_id > ?))'
       params.push(cursor.terminalAt, cursor.terminalAt, cursor.interactionId)
@@ -1537,6 +1594,17 @@ class AgentExecutionStore {
     const binding = this.database.prepare('SELECT * FROM agent_model_run_bindings WHERE run_id=?').get(row.run_id)
     return {
       interaction: rowInteraction(row),
+      ...(run.summary_input_policy ? { summaryInputPolicy: run.summary_input_policy,
+        summaryPlan: this.database.prepare(`SELECT policy_version,plan_digest,input_digest,binding_digest,
+          leaf_count,node_count,segment_count,raw_text_bytes,canonical_bytes
+          FROM formal_agent_run_input_plans WHERE run_id=?`).get(run.run_id) || null } : {}),
+      ...(run.recipe_id === 'qa.answer' && ['3', '4', '5'].includes(run.recipe_version) ? { questionInputPolicy: ['4', '5'].includes(run.recipe_version) ? 'question-retrieval@1' : 'qa-long-input@1',
+        questionPlan: this.database.prepare(`SELECT policy_version,plan_digest,input_digest,binding_digest,
+          leaf_count,node_count,segment_count,raw_text_bytes,canonical_bytes
+          FROM formal_agent_run_input_plans WHERE run_id=?`).get(run.run_id) || null } : {}),
+      ...(run.recipe_id === 'qa.answer' && ['4', '5'].includes(run.recipe_version) ? { questionEvidence: this.database.prepare(`
+        SELECT evidence_digest,descriptor_json,source_refs_json,coverage_json FROM formal_agent_question_evidence WHERE run_id=?`).get(run.run_id) || null,
+        questionEvidencePages: this.database.prepare('SELECT ordinal,descriptor_json,evidence_digest FROM formal_agent_question_evidence_pages WHERE run_id=? ORDER BY ordinal').all(run.run_id) } : {}),
       runState: run.state,
       summaryUseMemory: run.recipe_id === 'summary.minutes'
         ? (run.summary_use_memory === undefined || run.summary_use_memory === null

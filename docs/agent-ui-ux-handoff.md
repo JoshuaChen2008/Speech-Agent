@@ -128,6 +128,8 @@ fixture preview 只证明设计覆盖与渲染行为。它不证明模型、SQLi
 
 ### 5.2 设置：Agent 模型配置档案
 
+> 2026-09-29 展示增量（实现完成·尚未验收）：日常入口为默认模型搜索选择、独立测试状态与“测试模型 / 编辑连接”；“按用途指定模型”和“管理模型服务”默认折叠。新增与编辑使用同一页内表单，主区只呈现服务商、API 地址、密钥、模型，服务名称与六项能力放入高级区；缺失能力自动展开并聚焦。原先四步首次向导及 §12 中的旧控件布局仅作历史记录，不再指导现行设置页实现。renderer 沿用共享 token、控件、键盘焦点、强制色、窄窗口与 reduced-motion 约束，J18/J25 证据按当前实现重新取得。
+
 > 2026-09-13 展示增量状态：实现完成·尚未验收，执行范围扩展为首次配置向导、DeepSeek/OpenAI/通义千问（北京）版本化服务预设和用户明确触发的独立模型测试。独立 [spec](../openspec/changes/simplify-agent-model-settings/specs/agent-model-settings-guidance/spec.md)、[设计及文案映射](../openspec/changes/simplify-agent-model-settings/design.md)、[TODO](../openspec/changes/simplify-agent-model-settings/tasks.md) 将本节既有能力组织为“Agent 模型”页面，按服务连接、API 密钥、模型确认、测试与默认用途呈现，新建表单、专用用途及高级标识按需展开。展示别名不替换 CONTEXT 的规范定义，保留 SEM-F33 的空模型模板、独立命令回执、建议零写入和凭据边界；预设一次确认可写入产品维护的六字段应用上限，测试不写配置、正文、正式交互、个人上下文、历史或报告，通义千问预设只支持北京地域。本段记录本次增量边界，§12 历史实现记录不作为此增量证据。输入外观另见 [输入框规划](../openspec/changes/fix-settings-input-styles/proposal.md)。
 
 一个配置档案是一个受信任连接、一份独立凭据和一组 model。设置界面使用产品语言展示：

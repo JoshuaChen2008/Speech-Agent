@@ -9,7 +9,7 @@ const NLS_PARAMETERS = Object.freeze({
 const RECOGNITION_ERROR_CODES = Object.freeze([
   'NLS_AUTH_FAILED', 'NLS_PROJECT_INVALID', 'NLS_CONNECTION_FAILED', 'NLS_CONNECTION_CLOSED',
   'NLS_SERVICE_FAILED', 'NLS_INVALID_RESPONSE', 'NLS_HEARTBEAT_TIMEOUT', 'NLS_START_TIMEOUT',
-  'NLS_STOP_TIMEOUT', 'NLS_BUFFER_EXCEEDED', 'NLS_CANCELLED',
+  'NLS_STOP_TIMEOUT', 'NLS_BUFFER_EXCEEDED', 'NLS_CANCELLED', 'NLS_SEGMENT_TIMEOUT',
   'RECOGNITION_BUFFER_LIMIT', 'RECOGNITION_AUDIO_GAP', 'RECOGNITION_FALLBACK_FAILED'
 ])
 
@@ -56,6 +56,13 @@ function unknownRecognition () {
     fallbackCode: null, fallbackAtMs: null, faultCode: null, faultAtMs: null }
 }
 
+function assertRecognitionProgress (value) {
+  exact(value, ['sessionId', 'phase'])
+  if (typeof value.sessionId !== 'string' || value.sessionId.length < 1 || value.sessionId.length > 160 ||
+      !['loading', 'replaying', 'local'].includes(value.phase)) throw new TypeError('Invalid local fallback progress')
+  return value
+}
+
 function assertRecognitionMetadata (value) {
   exact(value, ['resultStatus', 'binding', 'actualProvider', 'fallbackCode', 'fallbackAtMs', 'faultCode', 'faultAtMs'])
   if (value.resultStatus === 'not_recorded') {
@@ -71,4 +78,4 @@ function assertRecognitionMetadata (value) {
 }
 
 module.exports = { NLS_PARAMETERS, RECOGNITION_ERROR_CODES, assertRecognitionBinding,
-  assertRecognitionStatus, assertRecognitionMetadata, unknownRecognition }
+  assertRecognitionStatus, assertRecognitionMetadata, assertRecognitionProgress, unknownRecognition }

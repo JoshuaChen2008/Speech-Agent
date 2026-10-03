@@ -1,9 +1,137 @@
 # 联合测试与 CI 策略
 
+## 2026-10-04 提交前回归与夹具对齐（实现完成·尚未验收）
+
+关联 SEM-F14/F23/F24/F38/F41/F43/F44、SEM-T03/T04/T05，以及 J9-CI/J12/J18/J19/J21/J28-FILES/J28-EXPORT/J28-MCP/J29/J30/J31、DB1/DB7/I3/B5。当前输入完整 Core 为1163/1163，Integration 为165/165；原生成器刷新 I3 绑定后，完整 Evidence 为248项成立、1项明确跳过、0失败。记忆文件保存/重启连续15轮、记忆专用 ASAR 1/1和默认几何产品壳 fresh/restart 自然退出绑定另有证据。夹具修正保留真实内部模块、持久化、来源、独占保存与失败断言；没有以过期界面名称或保存未收束时的直接文件读取冒充产品行为。实际命令、各次非零结果、根因、Luna复核及未验证范围见[提交整理记录](validation/commit-preparation-2026-10-04.md)，不提升产品联合验收或实机状态。
+
+## 2026-10-03 字幕助手布局与控件旅程（已决定）
+
+主题同步回归：通过真实设置 renderer 切换主题，助手在已有窗口中更新；自动主题依据 systemDark，独立于 Agent 设置 revision。
+
+本次实现完成·尚未验收：`npm run verify:renderer` 成功；`node --test --test-reporter=spec test/ui/renderer-style-guard.test.js test/ui/agent-ui.test.js` 为 62/62；`node --test --test-reporter=spec test/integration/agent-layout-journey.test.js` 为 1/1，覆盖真实设置切换、两主题 × 四种尺寸/缩放组合、日期倒置禁用/有效日期恢复、空项目长提示与叉号关闭。初次沙箱内 GPU 子进程启动失败属于环境问题，随后沙箱外执行成功。Computer Use 6 张原图与各构建阶段见 [第二组截图记录](ui-actual/captures/2026-10-03-2/index.md)。没有执行完整三条 lane；未将局部结果提升为完整 J18/J22/J29、系统高对比或系统 DPI 实机验收。
+
+| 旅程 | 路径与断言 | 范围 |
+|---|---|---|
+| J18，关联 J22/J29 | 正式助手窗口→展开跨会话分析→日期输入→范围问答；标签在输入框上方、日期框等宽、提问框满宽、提交位于下方右侧；长状态文字下关闭叉号保持尺寸和可点击；无范围禁用、日期倒置、空项目提示不破坏布局。 | 真实 renderer、preload、main；定向 UI 回归、生产构建和 Computer Use 实拍；覆盖深浅主题及窄布局。截图归档是设计评审参考，不替代完整 J18/J22/J29 或系统 DPI 实机门禁。 |
+
+## 2026-10-03 个人记忆对外读取旅程（实现完成·尚未验收）
+
+| 旅程 | 跨模块验证 | 当前证据 |
+|---|---|---|
+| J28-EXPORT | 正式设置选择/预览→preload/main→个人上下文→文件Worker/SQLite→复制/Markdown/JSON；覆盖候选/范围排除、旧预览、外部修订、撤销、取消、写失败与证据目录拒绝；零模型调用 | personal-memory-sharing-journey 与 production Electron journey；见[记录](validation/personal-memory-sharing-2026-10-03.md) |
+| J28-MCP | 正式授权→真实HTTP initialize/initialized/tools→同一文件/SQLite读取；覆盖令牌/Origin/Host/未知工具/非法参数、超限、范围隔离、休眠、修订、停止与重启失效；故障后字幕会话写入独立 | 同上；真实外部MCP客户端、完整发布包另验 |
+
+## 2026-10-02 Speech-Agent 界面用语旅程登记（实现完成·尚未验收）
+
+| 既有旅程 | 本次回归范围 | 执行方式 | 状态 |
+|---|---|---|---|
+| J18 | Speech-Agent 标题、设置导航、可见文案与无障碍名称一致；保留技术配置词 | renderer 类型检查、构建、既有 UI 测试与样式守卫 | 实现完成·尚未验收 |
+| J10/J15b/J15c | 字幕记录选择、原文/精修稿切换、精修缺失与故障提示；导出仍保留既有标记和版本隔离 | 既有 history UI、history-review 与 refinement-fallback 旅程 | 实现完成·尚未验收 |
+| J20/J21/J25/J28-FILES/J29 | 识别方式、助手云端授权、模型设置、记忆确认/暂停/停止使用/删除、引用来源与失败反馈的名称更新；真实内部授权和持久化边界不变 | 既有 NLS settings、formal-settings、个人记忆与会话总结旅程；只更新文案断言和定位器 | 实现完成·尚未验收 |
+
+对应 SEM-F11/F14/F23/F27/F30/F37/F38/F41/F42/T05。此轮是展示修订，不据此声明硬件、DWM 或完整产品联合验收；实际命令与未验证范围记录于 [界面用语记录](ui-copy-review.md)。
+
+## 2026-10-02 用户掌控个人记忆旅程（实现完成·尚未验收）
+
+依据 SEM-F41/F42、SEM-F14/F27/F32/F37/F38、ADR0025；要求与矩阵已先登记再实施。当前实现及三条 lane 结果见[交付记录](validation/personal-memory-files-2026-10-02.md)。固定100条带标签合成查询验证融合实现，不能替代人工独立标注、真实云端质量或实机证据。
+
+| 旅程 | 真实产品路径与失败矩阵 | 验证边界 |
+|---|---|---|
+| J21/J28-FILES + DB1/DB7/J10 | 目录选择→迁移/确认→MD唯一正文→管理/概览/摄取/执行读取→SQLite重开；外部编辑差异确认、未知元数据保留、根内移动、重复ID、超限/损坏、目录失联、独占保存竞争、阶段中断恢复、忘记/删除/备份重现、来源撤销、治理携带及缺失来源 | 内部模块/真实临时文件/SQLite/Win32文件句柄；仅目录对话框、权限等系统边界替身；历史迁移checksum不变、运行不回读旧正文 |
+| J22/J24-RETRIEVAL + DB7 | 已授权范围→中文短词/精确/向量→RRF→文件复核→有界输入；无授权/待确认/候选/忘记/删除不得外发；表征独立配置/凭据/披露，取消、超时、401/429、redirect、缺项/NaN/维度错配、迟到响应、模型切换、代际重建和索引丢失 | 真实接入层/个人上下文/索引/SQLite，网络provider边界替身；旧工具/recipe不升级，计数与全集不依赖top-k |
+| J29/J30 + J12 | 总结参考四种开关组合、休眠/撤销→文件/表征/模型请求均不越权；目录失联、重建、非合作云端及原生模块缺失期间字幕开始停止→历史→权威原始转写导出 | 正式main/preload/renderer及真实存储路径；打包原生模块实际加载；无音频产物，证据只含指标/枚举/布尔/相对耗时/哈希 |
+| J22-QUALITY | 100条人工标注题分别比较关键词、向量、RRF的Recall@10/Precision@10/nDCG@10/无答案误召回、耗时和索引成本 | 合成题集正文留在测试代码或临时目录，报告仅指标/哈希；真实云端与实机证据单列，缺失不得以替身质量替代 |
+
 > 功能承诺、测试边界和完成状态词以 [`semantic-contract.md`](semantic-contract.md) 为准；
 > 本文负责维护可执行的旅程 ID、运行环境与证据状态。
 
+## 2026-10-01 后台 Agent 任务空队列休眠回归
+
+| 旅程 | 用户路径与可观察结果 | 必须真实的边界与失败场景 | 当前证据 |
+|---|---|---|---|
+| J24（SEM-F28/F30、SEM-T04） | 开启 Agent 与个人记忆 → 后台 Agent 任务被唤醒 → 空队列休眠；等待超过原 1 秒重试间隔后仍零诊断、零重试 timer，空领取回执计数不增长。 | 真实 PersonalContextRuntime、ConfigStore、StorageGateway、StorageWorkerService 与 SQLite；入口覆盖空对象、两类单字段请求及未知字段、非法策略、混合字段拒绝，无模型调用。回归放在既有 `agent-redesign-s3-session-ingest-journey.test.js` 和 `storage-worker-service.test.js`。 | 实现完成·尚未验收；两项新增回归在修复前失败，修复后关联 focus 103/103，退出码 0。 |
+
+本次验证命令：`npm run test:focus -- test/storage/storage-worker-service.test.js test/integration/agent-redesign-s3-session-ingest-journey.test.js test/runtime/formal-agent-job-scheduler.test.js test/main/personal-context-runtime.test.js test/storage/personal-context-store.test.js test/storage/storage-worker-host.test.js test/main/storage-gateway.test.js test/validation/personal-context-s1-privacy.test.js`。原空队列复现也返回零诊断、零重试 timer、一次空领取；临时数据库均已清理。未运行全量三条 lane、正式 Electron 或实机模型，此子边界不替代 J24 完整验收。
+
+## 2026-09-29 Agent 模型设置与有界重试旅程增量（已决定）
+
+J25 从首次四步向导改为日常默认模型选择与页内共用新增/编辑表单：验证空模板、三项预设与自定义六字段、同服务多模型、密钥 scope、部分保存回执、revision 冲突、目录失败手填、测试与保存分离、测试取消和配置变化后的旧测试结果失效。J18 增加搜索选择器的键盘、Esc、焦点、主题、高对比、reduced motion 与窄窗口验证。
+
+J30/J31 用真实执行宿主、storage worker/SQLite、模型接入层、main/preload/renderer 证明同一 run 至多 5 个 attempt、同一操作跨重跑至多 5 次、执行前预留及重启不重置、第 5 次成功/失败、第 6 次零外发、非重试错误零额外执行、取消等待与迟到回写拒绝、原绑定不变、旧策略兼容。长输入还需证明分块与工具共享已有总预算，不能形成 5×5 放大；J12 覆盖失败或诊断不可用时字幕独立。仅 provider、网络、声卡、系统凭据等外部边界使用替身。定向证据不得冒充完整 J25/J30 联合验收。
+
+2026-09-29 当前证据状态：实现完成·尚未验收。`npm run test:core`（含 renderer 类型检查与构建）为 1086/1086，正式 Electron J25 定向旅程为 2/2；受控网络同步异常的五次上限、重试等待快照的存储与契约、缺密钥聚焦均有定向验证。J30 真实 scheduler/runner/storage worker/SQLite 重启旅程定向 1/1，证明模型请求的确定性预算拒绝只结束 Agent 请求，不熔断共享 storage 队列，后续字幕会话可继续写入。此前同一工作树的 integration lane 为 71/72；唯一失败是 J18 的重复 Vite 开发态启动首轮 Electron 子进程退出，单独复跑时有 GPU 初始化错误。该失败未被记作产品断言通过，本次增量未重复运行完整 integration lane。完整 J30/J31 的五次上限、重启及本地等待反馈矩阵仍需联合验收。
+
+## 2026-09-30 会话问答窗口内输入容量旅程（第一步，已决定）
+
+对应 SEM-F16/F28/F31/F33/F40 与语义合同同日“会话问答窗口内输入容量”表。新增场景落在既有 lane，不新增旅程层级。
+
+| 旅程子项 | 用户路径与必须验证的事实 | 真实内部边界 |
+|---|---|---|
+| J22-QA-WINDOW / J24 | Agent Bar 单会话问题→受理/意图收敛→新建 `qa.answer@2`→完整输入→回答/历史/导出。>15,000 字节但派生窗口内的中文及多段输入确实外发且完整覆盖；问题与首/中/尾来源保持，QaAnswerV1 及来源范围校验不变 | renderer/preload（适用 J30 正式 Electron 场景）、SessionSummaryRunService、IntentRouteOrchestrator、scheduler/runner、Personal Context、Model Access、Loop、生产 adapter、storage worker/SQLite；只在 provider/网络/系统边界使用替身 |
+| J22-QA-SIZE / J30-DIAG | 动态 prompt 边界减一/等于/加一，小模型零容量，Unicode 与 JSON 转义；超界专用码、字节实际/上限、零问答生成模型请求、零结果且不重试；通用预算失败不出现“模型尚未调用”反馈 | 同一 runner/Loop/adapter；诊断 exact schema 与 UI，失败后字幕新会话与历史仍可写读 |
+| J24-QA-BUDGET | 工具后续轮和重试每次复核系统/工具/消息增长与输入窗口、512 KiB HTTP 保护；输出额度受模型/累计余量约束，未知 usage 仍为 null；取消后不再外发、不提交迟到结果；60秒与累计预算不扩大 | 生产 adapter、Loop、请求预留与工具审计、真实 SQLite 终态 |
+| J24-QA-COMPAT / DB1 | v20→v21 保留每个旧 checksum、旧问答 `@1` 的绑定/预算/15,000字节拒绝/导出字节；新运行 `@2` 的专用失败码在重开、历史和导出中一致；总结与其它 recipe 限制不变 | 真实追加迁移、模型绑定、运行/交互存储与 exporter |
+
+当前状态：**实现完成·尚未验收**。本轮命令与范围：
+
+- 修复前 `node --test test/integration/session-question-window-journey.test.js` 为0/2：窗口内中文输入被旧15,000字节预检以通用预算错误拒绝，超界反馈也不精确。修复后该文件为4/4，额外覆盖150段分页输入、明确交互记忆信号来源、取消/迟到结果、失败后字幕新会话、数据库重开与成功/失败/取消导出。
+- `npm run test:core`（含 renderer 类型检查与构建）为1136/1136，含动态字节边界、序列化转义、工具后续轮、输出余额、未知usage、重试、v20→v21校验和/旧绑定/旧预算/旧导出字节、专用错误历史投影与UI字节诊断。
+- `node --test --experimental-test-isolation=none --test-reporter=spec "test/integration/**/*.test.js"` 首轮88/90。正式 Electron J25 fixture 在一次脚本任务里设置受控输入后立即点击仍禁用的按钮，未产生受理回执；修订为等待 renderer 提交输入并启用按钮后点击，`node --test --test-reporter=spec test/integration/agent-redesign-j25-formal-settings-journey.test.js` 定向2/2。此修订不改变产品受理语义。
+- `node --test --test-reporter=spec test/integration/renderer-development-entry-journey.test.js` 为0/1，既有 Vite 开发态首轮 Electron 启动仍以退出码1结束。完整 integration 未重跑、未记为联合验收；真实 provider、原46分钟会话、第二步长输入分块及四小时实机证据未验证。
+
+## 2026-09-30 会话问答长输入旅程（第二步，已决定）
+
+| 旅程/子项 | 必须覆盖的可观察结果 |
+|---|---|
+| J22-QA-LONG / J31 | 正式问题受理→qa.answer@3冻结绑定→真实分页/Unicode分块→同一Loop逐块回答→顺序归并→一个QaAnswerV1及来源引用→历史/新版导出；输入大于单请求窗口、四小时合成会话、多层归并、首/中/尾修订完整覆盖，问题传递至所有节点 |
+| J24-QA-LONG / J30 | 中间输出无效或越权、最小模型窗口/整次容量超界、工具与累计预算、未知用量、网络重试及跨attempt累计；失败零部分回答，取消期间及迟到结果拒绝，不重置冻结模型身份 |
+| J30-QA-RECOVERY / DB1 / J12 | 活动长问答停止→真实SQLite重开→提示未保存且无自动模型请求→固定原会话重新输入；成功/失败计划与用量回执重开一致、旧@1/@2绑定/预算/导出仍按原义，后续字幕会话独立工作；诊断/数据库不得保存问题或模型中间输出 |
+
+内部使用真实SessionSummaryRunService、IntentRouteOrchestrator、scheduler/runner、Personal Context、planner、Loop、Model Access、生产adapter、StorageGateway/worker与SQLite；替身只位于provider/网络/系统边界。先建立超窗口回答红测，再实施。定向结果不代替当前revision全lane、正式Electron窗口矩阵或真实provider/实机证据。
+
+2026-09-30 当前实施状态：**实现完成·尚未验收**。本轮证据与限制：
+
+- 超窗口回归修复前被 `qa.answer@2` 输入预检拒绝；改为新 raw 单会话 `@3` 后，`test/integration/session-question-window-journey.test.js` 为20/20（含嵌套失败场景）。四小时合成输入完整覆盖，128段含超长 Unicode 单段及首/中/尾修订，经多层归并后只提交一个回答；缓存用量沿实际 provider 回执累计，SQLite 重开后导出编码一致。另覆盖无效/超大/越权中间回答、必要归并容量拒绝零外发、累计预算与共享工具预算、归并取消、实际检索的个人记忆引用、运行期间撤回及重启重新提交。正文和原问题仅出现在受控输入或明确交互结果，不进入计划、诊断或请求回执。
+- 定向命令 `node --test --test-reporter=spec test/contracts/agent-run-ui-contract.test.js test/runtime/summary-input-plan.test.js test/integration/session-question-window-journey.test.js` 为34/34，含旧总结规划与新问答完整覆盖、取消及段数超界、新旧导出回执兼容。`npm run verify:renderer` 类型检查和生产构建返回码0。
+- 扩大 core 命令 `node --test --experimental-test-isolation=none --test-reporter=spec "test/contracts/**/*.test.js" "test/main/**/*.test.js" "test/runtime/**/*.test.js" "test/storage/**/*.test.js" "test/ui/**/*.test.js"` 为1139/1140。唯一失败为既有模型设置共用表单场景的 alert 节点为空，`test/ui/agent-model-settings-ui.test.js` 单独复核为4/5；本步未改动该表单，不把该失败记为问答断言成立。
+- 完整 integration 命令 `node --test --experimental-test-isolation=none --test-reporter=spec "test/integration/**/*.test.js"` 为105/106，含正式 Electron J25/J30 2/2。新问答版本要求的真实分页/计划及请求回执接线已同步到模型对比旅程，公开交互导出回执允许已登记 schema 1–4；剩余失败仍为 Vite 开发态首次 Electron 启动退出码1。
+- evidence 命令 `node --test --experimental-test-isolation=none --test-reporter=spec "test/gate-0b/**/*.test.js" "test/gate-0c/**/*.test.js" "test/validation/**/*.test.js"` 为246/249（1项按设计跳过）。两项 I3 非音频报告 provenance 校验因共享工作树的 `sessionCoordinatorSha256` 与既有报告不一致；本步未改 coordinator，也未改写报告或将其计为资格成功。
+
+上述合成 provider 旅程证明内部接线及确定性覆盖，不证明模型实际理解后文修订的质量。原46分钟及四小时真实会话、公网 provider 耗时、128 MiB 缓冲峰值和完整三条 lane 均未验收；新建 raw 问答使用新策略，旧失败运行与绑定不自动升级。
+
+## 2026-10-01 提问优先个人记忆旅程增量（实现完成·尚未验收）
+
+本表修订 J21/J22/J28/J29 的旧来源策略与实施顺序，依据 SEM-F26/F27/F30/F31/F32/F37/F38 的同日登记；旧总结局部证据保留。本轮提问/确认/关联/概览/总结实现完成·尚未验收。当前工作树 Core 1153/1153、Integration 119/119；刷新 UTC 的 I3 记录后，完整 Evidence 为 248 项成立、1 项明确跳过、0 项失败。实际命令、新增纵向旅程与实机边界见[验证记录](validation/personal-memory-optimization-2026-10-01.md)，不把这组确定性证据晋级为产品联合验收。
+
+J18 的重复开发启动只校验正式 caption/toolbar renderer 初始化。2026-10-01 本机默认 GPU 子进程以 0xC0000135 退出；旅程沿用既有 Electron 确定性测试的 disable-gpu/in-process-gpu 参数。受限环境加载本机页面另返回 ERR_FAILED，沙箱外定向旅程与完整 Integration 成立。该结果不证明 GPU、DWM 或真实声卡行为（SEM-T03）。
+
+| 旅程 | 必须覆盖的可观察结果 |
+|---|---|
+| J21/J22 | 正式提问中的本人项目/长期表达要求 → 结构化候选 → 查看来源 → 用户确认/修改 → 后续 resolve → SQLite 重开一致；知识问题、临时要求、引用、假设、代问、未采纳助手输出不归本人，失败/取消的提示仍按资格与清理边界摄取；重试、重复 digest/唤醒零新增独立证据，重复模式至少两次独立任务且仍是候选。旧 @1 绑定、输出合同和 migration checksum 保持。 |
+| J21/J28 + DB7 | 已确认个人信息 → 合格终态会话 → 等值关联与双侧依据 → 修改/忘记/删除信息 → 旧关联不可读；无本人信息、无关/同名/角色不符/相似话题不建立明确本人归属，项目背景不变成用户决定或待办。冻结外条目、越界引用、旧 revision/已删来源拒绝整个提交；撤销竞态、迟到响应及 SQLite 重开不恢复旧关联，已确认旧条目保留。 |
+| J28/J29 + J12 | 正式 settings/agent/history renderer → exact preload/main → 个人上下文 → SQLite：概览确定性分组、候选确认与正文/范围编辑；来源真实时间、跨年/时区、摘要与原文摘录分区、分页外精确定位；原提示已清理、旧记录缺摘要、已删/撤销、导航失败及重试；浏览不创建模型请求或记忆信号，返回原记忆位置。 |
+| J28/J21/J24 | 多次有效来源 → 有界 context.synthesize → 来源/覆盖/输入身份 → 当前与上版；修改落到底层条目，重复唤醒/重启/旧模型响应幂等，每范围单运行与全局并发一，无变化零调用；超预算、模型失败、休眠新边界、忘记/删除立即失效与 suppression；显式旧会话预览零调用、提交/取消受控。 |
+| J29，保留 J30/J31/J12 | 实际纳入输入的记忆及关联依据可展开；四种开关组合、休眠和撤销覆盖所有 provider payload；普通总结操作零写入、明确记住真实管理提交；取消/迟到、长输入覆盖、旧导出编码与下一字幕会话独立性保持。 |
+
+内部产品模块使用真实实现，仅模型/网络/系统权限等不可确定边界使用替身。确定性旅程证明范围、归属合同、来源及生命周期；实际模型分类和关联质量单独核对。每片按 §2.1 定向验证；公共合同、共享存储或 main/preload 改动扩大相关 lane，阶段联合验收要求当前 revision 完整三条 lane。复制/Markdown/JSON 与只读 MCP 后续另行登记。
+
 ## 1. 完成口径
+
+### 2026-10-01 总结检索优先问答旅程（已决定）
+
+依据 SEM-F26/F28/F30/F31/F34/F38/F39/F40 与[规划](session-question-summary-first-plan.md)，实施前登记下列新增子边界。内部个人上下文、runner/Loop、main/preload/renderer、storage worker/SQLite、历史服务均使用真实实现，只替代 provider/网络/系统权限边界；登记不晋级已有状态。
+
+| 既有旅程子边界 | 正常与失败出口 |
+|---|---|
+| J21-EXPERIENCE / J24 / DB7 | 长终态会话分段摄取→全部范围经历及逐项来源持久化→处理进度一致→重开/重复执行复用；前8项之后仍能分页读取。超长单段 Unicode 完整切分；第二范围失败/取消/失租不推进，已提交独立产物仍标明覆盖缺口；来源修改/删除和过期绑定拒绝。个人候选/关联/确认与休眠边界不变。 |
+| J22-QA-RETRIEVAL / J24 / J31 | 正式问答→总结与原文共同召回→有界原文核对→带来源答案。重复提问不重新全场逐块生成；摘要遗漏、中文两字词、数字日期、标识符、否定与较晚修订仍能找到。无总结、空召回、容量不足、工具增长、取消/迟到、应用重启和用量未知明确治理。 |
+| J22-QA-SCOPE / J24 / J31 | 日期/项目选择→冻结完整会话目录→局部变化联合检索或全局分页分批→实际覆盖与缺口。超过一页的会话不得遗漏；同名项目隔离；完整清单/计数不得仅用top-k；缺失总结、范围变化、source撤销和预算不足有明确结果。 |
+| J29-QA-SOURCE / J10 | 正式结果逐结论来源→main/preload→历史精确分页定位及高亮→返回结果；日期/相对时间从原记录解析。已删/失效、旧结果无粒度、跳转失败和迟到读取不串会话，查看不调用模型或摄取。 |
+| DB1 / J30 / J12 | 追加迁移保留全部旧checksum/recipe绑定/导出字节；索引重建、正文版本隔离及级联删除。Agent失败或取消后下一字幕会话、历史/导出独立；诊断与测试证据无正文/路径/现场音频。 |
+
+局部回归按 §2.1 执行；阶段验收取得当前工作树三条 lane 及正式 renderer 旅程，真实 provider 内容质量与适用 Windows 实机边界另验。
+
+2026-10-02 状态为**实现完成·尚未验收**，实施与证据见[交付记录](validation/session-question-summary-first-2026-10-02.md)。新增真实模块旅程位于 `session-experience-journey.test.js` 与 `personal-memory-question-journey.test.js`：范围产品/恢复、独立原文召回、52场日期目录、53项同名项目分页、正式日期/项目表面、迟到来源版本、候选并发和待办时效。正式Electron J25等既有旅程继续核验新默认问答；合成策略对照只度量来源可供性和请求字节，不作为真实模型质量评分。
 
 单元测试通过只能证明局部逻辑成立，不能作为功能完成的依据。一个面向用户的功能只有同时满足以下条件，才可以在 PLAN/README 中标记完成：
 
@@ -28,27 +156,33 @@ S5-Integration 采用 main-owned `AgentRunService`。submit 的公开载荷只�
 
 ## 2. 执行分层
 
+2026-09-30 J31实施登记（已决定）：验证summary-long-input@1新运行与旧直接@2并存、v19→v20及旧checksum、真实分页→planner→Loop→SQLite的173,827字节纵向旅程；包括单块、多层归并、超长Unicode段、节点范围、取消/迟到、未知用量、跨attempt累计和重启计划digest一致、失败零纪要。适用J29记忆开关/撤销、J30状态/取消及J12下一字幕会话；内部模块真实、仅provider/网络/系统边界替身。正式Electron与实机证据另列，不以局部结果晋级。
+
 ### 2026-09-27 起会话总结运行与长输入旅程（P0/P1 局部实现证据）
+
+2026-09-28 J30-STATE/CANCEL/DIAG、J12 失败收尾增量（已决定）：真实 storage worker/SQLite 与执行宿主用受控 provider 复现短会话模型错误、失败写入拒绝和失去执行者后的取消；断言重试/终态一致、取消在 5 秒内收束、迟到结果拒绝、诊断稳定错误码与隐私负扫描。另覆盖旧 `cancelling` 行、成功先提交、取消落库失败状态未知及字幕历史独立性。此登记不替代下表未满足的正式 Electron 与三条 lane 门禁。
+
+2026-09-28 失败收尾修复局部证据（实现完成·尚未验收）：当前代码的相关 focus 85/85，覆盖真实 SQLite/执行宿主的模型服务失败→等待重试、重试耗尽→运行/交互/请求一致失败、凭据拒绝零重试、运行中及旧 `cancelling` 请求取消；正式 Electron J30-ELECTRON 定向 2/2，renderer 类型检查和生产构建成功。一次 `npm test` 的 core 1096/1096、integration 71/72；唯一失败为 J18 Vite 开发态首次启动退出码 1。单独 `npm run test:evidence` 246/249（1 项按设计跳过），两项 I3 非音频报告因工作树中既有 `StorageGateway` 改动导致 `storageGatewaySha256` 不匹配。全 lane、真实模型原始失败原因及实机范围未验收。
 
 P0 与 P1 各子切片为**实现完成·尚未验收**；P1.5 的关联确定性旅程和 renderer 检查已运行，完整 Electron 联合旅程、公网模型与实机范围仍未验收。P2.1 版本化预算注册有局部实现证据，其余 P2 长输入任务仍为已决定待实施。以下记录子集证据，不沿用 J29 路由修复或旧 PluginHost 资格宣称 J30/J31 全面验收。数值唯一权威见[语义合同增量](semantic-contract.md#会话总结运行与长输入增量2026-09-27)，实施顺序见[任务表](../openspec/changes/fix-session-summary-lifecycle-and-long-input/tasks.md)。以下为 J30/J31 子项，不新增 test lane。
 
 | 旅程/子项 | 用户路径与可观察结果 | 必须真实的内部边界与失败矩阵 | 当前证据 |
 |---|---|---|---|
-| J30-ELECTRON | 正式 Agent Bar 发起会话总结→运行反馈/取消/诊断/恢复→字幕历史继续可用 | Electron main/preload/renderer、正式IPC、scheduler/runner、Model Access、utility storage worker 与 SQLite 使用生产组合；只替代 provider/网络/声卡/系统权限/保存对话框。由生产 UI 触发，覆盖通知丢失与刷新、期限内取消和状态未确认、跨进程重启明确继续、诊断写失败、敏感标记及下一字幕会话 | 实现完成·尚未验收：`test/integration/agent-redesign-j25-formal-settings-journey.test.js` 2/2 现经正式 Electron Agent Bar 验证受控 provider 取消、5 秒期限、丢弃终态通知后的状态校准、诊断查询/导出及敏感标记负扫描；新增正式 Electron 旅程另验证 Agent 窗口关闭不发送取消、挂起请求 IPC snapshot 未报告分块进展；相关 J30 服务旅程覆盖 SQLite 重启与明确继续，J12 子旅程覆盖诊断故障期间字幕独立性。正式 Electron 重启明确继续子旅程已覆盖同一 request/run 且用户操作前零 provider 请求；仍缺取消落库失败 UI、诊断写失败时字幕连续旅程及完整三条 lane 验收 |
+| J30-ELECTRON | 正式 Agent Bar 发起会话总结→运行反馈/取消/诊断/恢复→字幕历史继续可用 | Electron main/preload/renderer、正式IPC、scheduler/runner、Model Access、utility storage worker 与 SQLite 使用生产组合；只替代 provider/网络/声卡/系统权限/保存对话框。由生产 UI 触发，覆盖通知丢失与刷新、期限内取消和状态未确认、跨进程重启明确继续、诊断写失败、敏感标记及下一字幕会话 | 实现完成·尚未验收：`test/integration/agent-redesign-j25-formal-settings-journey.test.js` 2/2 现经正式 Electron Agent Bar 验证受控 provider 取消、5 秒期限、丢弃终态通知后的状态校准、诊断查询/导出及敏感标记负扫描；新增覆盖 Agent 窗口关闭不发送取消、挂起请求 IPC snapshot 未报告分块进展，以及独立进程重启后用户明确继续同一 request/run 且继续前零 provider 请求。相关 J30 服务旅程覆盖 SQLite 重启与明确继续，J12 子旅程覆盖诊断故障期间字幕独立性。仍缺取消落库失败 UI、诊断写失败时字幕连续旅程及完整三条 lane 验收。2026-09-29 轻量方案：本旅程需扩展窗口内直接总结场景（短会话与 173,827 字节合成会话生成→保存→重开、取消/失败零纪要、下一字幕会话独立），尚无实现证据 |
 | J30-STATE | 提交→快速失败→通知丢失→详情校准→准确失败；刷新/恢复/重载一致 | main/service/runner/SQLite/renderer/preload；旧revision/目标迟到、读取故障、新鲜度、草稿保留 | P0 子集实现完成·尚未验收：S5 SQLite 终态通知和 J25 生产 renderer 容量失败；J30 全矩阵未验收 |
 | J30-ACCEPT | 模型路由前可取消；明确总结零模型判定；未知回执同键不重复 | exact IPC、受理、真实路由器、SQLite；路由慢/取消/迟到/兜底、重复点击、删除旧键 | 受理接线子旅程实现完成·尚未验收：真实 SQLite/AgentRunService/ModelAccess/IntentRouteOrchestrator覆盖持久身份、preset零路由、question路由、同键回执丢失且资格/输入源不可用时重放、取消写失败重试；main IPC 与生产 preload 的边界测试、AgentView 组件回归验证精确合同、不确定回执锁定同一请求与会话、刷新期间保持作用域、终态解除锁定并保留会话显示、快照新鲜度。完整正式窗口旅程及 J30 全矩阵仍未验收 |
 | J30-CANCEL | pending/running或旧快照终态取消→权威终态 | 真实事务竞争、service/scheduler/adapter/UI；provider不理abort、工具慢、成功/失败先提交、取消落库失败、登记期限 | P0 子集实现完成·尚未验收：AgentRunService 冲突回读、S5 真实 SQLite 终态竞争及 UI 详情读取失败；P1取消子切片实现完成·尚未验收：路由、模型、工具与输入读取取消、非合作 provider 期限及迟到结果拒绝；StorageGateway 到真实 SQLite 的 worker 旅程验证 128 段 keyset 页读取能接收不进入 storage 请求 FIFO 的取消控制消息且后续读取正常。取消落库失败 UI 全矩阵、完整 main 到权威终态期限旅程、真实模型/公网取消、正式窗口与实机范围仍未验收 |
 | J30-PROGRESS | 真实阶段、等待、块数、attempt、实际记忆事实 | 真实阶段发射/快照/UI；无首响应、工具等待、退避、重跑进度重置、usage未知 | 进度子切片实现完成·尚未验收：provider 请求边界、受控工具结果、claim attempt 与实际记忆查询事实接入快照；去除未使用的无条件上下文解析；elapsed 与活动时间分离，终态前冻结耗时；P2 输入规划前块数保持 null |
-| J30-RECOVERY | 长请求续租→失租/退出→重开→明确继续或已取消；关闭 Agent 窗口不取消任务 | 真实scheduler/lease/storage/main/renderer；恢复列表项重新呈现冻结会话范围；旧owner/attempt回写、固定提示版本重建、自由问题提示缺失后固定原会话范围并要求重新提交、新请求受理时同事务清除旧标记、明确继续复用同一run/绑定并递增attempt、取消事实先核对、剩余预算不因重启清零、scheduler拒绝领取待继续run | 重启恢复、租约与预算子切片实现完成·尚未验收：既有焦点验证覆盖真实 SQLite/storage worker/service/preload/IPC 的恢复投影、显式继续复用 target run、新问题成功受理时旧待重新提交标记同事务清除及同键回执重放；AgentView harness 覆盖显式继续/重新输入、问题重输期间锁定会话范围与关闭窗口不取消。新增真实 scheduler/runner/ModelAccess/StorageGateway/StorageWorkerService/SQLite 旅程覆盖请求外发前预留、运行中续租、停止后重开数据库、旧 attempt 写入拒绝、明确继续复用 run 并递增 attempt、租约崩溃预留保守计入及字幕会话仍可写；旧预算未知的迁移恢复失败关闭。正式 Electron 重启明确继续子旅程已覆盖；完整正式窗口矩阵与 J30 全矩阵仍未验证 |
+| J30-RECOVERY | 长请求续租→失租/退出→重开→明确继续或已取消；关闭 Agent 窗口不取消任务 | 真实scheduler/lease/storage/main/renderer；恢复列表项重新呈现冻结会话范围；旧owner/attempt回写、固定提示版本重建、自由问题提示缺失后固定原会话范围并要求重新提交、新请求受理时同事务清除旧标记、明确继续复用同一run/绑定并递增attempt、取消事实先核对、剩余预算不因重启清零、scheduler拒绝领取待继续run | 重启恢复、租约与预算子切片实现完成·尚未验收：既有焦点验证覆盖真实 SQLite/storage worker/service/preload/IPC 的恢复投影、显式继续复用 target run、新问题成功受理时旧待重新提交标记同事务清除及同键回执重放；AgentView harness 覆盖显式继续/重新输入、问题重输期间锁定会话范围与关闭窗口不取消。新增真实 scheduler/runner/ModelAccess/StorageGateway/StorageWorkerService/SQLite 旅程覆盖请求外发前预留、运行中续租、停止后重开数据库、旧 attempt 写入拒绝、明确继续复用 run 并递增 attempt、租约崩溃预留保守计入及字幕会话仍可写；旧预算未知的迁移恢复失败关闭。正式 Electron 重启明确继续子旅程已覆盖，完整正式窗口矩阵与 J30 全矩阵仍未验证 |
 | J30-DIAG | 活动/失败/取消→诊断→导出或取消保存 | 真实诊断服务/schema/main save adapter/滚动文件；不可写、容量/年龄清理、开始无结束事件、异常脱敏 | 记录与写入故障降级子切片实现完成·尚未验收：4.1/4.2 定向测试 82/82，`npm run test:core` 1076/1076。查询/导出子切片实现完成·尚未验收：4.3 定向 contract/main/runtime/UI/J30 旅程 73/73，`npm run verify:renderer` 返回码为 0；真实 SQLite 请求身份解析、分页、main-owned 保存对话框、原子导出及取消零写入均有覆盖。隐私及独立字幕子切片实现完成·尚未验收：4.4 定向测试 24/24，覆盖真实 runner provider 异常后的稳定失败、健康诊断查询/导出、隐私标记负扫描和字幕独立旅程。P1.5 关联 focus 149/149、`npm run test:core` 1081/1081、`npm run verify:renderer` 返回码为 0；诊断测试直接验证六个有效文件时分配新文件会淘汰最旧项，年龄/单文件大小/队列容量也有确定性断言。完整 Electron 窗口联测和 J30/J12 联合验收仍未验证 |
 | J30-INDEPENDENCE | 总结等待/不合作取消/日志故障期间启动停止字幕→历史/导出 | 真实SessionCoordinator、recorder、storage worker、SQLite、history；只替代声卡/provider/网络/系统边界 | 4.4 子切片实现完成·尚未验收：诊断写入不可用且非合作 provider 保持未结算期间，真实 `SessionCoordinator`/`SqliteSessionRecorder`/`StorageGateway`/`StorageWorkerService`/SQLite 创建并停止字幕会话；真实 `HistoryService` 完成列表、分页和原文导出。受控 runtime/provider 与声卡边界替身；导出正文仅进入临时目录，递归检查列举的音频扩展名均未发现文件。完整 J12/J30 旅程仍待联合验收 |
-| J31-SIZE | >15KB旧规模及4h/5h/6h输入→预检→执行或明确超界；旧版输入预检使用专用稳定错误码并证明零模型调用 | 真planner/能力绑定/runner/Loop/adapter；原文/序列/段数各减一/等于/加一、能力不足、配置竞态、transport上限 | 旧版预检子集实现完成·尚未验收：1589 段合成 SQLite 样本得到专用错误；S5 证明总结模型调用数不增加，J25 证明 renderer 错误/恢复文案及零工具调用；长输入未实现 |
+| J31-SIZE | >15KB旧规模及4h/5h/6h输入→预检→执行或明确超界；旧版输入预检使用专用稳定错误码并证明零模型调用 | 真planner/能力绑定/runner/Loop/adapter/storage/export；原文/序列/段数各减一/等于/加一、能力不足、配置竞态、transport上限；v1与qa.answer@1旧限制不变；v2动态prompt≤256 KiB、完整HTTP request≤512 KiB、单Loop≤180秒、每attempt≤512次实际模型请求；v2总attempt≤2，工具记录每attempt≤12且旧attempt保留。2026-09-29 轻量方案：窗口内直接总结按语义合同 2026-09-29 小节的计数方式派生单请求输入窗口与 8,192 输出额度，窗口边界按本文件末尾 review 修订：86,914 字节在模型输入能力 95,106/95,105 token 下分别接受/拒绝；173,827 字节在当前无 tokenizer 策略下拒绝；新建运行以 `summary.minutes@2` 表达，专用 `AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED` 覆盖 @1 与 @2 的输入预检且保持零模型调用证明 | 旧版预检子集实现完成·尚未验收：1589 段合成 SQLite 样本得到专用错误；S5 证明总结模型调用数不增加，J25 证明 renderer 错误/恢复文案及零工具调用；长输入未实现。2026-09-29 容量登记已实施：定向 `npm run test:focus` 覆盖容量派生窗口边界（模型输入能力 95,106/95,105 token）、173,827 字节合成会话预检、新建 `summary.minutes@2` 冻结/绑定与 preset 直建路径 64/64 通过；S5 目标旅程及正式 Electron J30-ELECTRON 2/2 复跑通过（含超限专用错误码文案与零模型调用），runtime/contracts/storage 关联回归 58/58。未验证范围：完整三条 lane、真实 DeepSeek 公网与实机采集；定向结果不构成 J31-SIZE 完整联合验收 |
 | J31-COVERAGE | 分页冻结raw→分块→完整范围证明 | 真适配器/SQLite/planner；Unicode/JSON转义/超长段/精修覆盖/分页删除变更、无缺口无重叠 | 已决定 |
 | J31-MERGE | 多层归并→一份纪要→来源和语义核查 | 真Loop/归并/schema/提交；中段失败、输出超限、两个结果装不下、末段修订前段、否定/待办、零部分产物 | 已决定；质量和覆盖分别断言 |
 | J31-BUDGET | 多节点/attempt共享预算→触线收束 | 真版本化预算/绑定；逐轴边界、usage缺失、旧attempt消耗、运行中改模型 | 已决定 |
 | J31-RESOURCE | 上沿输入下UI/字幕响应、取消、释放缓冲 | 真分页/序列化/调度；缓冲峰值、取消耗时、main事件循环影响；文本容量不替代采集长稳 | 已决定 |
 | J31-RECOVERY | 中断后同run/绑定新attempt整次重跑 | 真SQLite/计划digest/剩余预算；中间正文零持久、取消不复活、来源撤销、删除 | 已决定 |
-| J31-COMPAT | 既有库升级→旧结果/绑定/导出→新v2总结 | 真追加迁移、v1/v2 validator/导出/原始历史；旧SQL/checksum及导出字节不变、删除级联、其它recipe预算不变；5.1先验证 v1/v2 recipe 解析、十轴作用域、同一四字段 bind 输入及调用方预算字段拒绝 | 5.1 实现完成·尚未验收：recipe contract、十轴策略快照、真实 SQLite bind 与 v2 ToolAudit 关联 focus 52/52；`npm run test:core` 1084/1084（含 renderer 类型检查与构建）。迁移、导出、旧库升级及完整 J31 尚未验证 |
+| J31-COMPAT | 既有库升级→旧结果/绑定/导出→新v2总结 | 真追加迁移、v1/v2 validator/导出/原始历史；旧SQL/checksum及导出字节不变、删除级联、其它recipe预算不变；5.1验证 v1/v2 recipe 解析、十轴作用域、同一四字段 bind 输入及调用方预算字段拒绝；5.2验证 SQLite claim 保留冻结 recipeVersion、终态与导出按同版 validator 校验，renderer IPC 不接收 recipeVersion/预算且旧导出字节不变 | 5.1 实现完成·尚未验收：recipe contract、十轴策略快照、真实 SQLite bind 与 v2 ToolAudit 关联 focus 52/52；`npm run test:core` 1084/1084（含 renderer 类型检查与构建）。迁移、导出、旧库升级及完整 J31 尚未验证 |
 
 2026-09-27 P1受理子切片：`formal_agent_requests` 的幂等受理、记忆参考偏好冻结、原始输入身份冻结、排队目标取消、会话删除收据、run 输入身份写屏障、无输入身份的 v15 活动行升级收束及 v14→v16 回滚/升级已有定向和 core 证据；服务层 J30-ACCEPT 真实 SQLite 旅程覆盖未知回执重放及取消写失败重试，状态为**实现完成·尚未验收**。完整 J30-ACCEPT 仍待 main/preload/renderer 接线和正式窗口旅程。
 
@@ -68,8 +202,8 @@ P0 与 P1 各子切片为**实现完成·尚未验收**；P1.5 的关联确定�
 
 | 旅程 | 用户路径与可观察结果 | 内部真实模块与失败边界 | 当前证据 |
 |---|---|---|---|
-| J28 | SEM-F37：多次合格终态会话 → 后台摄取 → 个人记忆综合视图 → “我的记忆”查看来源 → 明确纠正/忘记/删除 → 重建；补充显式日期范围历史整理的预览/提交/取消。 | 真实 recorder、个人上下文模块、scheduler、Agent Loop、storage worker/SQLite、settings renderer/preload/main；只替代 provider/网络等外部边界。覆盖重复事件/重启/旧 revision、冲突/到期未确认、覆盖省略、预算、休眠新边界、旧来源 suppression、删除后当前及上版失效、模型失败不恢复受撤销正文、无变更零模型调用、字幕独立性。 | 已决定（方向）；无本增量实现证据。J21 既有摄取证据不能替代综合视图旅程。 |
-| J29 | SEM-F38：工具条或字幕历史 → 明确会话与可见打开反馈 → 全局总结参考设置（首次缺失默认开启）→ 生成总结 → 结果/历史/导出；明确选定内容记住另行写入。 | 真实 toolbar/history/agent/settings renderer、preload、main 窗口、ConfigStore、AgentRunService、Personal Context、Loop、SQLite；只替代 provider/系统故障边界。覆盖窗口首开/重复点击/关闭重开/加载失败、监听中/空正文/缺模型、四种开关/重启/旧 revision、无记忆 payload 负证据、读取失败明确降级、summary.minutes 自动信号零写入、撤销与迟到输出、取消/重试、旧导出不变和失败后字幕新会话。 | 已决定；实现完成·尚未验收。新增 `session-summary-j29-memory-journey.test.js` 定向覆盖四种设置组合、真实 SQLite 冻结策略、provider 边界标记、引用计数与重启持久化；完整窗口/实机门禁仍待联合验收。 |
+| J28 | SEM-F37：正式提问→个人记忆候选→确认→相关会话→后台摄取/双侧关联→个人记忆综合视图→“我的记忆”查看来源→明确纠正/忘记/删除→重建。显式日期范围历史整理后续单独实施。 | 真实 recorder、个人上下文模块、scheduler、Agent Loop、storage worker/SQLite、settings renderer/preload/main；只替代 provider/网络等外部边界。覆盖重复事件/重启/旧 revision、冲突/到期未确认、覆盖省略、预算、休眠新边界、旧来源 suppression、删除后当前及上版失效、模型失败不恢复受撤销正文、无变更零模型调用、字幕独立性。 | 实现完成·尚未验收；2026-10-01的J28增量包含真实Loop/调度器/SQLite、renderer/preload/main旅程与失败边界。见[验证记录](validation/personal-memory-optimization-2026-10-01.md)；真实 provider 内容质量与 DWM 窗口行为仍需实机报告。 |
+| J29 | SEM-F38：工具条或字幕历史 → 明确会话与可见打开反馈 → 全局总结参考设置（首次缺失默认开启）→ 生成总结 → 结果/历史/导出；明确选定内容记住另行写入。 | 真实 toolbar/history/agent/settings renderer、preload、main 窗口、ConfigStore、AgentRunService、Personal Context、Loop、SQLite；只替代 provider/系统故障边界。覆盖窗口首开/重复点击/关闭重开/加载失败、监听中/空正文/缺模型、四种开关/重启/旧 revision、无记忆 payload 负证据、读取失败明确降级、summary.minutes 自动信号零写入、撤销与迟到输出、取消/重试、旧导出不变和失败后字幕新会话。 | 已决定；实现完成·尚未验收。新增 `session-summary-j29-memory-journey.test.js` 定向覆盖四种设置组合、真实 SQLite 冻结策略、provider 边界标记、引用计数与重启持久化；完整窗口/实机门禁仍待联合验收。2026-09-29 窗口内直接总结容量增量已决定（语义合同 2026-09-29 小节），对应生成场景待实施。 |
 
 实现顺序与逐片验证见[任务清单](../openspec/changes/clarify-memory-and-session-summary/tasks.md)，需求见[共同提案](../openspec/changes/clarify-memory-and-session-summary/proposal.md)。纯文档只核对术语/语义/链接；实现用既有 core/integration/evidence 目录，不新增测试 lane。真实公网、Windows 窗口焦点与内容质量另留实机证据；不因 OpenSpec 文件齐备晋级门禁。
 
@@ -208,12 +342,12 @@ Hosted CI 不声称验证真实 WASAPI/回环、物理麦克风、DWM 窗口行�
 | J17 | 窗口抓取与前台层级：用户在解锁字幕卡上从多个非工具条点位主键按住后立即连续拖动 → 原地按下/松开 bounds 不变 → 工具条在 quiet/attention/会话状态通知等宽度变化中只排除真实可见轮廓，并与 `8px` 拉伸带之间保持至少 `8 DIP` 普通拖动区间；用户在工具条上边、右边、相邻普通拖动区及靠近工具条的真实拉伸带反复原地点击或沿相关轴 `1–3 DIP` 轻微抖动时字幕窗宽高不变，真实拉伸只在相关轴达到 `4 DIP` 后启动；字幕窗或工具条任一窗口收到主指针结束都终止同代活动手势；字幕未锁定时握把不占布局且 renderer/main 都拒绝工具条拖动，组合只能从字幕卡普通拖动区移动；字幕锁定后两列三行六点握把才进入既有 `24 × 30 DIP` 命中盒并只移动工具条，图标替换不改变锁定态拖动时机、窗口 bounds 或实际轮廓 → `20 DIP` 透明外边距继续穿透、工具条轮廓先接管、轮廓外的 `8px` 内侧拉伸带再优先于普通拖动 → 锁定后字幕窗恒穿透；应用在任一窗口手势中最小化时取消旧手势并推进一次窗口交互代次，任务栏或第二实例恢复事务再推进一次，并在该恢复事务内以同一新代次执行 `suspend → resume` 与当前指针命中判定；下一次新的主键按下必须产生拖动意图且旧代次不得改变命中或 bounds；打开设置或字幕历史后，聚焦窗口临时压过字幕且其 `48px` 标题栏可拖、交互控件和正文不可拖，失焦后恢复普通层级；两窗在深色/浅色/高对比下共用中性标题栏层次 | 字幕 MVP PR 阻断；确定性层使用真实 main、四 renderer、preload、IPC access policy、BrowserWindow 和受控操作系统指针边界，覆盖至少 20 轮工具条上边/右边轮廓、相邻普通拖动区及靠近工具条的真实拉伸带按下松开；真实拉伸带覆盖相关轴 `1–3 DIP` 不发 `resizeStart`、`4 DIP` 才发起，以及字幕窗发起后由工具条收到结束仍清除主进程 timer；并覆盖手动拉伸或字幕卡组合拖动结束后的同代当前指针重命中、首帧/重载/非法或陈旧工具条矩形回落到最坏尺寸、有效同代矩形立即收缩、未锁定握把移出布局/轮廓/命中且 renderer/main 双重拒绝、锁定后六点握把的按下即拖/零位移/命中盒/轮廓不变、切锁结束旧手势并刷新动态轮廓、全部取消路径、缺失 `pointerup/pointercancel/blur` 时的生命周期手势重置、最小化与恢复各推进一次代次、恢复同代 `suspend → resume`、静止指针的 renderer 命中结果、旧 rAF/IPC 拒绝、锁定穿透及设置/字幕历史焦点往返。确定性层只断言原生穿透 API 的调用意图；真实任务栏恢复、Windows 原生穿透、恢复后首次鼠标拖动连续性、未锁定握把不可见且操作不改变字幕窗宽高/停靠、锁定握把可移动工具条、DWM z-order、100/125/150/200% DPI 和异缩放双屏另由 I2 `dwm-drag` schema-v6 可见实机观察。结构化报告不得包含字幕正文、本地绝对路径、设备名、指针坐标或绝对单调时刻。 | 既有 J17 旅程与最小化/恢复窗口交互代次、静止指针命中、过期意图拒绝及 reload/crash 降级已达到联合验收完成。本轮拉伸消歧、跨原生窗口手势收尾、固定工具条视口、动态轮廓重命中与有界原生几何纠正增量已经由确定性联合旅程及 schema-v7 产品壳覆盖，达到联合验收完成。工具条握把可见性增量为实现完成·尚未验收，确定性 UI/主进程/联合旅程与 schema-v8 产品壳协议已覆盖。I2 `dwm-drag` schema-v6 入口与 12 组合矩阵为实现完成·尚未验收，尚无当前候选实机证据。 |
 | J18 | Fluent 2 桌面界面重构：应用从生产 Vite bundle 打开字幕窗、工具条、设置窗与字幕历史 → 四窗共享语义 token 与 Fluent System Icons → 深色、浅色与自动主题不改变工具条固定深色半透明表面、浅色普通按钮、六点握把和 phase 色调，字幕背景自定义色不进入工具条，工具条表面透明度仍可独立调整 → 用户通过键盘和指针操作现有信息架构 → 设置外观立即在本窗预览、命令 pending/失败/权威回落明确可见 → 字幕历史保持权威原始转写默认、同会话版本选择、分页和导出语义 → 临时字幕高频更新只修改必要节点且不改变 bounds/命中 → renderer reload 从权威快照恢复 2026-09-13 输入控件增量：设置页文本（含无 type）、密码、数字、URL、搜索、邮箱、select/textarea 的主题、间距、焦点、禁用/只读/已有失败及长值窄窗一致性，保持 color/range/开关专用语义。 | 字幕 MVP PR 阻断；确定性层使用 Vite 生产 bundle、真实 React 设置/历史 renderer、真实直接 DOM 字幕/工具条 renderer、preload、IPC access policy、RuntimeSnapshot/CommandResult、字幕历史服务和 BrowserWindow。至少覆盖四窗首帧无报错、深/浅/自动主题工具条计算样式恒等、字幕自定义色隔离、工具条透明度、系统高对比、键盘焦点、reduced motion、开发 URL fail closed、设置失败回落、历史读取失败重试及产品 bundle 身份。真实 Mica/DWM/DPI/异缩放由 J15a 与 I2 `dwm-drag` 补充，报告只保留枚举、布尔、计数、相对时长和哈希。SEM-F23 的静态视觉不变量另由 renderer 样式守卫子边界承担，它按目录扫描全部 renderer 样式，新增 renderer 目录出现即被覆盖。 复用正式 J25 设置旅程检查生产计算样式、Tab/pending/失败恢复；样式守卫仅证明静态边界，人工主题/缩放观察单列。见 [spec](../openspec/changes/fix-settings-input-styles/specs/settings-input-appearance/spec.md) 与 [TODO](../openspec/changes/fix-settings-input-styles/tasks.md)。 | 既有 J18 生产 renderer、共享 token/图标、设置/历史和 schema-v6 产品壳旅程已达到联合验收完成；本次工具条主题独立配色与外观配置隔离增量由 UI 定向测试及绑定当前产品载荷的 schema-v6 产品壳覆盖，已达到联合验收完成。真实 Mica 合成、DWM、DPI、异缩放与连续鼠标观测仍为实现完成·尚未验收，继续沿 J15a/I2。2026-08-31 新增的 renderer 样式守卫子边界与 `src/history/history.css` 调色板直引修正为实现完成·尚未验收。 2026-09-13 输入控件增量为已决定：仅规划，所有实现 TODO 未执行，不继承既有联合验收状态。 |
 | J19 | Windows 任务栏与应用生命周期：普通 `npm start` 启动后，用户始终能从工具条对应的任务栏主入口找到应用 → 打开设置与字幕历史并在字幕窗或工具条手势尚未收到 `pointerup/pointercancel/blur` 时最小化主窗口，最小化事务推进一次窗口交互代次，字幕覆盖窗和两辅助窗口离开桌面、旧手势被取消但当前会话/状态/bounds 不变 → 从任务栏或第二实例恢复同一窗口集合，恢复事务再推进一次，并在该事务内以同一新代次执行 `suspend → resume` 与当前指针命中判定，`resume` 首次命中确认不等待 rAF，下一次新按下产生拖动意图且旧代次无效 → 单独关闭设置/字幕历史时应用和主任务栏入口继续 → 点击工具条“退出”或关闭任务栏主窗口后，SEM-F12 退出序列收束全部窗口、采集、worker 与 SQLite，exact-child supervisor 自然返回，随后可再次启动 | 字幕 MVP PR 阻断；确定性层使用真实 main、四 renderer/preload、IPC、BrowserWindow、产品生命周期与 exact-child supervisor，只替代真人任务栏点击/DWM。同步不变量单独断言 `resume` 首次命中确认不等待 rAF；局部失败矩阵注入最小化、恢复、同步确认超时、指针坐标不可用、原生穿透设置失败、renderer reload、过期窗口交互代次和退出异常，要求固定 `role/code`、穿透或显式实心命中降级、主入口可恢复或非零退出，绝不误报 clean exit。确定性产品壳只证明手势重置、代次时序与校验、renderer 命中结果、IPC 意图及主进程状态，不证明 Windows 实际应用原生穿透或真实鼠标拖动；新增实机结论全部由 I2 `dwm-drag` schema-v6 补充。 | 既有 schema-v6/schema-v7/schema-v8 产品壳、J17/J19 联合旅程及 exact-child 证据已覆盖窗口交互代次，达到联合验收完成。本轮 caption/toolbar `resume` 同步命中及恢复后静止指针直接按下的工具条附近首次拖动稳定性增量已由真实 renderer 联合旅程覆盖，达到联合验收完成；I2 `dwm-drag` schema-v6 为实现完成·尚未验收，当前候选实机证据尚未取得。 |
-| J20 | 权威识别策略：用户在会话前独立选择纯本地权威识别或云端主力识别与本地降级 → 会话开始冻结策略 → 纯本地路径继续满足 J16；云端路径只运行云端权威流且本地核心资源保持就绪 → 普通延迟波动不降级，明确断开、稳定错误或连接存活检测失败时才把有界内存 PCM 交给本地链路并在同一会话内单向降级 → 停止后仍只有一个首次稳定转写事实 | 云识别阶段 PR 阻断；真实 capture、SessionCoordinator、provider adapter、本地 recognizer、SQLite 与历史协作，仅云网络/provider 使用契约替身。覆盖活动会话拒绝换策略、云端已有 final 与当前未定稿段、断网前后 sequence/session 连续、无自动切回及 PCM/正文隐私负扫描；真实 provider、公网和物理来源仍归 I2/I4 | 已决定；**整条后置，不阻断正式 Agent 首版**。原「确认关键词」半边已按 [ADR 0017](adr/0017-retire-confirmed-recognition-terms.md) 取消——个人上下文中的任何条目都不影响 ASR，`recognition_*` 四张 v3 表转为废案不写入。本行已退出 SEM-T15 门禁清单，尚无实现证据。 |
-| J21 | 个人上下文摄取与管理：终态会话确定完整提交水位 → 默认只创建一个个人上下文摄取工作 → 真实个人上下文模块把固定快照分流为会话经历记录、个人记忆候选或丢弃并原子提交来源/revision/lifecycle；正式 Agent 交互只把提示、明确编辑、接受、拒绝、“记住”和“忘记”作为交互记忆信号再次摄取，普通点击、停留、滚动、浏览、调试聊天和未采纳模型输出保持零记录。无说话人身份的 `loopback` 默认只形成会话/项目范围；明确开启更积极的全局偏好策略后才允许低权重全局候选。`resolve` 按选区/会话/日期/项目与预算返回个人上下文包，`manage` 覆盖查看、修改、删除、休眠与 suppression；关闭/重新开启个人记忆建立新边界且不补处理关闭期间来源 | 正式 Agent/记忆 PR 阻断；真实 storage worker、SQLite migration/job、个人上下文模块、Agent Bar/历史/设置 renderer，只在 Agent 模型 provider 外部 seam 使用契约替身。覆盖 provider 失败重试、重复唤醒/回复丢失幂等、来源删除/tombstone、输入版本变化、整场完整精修稿约束、冲突 revision、删除 suppression、被动行为/调试聊天/未采纳输出负矩阵、`loopback` 默认/可选策略、关闭休眠/重新开启保留、范围/候选/条目/字节预算与整条不截断。无图/向量依赖并执行隐私负扫描 | 已决定；旧 memory schema、证据、revision、suppression、删除和任务恢复只作为迁移素材。旧“三项自动任务”和 `MemoryReader` exact query 不再代表 J21；S1 三接口、会话经历记录与管理合同已有 Core 子边界，正式交互信号与管理 UI 的完整 J21 仍待 S5 汇合；当前代码事实见执行计划 §5。 |
+| J20 | 权威识别策略：用户在会话前独立选择纯本地权威识别或云端主力识别与本地降级 → 会话开始冻结策略 → 纯本地路径继续满足 J16；云端路径只运行云端权威流，本地核心资源有磁盘就绪证明但模型、VAD 和原生推理运行时不常驻 → 普通延迟波动不降级，明确断开、稳定错误或连接存活检测失败时才自动创建独立本地 worker 冷加载，再按提交切点把有界内存 PCM 交给本地链路并在同一会话内单向降级 → 停止后仍只有一个首次稳定转写事实 | 云识别阶段 PR 阻断；真实 capture、SessionCoordinator、provider adapter、本地 recognizer、SQLite 与历史协作，仅云网络/provider 使用契约替身。覆盖活动会话拒绝换策略、云端已有 final 与当前未定稿段、断网前后 sequence/session 连续、无自动切回、加载期间连续留存、30 秒接管期限、60 秒留存限界、停止/退出取消接管、迟到 configured 不复活及 PCM/正文隐私负扫描；真实 provider、公网和物理来源仍归 I2/I4 | 实现完成·尚未验收；**不阻断正式 Agent 首版**。原「确认关键词」半边已按 [ADR 0017](adr/0017-retire-confirmed-recognition-terms.md) 取消——个人上下文中的任何条目都不影响 ASR，`recognition_*` 四张 v3 表转为废案不写入。本行已退出 SEM-T15 门禁清单，云端资源与自动冷加载增量见 [实施记录](validation/cloud-fallback-memory-2026-09-30.md)；真实云端、物理来源与 I2/I3/I4 仍另验。 |
+| J21 | 个人上下文摄取与管理：终态会话确定完整提交水位 → 默认只创建一个个人上下文摄取工作 → 真实个人上下文模块把固定快照分流为会话经历记录、个人记忆候选或丢弃并原子提交来源/revision/lifecycle；正式 Agent 交互只把提示、明确编辑、接受、拒绝、“记住”和“忘记”作为交互记忆信号再次摄取，普通点击、停留、滚动、浏览、调试聊天和未采纳模型输出保持零记录。会话候选只在会话/项目范围；mic/loopback均不证明本人身份。正式提问→候选→确认/纠正→已确认信息与后续会话等值关联→双侧来源撤销，详见2026-10-01增量。`resolve` 按选区/会话/日期/项目与预算返回个人上下文包，`manage` 覆盖查看、修改、删除、休眠与 suppression；关闭/重新开启个人记忆建立新边界且不补处理关闭期间来源 | 正式 Agent/记忆 PR 阻断；真实 storage worker、SQLite migration/job、个人上下文模块、Agent Bar/历史/设置 renderer，只在 Agent 模型 provider 外部 seam 使用契约替身。覆盖 provider 失败重试、重复唤醒/回复丢失幂等、来源删除/tombstone、输入版本变化、整场完整精修稿约束、冲突 revision、删除 suppression、被动行为/调试聊天/未采纳输出负矩阵、无说话人身份与旧全局候选复核、关闭休眠/重新开启保留、范围/候选/条目/字节预算与整条不截断。无图/向量依赖并执行隐私负扫描 | 实现完成·尚未验收；2026-10-01 提问候选→确认→关联→来源查看→纠正/忘记→SQLite 重开，包含真实 renderer/preload/main、个人上下文、Loop/调度器和存储，见[验证记录](validation/personal-memory-optimization-2026-10-01.md)。旧“三项自动任务”和 MemoryReader exact query 不再代表 J21；真实 provider 分类/关联质量与实机边界仍待验收。 |
 | J22 | Agent Bar 与固定 recipe：用户选择范围并提交意图，执行宿主按模型优先加规则兜底两层机制收敛到已登记 recipe（两条路径与改选各自可观察），个人上下文模块冻结有界输入，模型接入层映射四用途并冻结模型运行绑定；所有 recipe 走同一个有界 Agent Loop，轮次上限与工具授权由登记表静态给出，运行期无形态判定、无升级理由。终态历史保留时间、范围/模型身份、`ModelUsageV1`、相对时长、最终结果和完整工具调用记录；提示在信号提取后清理，reasoning/provider 事件和工具外中间 assistant 文本零持久化。 | 正式 Agent UI/执行宿主 PR 阻断；真实 renderer、preload/exact IPC、个人上下文模块、模型接入层、执行宿主、job runner 与 SQLite，只替代外部 provider。覆盖范围、recipe Schema、三档轮次上限与工具授权（含工具授权为空的 recipe 必须留下空工具调用记录、轮次上限为 1 的 recipe 不得进入第二轮）、十轴预算、provider token 与用量未知两种情况、缓存事实、工具全序、多 attempt、取消、隐私负扫描、reload 与字幕系统独立边界；不出现费用或金额展示。 | 已决定；SEM-F29/J23 只保留历史资格，S3/S4 执行、存储与工具已有局部实现证据；S5 窗口/IPC 为占位接线，完整 Agent Bar 与交互旅程仍待汇合。 |
 | J23 | 隔离 Agent 内核历史资格：旧开发应用曾以独立 userData、renderer/preload、Agent/storage utility、SQLite 与 Pi 验证受控工具事件、执行预览、取消、重试、恢复、幂等、调用级凭据和隐私边界。重设计只把这些结果作为迁移审计输入；旧调试聊天、PluginHost、专用子 Agent 与产品外壳均可删除，不能成为个人上下文或正式 Agent 交互来源 | 历史回归，不阻断新正式 Agent；若删除旧入口，只把仍由 J13/J21/J22/J24 需要的进程、凭据、恢复和负扫描场景迁到对应新旅程，不保留旧 UI 或插件测试来凑门禁 | 联合验收完成：J23-B01–B16 只在旧隔离范围内成立；不提升 J13/J21/J22/J24，也不限制新模块边界。 |
 | J24 | 正式 Agent 正常使用边界组合：Agent 处理资格、默认零报告、报告自动呈现偏好、无未读状态、选区/会话/日期/项目范围、空/短/超上下文分别得到显式资格、完整生成或确定性分块；个人上下文摄取与用户请求任务冻结各自来源引用/水位/digest/记忆 revision/recipe/模型用途/模型运行绑定/预算并独立成败。重复停止、启动扫描、worker replacement、重复呈现、人工双击及 claim/结果/管理回复丢失保持幂等；设置与 claim 两种 FIFO 顺序都使用最新策略，replacement 未重放策略前不领取或解析个人上下文。退出、取消、provider 短暂/终态故障、个人记忆关闭/重开、会话 tombstone、本地资源让行、多会话排队、recipe 故障、Agent Bar/renderer reload 均从 SQLite 权威状态恢复或显式降级且不影响字幕系统。取消是协程式终态：请求取消后当前工具调用与模型请求在下一个可观察检查点收束，已发生的 attempt 与工具调用记录保留，交互标记取消终态理由并同样可导出，不留部分产物。范围解析以会话内粒度剔除未定稿内容并写入省略标记 `not_committed_tail`；只有 `session_not_terminal`、`no_committed_transcript` 或 `budget` 才整场排除。预算耗尽使用 `AGENT_BUDGET_EXCEEDED` | 正式 Agent PR 阻断；使用真实 storage worker、SQLite migration/job、个人上下文模块、Agent 执行宿主、Agent 模型接入层、job runner、正式 preload/exact IPC 与 Agent Bar/管理 renderer，只在外部 provider、云网络、系统凭据、声卡和系统权限使用受控替身。必须证明凭据不进入非 Agent 子进程/SQLite/日志/报告，exact provider origin 拒绝 redirect，任务领取携带当前固定 recipe 闭集；长输入覆盖全部来源且不提交部分结果，`refined` 只接受整场完整精修稿；对产物/job、会话经历记录、个人记忆 current revision、交互信号、工具调用记录和报告呈现 receipt 做错配注入，证明完整 tool args/result 只持久化于交互审计 SQLite 并经受限 UI 读取，且与执行输入/返回逐字段一致，重试后旧 attempt 记录仍完整可读，省略标记同时出现在结果的 `gaps`/`openQuestions` 与导出中，并对原始提示、reasoning、provider 事件、凭据、现场音频、音频路径和绝对路径执行 SEM-F14 隐私负扫描。不得用旧 `agent-mvp-todo.md` 矩阵、单一 DeepSeek 配置、文档关键词正则或重复低层测试冒充新旅程 | 已决定；旧 D3–D15 组合矩阵只作为任务恢复、凭据、utility 和幂等迁移素材。新个人上下文模块、固定 recipe、Agent Bar、最小交互历史、完整工具调用记录、默认零报告与可选自动呈现的完整 J24 尚无实现证据。 |
-| J25 | OpenAI-compatible 配置与模型效率比较：设置只向用户展示模型配置档案及默认、信息提取、摘要与总结、分析与规划四用途。v6 持久化初始化只提供可修改、可删除的 DeepSeek 空 model provider 模板；首次向导额外展示 DeepSeek、OpenAI、通义千问（北京）三个未提交的只读预设草稿；用户明确提交 API base URL、model ID、六字段能力、用途和每档案独立凭据后，Agent 模型接入层按精确 `(profileId, modelId)` 冻结不可变模型运行绑定。同一来源可由用户主动以不同模型创建新 `runId`，历史比较模型身份、input/output token（`usageReporting=false` 或 provider 未返回时为用量未知，不估算、不显示数字）、可派生缓存命中率与相对时长，不计算或展示金额。九条 configure 命令全部使用统一 `expectedRevision`，失败零写入且只返回两个 `MODEL_CONFIG_*` 错误；用途回落显式、provider 失败不自动切换、删除/修改档案只影响未来 binding、旧 slot 缺失稳定收束为 `AGENT_PROVIDER_AUTH_FAILED`。remote pull 仅返回瞬时建议和六值状态，零写入、零 revision、零 changed；模板建议不能自动写 model。 2026-09-13 文案和信息顺序增量：展示别名映射、连接→密钥→模型确认→默认用途、新建/专用用途折叠及高级字段错误展开；默认配置充分不冒充网络或推理成功。 | 正式 Agent 模型接入层 PR 阻断；S2 Core 保留真实 v6、配置 store、每档案 vault、三接口、main exact IPC 与真实 preload facade，只在 provider/network/safeStorage 外部边界使用替身。覆盖模板空 model、至少两个用户档案/model、四用途、九命令、revision 冲突、session-only 重启、origin/redirect、鉴权隔离、不可变 binding、token/cache 归一化、reload、隐私负扫描和生产 fauxProvider 不可达；正式设置 renderer/preload → Agent Bar preload/main → SQLite/history renderer 的最小链路由 `test/integration/agent-redesign-j25-formal-settings-journey.test.js` 以受控 loopback provider 覆盖；真实公网 provider、系统凭据和正式模型比较实机证据仍待门禁。 同一正式设置旅程补首次空模板、自定义配置、同服务多模型、同服务商独立配置、建议六字段确认且零自动写入、默认/专用用途、目录失败手填、revision 冲突及 session_only 重启。保留真实设置→Agent Bar→SQLite/history。见 [spec](../openspec/changes/simplify-agent-model-settings/specs/agent-model-settings-guidance/spec.md) 与 [TODO](../openspec/changes/simplify-agent-model-settings/tasks.md)。 | 已决定；S2 Core 即使三条 lane 返回 0，状态最多为「实现完成·尚未验收」，不提升完整 J25。 2026-09-13 展示增量状态为实现完成·尚未验收：设置 renderer、三项版本化服务预设、独立模型测试和竞态/隐私边界已有定向证据；完整 J25、真实公网 provider、系统凭据、正式包和实机范围仍未形成新验收证据。 |
+| J25 | OpenAI-compatible 配置与模型效率比较：设置只向用户展示模型配置档案及默认、信息提取、摘要与总结、分析与规划四用途。v6 持久化初始化只提供可修改、可删除的 DeepSeek 空 model provider 模板；首次向导额外展示 DeepSeek、OpenAI、通义千问（北京）三个未提交的只读预设草稿；用户明确提交 API base URL、model ID、六字段能力、用途和每档案独立凭据后，Agent 模型接入层按精确 `(profileId, modelId)` 冻结不可变模型运行绑定。同一来源可由用户主动以不同模型创建新 `runId`，历史比较模型身份、input/output token（`usageReporting=false` 或 provider 未返回时为用量未知，不估算、不显示数字）、可派生缓存命中率与相对时长，不计算或展示金额。九条 configure 命令全部使用统一 `expectedRevision`，失败零写入且只返回两个 `MODEL_CONFIG_*` 错误；用途回落显式、provider 失败不自动切换、删除/修改档案只影响未来 binding、旧 slot 缺失稳定收束为 `AGENT_PROVIDER_AUTH_FAILED`。remote pull 仅返回瞬时建议和六值状态，零写入、零 revision、零 changed；模板建议不能自动写 model。 2026-09-13 文案和信息顺序增量：展示别名映射、连接→密钥→模型确认→默认用途、新建/专用用途折叠及高级字段错误展开；默认配置充分不冒充网络或推理成功。 | 正式 Agent 模型接入层 PR 阻断；S2 Core 保留真实 v6、配置 store、每档案 vault、三接口、main exact IPC 与真实 preload facade，只在 provider/network/safeStorage 外部边界使用替身。覆盖模板空 model、至少两个用户档案/model、四用途、九命令、revision 冲突、session-only 重启、origin/redirect、鉴权隔离、不可变 binding、token/cache 归一化、reload、隐私负扫描和生产 fauxProvider 不可达；正式设置 renderer/preload → Agent Bar preload/main → SQLite/history renderer 的最小链路由 `test/integration/agent-redesign-j25-formal-settings-journey.test.js` 以受控 loopback provider 覆盖；真实公网 provider、系统凭据和正式模型比较实机证据仍待门禁。 同一正式设置旅程补首次空模板、自定义配置、同服务多模型、同服务商独立配置、建议六字段确认且零自动写入、默认/专用用途、目录失败手填、revision 冲突及 session_only 重启。保留真实设置→Agent Bar→SQLite/history。见 [spec](../openspec/changes/simplify-agent-model-settings/specs/agent-model-settings-guidance/spec.md) 与 [TODO](../openspec/changes/simplify-agent-model-settings/tasks.md)。 | 已决定；S2 Core 即使三条 lane 返回 0，状态最多为「实现完成·尚未验收」，不提升完整 J25。 2026-09-13 展示增量状态为实现完成·尚未验收：设置 renderer、三项版本化服务预设、独立模型测试和竞态/隐私边界已有定向证据；完整 J25、真实公网 provider、系统凭据、正式包和实机范围仍未形成新验收证据。2026-09-29 明确：模型能力配置不被运行期输出额度派生改写；81920 等大输出能力不得直接成为请求额度，单次请求按 8,192 目标与模型能力、剩余输出预算、上下文余量取小值。 |
 
 > **J25 配置失败回执增量（2026-09-19）**：正式设置旅程还必须覆盖无凭据档案提交非法连接更新。存储拒绝时，真实 renderer→preload→main→ModelAccessRuntime→storage worker→SQLite 链路必须返回失败，配置 revision 与权威档案不变，编辑内容保留且不广播成功 changed；该场景不能由凭据为空推断配置已提交。
 
@@ -473,6 +607,8 @@ schema-v5 child 把冻结字幕可见延迟与诊断分段明确分离。唯一�
 
 ### 2026-09-21 J20 NLS 首期旅程登记（已决定）
 
+2026-09-30 J20 云端资源与自动冷加载增量（SEM-F06/F12/F14/F17/F21，已决定）：真实 worker 配置云端分支时拒绝任何本地模型/VAD/native require，并且运行期云端故障才创建第二个本地 worker。跨真实 adapter/router/coordinator/worker/SQLite/历史/runtime-view 验证冷加载期间继续接收音频，已提交切点后有序消费、进度可重新读取、模型及端口就绪才改变实际 provider、迟到云端结果拒绝、下一云端会话不保留本地 worker。覆盖配置失败、30 秒接管期限、60 秒留存耗尽、缺失切点、本地端口失效、冷加载时停止/退出及迟到 configured；精确等待两进程退出，首次稳定转写不被重识别，进度不持久化。替身仅在 Electron 进程/端口、声卡和云网络边界；结构模式不证明真实 ASR。本次定向验证之外，I2/I3 另验证真实模型冷加载、追赶速度、两个来源及内存趋势。
+
 凭据删除边界注入权限失败，断言保存返回清理未收束、Token 失效、新识别拒绝及重启恢复日志清理；损坏配置独立恢复则断言原文件保留并明确披露。
 
 恢复负向矩阵：损坏 settings/凭据 journal 后应用配置服务可构造且显示 loadError，恢复前 freeze 拒绝、用户明确保存纯本地后恢复，原损坏文件保留；持久凭据转进程内凭据的提交删除与失败回滚；启动前零 PCM；鉴权/项目/签名时钟分类及 SentenceEnd.status=0；保存失败后凭据输入已清空的明确提示。
@@ -499,3 +635,44 @@ J20 协议子矩阵还须明确断言：TranscriptionStarted 前零 PCM、StopTr
 2026-09-28 J30-ELECTRON 收尾增量（SEM-F38/F40、SEM-T01/T02/T04、J30-RECOVERY/J30-ELECTRON）：正式 Electron 定向旅程 2/2；生产 Agent Bar、main/preload/IPC、scheduler、runner、Model Access、storage worker 与 SQLite 覆盖正式取消期限、终态通知丢失后的状态校准、诊断查询/导出及隐私负扫描，并新增真实独立进程重启后明确继续同一 request/run，用户操作前没有 provider 请求；关闭 Agent 窗口不发送取消，挂起请求的 IPC snapshot 未报告分块进展。8.2 仍缺正式 UI 终态竞争、取消落库失败、失租屏障及自由问题重新提交覆盖；8.3 正式 Electron 受控麦克风启动返回 `ADAPTER_START_FAILED`，字幕独立性服务级旅程未替代此缺失矩阵。本次失败原型不计通过，J30/J12 联合验收与 P1 状态仍为实现完成·尚未验收。
 
 2026-09-28 当前 revision 回归（SEM-T03/J9-CI/J30/J12）：`npm test` renderer 类型检查/生产构建通过，core 1084/1084，integration 71/72，唯一失败仍是 J18 Vite 开发态 Electron 首次启动退出码 1；当前宿主日志出现 GPU shared context 创建失败。单独 `npm run test:evidence` 为 246/249，2 项 I3 provenance 断言因 `productPayloadSha256` 与当前工作树内容不一致而失败，1 项按设计跳过。三条 lane 未全部通过，不提升至「联合验收完成」，P1 保持「实现完成·尚未验收」。
+
+### 2026-09-29 容量 review 修订（已决定）
+
+SEM-F39/F40、J31-SIZE：撤销字节÷2的窗口证明；以86,914/86,913字节验证95,106/95,105输入能力边界，173,827字节在当前无tokenizer策略下拒绝且零模型调用；小窗口零容量沿专用错误与字节指标收束。SEM-T04、J30-RECOVERY：断言失败也必须停止scheduler并清理诊断，注入失败应自然退出。此前64/64与Electron2/2仅为旧计数策略及既有旅程证据，不证明新增窗口成功链路。
+
+修订实现完成·尚未验收：`npm run test:focus -- test/contracts/budget-axes-s3.test.js test/runtime/formal-agent-run-runner.test.js test/integration/session-summary-budget-recovery-journey.test.js test/integration/session-summary-j29-memory-journey.test.js test/integration/agent-redesign-s5-target-journey.test.js` 为32/32（先运行新增断言得到5项失败，再修复）。预算恢复旅程以内存副本在首次外发后注入断言失败，8秒上限内自然退出码1，无超时；此前同一探针超时。未验证本次revision完整三条lane、Electron、公网模型与实机；任务2–4继续待实施。
+
+2026-09-29 窗口内直接总结请求合同与结果收束（SEM-F28/F33/F36/F38/F39/F40、SEM-T04/T10、J25/J29/J30/J31-SIZE；任务2–3，实现完成·尚未验收）：先红测后实现。请求合同侧新增 `src/agent/contracts/recipe-output-directives.js`（按 recipe/version 的单行 JSON 输出说明与经 exact validator 校验的示例，经 AgentLoopExecutor 传入 systemPrompt；intent.route 保留路由闭集，context.ingest 保留独立 evidence 结构），runner→Loop→Model Access→adapter 接通宿主内部 `requestCapacity`（仅 `summary.minutes@2` 携带，缺额 fail closed 为 `AGENT_REQUEST_INVALID`），adapter 每次外发前经 `deriveSummaryMinutesV2OutboundQuota` 派生输出额度与序列化输入窗口：81920/4096 能力分别请求 8192/4096，已知余额 4000 请求 4000，零余额零额外外发（`AGENT_BUDGET_EXCEEDED`），usage 缺失整体保持未知、不假定为零，工具消息增长超窗口在外发前拒绝且不谎称零模型调用，完整 HTTP ≤512 KiB 检查保留，JSON/thinking 策略仍由冻结 requestStrategy 决定，旧绑定 `max_tokens` 与绑定 JSON 逐字节不变。结果收束侧实施 finish_reason 闭集（length、content_filter、缺失/未知、stop 与 tool_calls 矛盾、tool_calls 为空、空白正文均 `AGENT_OUTPUT_INVALID` 且零工具副作用、零额外外发），受控网络 fixture 全部显式提供 finish_reason；runner 增加来源范围校验（summary/qa 的 transcript 引用必须落在冻结输入 `[fromEventOrder, throughEventOrder]` 与同一 sessionId/transcriptVersion 内），缺字段/额外字段/超长字段/越界来源一律 `AGENT_OUTPUT_INVALID` 非重试收束、零部分提交。实际命令与结果：`npm run test:focus -- test/contracts/agent-recipes-contract.test.js test/contracts/budget-axes-s3.test.js test/runtime/agent-loop.test.js test/runtime/formal-agent-run-runner.test.js test/main/model-access-vault-runtime.test.js test/runtime/intent-route-orchestrator.test.js test/runtime/intent-router.test.js` 为 109/109；`npm run test:focus -- test/integration/model-access-s2-core-journey.test.js test/integration/agent-redesign-s5-target-journey.test.js test/integration/session-summary-j29-memory-journey.test.js test/integration/session-summary-budget-recovery-journey.test.js test/integration/agent-redesign-s3-route-journey.test.js` 为 7/7；`npm run test:focus -- test/runtime/context-ingest-runner-s3.test.js test/runtime/session-summary-run-progress.test.js test/runtime/controlled-tool-audit.test.js test/runtime/formal-agent-job-scheduler.test.js` 为 39/39；`npm run test:core` 为 1112/1112（含 renderer 类型检查与生产构建）。预算恢复旅程新增场景用真实 runner/Loop/Model Access/storage worker/SQLite 证明：成功链路发出 systemPrompt JSON 指令、`max_tokens=4096` 与含 sessionId/inputDigest 的完整输入，且恰好提交一个纪要；已成功请求再取消返回原成功终态且纪要保留；取消先于提交时迟到成功零纪要、交互 `result_json` 为空。173,827 字节拒绝样本与 86,914/86,913 字节窗口边界证据保持不变。未验证范围：完整三条 lane、任务4 正式 Electron 旅程、真实 DeepSeek 公网与实机运行；本条不替代阶段联合验收。
+
+2026-09-30 重试用量修复（SEM-F39/F40、SEM-T04、J31-SIZE/J30-RECOVERY；实现完成·尚未验收）：沿既有“失败请求缺用量则整体未知”语义，adapter 在请求失败后保持 usage 未知，后续重试成功不把部分用量标为完整用量。新增网络断开及 HTTP 503 后成功的回归；定向红测 `node --test --test-name-pattern="retry after missing request usage" test/main/model-access-vault-runtime.test.js` 修复前为 0/1，失败断言确认错误返回第二次请求用量。修复后 `npm run test:focus -- test/main/model-access-vault-runtime.test.js test/runtime/agent-loop.test.js test/integration/session-summary-budget-recovery-journey.test.js` 为 49/49，含既有真实 runner/Loop/Model Access/storage worker/SQLite 旅程。未重跑完整三条 lane、正式 Electron 或真实公网模型。
+
+### 2026-09-30 会话结果导航与窗口回归登记
+
+| gate | 场景 | 状态 |
+|---|---|---|
+| J29/J30 | 两会话不同纪要、无结果会话、切换后的迟到详情/历史拒绝、外部指定会话、总结/问答切换；正文不展开 sourceRefs，来源与运行详情保留；真实 service/storage 按 scope 分页隔离 | 实现完成·尚未验收 |
+| J17 | 历史→Agent→历史聚焦往返、失焦降级、最小化后重新打开及应用恢复；不要求永久置顶 | 实现完成·尚未验收 |
+
+2026-09-30 验证记录（SEM-F31/F38/F22、J29/J30/J17）：
+
+- `npm run test:focus -- test/ui/agent-ui.test.js test/main/agent-window-route.test.js test/main/window-layer-controller.test.js test/main/application-window-lifecycle-controller.test.js test/contracts/agent-run-ui-contract.test.js test/storage/agent-execution-store.test.js test/main/agent-run-service.test.js test/ui/renderer-style-guard.test.js`：137/137。覆盖会话/功能切换、迟到历史与详情丢弃、空态、重复点击当前功能、草稿隔离、来源/运行信息折叠、scope 在 SQLite 分页前过滤，以及 Agent 聚焦/最小化恢复。
+- `npm run verify:renderer`：返回码 0，类型检查与生产构建。`npm run test:focus -- test/integration/agent-redesign-s5-target-journey.test.js test/integration/agent-redesign-j25-formal-settings-journey.test.js` 初次扩大验证为 2/3：真实 service/worker/SQLite 的 S5 隔离旅程及 Electron 重启后显式恢复旅程成立；主流程旧夹具依赖全局历史。修正夹具为按会话与功能导航，并补齐受控 provider 的 finish_reason 后，`node --test --test-name-pattern="formal settings, Agent Bar" test/integration/agent-redesign-j25-formal-settings-journey.test.js` 为 1/1，覆盖生产 renderer/preload/main、问答反馈、总结取消/诊断和窗口关闭恢复。
+- 扩大执行 `npm run test:core`：1118/1119；唯一失败为 `test/ui/agent-model-settings-ui.test.js` 的“共用表单展开未知能力并保留未保存草稿”，读取预期 alert 时为 null。单独执行 `node --test --test-name-pattern="共用表单展开未知能力" test/ui/agent-model-settings-ui.test.js` 同样为 0/1；本次未修改模型设置表单。该 core 计数早于最后的当前功能重复点击保护，后者已由上述 137/137 及 renderer 构建验证。
+- 未验证：当前 revision 完整三条 lane、真实公网 provider、Windows DWM 点击置顶与遮挡实机行为。窗口替身断言仅证明原生调用意图，不提升实机验收状态。
+
+
+### 2026-09-30 长输入执行验证（SEM-F39/F40，J31/J29/J30）
+
+状态：**实现完成·尚未验收**。新raw总结已接通自动分块与连续归并；173,827字节合成来源经过真实SQLite、分页、规划器、Agent Loop及模型接入层，验证完整文本覆盖、一个纪要、中段失败零部分产物、未知usage、旧策略零请求拒绝和schema 3导出。v19→v20保留旧checksum、策略与attempt上限。外部provider受控，未验证公网质量或五小时实机。
+
+实际验证：`node --test test/runtime/summary-input-plan.test.js test/runtime/formal-agent-run-runner.test.js test/runtime/agent-loop.test.js test/storage/session-summary-request-store.test.js test/storage/agent-execution-store.test.js test/main/agent-interaction-exporter.test.js test/main/model-access-vault-runtime.test.js test/integration/session-summary-budget-recovery-journey.test.js` 为128/128；`npm run test:integration` 为73/74，正式Electron总结/取消/恢复旅程在成功项内，J18 Vite开发态启动失败；`npm run test:evidence` 为246/249（2项I3 provenance与当前storageGateway哈希不一致，1项按设计跳过）。两条命令的renderer类型检查和生产构建返回码0。此前当前实现的`npm test`止于core 1121/1122，失败是模型设置UI的未知能力提示断言；定向重现该文件为4/5。`git diff --check`返回码0。三条lane尚未全部成功，不提升联合验收状态。
+
+仍待验证：完整J31容量轴上下沿、128 MiB峰值、catalog/删除竞态、正式Electron长文本和跨块事实质量，以及真实五小时采集/公网模型。实现与任务边界见`openspec/changes/fix-session-summary-lifecycle-and-long-input/tasks.md`。
+
+### 2026-09-30 J20 中断回归登记（已决定）
+
+SEM-F12/F14/F21/F25：真实 provider/router/worker/coordinator/SQLite 旅程覆盖连续 180 秒发送回调周期迟到后仍监听、音频顺序与完整性、50 秒未定稿段单向本地交接及停止、静音不误降级；网络与时钟边界受控。保留两秒待发/六十秒留存失败、取消、暂停恢复与交接缺口测试。定向结果不替代真实 NLS、物理音源和两小时 I3。
+
+### 2026-09-30 J20 云端长段连续性修订（已决定）
+
+真实 provider/router/worker/coordinator/SQLite 验证连续180秒单一未定稿段仍使用NLS、停止接受唯一首次稳定转写、无降级；worker留存始终不超过60秒，断连时旧切点缺失显式失败。撤销50秒降级预期，保留发送积压、缺口和停止超时失败测试。真实公网识别效果及I3另验。

@@ -3,7 +3,7 @@
 // @ts-check
 
 const { randomUUID } = require('node:crypto')
-const { assertRecognitionBinding, assertRecognitionStatus, RECOGNITION_ERROR_CODES } = require('../../contracts/recognition')
+const { assertRecognitionBinding, assertRecognitionStatus, assertRecognitionProgress, RECOGNITION_ERROR_CODES } = require('../../contracts/recognition')
 const {
   assertCaptionEvent,
   assertCaptionState,
@@ -98,6 +98,7 @@ class SessionCoordinator {
     this.recognitionSettings = options.recognitionSettings || null
     this.sessionRecognition = null
     this.recognitionStatus = null
+    this.recognitionProgress = null
     this.snapshotListeners = new Set()
     this.captionListeners = new Set()
     this.captionStateListeners = new Set()
@@ -326,6 +327,7 @@ class SessionCoordinator {
     }
     this.recognitionStatus = this.sessionRecognition ? { resultStatus: 'known', binding: clone(this.sessionRecognition),
       actualProvider: this.sessionRecognition.provider, fallbackCode: null, fallbackAtMs: null, faultCode: null, faultAtMs: null } : null
+    this.recognitionProgress = null
     this.busy = true
     let sessionId
     try {
@@ -628,6 +630,7 @@ class SessionCoordinator {
   completeStoppedSession () {
     this.sessionRecognition = null
     this.recognitionStatus = null
+    this.recognitionProgress = null
     this.persistenceFault = null
     this.sessionSourceIds = []
     this.sessionRefinementEnabled = false
@@ -847,6 +850,16 @@ class SessionCoordinator {
     if (typeof adapter.onRecognitionStatus === 'function') {
       unsubscribers.push(adapter.onRecognitionStatus(value => this.acceptRecognitionStatus(adapter, value)))
     }
+    if (typeof adapter.onRecognitionProgress === 'function') {
+      unsubscribers.push(adapter.onRecognitionProgress(value => {
+        if (this.disposed || adapter !== this.adapter || this.snapshot.phase !== 'listening' ||
+            value?.sessionId !== this.snapshot.sessionId || this.sessionRecognition?.strategy !== 'cloud-primary') return
+        const snapshot = { ...this.snapshot, recognitionProgress: clone(value) }
+        try { assertRecognitionProgress(value); assertRuntimeSnapshot(snapshot) } catch { return }
+        this.recognitionProgress = clone(value)
+        this.publish(snapshot)
+      }))
+    }
     return () => { for (const unsubscribe of unsubscribers) unsubscribe() }
   }
 
@@ -859,7 +872,12 @@ class SessionCoordinator {
       const write = this.persistenceSink?.recordRecognitionStatus?.(value)
       if (write?.catch) write.catch(error => this.acceptPersistenceFault(error))
     } catch (error) { this.acceptPersistenceFault(error) }
-    this.publish({ ...this.snapshot, recognition: clone(this.recognitionStatus) })
+    // Loading describes the old actual provider. Clear it atomically with the
+    // accepted takeover/fault status; the adapter then publishes new progress.
+    if (status.actualProvider === 'local' || status.faultCode) this.recognitionProgress = null
+    const snapshot = { ...this.snapshot, recognition: clone(this.recognitionStatus) }
+    if (!this.recognitionProgress) delete snapshot.recognitionProgress
+    this.publish(snapshot)
     return true
   }
 
@@ -1135,6 +1153,7 @@ class SessionCoordinator {
       lastError
     }
     if (sessionId && this.recognitionStatus) snapshot.recognition = clone(this.recognitionStatus)
+    if (sessionId && phase === 'listening' && this.recognitionProgress) snapshot.recognitionProgress = clone(this.recognitionProgress)
     return assertRuntimeSnapshot(snapshot)
   }
 

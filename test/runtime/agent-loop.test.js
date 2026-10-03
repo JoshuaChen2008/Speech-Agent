@@ -5,6 +5,12 @@ const assert = require('node:assert/strict')
 
 const { AgentLoopExecutor, shouldStopAfterTurn } = require('../../src/agent/execution-host/agent-loop')
 const { RECIPE_CATALOG } = require('../../src/agent/contracts/recipes')
+const {
+  deriveRecipeBudget,
+  deriveRecipeRequestCapacity,
+  usesModelWindowCapacity,
+  deriveSummaryMinutesV2RequestCapacity
+} = require('../../src/agent/contracts/budget-axes')
 
 test('SEM-F28/SEM-F29/J22/J27: the formal Agent Loop requires an execution-host adapter', () => {
   assert.throws(() => new AgentLoopExecutor(), /agent loop adapter is required/)
@@ -23,17 +29,35 @@ test('SEM-F16/SEM-F28/J22/J24: every registered recipe enters one agentLoop with
     }
   })
   for (const recipe of RECIPE_CATALOG) {
+    const capabilities = { maxInputTokens: 64000, maxOutputTokens: 4096 }
+    const budget = deriveRecipeBudget(capabilities, recipe.recipeId, recipe.recipeVersion, 'user')
     const result = await executor.agentLoop({
       recipeId: recipe.recipeId,
       recipeVersion: recipe.recipeVersion,
       prompt: 'bounded prompt',
-      resolvedModel: { model: 'test', streamFn: async function * () {} }
+      resolvedModel: { model: 'test', streamFn: async function * () {}, capabilities, budget },
+      ...(usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)
+        ? { requestCapacity: deriveRecipeRequestCapacity({ ...recipe, capabilities, budget }) }
+        : {})
     })
     assert.equal(result.recipeId, recipe.recipeId)
     assert.equal(result.maxTurns, recipe.maxTurns)
     assert.deepEqual(result.toolGrants, recipe.toolGrants)
   }
   assert.equal(calls.length, RECIPE_CATALOG.length)
+})
+
+test('SEM-F39/J31-SIZE/J31-COMPAT: v2 summary alone accepts a prompt above the legacy Loop limit', async () => {
+  let calls = 0
+  const executor = new AgentLoopExecutor({
+    adapter: { run: async () => { calls += 1; return { text: '{}' } } }
+  })
+  const prompt = '中'.repeat(17000)
+  const input = { prompt, resolvedModel: { modelId: 'controlled-model' } }
+  await assert.rejects(executor.agentLoop({ ...input, recipeId: 'summary.minutes', recipeVersion: '1' }),
+    (error) => error.code === 'AGENT_REQUEST_INVALID')
+  await executor.agentLoop({ ...input, recipeId: 'summary.minutes', recipeVersion: '2' })
+  assert.equal(calls, 1)
 })
 
 test('SEM-F16/SEM-T10/J22: one-turn recipe stops deterministically and never creates a second turn', async () => {
@@ -202,4 +226,52 @@ test('SEM-F28/SEM-T04/J22/J24: a provider success arriving after cancellation is
   controller.abort()
   release()
   await assert.rejects(pending, (error) => error.code === 'AGENT_CANCELLED')
+})
+
+test('SEM-F39/J31-SIZE: the loop carries the recipe output directive as the system prompt', async () => {
+  const seen = []
+  const executor = new AgentLoopExecutor({
+    adapter: { run: async (request) => { seen.push(request); return { text: '{}' } } }
+  })
+  await executor.agentLoop({
+    recipeId: 'summary.minutes', recipeVersion: '2', prompt: '总结',
+    resolvedModel: { modelId: 'controlled-model' }
+  })
+  await executor.agentLoop({
+    recipeId: 'intent.route', recipeVersion: '1', prompt: 'route',
+    resolvedModel: { modelId: 'controlled-model' }
+  })
+  assert.equal(seen.length, 2)
+  assert.equal(seen[0].systemPrompt.includes('只输出一个 JSON 对象'), true)
+  assert.equal(seen[0].systemPrompt.includes('todos'), true)
+  assert.equal(seen[1].systemPrompt.includes('recipeId'), true)
+  assert.equal(seen[1].systemPrompt.includes('todos'), false)
+})
+
+test('SEM-F39/J31-SIZE/J31-COMPAT: only summary.minutes@2 may carry the host request capacity', async () => {
+  const seen = []
+  const executor = new AgentLoopExecutor({
+    adapter: { run: async (request) => { seen.push(request); return { text: '{}' } } }
+  })
+  const capacity = deriveSummaryMinutesV2RequestCapacity({
+    capabilities: { maxInputTokens: 64000, maxOutputTokens: 4096 },
+    budget: deriveRecipeBudget({ maxInputTokens: 64000, maxOutputTokens: 4096 }, 'summary.minutes', '2', 'user')
+  })
+  await executor.agentLoop({
+    recipeId: 'summary.minutes', recipeVersion: '2', prompt: '总结',
+    resolvedModel: { modelId: 'controlled-model' }, requestCapacity: capacity
+  })
+  assert.equal(seen[0].requestCapacity, capacity)
+  for (const [recipeId, recipeVersion] of [['summary.minutes', '1'], ['qa.answer', '1']]) {
+    await assert.rejects(executor.agentLoop({
+      recipeId, recipeVersion, prompt: 'prompt',
+      resolvedModel: { modelId: 'controlled-model' }, requestCapacity: capacity
+    }), (error) => error.code === 'AGENT_REQUEST_INVALID')
+  }
+  await assert.rejects(executor.agentLoop({
+    recipeId: 'summary.minutes', recipeVersion: '2', prompt: '总结',
+    resolvedModel: { modelId: 'controlled-model' },
+    requestCapacity: { requestOutputTokens: 8192, promptByteLimit: -1 }
+  }), (error) => error.code === 'AGENT_REQUEST_INVALID')
+  assert.equal(seen.length, 1)
 })

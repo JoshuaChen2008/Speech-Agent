@@ -4,7 +4,7 @@
 
 const { getRecipe, RECIPE_IDS, validateRecipeOutput } = require('../contracts/recipes')
 
-const TARGET_RECIPE_IDS = Object.freeze(RECIPE_IDS.filter((recipeId) => recipeId !== 'intent.route'))
+const TARGET_RECIPE_IDS = Object.freeze(RECIPE_IDS.filter((recipeId) => !['intent.route', 'context.synthesize'].includes(recipeId)))
 const FALLBACK_ERROR_CODES = new Set([
   'AGENT_OUTPUT_INVALID', 'AGENT_BUDGET_EXCEEDED', 'AGENT_WORKER_EXITED', 'AGENT_INTERNAL_FAILURE'
 ])
@@ -68,11 +68,12 @@ const RULES = Object.freeze([
   Object.freeze({ recipeId: 'text.enhance', scopes: ['session'], patterns: [
     /增强/u, /优化表达/u, /提升表达/u, /enhance/u, /polish/u
   ] }),
-  Object.freeze({ recipeId: 'extract.items', scopes: ['selection', 'session'], patterns: [
-    /提取/u, /待办/u, /行动项/u, /风险/u, /事项/u, /extract/u, /todo/u, /action item/u
-  ] }),
+  // Summary sections (todos, risks) must not override the session summary intent.
   Object.freeze({ recipeId: 'summary.minutes', scopes: ['session'], patterns: [
     /纪要/u, /会议总结/u, /会议摘要/u, /总结/u, /摘要/u, /minutes/u, /summary/u
+  ] }),
+  Object.freeze({ recipeId: 'extract.items', scopes: ['selection', 'session'], patterns: [
+    /提取/u, /待办/u, /行动项/u, /风险/u, /事项/u, /extract/u, /todo/u, /action item/u
   ] }),
   Object.freeze({ recipeId: 'report.analysis', scopes: ['selection', 'session', 'date_range', 'project'], patterns: [
     /分析/u, /洞察/u, /分析报告/u, /analysis/u, /report/u, /insight/u

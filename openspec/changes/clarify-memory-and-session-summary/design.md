@@ -1,5 +1,23 @@
 ## Context
 
+存储实施登记（2026-10-01，SEM-F26/F27/F32，DB7/J21）：v22追加仅含身份hash、问题digest和既有run/经历外键的独立证据表，不复制原问题；同问题不重复计数。V2条目沿既有content_json版本保存attribution/entityKeys，确认相同正文保留，纠正正文清除。删除条目清除其待形成证据，删除来源级联撤销。历史migration SQL/checksum不变。
+
+v23冻结会话摄取已确认输入引用（最多20条/8KiB），新增同库会话关联，引用既有episode与当前明确memory revision，双侧来源沿既有事实。修改/忘记删除关联，来源删除级联，迟到输出拒绝；旧自动全局条目待复核。内部读取source可带受存储验证的ingestRunId，仅context.ingest.session@2使用；不由renderer指定。管理来源为有界可读投影，不保留原问题。
+
+v24综合实施沿SEM-F37登记：ContextSynthesisV1固定12节/16KiB、事实/变化/候选/冲突四类和双类精确来源引用，facts必须由明确内容支持。同库目标/两版投影和仅引用job，复用自动scheduler/Loop；按ID有界分页，首片遵守12KiB的Loop输入预算，旧投影不进入模型输入。默认30秒合并，来源撤销先过滤两版所有受影响节。UI读取不建立job。
+
+2026-10-01 修订（已决定）：按 [提问优先规划](../../../docs/personal-memory-question-first-plan.md) 和 SEM 同日增量实施，以下新规则优先于旧“先会话摄取再综合”的叙述。已勾选总结任务和既有证据保留；复制/文件携带及 MCP 后续另立登记，不纳入本轮五步。
+
+### 本轮最小实现选择
+
+- 保持七种 kind，不重建既有 STRICT 表：本人背景用 experience，长期目标用 todo（未确认执行），本人项目职责用项目范围 project_fact，表达/工作偏好用 preference。展示分组和候选确认不新增另一套记忆事实。
+- 新建 context.ingest.interaction@2 / context.ingest.session@2 与 ContextIngestV2，@1 继续读取旧输出与绑定。交互输入分离用户文字、引用与助手结果；候选记录受控证据类别、Unicode code point范围依据（最长512，不另存原话）和最多8个、每个64字符的结构化关联键。类别闭集为self_statement/long_term_requirement/repeated_pattern/temporary_requirement/hypothetical/quoted/third_party/question/accepted_content，会话候选为session_context；后三类噪声和临时/假设不归本人。最多32项会话关联，每项含memoryRef、1–8个matchKeys、最多300字符relation和字幕evidence。模型提取不直接写 explicit；仅 manage 的确认/纠正形成明确内容。
+- 同一 session ingest 冻结有界已确认信息，模型提议关联后 storage 按结构化字段/登记别名等值复核，原子保存一般经历和双侧关联。关联保留两侧身份、revision、正文版本/水位/digest/范围；修改、忘记、删除及来源撤销使旧关联不可读，不能由迟到运行恢复。无信息只保存一般经历，无额外身份猜测调用。
+- 提问摘要最多512 Unicode code points及2 KiB。来源投影最多八条，时间来自真实原记录；原提示清理后仅显示真实摘要/结果，旧记录无摘要明确说明。会话来源从选定正文版本读取短摘录，导航由 main 重新核验稳定身份和引用范围，继续有界定位分页外目标。
+- 首版概览按有效条目确定性分组，候选单列；每次编辑仍经 manage 校验整体/条目 revision，冲突保留草稿。随后接下文有界 context.synthesize、当前/上版投影及合并唤醒，综合只派生、不写回条目。
+- 总结保留四栏，实际输入记忆与“与你的关联”独立展开；读取本地来源不改变旧结果、旧导出或普通总结零写入规则。关闭参考/休眠时所有输入和工具边界排除个人信息及关联背景。
+- 追加 migration 承载来源/关联/综合元数据；旧SQL/checksum、旧输出合同、不可变绑定和导出编码不改。避免通用策略框架、独立执行器、第二套数据库或向量检索。旧自动全局条目按来源治理为待复核，已确认条目保留，不自动补跑历史。
+
 状态：已决定（两项功能的方向）；以下默认值与实现取舍是本提案建议，尚未实施。
 
 现有代码已经具备个人上下文 ingest/resolve/manage、终态会话后台摄取、固定 recipe 与单次会话纪要；缺少跨会话综合视图及总结专用的记忆读取政策。`src/settings/agent-context-pane.tsx` 主要展示条目，`src/agent/formal-run/agent-run-service.js` 只开放 session 范围的 minutes/QA。用户报告入口无反馈，尚未证明故障发生在事件、IPC、窗口还是 renderer。

@@ -6,11 +6,12 @@ const RETAIN_SAMPLES = RATE * 60
 const SEND_SAMPLES = RATE * 2
 
 class CloudAudioBuffer {
-  constructor ({ core, send, emit, fault, schedule = setImmediate }) {
+  constructor ({ core = null, send, emit, fault, progress = () => {}, schedule = setImmediate }) {
     this.core = core
     this.send = send
     this.emit = emit
     this.fault = fault
+    this.progress = progress
     this.schedule = schedule
     this.frames = []
     this.pending = new Map()
@@ -23,12 +24,15 @@ class CloudAudioBuffer {
     this.failed = false
     this.ended = false
     this.draining = false
+    this.localActive = false
+    this.localPhase = null
     this.waiters = []
   }
 
   fail (code) {
     if (this.failed) return
     this.failed = true
+    this.core?.dispose?.()
     this.release()
     this.fault(code)
   }
@@ -52,13 +56,10 @@ class CloudAudioBuffer {
       return []
     }
     while (this.queuedSamples > RETAIN_SAMPLES && this.frames.length) {
-      const first = this.frames[0]
-      const end = Math.round(first.timestampSeconds * RATE) + first.sampleCount
-      if (this.activeBegin !== null && end > this.activeBegin) {
-        this.fail('RECOGNITION_BUFFER_LIMIT')
-        return []
-      }
-      this.frames.shift()
+      // Retention is only for local handoff, not cloud transcription.
+      // A long cloud segment must not pin PCM indefinitely. takeover()
+      // still rejects a cut that has left the retained window.
+      const first = this.frames.shift()
       this.queuedSamples -= first.sampleCount
     }
     if (this.pendingSamples + frame.sampleCount > SEND_SAMPLES) {
@@ -135,36 +136,61 @@ class CloudAudioBuffer {
     this.cloud = false
     this.pending.clear()
     this.pendingSamples = 0
+    // No native work is done here. Capture continues while another process
+    // loads the models, and the frozen cut must never roll out of retention.
+    if (this.core) this.startLocal()
+  }
+
+  attachLocal (core) {
+    if (this.cloud || this.failed || this.ended || this.core) { core.dispose(); return false }
+    this.core = core
+    return true
+  }
+
+  startLocal () {
+    if (this.cloud || this.failed || this.ended || !this.core || this.localActive) return false
+    this.localActive = true
     this.core.reanchor()
+    this.localPhase = 'replaying'
+    this.progress(this.localPhase)
     this.drain()
+    return true
   }
 
   drain () {
-    if (this.draining || this.failed || this.cloud) return
+    if (this.draining || this.failed || this.cloud || !this.localActive) return
     this.draining = true
-    this.schedule(() => {
-      this.draining = false
-      if (this.failed) return
+    this.schedule(async () => {
+      if (this.failed) { this.draining = false; return }
       try {
-        // Bound each synchronous ONNX batch; new capture/control messages get turns.
+        // Keep in-flight samples inside the bound until the native worker ACKs.
         for (let i = 0; i < 2 && this.frames.length; i++) {
-          const frame = this.frames.shift()
+          const frame = this.frames[0]
+          const events = await this.core.ingestFrame(frame)
+          if (this.failed) break
+          for (const event of events || []) this.emit(event)
+          this.frames.shift()
           this.queuedSamples -= frame.sampleCount
-          for (const event of this.core.ingestFrame(frame)) this.emit(event)
         }
+        this.draining = false
+        if (this.failed) return
         if (this.frames.length) this.drain()
-        else this.resolveWaiters()
-      } catch { this.fail('RECOGNITION_FALLBACK_FAILED') }
+        else {
+          if (this.localPhase !== 'local') { this.localPhase = 'local'; this.progress(this.localPhase) }
+          this.resolveWaiters()
+        }
+      } catch { this.draining = false; this.fail('RECOGNITION_FALLBACK_FAILED') }
     })
   }
 
   async end () {
     this.ended = true
+    if (!this.cloud && !this.localActive) { this.dispose(); return }
     if (!this.cloud && !this.failed && (this.draining || this.frames.length)) {
       await new Promise(resolve => this.waiters.push(resolve))
     }
     if (!this.cloud && !this.failed) {
-      try { for (const event of this.core.flush(this.endSample / RATE)) this.emit(event) } catch {
+      try { for (const event of (await this.core.flush(this.endSample / RATE)) || []) this.emit(event) } catch {
         this.fail('RECOGNITION_FALLBACK_FAILED')
       }
     }
@@ -178,7 +204,7 @@ class CloudAudioBuffer {
     this.queuedSamples = 0
     this.resolveWaiters()
   }
-  dispose () { this.failed = true; this.release() }
+  dispose () { this.failed = true; this.core?.dispose?.(); this.release() }
 }
 
 module.exports = { CloudAudioBuffer, RATE, RETAIN_SAMPLES, SEND_SAMPLES }

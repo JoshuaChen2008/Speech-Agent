@@ -82,6 +82,8 @@ async function loadRendererModule (absoluteFilename) {
   mod.paths = Module._nodeModulePaths(path.dirname(absoluteFilename))
   Module._cache[absoluteFilename] = mod
   mod._compile(withExports, absoluteFilename)
+  // _compile executes the module; the custom loader owns the loaded flag.
+  mod.loaded = true
   return mod.exports
 }
 

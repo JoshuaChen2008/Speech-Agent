@@ -65,6 +65,21 @@ const REQUIRED_NATIVE_FILES = Object.freeze([
   'sherpa-onnx-cxx-api.dll'
 ])
 const CAPTION_INPUT_NATIVE_ENTRY = '/src/native/caption-input/caption_input_native.node'
+const MEMORY_FILE_NATIVE_ENTRY = '/src/native/memory-file/memory_file_native.node'
+const REQUIRED_MEMORY_ENTRIES = Object.freeze([
+  '/src/agent/personal-context/memory-file-worker.js',
+  '/src/agent/personal-context/memory-file-format.js',
+  '/src/agent/personal-context/memory-file-runtime.js',
+  '/src/agent/personal-context/memory-sharing.js',
+  '/src/agent/personal-context/memory-mcp-server.js',
+  '/src/agent/contracts/personal-memory-sharing.js',
+  '/src/runtime/storage-worker/personal-memory-sharing-store.js',
+  '/src/agent/model-access/embedding-access.js',
+  '/src/runtime/storage-worker/personal-memory-file-store.js',
+  '/src/runtime/storage-worker/personal-memory-index-store.js',
+  '/src/runtime/storage-worker/personal-memory-portability.js',
+  '/node_modules/yaml/package.json'
+])
 const SMOKE_SCRIPTS = Object.freeze([
   '/scripts/product-shell-smoke.js',
   '/scripts/toolbar-reload-diagnostic.js',
@@ -214,8 +229,8 @@ function inspectPackageLayout (options) {
     throw new Error('packaged metadata has the wrong main entry or version')
   }
   const expected = options.variant === 'smoke'
-    ? [...REQUIRED_ASAR_ENTRIES, ...REQUIRED_NLS_ENTRIES, ...SMOKE_SCRIPTS]
-    : [...REQUIRED_ASAR_ENTRIES, ...REQUIRED_NLS_ENTRIES]
+    ? [...REQUIRED_ASAR_ENTRIES, ...REQUIRED_NLS_ENTRIES, ...REQUIRED_MEMORY_ENTRIES, ...SMOKE_SCRIPTS]
+    : [...REQUIRED_ASAR_ENTRIES, ...REQUIRED_NLS_ENTRIES, ...REQUIRED_MEMORY_ENTRIES]
   if (expected.some((entry) => !entries.includes(entry))) {
     throw new Error('packaged app.asar is missing a required product entry')
   }
@@ -262,6 +277,8 @@ function inspectPackageLayout (options) {
       !fs.statSync(captionNativePath, { throwIfNoEntry: false })?.isFile()) {
     throw new Error('caption input native addon is not unpacked beside the product sources')
   }
+  const memoryNativePath = path.join(packageDir, 'resources', 'app.asar.unpacked', 'src', 'native', 'memory-file', 'memory_file_native.node')
+  if (!entries.includes(MEMORY_FILE_NATIVE_ENTRY) || asar.statFile(asarPath, path.join('src', 'native', 'memory-file', 'memory_file_native.node')).unpacked !== true || !fs.statSync(memoryNativePath, { throwIfNoEntry: false })?.isFile()) throw new Error('memory file native addon is not unpacked beside the product sources')
 
   let installerSha256 = null
   let signingStatus = 'not-assessed'
@@ -345,7 +362,8 @@ function inspectPackageLayout (options) {
       requiredBinaryCount: REQUIRED_NATIVE_FILES.length,
       unpackedBinaryCount: REQUIRED_NATIVE_FILES.length,
       allMarkedUnpacked: true,
-      captionInputAddonUnpacked: true
+      captionInputAddonUnpacked: true,
+      memoryFileAddonUnpacked: true
     },
     evidenceBinding,
     limitations: options.variant === 'release'

@@ -500,12 +500,30 @@ class StorageWorkerHost {
     return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT, { source }, undefined, { signal })
   }
 
+  readPersonalContextSessionRangePage (request, signal) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_RANGE_PAGE, { request }, undefined, { signal })
+  }
+
   readPersonalContextToolContext (request, signal) {
     return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_READ_TOOL_CONTEXT, { request }, undefined, { signal })
   }
 
   commitPersonalContextSessionIngest (request, signal) {
     return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_COMMIT_SESSION_INGEST, { request }, undefined, { signal })
+  }
+  personalMemoryFiles (command) {
+    return this.enqueue(OPERATIONS.PERSONAL_MEMORY_FILES, { command })
+  }
+  personalMemoryIndex (command) {
+    return this.enqueue(OPERATIONS.PERSONAL_MEMORY_INDEX, { command })
+  }
+
+  personalContextSessionExperiences (request, signal) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_SESSION_EXPERIENCES, { request }, undefined, { signal })
+  }
+
+  personalContextQuestionEvidence (request, signal) {
+    return this.enqueue(OPERATIONS.PERSONAL_CONTEXT_QUESTION_EVIDENCE, { request }, undefined, { signal })
   }
 
   preparePersonalContextInteractionIngest (request) {
@@ -532,6 +550,10 @@ class StorageWorkerHost {
     if (this.closing) return Promise.reject(this.stateError('HOST_SHUTTING_DOWN'))
     if (this.state !== 'ready' || !this.child) return Promise.reject(this.stateError())
     return this.perform(OPERATIONS.FORMAL_AGENT_RENEW_RUN_LEASE, { request }, undefined, { priorityControl: true })
+  }
+
+  summaryInputPlan (request) {
+    return this.enqueue(OPERATIONS.SUMMARY_INPUT_PLAN, { request })
   }
 
   reserveFormalAgentModelRequest (request) {

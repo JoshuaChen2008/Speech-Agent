@@ -24,7 +24,9 @@ test('every inbound channel has an explicit least-privilege role allowlist', () 
     CHANNELS.CAPTION_STATE_CHANGED,
     CHANNELS.REFINEMENT_NOTICE_CHANGED,
     CHANNELS.AGENT_CONTEXT_CHANGED,
+    CHANNELS.AGENT_CONTEXT_SOURCE_REQUESTED,
     CHANNELS.AGENT_MODEL_CHANGED,
+    CHANNELS.PERSONAL_MEMORY_FILES_CHANGED,
     CHANNELS.SESSION_SUMMARY_RUN_CHANGED
   ].includes(channel))
   assert.deepEqual(Object.keys(ROLE_ACCESS).sort(), inbound.sort())
@@ -95,6 +97,8 @@ test('window roles cannot invoke one another privileged APIs', () => {
     assert.equal(isRoleAllowed(channel, 'settings'), true)
     for (const role of ['history', 'caption', 'toolbar', 'unknown']) assert.equal(isRoleAllowed(channel, role), false)
   }
+  assert.equal(isRoleAllowed(CHANNELS.PERSONAL_MEMORY_FILES, 'settings'), true)
+  for (const role of ['history', 'agent', 'caption', 'toolbar', 'unknown']) assert.equal(isRoleAllowed(CHANNELS.PERSONAL_MEMORY_FILES, role), false)
 })
 
 test('renderer config writes are whitelisted and capture changes are classified', () => {

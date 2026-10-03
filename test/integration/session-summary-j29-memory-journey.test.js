@@ -60,6 +60,9 @@ function serviceBackedHost (service, databasePath) {
     async personalContextManage (command) { return call(OPERATIONS.PERSONAL_CONTEXT_MANAGE, { command }) },
     async personalContextResolve (request) { return call(OPERATIONS.PERSONAL_CONTEXT_RESOLVE, { request }) },
     async derivePersonalContextSessionSource (request) { return call(OPERATIONS.PERSONAL_CONTEXT_DERIVE_SESSION_SOURCE, { request }) },
+    async summaryInputPlan (request) { return call(OPERATIONS.SUMMARY_INPUT_PLAN, { request }) },
+    async readPersonalContextSessionRangePage (request) { return call(OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_RANGE_PAGE, { request }) },
+    async reserveFormalAgentModelRequest (request) { return call(OPERATIONS.FORMAL_AGENT_RESERVE_MODEL_REQUEST, { request }) },
     async readPersonalContextSessionInput (source) { return call(OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT, { source }) },
     async readPersonalContextToolContext (request) { return call(OPERATIONS.PERSONAL_CONTEXT_READ_TOOL_CONTEXT, { request }) },
     async claimNextFormalAgentRun (request) { return call(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request }) },
@@ -213,6 +216,7 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
         return gateway.personalContextResolve(request)
       },
       readSessionInput: (source) => gateway.readPersonalContextSessionInput(source),
+    readSessionRangePage: (request, signal) => gateway.readPersonalContextSessionRangePage(request, signal),
       readToolContext: (request) => gateway.readPersonalContextToolContext(request)
     },
     modelAccess,
@@ -363,7 +367,7 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
   assert.equal(waiting.result.snapshot.attempt, 1)
   assert.equal(waiting.result.snapshot.memory_state, 'not_read')
   assert.equal(waiting.result.snapshot.last_activity_age_ms !== null, true)
-  assert.equal(waiting.result.snapshot.validated_chunk_count, null)
+  assert.equal(waiting.result.snapshot.validated_chunk_count, 0)
   releaseRequest.resolve()
   await toolFinished.promise
   const reading = await summaryRunService.get({ ...SUMMARY_RUN_CONTRACT, request_id: requestId })
@@ -385,7 +389,7 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
   assert.equal(terminal.state, 'succeeded')
   assert.equal(terminal.phase, 'terminal')
   assert.equal(terminal.memory_state, 'referenced')
-  assert.equal(terminal.validated_chunk_count, null)
+  assert.equal(terminal.validated_chunk_count, 1)
   assert.equal(discardedMemoryPreReads, 0)
   assert.ok(summaryProgressEvents.some((event) => event.revision > waiting.result.snapshot.revision))
 })

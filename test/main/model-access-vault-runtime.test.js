@@ -10,6 +10,7 @@ const { CredentialVault } = require('../../src/agent/model-access/credential-vau
 const { ModelAccessRuntime } = require('../../src/agent/model-access/runtime')
 const { RemoteModelCatalogPullController } = require('../../src/agent/model-access/remote-catalog-controller')
 const { OpenAiCompatibleAdapter } = require('../../src/agent/model-access/openai-compatible-adapter')
+const { deriveRecipeBudget, deriveSummaryMinutesV2RequestCapacity } = require('../../src/agent/contracts/budget-axes')
 const { sanitizedEnvironment } = require('../../src/agent/model-access/environment')
 
 function vault (t, encryptionAvailable = true) {
@@ -158,14 +159,14 @@ test('SEM-F33/J25: production loop adapter uses the frozen endpoint, normalizes 
   const requests = []
   const responses = [
     {
-      choices: [{ message: {
+      choices: [{ finish_reason: 'tool_calls', message: {
         role: 'assistant', content: null,
         tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'search_context', arguments: '{"schemaVersion":1,"aliasKeys":["decision"]}' } }]
       } }],
       usage: { prompt_tokens: 11, completion_tokens: 3, prompt_cache_hit_tokens: 4, prompt_cache_miss_tokens: 7 }
     },
     {
-      choices: [{ message: { role: 'assistant', content: '{"schemaVersion":1,"answer":"bounded"}' } }],
+      choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '{"schemaVersion":1,"answer":"bounded"}' } }],
       usage: { prompt_tokens: 21, completion_tokens: 5 }
     }
   ]
@@ -217,6 +218,36 @@ test('SEM-F33/J25: production loop adapter uses the frozen endpoint, normalizes 
   assert.equal(JSON.stringify(progress).includes('bounded-secret'), false)
 })
 
+test('SEM-F39/J31-SIZE/J31-COMPAT: transport accepts only versioned summary prompts above 16 KiB', async () => {
+  let sent = 0
+  const adapter = new OpenAiCompatibleAdapter({
+    fetch: async () => {
+      sent += 1
+      return { ok: true, status: 200, headers: { get: () => null },
+        text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '{}' } }] }) }
+    }
+  })
+  const request = {
+    connection: { httpsOrigin: 'https://example.test', basePath: '/v1' },
+    credential: Buffer.from('controlled-secret'),
+    resolvedModel: { modelId: 'model.one', capabilities: {
+      maxInputTokens: 64000, maxOutputTokens: 1024, supportsToolCalling: true, supportsStructuredOutput: true, usageReporting: false
+    } },
+    prompt: '中'.repeat(6000)
+  }
+  await assert.rejects(adapter.run({ ...request, recipe: { recipeId: 'summary.minutes', recipeVersion: '1' } }),
+    (error) => error.code === 'AGENT_REQUEST_INVALID')
+  const v2Capabilities = { maxInputTokens: 64000, maxOutputTokens: 1024, supportsToolCalling: true, supportsStructuredOutput: true, usageReporting: false }
+  const v2Budget = deriveRecipeBudget(v2Capabilities, 'summary.minutes', '2', 'user')
+  await adapter.run({
+    ...request,
+    recipe: { recipeId: 'summary.minutes', recipeVersion: '2' },
+    resolvedModel: { modelId: 'model.one', capabilities: v2Capabilities, budget: v2Budget },
+    requestCapacity: deriveSummaryMinutesV2RequestCapacity({ capabilities: v2Capabilities, budget: v2Budget })
+  })
+  assert.equal(sent, 1)
+})
+
 test('SEM-F33/J25: production loop adapter maps redirects, provider failures, malformed output, cancellation, and bounded responses', async () => {
   const request = {
     connection: { httpsOrigin: 'https://example.test', basePath: '/' },
@@ -226,13 +257,17 @@ test('SEM-F33/J25: production loop adapter maps redirects, provider failures, ma
     } },
     prompt: 'prompt'
   }
-  for (const [status, code] of [[301, 'AGENT_PROVIDER_UNAVAILABLE'], [401, 'AGENT_PROVIDER_AUTH_FAILED'],
-    [429, 'AGENT_PROVIDER_RATE_LIMITED'], [503, 'AGENT_PROVIDER_UNAVAILABLE'], [504, 'AGENT_PROVIDER_TIMEOUT']]) {
+  for (const [status, code] of [[301, 'AGENT_REQUEST_INVALID'], [400, 'AGENT_REQUEST_INVALID'],
+    [401, 'AGENT_PROVIDER_AUTH_FAILED'], [403, 'AGENT_PROVIDER_AUTH_FAILED'],
+    [404, 'AGENT_REQUEST_INVALID'], [422, 'AGENT_REQUEST_INVALID'],
+    [408, 'AGENT_PROVIDER_TIMEOUT'], [409, 'AGENT_PROVIDER_UNAVAILABLE'],
+    [425, 'AGENT_PROVIDER_UNAVAILABLE'], [429, 'AGENT_PROVIDER_RATE_LIMITED'],
+    [503, 'AGENT_PROVIDER_UNAVAILABLE'], [504, 'AGENT_PROVIDER_TIMEOUT']]) {
     const adapter = new OpenAiCompatibleAdapter({ fetch: async () => ({ ok: false, status }) })
     await assert.rejects(adapter.run(request), (error) => error.code === code)
   }
   const malformed = new OpenAiCompatibleAdapter({
-    fetch: async () => ({ ok: true, status: 200, text: async () => '{"choices":[{"message":{"content":null}}]}' })
+    fetch: async () => ({ ok: true, status: 200, text: async () => '{"choices":[{"finish_reason":"stop","message":{"content":null}}]}' })
   })
   await assert.rejects(malformed.run(request), (error) => error.code === 'AGENT_OUTPUT_INVALID')
   const bounded = new OpenAiCompatibleAdapter({
@@ -268,6 +303,50 @@ test('SEM-F33/J25: production loop adapter maps redirects, provider failures, ma
   ])
 })
 
+test('SEM-F38/J30-RECOVERY: one model operation retries transient responses at most five times and never retries invalid requests', async () => {
+  const request = {
+    connection: { httpsOrigin: 'https://example.test', basePath: '/' },
+    credential: Buffer.from('synthetic-secret'),
+    resolvedModel: { modelId: 'model.one', capabilities: {
+      maxOutputTokens: 128, supportsToolCalling: false, supportsStructuredOutput: false, usageReporting: false
+    } }, prompt: 'synthetic prompt'
+  }
+  let calls = 0
+  const attempts = []
+  const progress = []
+  const adapter = new OpenAiCompatibleAdapter({ fetch: async () => {
+    calls += 1
+    return { status: 503, ok: false }
+  } })
+  await assert.rejects(adapter.run({ ...request, beforeRequest: ({ requestAttempt }) => attempts.push(requestAttempt),
+    onProgress: (event) => progress.push(event) }),
+    (error) => error.code === 'AGENT_PROVIDER_UNAVAILABLE' && error.retryExhausted === true)
+  assert.equal(calls, 5)
+  assert.deepEqual(attempts, [1, 2, 3, 4, 5])
+  assert.deepEqual(progress.filter((event) => event.type === 'retry_wait').map((event) =>
+    [event.nextAttempt, event.reason, event.waitMs]), [
+    [2, 'AGENT_PROVIDER_UNAVAILABLE', 100], [3, 'AGENT_PROVIDER_UNAVAILABLE', 200],
+    [4, 'AGENT_PROVIDER_UNAVAILABLE', 400], [5, 'AGENT_PROVIDER_UNAVAILABLE', 800]
+  ])
+
+  calls = 0
+  const invalid = new OpenAiCompatibleAdapter({ fetch: async () => { calls += 1; return { status: 400, ok: false } } })
+  await assert.rejects(invalid.run({ ...request, beforeRequest: () => {} }),
+    (error) => error.code === 'AGENT_REQUEST_INVALID' && error.retryable === false)
+  assert.equal(calls, 1)
+
+  calls = 0
+  const offline = new OpenAiCompatibleAdapter({ fetch: () => {
+    calls += 1
+    const error = new Error('offline')
+    error.code = 'ECONNRESET'
+    throw error
+  } })
+  await assert.rejects(offline.run({ ...request, beforeRequest: () => {} }),
+    (error) => error.code === 'AGENT_PROVIDER_UNAVAILABLE' && error.retryExhausted === true)
+  assert.equal(calls, 5)
+})
+
 test('SEM-F38/SEM-T04/J30-RECOVERY: a durable request reservation gates provider egress', async () => {
   const order = []
   const request = {
@@ -282,7 +361,7 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: a durable request reservation gates provider
   const adapter = new OpenAiCompatibleAdapter({
     fetch: async () => {
       order.push('provider-egress')
-      return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: 'ok' } }] }) }
+      return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'ok' } }] }) }
     }
   })
   await adapter.run(request)
@@ -356,7 +435,7 @@ test('SEM-F36/J25: test and preset strategies add only their fixed provider fiel
   const adapter = new OpenAiCompatibleAdapter({
     fetch: async (_url, options) => {
       bodies.push(JSON.parse(options.body))
-      return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }) }
+      return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{"ok":true}' } }] }) }
     }
   })
   const base = {
@@ -374,12 +453,12 @@ test('SEM-F36/J25: test and preset strategies add only their fixed provider fiel
     { thinking: undefined, enable_thinking: false },
     { thinking: undefined, enable_thinking: undefined }
   ])
-  const malformed = new OpenAiCompatibleAdapter({
-    fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ choices: [{ message: { content: '{"ok":false}' } }] }) })
+  const malformedTest = new OpenAiCompatibleAdapter({
+    fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{"ok":false}' } }] }) })
   })
-  await assert.rejects(malformed.run({ ...base, testMode: true }), (error) => error.code === 'AGENT_OUTPUT_INVALID')
+  await assert.rejects(malformedTest.run({ ...base, testMode: true }), (error) => error.code === 'AGENT_OUTPUT_INVALID')
   const extra = new OpenAiCompatibleAdapter({
-    fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ choices: [{ message: { content: '{"ok":true,"extra":1}' } }] }) })
+    fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{"ok":true,"extra":1}' } }] }) })
   })
   await assert.rejects(extra.run({ ...base, testMode: true }), (error) => error.code === 'AGENT_OUTPUT_INVALID')
 })
@@ -389,7 +468,7 @@ test('SEM-F34/J24: production loop adapter bounds tool execution and propagates 
     ok: true,
     status: 200,
     text: async () => JSON.stringify({
-      choices: [{ message: {
+      choices: [{ finish_reason: 'tool_calls', message: {
         role: 'assistant', content: null,
         tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'search_context', arguments: '{}' } }]
       } }]
@@ -787,4 +866,350 @@ test('SEM-F33/J25: binding preserves non-auth provider errors from credential co
   expected.code = 'AGENT_PROVIDER_TIMEOUT'
   await assert.rejects(instance.borrowForBinding(binding, profiles, async () => { throw expected }), (error) => error === expected)
   assert.deepEqual(instance.state(slot, 'persistent', state.generation), { present: true, scope: 'persistent' })
+})
+
+function v2Scenario ({ maxInputTokens = 128000, maxOutputTokens = 81920 } = {}) {
+  const capabilities = {
+    maxInputTokens, maxOutputTokens,
+    supportsToolCalling: true, supportsStructuredOutput: true,
+    supportsStreaming: true, usageReporting: true
+  }
+  const budget = deriveRecipeBudget(capabilities, 'summary.minutes', '2', 'user')
+  return {
+    capabilities,
+    budget,
+    requestCapacity: deriveSummaryMinutesV2RequestCapacity({ capabilities, budget }),
+    recipe: { recipeId: 'summary.minutes', recipeVersion: '2' }
+  }
+}
+
+function v2Request (scenario, overrides = {}) {
+  return {
+    connection: { httpsOrigin: 'https://example.test', basePath: '/v1' },
+    credential: Buffer.from('summary-secret'),
+    resolvedModel: { modelId: 'summary-model', capabilities: scenario.capabilities, budget: scenario.budget },
+    recipe: scenario.recipe,
+    requestCapacity: scenario.requestCapacity,
+    prompt: '{"userPrompt":"总结"}',
+    maxTurns: 3,
+    timeoutMs: 1000,
+    ...overrides
+  }
+}
+
+function stopResponse (content, usage = undefined) {
+  return {
+    ok: true, status: 200, headers: { get: () => null },
+    text: async () => JSON.stringify({
+      choices: [{ finish_reason: 'stop', message: { role: 'assistant', content } }],
+      ...(usage === undefined ? {} : { usage })
+    })
+  }
+}
+
+function toolCallsResponse (usage = undefined) {
+  return {
+    ok: true, status: 200, headers: { get: () => null },
+    text: async () => JSON.stringify({
+      choices: [{
+        finish_reason: 'tool_calls',
+        message: {
+          role: 'assistant', content: null,
+          tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'search_context', arguments: '{"schemaVersion":1,"aliasKeys":[]}' } }]
+        }
+      }],
+      ...(usage === undefined ? {} : { usage })
+    })
+  }
+}
+
+function searchTool (results = { schemaVersion: 1, matches: [] }) {
+  return { name: 'search_context', execute: async () => results }
+}
+
+
+function qaScenario (options = {}) {
+  const { deriveRecipeRequestCapacity } = require('../../src/agent/contracts/budget-axes')
+  const { capabilities } = v2Scenario(options)
+  const recipe = { recipeId: 'qa.answer', recipeVersion: '2' }
+  const budget = deriveRecipeBudget(capabilities, recipe.recipeId, recipe.recipeVersion, 'user')
+  return { capabilities, budget, recipe,
+    requestCapacity: deriveRecipeRequestCapacity({ ...recipe, capabilities, budget }) }
+}
+
+test('SEM-F31/F33/J22-QA-WINDOW/J24-QA-BUDGET: real Agent Loop and adapter accept windowed Chinese input with bounded output', async () => {
+  const { AgentLoopExecutor } = require('../../src/agent/execution-host/agent-loop')
+  const scenario = qaScenario()
+  const bodies = []
+  const adapter = new OpenAiCompatibleAdapter({
+    fetch: async (_url, options) => { bodies.push(JSON.parse(options.body)); return stopResponse('{"schemaVersion":1}') }
+  })
+  const loop = new AgentLoopExecutor({ adapter: { run: (request) => adapter.run({
+    ...request, connection: { httpsOrigin: 'https://example.test', basePath: '/v1' }, credential: Buffer.from('synthetic-qa-secret')
+  }) } })
+  const prompt = '中'.repeat(6000) + 'a'.repeat(17000)
+  await loop.agentLoop({ ...scenario.recipe, requestCapacity: scenario.requestCapacity,
+    resolvedModel: { modelId: 'qa-model', capabilities: scenario.capabilities, budget: scenario.budget },
+    prompt, budget: scenario.budget, tools: [] })
+  assert.equal(bodies.length, 1)
+  assert.equal(bodies[0].messages[1].content, prompt)
+  assert.equal(bodies[0].max_tokens, 8000)
+})
+
+test('SEM-F31/F33/J22-QA-SIZE: exact prompt capacity accepts its edge and rejects overflow, missing or forged capacity before fetch', async () => {
+  const scenario = qaScenario({ maxInputTokens: 12000, maxOutputTokens: 4096 })
+  let fetches = 0
+  const adapter = new OpenAiCompatibleAdapter({ fetch: async () => { fetches++; return stopResponse('{"schemaVersion":1}') } })
+  for (const bytes of [3807, 3808]) await adapter.run(v2Request(scenario, { prompt: 'a'.repeat(bytes) }))
+  assert.equal(fetches, 2)
+  await assert.rejects(adapter.run(v2Request(scenario, { prompt: 'a'.repeat(3809) })),
+    (error) => {
+      assert.equal(error.code, 'AGENT_QA_INPUT_LIMIT_EXCEEDED')
+      assert.deepEqual(error.diagnosticMetrics, { actual: 3809, limit: 3808, unit: 'bytes' })
+      return true
+    })
+  await assert.rejects(adapter.run(v2Request(scenario, { requestCapacity: undefined })), { code: 'AGENT_REQUEST_INVALID' })
+  await assert.rejects(adapter.run(v2Request(scenario, { requestCapacity: { promptByteLimit: 64000, requestOutputTokens: 4096 } })),
+    { code: 'AGENT_REQUEST_INVALID' })
+  assert.equal(fetches, 2)
+})
+
+test('SEM-F31/F33/J22-QA-SIZE/J24-QA-BUDGET: serialized escaping rejects before fetch and post-tool growth uses the budget error', async () => {
+  const scenario = qaScenario({ maxInputTokens: 12000, maxOutputTokens: 4096 })
+  let fetches = 0
+  const adapter = new OpenAiCompatibleAdapter({ fetch: async () => { fetches++; return toolCallsResponse() } })
+  await assert.rejects(adapter.run(v2Request(scenario, { prompt: '\\'.repeat(3808), systemPrompt: 'a'.repeat(6000) })),
+    (error) => error.code === 'AGENT_QA_INPUT_LIMIT_EXCEEDED' && error.diagnosticMetrics.actual > 12000)
+  assert.equal(fetches, 0)
+  await assert.rejects(adapter.run(v2Request(scenario, { prompt: 'a'.repeat(3808),
+    tools: [searchTool({ schemaVersion: 1, matches: [], text: '中'.repeat(10000) })] })), { code: 'AGENT_BUDGET_EXCEEDED' })
+  assert.equal(fetches, 1)
+})
+
+test('SEM-F33/J24-QA-BUDGET: provider usage narrows QA output, unknown usage stays null and exhausted output prevents another request', async () => {
+  for (const [usage, expectedQuota, exhausted] of [
+    [{ prompt_tokens: 100, completion_tokens: 6000 }, 2000, false],
+    [undefined, 8000, false],
+    [{ prompt_tokens: 100, completion_tokens: 8000 }, null, true]
+  ]) {
+    const bodies = []
+    const scenario = qaScenario()
+    const adapter = new OpenAiCompatibleAdapter({
+      fetch: async (_url, options) => {
+        bodies.push(JSON.parse(options.body))
+        return bodies.length === 1 ? toolCallsResponse(usage) : stopResponse('{"schemaVersion":1}', usage)
+      }
+    })
+    const pending = adapter.run(v2Request(scenario, { tools: [searchTool()] }))
+    if (exhausted) {
+      await assert.rejects(pending, { code: 'AGENT_BUDGET_EXCEEDED' })
+      assert.equal(bodies.length, 1)
+    } else {
+      const result = await pending
+      assert.equal(bodies[1].max_tokens, expectedQuota)
+      if (usage === undefined) assert.equal(result.usage, null)
+    }
+    assert.equal(bodies[0].max_tokens, 8000)
+  }
+})
+
+test('SEM-F38/J24-QA-BUDGET: QA retries preserve the derived request quota and body', async () => {
+  const bodies = []
+  const scenario = qaScenario()
+  const adapter = new OpenAiCompatibleAdapter({ fetch: async (_url, options) => {
+    bodies.push(options.body)
+    return bodies.length === 1 ? { ok: false, status: 503, headers: { get: () => null } } : stopResponse('{"schemaVersion":1}')
+  } })
+  await adapter.run(v2Request(scenario, { beforeRequest: async () => {} }))
+  assert.equal(bodies.length, 2)
+  assert.equal(bodies[0], bodies[1])
+  assert.equal(JSON.parse(bodies[1]).max_tokens, 8000)
+})
+
+test('SEM-F39/J31-SIZE: v2 outbound max_tokens comes from the derived quota instead of the raw capability', async () => {
+  const bodies = []
+  const scenario = v2Scenario({ maxInputTokens: 128000, maxOutputTokens: 81920 })
+  const roomy = new OpenAiCompatibleAdapter({
+    fetch: async (_url, options) => { bodies.push(JSON.parse(options.body)); return stopResponse('{"schemaVersion":1}') }
+  })
+  await roomy.run(v2Request(scenario))
+  assert.equal(bodies[0].max_tokens, 8192, 'an 81920 output capability still requests the registered 8192 target')
+
+  bodies.length = 0
+  const bounded = v2Scenario({ maxInputTokens: 128000, maxOutputTokens: 4096 })
+  const small = new OpenAiCompatibleAdapter({
+    fetch: async (_url, options) => { bodies.push(JSON.parse(options.body)); return stopResponse('{"schemaVersion":1}') }
+  })
+  await small.run(v2Request(bounded))
+  assert.equal(bodies[0].max_tokens, 4096, 'a 4096 output capability requests 4096')
+})
+
+test('SEM-F39/J31-SIZE: known provider usage narrows the next outbound quota and unknown usage never becomes zero', async () => {
+  const bodies = []
+  const scenario = v2Scenario({ maxInputTokens: 128000, maxOutputTokens: 81920 })
+  const responses = [
+    toolCallsResponse({ prompt_tokens: 100, completion_tokens: 996000 }),
+    stopResponse('{"schemaVersion":1}')
+  ]
+  const bounded = new OpenAiCompatibleAdapter({
+    fetch: async (_url, options) => { bodies.push(JSON.parse(options.body)); return responses.shift() }
+  })
+  const result = await bounded.run(v2Request(scenario, { tools: [searchTool()] }))
+  assert.equal(bodies[0].max_tokens, 8192)
+  assert.equal(bodies[1].max_tokens, 4000, 'a known remaining balance of 4000 requests exactly 4000')
+  assert.equal(typeof result.text, 'string')
+
+  bodies.length = 0
+  const unknownResponses = [toolCallsResponse(null), stopResponse('{"schemaVersion":1}')]
+  const unknown = new OpenAiCompatibleAdapter({
+    fetch: async (_url, options) => { bodies.push(JSON.parse(options.body)); return unknownResponses.shift() }
+  })
+  await unknown.run(v2Request(scenario, { tools: [searchTool()] }))
+  assert.equal(bodies[1].max_tokens, 8192, 'missing provider usage keeps the quota at the target instead of assuming zero')
+})
+
+test('SEM-F39/F40/J31-SIZE: retry after missing request usage keeps the whole result usage unknown', async () => {
+  for (const failure of ['network', 'http']) {
+    let requests = 0
+    const adapter = new OpenAiCompatibleAdapter({
+      fetch: async () => {
+        requests += 1
+        if (requests === 1) {
+          if (failure === 'network') throw new Error('connection reset')
+          return { ok: false, status: 503 }
+        }
+        return stopResponse('{"schemaVersion":1}', { prompt_tokens: 100, completion_tokens: 10 })
+      }
+    })
+    const result = await adapter.run(v2Request(v2Scenario(), { beforeRequest: async () => {} }))
+    assert.equal(requests, 2)
+    assert.equal(result.usage, null, `${failure}: later known usage cannot account for the failed request`)
+  }
+})
+
+test('SEM-F39/J31-SIZE: an exhausted output balance rejects before any further egress', async () => {
+  let egress = 0
+  const scenario = v2Scenario({ maxInputTokens: 128000, maxOutputTokens: 81920 })
+  const adapter = new OpenAiCompatibleAdapter({
+    fetch: async () => { egress += 1; return toolCallsResponse({ prompt_tokens: 100, completion_tokens: 1000000 }) }
+  })
+  await assert.rejects(adapter.run(v2Request(scenario, { tools: [searchTool()] })),
+    (error) => error.code === 'AGENT_BUDGET_EXCEEDED')
+  assert.equal(egress, 1, 'zero remaining output balance means zero additional outbound requests')
+})
+
+test('SEM-F39/J31-SIZE/J31-COMPAT: v2 fails closed without the host quota and legacy bindings keep their request bytes', async () => {
+  let egress = 0
+  const scenario = v2Scenario()
+  const adapter = new OpenAiCompatibleAdapter({
+    fetch: async () => { egress += 1; return stopResponse('{"schemaVersion":1}') }
+  })
+  const { requestCapacity, ...withoutCapacity } = v2Request(scenario)
+  await assert.rejects(adapter.run(withoutCapacity), (error) => error.code === 'AGENT_REQUEST_INVALID')
+  await assert.rejects(adapter.run({ ...v2Request(scenario), requestCapacity: { requestOutputTokens: 8192 } }),
+    (error) => error.code === 'AGENT_REQUEST_INVALID')
+  assert.equal(egress, 0)
+  await assert.rejects(adapter.run({
+    connection: { httpsOrigin: 'https://example.test', basePath: '/v1' },
+    credential: Buffer.from('secret'),
+    resolvedModel: { modelId: 'model.one', capabilities: {
+      maxInputTokens: 64000, maxOutputTokens: 1024, supportsToolCalling: false,
+      supportsStructuredOutput: false, usageReporting: false
+    } },
+    prompt: 'prompt',
+    requestCapacity: scenario.requestCapacity
+  }), (error) => error.code === 'AGENT_REQUEST_INVALID')
+  assert.equal(egress, 0)
+
+  const bodies = []
+  const legacy = new OpenAiCompatibleAdapter({
+    fetch: async (_url, options) => { bodies.push(JSON.parse(options.body)); return stopResponse('{"schemaVersion":1,"answer":"bounded"}') }
+  })
+  await legacy.run({
+    connection: { httpsOrigin: 'https://example.test', basePath: '/v1' },
+    credential: Buffer.from('secret'),
+    resolvedModel: { modelId: 'model.one', capabilities: {
+      maxInputTokens: 64000, maxOutputTokens: 4096, supportsToolCalling: false,
+      supportsStructuredOutput: false, usageReporting: false
+    } },
+    prompt: 'prompt'
+  })
+  assert.equal(bodies[0].max_tokens, 4096, 'legacy bindings keep the frozen capability as the output reserve')
+})
+
+test('SEM-F28/SEM-T04/J31-SIZE: the transport enforces the closed finish_reason set before tools or content', async () => {
+  const rejections = [
+    ['length', { role: 'assistant', content: '{"schemaVersion":1}' }],
+    ['length', { role: 'assistant', content: null, tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'search_context', arguments: '{}' } }] }],
+    ['content_filter', { role: 'assistant', content: '{"schemaVersion":1}' }],
+    [undefined, { role: 'assistant', content: '{"schemaVersion":1}' }],
+    ['function_call', { role: 'assistant', content: '{"schemaVersion":1}' }],
+    ['stop', { role: 'assistant', content: null, tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'search_context', arguments: '{}' } }] }],
+    ['tool_calls', { role: 'assistant', content: null, tool_calls: [] }]
+  ]
+  for (const [finishReason, message] of rejections) {
+    let toolRan = false
+    let egress = 0
+    const adapter = new OpenAiCompatibleAdapter({
+      fetch: async () => {
+        egress += 1
+        const choice = finishReason === undefined ? { message } : { finish_reason: finishReason, message }
+        return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ choices: [choice] }) }
+      }
+    })
+    await assert.rejects(adapter.run({
+      connection: { httpsOrigin: 'https://example.test', basePath: '/' },
+      credential: Buffer.from('secret'),
+      resolvedModel: { modelId: 'model.one', capabilities: {
+        maxInputTokens: 64000, maxOutputTokens: 1024, supportsToolCalling: true,
+        supportsStructuredOutput: false, usageReporting: false
+      } },
+      prompt: 'prompt',
+      tools: [{ name: 'search_context', execute: async () => { toolRan = true; return { schemaVersion: 1, matches: [] } } }],
+      maxTurns: 3,
+      timeoutMs: 1000
+    }), (error) => error.code === 'AGENT_OUTPUT_INVALID')
+    assert.equal(toolRan, false, `tools must stay idle for ${finishReason ?? 'a missing'} finish_reason`)
+    assert.equal(egress, 1, `a rejected result must not trigger another egress for ${finishReason ?? 'a missing'} finish_reason`)
+  }
+
+  const whitespace = new OpenAiCompatibleAdapter({ fetch: async () => stopResponse('   \n  ') })
+  await assert.rejects(whitespace.run({
+    connection: { httpsOrigin: 'https://example.test', basePath: '/' },
+    credential: Buffer.from('secret'),
+    resolvedModel: { modelId: 'model.one', capabilities: {
+      maxInputTokens: 64000, maxOutputTokens: 1024, supportsToolCalling: false,
+      supportsStructuredOutput: false, usageReporting: false
+    } },
+    prompt: 'prompt'
+  }), (error) => error.code === 'AGENT_OUTPUT_INVALID')
+
+  const responses = [toolCallsResponse(null), stopResponse('{"schemaVersion":1}')]
+  const cooperative = new OpenAiCompatibleAdapter({ fetch: async () => responses.shift() })
+  const result = await cooperative.run({
+    connection: { httpsOrigin: 'https://example.test', basePath: '/' },
+    credential: Buffer.from('secret'),
+    resolvedModel: { modelId: 'model.one', capabilities: {
+      maxInputTokens: 64000, maxOutputTokens: 1024, supportsToolCalling: true,
+      supportsStructuredOutput: false, usageReporting: false
+    } },
+    prompt: 'prompt',
+    tools: [searchTool()],
+    maxTurns: 3,
+    timeoutMs: 1000
+  })
+  assert.equal(result.text, '{"schemaVersion":1}')
+})
+
+test('SEM-F39/J31-SIZE: tool message growth beyond the v2 input window rejects before the next egress', async () => {
+  let egress = 0
+  const scenario = v2Scenario({ maxInputTokens: 20000, maxOutputTokens: 8192 })
+  const responses = [toolCallsResponse(null), stopResponse('{"schemaVersion":1}')]
+  const adapter = new OpenAiCompatibleAdapter({
+    fetch: async () => { egress += 1; return responses.shift() }
+  })
+  await assert.rejects(adapter.run(v2Request(scenario, {
+    tools: [searchTool({ schemaVersion: 1, matches: [{ text: 'x'.repeat(60000) }] })]
+  })), (error) => error.code === 'AGENT_BUDGET_EXCEEDED')
+  assert.equal(egress, 1, 'the growth check must fire before the second outbound request')
 })

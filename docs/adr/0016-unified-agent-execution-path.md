@@ -1,5 +1,7 @@
 # ADR 0016：取消单轮与 Agent Loop 的二分，Agent 系统只保留一条执行路径
 
+> 2026-09-27：[ADR 0021](0021-summary-lifecycle-and-long-input.md) 为 `summary.minutes@2` 明确确定性输入计划中的多个 Loop 调用、预算作用域和时限策略，局部修订本ADR第5/9项。统一Agent Loop与每次Loop静态轮次/工具不变，旧版本绑定继续按原策略解释；此增量为已决定，尚无实现证据。
+
 - 状态：已决定
 - 日期：2026-08-30
 - 决策者：项目负责人

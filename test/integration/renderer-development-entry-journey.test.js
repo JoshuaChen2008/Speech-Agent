@@ -52,14 +52,16 @@ test('SEM-F23/J18 four repeated Vite development starts initialize the caption a
     }
     delete environment.ELECTRON_RUN_AS_NODE
     for (let restart = 1; restart <= RESTART_COUNT; restart += 1) {
-      child = spawn(electronExecutable, [FIXTURE], {
+      let output = ''
+      child = spawn(electronExecutable, ['--disable-gpu', '--disable-gpu-compositing', '--disable-software-rasterizer', '--in-process-gpu', FIXTURE], {
         cwd: PROJECT_ROOT,
         env: environment,
-        stdio: 'ignore',
+        stdio: ['ignore', 'pipe', 'ignore'],
         windowsHide: true
       })
+      child.stdout.on('data', data => { output = (output + data).slice(-1024) })
       const result = await waitForExit(child, 15000)
-      assert.deepEqual(result, { code: 0, signal: null }, `development start ${restart} failed`)
+      assert.deepEqual(result, { code: 0, signal: null }, `development start ${restart} failed: ${output.trim()}`)
       child = null
     }
   } finally {

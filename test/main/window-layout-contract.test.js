@@ -140,7 +140,7 @@ test('SEM-F22/J17: overlay creation disables native resizing without frameless s
   const { overlayWindowBehavior } = require('../../src/main/application-window-lifecycle-controller')
 
   assert.deepEqual(overlayWindowBehavior('caption', false), {
-    title: 'Live Subtitle',
+    title: 'Speech-Agent',
     minimizable: false,
     skipTaskbar: true,
     frame: false,

@@ -3,6 +3,7 @@
 const {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   globalShortcut,
   ipcMain,
@@ -56,6 +57,8 @@ const {
   broadcastPersonalContextChanged,
   registerPersonalContextIpc
 } = require('./main/ipc/personal-context-ipc')
+const { registerContextSourceIpc } = require('./main/ipc/context-source-ipc')
+const { registerPersonalMemoryFileIpc } = require('./main/ipc/personal-memory-file-ipc')
 const { registerAgentSettingsIpc } = require('./main/ipc/agent-settings-ipc')
 const { registerSessionSummarySettingsIpc } = require('./main/ipc/session-summary-settings-ipc')
 const { publicConfigPayload } = require('./main/config-public-projection')
@@ -147,6 +150,8 @@ let agentRequestedSessionId = null
 /** @type {null | { start: Function, stop: Function, getOverview: Function, manage: Function }} */ let personalContextRuntime = null
 /** @type {null | {catalog: Function, configure: Function, bind: Function, cancelAllModelTests?: Function, close?: Function}} */ let modelAccessRuntime = null
 /** @type {null | import('./agent/model-access/credential-vault').CredentialVault} */ let modelAccessVault = null
+let personalMemoryFileRuntime = null
+let embeddingAccessRuntime = null
 /** @type {null | import('./agent/model-access/remote-catalog-controller').RemoteModelCatalogPullController} */ let remoteModelCatalogController = null
 /** @type {null | AgentRunService} */ let formalAgentService = null
 /** @type {null | SessionSummaryRunService} */ let sessionSummaryRunService = null
@@ -258,6 +263,7 @@ const applicationWindowLifecycleController = new ApplicationWindowLifecycleContr
   getToolbarWindow: () => toolbarWin,
   getSettingsWindow: () => settingsWin,
   getHistoryWindow: () => historyWin,
+  getAgentWindow: () => agentWin,
   stopInteractions: () => windowInteractionController.stopAll(),
   beginInteractionTransaction: () => windowInteractionGenerationController.beginTransaction(),
   resumeInteractions: (generation, primaryBounds) => {
@@ -278,6 +284,7 @@ const applicationWindowLifecycleController = new ApplicationWindowLifecycleContr
 })
 const CHILD_SERVICE_LABELS = Object.freeze([
   'Speech Agent realtime ASR',
+  'Speech Agent cloud audio',
   'Speech Agent offline refinement',
   'Speech Agent subtitle storage'
 ])
@@ -344,6 +351,7 @@ function invalidateToolbarOverlap () {
 
 function broadcastConfig () {
   const value = payload()
+  personalMemoryFileRuntime?.policyChanged()
   for (const win of [captionWin, toolbarWin, settingsWin, historyWin, agentWin]) send(win, CHANNELS.CONFIG_CHANGED, value)
 }
 
@@ -386,6 +394,36 @@ registerPersonalContextIpc({
   ipcMain,
   authorize: requireSender,
   getRuntime: () => personalContextRuntime
+})
+
+registerPersonalMemoryFileIpc({
+  ipcMain, authorize: requireSender, getRuntime: () => personalMemoryFileRuntime,
+  dialog, shell, clipboard, getWindow: sender => BrowserWindow.fromWebContents(sender)
+})
+
+const contextSourceOrigins = new Map()
+registerContextSourceIpc({
+  ipcMain, authorize: requireSender,
+  getStorage: () => applicationRuntime?.gateway,
+  openSource: (location, sender) => {
+    const origin = BrowserWindow.fromWebContents(sender)
+    if (location.target.kind === 'interaction') {
+      const opened = openAgentWindow({ sessionId: location.scope.kind === 'session' ? location.scope.reference : null, sourceLocation: location })
+      if (!opened.ok) return false
+      if (origin !== agentWin) contextSourceOrigins.set(agentWin.webContents.id, origin)
+    } else {
+      if (openHistoryWindow({ sourceLocation: location }) === false) return false
+      if (origin !== historyWin) contextSourceOrigins.set(historyWin.webContents.id, origin)
+    }
+    return true
+  },
+  returnSource: (sender) => {
+    const origin = contextSourceOrigins.get(sender.id)
+    contextSourceOrigins.delete(sender.id)
+    if (!origin || origin.isDestroyed()) return false
+    applicationWindowLifecycleController.showAuxiliaryWindow(origin, windowRoles.get(origin.webContents.id))
+    return true
+  }
 })
 
 registerAgentSettingsIpc({
@@ -818,11 +856,16 @@ function openSettingsWindow (initialPane = null) {
     .catch((error) => logError('renderer.settings.load', error))
 }
 
-function openHistoryWindow () {
-  if (!historyService) return
+function openHistoryWindow ({ sourceLocation = null } = {}) {
+  if (!historyService) return false
   if (historyWin && !historyWin.isDestroyed()) {
     applicationWindowLifecycleController.showAuxiliaryWindow(historyWin, 'history')
-    return
+    if (sourceLocation) {
+      const targetWindow = historyWin
+      if (targetWindow.webContents.isLoadingMainFrame?.()) targetWindow.webContents.once('did-finish-load', () => send(targetWindow, CHANNELS.AGENT_CONTEXT_SOURCE_REQUESTED, sourceLocation))
+      else send(targetWindow, CHANNELS.AGENT_CONTEXT_SOURCE_REQUESTED, sourceLocation)
+    }
+    return true
   }
   historyWin = new BrowserWindow({
     width: 1060,
@@ -848,13 +891,16 @@ function openHistoryWindow () {
   applicationWindowLifecycleController.bindAuxiliaryWindow(historyWin, 'history')
   windowLayerController.bindForegroundWindow(historyWin, 'history')
   hardenContents(historyWin)
+  if (sourceLocation) historyWin.webContents.once('did-finish-load', () => send(historyWin, CHANNELS.AGENT_CONTEXT_SOURCE_REQUESTED, sourceLocation))
   historyWin.webContents.on('console-message', (details) => console.log('[history]', details.message))
   historyWin.once('ready-to-show', () => {
     applicationWindowLifecycleController.showAuxiliaryWindow(historyWin, 'history')
   })
-  historyWin.on('closed', () => { windowInteractionController.stopAll(); historyWin = null })
+  const sourceHistoryId = historyWin.webContents.id
+  historyWin.on('closed', () => { contextSourceOrigins.delete(sourceHistoryId); windowInteractionController.stopAll(); historyWin = null })
   void loadRendererFailClosed(historyWin, 'history', { isPackaged: app.isPackaged })
     .catch((error) => logError('renderer.history.load', error))
+  return true
 }
 
 function validAgentSessionReference (value) {
@@ -877,12 +923,17 @@ function requestAgentScope (sessionId) {
   if (reference) send(agentWin, CHANNELS.AGENT_SCOPE_REQUESTED, { kind: 'session', reference })
 }
 
-function openAgentWindow ({ sessionId = null } = {}) {
+function openAgentWindow ({ sessionId = null, sourceLocation = null } = {}) {
   const requestedSession = validAgentSessionReference(sessionId)
   if (requestedSession) agentRequestedSessionId = requestedSession
   if (agentWin && !agentWin.isDestroyed()) {
-    agentWin.show(); agentWin.focus()
+    applicationWindowLifecycleController.showAuxiliaryWindow(agentWin, 'agent')
     requestAgentScope(agentRequestedSessionId)
+    if (sourceLocation) {
+      const targetWindow = agentWin
+      if (targetWindow.webContents.isLoadingMainFrame?.()) targetWindow.webContents.once('did-finish-load', () => send(targetWindow, CHANNELS.AGENT_CONTEXT_SOURCE_REQUESTED, sourceLocation))
+      else send(targetWindow, CHANNELS.AGENT_CONTEXT_SOURCE_REQUESTED, sourceLocation)
+    }
     if (agentOpenFailed || agentOpenPhase === 'waiting' || agentOpenPhase === 'failed') {
       agentOpenFailed = false
       agentRendererReady = false
@@ -890,7 +941,7 @@ function openAgentWindow ({ sessionId = null } = {}) {
       void loadRendererFailClosed(agentWin, 'agent', { isPackaged: app.isPackaged })
         .then(() => {
           agentRendererReady = true
-          if (!agentWin.isDestroyed()) { agentWin.show(); agentWin.focus() }
+          if (!agentWin.isDestroyed()) applicationWindowLifecycleController.showAuxiliaryWindow(agentWin, 'agent')
           publishAgentOpenStatus('ready')
         })
         .catch(() => { agentOpenFailed = true; publishAgentOpenStatus('failed') })
@@ -925,16 +976,21 @@ function openAgentWindow ({ sessionId = null } = {}) {
     return { ok: false, phase: 'failed', reused: false }
   }
   registerWindowRole(agentWin, 'agent')
+  applicationWindowLifecycleController.bindAuxiliaryWindow(agentWin, 'agent')
+  windowLayerController.bindForegroundWindow(agentWin, 'agent')
   hardenContents(agentWin)
   agentWin.webContents.once('did-finish-load', () => {
     agentRendererReady = true
     requestAgentScope(agentRequestedSessionId)
+    if (sourceLocation) send(agentWin, CHANNELS.AGENT_CONTEXT_SOURCE_REQUESTED, sourceLocation)
   })
   agentWin.once('ready-to-show', () => {
     if (agentOpenWaitingTimer) { clearTimeout(agentOpenWaitingTimer); agentOpenWaitingTimer = null }
-    if (!agentWin.isDestroyed()) { agentWin.show(); agentWin.focus(); if (agentRendererReady) publishAgentOpenStatus('ready') }
+    if (!agentWin.isDestroyed()) { applicationWindowLifecycleController.showAuxiliaryWindow(agentWin, 'agent'); if (agentRendererReady) publishAgentOpenStatus('ready') }
   })
+  const sourceAgentId = agentWin.webContents.id
   agentWin.on('closed', () => {
+    contextSourceOrigins.delete(sourceAgentId)
     if (agentOpenWaitingTimer) { clearTimeout(agentOpenWaitingTimer); agentOpenWaitingTimer = null }
     agentWin = null
     agentOpenFailed = false
@@ -1090,12 +1146,12 @@ function publicModelError (error) {
     INSTALL_FAILED: '模型安装失败',
     INVALID_MANIFEST: '模型资源清单无效',
     MODEL_FILES_MISSING: '模型文件不完整',
-    MODEL_RUNTIME_UNAVAILABLE: '模型已安装但字幕运行时未就绪',
+    MODEL_RUNTIME_UNAVAILABLE: '模型已安装，但识别服务尚未准备好，请重试',
     REFINEMENT_MODEL_NOT_READY: '请先下载精修模型',
     MODEL_INSTALL_NOT_ACTIVE: '当前没有可取消的模型下载',
     SESSION_ACTIVE: '请先停止当前字幕会话',
     SHUTDOWN: '模型管理服务已关闭',
-    TOO_MANY_REDIRECTS: '模型下载重定向过多'
+    TOO_MANY_REDIRECTS: '下载地址多次跳转，无法继续下载'
   }
   return { code, message: messages[code] || '模型资源暂时不可用' }
 }
@@ -1349,10 +1405,10 @@ function publicHistoryError (error) {
     : 'HISTORY_UNAVAILABLE'
   const messages = {
     INVALID_HISTORY_REQUEST: '历史记录请求无效',
-    INVALID_SESSION: '会话标识无效',
+    INVALID_SESSION: '无法识别这场会话，请刷新记录后重试',
     INVALID_EXPORT_FORMAT: '不支持这种导出格式',
     SESSION_NOT_FOUND: '这条记录不存在或已移除',
-    SESSION_ACTIVE: '活动会话尚未进入历史记录'
+    SESSION_ACTIVE: '会话还未结束，请停止后查看字幕记录'
   }
   return { code, message: messages[code] || '历史记录暂时不可用' }
 }
@@ -1455,9 +1511,37 @@ async function bootstrapApplication () {
   try {
     if (retirementFailure) throw new Error('AGENT_RETIREMENT_PENDING')
     const { PersonalContextRuntime } = require('./agent/personal-context/runtime')
+    const { PersonalMemoryFileRuntime } = require('./agent/personal-context/memory-file-runtime')
+    const { EmbeddingAccessRuntime } = require('./agent/model-access/embedding-access')
     const { evaluateAutomaticEligibility } = require('./agent/personal-context/automatic-eligibility')
     const { AgentLoopExecutor } = require('./agent/execution-host')
     const gateway = applicationRuntime.gateway
+    if (modelAccessRuntime) {
+      try {
+        const { CredentialVault } = require('./agent/model-access/credential-vault')
+        embeddingAccessRuntime = await new EmbeddingAccessRuntime({ gateway,
+          vault: new CredentialVault({ directory: path.join(userDataDir, 'agent-embedding-credentials'), safeStorage }),
+          onChanged: () => { personalMemoryFileRuntime?.cancelIndex(); send(settingsWin, CHANNELS.PERSONAL_MEMORY_FILES_CHANGED, { changed: true }) }
+        }).initialize()
+        modelAccessRuntime.attachEmbeddingAccess(embeddingAccessRuntime)
+      } catch { embeddingAccessRuntime?.close(); embeddingAccessRuntime = null; console.error('[agent.embedding-access] EMBEDDING_UNAVAILABLE') }
+    }
+    let lastFileContextRevision = -1
+    let lastFileRootReason = null
+    personalMemoryFileRuntime = new PersonalMemoryFileRuntime({ gateway, directory: path.join(userDataDir, 'personal-memory'), getConfig: () => config.get(), modelAccess: modelAccessRuntime,
+      onChanged: () => {
+        send(settingsWin, CHANNELS.PERSONAL_MEMORY_FILES_CHANGED, { changed: true })
+        void gateway.personalMemoryFiles({ type: 'revision' }).then(({ revision }) => {
+          if (!personalContextRuntime) return
+          const publicRevision = revision + config.get().agentSettingsRevision
+          const reason = personalMemoryFileRuntime?.root?.error || null
+          if (publicRevision === lastFileContextRevision && reason === lastFileRootReason) return
+          lastFileContextRevision = publicRevision; lastFileRootReason = reason
+          personalContextRuntime.controller.changed(publicRevision)
+        }).catch(() => {})
+      } })
+    personalMemoryFileRuntime.ready = personalMemoryFileRuntime.initialize()
+    void personalMemoryFileRuntime.ready.then(() => personalMemoryFileRuntime?.scheduleIndex()).catch(() => {})
     const getAutomaticEligibility = async ({ sessionId }) => {
       let detail
       try {
@@ -1497,6 +1581,7 @@ async function bootstrapApplication () {
     }
     const gateway = applicationRuntime.gateway
     formalRouteOrchestrator = new IntentRouteOrchestrator({
+      questionRecipeVersion: '5',
       runs: {
         create: (request) => gateway.createAgentRun(request),
         cancel: (request) => gateway.cancelAgentRun(request),
@@ -1571,6 +1656,7 @@ async function bootstrapApplication () {
   }
   try {
     formalAgentService = new AgentRunService({
+      questionRecipeVersion: '5',
       storage: applicationRuntime.gateway,
       modelAccess: modelAccessRuntime,
       scheduler: formalAgentScheduler,
@@ -1669,6 +1755,9 @@ function beginQuitBarrier (event) {
       formalAgentScheduler = null
     }
     formalAgentPrompts.clear()
+    if (personalMemoryFileRuntime) { try { await personalMemoryFileRuntime.close() } catch {}; personalMemoryFileRuntime = null }
+    try { embeddingAccessRuntime?.close() } catch {}
+    embeddingAccessRuntime = null
     let modelAccessClosed = false
     if (modelAccessRuntime) {
       try {

@@ -1,5 +1,22 @@
 # 字幕系统持久化与 Agent 派生数据架构
 
+> 2026-10-02 个人记忆文件增量（实现完成·尚未验收）：SEM-F41/F42、ADR0025。当前正式 catalog 为 v32，新建问答为 `qa.answer@5`。v29 登记文件根、引用、确认、操作恢复与删除墓碑；v30 保存可重建正文索引、向量代际及独立表征配置；v31 保存携带来源、suppression与生命周期；v32 保存撤销后的文件清理回执。v1–v28 SQL/checksum 不变。已迁移个人记忆的 `content_json` 只保存版本化文件引用与摘要，revision不再保留旧正文；来源/confirmation/suppression仍由storage worker单写。根目录绝对位置仅主进程私有设置持有，SQLite只保存根身份与相对定位。正文快照、FTS及向量均是可失效派生数据；所有产品读取校验当前文件修订，禁止回读旧正文。文件I/O、扫描和云端请求在事务外，有界批次让行字幕写入。验证范围见[交付记录](validation/personal-memory-files-2026-10-02.md)。旧§4.3识别关键词叙述已由ADR0017退役，不作为新接线依据。
+
+> **2026-10-02 总结检索优先增量（历史切片；实现完成·尚未验收）**：此切片登记时 catalog 为 v28，会话经历摄取为 `context.ingest.session@3`，问答为 `qa.answer@4`。当前文件增量见上段；下文较早日期的版本叙述保留为历史解释。依据 SEM-F07/F28/F30/F31/F39、DB1/DB7/J21/J22/J29 与 [ADR0024](adr/0024-summary-first-session-question.md)。
+
+| 追加版本 | SQLite 事实与治理 |
+|---|---|
+| v25 | `personal_context_experience_ranges` 与 `personal_context_experiences`：独立范围产品绑定 source/plan digest、事件及 code point 边界，逐项保存来源相对时间。范围产品、候选、关联与连续处理进度同事务；重复提交核对 digest。会话删除沿 episode/run 外键清理。 |
+| v26 | `formal_agent_question_evidence`：仅保留问题 digest、选中经历产品身份、原文事件/code point 边界、证据 digest 与覆盖；不存问题或原文副本。 |
+| v27 | `formal_agent_question_scopes`、`scope_sources` 与 `evidence_pages`：分页冻结完整日期/项目来源目录及有界证据页。来源目录保留已删除身份以拒绝迟到提交，不用级联删除掩盖缺失来源。页边界 digest、顺序和目录身份在重试及提交前复核。 |
+| v28 | `personal_context_candidate_batches` 与 `candidate_consumptions`：冻结候选 ID/revision 和批次输入 revision；消费回执与综合投影同事务。消费不会删除或确认底层候选；期间新增条目留给下一批。 |
+
+v1–v24 的 SQL/checksum 与旧 recipe/模型绑定解释保持不变。权威原始转写仍经 `segments.first_event_order → caption_events.final` 读取；精修稿不参与新问答的原文身份。FTS5 trigram 与短词扫描缓存仅存在于 SQLite 连接内的 TEMP 表，可重建，没有 JSONL 双写。
+
+新问答输出为 `QaAnswerV2`，逐结论引用受实际供应证据约束，覆盖由宿主填写。单会话检索交互导出为 schema 5；分页证据为 schema 6，增加仅含身份、边界及 digest 的证据页。schema 1–4 编码继续原义，provider 用量缺失保持 null。来源定位以首次稳定转写时间排序，返回至多50个引用字幕段 ID；历史正文 DTO 保持原形。
+
+源范围/候选的具体合同及验证入口见 [change](../openspec/changes/implement-summary-first-session-question/design.md)；真实 provider 内容质量与适用实机边界另验。
+
 > **2026-09-22 catalog 登记：** formal SQLite catalog 在 v10 退役迁移后已有 v11 会话总结记忆参考偏好与 v12 独立记忆读取错误字段，本轮按 ADR 0020 登记追加 v13 字幕识别会话元数据；登记不表示联合或实机验收。v1–v12 SQL/checksum 保持不变；v10 删除旧 Agent 与确认关键词的 15 个对象，当前写入只允许 formal Agent、model-access、personal-context 与字幕表。本文中标注“旧实现留存/目标”的旧表定义和候选 catalog 仅用于迁移审计，不是当前写入接口；备份、恢复、失败降级和精确退役清单以 [ADR 0019](adr/0019-complete-legacy-agent-retirement.md) 为准。
 
 > 状态：SQLite 字幕存储与 Agent 插件宿主语义已决定；DB0/DB1、Gateway 恢复、SQLite-only 生命周期、历史/导出、DB2/J10 与 J15b/J15c 文本版本结果已达到确定性联合验收完成（2026-08-02）。packaged Electron 已有旧 JSONL 首启迁移、同 `userData` 二次启动幂等、跨会话版本重置以及精修故障/覆盖复读证据；I3 非音频 3,600 段资源预资格为 `pass/partial`。真实两小时音频与干净机 I4 尚未达到实机验收完成；向量检索 Deferred
@@ -13,6 +30,8 @@
 > **2026-08-30 Agent 重设计说明**：本文件中仍使用 `AgentPluginHost`、三项自动任务、`agent_debug_*`、固定 DeepSeek catalog 或启动环境凭据的段落只描述当前/历史 D3–D15 实现，不再定义新正式 Agent。目标语义由 `SEM-F28/F30–F35/SEM-T15` 与 `J21/J22/J24/J25/J26` 规定：固定 recipe 与个人上下文模块、OpenAI-compatible 多配置档案、DeepSeek 空 model provider 模板、四个模型用途、冻结模型运行绑定、`ModelUsageV1`、完整 tool args/result 审计及用户明确触发的单交互 JSON 导出。实现仍须通过新的追加 migration 落地，不得修改既有 migration/checksum。
 
 ## 1. 架构名称与边界
+
+2026-09-30 会话问答输入容量持久化：正式 catalog 追加 v21，仅向 `formal_agent_runs` 与 `formal_agent_interactions` 各追加 `qa_input_limit_error INTEGER NOT NULL DEFAULT 0 CHECK IN (0,1)`。专用 `AGENT_QA_INPUT_LIMIT_EXCEEDED` 只允许 `qa.answer@2`，旧 CHECK 内存储 `AGENT_INTERNAL_FAILURE` 并在读取投影中恢复专用码；成功、取消或真实预算耗尽清零。v1–v20 SQL/checksum、旧模型运行绑定、十轴预算及旧导出字节不改写，不保存输入正文副本。详见 [ADR 0022](adr/0022-windowed-session-question-input.md)；状态为实现完成·尚未验收。
 
 整体可称为 **Local-first, Event-driven Meeting Intelligence Architecture**（本地优先、事件驱动的会议智能架构）。产品上由字幕系统与 Agent 系统组成，Agent 只消费字幕提交边界后的事实。其中使用的专业模式是：
 
@@ -74,6 +93,10 @@ flowchart LR
 SQLite 驱动放在 storage worker 内的适配器后。当前选择 Electron/Node 内置 `node:sqlite`：Electron 43 utility process 的开发态探针已验证驱动加载、WAL、migration、事务隔离/回滚与重开恢复；B5 又从真实 ASAR 内的 storage utility 完成同一 17 项资格并 exact exit 0，同时由 production storage utility 写入/读取 packaged 产品会话。它没有外置 native addon 或 `asarUnpack` 需求。DB0 的开发态与打包态确定性资格已通过；精确 NSIS 干净机发布仍归 I4，不反向改变驱动选择。`sqlite-vec` 扩展加载不属于 DB0。
 
 ## 3. 数据权威与逻辑表
+
+> 2026-09-27 会话总结规划增量（已决定）：受理身份、输入计划摘要、版本化预算和运行快照需要追加元数据迁移，版本按实施时最新schema顺延；不改写既有迁移/绑定，不存分块正文或模型中间输出。逻辑字段及兼容见[实施设计](../openspec/changes/fix-session-summary-lifecycle-and-long-input/design.md)，要求唯一权威见SEM-F38/F39/F40。本注不是已存在表的说明。
+
+> 2026-09-29 追加迁移 v19（实现完成·尚未验收）：`formal_agent_runs.retry_policy_version` 冻结新运行的五次策略；模型请求保留 `operation_digest`，非总结运行的执行前预留写入 `formal_agent_model_operation_attempts`。`formal_agent_requests` 追加受控 `retry_request_attempt`、`retry_wait_ms` 和 `retry_reason`，只在等待重试阶段投影。旧运行的策略列为 NULL，保留原有 `max_attempts`；v1–v18 SQL/checksum 不改写。表中只保存身份摘要、计数和相对运行元数据，不保存请求正文。
 
 数据库建议位于 `app.getPath('userData')/data/speech-agent.sqlite3`。文件名和目录属于实现配置，不能由 renderer 提供任意路径。
 
@@ -267,6 +290,7 @@ B3.1 JSONL 是旧版过渡基线；默认组合根现已按下列顺序切到 SQ
 按 ADR 0020 在当前 catalog 后追加 migration，独立保存会话冻结策略、非敏感项目引用/参数摘要、用户声明模型说明、实际 provider、降级和故障相对时点。通过 StorageGateway 幂等写入，与会话关联删除；旧会话没有记录不推定为纯本地。不得复用已退役 recognition_*，不得修改历史 SQL/checksum。现场音频、AccessKey、Token、原始 provider JSON 与原始异常不入库。云端首期的 refinement_enabled 表示本会话实际冻结为关闭，单独保留全局精修偏好，不以故障冒充组合限制。
 
 - v13 只新增 `subtitle_recognition_sessions` STRICT 表，以 `session_id` 为唯一主键并外键关联 `sessions`，`ON DELETE CASCADE`；正常会话删除事务同时移除元数据，无独立识别删除入口。v13 失败回滚，既有 migration checksum 不匹配继续 fail closed。
+- v14 只为 `formal_agent_runs` 与 `formal_agent_interactions` 增加布尔 `summary_input_limit_error` 投影列，不修改冻结的旧 `error_code` CHECK；它把 `summary.minutes@1` 的旧输入上限失败投影成稳定错误码。既有行默认 0，迁移失败回滚且旧 migration/checksum 不变。
 - `openSession.recognition` 可选；传入时在打开会话同一事务冻结 `binding_json`，exact 字段为 `strategy/provider/region/configRevision/projectRef/modelLabel/parameters`。纯本地对应 `local-only/local`、地域/项目/参数为空；云端对应 `cloud-primary/nls/cn-shanghai`，项目引用仅 AppKey 的 SHA-256，参数严格为 ADR 0020 的固定 NLS 参数。配置 revision 为非负整数，模型说明不超过 160 字符，不证明云端权重不可变。重放相同绑定幂等，修改冻结绑定报冲突。
 - `recordRecognitionStatus` 经 Recorder → Gateway → Host → WorkerService 的字幕持久化 FIFO 写入 `actual_provider/fallback_code/fallback_at_ms/fault_code/fault_at_ms`；exact 请求含 `sessionId` 及对应 camelCase 五个状态字段。错误只接受 `src/contracts/recognition.js` 的闭集，相对时点为非负毫秒；无错误时 code/time 均为空。幂等键从全部字段摘要派生，首次降级和首次故障保留，Retry 的空字段不得抹除。降级后拒绝恢复 NLS，纯本地不得登记云端降级。
 - 无元数据行的旧会话、旧 JSONL 导入及未提供绑定的兼容调用一律投影 `resultStatus='not_recorded'`，其它识别元数据均为空；不插入推测策略。已登记会话投影 `known`，历史详情与分页返回经 exact 校验的 `recognition`，正文仍只读取首次稳定转写与独立精修稿，不更改 txt/md/srt 内容。
@@ -274,3 +298,26 @@ B3.1 JSONL 是旧版过渡基线；默认组合根现已按下列顺序切到 SQ
 ## 会话总结请求受理元数据（2026-09-27）
 
 状态：**实现完成·尚未验收**。v15 在 v14 后追加 `formal_agent_requests`，以请求 ID、会话 ID、动作、请求/范围/提示摘要 digest、受理时冻结的总结记忆参考偏好、状态/阶段、generation/revision、相对耗时、计数、预算与稳定错误码保存可查询的受理事实；请求正文、字幕正文和模型中间输出不入表。v16 追加原始输入版本、水位和 digest，`request_digest` 同时绑定输入身份，使同键未知回执重放不重新读取可能变化的会话来源；新建 run 时在同一事务精确核对这些冻结字段。v15 中缺少输入身份且尚无 route/target 的活动请求在升级时转为 `failed/AGENT_RUN_UNAVAILABLE`，防止把不可恢复身份继续呈现为活动请求。`formal_agent_runs.session_summary_request_id` 关联执行，`resume_required` 标记需用户明确继续的运行。会话删除事务把 client key/request ID/request identity 摘要写入 `formal_agent_request_tombstones`，删除受理行并在 `session_deletion_tombstones.deleted_summary_request_count` 记数；旧请求读取或同键重放只返回已删除，不重建任务。v1–v15 SQL/checksum 保持不变；v14→v16 升级及失败回滚有存储测试证据。P1完整运行链路仍未验收。
+
+
+## 会话总结长输入策略与请求用量（2026-09-30）
+
+状态：**实现完成·尚未验收**（SEM-F39/F40，DB1/J31-COMPAT）。v20 只追加 `formal_agent_runs.summary_input_policy` 和请求预留的 `usage_json`，不改写 v1–v19 checksum。新建 raw `summary.minutes@2` 冻结 `summary-long-input@1`、最多两个 run attempt；旧行 NULL 和原有 attempt 上限保持原义。同键创建重放不升级旧策略。
+
+v18 的 `formal_agent_run_input_plans` 保存计划/输入/绑定 digest、覆盖计数及累计用量；同 run 重建必须匹配原计划。`formal-agent:summary-input-plan` 是内部 worker 命令，register/read/receipt 都验证当前 attempt/owner/租约。每次外发先预留，响应只记规范化用量；缺失或未返回响应保持未知，不补零。中间纪要只在内存中，最终结果沿既有交互事务发布。计划与请求预留沿 run 外键级联删除。新策略交互导出 schema 3 附带策略与计划摘要，旧交互继续原编码。
+
+## 会话问答长输入策略与导出（2026-09-30）
+
+状态：**实现完成·尚未验收**（SEM-F31/F35/F39，DB1/J24-QA-COMPAT/J30-QA-RECOVERY）。`qa.answer@3` 的身份冻结 `qa-long-input@1`，复用现有计划、run/attempt 预算和模型请求预留表；第二步不增加迁移或改写旧 checksum。同 run/attempt 重试沿原计划与绑定，原用量和请求计数不清零。只有全部回执的相关字段均已知，才投影 provider 的累计输入、输出及缓存命中/未命中用量；未知用量不估算，已知输入/输出计数仍用于预算。
+
+新问答交互导出 `schema_version=4`，增加 `question_input_policy` 和仅含计数/digest 的 `question_input_plan`；成功回答必须具有对应计划。公开导出回执接受已登记的 schema 1–4，旧问答和总结编码保持原版本。`qa_input_limit_error` 的专用失败投影扩展到 `@3`，仍沿 v21 的布尔事实解释。原问题、分块正文和中间回答不新增持久副本；SQLite 重开保留计划身份、累计用量与最终交互。自由问题重启恢复仅保存固定会话及重新提交提示，成功受理新问题时同事务解除旧提示。
+
+## 提问优先个人记忆存储（2026-10-01）
+
+状态：**已决定**（SEM-F26/F27/F32，J21/J22、DB7）。v22追加`personal_context_question_evidence`，仅保存候选身份hash、独立问题digest、已有摄取run/经历引用和发生时间；同身份同问题digest唯一，至少两条独立证据才建立`repeated_pattern`候选。原问题不入表，经历删除外键级联撤销证据，删除记忆同时清除该身份的待形成证据。v1–v21 SQL/checksum保持不变。
+
+ContextIngestV2的条目`content_json`保存`displayText/attribution/entityKeys`，沿既有版本事实提交。确认同一正文保留结构化字段；纠正正文清除旧字段，项目范围本身仍是等值字段。明确条目不由自动摄取改写。七种kind和既有STRICT约束不变。
+
+v23追加摄取输入引用表与会话关联表。准备会话摄取时冻结最多20条明确内容的memory/revision、范围及等值字段（累计8KiB），不存第二份正文；读取与提交均核对当前有效revision。关联引用episode和memory，保存匹配字段、说明和字幕引用；正文版本、水位、digest沿episode，修改/忘记立即删除关联，来源/条目删除级联清理。旧自动全局条目标为conflicted待复核，明确内容保留。管理界面可读来源上限8条，来源内容从既有经历摘要或指定字幕范围读取，不保存完整问题。
+
+v24追加`personal_context_overviews`（范围、目标revision、游标、current/previous JSON、关联run）及`personal_context_overview_jobs`（run外键、expected revision、输入digest和有界来源引用JSON）。模型调用在事务外，提交短事务核验租约、revision、所有来源和静态输出合同。投影只保留两版、最多12节/16KiB；管理读取实时复核引用，不返回已撤销节，来源删除可重建。项目/主题必须已登记；全局投影包含有界明确/候选条目及已关联会话，普通会话经历保留独立列表。旧SQL/checksum不变。

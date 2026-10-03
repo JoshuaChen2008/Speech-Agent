@@ -568,8 +568,8 @@ test('SEM-F31/J22/J24: toolbar exposes one formal Agent Bar entry and preserves 
   const agent = elements.get('windowControls').children
     .find((child) => child.dataset.act === 'agent')
   assert.ok(agent)
-  assert.equal(agent.getAttribute('aria-label'), '会话总结')
-  assert.equal(agent.title, '会话总结')
+  assert.equal(agent.getAttribute('aria-label'), '字幕助手')
+  assert.equal(agent.title, '字幕助手')
 
   for (const callback of elements.get('toolbar').listeners.get('click')) callback({ target: agent })
   assert.deepEqual(actions, ['agent'])

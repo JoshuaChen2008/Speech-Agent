@@ -16,6 +16,10 @@ test('SEM-F16/SEM-F28/J22/J24: deterministic route uses only frozen scope and co
   assert.equal(deterministicRoute({ scope: { kind: 'selection', reference: 'selection.one' }, prompt: '把这段翻译成英文' }).recipeId, 'text.translate')
   assert.equal(deterministicRoute({ scope: { kind: 'selection', reference: 'selection.one' }, prompt: '请重写并改得正式' }).recipeId, 'text.rewrite')
   assert.equal(deterministicRoute({ scope: { kind: 'session', reference: 'session.one' }, prompt: '提取待办和风险' }).recipeId, 'extract.items')
+  for (const prompt of ['请生成会话总结，包含待办和风险', '会议纪要，列出行动项', 'summary with action items']) {
+    assert.equal(deterministicRoute({ scope: { kind: 'session', reference: 'session.one' }, prompt }).recipeId, 'summary.minutes')
+  }
+  assert.equal(deterministicRoute({ scope: { kind: 'selection', reference: 'selection.one' }, prompt: '提取摘要中的待办' }).recipeId, 'extract.items')
   assert.equal(deterministicRoute({ scope: { kind: 'project', reference: 'project.one' }, prompt: '帮我分析这些内容' }).recipeId, 'report.analysis')
   assert.equal(deterministicRoute({ scope: { kind: 'project', reference: 'project.one' }, prompt: '给出一个执行计划' }).recipeId, 'plan.proposal')
   assert.equal(deterministicRoute({ scope: { kind: 'session', reference: 'session.one' }, prompt: '没有受控关键词' }).recipeId, 'qa.answer')
@@ -34,4 +38,3 @@ test('SEM-F16/SEM-F28/J22: fallback classifier has exactly five triggers and doe
   assert.equal(routeTarget({ recipeId: 'intent.route', confidence: 1 }), null)
   assert.equal(routeTarget({ recipeId: 'qa.answer', confidence: 1, alternatives: [] }), null)
 })
-

@@ -15,9 +15,9 @@ function settingErrorMessage (code: unknown): string {
   switch (code) {
     case 'AGENT_SETTINGS_REVISION_CONFLICT': return '设置已在别处更新，请重新载入后再试。'
     case 'AGENT_SETTINGS_INVALID': return '设置请求无效，请检查后重试。'
-    case 'AGENT_SETTINGS_PERMISSION_DENIED': return '当前窗口没有修改 Agent 设置的权限。'
-    case 'AGENT_SETTINGS_UNAVAILABLE': return 'Agent 设置暂时不可用，请稍后重试。'
-    default: return 'Agent 设置未能保存，请稍后重试。'
+    case 'AGENT_SETTINGS_PERMISSION_DENIED': return '当前窗口没有修改 助手设置的权限。'
+    case 'AGENT_SETTINGS_UNAVAILABLE': return '助手设置暂时不可用，请稍后重试。'
+    default: return '助手设置未能保存，请稍后重试。'
   }
 }
 
@@ -30,7 +30,7 @@ export function AgentSettingsPane ({ shell, config, onConfigRefresh }: {
   const update = async (patch: Dict) => {
     if (!config || pending) return
     setPending(true)
-    setNotice('正在保存 Agent 设置…')
+    setNotice('正在保存 助手设置…')
     try {
       const response = await shell.setAgentSettings({
         ...CONTRACT_HEADER,
@@ -47,7 +47,7 @@ export function AgentSettingsPane ({ shell, config, onConfigRefresh }: {
       setNotice('')
       await onConfigRefresh()
     } catch {
-      setNotice('Agent 设置未能保存，请稍后重试。')
+      setNotice('助手设置未能保存，请稍后重试。')
       await onConfigRefresh()
     } finally {
       setPending(false)
@@ -87,35 +87,35 @@ export function AgentSettingsPane ({ shell, config, onConfigRefresh }: {
   const summaryUseMemory = config?.summaryUseMemory !== false
 
   return <section className="agent-settings" aria-labelledby="agentSettingsTitle">
-    <h2 id="agentSettingsTitle">Agent 系统</h2>
-    <p className="sub">Agent 系统是可选能力，字幕系统在它关闭或不可用时仍独立运行。</p>
+    <h2 id="agentSettingsTitle">AI 助手</h2>
+    <p className="sub">使用模型生成总结、回答问题和整理记忆。关闭助手仍可使用字幕。</p>
     {notice !== '' && <p className="settings-status" role="status" aria-live="polite">{notice}</p>}
-    <div className="group" aria-label="Agent 系统设置">
+    <div className="group" aria-label="AI 助手设置">
       <div className="row">
-        <div><div className="label">启用 Agent 系统</div>
-          <div className="hint">开启后才会创建后台 Agent 任务和正式 Agent 交互。</div></div>
+        <div><div className="label">启用 AI 助手</div>
+          <div className="hint">开启后可以生成总结、提问，并按设置整理记忆。</div></div>
         <label className="switch"><input type="checkbox" checked={agentEnabled} disabled={config == null || pending}
-          aria-label="启用 Agent 系统" onChange={(event) => void update({ agent_enabled: event.currentTarget.checked })} /><span>{agentEnabled ? '已开启' : '已关闭'}</span></label>
+          aria-label="启用 AI 助手" onChange={(event) => void update({ agent_enabled: event.currentTarget.checked })} /><span>{agentEnabled ? '已开启' : '已关闭'}</span></label>
       </div>
       <div className="row">
         <div><div className="label">总结时参考记忆</div>
-          <div className="hint">生成总结时补充已记住的信息；关闭后仍可自动整理记忆，只使用本次会话。</div></div>
+          <div className="hint">开启后，总结会参考相关记忆；关闭后，总结只依据本次会话，自动整理记忆不受影响。</div></div>
         <label className="switch"><input type="checkbox" checked={summaryUseMemory} disabled={config == null || pending || typeof shell.setSummaryMemoryPreference !== 'function'}
           aria-label="总结时参考记忆" onChange={(event) => void updateSummaryMemory(event.currentTarget.checked)} /><span>{summaryUseMemory ? '已开启' : '已关闭'}</span></label>
       </div>
       <div className="row">
         <div><div className="label">个人记忆</div>
-          <div className="hint">只在 Agent 系统开启时生效；关闭后不会自动摄取新的个人上下文。</div></div>
+          <div className="hint">需要先开启 AI 助手。关闭个人记忆后，不再自动添加或引用记忆，已有内容保留。</div></div>
         <label className="switch"><input type="checkbox" checked={memoryEnabled} disabled={config == null || pending}
           aria-label="启用个人记忆" onChange={(event) => void update({ memory_enabled: event.currentTarget.checked })} /><span>{memoryEnabled ? '已开启' : '已关闭'}</span></label>
       </div>
       <div className="row">
-        <div><div className="label">云端模型披露</div>
-          <div className="hint">允许使用已配置的云端 Agent 模型前，需要明确确认数据会发送到该服务。</div></div>
+        <div><div className="label">允许发送到云端模型</div>
+          <div className="hint">云端数据使用说明：使用云端模型生成回答、总结或整理记忆时，会按任务和记忆设置，将问题、相关字幕和记忆发送到你配置的模型服务商。数据如何处理和保留，以该服务商的政策为准。</div></div>
         <label className="switch"><input type="checkbox" checked={cloudDisclosureAccepted} disabled={config == null || pending}
-          aria-label="确认云端模型披露" onChange={(event) => void update({ cloud_disclosure_accepted: event.currentTarget.checked })} /><span>{cloudDisclosureAccepted ? '已确认' : '未确认'}</span></label>
+          aria-label="允许发送到云端模型" onChange={(event) => void update({ cloud_disclosure_accepted: event.currentTarget.checked })} /><span>{cloudDisclosureAccepted ? '已允许' : '未允许'}</span></label>
       </div>
     </div>
-    <p className="note">这些开关只影响后续 Agent 处理周期；字幕采集、首次稳定转写、历史与导出保持原有生命周期。</p>
+    <p className="note">设置对之后的助手任务生效，不影响字幕识别、保存和导出。</p>
   </section>
 }

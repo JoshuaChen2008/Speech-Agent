@@ -3,6 +3,7 @@
 const { createPersonalContextExecutionAdapter, createPersonalContextModule } = require('./index')
 const { PersonalContextController } = require('./controller')
 const { canonicalize } = require('../../runtime/storage-worker/canonical-json')
+const { CONTRACT_ID, CONTRACT_VERSION } = require('../contracts/agent-context-ui')
 const {
   ContextIngestSessionRunner,
   FormalAgentJobScheduler,
@@ -51,13 +52,17 @@ class PersonalContextRuntime {
     this.config = options.config
     this.onChanged = typeof options.onChanged === 'function' ? options.onChanged : () => {}
     this.onDiagnostic = typeof options.onDiagnostic === 'function' ? options.onDiagnostic : () => {}
+    this.synthesisDelayMs = Number.isSafeInteger(options.synthesisDelayMs) && options.synthesisDelayMs >= 0 ? Math.min(30000, options.synthesisDelayMs) : 30000
+    this.synthesisTimer = null
+    this.pendingSynthesis = null
     this.module = createPersonalContextModule({ storage: this.gateway })
     this.controller = new PersonalContextController({
       module: this.module,
       readScopeDirectory: (command) => this.gateway.personalContextManage(command),
+      readOverview: options.modelAccess ? (scopeKey) => this.gateway.personalContextManage({ type: 'synthesize', action: 'view', scopeKey }) : null,
       getConfig: () => this.config.get(),
       updateAgentSettings: (request) => this.updateAgentSettings(request),
-      onChanged: this.onChanged
+      onChanged: (event) => { this.onChanged(event); this.scheduler?.wake('memory-change'); this.scheduleSynthesis() }
     })
     this.executionAdapter = null
     if (options.executionAdapter) this.executionAdapter = options.executionAdapter
@@ -81,10 +86,17 @@ class PersonalContextRuntime {
       },
       loop: options.loop,
       loopFactory: options.loopFactory,
+      ingestRecipeVersion: options.ingestRecipeVersion || '3',
       resolveModel: options.resolveModel,
       now: options.now,
       interactionPayloadProvider: (runId) => this.interactionPayloads.get(runId) || null,
-      onSettled: (runId, terminalReason) => this.settleInteraction(runId, terminalReason)
+      onSettled: (runId, terminalReason) => {
+        this.settleInteraction(runId, terminalReason)
+        this.scheduleSynthesis(runId.startsWith('run.overview.') ? 0 : this.synthesisDelayMs)
+        void this.controller.getOverview({ contract_id: CONTRACT_ID, contract_version: CONTRACT_VERSION }).then((response) => {
+          if (response.ok) this.onChanged({ contract_id: CONTRACT_ID, contract_version: CONTRACT_VERSION, revision: response.snapshot.revision })
+        }).catch(() => {})
+      }
     })
     this.scheduler = new FormalAgentJobScheduler({
       storage: this.gateway,
@@ -111,6 +123,21 @@ class PersonalContextRuntime {
     this.policyPromise = Promise.resolve()
   }
 
+  scheduleSynthesis (delay = this.synthesisDelayMs) {
+    if (!this.started || !this.runner.s3 || !this.policyReady || !this.policyAllows() || this.synthesisTimer !== null || this.pendingSynthesis) return
+    const generation = this.generation
+    this.synthesisTimer = setTimeout(() => {
+      this.synthesisTimer = null
+      if (!this.isCurrent(generation) || !this.policyReady || !this.policyAllows()) return
+      let continuePaging = false
+      this.pendingSynthesis = this.gateway.personalContextManage({ type: 'synthesize', action: 'prepare' }).then((result) => {
+        continuePaging = result.hasMore === true
+        if (this.isCurrent(generation) && result.preparedCount > 0) { if (!this.scheduler.started) this.scheduler.start(); this.scheduler.wake('memory-overview') }
+      }).catch(() => this.onDiagnostic({ code: 'AGENT_CONTEXT_OPERATION_FAILED' })).finally(() => { this.pendingSynthesis = null; if (continuePaging) this.scheduleSynthesis(0) })
+    }, delay)
+    this.synthesisTimer.unref?.()
+  }
+
   async updateAgentSettings (request) {
     const generation = ++this.generation
     const updated = this.config.updateAgentSettings(request)
@@ -118,6 +145,7 @@ class PersonalContextRuntime {
     this.policyPromise = policyPromise.catch(() => false)
     try {
       await policyPromise
+      this.scheduleSynthesis()
     } catch {
       throw policyFailure()
     }
@@ -290,6 +318,7 @@ class PersonalContextRuntime {
     this.started = true
     const generation = ++this.generation
     this.policyPromise = this.refreshAutomaticPolicy(this.config.get(), generation).catch(() => false)
+    void this.policyPromise.then(() => this.scheduleSynthesis())
     this.unsubscribe = recorder.onTerminalCommitted((notice) => {
       const generation = this.generation
       const entry = { prepareStarted: false, promise: null }
@@ -334,6 +363,9 @@ class PersonalContextRuntime {
   async stop () {
     this.generation += 1
     this.started = false
+    if (this.synthesisTimer !== null) clearTimeout(this.synthesisTimer)
+    this.synthesisTimer = null
+    if (this.pendingSynthesis) await this.pendingSynthesis
     if (this.unsubscribe) {
       try { this.unsubscribe() } catch { /* listener cleanup is best effort */ }
       this.unsubscribe = null

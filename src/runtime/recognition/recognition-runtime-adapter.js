@@ -14,17 +14,23 @@ class RecognitionRuntimeAdapter extends RealtimeRuntimeAdapter {
     this.recognitionSettings = options.recognitionSettings
     this.providerFactory = options.providerFactory || (options => new NlsRealtimeProvider(options))
     this.statusHandler = null
+    this.progressHandler = null
     this.output = null
     this.router = null
     this.cloudPort = null
     this.provider = null
     this.pendingWrites = new Set()
     this.endWaitTimeoutMs = 10000
+    this.takeoverTimeoutMs = options.takeoverTimeoutMs ?? 30000
+    if (!Number.isInteger(this.takeoverTimeoutMs) || this.takeoverTimeoutMs < 1 || this.takeoverTimeoutMs > 30000) {
+      throw new RangeError('takeoverTimeoutMs must be between 1 and 30000')
+    }
     super.onCaption(event => this.router ? this.router.local(event) : this.output?.(event))
   }
 
   onCaption (handler) { this.output = handler; return () => { if (this.output === handler) this.output = null } }
   onRecognitionStatus (handler) { this.statusHandler = handler; return () => { if (this.statusHandler === handler) this.statusHandler = null } }
+  onRecognitionProgress (handler) { this.progressHandler = handler; return () => { if (this.progressHandler === handler) this.progressHandler = null } }
 
   async start (context) {
     const binding = context.recognition
@@ -61,7 +67,12 @@ class RecognitionRuntimeAdapter extends RealtimeRuntimeAdapter {
     } finally { this.startingCloud = false }
   }
 
-  workerConfiguration () { return this.router?.actualProvider === 'nls' ? { cloudAudio: true, initialCredits: 2, creditBatch: 1 } : {} }
+  workerConfiguration () {
+    return this.router?.actualProvider === 'nls'
+      ? { cloudAudio: true, initialCredits: 2, creditBatch: 1,
+          recognizer: undefined, draftRecognizer: undefined, vad: undefined, refinement: false }
+      : {}
+  }
 
   async beforeCapture (session, context) {
     if (!this.router) return
@@ -72,10 +83,19 @@ class RecognitionRuntimeAdapter extends RealtimeRuntimeAdapter {
     this.delayMonitor.enable()
     session.unsubscribers.push(session.worker.onControl(message => {
       if (this.session !== session || session.faulted) return
-      if (message.type === 'recognition-local-ready') {
+      if (message.type === 'recognition-fault') { this.failRecognition(session, message.code); return }
+      if (session.stopping) return
+      if (message.type === 'recognition-local-loading') {
+        void this.loadLocalFallback(session, context)
+      } else if (message.type === 'recognition-local-ready') {
+        if (session.takeoverCancelled || !session.fallbackReady || !this.router.pendingFallback) return
         clearTimeout(this.takeoverTimer)
         this.router.confirmTakeover()
-      } else if (message.type === 'recognition-fault') this.failRecognition(session, message.code)
+        this.progress(session, 'replaying')
+        try { this.cloudPort.postMessage({ type: 'local-start' }) } catch { this.failRecognition(session, 'RECOGNITION_FALLBACK_FAILED') }
+      } else if (message.type === 'recognition-local-progress') {
+        this.progress(session, message.phase)
+      }
     }))
     if (this.router.actualProvider === 'local') {
       this.router.openStream((performance.now() - this.origin) / 1000)
@@ -115,6 +135,56 @@ class RecognitionRuntimeAdapter extends RealtimeRuntimeAdapter {
     port.start()
   }
 
+  progress (session, phase) {
+    if (this.session !== session || session.stopping || session.faulted || session.fallbackPhase === phase) return
+    session.fallbackPhase = phase
+    this.progressHandler?.({ sessionId: session.sessionId, phase })
+  }
+
+  async loadLocalFallback (session, context) {
+    if (this.session !== session || session.stopping || session.faulted || session.fallbackWorker || session.fallbackLoading ||
+        session.takeoverCancelled || !this.router.pendingFallback) return
+    session.fallbackLoading = true
+    this.progress(session, 'loading')
+    try {
+      // A stop requested by the newly published snapshot enters the adapter
+      // on a microtask. Give it that turn before allocating a native child.
+      await Promise.resolve()
+      if (session.stopping || session.faulted || session.takeoverCancelled || !this.router.pendingFallback) return
+      const worker = this.workerFactory()
+      session.fallbackWorker = worker
+      session.unsubscribers.push(worker.onCaption(event => {
+        if (this.session === session && !session.faulted && !session.takeoverCancelled) this.captionHandler?.(event)
+      }))
+      session.unsubscribers.push(worker.onExit(() => {
+        if (session.fallbackReady && !session.stopping) this.failRecognition(session, 'RECOGNITION_FALLBACK_FAILED')
+      }))
+      session.unsubscribers.push(worker.onControl(message => {
+        // Draft failure still degrades to the authoritative recognizer only.
+        if (message.type === 'draft-recognizer-fault' && this.session === session && !session.stopping && !session.draftRecognizerFaulted) {
+          session.draftRecognizerFaulted = true
+          session.draftRecognizerFaultStage = message.stage
+          this.draftFaultHandler?.(Object.freeze({ code: message.code, stage: message.stage, count: 1 }))
+        }
+      }))
+      const recognizerProfile = this.profileMap[context.profile]
+      await worker.start({ sessionId: session.sessionId, sourceIds: session.sourceIds, recognizerProfile,
+        recognizer: recognizerProfile !== 'null' ? this.recognizer : undefined,
+        draftRecognizer: recognizerProfile !== 'null' ? this.draftRecognizer : undefined,
+        vad: recognizerProfile !== 'null' ? this.vad : undefined,
+        vadOptions: this.vadOptions, refinement: false,
+        initialCredits: 1, creditBatch: 1, configureTimeoutMs: this.takeoverTimeoutMs,
+        attempt: context.resume?.attempt || 0, sequenceBases: context.resume?.sourceSequences || {} })
+      if (this.session !== session || session.stopping || session.faulted || session.takeoverCancelled || !this.router.pendingFallback) return
+      session.fallbackReady = true
+      const channel = new this.electron.MessageChannelMain()
+      worker.attachPort(channel.port1)
+      session.worker.attachFallbackPort(channel.port2)
+    } catch {
+      if (!session.stopping && !session.takeoverCancelled) this.failRecognition(session, 'RECOGNITION_FALLBACK_FAILED')
+    }
+  }
+
   providerFault (session, code) {
     if (this.session !== session || session.faulted) return
     if (session.stopping || this.startingCloud || this.context?.signal?.aborted) {
@@ -131,7 +201,7 @@ class RecognitionRuntimeAdapter extends RealtimeRuntimeAdapter {
       return
     }
     if (requested) {
-      this.takeoverTimer = setTimeout(() => this.failRecognition(session, 'RECOGNITION_FALLBACK_FAILED'), 10000)
+      this.takeoverTimer = setTimeout(() => this.failRecognition(session, 'RECOGNITION_FALLBACK_FAILED'), this.takeoverTimeoutMs)
       const provider = this.provider
       this.provider = null
       provider?.abort()
@@ -143,6 +213,9 @@ class RecognitionRuntimeAdapter extends RealtimeRuntimeAdapter {
   failRecognition (session, code) {
     if (this.session !== session || session.faulted) return
     const safe = this.safeCode(code)
+    clearTimeout(this.takeoverTimer)
+    session.takeoverCancelled = true
+    try { this.cloudPort?.postMessage({ type: 'local-cancel' }) } catch {}
     this.streamFault = failure(safe)
     this.router.fail(safe)
     const provider = this.provider
@@ -166,6 +239,9 @@ class RecognitionRuntimeAdapter extends RealtimeRuntimeAdapter {
       await Promise.race([Promise.all([...this.pendingWrites]), new Promise(resolve => setTimeout(resolve, 25))])
     }
     if (this.streamFault) throw this.streamFault
+    // Native captions and stats share its parent channel. Waiting for its end
+    // ensures all flush captions are delivered before removing subscriptions.
+    if (session.fallbackReady) await session.fallbackWorker.waitForEnd(this.endWaitTimeoutMs)
     if (this.provider && this.router.actualProvider === 'nls') {
       await this.provider.finishInput({ signal: options.signal })
       if (this.router.active) throw failure('NLS_INVALID_RESPONSE')
@@ -187,6 +263,14 @@ class RecognitionRuntimeAdapter extends RealtimeRuntimeAdapter {
   }
 
   async stop (options = {}) {
+    const session = this.session
+    if (session && this.router?.pendingFallback) {
+      session.takeoverCancelled = true
+      clearTimeout(this.takeoverTimer)
+      this.streamFault = failure('RECOGNITION_FALLBACK_FAILED')
+      this.router.fail('RECOGNITION_FALLBACK_FAILED')
+      try { this.cloudPort?.postMessage({ type: 'local-cancel' }) } catch {}
+    }
     try { await super.stop(options) } catch (error) {
       if (this.router && !this.router.faultCode) this.router.fail(this.safeCode(error.code))
       throw error
@@ -194,7 +278,10 @@ class RecognitionRuntimeAdapter extends RealtimeRuntimeAdapter {
   }
 
   teardownSession (session, mode) {
+    if (session.teardownPromise) return session.teardownPromise
+    if (this.session !== session) return super.teardownSession(session, mode)
     clearTimeout(this.takeoverTimer)
+    session.takeoverCancelled = true
     const provider = this.provider
     this.provider = null
     if (this.router) this.router.accepting = false
@@ -206,6 +293,11 @@ class RecognitionRuntimeAdapter extends RealtimeRuntimeAdapter {
       this.recognitionMetrics = this.eventLoopMetrics()
     }
     return super.teardownSession(session, mode)
+  }
+
+  captureDiagnostics (session) {
+    super.captureDiagnostics(session)
+    if (session.fallbackWorker) this.lastRunDiagnostics.localFallback = session.fallbackWorker.lastStats
   }
 
   getLiveDiagnostics () {

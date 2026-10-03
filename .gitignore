@@ -2,6 +2,8 @@ node_modules/
 dist/
 src/renderer-dist/
 native/caption-input/build/
+native/memory-file/build/
+src/native/memory-file/*.node
 native/caption-input/*.node
 src/native/caption-input/*.node
 out/
@@ -10,6 +12,11 @@ out/
 models/
 .artifacts/
 .claude/settings.local.json
+
+# 本地工具配置、参考附件与用户字幕原文导出
+.codex-remote-attachments/
+.zcodeignore
+/*_session-*_original.md
 
 # archify 产物：可由 docs/current-framework.architecture.json 重建
 docs/current-framework.html

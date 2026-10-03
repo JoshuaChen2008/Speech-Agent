@@ -45,18 +45,20 @@
 ## 5. P2 预算与存储
 
 - [x] 5.1 登记summary.minutes@2策略和十轴作用域，v1/v2并存；bind四字段不扩充，调用者不能指定预算（SEM-F39/J31-COMPAT）。实现完成·尚未验收：冻结recipe目录保留summary.minutes@1并注册@2；模型接入层按run中的recipe版本派生精确十轴预算，@1与其它recipe仍用原策略；真实SQLite bind拒绝调用方预算字段，v2预算经ToolAudit策略校验。相关focus 52/52，`npm run test:core` 1084/1084（含renderer类型检查与生产构建）；P2剩余执行链、迁移、长输入和完整J31仍未验收。
-- [ ] 5.2 盘点runner/Loop/runtime/adapter/HTTP/tool/IPC/SQLite/export限制与version=1硬编码，统一政策并覆盖非总结recipe不变（J31-SIZE/COMPAT）。
-- [ ] 5.3 追加计划/策略摘要和累计时长/调用数迁移，不存中间正文；版本按最新schema顺延，验证既有库升级及失败回滚（DB1/J31-COMPAT）。
-- [ ] 5.4 增加冻结raw keyset分页和超长段code point范围读取，验证first_event_order、身份变化与删除拒绝（J31-COVERAGE）。
+- [ ] 5.2 盘点runner/Loop/runtime/adapter/HTTP/tool/IPC/SQLite/export限制与version=1硬编码，统一政策并覆盖非总结recipe不变（J31-SIZE/COMPAT）。新建raw总结@2已依据独立策略接通分页、规划与归并，旧策略不变；请求包含HTTP JSON转义容量检查。完整限制矩阵仍待7.2，故不勾选。
+- [ ] 5.3 追加计划/策略摘要和累计时长/调用数迁移，不存中间正文；版本按最新schema顺延，验证既有库升级及失败回滚（DB1/J31-COMPAT）。v20已追加策略身份/请求用量，计划登记与重建核对、累计usage已接线；v19→v20保留旧checksum/策略/attempt有定向证据。新增迁移故障回滚矩阵仍待补齐，故不勾选。
+- [ ] 5.4 增加冻结raw keyset分页和超长段code point范围读取，验证first_event_order、身份变化与删除拒绝（J31-COVERAGE）。当前已追加≤500段/≤256 KiB正文的分页接口、code point续读与最终inputDigest复核；已进入正式runner，删除/变更竞态完整矩阵仍待补齐，故不勾选。
 - [ ] 5.5 实现catalog预检→bind→复核，覆盖能力不足、配置竞态、计数边界和精确/保守输入估算，拒绝零总结请求（J31-SIZE）。
 
 ## 6. P2 分块归并与恢复
 
-- [ ] 6.1 实现确定性Agent输入计划/planDigest和无遗漏无重复覆盖证明；envelope、JSON转义、记忆/工具和输出预留计入预算（J31-COVERAGE）。
-- [ ] 6.2 定义中间结果exact Schema/来源/字节上限，按连续顺序固定扇入归并，覆盖单块及装不下两个结果的拒绝（J31-MERGE）。
-- [ ] 6.3 每节点调用同一AgentLoopExecutor及冻结绑定，共享实际请求/工具/usage/时限计数，未知usage不补造（J31-BUDGET）。
+2026-09-30执行顺序（已决定）：按design「P2最小实施顺序」依次执行5.2–5.5 → 6.1–6.5 → 6.6–6.7 → §7及适用§8，不新增平行清单。5.2首先处理直接总结@2最多5个attempt与原P2最多2个attempt的策略身份冲突：先登记SEM-F39/F40、J31-COMPAT及ADR0021，再实现版本判别；保留旧绑定/策略解释。复用A的JSON、输出额度和请求保护，不等待C/D/E重构。首条纵向旅程使用173,827字节合成输入，验证直接策略拒绝、分块策略适配时完整产出、中段失败零部分纪要；随后覆盖全部既有矩阵。不得将旧复选框或局部规划器当作接线证据。
+
+- [ ] 6.1 实现确定性Agent输入计划/planDigest和无遗漏无重复覆盖证明；envelope、JSON转义、记忆/工具和输出预留计入预算（J31-COVERAGE）。正式分页/执行链已接通，覆盖code point、来源连续性、HTTP JSON转义与固定扇入；完整工具envelope边界仍待7.2，故不勾选。
+- [x] 6.2 定义中间结果exact Schema/来源/字节上限，按连续顺序固定扇入归并，覆盖单块及装不下两个结果的拒绝（J31-MERGE）。
+- [x] 6.3 每节点调用同一AgentLoopExecutor及冻结绑定，共享实际请求/工具/usage/时限计数，未知usage不补造（J31-BUDGET）。
 - [ ] 6.4 分批分页/序列化/规划让出执行，统计正文缓冲峰值并及时释放；验证最大输入下取消及字幕调度（J31-RESOURCE）。
-- [ ] 6.5 全部节点结束后复核覆盖/输入/记忆撤销/Schema并原子发布一个结果；中段失败、超限和迟到结果均零部分产物（J31-MERGE）。
+- [x] 6.5 全部节点结束后复核覆盖/输入/记忆撤销/Schema并原子发布一个结果；中段失败、超限和迟到结果均零部分产物（J31-MERGE）。
 - [ ] 6.6 同run/绑定新attempt整次重建计划并核对digest，重启不存中间结果、不复活取消、预算不重置（J31-RECOVERY）。
 - [ ] 6.7 新导出携带策略/覆盖/预算身份，旧编码器字节稳定；删除会话/交互清理新增映射（J31-COMPAT/J26/J12）。
 
@@ -66,9 +68,9 @@
 - [ ] 7.2 文本/序列/段数/节点/请求/工具/内存/期限逐轴减一、等于、加一；容量内且计划适配的上沿样本必须产出（J31-SIZE/BUDGET/RESOURCE）。
 - [ ] 7.3 真实main/preload/renderer/service/planner/Loop/storage联合覆盖通知丢失、取消、重启、迁移、下一字幕会话；仅替代provider/网络/声卡/系统外部边界（J30/J31）。
 - [ ] 7.4 验证跨块修订/否定/重复事项/末段撤销/待办和来源；记忆开关四组合/撤销及summary自动信号零写入（J31-MERGE/J29）。
-- [ ] 7.5 执行受影响focus、verify:renderer及相关lane；PR/阶段联合验收由当前revision完整三条lane承担，记录命令与未验证范围。
+- [x] 7.5 执行受影响focus、verify:renderer及相关lane；PR/阶段联合验收由当前revision完整三条lane承担，记录命令与未验证范围。
 - [ ] 7.6 已授权真实模型验证五小时来源规模输入的质量/耗时/真实网络取消；独立记录五小时实际字幕采集资源趋势、退出及历史，无音频落盘，不替代原I2/I3/I4门禁（J31实机）。
-- [ ] 7.7 更新语义表/旅程证据列及runtime/data说明、在途change交接链接；未验部分保持实现完成·尚未验收，不把文档校验算产品证据。
+- [x] 7.7 更新语义表/旅程证据列及runtime/data说明、在途change交接链接；未验部分保持实现完成·尚未验收，不把文档校验算产品证据。
 
 ## 8. P1 确定性联合验收收尾
 
@@ -77,3 +79,12 @@
 - [ ] 8.3 在非合作 provider 与诊断写失败期间，通过正式产品入口开始/停止下一字幕会话，验证SQLite、HistoryService与文本导出；外部取消从main受理到持久终态须≤5秒，音频替身不得产出或保存现场音频（SEM-F38/F40、SEM-F14、J12/J30-INDEPENDENCE）。实现完成·尚未验收：服务级字幕独立旅程已有 4.4 证据；正式 Electron 受控麦克风启动尝试以 `ADAPTER_START_FAILED` 收束，未形成本项要求的 SQLite、HistoryService、文本导出、取消期限及无音频文件联合证据，失败根因尚未定位，本项未勾选。
 - [x] 8.4 修复或明确定位当前 revision 的 integration/evidence 阻塞；重建 I3 非音频证据并通过严格 verifier/隐私检查，执行受影响focus、renderer验证和最终完整 `npm test`；只有三条 lane 全部成功时记录 P1 确定性联合验收证据（SEM-T03/J9-CI、J30/J12）。I3 非音频报告在干净 managed worktree（提交 `2959732`）先执行 `npm run verify:renderer` 后由 runner 重建；该提交绑定的严格 verifier、敏感标记检查和 `npm run test:evidence` 为 248/249（1 项按设计跳过）。当前工作树 `npm test` 的 renderer 类型检查/生产构建通过，core 为 1084/1084，integration 为 71/72；J18 Vite 开发态 Electron 首次启动退出码 1，当前宿主另报告 GPU shared context 创建失败。单独执行 `npm run test:evidence` 为 246/249，2 项 I3 测试因当前 `productPayloadSha256` provenance 与工作树内容不一致而失败，1 项按设计跳过。三条 lane 未全部成功，故不记录 P1 联合验收证据；本勾选只表示已执行阻塞定位与既有 I3 非音频证据重建。
 - [ ] 8.5 同步语义合同、旅程矩阵、ADR/实施状态和本任务证据；仅在 J30-ELECTRON、适用 J29/J12 回归及完整三条 lane 都通过后，将 P1 标为「联合验收完成」，P2 保持开放且不宣称联合验收，change 保持开放（SEM-F38/F40、J30/J12/J24/J26）。
+
+
+### 2026-09-30 P2 执行记录
+
+**实现完成·尚未验收**：已接通新策略→冻结raw分页→Agent输入计划→同一Agent Loop分块→连续归并→输入复核→原子发布；请求预留/规范化usage累计、进度计数、两次attempt、旧运行兼容、v20迁移和schema 3导出已有实现。173,827字节真实SQLite/规划器/模型接入层旅程验证完整覆盖、一个纪要、中段失败零部分结果、未知usage保持未知，以及同规模旧策略零模型调用拒绝。provider为受控网络边界，未访问公网模型。
+
+§5/§6未勾选项中的实现不再是未接线，但其完整验收矩阵仍开放：catalog预检竞态、删除/变更竞态、全部容量轴上下沿、128 MiB正文峰值测量、正式Electron长文本以及跨块事实质量需继续验证；不将局部结果提升为P2联合验收。完整命令结果见语义表及旅程矩阵的本次证据记录。
+
+本次勾选6.2/6.3/6.5表示分块归并、共享请求/工具/usage账本和原子发布实现与局部失败/取消旅程已有证据；完整边界矩阵仍由7.2–7.4跟踪。7.5/7.7表示验证执行和文档回填已有记录，不表示全仓成功。定向128/128；integration 73/74；evidence 246/249（2失败、1跳过）；此前npm test的core 1121/1122。阻塞分别为模型设置未知能力UI断言、J18开发态启动、I3旧证据provenance。renderer构建及diff检查返回码0，change保持开放。

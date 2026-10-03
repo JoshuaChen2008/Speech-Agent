@@ -33,11 +33,14 @@ test('SEM-F14/J20 silent cloud audio stays bounded without invoking local recogn
   f.core.dispose()
 })
 
-test('SEM-F12/J20 unfinished cloud segment cannot be evicted at the retention limit', () => {
+test('SEM-F12/J20 unfinished cloud segment uses rolling retention and rejects missing handoff range', () => {
   const f = fixture()
   f.feed(0); f.buffer.begin(0)
-  for (let i = 1; i <= 600; i++) f.feed(i)
-  assert.deepEqual(f.faults, ['RECOGNITION_BUFFER_LIMIT'])
+  for (let i = 1; i < 1800; i++) f.feed(i)
+  assert.deepEqual(f.faults, [])
+  assert.equal(f.buffer.queuedSamples, RETAIN_SAMPLES)
+  f.buffer.takeover(0)
+  assert.deepEqual(f.faults, ['RECOGNITION_AUDIO_GAP'])
   assert.equal(f.buffer.pendingSamples, 0)
   f.core.dispose()
 })

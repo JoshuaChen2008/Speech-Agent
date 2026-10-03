@@ -15,6 +15,42 @@
 
 本次环境没有可用的交互式桌面会话，因此未执行 J15a 可见 DWM 矩阵或 I2 `dwm-drag` 实机观察；也没有专用干净 Win11 快照，I4 非音频、`loopback`、`mic` 子报告均未执行。release 安装器布局与 NSIS 生命周期结果见 [`b5-packaging.md`](b5-packaging.md) 的 2026-09-26 记录。当前状态保持「实现完成·尚未验收」；没有提升联合验收或发布验收状态。
 
+## 2026-09-26 后续定位：artifact 已取得，目标超时未复现
+
+本节晚于上节的环境受阻记录。对应 SEM-F22/F14/T03、J17；状态仍为实现完成·尚未验收。没有修改产品代码、5 秒恢复等待或布局接受条件，也没有推送或触发新 CI。指标与哈希见 [`toolbar-reload-investigation-2026-09-26.json`](toolbar-reload-investigation-2026-09-26.json)。
+
+通过 GitHub connector 下载了原 artifact，ZIP SHA-256 为 `be87bb81e9774994a7f76b5594d0a05a2a7db66d749a71323d17b87ed2147caa`，与 GitHub 的 digest 相同；此前 HTTP 401 不再阻止本轮读取。只提取了产品失败报告与退出证据，没有展开整个工作目录：
+
+- 产品报告为 `fail / PRODUCT_SHELL_SMOKE_FAILED`，`crashEventCount=0`。
+- 退出证据为 `other-nonzero`，`quitRequested=true`、`willQuitObserved=true`、`cleanIntentObserved=true`。唯一 incident 是主进程非零退出；renderer/utility gone、preload error、unresponsive 和 rejected IPC 计数均为 0，`breakpointObserved=false`。这支持“旅程断言失败后退出”的路径，不能将本机 sandbox 的 GPU 崩溃归因给原 CI；计数为零也不证明所有可能异常都已被观测。
+- ZIP 中没有 `toolbar-reload-diagnostic.json`，与原 workflow 未启用诊断一致。旧 artifact 不能补出 renderer/main/layout 分支证据。
+
+原提交 `b49a940` 的等待顺序可进一步收窄问题边界：`isLoading() === false` → 通过真实 preload/IPC 读到更大的工具条布局代次 → 观察到该代次的 `invalidate/fallback` → 等待同代 `acceptReport/source=toolbar`。因此报错到达 `toolbar reload recovery`，表示前面三个等待已经返回。它不等于 renderer 的 `initToolbarLayout()` 已成功，也不证明所有异步布局/字体工作已经结束；旅程自身发起的上下文读取与 renderer 的初始化读取是不同调用。唯一能确定缺少的是 **5 秒内被 probe 观察到的同代有效布局报告**。
+
+本机当前 revision `120430c` 的实际命令与结果：
+
+```powershell
+npm run verify:renderer
+node scripts/run-supervised-electron.js --entry scripts/product-shell-smoke.js --entry-arg --toolbar-reload-diagnostic --entry-arg --work-dir --entry-arg .artifacts/reload-diagnosis-20260926/host-baseline/work --entry-arg --report --entry-arg .artifacts/reload-diagnosis-20260926/host-baseline/report.json --entry-arg --window-geometry-profile --entry-arg default --report .artifacts/reload-diagnosis-20260926/host-baseline/exit-evidence.json --strict-report
+node scripts/verify-toolbar-reload-diagnostic.js .artifacts/reload-diagnosis-20260926/host-baseline/toolbar-reload-diagnostic.json
+node scripts/verify-product-shell-report.js .artifacts/reload-diagnosis-20260926/host-baseline/report.json
+node scripts/verify-electron-exit-evidence.js .artifacts/reload-diagnosis-20260926/host-baseline/exit-evidence.json
+```
+
+构建返回 0。首轮受限 sandbox 的产品壳在 GPU 子进程边界异常退出，没有到达目标断言；随后获准在沙箱外使用独立目录执行上述命令，产品报告为 `pass/partial`，阶段诊断为 `recovered`，supervisor 为 `clean-exit`、0 incident，三个 reader 均返回 0。renderer 已发送，main 已接收并接受目标代次布局，无发送者或布局拒绝。载荷 SHA 为 `e4e0f26678910d75983bee8a3000b988ff24b30d8e2e0f4be70785a5da5214ac`。
+
+另用明确标为临时诊断的 `.artifacts/reload-diagnosis-20260926/repeat-reload.cjs`，在内存中包装原产品壳入口，连续调用原 `completeWindowInteractionLayoutProbe()` 100 次，每轮诊断写独立文件。保留真实四窗/main/preload/renderer/IPC，未改产品源码、可见性、调度、超时或判定；包装只改变重复次数与诊断文件名：
+
+```powershell
+node scripts/run-supervised-electron.js --entry .artifacts/reload-diagnosis-20260926/repeat-reload.cjs --entry-arg --toolbar-reload-diagnostic --entry-arg --work-dir --entry-arg .artifacts/reload-diagnosis-20260926/repeat/work --entry-arg --report --entry-arg .artifacts/reload-diagnosis-20260926/repeat/report.json --report .artifacts/reload-diagnosis-20260926/repeat/exit-evidence.json --strict-report
+```
+
+结果为 100/100 `recovered`，所有快照经 `validateReport` 验证；拒绝计数与缓冲溢出计数均为 0，应用正常退出。这是同一进程中的重复诊断，不是 100 次独立 CI，也不是原提交的重跑；观测开销可能影响竞态。当前与原提交的工具条上报路径差异为诊断探针，但其它产品模块已有改动，因此不能用当前成功代替旧 revision 的原因证明。
+
+联网核对发现一个需要阶段证据才能验证的具体调度依赖：`queueToolbarLayoutReport()` 的发送只在 rAF 内发生，100ms 补报仍调用同一队列，已有 pending 时还会直接返回；所以它不是独立于 rAF 的恢复通道。Electron [Page visibility 文档](https://www.electronjs.org/docs/latest/api/browser-window#page-visibility) 说明 `backgroundThrottling: false` 的预期，项目已经设置该选项。[Windows hide/rAF 问题 #31016](https://github.com/electron/electron/issues/31016) 与 [隐藏窗口渲染问题 #42378](https://github.com/electron/electron/issues/42378) 提供相关案例，但版本和触发条件不同，不能证明 Electron 43.3.0 的本次 CI 命中了相同问题。没有证据支持直接升级 Electron、增大超时或把 `backgroundThrottling: false` 再加一遍。
+
+下一次应在 Windows hosted runner 执行含现有 `--toolbar-reload-diagnostic` 的 workflow；单纯 rerun 原 run 会继续使用旧 workflow，无法增加该快照。若再次失败，按 `context-valid → queued → raf-ran → sent → report-arrived → sender-accepted → layout-accepted/rejected` 定位最早缺失或拒绝环节，再做单变量实验。本轮没有捕获目标失败，故不提交猜测性修复，不提升 J17、I2 或发布验收状态。
+
 ## 实现边界
 
 - 产品壳通过 `--toolbar-reload-diagnostic` 显式启用。renderer/preload 观察初始化、上下文、排队/rAF、去重、原有 100ms 补报及实际发送；main 观察到达、发送者校验、实际布局校验分支与工具条布局代次关系。

@@ -80,10 +80,12 @@ test('SEM-F27/SEM-F30/J21: Agent settings surface exposes the three product cont
     error: null
   })
   t.after(() => harness.dispose())
-  assert.match(document.body.textContent, /Agent 系统/)
+  assert.match(document.body.textContent, /AI 助手/)
   assert.match(document.body.textContent, /个人记忆/)
-  assert.match(document.body.textContent, /云端模型披露/)
-  await act(async () => click(document.querySelector('input[aria-label="启用 Agent 系统"]')))
+  assert.match(document.body.textContent, /云端数据使用说明/)
+  assert.match(document.body.textContent, /问题、相关字幕和记忆发送到你配置的模型服务商/)
+  assert.match(document.body.textContent, /以该服务商的政策为准/)
+  await act(async () => click(document.querySelector('input[aria-label="启用 AI 助手"]')))
   await flush()
   assert.deepEqual(harness.calls, [{
     ...header,
@@ -104,7 +106,7 @@ test('SEM-T04/J21: settings conflict is surfaced as an actionable message withou
     error: { code: 'AGENT_SETTINGS_REVISION_CONFLICT', next_action: 'reload' }
   })
   t.after(() => harness.dispose())
-  await act(async () => click(document.querySelector('input[aria-label="确认云端模型披露"]')))
+  await act(async () => click(document.querySelector('input[aria-label="允许发送到云端模型"]')))
   await flush()
   assert.match(document.body.textContent, /设置已在别处更新，请重新载入后再试/)
   assert.doesNotMatch(document.body.textContent, /stack|path|credential|prompt/i)
@@ -119,7 +121,7 @@ test('SEM-F38/J29: settings expose the beginner summary memory toggle through it
   })
   t.after(() => harness.dispose())
   assert.match(document.body.textContent, /总结时参考记忆/)
-  assert.match(document.body.textContent, /关闭后仍可自动整理记忆，只使用本次会话/)
+  assert.match(document.body.textContent, /关闭后，总结只依据本次会话，自动整理记忆不受影响/)
   await act(async () => click(document.querySelector('input[aria-label="总结时参考记忆"]')))
   await flush()
   assert.deepEqual(harness.summaryCalls, [{

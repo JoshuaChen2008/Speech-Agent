@@ -20,7 +20,7 @@ test('SEM-F14/F25 J20 real settings IPC and preload enforce exact requests and s
   let exposed; let responseOverride
   const preload = path.resolve('src/preload/settings.js')
   const nativeRequire = createRequire(preload)
-  const ipcRenderer = { invoke: async (channel, request) => responseOverride || handlers.get(channel)({}, request) }
+  const ipcRenderer = { invoke: async (channel, request) => responseOverride || handlers.get(channel)({}, request), on: () => {} }
   const localRequire = specifier => specifier === 'electron'
     ? { contextBridge: { exposeInMainWorld: (_name, api) => { exposed = api } } }
     : specifier === './shared' ? { createWindowInteractionBridge: () => ({}), ipcRenderer, subscribe: () => {} } : nativeRequire(specifier)

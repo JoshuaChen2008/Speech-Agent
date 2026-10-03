@@ -10,8 +10,8 @@ type ModelState = 'missing' | 'downloading' | 'verifying' | 'ready' | 'error'
 type Dict = Record<string, any>
 
 const PANES: ReadonlyArray<readonly [Pane, string]> = [
-  ['display', '显示与字幕'], ['audio', '音频源'], ['asr', '语音识别'],
-  ['resources', '模型资源'], ['agentContext', '个人上下文'], ['agentModel', 'Agent 模型'], ['about', '关于']
+  ['display', '显示与字幕'], ['audio', '音频来源'], ['asr', '语音识别'],
+  ['resources', '模型资源'], ['agentContext', '我的记忆'], ['agentModel', '助手模型'], ['about', '关于']
 ]
 const MODEL_STATES: readonly ModelState[] = ['missing', 'downloading', 'verifying', 'ready', 'error']
 const MODEL_LABEL: Record<ModelState, string> = {
@@ -19,21 +19,21 @@ const MODEL_LABEL: Record<ModelState, string> = {
 }
 const MODEL_DETAIL: Record<'core' | 'refinement', Record<ModelState, string>> = {
   core: {
-    missing: '需要下载实时字幕模型与语音活动检测。', downloading: '正在下载核心字幕模型资源包。',
-    verifying: '正在校验并安装核心字幕模型资源包。', ready: '实时字幕模型与语音活动检测已就绪。',
-    error: '核心字幕模型资源包未能完成安装，可以重试。'
+    missing: '需要下载实时字幕模型与语音检测模型。', downloading: '正在下载字幕必需模型。',
+    verifying: '正在校验并安装字幕必需模型。', ready: '实时字幕模型与语音检测模型已就绪。',
+    error: '字幕必需模型未能完成安装，可以重试。'
   },
   refinement: {
-    missing: '默认不下载；需要时请明确下载精修模型。', downloading: '正在下载精修模型；可取消，之后需明确继续下载。',
-    verifying: '正在校验并安装精修模型。', ready: '精修模型已就绪；仍需再次明确开启。',
+    missing: '可选下载，用于生成精修稿。', downloading: '正在下载精修模型；取消后可以手动继续下载。',
+    verifying: '正在校验并安装精修模型。', ready: '精修模型已就绪；开启精修后生效。',
     error: '精修模型未能完成安装，可以重新下载。'
   }
 }
 const RESOURCE_COPY = [
-  ['zipformer-bilingual-zh-en-2023-02-20', '临时字幕识别器', '优先提供低延迟临时字幕，不写入历史'],
-  ['x-asr-160ms', '权威识别器', '负责首次稳定转写、历史与导出'],
-  ['silero-vad', '语音活动检测', '辅助判断字幕段边界'],
-  ['x-asr-offline', '离线精修识别模型', '为首次稳定转写生成独立精修稿']
+  ['zipformer-bilingual-zh-en-2023-02-20', '实时预览模型', '快速显示正在识别的字幕，不保存到记录'],
+  ['x-asr-160ms', '字幕识别模型', '生成字幕原文，用于保存和导出'],
+  ['silero-vad', '语音检测模型', '检测说话与停顿，为字幕分段'],
+  ['x-asr-offline', '字幕精修模型', '再次识别语音，生成独立的精修稿']
 ] as const
 
 function modelState (value: unknown): ModelState {
@@ -87,10 +87,10 @@ function ResourceRow ({ item, title, hint }: { item: Dict, title: string, hint: 
 function ModelSummary ({ kind, group, children }: { kind: 'core' | 'refinement', group: Dict, children: ReactElement }): ReactElement {
   const state = modelState(group.state); const percent = Math.round(progress(group.progress) * 100)
   return <div className={`group model-summary${kind === 'refinement' ? ' refinement-summary' : ''}`}>
-    <div className="row"><div><div className="label">{kind === 'core' ? '核心字幕模型资源包' : '精修模型资源'}</div>
+    <div className="row"><div><div className="label">{kind === 'core' ? '字幕必需模型' : '精修模型'}</div>
       <div className="hint model-state" id={kind === 'core' ? 'modelOverallState' : 'refinementOverallState'} aria-live="polite">{MODEL_DETAIL[kind][state]}</div></div>{children}</div>
     <div className="model-progress" id={kind === 'core' ? 'modelProgress' : 'refinementProgress'} role="progressbar"
-      aria-label={kind === 'core' ? '模型资源总进度' : '精修模型资源进度'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+      aria-label={kind === 'core' ? '模型资源总进度' : '精修模型进度'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
       <span id={kind === 'core' ? 'modelProgressBar' : 'refinementProgressBar'} style={{ width: `${percent}%` }} /></div>
     <div className="model-progress-meta"><span id={kind === 'core' ? 'modelProgressText' : 'refinementProgressText'}>{percent}%</span>
       <span id={kind === 'core' ? 'modelBytes' : 'refinementBytes'}>{byteProgress(group)}</span></div>
@@ -119,7 +119,7 @@ export function SettingsView (): ReactElement {
   const reflectConfig = useCallback((next: Dict) => {
     setCfg(next)
     document.documentElement.dataset.theme = next.theme === 'auto' ? (next.systemDark ? 'dark' : 'light') : next.theme
-    if (next.refinementPreferenceFallback === true) setNotice('精修模型不可用，已关闭精修偏好。请重新下载模型后再开启。')
+    if (next.refinementPreferenceFallback === true) setNotice('精修模型缺失或损坏，已关闭精修。请重新下载模型后再开启。')
   }, [])
   const refreshConfig = useCallback(async () => { try { reflectConfig(await shell.getConfig()) } catch { /* keep last authority */ } }, [reflectConfig, shell])
   const refreshModels = useCallback(async () => {
@@ -181,9 +181,9 @@ export function SettingsView (): ReactElement {
   const profiles: string[] = runtime?.capabilities?.availableProfiles ?? []
   const limitation = runtime?.capabilities?.limitations?.find((item: Dict) => item.capability === 'start')
   const asrNote = profiles.length === 0 ? (limitation?.message ?? '当前没有可用识别档位。') : '识别档位由本机已就绪的模型决定，不可用的档位已停用。'
-  const preferenceText = cfg == null ? '正在读取全局精修偏好。' : cfg.refinementEnabled === true
-    ? '已启用；只影响未来新会话，当前会话保持开始时的选择。' : refinement.state === 'ready'
-      ? '模型已就绪；请明确开启，设置仅影响未来新会话。' : '默认关闭；模型缺失时尝试开启不会下载，请先下载精修模型。'
+  const preferenceText = cfg == null ? '正在读取精修设置。' : cfg.refinementEnabled === true
+    ? '已开启，从下次会话生效；当前会话不变。' : refinement.state === 'ready'
+      ? '模型已就绪，可以开启精修；从下次会话生效。' : '默认关闭；请先下载精修模型，再开启精修。'
 
   const choosePreset = async (preset: string, sourceChange = false) => {
     sourceChange ? setSourcePending(true) : setPresetPending(true); setNotice(sourceChange ? '正在切换监听模式…' : '正在保存场景…')
@@ -203,13 +203,13 @@ export function SettingsView (): ReactElement {
   }
   const cancelRefinement = async () => {
     setRefinementPending(true)
-    try { const result = await shell.cancelModelInstall(); setNotice(result?.ok ? '已取消精修模型下载；需要时请明确继续下载。' : (result?.error?.message || '取消下载请求未能完成。')) }
+    try { const result = await shell.cancelModelInstall(); setNotice(result?.ok ? '已取消下载；需要时可点击“继续下载”。' : (result?.error?.message || '取消下载请求未能完成。')) }
     catch { setNotice('取消下载请求未能完成。') } finally { await refreshModels(); setRefinementPending(false) }
   }
   const setPreference = async (enabled: boolean) => {
     setPreferencePending(true)
-    try { const result = await shell.setRefinementPreference(enabled); if (!result?.ok) { setNotice(result?.error?.message || '精修偏好未保存。'); await refreshConfig() } else { reflectConfig(result.value); setNotice('') } }
-    catch { setNotice('精修偏好未保存。'); await refreshConfig() } finally { setPreferencePending(false) }
+    try { const result = await shell.setRefinementPreference(enabled); if (!result?.ok) { setNotice(result?.error?.message || '精修设置未保存。'); await refreshConfig() } else { reflectConfig(result.value); setNotice('') } }
+    catch { setNotice('精修设置未保存。'); await refreshConfig() } finally { setPreferencePending(false) }
   }
 
   const coreDisabled = !runtimeKnown || corePending || sessionActive || anyBusy || core.state === 'ready' || models?.canInstall !== true
@@ -224,11 +224,11 @@ export function SettingsView (): ReactElement {
   }
 
   return <>
-    <header className="titlebar" ref={titlebar}><div className="tb-title">Live Subtitle Agent · 设置</div>
+    <header className="titlebar" ref={titlebar}><div className="tb-title">Speech-Agent · 设置</div>
       <div className="settings-status" id="settingsStatus" role="status" aria-live="polite">{notice}</div>
       <button className="tb-close" id="close" title="关闭" aria-label="关闭" onClick={() => shell.closeSettings()}><Icon name="close" /></button></header>
     <section className="onboarding" id="onboarding" hidden={cfg?.onboardingCompleted === true} aria-labelledby="onboardingTitle"><div className="onboarding-panel">
-      <p className="onboarding-step">首次设置</p><h1 id="onboardingTitle">你主要想听哪一种声音？</h1><p className="sub">先选一个起点，之后仍可在“音频源”中调整。</p>
+      <p className="onboarding-step">首次设置</p><h1 id="onboardingTitle">你主要想听哪一种声音？</h1><p className="sub">先选一个起点，之后仍可在“音频来源”中调整。</p>
       <div className="preset-grid"><button className="preset-card" data-preset="meeting" disabled={presetPending} onClick={() => void choosePreset('meeting')}><strong>会议字幕</strong><span>默认监听系统音频，适合线上会议与视频。</span></button>
         <button className="preset-card" data-preset="dictation" disabled={presetPending} onClick={() => void choosePreset('dictation')}><strong>个人听写</strong><span>默认监听麦克风，适合口述记录与写作。</span></button></div>
       <p className="onboarding-note">选择前不会启用麦克风或系统音频。模型未就绪时，识别功能会保持不可用。</p></div></section>
@@ -242,20 +242,20 @@ export function SettingsView (): ReactElement {
           <div className="row"><div className="label">字幕背景颜色 <span className="hint" id="barColorVal">{cfg?.barColor || '跟随主题'}</span></div><div className="field"><input type="color" id="barColor" value={cfg?.barColor || '#0e202c'} aria-label="字幕背景颜色" onChange={(event) => previewPatch({ barColor: event.currentTarget.value })} /><button className="link-btn" id="barColorReset" disabled={!cfg?.barColor} onClick={() => previewPatch({ barColor: null })}>跟随主题</button></div></div>
           <div className="row"><div className="label">字幕文字颜色 <span className="hint" id="captionTextColorVal">{cfg?.captionTextColor || '默认白'}</span></div><div className="field"><input type="color" id="captionTextColor" value={cfg?.captionTextColor || '#ffffff'} aria-label="字幕文字颜色" onChange={(event) => previewPatch({ captionTextColor: event.currentTarget.value })} /><button className="link-btn" id="captionTextColorReset" disabled={!cfg?.captionTextColor} onClick={() => previewPatch({ captionTextColor: null })}>还原默认</button></div></div>
           <div className="row"><div className="label">圆角 <span className="hint" id="radiusVal">{cfg?.radius ?? 10} px</span></div><input type="range" id="radius" min="6" max="16" step="1" value={cfg?.radius ?? 10} aria-label="字幕圆角" onChange={(event) => previewPatch({ radius: Number(event.currentTarget.value) })} /></div>
-        </div><p className="note">字幕文字颜色独立于主题：切换浅色或深色都不会改变它。字幕卡是半透明浮在任意画面上的，文字可读性由颜色本身和描边保证。</p></section>
-        <section className={`pane${pane === 'audio' ? ' active' : ''}`} data-pane="audio"><h1>音频源</h1><p className="sub">选择本次会话要监听的一路声音。</p><div className="group"><div className="row"><div><div className="label">监听模式</div><div className="hint source-hint">一次只监听一路；活动会话需停止后才能切换。</div></div>
+        </div><p className="note">字幕文字颜色独立于主题：切换浅色或深色都不会改变它。请选择与背景容易区分的文字颜色。</p></section>
+        <section className={`pane${pane === 'audio' ? ' active' : ''}`} data-pane="audio"><h1>音频来源</h1><p className="sub">选择要识别的声音来源。</p><div className="group"><div className="row"><div><div className="label">监听模式</div><div className="hint source-hint">一次只能选择一种来源；请先停止当前会话再切换。</div></div>
           <div className="seg source-choice" id="audioSourceChoice" role="radiogroup" aria-label="监听模式">{[['loopback', 'meeting', '系统音频'], ['mic', 'dictation', '麦克风']].map(([source, preset, label]) => <button key={source} data-source={source} data-preset={preset} role="radio" aria-checked={cfg?.[source] === true} className={cfg?.[source] === true ? 'on' : ''} disabled={sessionActive || sourcePending} onClick={() => void choosePreset(preset, true)}>{label}</button>)}</div></div></div>
-          <p className="note">两种来源均保留支持，但不会在同一会话中并发采集。系统音频不代表特定说话人。</p></section>
-        <section className={`pane${pane === 'asr' ? ' active' : ''}`} data-pane="asr"><h1>语音识别</h1><p className="sub">选择未来新会话的识别策略。</p>{pane === 'asr' && <RecognitionSettingsPane shell={shell} active={sessionActive} />}<div className="group"><div className="row"><div className="label">本地字幕延迟</div>
+          <p className="note">系统音频包括电脑播放的会议、视频和提示音。麦克风用于识别输入设备收到的声音。</p></section>
+        <section className={`pane${pane === 'asr' ? ' active' : ''}`} data-pane="asr"><h1>语音识别</h1><p className="sub">选择识别方式，从下次会话生效。</p>{pane === 'asr' && <RecognitionSettingsPane shell={shell} active={sessionActive} />}<div className="group"><div className="row"><div className="label">本地识别档位</div>
           <Segmented name="latency" value={cfg?.latency} options={[[160, '极速'], [480, '均衡'], [960, '精准']]} disabled={(value) => !profiles.includes(({ 160: 'fast', 480: 'balanced', 960: 'accurate' } as Dict)[value])} onSelect={(value) => void savePatch({ latency: Number(value) })} /></div></div><p className="note" id="asrNote">{asrNote}</p></section>
-        <section className={`pane${pane === 'resources' ? ' active' : ''}`} data-pane="resources"><h1>模型资源</h1><p className="sub">核心字幕模型资源包与可选精修模型资源分别管理。</p>
+        <section className={`pane${pane === 'resources' ? ' active' : ''}`} data-pane="resources"><h1>模型资源</h1><p className="sub">先下载字幕必需模型。需要精修时，再下载精修模型。</p>
           <ModelSummary kind="core" group={core}><button className="primary-btn" id="modelInstallButton" disabled={coreDisabled} aria-busy={corePending || coreBusy} onClick={() => void install('core')}>{installLabel('core')}</button></ModelSummary>
           <div className="resource-list" aria-label="核心字幕模型资源明细">{RESOURCE_COPY.slice(0, 3).map(([id, title, hint]) => <ResourceRow key={id} item={resource(id)} title={title} hint={hint} />)}</div>
           <ModelSummary kind="refinement" group={refinement}><div className="resource-actions"><button className="secondary-btn" id="refinementCancelButton" hidden={!refinementBusy} disabled={sessionActive || models?.canCancelInstall !== true} onClick={() => void cancelRefinement()}>取消下载</button>
             <button className="primary-btn" id="refinementInstallButton" disabled={refinementDisabled} aria-busy={refinementPending || refinementBusy} onClick={() => void install('refinement')}>{installLabel('refinement')}</button></div></ModelSummary>
-          <div className="resource-list" aria-label="精修模型资源明细"><ResourceRow item={resource(RESOURCE_COPY[3][0])} title={RESOURCE_COPY[3][1]} hint={RESOURCE_COPY[3][2]} /></div>
-          <div className="group refinement-preference"><div className="row"><div><div className="label">为未来新会话启用精修</div><div className="hint" id="refinementPreferenceState">{preferenceText}</div></div><label className="switch"><input id="refinementPreferenceToggle" type="checkbox" checked={cfg?.refinementEnabled === true} disabled={cfg == null || refinementBusy || preferencePending} aria-describedby="refinementPreferenceState" onChange={(event) => void setPreference(event.currentTarget.checked)} /><span>启用</span></label></div></div>
-          <p className="note">这些资源只服务于本地字幕识别，不包含 Agent、翻译或大语言模型。核心字幕模型资源包包含临时字幕识别器、权威识别器与语音活动检测；临时字幕不会进入历史或导出。精修模型默认不下载；取消后保留合法已下载部分，只有明确点击“继续下载”才会续传。安装完成后仍需再次明确开启，且只影响未来新会话。</p></section>
+          <div className="resource-list" aria-label="精修模型明细"><ResourceRow item={resource(RESOURCE_COPY[3][0])} title={RESOURCE_COPY[3][1]} hint={RESOURCE_COPY[3][2]} /></div>
+          <div className="group refinement-preference"><div className="row"><div><div className="label">启用字幕精修</div><div className="hint" id="refinementPreferenceState">{preferenceText}</div></div><label className="switch"><input id="refinementPreferenceToggle" type="checkbox" checked={cfg?.refinementEnabled === true} disabled={cfg == null || refinementBusy || preferencePending} aria-describedby="refinementPreferenceState" onChange={(event) => void setPreference(event.currentTarget.checked)} /><span>启用</span></label></div></div>
+          <p className="note">这些模型用于本地字幕识别，不包含助手或翻译模型。精修模型按需下载；取消后保留可继续使用的下载进度，点击“继续下载”即可继续。下载后需要手动开启精修，从下次会话生效。</p></section>
         <section className={`pane${pane === 'agentContext' ? ' active' : ''}`} data-pane="agentContext">
           {pane === 'agentContext' && <AgentContextPane shell={shell} />}
         </section>
@@ -265,7 +265,7 @@ export function SettingsView (): ReactElement {
             <AgentModelPane shell={shell} />
           </>}
         </section>
-        <section className={`pane${pane === 'about' ? ' active' : ''}`} data-pane="about"><h1>关于</h1><p className="sub">Live Subtitle Agent · 骨架 v0.1.0</p><p className="note">本地两遍 ASR 已接入；模型缺失时保持不可用，不会伪造字幕。</p></section>
+        <section className={`pane${pane === 'about' ? ' active' : ''}`} data-pane="about"><h1>关于</h1><p className="sub">Speech-Agent · v0.1.0</p><p className="note">实时识别语音，在本机保存字幕记录；也可以使用 AI 助手总结和提问。</p></section>
       </main></div>
   </>
 }

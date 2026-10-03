@@ -37,6 +37,7 @@ const WEB_CONTENTS_ROLE_MAP = Object.freeze({
 
 const SERVICE_ROLE_MAP = Object.freeze({
   'Speech Agent realtime ASR': 'realtime',
+  'Speech Agent cloud audio': 'realtime',
   'Speech Agent offline refinement': 'refine',
   'Speech Agent subtitle storage': 'storage'
 })

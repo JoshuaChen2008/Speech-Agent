@@ -20,6 +20,9 @@ try {
     typeof WebSocket.prototype.send === 'function' &&
     typeof RPCClient === 'function' && typeof RPCClient.prototype.request === 'function'
   const sherpaLoaded = !!sherpa && typeof sherpa === 'object'
+  const memoryFile = require('../src/native/memory-file/memory_file_native.node')
+  const YAML = require('yaml')
+  const memoryReady = ['open', 'read', 'write', 'close', 'remove'].every(name => typeof memoryFile[name] === 'function') && typeof YAML.parseDocument === 'function'
   const sherpaApiReady = sherpaLoaded &&
     typeof sherpa.OnlineRecognizer === 'function' &&
     typeof sherpa.OfflineRecognizer === 'function' &&
@@ -34,7 +37,7 @@ try {
     typeof captionAddon.isAttached === 'function' &&
     typeof captionAddon.detach === 'function'
   loaded = sherpaLoaded && captionLoaded
-  apiSurfaceReady = sherpaApiReady && captionApiReady && recognitionDependenciesReady
+  apiSurfaceReady = sherpaApiReady && captionApiReady && recognitionDependenciesReady && memoryReady
 } catch {
   loaded = false
   apiSurfaceReady = false

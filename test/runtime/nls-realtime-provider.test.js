@@ -70,7 +70,7 @@ test('SEM-F25 J20 stop timeout rejects without runtime fallback and releases que
   await assert.rejects(provider.finishInput(), { code: 'NLS_STOP_TIMEOUT' })
   assert.deepEqual(faults, [])
 })
-test('SEM-F12/J20 cumulative PCM pacing absorbs small timer jitter and reanchors after a long stall', async t => {
+test('SEM-F12/J20 cumulative PCM pacing catches up after a stall with a bounded send interval', async t => {
   const clock = { now: 0, timers: [], sentAt: [] }
   class TimedSocket extends Socket {
     send (data, options, callback) {
@@ -100,12 +100,12 @@ test('SEM-F12/J20 cumulative PCM pacing absorbs small timer jitter and reanchors
   await second
   await new Promise(setImmediate)
   assert.deepEqual(clock.sentAt, [0, 450])
-  assert.equal(clock.timers[1].at, 560)
+  assert.equal(clock.timers[1].at, 540)
 
   clock.now = clock.timers[1].at
   clock.timers[1].callback()
   await third
-  assert.deepEqual(clock.sentAt, [0, 450, 560])
+  assert.deepEqual(clock.sentAt, [0, 450, 540])
 })
 
 test('SEM-F25 J20 bounded queued PCM rejects overflow, while silence alone is not a fault', async t => {

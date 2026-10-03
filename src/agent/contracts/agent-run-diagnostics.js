@@ -86,8 +86,9 @@ function assertDiagnosticRecord (record) {
       fail('diagnostic.metrics.unit', 'does not match the registered budget axis')
     }
     if (record.budgetAxis === null && (record.event !== 'budget_rejected' ||
-        record.errorCode !== 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED' || record.metrics.unit !== 'bytes')) {
-      fail('diagnostic.budgetAxis', 'known metrics without an axis require the v1 summary input compatibility preflight')
+        !['AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED', 'AGENT_QA_INPUT_LIMIT_EXCEEDED'].includes(record.errorCode) ||
+        !(record.metrics.unit === 'bytes' || (record.errorCode === 'AGENT_QA_INPUT_LIMIT_EXCEEDED' && record.metrics.unit === 'count')))) {
+      fail('diagnostic.budgetAxis', 'known metrics without an axis require a registered input-capacity preflight')
     }
   }
   nullableDigest(record.modelBindingDigest, 'diagnostic.modelBindingDigest')
