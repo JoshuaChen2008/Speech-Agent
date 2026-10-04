@@ -45,6 +45,7 @@ function loadPreload (role, options = {}) {
     if (specifier === '../main/ipc/channels') return CHANNELS
     if (specifier === './context-source') return require('../../src/preload/context-source')
     if (specifier === '../contracts/recognition-settings') return require('../../src/contracts/recognition-settings')
+    if (specifier === '../contracts/caption-lock-shortcut') return require('../../src/contracts/caption-lock-shortcut')
     if (specifier === '../agent/contracts/agent-context-ui') return require('../../src/agent/contracts/agent-context-ui')
     if (specifier === '../agent/contracts/personal-memory-file-ui') return require('../../src/agent/contracts/personal-memory-file-ui')
     if (specifier === '../agent/contracts/agent-model-ui') return require('../../src/agent/contracts/agent-model-ui')
@@ -58,6 +59,15 @@ function loadPreload (role, options = {}) {
     (localRequire, { exports: {} }, {})
   return { api: exposed[role === 'settings' ? 'shell' : 'historyApi'], listeners }
 }
+
+test('SEM-F22/SEM-T04/J17-SHORTCUT: settings preload rejects malformed recording input before IPC', async () => {
+  const calls = []
+  const { api } = loadPreload('settings', { invoke: async (channel, request) => { calls.push({ channel, request }); return { ok: true } } })
+  for (const request of [null, {}, { recording: 1 }, { recording: true, keys: ['AltRight'] }]) assert.throws(() => api.setCaptionLockShortcutRecording(request))
+  assert.equal(calls.length, 0)
+  await api.setCaptionLockShortcutRecording({ recording: true })
+  assert.deepEqual(calls, [{ channel: CHANNELS.CAPTION_LOCK_SHORTCUT_RECORDING, request: { recording: true } }])
+})
 
 test('SEM-F14/SEM-F33/J25: settings preload exposes exact model actions and drops invalid reload events', async () => {
   const modelHeader = { contractId: 'agent-model-ui', contractVersion: '1.0.0' }

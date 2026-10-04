@@ -423,6 +423,11 @@ export function AgentView (): ReactElement {
   const [scopePending, setScopePending] = useState(true)
   const [scopeError, setScopeError] = useState('')
   const [history, setHistory] = useState<Dict[]>([])
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const historyToggle = useRef<HTMLButtonElement>(null)
+  const historyClose = useRef<HTMLButtonElement>(null)
+  const closeHistory = () => { setHistoryOpen(false); historyToggle.current?.focus() }
+  useEffect(() => { if (historyOpen) historyClose.current?.focus() }, [historyOpen])
   const [historyCursor, setHistoryCursor] = useState<string | null>(null)
   const [historyPending, setHistoryPending] = useState(true)
   const [historyError, setHistoryError] = useState('')
@@ -1488,10 +1493,10 @@ export function AgentView (): ReactElement {
     ? summaryDiagnostics
     : null
   return (
-    <div className="agent-shell">
+    <div className="agent-shell" onKeyDown={(event) => { if (event.key === 'Escape' && historyOpen && !event.defaultPrevented) { event.preventDefault(); closeHistory() } }}>
       <header className="agent-titlebar" id="titlebar" ref={titlebar}>
         <div className="title-copy"><strong>Speech-Agent · 字幕助手</strong><span>选择已结束的会话，生成总结或针对内容提问</span></div>
-        <div className="title-actions">{sourceOpened && <button type="button" onClick={() => void api.returnToAgentContext().then((result: Dict) => { if (!result.ok) setStatus('来源界面已关闭。') })}>返回我的记忆</button>}<button className="close-button" type="button" onClick={() => api.close?.()} title="关闭" aria-label="关闭字幕助手"><span aria-hidden="true" dangerouslySetInnerHTML={{ __html: Icons.iconMarkup('close') }} /></button></div>
+        <div className="title-actions"><button type="button" ref={historyToggle} aria-controls="agentHistory" aria-expanded={historyOpen} onClick={() => historyOpen ? closeHistory() : setHistoryOpen(true)}>生成记录</button>{sourceOpened && <button type="button" onClick={() => void api.returnToAgentContext().then((result: Dict) => { if (!result.ok) setStatus('来源界面已关闭。') })}>返回我的记忆</button>}<button className="close-button" type="button" onClick={() => api.close?.()} title="关闭" aria-label="关闭字幕助手"><span aria-hidden="true" dangerouslySetInnerHTML={{ __html: Icons.iconMarkup('close') }} /></button></div>
       </header>
       <div className="status" role="status" aria-live="polite">{status}</div>
       <main className="agent-layout">
@@ -1578,11 +1583,11 @@ export function AgentView (): ReactElement {
           </article>}
         </section>
 
-        <aside className="history-panel" aria-label="会话总结记录">
-          <div className="panel-heading"><div><h1>生成记录</h1><p>{historyPending ? '正在读取…' : `${history.length} 条记录`}</p></div></div>
+        <aside id="agentHistory" className="history-panel" aria-label="会话总结记录" hidden={!historyOpen}>
+          <div className="panel-heading"><div><h1>生成记录</h1><p>{historyPending ? '正在读取…' : '按时间查看已生成的结果'}</p></div><button type="button" ref={historyClose} aria-label="收起生成记录" onClick={closeHistory}>收起</button></div>
           {historyError && <p className="error" role="alert">{historyError}</p>}
           {comparisonGroups(history).map((group) => <section className="comparison-card" aria-label="同一会话与问题的模型比较" key={group[0].comparison_group_id}><h2>模型比较</h2><p>同一会话与问题的不同模型结果</p><ul>{group.map((item) => <li key={item.interaction_id}><strong>{modelLabel(item.model)}</strong><span>{usageLabel(item.usage, item.usage_state)}</span><span>{relativeDuration(group, item)}</span></li>)}</ul></section>)}
-          <div className="history-list" role="list">{history.map((item) => <button type="button" role="listitem" className="history-card" aria-current={item.interaction_id === activeInteractionId} key={item.interaction_id} onClick={() => selectInteraction(item.interaction_id, knownInteractionState(item.terminal_reason))}><strong>{recipeLabel(item.recipe_id)}</strong><span>{modelLabel(item.model)}</span><span>{utcLabel(item.terminal_at ? new Date(item.terminal_at).toISOString() : null)} · {stateLabel(item.terminal_reason)}</span><p>{resultPreview(item.result)}</p></button>)}{!historyPending && history.length === 0 && !historyError && <p className="empty">还没有生成记录。</p>}</div>
+          <div className="history-list" role="list">{history.map((item) => <button type="button" role="listitem" className="history-card" aria-current={item.interaction_id === activeInteractionId} key={item.interaction_id} onClick={() => { selectInteraction(item.interaction_id, knownInteractionState(item.terminal_reason)); closeHistory() }}><strong>{recipeLabel(item.recipe_id)}</strong><span>{modelLabel(item.model)}</span><span>{utcLabel(item.terminal_at ? new Date(item.terminal_at).toISOString() : null)} · {stateLabel(item.terminal_reason)}</span><p>{resultPreview(item.result)}</p></button>)}{!historyPending && history.length === 0 && !historyError && <p className="empty">还没有生成记录。</p>}</div>
           {historyCursor && <button className="more-button" type="button" onClick={() => void loadHistory(false)} disabled={historyPending}>加载更多</button>}
         </aside>
       </main>

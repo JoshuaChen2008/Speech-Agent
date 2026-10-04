@@ -62,6 +62,8 @@ let commandPending = false
 let commandFailure: any | null = null
 let refinementNotice: any | null = null
 let agentOpenStatus: any | null = null
+let agentOpenStatusRevision = 0
+let agentOpenCommandRevision = 0
 let toolbarLayoutGeneration = 0
 let toolbarLayoutObserver: ResizeObserver | null = null
 let toolbarLayoutMutationObserver: MutationObserver | null = null
@@ -183,7 +185,10 @@ const SUPPORTED: Record<string, () => unknown> = {
   'open-model-manager': () => bridge.action('open-model-manager'),
   agent: () => {
     if (typeof bridge.openAgent === 'function') {
+      const commandRevision = ++agentOpenCommandRevision
+      const statusRevision = agentOpenStatusRevision
       void bridge.openAgent().catch(() => {
+        if (commandRevision !== agentOpenCommandRevision || statusRevision !== agentOpenStatusRevision) return
         // The main process normally sends the failure phase itself.  Keep a
         // local visible fallback for an IPC rejection before that status can
         // arrive (for example while the window is being torn down).
@@ -632,9 +637,10 @@ async function initRefinementNotice () {
 }
 
 function acceptAgentOpenStatus (value: any): void {
-  if (!value || value.schemaVersion !== 1 || !['opening', 'ready', 'waiting', 'failed'].includes(value.phase) ||
+  if (!value || value.schemaVersion !== 1 || !['opening', 'ready', 'waiting', 'failed', 'closed'].includes(value.phase) ||
       typeof value.message !== 'string') return
-  agentOpenStatus = value
+  agentOpenStatusRevision += 1
+  agentOpenStatus = value.phase === 'closed' ? null : value
   render()
   if (value.phase === 'ready') {
     setTimeout(() => {

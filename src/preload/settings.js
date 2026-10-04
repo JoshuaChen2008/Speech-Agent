@@ -7,6 +7,7 @@ const { createWindowInteractionBridge, ipcRenderer, subscribe } = require('./sha
 const contextSource = createContextSourceBridge(ipcRenderer)
 const memoryFileContract = require('../agent/contracts/personal-memory-file-ui')
 const interaction = createWindowInteractionBridge('settings')
+const { assertShortcutRecordingRequest } = require('../contracts/caption-lock-shortcut')
 const { assertUpdateRequest: assertRecognitionUpdateRequest, assertResponse: assertRecognitionResponse } = require('../contracts/recognition-settings')
 const {
   assertChangedEvent,
@@ -86,6 +87,10 @@ contextBridge.exposeInMainWorld('shell', {
   closeSettings: () => ipcRenderer.send(CHANNELS.SETTINGS_CLOSE),
   getConfig: () => ipcRenderer.invoke(CHANNELS.CONFIG_GET),
   setConfig: (patch) => ipcRenderer.invoke(CHANNELS.CONFIG_UPDATE, patch),
+  setCaptionLockShortcutRecording: (request) => {
+    assertShortcutRecordingRequest(request)
+    return ipcRenderer.invoke(CHANNELS.CAPTION_LOCK_SHORTCUT_RECORDING, request)
+  },
   setAgentSettings: (request) => {
     assertAgentSettingsUpdateRequest(request)
     return ipcRenderer.invoke(CHANNELS.AGENT_SETTINGS_UPDATE, request).then((response) => assertAgentSettingsUpdateResponse(response))

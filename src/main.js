@@ -106,6 +106,8 @@ const {
   WindowInteractionGenerationController
 } = require('./main/window-interaction-generation-controller')
 const { CaptionNativeHitController } = require('./main/caption-native-hit-controller')
+const { CaptionLockShortcutController } = require('./main/caption-lock-shortcut-controller')
+const { assertShortcutRecordingRequest, shortcutLabel } = require('./contracts/caption-lock-shortcut')
 const {
   createBinding: createCaptionNativeInputBinding,
   loadCaptionInputNative
@@ -146,6 +148,7 @@ let agentRequestedSessionId = null
 /** @type {OverlayStartupController | null} */ let overlayStartupController = null
 /** @type {null | { isAttached: Function, dispose: Function, matches: Function }} */ let captionNativeInputBinding = null
 /** @type {object | null} */ let captionNativeInputAddon = null
+let captionLockShortcutController = null
 /** @type {RefinementFaultLog | null} */ let refinementFaultLog = null
 /** @type {null | { start: Function, stop: Function, getOverview: Function, manage: Function }} */ let personalContextRuntime = null
 /** @type {null | {catalog: Function, configure: Function, bind: Function, cancelAllModelTests?: Function, close?: Function}} */ let modelAccessRuntime = null
@@ -331,6 +334,8 @@ function payload () {
   return {
     ...publicConfigPayload(config.get()),
     systemDark: nativeTheme.shouldUseDarkColors,
+    captionLockShortcutLabel: shortcutLabel(config.get().captionLockShortcut),
+    captionLockShortcutStatus: captionLockShortcutController?.status || 'unavailable',
     refinementPreferenceFallback: refinementPreferenceFallbackNotice
   }
 }
@@ -556,7 +561,8 @@ function registerWindowRole (win, role) {
     navigationEpoch += 1
     windowInteractionController.stopForSender(senderId)
     windowInteractionGenerationController.failClosedAfterRendererGone(role)
-    if (role === 'agent') {
+    if (role === 'agent' && agentWin === win) {
+      agentOpenRequestId += 1
       agentRendererReady = false
       agentOpenFailed = true
       publishAgentOpenStatus('failed')
@@ -571,7 +577,7 @@ function registerWindowRole (win, role) {
     navigationEpoch += 1
     windowInteractionController.stopForSender(senderId)
     windowInteractionGenerationController.suspendRoleForReload(role)
-    if (role === 'agent') agentRendererReady = false
+    if (role === 'agent' && agentWin === win) agentRendererReady = false
     if (role === 'toolbar') invalidateToolbarOverlap()
   })
   win.webContents.on('preload-error', () => exitEvidence.recordPreloadError(win.webContents))
@@ -843,11 +849,16 @@ function openSettingsWindow (initialPane = null) {
   windowLayerController.bindForegroundWindow(settingsWin, 'settings')
   hardenContents(settingsWin, { openExternalUrls: APPROVED_MODEL_HELP_URLS })
   settingsWin.webContents.on('console-message', (details) => console.log('[settings]', details.message))
+  const stopShortcutRecording = () => captionLockShortcutController?.setRecording(false)
+  settingsWin.on('blur', stopShortcutRecording)
+  settingsWin.webContents.on('did-start-loading', stopShortcutRecording)
+  settingsWin.webContents.on('render-process-gone', stopShortcutRecording)
   settingsWin.once('ready-to-show', () => {
     applicationWindowLifecycleController.showAuxiliaryWindow(settingsWin, 'settings')
     if (initialPane) send(settingsWin, CHANNELS.SETTINGS_NAVIGATE, initialPane)
   })
   settingsWin.on('closed', () => {
+    stopShortcutRecording()
     cancelSettingsModelTests()
     windowInteractionController.stopAll()
     settingsWin = null
@@ -912,7 +923,12 @@ function publishAgentOpenStatus (phase) {
     opening: '正在打开会话总结…',
     ready: '会话总结已打开',
     waiting: '打开时间较长，可重试',
-    failed: '暂时无法打开会话总结，请重试'
+    failed: '暂时无法打开会话总结，请重试',
+    closed: ''
+  }
+  if (phase !== 'opening' && agentOpenWaitingTimer) {
+    clearTimeout(agentOpenWaitingTimer)
+    agentOpenWaitingTimer = null
   }
   agentOpenPhase = phase
   send(toolbarWin, CHANNELS.AGENT_OPEN_STATUS, { schemaVersion: 1, phase, message: messages[phase] || '' })
@@ -921,6 +937,35 @@ function publishAgentOpenStatus (phase) {
 function requestAgentScope (sessionId) {
   const reference = validAgentSessionReference(sessionId)
   if (reference) send(agentWin, CHANNELS.AGENT_SCOPE_REQUESTED, { kind: 'session', reference })
+}
+
+function loadAgentWindow (win) {
+  const requestId = ++agentOpenRequestId
+  agentOpenFailed = false
+  agentRendererReady = false
+  publishAgentOpenStatus('opening')
+  if (agentOpenWaitingTimer) clearTimeout(agentOpenWaitingTimer)
+  agentOpenWaitingTimer = setTimeout(() => {
+    if (requestId === agentOpenRequestId && agentWin === win && !win.isDestroyed() && !agentRendererReady) publishAgentOpenStatus('waiting')
+  }, 5000)
+  // Own fail-closed handling here: an obsolete navigation rejection must not
+  // destroy a window that is already loading a newer retry.
+  const load = async () => loadRenderer(win, 'agent', { isPackaged: app.isPackaged })
+  void load()
+    .then(() => {
+      if (requestId !== agentOpenRequestId || agentWin !== win || win.isDestroyed()) return
+      agentRendererReady = true
+      publishAgentOpenStatus('ready')
+      applicationWindowLifecycleController.showAuxiliaryWindow(win, 'agent')
+    })
+    .catch((error) => {
+      if (requestId !== agentOpenRequestId || agentWin !== win || win.isDestroyed()) return
+      agentOpenFailed = true
+      agentRendererReady = false
+      win.destroy()
+      if (agentWin === null && agentOpenRequestId === requestId + 1) publishAgentOpenStatus('failed')
+      logError('renderer.agent.load', error)
+    })
 }
 
 function openAgentWindow ({ sessionId = null, sourceLocation = null } = {}) {
@@ -935,16 +980,7 @@ function openAgentWindow ({ sessionId = null, sourceLocation = null } = {}) {
       else send(targetWindow, CHANNELS.AGENT_CONTEXT_SOURCE_REQUESTED, sourceLocation)
     }
     if (agentOpenFailed || agentOpenPhase === 'waiting' || agentOpenPhase === 'failed') {
-      agentOpenFailed = false
-      agentRendererReady = false
-      publishAgentOpenStatus('opening')
-      void loadRendererFailClosed(agentWin, 'agent', { isPackaged: app.isPackaged })
-        .then(() => {
-          agentRendererReady = true
-          if (!agentWin.isDestroyed()) applicationWindowLifecycleController.showAuxiliaryWindow(agentWin, 'agent')
-          publishAgentOpenStatus('ready')
-        })
-        .catch(() => { agentOpenFailed = true; publishAgentOpenStatus('failed') })
+      loadAgentWindow(agentWin)
     } else if (agentRendererReady) {
       publishAgentOpenStatus('ready')
     } else if (agentOpenPhase !== 'opening') {
@@ -952,14 +988,9 @@ function openAgentWindow ({ sessionId = null, sourceLocation = null } = {}) {
     }
     return { ok: true, phase: agentOpenPhase, reused: true }
   }
-  const requestId = ++agentOpenRequestId
   if (requestedSession) agentRequestedSessionId = requestedSession
   agentRendererReady = false
   publishAgentOpenStatus('opening')
-  if (agentOpenWaitingTimer) clearTimeout(agentOpenWaitingTimer)
-  agentOpenWaitingTimer = setTimeout(() => {
-    if (requestId === agentOpenRequestId && agentWin && !agentWin.isDestroyed()) publishAgentOpenStatus('waiting')
-  }, 5000)
   try {
     agentWin = new BrowserWindow({
       width: 720, height: 640, minWidth: 520, minHeight: 420,
@@ -979,31 +1010,32 @@ function openAgentWindow ({ sessionId = null, sourceLocation = null } = {}) {
   applicationWindowLifecycleController.bindAuxiliaryWindow(agentWin, 'agent')
   windowLayerController.bindForegroundWindow(agentWin, 'agent')
   hardenContents(agentWin)
-  agentWin.webContents.once('did-finish-load', () => {
+  const openedWindow = agentWin
+  agentWin.webContents.on('did-finish-load', () => {
+    if (agentWin !== openedWindow || openedWindow.isDestroyed()) return
     agentRendererReady = true
+    agentOpenFailed = false
+    publishAgentOpenStatus('ready')
     requestAgentScope(agentRequestedSessionId)
-    if (sourceLocation) send(agentWin, CHANNELS.AGENT_CONTEXT_SOURCE_REQUESTED, sourceLocation)
+  })
+  if (sourceLocation) openedWindow.webContents.once('did-finish-load', () => {
+    if (agentWin === openedWindow && !openedWindow.isDestroyed()) send(openedWindow, CHANNELS.AGENT_CONTEXT_SOURCE_REQUESTED, sourceLocation)
   })
   agentWin.once('ready-to-show', () => {
-    if (agentOpenWaitingTimer) { clearTimeout(agentOpenWaitingTimer); agentOpenWaitingTimer = null }
-    if (!agentWin.isDestroyed()) { applicationWindowLifecycleController.showAuxiliaryWindow(agentWin, 'agent'); if (agentRendererReady) publishAgentOpenStatus('ready') }
+    if (agentWin === openedWindow && !openedWindow.isDestroyed()) applicationWindowLifecycleController.showAuxiliaryWindow(openedWindow, 'agent')
   })
   const sourceAgentId = agentWin.webContents.id
   agentWin.on('closed', () => {
     contextSourceOrigins.delete(sourceAgentId)
+    if (agentWin !== openedWindow) return
     if (agentOpenWaitingTimer) { clearTimeout(agentOpenWaitingTimer); agentOpenWaitingTimer = null }
     agentWin = null
+    agentOpenRequestId += 1
+    publishAgentOpenStatus('closed')
     agentOpenFailed = false
-    agentOpenPhase = 'closed'
     agentRendererReady = false
   })
-  void loadRendererFailClosed(agentWin, 'agent', { isPackaged: app.isPackaged })
-    .catch((error) => {
-      agentOpenFailed = true
-      agentRendererReady = false
-      publishAgentOpenStatus('failed')
-      logError('renderer.agent.load', error)
-    })
+  loadAgentWindow(openedWindow)
   return { ok: true, phase: 'opening', reused: false }
 }
 
@@ -1107,12 +1139,18 @@ async function updateConfig (patch) {
     }
     const next = { ...config.get(), ...patch }
     coordinator.validateConfiguration(next)
-    config.set(patch)
+    if (Object.hasOwn(patch, 'captionLockShortcut') || Object.hasOwn(patch, 'captionLockShortcutEnabled')) {
+      if (!captionLockShortcutController) return failure('CAPTION_SHORTCUT_UNAVAILABLE', '快捷键暂时无法启用，请使用工具条锁定按钮。', true)
+      captionLockShortcutController.update(next, () => config.set(patch))
+    } else config.set(patch)
     coordinator.updateConfiguration(config.get())
     broadcastConfig()
     return success()
   } catch (error) {
-    logError('config.update', error)
+    if (error?.code === 'CAPTION_SHORTCUT_CONFLICT') return failure(error.code, '这个快捷键已被其他应用占用，请换一个。', true)
+    if (error?.code === 'CAPTION_SHORTCUT_UNAVAILABLE') return failure(error.code, '快捷键暂时无法启用，请使用工具条锁定按钮。', true)
+    if (patch && (Object.hasOwn(patch, 'captionLockShortcut') || Object.hasOwn(patch, 'captionLockShortcutEnabled'))) console.error('[config.update] INVALID_CONFIG')
+    else logError('config.update', error)
     return failure('INVALID_CONFIG', '设置未保存', true)
   }
 }
@@ -1322,6 +1360,15 @@ ipcMain.handle(CHANNELS.CONFIG_UPDATE, (event, patch) => {
   requireSender(event, CHANNELS.CONFIG_UPDATE)
   return updateConfig(patch)
 })
+ipcMain.handle(CHANNELS.CAPTION_LOCK_SHORTCUT_RECORDING, (event, request) => {
+  const { win } = requireSender(event, CHANNELS.CAPTION_LOCK_SHORTCUT_RECORDING)
+  assertShortcutRecordingRequest(request)
+  if (!captionLockShortcutController || (request.recording && !win.isFocused())) {
+    return failure('CAPTION_SHORTCUT_UNAVAILABLE', '请保持设置窗口处于前台，再录入按键。', true)
+  }
+  captionLockShortcutController.setRecording(request.recording)
+  return success()
+})
 ipcMain.handle(CHANNELS.PRESET_SELECT, (event, preset) => {
   requireSender(event, CHANNELS.PRESET_SELECT)
   return selectPreset(preset)
@@ -1442,6 +1489,17 @@ nativeTheme.on('updated', broadcastConfig)
 async function bootstrapApplication () {
   if (quitRequested) return false
   config.load()
+  captionLockShortcutController = new CaptionLockShortcutController({
+    globalShortcut,
+    readVirtualKeys: () => {
+      if (!captionNativeInputAddon) captionNativeInputAddon = loadCaptionInputNative({ isPackaged: app.isPackaged })
+      if (typeof captionNativeInputAddon?.readShortcutKeys !== 'function') throw new Error('caption shortcut native input unavailable')
+      return captionNativeInputAddon.readShortcutKeys()
+    },
+    onToggle: () => applyLock(!locked),
+    onStatusChanged: () => { if (toolbarWin) broadcastConfig() }
+  })
+  captionLockShortcutController.initialize(config.get())
   const userDataDir = app.getPath('userData')
   agentRunDiagnostics = new AgentRunDiagnostics({
     directory: path.join(userDataDir, 'logs', 'agent-run-diagnostics'),
@@ -1724,12 +1782,11 @@ async function bootstrapApplication () {
   createWindows()
   if (!config.get().onboardingCompleted) openSettingsWindow()
 
-  globalShortcut.register('CommandOrControl+Alt+L', () => applyLock(!locked))
   return true
 }
 
 function cleanupUiRuntime () {
-  globalShortcut.unregisterAll()
+  captionLockShortcutController?.dispose()
   windowInteractionController.stopAll()
   disposeCaptionNativeInput()
   if (powerSessionGuard) {

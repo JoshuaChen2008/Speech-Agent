@@ -554,13 +554,20 @@ if (typeof ResizeObserver === 'function') {
 /** @param {any} c */
 function applyConfig (c: any): void {
   applyAppearance(document.documentElement, c)
+  const hint = document.getElementById('captionLockHint')
+  if (hint) hint.textContent = c.captionLockShortcutEnabled === true && c.captionLockShortcutStatus === 'active' && c.captionLockShortcutLabel
+    ? `字幕已锁定 · ${c.captionLockShortcutLabel} 解锁`
+    : '字幕已锁定 · 点击工具条锁定按钮解锁'
   /* 字号变化不改变 .captions 的高度，ResizeObserver 不会触发，必须显式重算。 */
   applyViewport()
   render()
 }
 async function initConfig () {
-  try { applyConfig(await bridge.getConfig()) } catch { applyViewport(); render() }
-  bridge.onConfig(applyConfig)
+  let configRevision = 0
+  bridge.onConfig((c: any) => { configRevision += 1; applyConfig(c) })
+  const requestedAt = configRevision
+  try { const c = await bridge.getConfig(); if (configRevision === requestedAt) applyConfig(c) }
+  catch { applyViewport(); render() }
 }
 initConfig()
 initLock()

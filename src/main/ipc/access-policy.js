@@ -15,6 +15,7 @@ const ROLE_ACCESS = Object.freeze({
   [CHANNELS.WINDOW_INTERACTION_READY]: Object.freeze(['caption', 'toolbar', 'settings', 'history', 'agent']),
   [CHANNELS.LOCK_TOGGLE]: Object.freeze(['toolbar']),
   [CHANNELS.LOCK_GET]: Object.freeze(['caption', 'toolbar']),
+  [CHANNELS.CAPTION_LOCK_SHORTCUT_RECORDING]: Object.freeze(['settings']),
   [CHANNELS.TOOLBAR_LAYOUT_GET_CONTEXT]: Object.freeze(['toolbar']),
   [CHANNELS.TOOLBAR_LAYOUT_REPORT_RECT]: Object.freeze(['toolbar']),
   [CHANNELS.TOOLBAR_ACTION]: Object.freeze(['toolbar']),
@@ -81,6 +82,8 @@ const RENDERER_CONFIG_KEYS = Object.freeze([
   'captionTextColor',
   'radius',
   'theme',
+  'captionLockShortcutEnabled',
+  'captionLockShortcut',
   'bilingual',
   'maxLines',
   'latency'

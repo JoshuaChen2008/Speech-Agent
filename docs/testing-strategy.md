@@ -1,5 +1,22 @@
 # 联合测试与 CI 策略
 
+## 2026-10-04 字幕窗锁定快捷键旅程登记（实现完成·尚未验收）
+
+| 既有旅程子边界 | 必须覆盖的可观察结果 | 状态 |
+|---|---|---|
+| J17-SHORTCUT（SEM-F22/F23、SEM-T04） | 真实设置录入→左右键预览→保存→受约束 preload/main→原子 ConfigStore→全局快捷键控制器→真实锁定广播→字幕提示与工具条按钮；旧配置默认、右 Alt、组合键、纯修饰键松开、长按去重、其它键抑制、AltGr、关闭保留键位、重新启用、恢复默认、设置/应用重开一致。仅替代操作系统按键/注册/权限边界；产品内部实现保持真实。覆盖 Esc、取消、失焦、换页、reload/关闭恢复，注册/读取/持久化失败、非法 IPC 和损坏配置明确降级。 | 实现完成·尚未验收 |
+
+Windows 真实按键连续性、AltGr 布局、UIPI/活动桌面及 DWM 沿 J17/I2；本次不把确定性按键注入当作实机输入证据。影响公共合同与 main/preload，执行 renderer 检查、相关 core 与 integration；阶段联合验收仍需当前 revision 的完整三条 lane。
+
+本次先登记语义与旅程，再实施。设计和官方来源见[设计记录](caption-lock-shortcut-design.md)与[调研](research/caption-unlock-shortcut.md)。当前命令与结果：
+
+- `npm run build:native`、`npm run verify:renderer` 返回码均为 0；只读原生状态探针确认有界数组和左右修饰键别名排除。探针在受限沙箱内遇到活动桌面权限拒绝，沙箱外读取成立；这不证明任何真实按键触发或系统权限场景。
+- `node --test --experimental-test-isolation=none "test/contracts/**/*.test.js" "test/main/**/*.test.js" "test/runtime/**/*.test.js" "test/storage/**/*.test.js" "test/ui/**/*.test.js"` 当前完整 Core 断言为 1188/1188、0 失败。首轮 1184/1187 的三项失败来自旧 preload 测试装载器未登记新增合同依赖，修订装载器后重新执行；未放宽产品 IPC 校验或断言。
+- `npm run test:focus -- test/integration/caption-lock-shortcut-journey.test.js test/integration/window-interaction-journey.test.js test/integration/product-sqlite-lifecycle-journey.test.js` 为 8/8、0 失败。快捷键旅程使用真实 Electron 设置/字幕/工具条、preload/main、ConfigStore 和 SQLite；只有操作系统按键/注册/读取及文件写入权限边界受控。覆盖右 Alt 预览与保存、干净松开、左 Alt 排除、夹带其它键抑制、AltGr、Esc/导航/失焦/reload/关闭恢复、读取失败降级与重新设置、写失败保持旧键位、工具条锁定按钮和第二次启动关闭状态。第二次启动还覆盖注册失败保持关闭与恢复默认重新启用。
+- 为解决截图捕获早于 compositor 重绘的问题，仅在可选截图分支等待动画收束后，单独再次执行快捷键旅程为 1/1、0 失败；生产设置页录入与关闭状态已作静态视觉检查。没有以截图替代物理按键证据。
+
+未执行完整 Integration/Evidence lane 或交互安装；真实键盘布局、物理短按、管理员窗口、安全桌面、系统高对比/DPI 与 DWM 仍未验收。字母/数字在非标准布局下的物理 `code` 与系统虚拟键映射尚无实机证据；这项输入身份边界纳入 J17/I2，不将确定性美式布局注入提升为跨布局资格。
+
 ## 2026-10-04 提交前回归与夹具对齐（实现完成·尚未验收）
 
 关联 SEM-F14/F23/F24/F38/F41/F43/F44、SEM-T03/T04/T05，以及 J9-CI/J12/J18/J19/J21/J28-FILES/J28-EXPORT/J28-MCP/J29/J30/J31、DB1/DB7/I3/B5。当前输入完整 Core 为1163/1163，Integration 为165/165；原生成器刷新 I3 绑定后，完整 Evidence 为248项成立、1项明确跳过、0失败。记忆文件保存/重启连续15轮、记忆专用 ASAR 1/1和默认几何产品壳 fresh/restart 自然退出绑定另有证据。夹具修正保留真实内部模块、持久化、来源、独占保存与失败断言；没有以过期界面名称或保存未收束时的直接文件读取冒充产品行为。实际命令、各次非零结果、根因、Luna复核及未验证范围见[提交整理记录](validation/commit-preparation-2026-10-04.md)，不提升产品联合验收或实机状态。
@@ -676,3 +693,20 @@ SEM-F12/F14/F21/F25：真实 provider/router/worker/coordinator/SQLite 旅程覆
 ### 2026-09-30 J20 云端长段连续性修订（已决定）
 
 真实 provider/router/worker/coordinator/SQLite 验证连续180秒单一未定稿段仍使用NLS、停止接受唯一首次稳定转写、无降级；worker留存始终不超过60秒，断连时旧切点缺失显式失败。撤销50秒降级预期，保留发送积压、缺口和停止超时失败测试。真实公网识别效果及I3另验。
+
+### 2026-10-04 生成记录与滚动条登记（已决定）
+
+| 旅程 | 增量边界 | 状态 |
+|---|---|---|
+| J18/J29/J30 | 正式 Agent renderer 默认隐藏生成记录，右侧展开/关闭/Esc 焦点返回；窄宽窗口、125% 缩放保持两栏完整高度。生成记录空列表/读取失败仍可关闭；已有会话范围隔离与分页继续验证。 | 已决定 |
+| J18 | 共享滚动条覆盖所有 renderer，生产布局旅程核对深浅主题计算样式及高对比回落；实机滚动条拖动、DPI 与可读性另验。 | 已决定 |
+
+2026-10-04 定向验证（SEM-F23/F31/F38、SEM-T04、J18/J29/J30）：状态为**实现完成·尚未验收**。`npm run test:focus -- test/ui/agent-ui.test.js test/ui/renderer-style-guard.test.js` 为64/64，覆盖默认收起、展开、Esc/按钮收起、焦点返回、读取失败仍可收起及既有会话范围隔离。`npm run verify:renderer` 返回0。`npm run test:focus -- test/integration/agent-layout-journey.test.js` 在受限环境因Electron GPU子进程退出码-1073741515中止，不计产品断言结果；沙箱外同一隔离旅程为1/1，使用生产main/preload/renderer，验证深浅主题、520/720/1100宽度、125%缩放、右侧展开不压缩阅读高度及模拟高对比下滚动条回落。`git diff --check` 返回0。未运行完整三条lane、真实DPI/鼠标拖动及人工可读性验收，不提升J18/J29/J30整体状态。
+
+### 2026-10-04 会话总结窗口反馈登记（已决定）
+
+J29/J18、SEM-F38/F23、SEM-T04：覆盖 ready-to-show 与 did-finish-load 的两种顺序、关闭立即清除、旧窗口失败不污染新窗口、重复打开、等待后重试、失败后重开、工具条恢复既有精修通知。主进程控制事件序列回归只替代窗口边界；正式 Electron 旅程保留真实 main/preload/toolbar/agent 检查首开和关闭后的显示状态。状态为已决定，不把窗口已打开等同于会话总结已生成。
+
+2026-10-04 窗口反馈定位与验证（SEM-F38/F23、SEM-T04、J29/J18）：**实现完成·尚未验收**。受控窗口事件序列先复现三项断言失败：ready-to-show先到导致opening不收束；closed未广播；旧窗口加载拒绝覆盖新窗口ready。排查还发现等待后重试未重建期限、失败未统一撤销等待，以及工具条旧IPC拒绝可能覆盖新状态。修复统一加载/重试等待、成功/失败/关闭收束与窗口/尝试身份校验；closed恢复原有字幕状态或精修通知。设置/字幕历史入口无独立“正在打开”反馈；所检查的历史读取/导出、助手设置保存与会话总结请求使用各自成功/失败收束，不将本次打开反馈修复冒充模型运行状态验收。
+
+实际命令：`npm run test:focus -- test/main/agent-window-lifecycle.test.js test/main/agent-window-route.test.js test/main/renderer-entry.test.js test/ui/toolbar-notice-ui.test.js test/ui/history-ui.test.js test/ui/agent-ui.test.js` 为89/89；`npm run verify:renderer` 返回0；沙箱外 `npm run test:focus -- test/integration/agent-layout-journey.test.js test/integration/agent-bar-ipc-journey.test.js` 为2/2，保留真实main/preload/renderer/IPC及既有storage worker旅程，并验证工具条首次打开、关闭清除和关闭重开。`git diff --check` 返回0。未执行完整三条lane、真实模型、真实DWM/声卡及用户当前运行实例的重启后实机观察，不提升J29整体验收状态。

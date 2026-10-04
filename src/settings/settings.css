@@ -275,6 +275,15 @@ h1 { font-size: var(--fs-title); font-weight: var(--fw-bold); margin: 14px 0 4px
 .switch input { accent-color: var(--accent-solid); }
 .switch input:disabled + span { opacity: 0.45; }
 
+.shortcut-hint { margin: 6px 0 0; line-height: 1.5; opacity: 0.7; }
+.shortcut-settings .row { gap: 16px; }
+.shortcut-binding { flex-wrap: wrap; }
+.shortcut-binding kbd { font: var(--fw-medium) var(--fs-body) var(--font-ui); }
+.shortcut-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.shortcut-recorder { display: grid; gap: 12px; padding: 18px 0 4px; border-top: 1px solid var(--border-window-titlebar); }
+.shortcut-recorder input { width: 100%; min-height: 42px; }
+.shortcut-error { margin: 12px 0 0; color: var(--tone-danger); font-size: var(--fs-label); line-height: 1.5; }
+
 /* 分段控件 */
 .seg {
   display: inline-flex;

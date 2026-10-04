@@ -27,6 +27,7 @@ async function run () {
   const evaluate = source => win.webContents.executeJavaScript(source)
   await until(() => evaluate("Boolean(document.querySelector('#agentPrompt'))"))
   if (process.env.AGENT_LAYOUT_INTERACTIVE === '1') return
+  assert.equal(await toolbar.webContents.executeJavaScript("document.querySelector('#status').textContent.includes('正在打开会话总结')"), false, 'loaded Agent window must settle toolbar opening feedback')
   await toolbar.webContents.executeJavaScript("window.shell.action('settings')")
   await until(() => findWindow('settings'))
   const settings = findWindow('settings')
@@ -40,6 +41,18 @@ async function run () {
       win.setSize(width, height)
       win.webContents.setZoomFactor(zoom)
       await wait(100)
+      assert.equal(await evaluate("document.querySelector('.history-panel').hidden"), true)
+      const readingHeight = await evaluate("document.querySelector('.request-panel').getBoundingClientRect().height")
+      await evaluate("document.querySelector('[aria-controls=agentHistory]').click()")
+      await until(() => evaluate("!document.querySelector('.history-panel').hidden"))
+      assert.equal(await evaluate(`(() => {
+        const panel = document.querySelector('.history-panel').getBoundingClientRect();
+        const layout = document.querySelector('.agent-layout').getBoundingClientRect();
+        return panel.right <= innerWidth && Math.abs(panel.top - layout.top) < 1
+          && Math.abs(document.querySelector('.request-panel').getBoundingClientRect().height - ${readingHeight}) < 1;
+      })()`), true)
+      await evaluate("document.querySelector('[aria-label=\"收起生成记录\"]').click()")
+      await until(() => evaluate("document.querySelector('.history-panel').hidden"))
       const metrics = await evaluate(`(() => {
         const rect = selector => document.querySelector(selector).getBoundingClientRect();
         const from = rect('#agentDateFrom'), through = rect('#agentDateThrough');
@@ -56,15 +69,28 @@ async function run () {
           noPageOverflow: document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight,
           disabledWithoutScope: document.querySelector('#agentPrompt').disabled && document.querySelector('[data-action="qa"]').disabled,
           inputBackground: getComputedStyle(document.querySelector('#agentDateFrom')).backgroundColor,
-          inputScheme: getComputedStyle(document.querySelector('#agentDateFrom')).colorScheme
+          inputScheme: getComputedStyle(document.querySelector('#agentDateFrom')).colorScheme,
+          scrollbarWidth: getComputedStyle(document.querySelector('.request-panel')).scrollbarWidth,
+          scrollbarColor: getComputedStyle(document.querySelector('.request-panel')).scrollbarColor
         };
       })()`)
       for (const [key, value] of Object.entries(metrics)) {
         if (typeof value === 'boolean') assert.equal(value, true, `${theme}/${width}/${zoom}: ${key}`)
       }
       assert.equal(metrics.inputScheme, theme)
+      assert.equal(metrics.scrollbarWidth, 'thin')
+      assert.notEqual(metrics.scrollbarColor, 'auto')
       assert.notEqual(metrics.inputBackground, 'rgba(0, 0, 0, 0)')
     }
+  }
+  win.webContents.debugger.attach('1.3')
+  try {
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'active' }] })
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('.request-panel')).scrollbarColor"), 'auto')
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('.request-panel')).scrollbarWidth"), 'auto')
+  } finally {
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] })
+    win.webContents.debugger.detach()
   }
   const setDate = async (id, value) => {
     await evaluate(`(() => {
@@ -83,6 +109,15 @@ async function run () {
   assert.equal(await evaluate("document.querySelector('.close-button').getBoundingClientRect().width === 32"), true)
   await evaluate("document.querySelector('.close-button').click()")
   await until(() => !findWindow('agent'))
+  await until(() => toolbar.webContents.executeJavaScript("!document.querySelector('#status').textContent.includes('会话总结')"))
+  await toolbar.webContents.executeJavaScript("document.querySelector('[data-act=agent]').click()")
+  await until(() => findWindow('agent'))
+  const reopened = findWindow('agent')
+  await until(() => reopened.webContents.executeJavaScript("Boolean(document.querySelector('#agentPrompt'))"))
+  await until(() => toolbar.webContents.executeJavaScript("!document.querySelector('#status').textContent.includes('正在打开会话总结')"))
+  await reopened.webContents.executeJavaScript("document.querySelector('.close-button').click()")
+  await until(() => !findWindow('agent'))
+  await until(() => toolbar.webContents.executeJavaScript("!document.querySelector('#status').textContent.includes('会话总结')"))
   console.log('AGENT_LAYOUT_OK')
   app.quit()
 }

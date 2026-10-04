@@ -87,7 +87,7 @@ async function flush () {
   await new Promise((resolve) => setImmediate(resolve))
 }
 
-function createHarness ({ deferFrames = false, toolbarRect = null } = {}) {
+function createHarness ({ deferFrames = false, toolbarRect = null, openAgent = null } = {}) {
   const ids = ['wrap', 'toolbar', 'grip', 'status', 'commands', 'windowControls']
   const elements = new Map(ids.map((id) => [id, new FakeElement('div')]))
   elements.get('wrap').dataset.locked = 'off'
@@ -103,7 +103,11 @@ function createHarness ({ deferFrames = false, toolbarRect = null } = {}) {
   let triggerToolbarResize = () => {}
   let triggerToolbarMutation = () => {}
   const frames = []
+  const timers = new Map()
+  let timerId = 0
   const shell = {
+    ...(openAgent ? { openAgent } : {}),
+    onAgentOpenStatus: callback => { callbacks.agentStatus = callback },
     mouseThrough: (ignore) => throughCalls.push(ignore),
     dragStart (role) { dragCalls.push(['start', role]) },
     dragEnd () { dragCalls.push(['end']) },
@@ -187,6 +191,8 @@ function createHarness ({ deferFrames = false, toolbarRect = null } = {}) {
   }
   vm.runInNewContext(transpileRenderer(path.join(root, 'src', 'toolbar', 'toolbar.ts')), {
     console,
+    setTimeout (callback, delay) { const id = ++timerId; timers.set(id, { callback, delay }); return id },
+    clearTimeout: id => timers.delete(id),
     document,
     requestAnimationFrame: (callback) => {
       if (!deferFrames) return callback()
@@ -207,6 +213,7 @@ function createHarness ({ deferFrames = false, toolbarRect = null } = {}) {
   })
   return {
     actions,
+    runTimers (delay) { for (const [id, timer] of [...timers]) { if (timer.delay === delay) { timers.delete(id); timer.callback() } } },
     callbacks,
     document,
     dragController,
@@ -220,6 +227,34 @@ function createHarness ({ deferFrames = false, toolbarRect = null } = {}) {
     throughCalls
   }
 }
+
+test('SEM-F38/J29: closed feedback restores the underlying notice and old success timers cannot clear a newer opening', async () => {
+  const { callbacks, elements, runTimers } = createHarness()
+  await flush()
+  const status = elements.get('status')
+  const notify = (phase, message = phase) => callbacks.agentStatus({ schemaVersion: 1, phase, message })
+  callbacks.notice({ kind: 'refinement-fault', message: '精修异常' })
+  notify('opening'); notify('ready'); notify('opening', 'new opening')
+  runTimers(1800)
+  assert.equal(status.getAttribute('aria-label'), 'new opening')
+  notify('closed', '')
+  assert.equal(status.classList.contains('refinement-notice'), true)
+  notify('ready'); runTimers(1800)
+  assert.equal(status.classList.contains('refinement-notice'), true)
+})
+
+test('SEM-F38/SEM-T04/J29: an obsolete open IPC rejection cannot replace ready or closed feedback', async () => {
+  let rejectOpen
+  const { callbacks, elements } = createHarness({ openAgent: () => new Promise((_resolve, reject) => { rejectOpen = reject }) })
+  await flush()
+  const agent = elements.get('windowControls').children.find(child => child.dataset.act === 'agent')
+  for (const callback of elements.get('toolbar').listeners.get('click')) callback({ target: agent })
+  callbacks.agentStatus({ schemaVersion: 1, phase: 'ready', message: '已打开' })
+  callbacks.agentStatus({ schemaVersion: 1, phase: 'closed', message: '' })
+  rejectOpen(new Error('old IPC rejection'))
+  await flush()
+  assert.equal(elements.get('status').getAttribute('aria-label'), '空闲')
+})
 
 test('toolbar renderer shows and dismisses a post-session status without creating another row', async () => {
   const { actions, callbacks, elements } = createHarness()

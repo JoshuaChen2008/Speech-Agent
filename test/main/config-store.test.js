@@ -28,6 +28,25 @@ function makeStore (t) {
   }
 }
 
+test('SEM-F22/J17-SHORTCUT: preference persists independently, retains disabled right Alt and owns its arrays', (t) => {
+  const { file, store } = makeStore(t); store.load()
+  const keys = ['AltRight']; store.update({ captionLockShortcut: keys, captionLockShortcutEnabled: false }); keys.push('KeyK')
+  const snapshot = store.get(); snapshot.captionLockShortcut.push('KeyL')
+  assert.deepEqual(store.get().captionLockShortcut, ['AltRight'])
+  const reopened = new ConfigStore(file).load()
+  assert.equal(reopened.captionLockShortcutEnabled, false); assert.deepEqual(reopened.captionLockShortcut, ['AltRight']); assert.equal(reopened.agentEnabled, false)
+})
+
+test('SEM-F22/SEM-T04/J17-SHORTCUT: legacy defaults and corrupt explicit shortcuts do not affect other preferences', () => {
+  const legacy = migrateConfig({ schemaVersion: 1, fontSize: 38 })
+  assert.equal(legacy.captionLockShortcutEnabled, true); assert.deepEqual(legacy.captionLockShortcut, ['Control', 'Alt', 'KeyL'])
+  for (const value of [[], ['Unknown'], 'AltRight']) {
+    const result = migrateConfig({ ...DEFAULT_CONFIG, fontSize: 38, captionLockShortcut: value })
+    assert.equal(result.captionLockShortcutEnabled, false); assert.equal(result.fontSize, 38)
+  }
+  assert.throws(() => validateConfigPatch({ captionLockShortcut: ['MetaLeft'] })); assert.throws(() => validateConfigPatch({ captionLockShortcutEnabled: 'false' }))
+})
+
 test('fresh config requires an explicit Gate 0D preset', (t) => {
   const { store } = makeStore(t)
   assert.deepEqual(store.load(), DEFAULT_CONFIG)

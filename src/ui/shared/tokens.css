@@ -393,3 +393,25 @@
     --text-input-disabled: GrayText;
   }
 }
+
+/* Shared scrollbar appearance, including nested scroll areas and native pickers. */
+:root {
+  --scrollbar-thumb: rgba(var(--fg), 0.38);
+  --scrollbar-track: transparent;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+@media (forced-colors: active) {
+  * { scrollbar-color: auto; scrollbar-width: auto; }
+}
+@supports selector(::picker(select)) {
+  select::picker(select) {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  }
+  @media (forced-colors: active) {
+    select::picker(select) { scrollbar-color: auto; scrollbar-width: auto; }
+  }
+}

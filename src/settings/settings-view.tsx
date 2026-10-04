@@ -4,13 +4,14 @@ import { AgentSettingsPane } from './agent-settings-pane'
 import { AgentModelPane } from './agent-model-pane'
 import { AgentContextPane } from './agent-context-pane'
 import { RecognitionSettingsPane } from './recognition-settings-pane'
+import { CaptionLockShortcutPane } from './caption-lock-shortcut-pane'
 
-type Pane = 'display' | 'audio' | 'asr' | 'resources' | 'agentContext' | 'agentModel' | 'about'
+type Pane = 'display' | 'shortcuts' | 'audio' | 'asr' | 'resources' | 'agentContext' | 'agentModel' | 'about'
 type ModelState = 'missing' | 'downloading' | 'verifying' | 'ready' | 'error'
 type Dict = Record<string, any>
 
 const PANES: ReadonlyArray<readonly [Pane, string]> = [
-  ['display', '显示与字幕'], ['audio', '音频来源'], ['asr', '语音识别'],
+  ['display', '显示与字幕'], ['shortcuts', '快捷键'], ['audio', '音频来源'], ['asr', '语音识别'],
   ['resources', '模型资源'], ['agentContext', '我的记忆'], ['agentModel', '助手模型'], ['about', '关于']
 ]
 const MODEL_STATES: readonly ModelState[] = ['missing', 'downloading', 'verifying', 'ready', 'error']
@@ -234,6 +235,9 @@ export function SettingsView (): ReactElement {
       <p className="onboarding-note">选择前不会启用麦克风或系统音频。模型未就绪时，识别功能会保持不可用。</p></div></section>
     <div className="layout"><nav className="nav" aria-label="设置类别">{PANES.map(([name, label]) => <button key={name} className={`nav-item${pane === name ? ' active' : ''}`} data-pane={name} aria-current={pane === name ? 'page' : undefined} onClick={() => setPane(name)}>{label}</button>)}</nav>
       <main className="content">
+        <section className={`pane${pane === 'shortcuts' ? ' active' : ''}`} data-pane="shortcuts">
+          {pane === 'shortcuts' && <CaptionLockShortcutPane shell={shell} config={cfg} onConfigRefresh={refreshConfig} />}
+        </section>
         <section className={`pane${pane === 'display' ? ' active' : ''}`} data-pane="display"><h1>显示与字幕</h1><p className="sub">调整字幕条的外观，改动实时生效。</p><div className="group">
           <div className="row"><div className="label">字号</div><Segmented name="fontsize" value={cfg?.fontSize} options={[[24, '小'], [30, '中'], [38, '大']]} onSelect={(value) => previewPatch({ fontSize: Number(value) })} /></div>
           <div className="row"><div className="label">主题</div><Segmented name="theme" value={cfg?.theme} options={[['light', '浅色'], ['auto', '自动'], ['dark', '深色']]} onSelect={(value) => previewPatch({ theme: value })} /></div>

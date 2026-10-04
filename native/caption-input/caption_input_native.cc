@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <cwchar>
 #include <exception>
 #include <mutex>
 #include <unordered_map>
@@ -307,11 +308,37 @@ napi_value probe_mouse_activate(napi_env env, napi_callback_info info) {
   return output;
 }
 
+napi_value read_shortcut_keys(napi_env env, napi_callback_info info) {
+  // Read only the current high bit. The low 'pressed since last call' bit is
+  // shared with other processes and is not a reliable edge detector.
+  HDESK input_desktop = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS);
+  if (input_desktop == nullptr) return make_error(env, "shortcut input desktop is unavailable");
+  wchar_t active_name[256] = {}, thread_name[256] = {};
+  DWORD needed = 0;
+  const bool readable = GetUserObjectInformationW(input_desktop, UOI_NAME, active_name, sizeof(active_name), &needed) &&
+      GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()), UOI_NAME, thread_name, sizeof(thread_name), &needed) &&
+      wcscmp(active_name, thread_name) == 0;
+  CloseDesktop(input_desktop);
+  if (!readable) return make_error(env, "shortcut input desktop is unavailable");
+  napi_value result = nullptr;
+  if (napi_create_array(env, &result) != napi_ok) return nullptr;
+  uint32_t count = 0;
+  for (int vk = 1; vk < 255; ++vk) {
+    // Generic modifier aliases would duplicate the physical left/right keys.
+    if (vk == VK_SHIFT || vk == VK_CONTROL || vk == VK_MENU) continue;
+    if ((GetAsyncKeyState(vk) & 0x8000) == 0) continue;
+    napi_value value = nullptr;
+    if (napi_create_int32(env, vk, &value) != napi_ok || napi_set_element(env, result, count++, value) != napi_ok) return nullptr;
+  }
+  return result;
+}
+
 napi_value init(napi_env env, napi_value exports) {
   napi_property_descriptor properties[] = {
       {"attach", nullptr, attach, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"isAttached", nullptr, is_attached, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"detach", nullptr, detach, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"readShortcutKeys", nullptr, read_shortcut_keys, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"getStats", nullptr, get_stats, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"normalizeMouseActivate", nullptr, normalize_mouse_activate, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"inspectWindow", nullptr, inspect_window, nullptr, nullptr, nullptr, napi_default, nullptr},

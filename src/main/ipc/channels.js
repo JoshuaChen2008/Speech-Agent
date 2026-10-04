@@ -14,6 +14,7 @@ module.exports = Object.freeze({
   LOCK_TOGGLE: 'window:lock-toggle',
   LOCK_GET: 'window:lock-get',
   LOCK_CHANGED: 'window:lock-changed',
+  CAPTION_LOCK_SHORTCUT_RECORDING: 'caption-lock-shortcut:recording',
   TOOLBAR_LAYOUT_GET_CONTEXT: 'toolbar-layout:get-context',
   TOOLBAR_LAYOUT_REPORT_RECT: 'toolbar-layout:report-rect',
   CAPTION_LAYOUT_TOOLBAR_OVERLAP: 'caption-layout:toolbar-overlap',

@@ -4,6 +4,7 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
+const { DEFAULT_CAPTION_LOCK_SHORTCUT, canonicalShortcut, isCaptionLockShortcut } = require('../../contracts/caption-lock-shortcut')
 const {
   ONBOARDING_PRESETS,
   assertListeningConfiguration,
@@ -47,6 +48,8 @@ const DEFAULT_CONFIG = Object.freeze({
   captionWidth: 920,
   captionHeight: 190,
   theme: 'auto',
+  captionLockShortcutEnabled: true,
+  captionLockShortcut: DEFAULT_CAPTION_LOCK_SHORTCUT,
   bilingual: true,
   maxLines: 4,
   // Global, source-independent choice read once when a future session starts.
@@ -81,6 +84,8 @@ const FIELD_RULES = Object.freeze({
   captionWidth: (value) => isIntegerRange(value, 480, 1600),
   captionHeight: (value) => isIntegerRange(value, 140, 420),
   theme: (value) => ['light', 'auto', 'dark'].includes(value),
+  captionLockShortcutEnabled: (value) => typeof value === 'boolean',
+  captionLockShortcut: isCaptionLockShortcut,
   bilingual: (value) => typeof value === 'boolean',
   maxLines: (value) => isIntegerRange(value, 1, 6),
   refinementEnabled: (value) => typeof value === 'boolean',
@@ -115,7 +120,7 @@ function isOptionalTimestamp (value) {
 }
 
 function cloneConfig (value) {
-  return { ...value }
+  return { ...value, captionLockShortcut: [...value.captionLockShortcut] }
 }
 
 function assertRecord (value, label) {
@@ -180,6 +185,11 @@ function migrateConfig (input) {
     const value = input[key]
     if (FIELD_RULES[key](value)) migrated[key] = value
   }
+  if ((Object.hasOwn(input, 'captionLockShortcut') && !isCaptionLockShortcut(input.captionLockShortcut)) ||
+      (Object.hasOwn(input, 'captionLockShortcutEnabled') && typeof input.captionLockShortcutEnabled !== 'boolean')) {
+    migrated.captionLockShortcutEnabled = false
+  }
+  migrated.captionLockShortcut = canonicalShortcut(migrated.captionLockShortcut)
 
   // The unmarked 1373 x 168 pair is the one persisted shape known to trigger
   // a mixed-DPI Win32/Electron content-size feedback loop. Normalize it once;
@@ -274,7 +284,8 @@ class ConfigStore {
 
   update (patch) {
     validateConfigPatch(patch)
-    const next = { ...this.state, ...patch, schemaVersion: CONFIG_SCHEMA_VERSION }
+    const next = cloneConfig({ ...this.state, ...patch, schemaVersion: CONFIG_SCHEMA_VERSION })
+    next.captionLockShortcut = canonicalShortcut(next.captionLockShortcut)
     assertListeningConfiguration(next, 'config patch')
     this.persist(next)
     this.state = next
