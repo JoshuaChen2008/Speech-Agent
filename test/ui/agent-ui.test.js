@@ -13,7 +13,7 @@ const { JSDOM } = require('jsdom')
 const { loadRendererModule } = require('./load-renderer-module')
 
 const root = path.resolve(__dirname, '..', '..')
-const CONTRACT = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.1.0' }
+const CONTRACT = { contract_id: 'speech-agent.agent-run.ui', contract_version: '1.2.0' }
 const { deriveToolResultMetadata } = require('../../src/agent/contracts/controlled-tools')
 const { sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
 const toolSourceRef = { sessionId:'session.ui', transcriptVersion:'raw', fromEventOrder:1, throughEventOrder:1 }
@@ -227,6 +227,17 @@ async function createHarness (options = {}) {
       return { ok: true, error: null, result: { accepted: true, interaction_id: request.interaction_id, replayed: false, signal_kind: request.signal_kind } }
     }
   }
+  const bridge = dom.window.agentApi
+  bridge.operations = {
+    submit: bridge.acceptSessionSummaryRun,
+    getSnapshot: bridge.getSessionSummaryRun,
+    cancel: bridge.cancelSessionSummaryRun,
+    resume: bridge.resumeSessionSummaryRun,
+    listRecoverable: bridge.listRecoverableSessionSummaryRuns,
+    getDiagnostics: bridge.getSessionSummaryRunDiagnostics,
+    exportDiagnostics: bridge.exportSessionSummaryRunDiagnostics,
+    onChanged: bridge.onSessionSummaryRunChanged
+  }
   const reactRoot = createRoot(dom.window.document.getElementById('root'))
   await act(async () => reactRoot.render(React.createElement(AgentView)))
   await flush()
@@ -262,7 +273,8 @@ test('S5-UX/J22/J24: formal Agent renderer consumes the exact facade and keeps p
   assert.match(source('src/agent/index.html'), /src="\.\/entry\.tsx"/)
   assert.match(source('src/agent/entry.tsx'), /createRoot[\s\S]*AgentView/)
   const view = source('src/agent/agent-view.tsx')
-  for (const method of ['subscribeChanged', 'getConfig', 'onConfig', 'getScopes', 'getEligibility', 'acceptSessionSummaryRun', 'getSessionSummaryRun', 'cancelSessionSummaryRun', 'resumeSessionSummaryRun', 'listRecoverableSessionSummaryRuns', 'onSessionSummaryRunChanged', 'cancel', 'getHistory', 'getInteraction', 'exportInteraction', 'recordSignal']) assert.match(view, new RegExp(`api\\.${method}`))
+  for (const method of ['subscribeChanged', 'getConfig', 'onConfig', 'getScopes', 'getEligibility', 'cancel', 'getHistory', 'getInteraction', 'exportInteraction', 'recordSignal']) assert.match(view, new RegExp(`api\\.${method}`))
+  for (const method of ['submit', 'getSnapshot', 'cancel', 'resume', 'listRecoverable', 'getDiagnostics', 'exportDiagnostics', 'onChanged']) assert.match(view, new RegExp(`operations\\.${method}`))
   assert.match(source('src/preload/agent.js'), /getConfig:\s*\(\)\s*=>\s*ipcRenderer\.invoke\(CHANNELS\.CONFIG_GET\)/)
   assert.match(source('src/preload/agent.js'), /onConfig:\s*\(callback\)\s*=>\s*subscribe\(CHANNELS\.CONFIG_CHANGED, callback\)/)
   assert.match(view, /生成总结/)
@@ -273,6 +285,93 @@ test('S5-UX/J22/J24: formal Agent renderer consumes the exact facade and keeps p
   assert.doesNotMatch(`${source('src/agent/index.html')}\n${view}`, /<audio\b|reasoning|provider_event|apiKey|absolute_path/i)
 })
 
+
+test('SEM-F38/F39/J29/J31-COMPAT: new minutes render topics and disclose verified chunk merging', async t => {
+  const harness = await createHarness()
+  t.after(() => harness.dispose())
+  harness.setDetail({ ...harness.historyItem, recipe_id: 'summary.minutes', recipe_version: '3', run_id: 'run.ui.1',
+    state: 'succeeded', terminal_reason: 'succeeded', result: { schemaVersion: 2, overview: '背景',
+      topics: [{ topicId: 't1', title: '发布议题', text: '计划已撤销。\n\n条件还需评估。', sourceRefs: [] }], conclusions: [], todos: [], risks: [] },
+    result_digest: 'a'.repeat(64), source_refs: [], tool_calls: [], summary_processing_mode: 'chunked' })
+  await act(async () => click(document.querySelector('.history-card'))); await flush()
+  assert.deepEqual([...document.querySelectorAll('.result-content > section > h2')].map(item => item.textContent), ['主要内容', '决定', '待办', '需要注意'])
+  assert.equal(document.querySelector('.result-content h3').textContent, '发布议题')
+  assert.match(document.querySelector('.result-content').textContent, /已撤销/)
+  assert.match(document.body.textContent, /已核对的分块结果/)
+  assert.equal(harness.submitRequests.length, 0)
+})
+
+test('SEM-F40/J29/J30-DIAG: persisted size rejection displays actual bytes and the frozen limit', async t => {
+  const harness = await createHarness()
+  t.after(() => harness.dispose())
+  harness.setDetail({ ...harness.historyItem, recipe_id: 'summary.minutes', recipe_version: '3', run_id: 'run.ui.1', state: 'failed',
+    terminal_reason: 'failed', error_code: 'AGENT_OUTPUT_INVALID', result: null, result_digest: null, source_refs: [], tool_calls: [],
+    output_validation: { reason: 'output_size', field: 'output', actual: 131073, limit: 131072 } })
+  await act(async () => click(document.querySelector('.history-card'))); await flush()
+  assert.match(document.body.textContent, /131073/); assert.match(document.body.textContent, /131072/)
+})
+
+test('SEM-F38/F40/J30-DIAG: a failed run snapshot retains the byte reason when interaction detail is unavailable', async t => {
+  const harness = await createHarness({ getInteraction: async () => ({ ok: false, error: { category: 'unavailable', code: 'AGENT_RUN_UNAVAILABLE', next_action: 'retry' } }) })
+  t.after(() => harness.dispose())
+  await act(async () => click(document.querySelector('[data-action="minutes"]'))); await flush()
+  const snapshot = [...harness.summarySnapshots.values()][0]
+  harness.summarySnapshots.set(snapshot.request_id, { ...snapshot, revision: snapshot.revision + 1, state: 'failed', phase: 'terminal',
+    error_code: 'AGENT_OUTPUT_INVALID', output_validation: { reason: 'output_size', field: 'output', actual: 131073, limit: 131072 } })
+  await act(async () => harness.summaryChanged[0]({ contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.1.0',
+    request_id: snapshot.request_id, generation: snapshot.generation, revision: snapshot.revision + 1 })); await flush()
+  assert.match(document.querySelector('.run-card [role="alert"]').textContent, /131073.*131072/)
+})
+
+test('SEM-F31/F38/J29/J22: result paragraphs and lists preserve text and never interpret model HTML', async (t) => {
+  const harness = await createHarness()
+  t.after(() => harness.dispose())
+  const overview = 'First **paragraph**.\r\n\r\nSecond `paragraph`.\n\n### Discussion\n- First item\n- Second item\n\n4. Ordered first\n5. Ordered second\n\n<img src=x onerror=alert(1)>'
+  harness.setDetail({ ...harness.historyItem, recipe_id: 'summary.minutes', recipe_version: '2', run_id: 'run.ui.1',
+    state: 'succeeded', terminal_reason: 'succeeded', result: { schemaVersion: 1, overview, conclusions: [], todos: [], risks: [] },
+    result_digest: 'a'.repeat(64), source_refs: [], tool_calls: [] })
+  await act(async () => click(document.querySelector('.history-card')))
+  await flush()
+  const sections = document.querySelectorAll('.result-content > section')
+  assert.deepEqual([...sections].map(section => section.querySelector('h2').textContent), ['概要', '结论', '待办', '风险'])
+  assert.deepEqual([...sections[0].querySelectorAll('.result-prose > p')].map(p => p.textContent), ['First paragraph.', 'Second paragraph.', '<img src=x onerror=alert(1)>'])
+  assert.deepEqual([...sections[0].querySelectorAll('.result-prose > ul > li')].map(li => li.textContent), ['First item', 'Second item'])
+  assert.deepEqual([...sections[0].querySelectorAll('.result-prose > ol > li')].map(li => li.textContent), ['Ordered first', 'Ordered second'])
+  assert.equal(sections[0].querySelector('.result-prose > h3').textContent, 'Discussion')
+  assert.equal(sections[0].querySelector('strong').textContent, 'paragraph')
+  assert.equal(sections[0].querySelector('code').textContent, 'paragraph')
+  assert.equal(sections[0].querySelector('ol').start, 4)
+  assert.equal(sections[0].querySelector('img'), null)
+  const style = document.createElement('style')
+  style.textContent = source('src/agent/agent.css')
+  document.head.appendChild(style)
+  const paragraphs = sections[0].querySelectorAll('.result-prose > p')
+  assert.ok(Number.parseFloat(window.getComputedStyle(paragraphs[1]).marginTop) > 10, 'paragraphs have visible whitespace')
+  assert.equal(window.getComputedStyle(sections[0].querySelector('.result-prose')).lineHeight, '1.8')
+})
+
+test('SEM-F31/F38/J29/J22: existing long summary and answer bodies gain sentence paragraphs without changing text or submitting', async () => {
+  const visibleText = Array.from({ length: 10 }, (_, index) => `第${index + 1}项讨论涉及客户端接口调整、版本安排和后续核对，需要保留上下文，逐项确认负责范围及依赖关系，再根据会话中的证据说明进展。`).join('')
+  for (const recipeId of ['summary.minutes', 'qa.answer']) {
+    const harness = await createHarness()
+    try {
+      const body = `**${visibleText}**`
+      harness.setDetail({ ...harness.historyItem, recipe_id: recipeId, recipe_version: recipeId === 'summary.minutes' ? '2' : '5',
+        run_id: 'run.ui.1', state: 'succeeded', terminal_reason: 'succeeded',
+        result: recipeId === 'summary.minutes' ? { schemaVersion: 1, overview: body, conclusions: [], todos: [], risks: [] }
+          : { schemaVersion: 2, answer: body, claims: [], unresolved: [], sourceRefs: [], memoryRefs: [], coverage: null },
+        result_digest: 'a'.repeat(64), source_refs: [], tool_calls: [] })
+      await act(async () => click(document.querySelector('.history-card')))
+      await flush()
+      const paragraphs = [...document.querySelectorAll('.result-content > section:first-child .result-prose > p')]
+      assert.ok(paragraphs.length > 1, `${recipeId} long body should have readable paragraphs`)
+      assert.equal(paragraphs.map(p => p.textContent).join(''), visibleText)
+      assert.ok(paragraphs.every(p => p.textContent.endsWith('。')), 'paragraphs keep complete sentences')
+      assert.equal(paragraphs.map(p => p.querySelector('strong').textContent).join(''), visibleText)
+      assert.equal(harness.submitRequests.length, 0, 'viewing a saved result never submits another model request')
+    } finally { await harness.dispose() }
+  }
+})
 
 test('SEM-F31/F33/J22-QA-SIZE: QA input failure is actionable and generic budget failure makes no preflight claim', async () => {
   for (const code of ['AGENT_QA_INPUT_LIMIT_EXCEEDED', 'AGENT_BUDGET_EXCEEDED']) {
@@ -356,13 +455,44 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: reopening shows a frozen summary scope and o
   await flush()
   assert.equal(harness.resumeRequests.length, 1)
   assert.deepEqual(JSON.parse(JSON.stringify(harness.resumeRequests[0])), {
-    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.1.0',
     request_id: 'request.ui.recovered', generation: 1, expected_revision: 4
   })
   assert.equal(document.querySelector('[aria-label="当前会话总结请求状态"] strong').textContent, '等待处理')
   assert.equal(document.querySelector('.recoverable-runs'), null)
   await act(async () => click(document.querySelector('[aria-label="关闭字幕助手"]')))
   assert.equal(harness.closeRequests(), 1)
+  assert.equal(harness.summaryCancelRequests.length, 0)
+})
+
+test('SEM-F38/J30-STATE: reopening a running request restores polling and ignores older generations and revisions', async (t) => {
+  const scope = { kind: 'session', reference: 'session.ui.reopened-running' }
+  const snapshot = {
+    request_id: 'request.ui.reopened-running', generation: 2, revision: 4, action: 'summary',
+    state: 'running', phase: 'waiting_model', attempt: 1, elapsed_ms: 1200,
+    last_activity_age_ms: null, validated_chunk_count: 0, total_chunk_count: 1,
+    memory_state: 'not_used', error_code: null, budget: null, freshness: 'fresh',
+    cancel_requested: false, resume_required: false, diagnostics_available: true,
+    route_run_id: null, target_run_id: 'run.ui.reopened-running', interaction_id: 'interaction.ui.reopened-running',
+    recipe_id: 'summary.minutes', routing_mode: 'preset'
+  }
+  let snapshotReads = 0
+  const harness = await createHarness({ recoverableSummaryRuns: [{ scope, snapshot }],
+    getSessionSummaryRun: async () => { snapshotReads += 1; return { ok: true, result: { snapshot } } } })
+  t.after(() => harness.dispose())
+  assert.ok(document.querySelector('[aria-label="当前会话总结请求状态"]'))
+  assert.equal(document.querySelector('.recoverable-runs'), null)
+  assert.equal(harness.submitRequests.length, 0)
+  assert.equal(harness.resumeRequests.length, 0)
+  const readsBeforePolling = snapshotReads
+  await harness.tickIntervals(2000)
+  assert.equal(snapshotReads, readsBeforePolling + 1)
+  for (const event of [{ generation: 1, revision: 99 }, { generation: 2, revision: 3 }]) {
+    await act(async () => harness.summaryChanged[0]({ request_id: snapshot.request_id, ...event }))
+    await flush()
+  }
+  assert.equal(snapshotReads, readsBeforePolling + 1, 'stale events cannot replace the current authoritative identity')
+  await act(async () => click(document.querySelector('[aria-label="关闭字幕助手"]')))
   assert.equal(harness.summaryCancelRequests.length, 0)
 })
 

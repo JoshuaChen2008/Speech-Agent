@@ -13,6 +13,9 @@ const { AgentLoopExecutor } = require('./agent-loop')
 const { readFrozenSummaryInput, readFrozenQuestionInput } = require('./summary-input-source')
 const { planSummaryInputAsync, planQuestionInputAsync } = require('./summary-input-plan')
 const { executeInputPlan } = require('./summary-plan-executor')
+const { planSummaryQuality, capacity: qualityCapacity } = require('./summary-quality-plan')
+const { executeSummaryQuality } = require('./summary-quality-executor')
+const { outputInvalid, outputValidationFor } = require('../contracts/output-validation')
 
 const TARGET_RECIPES = new Set(['summary.minutes', 'qa.answer'])
 const RETRYABLE_ERRORS = new Set([
@@ -71,7 +74,7 @@ function outputValue (value) {
     if (Object.hasOwn(value, 'output')) return value.output
     if (Object.hasOwn(value, 'result')) return value.result
     if (typeof value.text === 'string') {
-      try { return JSON.parse(value.text) } catch { throw codedError('AGENT_OUTPUT_INVALID') }
+      try { return JSON.parse(value.text) } catch { throw outputInvalid('json') }
     }
     if (Object.hasOwn(value, 'schemaVersion')) return value
   }
@@ -115,7 +118,7 @@ function assertAuthorizedSourceRefs (input, output) {
   for (const ref of collectSourceRefs(output)) {
     if (ref.sessionId !== input.sessionId || ref.transcriptVersion !== input.transcriptVersion ||
         ref.fromEventOrder < input.fromEventOrder || ref.throughEventOrder > input.throughEventOrder) {
-      throw codedError('AGENT_OUTPUT_INVALID')
+      throw outputInvalid('source_reference', 'sourceRefs')
     }
   }
 }
@@ -187,6 +190,7 @@ function summaryMemoryReadError (error) {
 }
 
 function diagnosticEventForProgress (event) {
+  if (event.type === 'output_rejected') return 'output_rejected'
   if (event.type === 'budget_rejected') return 'budget_rejected'
   if (event.type === 'retry_wait' || event.phase === 'retry_wait') return 'backoff'
   if (event.type === 'request_started') return 'model_request_started'
@@ -264,6 +268,10 @@ class FormalAgentRunRunner {
   }
 
   async reportProgress (job, event = {}) {
+    if (event.summaryStage !== undefined) {
+      await this.storage.summaryInputPlan({ action: 'stage', attemptIdentity: job.attemptIdentity,
+        summaryStage: event.summaryStage, nodeRole: event.nodeRole, nodeIndex: event.nodeIndex, loopCount: event.loopCount })
+    }
     const identity = job.sessionSummaryRequest
     if (!identity) return
     const phase = event.phase || (['request_started', 'response_received', 'request_failed'].includes(event.type) ? 'waiting_model' : null)
@@ -285,6 +293,10 @@ class FormalAgentRunRunner {
     if (event.state === 'retry_wait') update.state = 'retry_wait'
     const diagnosticEvent = diagnosticEventForProgress(event)
     if (diagnosticEvent) update.diagnosticEvent = diagnosticEvent
+    if (diagnosticEvent === 'output_rejected') {
+      update.errorCode = 'AGENT_OUTPUT_INVALID'
+      update.outputValidation = outputValidationFor(event)
+    }
     if (diagnosticEvent === 'budget_rejected') {
       update.errorCode = event.errorCode
       update.budgetAxis = event.budgetAxis
@@ -297,7 +309,7 @@ class FormalAgentRunRunner {
         if (['AGENT_PROVIDER_RATE_LIMITED', 'AGENT_PROVIDER_UNAVAILABLE', 'AGENT_PROVIDER_TIMEOUT'].includes(event.reason) &&
             Number.isSafeInteger(event.waitMs) && event.waitMs >= 0 && event.waitMs <= 1000) {
           update.retry = { requestAttempt: event.nextAttempt, waitMs: event.waitMs, reason: event.reason }
-        }
+        } else update.retry = null
       }
     }
     const bindingDigest = this.bindingDigests.get(`${job.attemptIdentity.runId}:${job.attemptIdentity.attempt}`)
@@ -333,7 +345,7 @@ class FormalAgentRunRunner {
     exactObject(job, ['recipeId', 'source', 'attemptIdentity'], [
       'recipeVersion', 'summaryInputPolicy',
       'interactionId', 'requestedBy', 'signal', 'runId', 'summaryUseMemory', 'sessionSummaryRequest',
-      'getRemainingWallClockMs', 'getWallClockElapsedMs', 'remainingWallClockMs', 'requestCount', 'requestLimit'
+      'getRemainingWallClockMs', 'getWallClockElapsedMs', 'remainingWallClockMs', 'requestCount', 'requestLimit', 'retryPolicyVersion'
     ])
     if (!TARGET_RECIPES.has(job.recipeId) || job.requestedBy !== undefined && job.requestedBy !== 'user') {
       throw codedError('AGENT_REQUEST_INVALID')
@@ -356,7 +368,7 @@ class FormalAgentRunRunner {
       await this.storage.failFormalAgentRun({ attemptIdentity: job.attemptIdentity, errorCode: 'AGENT_REQUEST_INVALID' }, job.signal)
       return null
     }
-    if (job.summaryInputPolicy !== undefined && job.summaryInputPolicy !== 'summary-long-input@1') throw codedError('AGENT_REQUEST_INVALID')
+    if (job.summaryInputPolicy !== undefined && !['summary-long-input@1', 'summary-quality@1'].includes(job.summaryInputPolicy)) throw codedError('AGENT_REQUEST_INVALID')
     const startedAt = this.now()
     const startedMonotonic = performance.now()
     let activePlan = null
@@ -388,10 +400,12 @@ class FormalAgentRunRunner {
       })
       const longQuestion = recipe.recipeId === 'qa.answer' && recipe.recipeVersion === '3'
       const retrievalQuestion = recipe.recipeId === 'qa.answer' && ['4', '5'].includes(recipe.recipeVersion)
-      const longInput = job.summaryInputPolicy === 'summary-long-input@1' || longQuestion
+      const quality = recipe.recipeId === 'summary.minutes' && recipe.recipeVersion === '3'
+      if (quality && job.summaryInputPolicy !== 'summary-quality@1') throw codedError('AGENT_REQUEST_INVALID')
+      const longInput = ['summary-long-input@1', 'summary-quality@1'].includes(job.summaryInputPolicy) || longQuestion
       const readInput = longQuestion ? readFrozenQuestionInput : readFrozenSummaryInput
       const requestCapacity = usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)
-        ? deriveRecipeRequestCapacity({ recipeId: recipe.recipeId, recipeVersion: recipe.recipeVersion, capabilities: binding.capabilities, budget: binding.budget }) : null
+        ? deriveRecipeRequestCapacity({ recipeId: recipe.recipeId, recipeVersion: recipe.recipeVersion, capabilities: binding.capabilities, budget: binding.budget, binding }) : null
       if (retrievalQuestion && requestCapacity.promptByteLimit < 1024) throw codedError('AGENT_BUDGET_EXCEEDED')
       const retrieved = retrievalQuestion ? await awaitWithCancellation(() => this.personalContext.questionEvidence({ action: 'retrieve',
         attemptIdentity: job.attemptIdentity, query: userPrompt, maxPromptBytes: Math.min(256 * 1024, requestCapacity.promptByteLimit) }, job.signal), job.signal) : null
@@ -401,7 +415,7 @@ class FormalAgentRunRunner {
         : this.personalContext.readSessionInput(job.source, job.signal), job.signal)
 
       const windowedInput = usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)
-      const planInput = longQuestion ? planQuestionInputAsync : planSummaryInputAsync
+      const planInput = quality ? planSummaryQuality : longQuestion ? planQuestionInputAsync : planSummaryInputAsync
       const plan = retrieved ? { ...retrieved, policyVersion: 'question-retrieval@1', bindingDigest: sha256Canonical(binding),
         planDigest: sha256Canonical({ evidenceDigest: retrieved.evidenceDigest, bindingDigest: sha256Canonical(binding) }),
         leaves: retrieved.leaves || [{ prompt: retrieved.prompt }], nodeCount: retrieved.leaves ? questionNodeCount(retrieved.leaves.length) : 1 } : longInput ? await planInput(input, userPrompt, binding, job.signal) : null
@@ -410,7 +424,8 @@ class FormalAgentRunRunner {
       if (plan) {
         const { planDigest, inputDigest, bindingDigest, nodeCount, segmentCount, rawTextBytes, canonicalBytes } = plan
         await this.storage.summaryInputPlan({ action: 'register', attemptIdentity: job.attemptIdentity,
-          plan: { planDigest, inputDigest, bindingDigest, nodeCount, segmentCount, rawTextBytes, canonicalBytes, leafCount: plan.leaves.length } })
+          plan: { planDigest, inputDigest, bindingDigest, nodeCount, segmentCount, rawTextBytes, canonicalBytes, leafCount: plan.leaves.length,
+            ...(quality ? { quality: plan.quality } : {}) } })
         await this.reportProgress(job, { type: 'plan_created', phase: 'preparing', validatedChunkCount: 0, totalChunkCount: plan.leaves.length })
       }
       let tools
@@ -444,7 +459,7 @@ class FormalAgentRunRunner {
         }
         if (typeof this.storage.reserveFormalAgentModelRequest !== 'function') throw codedError('AGENT_RUN_UNAVAILABLE')
         requestSequence += 1
-        await awaitWithCancellation(() => this.storage.reserveFormalAgentModelRequest({
+        return awaitWithCancellation(() => this.storage.reserveFormalAgentModelRequest({
           attemptIdentity: { ...job.attemptIdentity },
           requestSequence,
           operationDigest: sha256Canonical({ recipeId: recipe.recipeId, recipeVersion: recipe.recipeVersion,
@@ -453,7 +468,7 @@ class FormalAgentRunRunner {
       }
       const remainingWallClockMs = remaining()
       if (remainingWallClockMs <= 0) throw codedError('AGENT_BUDGET_EXCEEDED')
-      const invoke = async (nodePrompt) => {
+      const invoke = async (nodePrompt, summaryStage) => {
         prompt = nodePrompt
         return loop.agentLoop({
           recipeId: recipe.recipeId,
@@ -462,24 +477,26 @@ class FormalAgentRunRunner {
           resolvedModel: binding,
           tools,
           signal: job.signal,
-          timeoutMs: Math.min(plan ? 180000 : binding.budget.maxWallClockMs, Math.max(1, remaining())),
+          timeoutMs: Math.min(quality ? 600000 : plan ? 180000 : binding.budget.maxWallClockMs, Math.max(1, remaining())),
+          ...(quality ? { summaryStage } : {}),
           beforeRequest,
+          retryPolicyVersion: job.retryPolicyVersion,
           ...(plan ? {
             getRunUsage: () => this.storage.summaryInputPlan({ action: 'read', attemptIdentity: job.attemptIdentity }),
             onRequestUsage: (usage) => this.storage.summaryInputPlan({ action: 'receipt', attemptIdentity: job.attemptIdentity, requestSequence, usage })
           } : {}),
           onProgress: (event) => this.reportProgress(job, event),
           budget: binding.budget,
-          ...(windowedInput ? { requestCapacity } : {}),
+          ...(windowedInput ? { requestCapacity: quality ? qualityCapacity(binding, summaryStage) : requestCapacity } : {}),
           usageReporting: binding?.capabilities?.usageReporting !== false
         })
       }
-      const result = retrieved?.leaves ? await executeQuestionEvidence({ evidence: retrieved, invoke, signal: job.signal,
+      const result = quality ? await executeSummaryQuality({ input, plan, invoke, signal: job.signal, onProgress: event => this.reportProgress(job, event) }) : retrieved?.leaves ? await executeQuestionEvidence({ evidence: retrieved, invoke, signal: job.signal,
         promptByteLimit: requestCapacity.promptByteLimit, validateMemoryRefs: output => {
-          if (output.memoryRefs.some(ref => !readMemoryRefs.has(canonicalize(ref)))) throw codedError('AGENT_OUTPUT_INVALID')
+          if (output.memoryRefs.some(ref => !readMemoryRefs.has(canonicalize(ref)))) throw outputInvalid('memory_reference', 'memoryRefs')
         } }) : plan && !retrievalQuestion ? await executeInputPlan({ input, plan, invoke, signal: job.signal,
         ...(longQuestion ? { validateReferences: (output) => {
-          if (output.memoryRefs.some(ref => !readMemoryRefs.has(canonicalize(ref)))) throw codedError('AGENT_OUTPUT_INVALID')
+          if (output.memoryRefs.some(ref => !readMemoryRefs.has(canonicalize(ref)))) throw outputInvalid('memory_reference', 'memoryRefs')
         } } : {}),
         onProgress: event => this.reportProgress(job, event) }) : await invoke(prompt)
       if (plan) {
@@ -497,8 +514,9 @@ class FormalAgentRunRunner {
       const output = outputValue(result)
       validateRecipeOutput(recipe.recipeId, recipe.recipeVersion, output)
       if (retrievalQuestion) {
-        if (output.coverage !== null || output.memoryRefs.some(ref => !readMemoryRefs.has(canonicalize(ref))) ||
-            output.sourceRefs.some(ref => !retrieved.sourceRefs.some(allowed => canonicalize(allowed) === canonicalize(ref)))) throw codedError('AGENT_OUTPUT_INVALID')
+        if (output.coverage !== null) throw outputInvalid('coverage', 'coverage')
+        if (output.memoryRefs.some(ref => !readMemoryRefs.has(canonicalize(ref)))) throw outputInvalid('memory_reference', 'memoryRefs')
+        if (output.sourceRefs.some(ref => !retrieved.sourceRefs.some(allowed => canonicalize(allowed) === canonicalize(ref)))) throw outputInvalid('source_reference', 'sourceRefs')
         output.coverage = retrieved.coverage
         validateRecipeOutput(recipe.recipeId, recipe.recipeVersion, output)
       }
@@ -533,6 +551,10 @@ class FormalAgentRunRunner {
       const code = job.signal?.reason?.code === 'AGENT_BUDGET_EXCEEDED'
         ? 'AGENT_BUDGET_EXCEEDED'
         : normalizedErrorCode(error)
+      if (code === 'AGENT_OUTPUT_INVALID') {
+        await this.reportProgress(job, { type: 'output_rejected', phase: 'validating', activity: false,
+          outputValidation: outputValidationFor(error) })
+      }
       if (error?.diagnosticMetrics && job.sessionSummaryRequest) {
         await this.reportProgress(job, {
           type: 'budget_rejected', phase: 'preparing', activity: false,

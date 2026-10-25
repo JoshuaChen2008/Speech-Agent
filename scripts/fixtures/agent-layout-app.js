@@ -37,20 +37,30 @@ async function run () {
   for (const theme of ['dark', 'light']) {
     await settings.webContents.executeJavaScript(`Array.from(document.querySelectorAll('button')).find(b => b.textContent === '${theme === 'dark' ? '深色' : '浅色'}').click()`)
     await until(() => evaluate(`document.documentElement.dataset.theme === '${theme}'`))
-    for (const [width, height, zoom] of [[520, 420, 1], [720, 640, 1], [1100, 720, 1], [720, 640, 1.25]]) {
+    for (const [width, height, zoom] of [[520, 420, 1], [720, 640, 1], [1100, 720, 1], [720, 640, 1.25], [1100, 720, 1], [720, 640, 1.25], [520, 420, 1], [720, 640, 1.25]]) {
       win.setSize(width, height)
       win.webContents.setZoomFactor(zoom)
-      await wait(100)
+      await until(async () => {
+        const size = win.getSize()
+        if (Math.abs(size[0] - width) > 2 || Math.abs(size[1] - height) > 2) return false
+        const content = win.getContentSize()
+        return evaluate(`Math.abs(innerWidth - ${content[0] / zoom}) <= 1 && Math.abs(innerHeight - ${content[1] / zoom}) <= 1`)
+      })
       assert.equal(await evaluate("document.querySelector('.history-panel').hidden"), true)
       const readingHeight = await evaluate("document.querySelector('.request-panel').getBoundingClientRect().height")
       await evaluate("document.querySelector('[aria-controls=agentHistory]').click()")
       await until(() => evaluate("!document.querySelector('.history-panel').hidden"))
-      assert.equal(await evaluate(`(() => {
+      const historyMetrics = await evaluate(`(() => {
         const panel = document.querySelector('.history-panel').getBoundingClientRect();
         const layout = document.querySelector('.agent-layout').getBoundingClientRect();
-        return panel.right <= innerWidth && Math.abs(panel.top - layout.top) < 1
-          && Math.abs(document.querySelector('.request-panel').getBoundingClientRect().height - ${readingHeight}) < 1;
-      })()`), true)
+        return {
+          rightOverflow: panel.right - innerWidth,
+          topDifference: panel.top - layout.top,
+          readingHeightDifference: document.querySelector('.request-panel').getBoundingClientRect().height - ${readingHeight}
+        };
+      })()`)
+      assert.ok(historyMetrics.rightOverflow <= 0 && Math.abs(historyMetrics.topDifference) < 1 &&
+        Math.abs(historyMetrics.readingHeightDifference) < 1, `${theme}/${width}/${zoom}: history geometry ${JSON.stringify(historyMetrics)}`)
       await evaluate("document.querySelector('[aria-label=\"收起生成记录\"]').click()")
       await until(() => evaluate("document.querySelector('.history-panel').hidden"))
       const metrics = await evaluate(`(() => {
@@ -67,6 +77,11 @@ async function run () {
           submitAligned: submit.top >= prompt.bottom && Math.abs(submit.right - prompt.right) < 1,
           closeVisible: close.width === 32 && close.height === 32 && close.right <= innerWidth && close.top >= 0,
           noPageOverflow: document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight,
+          pageGeometry: { width: innerWidth, height: innerHeight,
+            clientWidth: document.documentElement.clientWidth, clientHeight: document.documentElement.clientHeight,
+            scrollWidth: document.documentElement.scrollWidth, scrollHeight: document.documentElement.scrollHeight,
+            bodyWidth: document.body.getBoundingClientRect().width, bodyHeight: document.body.getBoundingClientRect().height,
+            shellHeight: rect('.agent-shell').height, layoutHeight: rect('.agent-layout').height },
           disabledWithoutScope: document.querySelector('#agentPrompt').disabled && document.querySelector('[data-action="qa"]').disabled,
           inputBackground: getComputedStyle(document.querySelector('#agentDateFrom')).backgroundColor,
           inputScheme: getComputedStyle(document.querySelector('#agentDateFrom')).colorScheme,
@@ -75,7 +90,7 @@ async function run () {
         };
       })()`)
       for (const [key, value] of Object.entries(metrics)) {
-        if (typeof value === 'boolean') assert.equal(value, true, `${theme}/${width}/${zoom}: ${key}`)
+        if (typeof value === 'boolean') assert.equal(value, true, `${theme}/${width}/${zoom}: ${key}${key === 'noPageOverflow' ? ` ${JSON.stringify(metrics.pageGeometry)}` : ''}`)
       }
       assert.equal(metrics.inputScheme, theme)
       assert.equal(metrics.scrollbarWidth, 'thin')
@@ -101,12 +116,12 @@ async function run () {
   }
   await setDate('agentDateFrom', '2026-01-02')
   await setDate('agentDateThrough', '2026-01-01')
-  assert.equal(await evaluate("document.querySelector('.date-range-fields button').disabled"), true)
+  assert.equal(await evaluate("document.querySelector('.date-range-fields button').disabled"), true, 'reversed date range disables selection')
   await setDate('agentDateThrough', '2026-01-03')
   await until(() => evaluate("!document.querySelector('.date-range-fields button').disabled"))
   await evaluate("document.querySelector('.project-actions button').click()")
   await until(() => evaluate("document.querySelector('.status').textContent.includes('还没有可选择的项目')"))
-  assert.equal(await evaluate("document.querySelector('.close-button').getBoundingClientRect().width === 32"), true)
+  assert.equal(await evaluate("document.querySelector('.close-button').getBoundingClientRect().width"), 32, 'close control retains its width after date and project interactions')
   await evaluate("document.querySelector('.close-button').click()")
   await until(() => !findWindow('agent'))
   await until(() => toolbar.webContents.executeJavaScript("!document.querySelector('#status').textContent.includes('会话总结')"))

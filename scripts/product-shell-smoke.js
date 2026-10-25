@@ -155,11 +155,13 @@ function parseArguments (argv) {
     mode: 'fresh',
     windowGeometryProfile: 'default',
     toolbarReloadDiagnostic: false,
+    holdToolbarReloadFrames: false,
     qualificationRunId: null,
     freshProductReportSha256: null
   }
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === '--toolbar-reload-diagnostic') { values.toolbarReloadDiagnostic = true; continue }
+    if (argv[index] === '--hold-toolbar-reload-frames') { values.holdToolbarReloadFrames = true; continue }
     const next = argv[index + 1]
     if (argv[index] === '--artifacts-root') { values.artifactsRoot = next; index += 1 } else if (argv[index] === '--work-dir') { values.workDir = next; index += 1 } else if (argv[index] === '--report') { values.report = next; index += 1 } else if (argv[index] === '--mode') { values.mode = next; index += 1 } else if (argv[index] === '--window-geometry-profile') { values.windowGeometryProfile = next; index += 1 } else if (argv[index] === '--qualification-run-id') { values.qualificationRunId = next; index += 1 } else if (argv[index] === '--fresh-product-report-sha256') { values.freshProductReportSha256 = next; index += 1 } else throw new Error(`unknown argument: ${argv[index]}`)
   }
@@ -204,6 +206,7 @@ function parseArguments (argv) {
     mode: values.mode,
     windowGeometryProfile: values.windowGeometryProfile,
     toolbarReloadDiagnostic: values.toolbarReloadDiagnostic,
+    holdToolbarReloadFrames: values.holdToolbarReloadFrames,
     qualificationRunId: values.qualificationRunId,
     freshProductReportSha256: values.freshProductReportSha256
   }
@@ -807,10 +810,29 @@ async function completeWindowInteractionLayoutProbe (toolbar, probe) {
   const beforeReload = toolbarLayoutProbe.length
   let generationAfterReload = null
   let reloadFailure = null
+  let heldFrameScriptId = null
   let reloadPhase = 'renderer-load'
   const reloadStartedAt = Date.now()
   reloadDiagnostic?.begin()
   try {
+    if (options.holdToolbarReloadFrames) {
+      // Control only Chromium's external frame scheduling. Product modules and IPC stay real.
+      toolbar.webContents.debugger.attach('1.3')
+      await toolbar.webContents.debugger.sendCommand('Page.enable')
+      const registered = await toolbar.webContents.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', {
+        source: `(() => {
+          const request = window.requestAnimationFrame.bind(window)
+          const waiting = []
+          window.requestAnimationFrame = callback => { waiting.push(callback); return waiting.length }
+          window.__releaseToolbarFrames = () => {
+            window.requestAnimationFrame = request
+            delete window.__releaseToolbarFrames
+            for (const callback of waiting) request(callback)
+          }
+        })()`
+      })
+      heldFrameScriptId = registered.identifier
+    }
     toolbar.webContents.reload()
     await waitFor(() => !toolbar.webContents.isLoading(), 'toolbar renderer reload')
     reloadPhase = 'generation'
@@ -830,26 +852,40 @@ async function completeWindowInteractionLayoutProbe (toolbar, probe) {
     reloadFailure = error
     throw error
   } finally {
-    if (reloadDiagnostic) {
-      try {
-        const cutoff = Date.now()
-        const main = reloadDiagnostic.freeze(cutoff, generationAfterReload)
-        const renderer = await readRendererSnapshot((at, generation) => rendererValue(toolbar,
-          `window.shell?.toolbarLayoutDiagnostic?.snapshot(${at}, ${generation}, ${reloadStartedAt}) ?? null`), cutoff, generationAfterReload)
-        const diagnostic = makeReloadDiagnosticReport({
-          profile: options.windowGeometryProfile,
-          productPayloadSha256: productPayloadIdentity.sha256,
-          outcome: reloadFailure ? 'failed' : 'recovered',
-          phase: reloadPhase,
-          main,
-          renderer
-        })
-        fs.writeFileSync(path.join(path.dirname(options.report), 'toolbar-reload-diagnostic.json'),
-          `${JSON.stringify(diagnostic, null, 2)}\n`, { flag: 'wx' })
-        if (!reloadFailure && renderer.status !== 'captured') throw new Error('diagnostic snapshot missing')
-      } catch {
-        console.error('[toolbar-reload-diagnostic] capture-or-write-failed')
-        if (!reloadFailure) throw new Error('toolbar reload diagnostic unavailable')
+    try {
+      if (reloadDiagnostic) {
+        try {
+          const cutoff = Date.now()
+          const main = reloadDiagnostic.freeze(cutoff, generationAfterReload)
+          const renderer = await readRendererSnapshot((at, generation) => rendererValue(toolbar,
+            `window.shell?.toolbarLayoutDiagnostic?.snapshot(${at}, ${generation}, ${reloadStartedAt}) ?? null`), cutoff, generationAfterReload)
+          const diagnostic = makeReloadDiagnosticReport({
+            profile: options.windowGeometryProfile,
+            productPayloadSha256: productPayloadIdentity.sha256,
+            outcome: reloadFailure ? 'failed' : 'recovered',
+            phase: reloadPhase,
+            main,
+            renderer
+          })
+          fs.writeFileSync(path.join(path.dirname(options.report), 'toolbar-reload-diagnostic.json'),
+            `${JSON.stringify(diagnostic, null, 2)}\n`, { flag: 'wx' })
+          if (!reloadFailure && renderer.status !== 'captured') throw new Error('diagnostic snapshot missing')
+        } catch {
+          console.error('[toolbar-reload-diagnostic] capture-or-write-failed')
+          if (!reloadFailure) throw new Error('toolbar reload diagnostic unavailable')
+        }
+      }
+    } finally {
+      if (heldFrameScriptId !== null) {
+        try {
+          await toolbar.webContents.debugger.sendCommand('Page.removeScriptToEvaluateOnNewDocument', {
+            identifier: heldFrameScriptId
+          })
+          await rendererValue(toolbar, 'window.__releaseToolbarFrames?.()')
+          toolbar.webContents.debugger.detach()
+        } catch {
+          if (!reloadFailure) throw new Error('toolbar frame scheduling restoration failed')
+        }
       }
     }
   }

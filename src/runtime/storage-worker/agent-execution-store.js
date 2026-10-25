@@ -497,7 +497,7 @@ class AgentExecutionStore {
           lease_renewed_from_expires_at, cancel_requested_at, error_code,
           result_digest, result_summary_json, created_at, updated_at${hasRetryPolicy ? ', retry_policy_version' : ''}
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, NULL, NULL,
-          NULL, NULL, NULL, NULL, NULL, ?, ?${hasRetryPolicy ? ", 'agent-retry@1'" : ''})
+          NULL, NULL, NULL, NULL, NULL, ?, ?${hasRetryPolicy ? ", 'agent-retry@2'" : ''})
       `).run(
         runId, dedupeKey, input.clientIdempotencyKey, requestDigest, requestId,
         recipe.recipeId, recipe.recipeVersion, canonicalize(scope), scopeDigest,
@@ -508,6 +508,10 @@ class AgentExecutionStore {
       if (recipe.recipeId === 'summary.minutes' && recipe.recipeVersion === '2' && input.transcriptVersion === 'raw' &&
           this.database.prepare("SELECT 1 FROM pragma_table_info('formal_agent_runs') WHERE name='summary_input_policy'").get()) {
         this.database.prepare("UPDATE formal_agent_runs SET summary_input_policy='summary-long-input@1',max_attempts=2 WHERE run_id=?").run(runId)
+      }
+      if (recipe.recipeId === 'summary.minutes' && recipe.recipeVersion === '3') {
+        if (input.transcriptVersion !== 'raw') fail('AGENT_REQUEST_INVALID')
+        this.database.prepare("UPDATE formal_agent_runs SET summary_quality_policy='summary-quality@1',max_attempts=2 WHERE run_id=?").run(runId)
       }
       if (recipe.recipeId === 'qa.answer' && recipe.recipeVersion === '3') {
         if (scope.kind !== 'session' || input.transcriptVersion !== 'raw') fail('AGENT_REQUEST_INVALID')
@@ -546,7 +550,7 @@ class AgentExecutionStore {
   sessionSummaryRequestProjection (row, replayed = false) {
     const targetRun = row.target_run_id === null
       ? null
-      : this.database.prepare('SELECT run_id,recipe_id,state,attempt_count FROM formal_agent_runs WHERE run_id=?').get(row.target_run_id)
+      : this.database.prepare('SELECT * FROM formal_agent_runs WHERE run_id=?').get(row.target_run_id)
     const routeRun = row.route_run_id === null
       ? null
       : this.database.prepare('SELECT run_id,state FROM formal_agent_runs WHERE run_id=?').get(row.route_run_id)
@@ -568,6 +572,7 @@ class AgentExecutionStore {
     const budget = row.budget_axis === null
       ? null
       : { axis: row.budget_axis, actual: Number(row.budget_actual), limit: Number(row.budget_limit) }
+    const quality = targetRun?.summary_quality_policy ? this.database.prepare('SELECT * FROM formal_agent_summary_quality WHERE run_id=?').get(targetRun.run_id) : null
     return {
       requestId: row.request_id,
       scope: { kind: 'session', reference: row.session_id },
@@ -603,6 +608,9 @@ class AgentExecutionStore {
       errorCode: row.error_code,
       budget,
       diagnosticsAvailable: row.diagnostics_available !== 0,
+      ...(quality ? { summaryStage: quality.summary_stage, nodeRole: quality.node_role,
+        summaryProcessingMode: JSON.parse(quality.frozen_json).mode } : {}),
+      ...(row.output_validation_json ? { outputValidation: JSON.parse(row.output_validation_json) } : {}),
       replayed
     }
   }
@@ -701,12 +709,15 @@ class AgentExecutionStore {
   updateSessionSummaryRequest (input) {
     exactObject(input, ['requestId', 'generation', 'expectedRevision'], [
       'state', 'phase', 'attempt', 'elapsedMs', 'lastActivityElapsedMs', 'validatedChunkCount',
-      'totalChunkCount', 'memoryState', 'errorCode', 'budget', 'resumeRequired', 'diagnosticsAvailable', 'attemptIdentity', 'retry'
+      'totalChunkCount', 'memoryState', 'errorCode', 'budget', 'resumeRequired', 'diagnosticsAvailable', 'attemptIdentity', 'retry', 'outputValidation'
     ])
     const requestId = identifier(input.requestId)
     boundedInteger(input.generation, 1, Number.MAX_SAFE_INTEGER)
     nonNegativeInteger(input.expectedRevision)
     const current = this.sessionSummaryRequestRow(requestId)
+    if (input.outputValidation !== undefined) {
+      try { require('../../agent/contracts/output-validation').assertOutputValidation(input.outputValidation) } catch { fail('AGENT_REQUEST_INVALID') }
+    }
     if (Number(current.generation) !== input.generation || Number(current.revision) !== input.expectedRevision ||
         ['succeeded', 'failed', 'cancelled'].includes(current.state) || current.cancel_requested !== 0) {
       fail('AGENT_CONTEXT_REVISION_CONFLICT')
@@ -775,6 +786,7 @@ class AgentExecutionStore {
         this.nowValue(), requestId, input.generation, input.expectedRevision
       )
       if (Number(result.changes) !== 1) fail('AGENT_CONTEXT_REVISION_CONFLICT')
+      if (input.outputValidation !== undefined) this.database.prepare('UPDATE formal_agent_requests SET output_validation_json=? WHERE request_id=?').run(canonicalize(input.outputValidation), requestId)
       return this.sessionSummaryRequestProjection(this.sessionSummaryRequestRow(requestId))
     })
   }
@@ -1257,6 +1269,11 @@ class AgentExecutionStore {
               input.result.sourceRefs.some(ref => !evidence.sourceRefs.some(allowed => canonicalize(allowed) === canonicalize(ref)))) fail('AGENT_OUTPUT_INVALID')
         }
         resultEncoded = canonicalize(input.result)
+        if (run.recipe_id === 'summary.minutes' && run.recipe_version === '3') {
+          const q = this.database.prepare('SELECT * FROM formal_agent_summary_quality WHERE run_id=?').get(run.run_id)
+          if (!q || q.attempt !== input.attemptIdentity?.attempt || q.summary_stage !== 'verifying_sources' ||
+              q.loop_count !== JSON.parse(q.frozen_json).loopLimit || Buffer.byteLength(resultEncoded, 'utf8') > JSON.parse(q.frozen_json).finalBytes) fail('AGENT_OUTPUT_INVALID')
+        }
         resultDigest = sha256Canonical(input.result)
       }
       if (row.terminal_reason !== null) {
@@ -1365,7 +1382,7 @@ class AgentExecutionStore {
       this.guardTombstone(run)
       this.assertActiveAttempt(run, input.attemptIdentity, this.nowValue())
       if (row.terminal_reason !== null) fail('AGENT_INTERACTION_STATE_CONFLICT')
-      if (run.retry_policy_version === 'agent-retry@1') {
+      if (['agent-retry@1', 'agent-retry@2'].includes(run.retry_policy_version) || run.retry_policy_version == null) {
         const previous = this.database.prepare(`
           SELECT COUNT(*) AS count FROM formal_agent_tool_calls AS calls
           JOIN formal_agent_interactions AS interactions ON interactions.interaction_id=calls.interaction_id
@@ -1594,10 +1611,22 @@ class AgentExecutionStore {
     const binding = this.database.prepare('SELECT * FROM agent_model_run_bindings WHERE run_id=?').get(row.run_id)
     return {
       interaction: rowInteraction(row),
-      ...(run.summary_input_policy ? { summaryInputPolicy: run.summary_input_policy,
+      ...(() => {
+        if (run.summary_quality_policy === undefined) return {}
+        const validation = this.database.prepare('SELECT output_validation_json FROM formal_agent_requests WHERE target_run_id=?').get(run.run_id)?.output_validation_json
+        return validation ? { outputValidation: JSON.parse(validation) } : {}
+      })(),
+      ...(run.summary_input_policy || run.summary_quality_policy ? { summaryInputPolicy: run.summary_quality_policy || run.summary_input_policy,
         summaryPlan: this.database.prepare(`SELECT policy_version,plan_digest,input_digest,binding_digest,
           leaf_count,node_count,segment_count,raw_text_bytes,canonical_bytes
           FROM formal_agent_run_input_plans WHERE run_id=?`).get(run.run_id) || null } : {}),
+      ...(run.summary_quality_policy ? (() => {
+        const q = this.database.prepare('SELECT * FROM formal_agent_summary_quality WHERE run_id=?').get(run.run_id)
+        return { summaryQuality: q ? JSON.parse(q.frozen_json) : null, summaryExecution: q ? {
+          summary_stage: q.summary_stage, node_role: q.node_role, node_index: q.node_index, loop_count: q.loop_count,
+          total_loop_count: q.total_loop_count, request_count: this.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_model_request_reservations WHERE run_id=?').get(run.run_id).count
+        } : null }
+      })() : {}),
       ...(run.recipe_id === 'qa.answer' && ['3', '4', '5'].includes(run.recipe_version) ? { questionInputPolicy: ['4', '5'].includes(run.recipe_version) ? 'question-retrieval@1' : 'qa-long-input@1',
         questionPlan: this.database.prepare(`SELECT policy_version,plan_digest,input_digest,binding_digest,
           leaf_count,node_count,segment_count,raw_text_bytes,canonical_bytes
@@ -1624,6 +1653,7 @@ class AgentExecutionStore {
             httpsOrigin: binding.https_origin,
             basePath: binding.base_path,
             modelId: binding.model_id,
+            ...(run.summary_quality_policy ? { requestStrategy: this.database.prepare('SELECT request_strategy FROM agent_model_run_request_policies WHERE run_id=?').get(run.run_id)?.request_strategy || binding.request_strategy || 'openai-compatible@1' } : {}),
             capabilities: jsonObject(binding.capability_json),
             budget: jsonObject(binding.budget_json),
             providerKind: binding.provider_kind,

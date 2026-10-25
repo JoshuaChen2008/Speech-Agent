@@ -34,10 +34,11 @@ async function executeSessionExperiences ({ personalContext, storage, loop, bind
       const result = await loop.agentLoop({ recipeId: 'context.ingest.session', recipeVersion: '3', prompt, resolvedModel,
         signal: job.signal, budget: binding.budget, requestCapacity,
         timeoutMs: Math.min(180000, remaining()),
+        retryPolicyVersion: job.retryPolicyVersion,
         usageReporting: binding.capabilities.usageReporting !== false,
         beforeRequest: async ({ turn } = {}) => {
           checkActive()
-          await storage.reserveFormalAgentModelRequest({ attemptIdentity: identity, requestSequence: ++sequence,
+          return storage.reserveFormalAgentModelRequest({ attemptIdentity: identity, requestSequence: ++sequence,
             operationDigest: sha256Canonical({ planDigest, ordinal, promptDigest: sha256Canonical(prompt), turn: turn || 1 }) }, job.signal)
         },
         getRunUsage: () => storage.summaryInputPlan({ action: 'read', attemptIdentity: identity }),

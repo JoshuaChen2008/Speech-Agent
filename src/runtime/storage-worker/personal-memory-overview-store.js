@@ -158,7 +158,7 @@ class PersonalMemoryOverviewStore {
         }
         database.prepare(`INSERT OR IGNORE INTO formal_agent_runs
           (run_id,dedupe_key,request_digest,recipe_id,recipe_version,scope_json,scope_digest,transcript_version,input_watermark_json,input_digest,personal_context_revision,requested_by,state,max_attempts,next_attempt_at,created_at,updated_at,retry_policy_version)
-          VALUES (?,?,?,'context.synthesize','2',?,?,'raw',?,?,?,'automatic','queued',3,?,?,?,'agent-retry@1')`)
+          VALUES (?,?,?,'context.synthesize','2',?,?,'raw',?,?,?,'automatic','queued',3,?,?,?,'agent-retry@2')`)
           .run(runId, sha256Canonical({ scopeKey, revision, inputDigest, retryOf }), inputDigest, canonicalize(scope), sha256Canonical(scope), canonicalize({ throughEventOrder: 1 }), inputDigest, revision, now, now, now)
         database.prepare('INSERT OR IGNORE INTO personal_context_overview_jobs(run_id,scope_key,expected_revision,input_digest,refs_json) VALUES (?,?,?,?,?)').run(runId, scopeKey, revision, inputDigest, canonicalize(refs))
         database.prepare('INSERT OR IGNORE INTO personal_context_candidate_batches(batch_id,run_id,scope_key,input_revision,refs_json) VALUES(?,?,?,?,?)')

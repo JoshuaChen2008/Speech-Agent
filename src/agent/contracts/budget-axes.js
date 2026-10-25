@@ -84,6 +84,10 @@ const QA_ANSWER_V3_BUDGET_POLICY = Object.freeze({
   ...SUMMARY_MINUTES_V2_BUDGET_POLICY,
   policyId: 'qa.answer@3', recipeId: 'qa.answer', recipeVersion: '3'
 })
+const SUMMARY_MINUTES_V3_BUDGET_POLICY = Object.freeze({
+  ...SUMMARY_MINUTES_V2_BUDGET_POLICY,
+  policyId: 'summary.minutes@3', recipeVersion: '3', maxRequestInputTokens: 917504
+})
 
 const CONTEXT_INGEST_V3_BUDGET_POLICY = Object.freeze({
   ...SUMMARY_MINUTES_V2_BUDGET_POLICY,
@@ -96,7 +100,7 @@ const QA_ANSWER_V4_BUDGET_POLICY = Object.freeze({
 const QA_ANSWER_V5_BUDGET_POLICY = Object.freeze({ ...QA_ANSWER_V4_BUDGET_POLICY, policyId: 'qa.answer@5', recipeVersion: '5' })
 
 function usesLongInputBudget (recipeId, recipeVersion) {
-  return (recipeId === 'summary.minutes' && recipeVersion === '2') ||
+  return (recipeId === 'summary.minutes' && ['2', '3'].includes(recipeVersion)) ||
     (recipeId === 'qa.answer' && ['3', '4', '5'].includes(recipeVersion)) ||
     (recipeId === 'context.ingest.session' && recipeVersion === '3')
 }
@@ -115,7 +119,12 @@ function usesModelWindowCapacity (recipeId, recipeVersion) {
   return usesLongInputBudget(recipeId, recipeVersion) || (recipeId === 'qa.answer' && recipeVersion === '2')
 }
 
-function deriveRecipeRequestCapacity ({ recipeId, recipeVersion, capabilities, budget, remainingCumulativeOutputTokens = null }) {
+function summaryContextTarget (binding) {
+  return binding?.httpsOrigin === 'https://api.deepseek.com' && ['deepseek-flash', 'deepseek-v4-flash'].includes(binding.modelId)
+    ? 1048576 : 256000
+}
+
+function deriveRecipeRequestCapacity ({ recipeId, recipeVersion, capabilities, budget, binding, summaryStage, remainingCumulativeOutputTokens = null }) {
   if (!usesModelWindowCapacity(recipeId, recipeVersion)) throw budgetError('recipe has no model-window capacity')
   if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities) ||
       !Number.isSafeInteger(capabilities.maxInputTokens) || capabilities.maxInputTokens < 1 ||
@@ -126,7 +135,8 @@ function deriveRecipeRequestCapacity ({ recipeId, recipeVersion, capabilities, b
   const remaining = remainingCumulativeOutputTokens === null || remainingCumulativeOutputTokens === undefined
     ? null
     : nonNegativeInteger(remainingCumulativeOutputTokens, 'remainingCumulativeOutputTokens')
-  const outputTarget = usesLongInputBudget(recipeId, recipeVersion)
+  const quality = recipeId === 'summary.minutes' && recipeVersion === '3'
+  const outputTarget = quality ? (summaryStage === 'organizing_topics' ? 16384 : 65536) : usesLongInputBudget(recipeId, recipeVersion)
     ? SUMMARY_MINUTES_V2_REQUEST_OUTPUT_TOKEN_TARGET
     : budget.maxCumulativeOutputTokens
   const requestOutputTokens = Math.min(
@@ -136,11 +146,11 @@ function deriveRecipeRequestCapacity ({ recipeId, recipeVersion, capabilities, b
   )
   const perToken = SUMMARY_MINUTES_V2_TOKEN_ESTIMATE_BYTES_PER_TOKEN
   const promptByteLimit = Math.max(0, Math.min(
-    SUMMARY_MINUTES_V2_PROMPT_BYTE_LIMIT,
+    quality ? 917504 : SUMMARY_MINUTES_V2_PROMPT_BYTE_LIMIT,
     (Math.min(capabilities.maxInputTokens, budget.maxRequestInputTokens) -
-      SUMMARY_MINUTES_V2_REQUEST_ENVELOPE_TOKENS) * perToken,
-    (SUMMARY_MINUTES_V2_CONTEXT_TOKEN_TARGET -
-      requestOutputTokens - SUMMARY_MINUTES_V2_REQUEST_ENVELOPE_TOKENS) * perToken
+      (quality ? 16384 : SUMMARY_MINUTES_V2_REQUEST_ENVELOPE_TOKENS)) * perToken,
+    ((quality ? summaryContextTarget(binding) : SUMMARY_MINUTES_V2_CONTEXT_TOKEN_TARGET) -
+      requestOutputTokens - (quality ? 16384 : SUMMARY_MINUTES_V2_REQUEST_ENVELOPE_TOKENS)) * perToken
   ))
   return Object.freeze({ requestOutputTokens, promptByteLimit })
 }
@@ -150,7 +160,7 @@ function deriveRecipeRequestCapacity ({ recipeId, recipeVersion, capabilities, b
 // serialized input window always come from this one rule. Known consumption
 // accumulates from provider usage only; any missing usage keeps the remaining
 // budget unknown (never assumed zero) and never rewrites model capabilities.
-function deriveRecipeOutboundQuota ({ recipeId, recipeVersion, capabilities, budget, knownCumulativeOutputTokens }) {
+function deriveRecipeOutboundQuota ({ recipeId, recipeVersion, capabilities, budget, binding, summaryStage, knownCumulativeOutputTokens }) {
   if (!usesModelWindowCapacity(recipeId, recipeVersion)) throw budgetError('recipe has no model-window capacity')
   if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities) ||
       !Number.isSafeInteger(capabilities.maxInputTokens) || capabilities.maxInputTokens < 1 ||
@@ -168,12 +178,12 @@ function deriveRecipeOutboundQuota ({ recipeId, recipeVersion, capabilities, bud
     throw error
   }
   const capacity = deriveRecipeRequestCapacity({
-    recipeId, recipeVersion, capabilities, budget, remainingCumulativeOutputTokens: remaining
+    recipeId, recipeVersion, capabilities, budget, binding, summaryStage, remainingCumulativeOutputTokens: remaining
   })
   const requestInputByteWindow = Math.max(0, Math.min(
     capabilities.maxInputTokens,
     budget.maxRequestInputTokens,
-    SUMMARY_MINUTES_V2_CONTEXT_TOKEN_TARGET - capacity.requestOutputTokens
+    (recipeId === 'summary.minutes' && recipeVersion === '3' ? summaryContextTarget(binding) : SUMMARY_MINUTES_V2_CONTEXT_TOKEN_TARGET) - capacity.requestOutputTokens
   ))
   return Object.freeze({
     requestOutputTokens: capacity.requestOutputTokens,
@@ -238,6 +248,7 @@ function assertRegisteredToolGrantCombination (maxTurns, toolGrants) {
 
 function getBudgetPolicy (recipeId, recipeVersion) {
   const recipe = getRecipe(recipeId, recipeVersion)
+  if (recipe.recipeId === 'summary.minutes' && recipe.recipeVersion === '3') return SUMMARY_MINUTES_V3_BUDGET_POLICY
   if (recipe.recipeId === 'qa.answer' && recipe.recipeVersion === '3') return QA_ANSWER_V3_BUDGET_POLICY
   if (recipe.recipeId === 'qa.answer' && recipe.recipeVersion === '4') return QA_ANSWER_V4_BUDGET_POLICY
   if (recipe.recipeId === 'qa.answer' && recipe.recipeVersion === '5') return QA_ANSWER_V5_BUDGET_POLICY
@@ -384,6 +395,8 @@ module.exports = Object.freeze({
   LIMITS,
   SUMMARY_MINUTES_V2_AXIS_SCOPES,
   SUMMARY_MINUTES_V2_BUDGET_POLICY,
+  SUMMARY_MINUTES_V3_BUDGET_POLICY,
+  summaryContextTarget,
   QA_ANSWER_V3_BUDGET_POLICY,
   CONTEXT_INGEST_V3_BUDGET_POLICY,
   QA_ANSWER_V4_BUDGET_POLICY,

@@ -1,4 +1,6 @@
 'use strict'
+const { createRecipeNetworkAdapter, providerResponse, toolRequest } = require('./provider-network-fixture')
+const { getRecipe } = require('../../src/agent/contracts/recipes')
 
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
@@ -146,43 +148,39 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
   const memoryObservations = []
   let routeCalls = 0
   let summaryProviderBarrier = null
+  const pendingBarriers = new Map()
   const modelAccess = new ModelAccessRuntime({
     gateway,
     vault,
-    adapter: {
-      async run ({ recipe, tools, onProgress }) {
-        if (recipe.recipeId === 'intent.route') {
-          routeCalls += 1
-          // An invalid provider output must fall back to the same summary intent.
-          return { text: routeCalls === 1 ? '{}' : JSON.stringify({ recipeId: 'summary.minutes', confidence: 1 }) }
-        }
-        assert.equal(recipe.recipeId, 'summary.minutes')
-        await onProgress?.({ type: 'request_started', turn: 1 })
+    adapter: createRecipeNetworkAdapter(runId => {
+      const row = service.requireStore().database.prepare('SELECT recipe_id,recipe_version FROM formal_agent_runs WHERE run_id=?').get(runId)
+      return getRecipe(row.recipe_id, row.recipe_version)
+    }, async ({ recipe, observation, resolvedModel, prompt }) => {
+      if (recipe.recipeId === 'intent.route') {
+        routeCalls++
+        return providerResponse(routeCalls === 1 ? '{}' : { recipeId: 'summary.minutes', confidence: 1 })
+      }
+      assert.equal(recipe.recipeId, 'summary.minutes')
+      if (observation === null) {
         const barrier = summaryProviderBarrier
         if (barrier) {
-          summaryProviderBarrier = null
-          barrier.requestStarted.resolve()
-          await barrier.releaseRequest.promise
+          summaryProviderBarrier = null; pendingBarriers.set(resolvedModel.runId, barrier)
+          barrier.requestStarted.resolve(); await barrier.releaseRequest.promise
         }
-        const lookup = await tools[0].execute({ schemaVersion: 1, aliasKeys: ['j29 provider marker'] })
-        memoryObservations.push(lookup)
-        if (barrier) {
-          barrier.toolFinished.resolve()
-          await barrier.releaseResponse.promise
-        }
-        const sourceRef = { sessionId: 'session.j29.memory', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }
-        await onProgress?.({ type: 'response_received', turn: 1 })
-        return {
-          text: JSON.stringify({
-            schemaVersion: 1,
-            overview: lookup.matches.length > 0 ? '本次总结带有相关背景。' : '本次总结只依据会话。',
-            conclusions: [{ text: '保留会话中的决定。', sourceRefs: [sourceRef] }],
-            todos: [],
-            risks: []
-          })
-        }
+        return toolRequest('search_context', { schemaVersion: 1, aliasKeys: ['j29 provider marker'] })
       }
-    }
+      memoryObservations.push(observation)
+      const barrier = pendingBarriers.get(resolvedModel.runId)
+      if (barrier) {
+        pendingBarriers.delete(resolvedModel.runId); barrier.toolFinished.resolve(); await barrier.releaseResponse.promise
+      }
+      const sourceRef = { sessionId: 'session.j29.memory', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }
+      if (recipe.recipeVersion === '3' && JSON.parse(prompt).summaryPlan.stage === 'organizing_topics') return providerResponse({ schemaVersion: 1, topics: [] })
+      return providerResponse({ schemaVersion: recipe.recipeVersion === '3' ? 2 : 1,
+        ...(recipe.recipeVersion === '3' ? { topics: [] } : {}),
+        overview: (observation.matches.length > 0 ? '本次总结**带有相关背景**。' : '本次总结只依据会话。') + '\n\n会话中的决定与相关背景分别核对，保留原文来源。',
+        conclusions: [{ text: '保留会话中的决定。', ...(recipe.recipeVersion === '3' ? { topicId: null } : {}), sourceRefs: [sourceRef] }], todos: [], risks: [] })
+    })
   })
   await modelAccess.initialize()
   await configureModel(modelAccess)
@@ -236,7 +234,8 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
       runs: {
         create: (request) => gateway.createAgentRun(request),
         cancel: (request) => gateway.cancelAgentRun(request),
-        getInteraction: (request) => gateway.getAgentInteraction(request)
+        getInteraction: (request) => gateway.getAgentInteraction(request),
+      reserveModelRequest: request => gateway.reserveFormalAgentModelRequest(request)
       },
       modelAccess,
       interactions: {
@@ -325,12 +324,12 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
   assert.equal(optedInDetail.result.summary_use_memory, true)
   assert.equal(optedInDetail.result.memory_reference_count, 1)
 
-  assert.equal(memoryObservations.length, 3)
+  assert.equal(memoryObservations.length, 9)
   assert.equal(routeCalls, 3)
   assert.equal(memoryObservations[0].matches.length, 0)
-  assert.equal(memoryObservations[1].matches.length, 0)
-  assert.equal(memoryObservations[2].matches.length, 1)
-  assert.match(memoryObservations[2].matches[0].entries[0].displayText, /J29 provider marker/)
+  assert.ok(memoryObservations.slice(0, 6).every(observation => observation.matches.length === 0))
+  assert.ok(memoryObservations.slice(6).every(observation => observation.matches.length === 1))
+  assert.match(memoryObservations[6].matches[0].entries[0].displayText, /J29 provider marker/)
 
   const history = await agent.getHistory({ ...CONTRACT, limit: 10, cursor: null })
   assert.equal(history.ok, true)
@@ -362,7 +361,12 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
   assert.equal(acceptedSummary.ok, true)
   const requestId = acceptedSummary.result.snapshot.request_id
   await requestStarted.promise
-  const waiting = await summaryRunService.get({ ...SUMMARY_RUN_CONTRACT, request_id: requestId })
+  let waiting
+  for (let attempt = 0; attempt < 120; attempt++) {
+    waiting = await summaryRunService.get({ ...SUMMARY_RUN_CONTRACT, request_id: requestId })
+    if (waiting.result.snapshot.phase === 'waiting_model' && waiting.result.snapshot.last_activity_age_ms !== null) break
+    await tick()
+  }
   assert.equal(waiting.result.snapshot.phase, 'waiting_model')
   assert.equal(waiting.result.snapshot.attempt, 1)
   assert.equal(waiting.result.snapshot.memory_state, 'not_read')
@@ -370,8 +374,13 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
   assert.equal(waiting.result.snapshot.validated_chunk_count, 0)
   releaseRequest.resolve()
   await toolFinished.promise
-  const reading = await summaryRunService.get({ ...SUMMARY_RUN_CONTRACT, request_id: requestId })
-  assert.equal(reading.result.snapshot.phase, 'reading_context')
+  let reading
+  for (let attempt = 0; attempt < 120; attempt++) {
+    reading = await summaryRunService.get({ ...SUMMARY_RUN_CONTRACT, request_id: requestId })
+    if (reading.result.snapshot.phase === 'waiting_model' && reading.result.snapshot.memory_state === 'referenced') break
+    await tick()
+  }
+  assert.equal(reading.result.snapshot.phase, 'waiting_model')
   assert.equal(reading.result.snapshot.memory_state, 'referenced')
   assert.equal(reading.result.snapshot.attempt, 1)
   releaseResponse.resolve()
@@ -392,4 +401,17 @@ test('SEM-F38/SEM-T04/J29: settings, SQLite, provider boundary and Agent Bar sum
   assert.equal(terminal.validated_chunk_count, 1)
   assert.equal(discardedMemoryPreReads, 0)
   assert.ok(summaryProgressEvents.some((event) => event.revision > waiting.result.snapshot.revision))
+  const modelRequestsBeforeViewing = memoryObservations.length
+  const { mountAgent } = require('./helpers/formal-agent-surface')
+  const surface = await mountAgent(t, { service: agent, config })
+  await surface.click([...surface.agent.querySelectorAll('button')].find(button => button.textContent === '生成记录'))
+  await surface.wait(() => surface.agent.querySelector('.history-card'))
+  await surface.click(surface.agent.querySelector('.history-card'))
+  await surface.wait(() => surface.agent.querySelector('.result-content .result-prose'))
+  const overviewBody = surface.agent.querySelector('.result-content > section:first-child .result-prose')
+  assert.deepEqual([...overviewBody.querySelectorAll(':scope > p')].map(p => p.textContent), ['本次总结带有相关背景。', '会话中的决定与相关背景分别核对，保留原文来源。'])
+  assert.equal(overviewBody.querySelector('strong').textContent, '带有相关背景')
+  assert.deepEqual([...surface.agent.querySelectorAll('.result-content > section > h2')].map(heading => heading.textContent), ['主要内容', '决定', '待办', '需要注意'])
+  assert.ok(surface.agent.querySelector('.result-sources button'))
+  assert.equal(memoryObservations.length, modelRequestsBeforeViewing, 'reading the persisted minutes invokes no model')
 })

@@ -12,11 +12,11 @@
   "dimensions": 17,
   "vectorBytes": 1088,
   "providerRequests": 101,
-  "buildDurationMs": 39.42469999999594,
+  "buildDurationMs": 47.45029999999679,
   "queryDurationMs": {
-    "p50": 28.079499999999825,
-    "p95": 33.84229999999661,
-    "max": 57.452400000001944
+    "p50": 36.74300000000221,
+    "p95": 42.72699999999895,
+    "max": 52.02249999999185
   },
   "comparisons": {
     "keyword": {

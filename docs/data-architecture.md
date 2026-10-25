@@ -1,5 +1,7 @@
 # 字幕系统持久化与 Agent 派生数据架构
 
+> 2026-10-11 会话总结容量与内容质量增量（联合验收完成，范围见[同日记录](validation/session-summary-quality-2026-10-11.md)）：SEM-F28/F38/F39/F40、J29/J30/J31、ADR0021。正式 catalog 追加 v33；v1–v32 SQL/checksum 保持不变。`summary.minutes@3` 的 `summary-quality@1` 由独立列与 `formal_agent_summary_quality` 保存政策、首次调用前冻结的容量组合和计划摘要、总结阶段、节点角色、当前尝试及整个运行的 Loop 计数。模型请求仍经原累计账本登记，并在整个运行独立限制实际请求数量；阶段更新拒绝跳步及乱序。新增模型请求政策表登记 `deepseek-openai@2`，旧 catalog 与绑定继续原解释，当前模型用途不变。请求诊断只追加闭集校验分类及尺寸指标；思考正文、话题目录及草稿不持久化。公开最终纪要为 `SummaryMinutesV2`，交互导出追加 schema 7；旧 schema 1–6 保持兼容。迁移幂等、旧绑定、单份最终提交及迟到失败边界由 J31、J30 的真实内部模块旅程核查。
+
 > 2026-10-02 个人记忆文件增量（实现完成·尚未验收）：SEM-F41/F42、ADR0025。当前正式 catalog 为 v32，新建问答为 `qa.answer@5`。v29 登记文件根、引用、确认、操作恢复与删除墓碑；v30 保存可重建正文索引、向量代际及独立表征配置；v31 保存携带来源、suppression与生命周期；v32 保存撤销后的文件清理回执。v1–v28 SQL/checksum 不变。已迁移个人记忆的 `content_json` 只保存版本化文件引用与摘要，revision不再保留旧正文；来源/confirmation/suppression仍由storage worker单写。根目录绝对位置仅主进程私有设置持有，SQLite只保存根身份与相对定位。正文快照、FTS及向量均是可失效派生数据；所有产品读取校验当前文件修订，禁止回读旧正文。文件I/O、扫描和云端请求在事务外，有界批次让行字幕写入。验证范围见[交付记录](validation/personal-memory-files-2026-10-02.md)。旧§4.3识别关键词叙述已由ADR0017退役，不作为新接线依据。
 
 > **2026-10-02 总结检索优先增量（历史切片；实现完成·尚未验收）**：此切片登记时 catalog 为 v28，会话经历摄取为 `context.ingest.session@3`，问答为 `qa.answer@4`。当前文件增量见上段；下文较早日期的版本叙述保留为历史解释。依据 SEM-F07/F28/F30/F31/F39、DB1/DB7/J21/J22/J29 与 [ADR0024](adr/0024-summary-first-session-question.md)。

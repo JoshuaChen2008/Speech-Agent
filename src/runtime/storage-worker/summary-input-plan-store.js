@@ -3,6 +3,7 @@
 const { StorageError, assertExactKeys } = require('./protocol')
 const { canonicalize } = require('./canonical-json')
 const { assertModelUsage } = require('../../agent/contracts/model-access-core')
+const { CANDIDATES, STAGES } = require('../../agent/contracts/summary-quality')
 const POLICY = 'summary-long-input@1'
 const fields = {
   planDigest: 'plan_digest', inputDigest: 'input_digest', bindingDigest: 'binding_digest',
@@ -12,9 +13,9 @@ const fields = {
 function fail (code = 'AGENT_REQUEST_INVALID') { throw new StorageError(code) }
 
 function operate (store, request) {
-  const extra = request?.action === 'register' ? ['plan'] : request?.action === 'receipt' ? ['requestSequence', 'usage'] : []
+  const extra = request?.action === 'register' ? ['plan'] : request?.action === 'receipt' ? ['requestSequence', 'usage'] : request?.action === 'stage' ? ['summaryStage', 'nodeRole', 'nodeIndex', 'loopCount'] : []
   assertExactKeys(request, ['action', 'attemptIdentity', ...extra], 'AGENT_REQUEST_INVALID')
-  if (!['read', 'register', 'receipt'].includes(request.action)) fail()
+  if (!['read', 'register', 'receipt', 'stage'].includes(request.action)) fail()
   const identity = store.assertAttempt(request.attemptIdentity)
   const db = store.database
   db.exec('BEGIN IMMEDIATE')
@@ -27,11 +28,11 @@ function operate (store, request) {
     const policy = run.recipe_id === 'context.ingest.session' && run.recipe_version === '3' && run.transcript_version === 'raw'
       ? 'experience-input@1' : run.recipe_id === 'qa.answer' && ['4', '5'].includes(run.recipe_version) && run.transcript_version === 'raw'
         ? 'question-retrieval@1' : run.recipe_id === 'qa.answer' && run.recipe_version === '3' && run.transcript_version === 'raw'
-        ? 'qa-long-input@1' : run.summary_input_policy
-    if (![POLICY, 'qa-long-input@1', 'question-retrieval@1', 'experience-input@1'].includes(policy)) fail()
+        ? 'qa-long-input@1' : run.summary_quality_policy || run.summary_input_policy
+    if (![POLICY, 'summary-quality@1', 'qa-long-input@1', 'question-retrieval@1', 'experience-input@1'].includes(policy)) fail()
     if (request.action === 'register') {
       const plan = request.plan
-      assertExactKeys(plan, Object.keys(fields), 'AGENT_REQUEST_INVALID')
+      assertExactKeys(plan, [...Object.keys(fields), ...(policy === 'summary-quality@1' ? ['quality'] : [])], 'AGENT_REQUEST_INVALID')
       for (const key of ['planDigest', 'inputDigest', 'bindingDigest']) {
         if (!/^[a-f0-9]{64}$/.test(plan[key])) fail()
       }
@@ -39,6 +40,21 @@ function operate (store, request) {
         if (!Number.isSafeInteger(plan[key]) || plan[key] < 1 || plan[key] > max) fail()
       }
       if (plan.inputDigest !== run.input_digest || plan.nodeCount < plan.leafCount) fail()
+      if (policy === 'summary-quality@1') {
+        const q = plan.quality
+        assertExactKeys(q, ['policyVersion', 'mode', 'intermediateBytes', 'finalBytes', 'requestLimit', 'stageOutputTokens', 'loopLimit', 'requestLimitCount'], 'AGENT_REQUEST_INVALID')
+        if (q.policyVersion !== policy || !['whole', 'chunked'].includes(q.mode) ||
+            q.mode === 'whole' && plan.leafCount !== 1 || q.mode === 'chunked' && plan.leafCount < 2 ||
+            !CANDIDATES.some(([i, f]) => i === q.intermediateBytes && f === q.finalBytes) ||
+            !Number.isSafeInteger(q.requestLimit) || q.requestLimit < 1 || q.requestLimit > 917504 ||
+            q.loopLimit !== plan.nodeCount * 3 || q.requestLimitCount !== plan.nodeCount * 9) fail()
+        assertExactKeys(q.stageOutputTokens, STAGES, 'AGENT_REQUEST_INVALID')
+        for (const stage of STAGES) if (!Number.isSafeInteger(q.stageOutputTokens[stage]) || q.stageOutputTokens[stage] < 1 || q.stageOutputTokens[stage] > (stage === 'organizing_topics' ? 16384 : 65536)) fail()
+        const frozen = canonicalize(q)
+        const priorQuality = db.prepare('SELECT frozen_json FROM formal_agent_summary_quality WHERE run_id=?').get(identity.runId)
+        if (priorQuality && priorQuality.frozen_json !== frozen) fail('AGENT_REQUEST_IDENTITY_CONFLICT')
+        if (!priorQuality) db.prepare('INSERT INTO formal_agent_summary_quality(run_id,policy_version,frozen_json) VALUES(?,?,?)').run(identity.runId, policy, frozen)
+      }
       const prior = db.prepare('SELECT * FROM formal_agent_run_input_plans WHERE run_id=?').get(identity.runId)
       if (prior) {
         if (prior.policy_version !== policy || Object.entries(fields).some(([key, column]) => prior[column] !== plan[key])) fail('AGENT_REQUEST_IDENTITY_CONFLICT')
@@ -50,6 +66,23 @@ function operate (store, request) {
     }
     const plan = db.prepare('SELECT * FROM formal_agent_run_input_plans WHERE run_id=?').get(identity.runId)
     if (!plan) fail('AGENT_RUN_UNAVAILABLE')
+    if (request.action === 'stage') {
+      if (policy !== 'summary-quality@1' || !STAGES.includes(request.summaryStage) || !['whole', 'leaf', 'merge'].includes(request.nodeRole) ||
+          !Number.isSafeInteger(request.nodeIndex) || request.nodeIndex < 1 || request.nodeIndex > plan.node_count ||
+          !Number.isSafeInteger(request.loopCount) || request.loopCount < 1 || request.loopCount > plan.node_count * 3) fail()
+      const prior = db.prepare('SELECT * FROM formal_agent_summary_quality WHERE run_id=?').get(identity.runId)
+      if (!prior || prior.attempt > identity.attempt || prior.attempt === identity.attempt &&
+          (request.loopCount < prior.loop_count || request.nodeIndex < prior.node_index)) fail('AGENT_CONTEXT_OPERATION_FAILED')
+      const q = JSON.parse(prior.frozen_json)
+      if (request.summaryStage !== STAGES[(request.loopCount - 1) % 3] || request.nodeIndex !== Math.ceil(request.loopCount / 3) ||
+          request.nodeRole !== (q.mode === 'whole' ? 'whole' : request.nodeIndex <= plan.leaf_count ? 'leaf' : 'merge')) fail()
+      const repeated = prior.attempt === identity.attempt && request.loopCount === prior.loop_count
+      if (prior.attempt === identity.attempt ? request.loopCount > prior.loop_count + 1 : request.loopCount !== 1) fail()
+      if (repeated && (request.summaryStage !== prior.summary_stage || request.nodeRole !== prior.node_role)) fail()
+      if (!repeated && prior.total_loop_count >= 1152) fail('AGENT_BUDGET_EXCEEDED')
+      db.prepare(`UPDATE formal_agent_summary_quality SET summary_stage=?,node_role=?,attempt=?,node_index=?,loop_count=?,total_loop_count=total_loop_count+? WHERE run_id=?`)
+        .run(request.summaryStage, request.nodeRole, identity.attempt, request.nodeIndex, request.loopCount, repeated ? 0 : 1, identity.runId)
+    }
     if (request.action === 'receipt') {
       if (!Number.isSafeInteger(request.requestSequence) || request.requestSequence < 1) fail()
       if (request.usage !== null) {
@@ -76,7 +109,7 @@ function operate (store, request) {
         db.prepare('SELECT COUNT(*) AS count FROM formal_agent_model_request_reservations WHERE run_id=?').get(identity.runId).count > 0,
       inputTokens: current.input_tokens, outputTokens: current.output_tokens
     }
-    if (['qa-long-input@1', 'question-retrieval@1'].includes(policy)) {
+    if (['qa-long-input@1', 'question-retrieval@1', 'summary-quality@1'].includes(policy)) {
       const receipts = db.prepare('SELECT usage_json FROM formal_agent_model_request_reservations WHERE run_id=?').all(identity.runId)
         .map(row => row.usage_json === null ? null : JSON.parse(row.usage_json))
       const cacheKnown = result.known && receipts.every(usage => usage?.cacheHitInputTokens !== null && usage?.cacheMissInputTokens !== null)

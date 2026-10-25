@@ -49,7 +49,7 @@ function requestPromptLimit (binding, policy = SUMMARY_POLICY) {
       !Number.isSafeInteger(budget?.maxRequestInputTokens)) fail('AGENT_REQUEST_INVALID')
   // With no registered tokenizer, UTF-8 bytes are a conservative input unit.
   // Leave room for the HTTP/recipe/tool envelope and the model's output.
-  const limit = Math.min(PROMPT_LIMIT, capabilities.maxInputTokens, budget.maxRequestInputTokens) - ENVELOPE_RESERVE
+  const limit = policy.promptLimit ?? Math.min(PROMPT_LIMIT, capabilities.maxInputTokens, budget.maxRequestInputTokens) - ENVELOPE_RESERVE
   if (limit < 1024) capacityFailure(policy, 1024, limit)
   return limit
 }
@@ -96,7 +96,7 @@ function mergeShape (leafCount, fanIn, policy) {
     const sizes = mergeGroupSizes(current, fanIn)
     levels.push(sizes)
     current = sizes.length
-    nodeCount += current
+    nodeCount += policy.countOnlyExecutedNodes ? sizes.filter(size => size > 1).length : current
     if (nodeCount > MAX_NODES) capacityFailure(policy, nodeCount, MAX_NODES, 'count')
   }
   return { levels, nodeCount }
@@ -212,7 +212,7 @@ function * planInputSteps (input, userPrompt, binding, policy) {
   }
   if (rawTextBytes === 0 || priorEventOrder !== input.inputWatermark) fail('AGENT_INPUT_EMPTY')
   flush()
-  const fanIn = Math.min(4, Math.floor((promptLimit - 4096 - wireBytes(userPrompt)) / (2 * INTERMEDIATE_LIMIT)))
+  const fanIn = policy.fanIn ?? Math.min(4, Math.floor((promptLimit - 4096 - wireBytes(userPrompt)) / (2 * INTERMEDIATE_LIMIT)))
   if (policy !== EXPERIENCE_POLICY && leaves.length > 1 && fanIn < 2) capacityFailure(policy, 4096 + wireBytes(userPrompt) + 4 * INTERMEDIATE_LIMIT, promptLimit)
   const { levels, nodeCount } = policy === EXPERIENCE_POLICY ? { levels: [], nodeCount: leaves.length } : mergeShape(leaves.length, fanIn, policy)
 
@@ -259,5 +259,5 @@ async function planInputAsync (input, userPrompt, binding, signal, policy) {
 }
 function assertSummaryPlanCoverage (input, plan) { return assertPlanCoverage(input, plan, SUMMARY_POLICY) }
 function assertQuestionPlanCoverage (input, plan) { return assertPlanCoverage(input, plan, QUESTION_POLICY) }
-module.exports = { planSummaryInputAsync, planQuestionInputAsync, planExperienceInputAsync, INTERMEDIATE_LIMIT, assertSummaryPlanCoverage,
+module.exports = { planInputAsync, assertPlanCoverage, planSummaryInputAsync, planQuestionInputAsync, planExperienceInputAsync, INTERMEDIATE_LIMIT, assertSummaryPlanCoverage,
   assertQuestionPlanCoverage, mergeGroupSizes, planSummaryInput, requestPromptLimit }

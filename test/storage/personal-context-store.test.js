@@ -156,7 +156,7 @@ test('SEM-F26/SEM-F30/J21: ingest rereads a terminal source and replays one boun
   `).get() }, { runs: 1, episodes: 1, memories: 0 })
   assert.deepEqual({ ...subtitleStore.database.prepare(`
     SELECT max_attempts,retry_policy_version FROM formal_agent_runs WHERE run_id=?
-  `).get(first.runId) }, { max_attempts: 5, retry_policy_version: 'agent-retry@1' })
+  `).get(first.runId) }, { max_attempts: 5, retry_policy_version: 'agent-retry@2' })
   const summary = subtitleStore.database.prepare('SELECT summary_json FROM personal_context_episodes').get().summary_json
   assert.ok(Buffer.byteLength(summary, 'utf8') < 8192)
   assert.doesNotMatch(summary, /synthetic committed/)

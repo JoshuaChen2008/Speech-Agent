@@ -184,7 +184,7 @@ function isTopLevelForbidden (entry, variant) {
   const normalized = entry.replace(/\\/g, '/')
   if (/^\/(?:models|model|test|docs|\.artifacts)(?:\/|$)/i.test(normalized)) return true
   if (/^\/src\/(?:agent-core|agent-mvp|agent-provider|agent-runtime)(?:\/|$)/i.test(normalized)) return true
-  if (/^\/node_modules\/@earendil-works\/(?:pi-agent-core|pi-ai)(?:\/|$)/i.test(normalized)) return true
+  if (/^\/node_modules\/@earendil-works\/pi-coding-agent(?:\/|$)/i.test(normalized)) return true
   if (variant === 'release' && /^\/scripts(?:\/|$)/i.test(normalized)) return true
   if (variant === 'smoke' && /^\/scripts\//i.test(normalized) && !SMOKE_SCRIPTS.includes(normalized)) return true
   return false

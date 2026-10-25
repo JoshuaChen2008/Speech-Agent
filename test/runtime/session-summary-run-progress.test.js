@@ -324,6 +324,7 @@ test('SEM-F38/J30-CANCEL: scheduler abort precedes the persistent cancellation t
     contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
     request_id: 'request.progress.one', generation: 1
   })
+  await new Promise((resolve) => setImmediate(resolve))
   assert.deepEqual(order, ['scheduler.cancel:run.current', 'storage.cancel.begin'])
   releaseCancellation()
   const response = await pending

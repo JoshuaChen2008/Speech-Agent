@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { MemorySources } from '../ui/shared/memory-sources'
+import { ResultText } from './result-text'
 import Icons from '../ui/shared/fluent-icons'
 
 type Dict = Record<string, any>
@@ -9,8 +10,8 @@ type SummaryScopePin = { scope: ScopeItem['scope'], scopeItem: ScopeItem, reques
 type RecoverableSummaryRun = { scope: ScopeItem['scope'], snapshot: Dict }
 type State = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelling' | 'cancelled'
 
-const CONTRACT = Object.freeze({ contract_id: 'speech-agent.agent-run.ui', contract_version: '1.1.0' })
-const SUMMARY_RUN_CONTRACT = Object.freeze({ contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0' })
+const CONTRACT = Object.freeze({ contract_id: 'speech-agent.agent-run.ui', contract_version: '1.2.0' })
+const SUMMARY_RUN_CONTRACT = Object.freeze({ contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.1.0' })
 const SUMMARY_DIAGNOSTICS_CONTRACT = Object.freeze({ contract_id: 'speech-agent.agent-run-diagnostics.ui', contract_version: '1.0.0' })
 const SUMMARY_RUN_TERMINAL_STATES = new Set(['succeeded', 'failed', 'cancelled'])
 const SCOPE_LIMIT = 50
@@ -33,7 +34,7 @@ const SUMMARY_DIAGNOSTIC_EVENT_LABELS: Record<string, string> = Object.freeze({
   model_request_started: '模型请求已发送', model_request_ended: '模型请求已结束',
   tool_started: '开始读取受控来源', tool_ended: '受控来源读取结束', backoff: '等待后重试',
   cancel_requested: '已请求取消', cancelled: '请求已取消', budget_rejected: '已达到处理限制',
-  terminal: '请求已结束', recovery: '请求已恢复'
+  terminal: '请求已结束', recovery: '请求已恢复', output_rejected: '模型结果校验未接受'
 })
 
 const ERROR_MESSAGES: Record<string, string> = Object.freeze({
@@ -145,6 +146,15 @@ function summaryRunPhaseLabel (phase: unknown): string {
   } as Dict)[String(phase || '')] || '阶段暂未记录'
 }
 
+function summaryStageLabel (snapshot: Dict): string {
+  return ({ organizing_topics: '组织话题', drafting_minutes: '撰写纪要', verifying_sources: snapshot.node_role === 'merge' ? '核对分块结果' : '核对原文' } as Dict)[snapshot.summary_stage] || summaryRunPhaseLabel(snapshot.phase)
+}
+function outputFailureLabel (validation: Dict | undefined): string {
+  if (!validation) return ERROR_MESSAGES.AGENT_OUTPUT_INVALID
+  if (['output_size', 'transport_size'].includes(validation.reason)) return `${validation.reason === 'transport_size' ? '模型响应' : '总结结果'}超过字节上限：实际 ${validation.actual} bytes，上限 ${validation.limit} bytes。`
+  return ({ json: '模型返回的 JSON 无法解析，请重试。', schema: '模型结果字段不符合要求，请重试。', source_reference: '模型引用了本次输入范围外的来源，结果未保存。', response_protocol: '模型响应协议不符合要求，结果未保存。' } as Dict)[validation.reason] || ERROR_MESSAGES.AGENT_OUTPUT_INVALID
+}
+
 function summaryMemoryProgressLabel (state: unknown): string {
   return ({
     not_read: '尚未读取记忆',
@@ -205,12 +215,15 @@ function TranscriptSources ({ sources = [], positions = [], onOpen }: { sources?
 }
 
 function SummaryContent ({ result = {}, onOpen }: { result: Dict, onOpen: (ref: Dict) => void }): ReactElement {
-  const labels = [['conclusions', '决定'], ['todos', '待办'], ['risks', '需要注意']]
+  const quality = result.schemaVersion === 2
+  const labels = [['conclusions', quality ? '决定' : '结论'], ['todos', '待办'], ['risks', quality ? '需要注意' : '风险']]
   return <div className="result-content">
-    <section><h2>主要内容</h2><p>{result.overview || result.summary || '未提及'}</p></section>
+    <section><h2>{quality ? '主要内容' : '概要'}</h2><ResultText text={formatValue(result.overview || result.summary || '未提及')} />
+      {quality && result.topics?.map((topic: Dict) => <section key={topic.topicId}><h3>{topic.title}</h3><ResultText text={topic.text} /><TranscriptSources sources={topic.sourceRefs} onOpen={onOpen} /></section>)}
+    </section>
     {labels.map(([key, label]) => <section key={key}><h2>{label}</h2>
-      {Array.isArray(result[key]) && result[key].length > 0 ? <ul>{result[key].map((item: Dict, index: number) => <li key={index}>
-        <p>{item.text}</p>
+      {Array.isArray(result[key]) && result[key].length > 0 ? <ul className="result-items">{result[key].map((item: Dict, index: number) => <li key={index}>
+        <ResultText text={formatValue(item.text)} />
         {key === 'todos' && (item.ownerHint || item.dueHint) && <p>{item.ownerHint && `负责人：${item.ownerHint}`}{item.ownerHint && item.dueHint ? ' · ' : ''}{item.dueHint && `期限：${item.dueHint}`}</p>}
         <TranscriptSources sources={item.sourceRefs || []} onOpen={onOpen} />
       </li>)}</ul> : <p>未提及</p>}
@@ -221,16 +234,16 @@ function SummaryContent ({ result = {}, onOpen }: { result: Dict, onOpen: (ref: 
 function QuestionContent ({ result, positions = [], onOpen }: { result: Dict, positions?: Dict[], onOpen: (ref: Dict) => void }): ReactElement {
   const coverage = result.coverage
   return <div className="result-content">
-    <section><h2>回答</h2><p>{result.answer}</p></section>
+    <section><h2>回答</h2><ResultText text={formatValue(result.answer)} /></section>
     {Array.isArray(result.claims) && result.claims.length > 0
-      ? <section><h2>结论与来源</h2><ul>{result.claims.map((claim: Dict, index: number) => <li key={index}>
-        <p>{claim.text}</p><TranscriptSources sources={claim.sourceRefs} positions={positions} onOpen={onOpen} />
+      ? <section><h2>结论与来源</h2><ul className="result-items">{result.claims.map((claim: Dict, index: number) => <li key={index}>
+        <ResultText text={formatValue(claim.text)} /><TranscriptSources sources={claim.sourceRefs} positions={positions} onOpen={onOpen} />
       </li>)}</ul></section>
       : <TranscriptSources sources={result.sourceRefs} positions={positions} onOpen={onOpen} />}
     {coverage && <p role="status">已检索 {coverage.visitedSessionCount}/{coverage.scopeSessionCount} 个会话。
       {coverage.sourceTextComplete ? '本次分析已覆盖全部原文。' : '回答依据所列原文片段，尚未完整核对全部正文。'}
       {!coverage.summaryComplete && '部分会话内容尚未整理。'}</p>}
-    {result.unresolved?.length > 0 && <section><h2>待核对</h2><ul>{result.unresolved.map((text: string, index: number) => <li key={index}>{text}</li>)}</ul></section>}
+    {result.unresolved?.length > 0 && <section><h2>待核对</h2><ul className="result-items">{result.unresolved.map((text: string, index: number) => <li key={index}><ResultText text={text} /></li>)}</ul></section>}
   </div>
 }
 
@@ -370,6 +383,8 @@ function scopeIdentity (scope: Dict | null): string {
 export function AgentView (): ReactElement {
   const api = window.agentApi
   if (!api) throw new Error('agent preload bridge is missing')
+  const operations = api.operations
+  if (!operations) throw new Error('Agent operation bridge is missing')
   const titlebar = useRef<HTMLElement>(null)
   const scopeGeneration = useRef(0)
   const historyGeneration = useRef(0)
@@ -816,14 +831,14 @@ export function AgentView (): ReactElement {
   const continueRecoveredSummaryRun = async (item: RecoverableSummaryRun) => {
     const snapshot = item?.snapshot
     if (!snapshot || snapshot.action !== 'summary' || snapshot.resume_required !== true ||
-        snapshot.state !== 'retry_wait' || typeof api.resumeSessionSummaryRun !== 'function' ||
+        snapshot.state !== 'retry_wait' || typeof operations.resume !== 'function' ||
         recoverableSummaryPendingId !== null || recoverableResumeLocksRef.current.has(snapshot.request_id)) return
     recoverableResumeLocksRef.current.add(snapshot.request_id)
     setRecoverableSummaryPendingId(snapshot.request_id)
     setRecoverableSummaryError('')
     setStatus('正在继续会话总结…')
     try {
-      const result = unwrap<Dict>(await api.resumeSessionSummaryRun({
+      const result = unwrap<Dict>(await operations.resume({
         ...summaryRunHeaders(),
         request_id: snapshot.request_id,
         generation: snapshot.generation,
@@ -978,13 +993,13 @@ export function AgentView (): ReactElement {
   }, [clearSummaryScopePin, selectInteraction])
   const loadSummarySnapshot = useCallback(async (requestId: string) => {
     const identity = summaryRequestIdentityRef.current
-    if (!identity || identity.requestId !== requestId || typeof api.getSessionSummaryRun !== 'function') return
+    if (!identity || identity.requestId !== requestId || typeof operations.getSnapshot !== 'function') return
     const currentRead = summarySnapshotReadRef.current
     if (currentRead?.requestId === requestId) return currentRead.promise
     const read = { requestId, promise: Promise.resolve() as Promise<void> }
     const task = (async () => {
       try {
-        const response = await api.getSessionSummaryRun({ ...summaryRunHeaders(), request_id: requestId })
+        const response = await operations.getSnapshot({ ...summaryRunHeaders(), request_id: requestId })
         if (summaryRequestIdentityRef.current?.requestId !== requestId) return
         if (response?.ok !== true || !response?.result?.snapshot) {
           throw new PublicResponseError(responseErrorMessage(response, '状态暂时无法确认'))
@@ -1002,16 +1017,16 @@ export function AgentView (): ReactElement {
     read.promise = task
     summarySnapshotReadRef.current = read
     return task
-  }, [api, applySummarySnapshot])
+  }, [operations, applySummarySnapshot])
   const loadSummaryDiagnostics = useCallback(async (beforeSequence: number | null = null) => {
     const snapshot = summarySnapshotRef.current
     const requestId = typeof snapshot?.request_id === 'string' ? snapshot.request_id : null
-    if (!requestId || typeof api.getSessionSummaryRunDiagnostics !== 'function') return
+    if (!requestId || typeof operations.getDiagnostics !== 'function') return
     const token = ++summaryDiagnosticsGeneration.current
     setSummaryDiagnosticsPending(true)
     setSummaryDiagnosticsError('')
     try {
-      const response = await api.getSessionSummaryRunDiagnostics({
+      const response = await operations.getDiagnostics({
         ...summaryDiagnosticsHeaders(), request_id: requestId, before_sequence: beforeSequence, limit: 50
       })
       if (token !== summaryDiagnosticsGeneration.current) return
@@ -1037,12 +1052,12 @@ export function AgentView (): ReactElement {
     } finally {
       if (token === summaryDiagnosticsGeneration.current) setSummaryDiagnosticsPending(false)
     }
-  }, [api])
+  }, [operations])
   const exportSummaryDiagnostics = useCallback(async (requestId: string) => {
-    if (typeof api.exportSessionSummaryRunDiagnostics !== 'function') return
+    if (typeof operations.exportDiagnostics !== 'function') return
     setSummaryDiagnosticsError('')
     try {
-      const response = await api.exportSessionSummaryRunDiagnostics({
+      const response = await operations.exportDiagnostics({
         ...summaryDiagnosticsHeaders(), request_id: requestId
       })
       if (response?.ok !== true || response?.result?.status === undefined) {
@@ -1056,7 +1071,7 @@ export function AgentView (): ReactElement {
       setSummaryDiagnosticsError(message)
       setStatus(message)
     }
-  }, [api])
+  }, [operations])
   useEffect(() => {
     summaryDiagnosticsGeneration.current += 1
     setSummaryDiagnostics(null)
@@ -1066,22 +1081,24 @@ export function AgentView (): ReactElement {
   const loadRecoverableSummaryRuns = useCallback(async (selectNewest = false) => {
     const token = ++recoverableSummaryGeneration.current
     setRecoverableSummaryError('')
-    if (typeof api.listRecoverableSessionSummaryRuns !== 'function') {
+    if (typeof operations.listRecoverable !== 'function') {
       setRecoverableSummaryRuns([])
       return
     }
     try {
-      const response = await api.listRecoverableSessionSummaryRuns(summaryRunHeaders())
+      const response = await operations.listRecoverable(summaryRunHeaders())
       if (token !== recoverableSummaryGeneration.current) return
       if (response?.ok !== true || !Array.isArray(response?.result?.requests)) {
         throw new PublicResponseError(responseErrorMessage(response, '恢复请求暂时不可用'))
       }
-      const requests = (response.result.requests as RecoverableSummaryRun[])
+      const listedRequests = response.result.requests as RecoverableSummaryRun[]
+      const requests = listedRequests
         .filter((item) => item?.snapshot?.resume_required === true)
       recoverableSummaryRunsRef.current = requests
       setRecoverableSummaryRuns(requests)
       if (selectNewest && !summaryRequestIdentityRef.current && !activeInteractionRef.current) {
-        const first = requests.find((item) => item?.snapshot?.resume_required === true)
+        const first = listedRequests.find((item) => item?.snapshot &&
+          (!summaryRunTerminal(item.snapshot) || item.snapshot.resume_required === true))
         if (first?.scope?.kind === 'session' && typeof first.scope.reference === 'string' && first.snapshot) {
           const scopeItem: ScopeItem = {
             scope: first.scope, display_name: '已恢复的会话', started_at: null, ended_at: '', state: 'terminal'
@@ -1098,7 +1115,7 @@ export function AgentView (): ReactElement {
         setRecoverableSummaryError(error instanceof PublicResponseError ? error.message : '恢复请求暂时不可用')
       }
     }
-  }, [api, applySummarySnapshot])
+  }, [operations, applySummarySnapshot])
   reloadRecoverableSummaryRunsRef.current = () => { void loadRecoverableSummaryRuns(false) }
   useEffect(() => {
     void loadRecoverableSummaryRuns(true)
@@ -1109,8 +1126,8 @@ export function AgentView (): ReactElement {
     if (identity) void loadSummarySnapshot(identity.requestId)
   }
   useEffect(() => {
-    if (typeof api.onSessionSummaryRunChanged !== 'function') return
-    const dispose = api.onSessionSummaryRunChanged((event: Dict) => {
+    if (typeof operations.onChanged !== 'function') return
+    const dispose = operations.onChanged((event: Dict) => {
       const identity = summaryRequestIdentityRef.current
       const snapshot = summarySnapshotRef.current
       if (identity && event.request_id === identity.requestId && event.generation === identity.generation) {
@@ -1122,7 +1139,7 @@ export function AgentView (): ReactElement {
       }
     })
     return () => { if (typeof dispose === 'function') dispose() }
-  }, [api, loadSummarySnapshot])
+  }, [operations, loadSummarySnapshot])
   useEffect(() => {
     const snapshot = activeSummarySnapshot
     if (!snapshot || summaryRunTerminal(snapshot) || snapshot.resume_required === true) return
@@ -1223,7 +1240,7 @@ export function AgentView (): ReactElement {
         ...(submission.action === 'question' ? { prompt: submission.prompt } : {}),
         ...(submission.resubmitsRequestId ? { resubmits_request_id: submission.resubmitsRequestId } : {})
       }
-      const response = await api.acceptSessionSummaryRun(request)
+      const response = await operations.submit(request)
       if (response?.ok !== true || response?.result?.accepted !== true || !response?.result?.snapshot) {
         if (response?.ok === false && response.error?.next_action && response.error.next_action !== 'retry') {
           receiptUnknown = false
@@ -1287,7 +1304,7 @@ export function AgentView (): ReactElement {
       cancelLocksRef.current.add(requestId)
       setCancelPendingInteractionId(requestId); setStatus('正在取消生成…')
       try {
-        const result = unwrap<Dict>(await api.cancelSessionSummaryRun({
+        const result = unwrap<Dict>(await operations.cancel({
           ...summaryRunHeaders(), request_id: requestId, generation: summarySnapshot.generation
         }))
         applySummarySnapshot(result.snapshot)
@@ -1545,8 +1562,8 @@ export function AgentView (): ReactElement {
           {unresolvedSubmission && <div className="run-card" aria-label="受理状态未确认"><div><span>当前请求</span><strong>暂时无法确认是否已收到请求</strong><span>重试会继续核对这次请求，不会重复创建任务。</span></div><button type="button" onClick={retryUnresolvedSubmission} disabled={submitPending}>重试原请求</button></div>}
           {recoverableSummaryRuns.length > 0 && <section className="recoverable-runs" aria-label="需要处理的会话总结请求"><div className="panel-heading"><div><h2>需要处理的请求</h2><p>上次生成被中断，请选择是否继续。</p></div><button type="button" onClick={() => void loadRecoverableSummaryRuns(false)} disabled={recoverableSummaryPendingId !== null}>刷新</button></div>{recoverableSummaryError && <p className="error" role="alert">{recoverableSummaryError}</p>}<ul>{recoverableSummaryRuns.map((item) => { const snapshot = item.snapshot; const lostQuestion = snapshot.action === 'question' && snapshot.state === 'failed' && snapshot.error_code === 'AGENT_REQUEST_INVALID' && snapshot.resume_required === true; const scopeName = scopes.find((entry) => scopeIdentity(entry.scope) === scopeIdentity(item.scope))?.display_name || '已恢复的会话'; return <li key={`${snapshot.request_id}:${snapshot.generation}`}><strong>{scopeName}</strong><span>{lostQuestion ? '问题内容未保留，需要重新输入' : '会话总结已暂停'}</span>{!snapshot.diagnostics_available && <span role="status">诊断记录不可用</span>}<button type="button" onClick={() => void exportSummaryDiagnostics(snapshot.request_id)}>导出诊断</button><button type="button" onClick={() => lostQuestion ? selectRecoverableSummaryRun(item) : void continueRecoveredSummaryRun(item)} disabled={recoverableSummaryPendingId !== null}>{lostQuestion ? '重新输入问题' : recoverableSummaryPendingId === snapshot.request_id ? '正在继续…' : '继续生成'}</button></li> })}</ul></section>}
           {activeSummarySnapshot && <details className="run-details" open={!summaryRunTerminal(activeSummarySnapshot)}><summary>运行详情 · {summaryRunStateLabel(activeSummarySnapshot)}</summary>
-          {activeSummarySnapshot && <div className="run-card" aria-label="当前会话总结请求状态"><div><span>当前请求 · {summaryRunPhaseLabel(activeSummarySnapshot.phase)}</span><strong>{summarySnapshotStale ? '状态暂时无法确认' : summaryRunStateLabel(activeSummarySnapshot)}</strong>{summarySnapshotStale && <span className="stale-status" role="status">上次确认状态：{summaryRunStateLabel(activeSummarySnapshot)}；正在重新读取。</span>}{!activeSummarySnapshot.diagnostics_available && <span className="stale-status" role="status">诊断记录不可用</span>}<span>已用时 {Math.floor(activeSummarySnapshot.elapsed_ms / 1000)} 秒{activeSummarySnapshot.attempt > 0 ? ` · 第 ${activeSummarySnapshot.attempt} 次尝试` : ''}{activeSummarySnapshot.validated_chunk_count !== null ? ` · 已检查 ${activeSummarySnapshot.validated_chunk_count}/${activeSummarySnapshot.total_chunk_count} 部分内容` : ''}</span>{activeSummarySnapshot.retry && <span role="status">模型请求第 {activeSummarySnapshot.retry.request_attempt}/5 次 · {RETRY_REASON_LABELS[activeSummarySnapshot.retry.reason] || '服务响应异常'} · 等待 {Math.ceil(activeSummarySnapshot.retry.wait_ms / 1000)} 秒；可取消</span>}<span>{summaryActivityAgeLabel(activeSummarySnapshot.last_activity_age_ms)} · {summaryMemoryProgressLabel(activeSummarySnapshot.memory_state)}</span>{activeSummarySnapshot.state === 'failed' && <span className="error" role="alert">{errorCodeLabel(activeSummarySnapshot.error_code)}</span>}{summarySnapshotError && <span className="stale-status" role="status">{summarySnapshotError}</span>}</div><button type="button" onClick={() => void cancel()} disabled={cancelPending || activeSummarySnapshot.state === 'cancelling' || summaryRunTerminal(activeSummarySnapshot) || summaryTargetTerminal}>{cancelPending || activeSummarySnapshot.state === 'cancelling' ? '正在取消…' : '取消生成'}</button></div>}
-          {activeSummarySnapshot && <details className="diagnostics-panel" key={activeSummarySnapshot.request_id}><summary>助手运行诊断</summary><div className="diagnostics-actions"><button type="button" onClick={() => void loadSummaryDiagnostics()} disabled={summaryDiagnosticsPending}>{summaryDiagnosticsPending ? '正在读取…' : '查看诊断'}</button><button type="button" onClick={() => void exportSummaryDiagnostics(activeSummarySnapshot.request_id)}>导出诊断</button></div>{summaryDiagnosticsError && <p className="error" role="alert">{summaryDiagnosticsError}</p>}{activeSummaryDiagnostics && <section aria-label="诊断记录"><p role="status">{activeSummaryDiagnostics.available ? `已读取 ${activeSummaryDiagnostics.records.length} 条诊断记录` : '诊断记录不可用；以下仅显示已写入的记录'}</p><ol>{activeSummaryDiagnostics.records.map((record) => <li key={record.sequence}><span>+{record.elapsedMs ?? 0} ms</span><strong>{SUMMARY_DIAGNOSTIC_EVENT_LABELS[record.event] || '诊断事件'}</strong>{record.errorCode && <code>{record.errorCode}</code>}{record.event === 'backoff' && record.metrics?.actual !== null && <span>第 {record.metrics.actual}/{record.metrics.limit} 次请求</span>}{record.budgetAxis && record.metrics?.actual !== null && <span>{record.budgetAxis}：{record.metrics.actual}/{record.metrics.limit} {record.metrics.unit}</span>}{!record.budgetAxis && ['bytes', 'count'].includes(record.metrics?.unit) && record.metrics.actual !== null && ['AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED', 'AGENT_QA_INPUT_LIMIT_EXCEEDED'].includes(record.errorCode) && <span>输入容量：{record.metrics.actual}/{record.metrics.limit} {record.metrics.unit === 'bytes' ? 'bytes' : '项'}</span>}</li>)}</ol>{activeSummaryDiagnostics.nextBeforeSequence !== null && <button type="button" onClick={() => void loadSummaryDiagnostics(activeSummaryDiagnostics.nextBeforeSequence)} disabled={summaryDiagnosticsPending}>{summaryDiagnosticsPending ? '正在读取…' : '读取更早记录'}</button>}</section>}</details>}
+          {activeSummarySnapshot && <div className="run-card" aria-label="当前会话总结请求状态"><div><span>当前请求 · {summaryStageLabel(activeSummarySnapshot)}</span><strong>{summarySnapshotStale ? '状态暂时无法确认' : summaryRunStateLabel(activeSummarySnapshot)}</strong>{summarySnapshotStale && <span className="stale-status" role="status">上次确认状态：{summaryRunStateLabel(activeSummarySnapshot)}；正在重新读取。</span>}{!activeSummarySnapshot.diagnostics_available && <span className="stale-status" role="status">诊断记录不可用</span>}<span>已用时 {Math.floor(activeSummarySnapshot.elapsed_ms / 1000)} 秒{activeSummarySnapshot.attempt > 0 ? ` · 第 ${activeSummarySnapshot.attempt} 次尝试` : ''}{activeSummarySnapshot.validated_chunk_count !== null ? ` · 已检查 ${activeSummarySnapshot.validated_chunk_count}/${activeSummarySnapshot.total_chunk_count} 部分内容` : ''}</span>{activeSummarySnapshot.retry && <span role="status">模型请求第 {activeSummarySnapshot.retry.request_attempt} 次 · {RETRY_REASON_LABELS[activeSummarySnapshot.retry.reason] || '服务响应异常'} · 等待 {Math.ceil(activeSummarySnapshot.retry.wait_ms / 1000)} 秒；可取消</span>}<span>{summaryActivityAgeLabel(activeSummarySnapshot.last_activity_age_ms)} · {summaryMemoryProgressLabel(activeSummarySnapshot.memory_state)}</span>{activeSummarySnapshot.state === 'failed' && <span className="error" role="alert">{activeSummarySnapshot.error_code === 'AGENT_OUTPUT_INVALID' ? outputFailureLabel(activeSummarySnapshot.output_validation) : errorCodeLabel(activeSummarySnapshot.error_code)}</span>}{summarySnapshotError && <span className="stale-status" role="status">{summarySnapshotError}</span>}</div><button type="button" onClick={() => void cancel()} disabled={cancelPending || activeSummarySnapshot.state === 'cancelling' || summaryRunTerminal(activeSummarySnapshot) || summaryTargetTerminal}>{cancelPending || activeSummarySnapshot.state === 'cancelling' ? '正在取消…' : '取消生成'}</button></div>}
+          {activeSummarySnapshot && <details className="diagnostics-panel" key={activeSummarySnapshot.request_id}><summary>助手运行诊断</summary><div className="diagnostics-actions"><button type="button" onClick={() => void loadSummaryDiagnostics()} disabled={summaryDiagnosticsPending}>{summaryDiagnosticsPending ? '正在读取…' : '查看诊断'}</button><button type="button" onClick={() => void exportSummaryDiagnostics(activeSummarySnapshot.request_id)}>导出诊断</button></div>{summaryDiagnosticsError && <p className="error" role="alert">{summaryDiagnosticsError}</p>}{activeSummaryDiagnostics && <section aria-label="诊断记录"><p role="status">{activeSummaryDiagnostics.available ? `已读取 ${activeSummaryDiagnostics.records.length} 条诊断记录` : '诊断记录不可用；以下仅显示已写入的记录'}</p><ol>{activeSummaryDiagnostics.records.map((record) => <li key={record.sequence}><span>+{record.elapsedMs ?? 0} ms</span><strong>{SUMMARY_DIAGNOSTIC_EVENT_LABELS[record.event] || '诊断事件'}</strong>{record.errorCode && <code>{record.errorCode}</code>}{record.outputValidation && <span>{record.outputValidation.field}：{record.outputValidation.reason}{record.outputValidation.actual !== null ? `（${record.outputValidation.actual}/${record.outputValidation.limit}）` : ''}</span>}{record.event === 'backoff' && record.metrics?.actual !== null && <span>第 {record.metrics.actual}/{record.metrics.limit} 次请求</span>}{record.budgetAxis && record.metrics?.actual !== null && <span>{record.budgetAxis}：{record.metrics.actual}/{record.metrics.limit} {record.metrics.unit}</span>}{!record.budgetAxis && ['bytes', 'count'].includes(record.metrics?.unit) && record.metrics.actual !== null && ['AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED', 'AGENT_QA_INPUT_LIMIT_EXCEEDED'].includes(record.errorCode) && <span>输入容量：{record.metrics.actual}/{record.metrics.limit} {record.metrics.unit === 'bytes' ? 'bytes' : '项'}</span>}</li>)}</ol>{activeSummaryDiagnostics.nextBeforeSequence !== null && <button type="button" onClick={() => void loadSummaryDiagnostics(activeSummaryDiagnostics.nextBeforeSequence)} disabled={summaryDiagnosticsPending}>{summaryDiagnosticsPending ? '正在读取…' : '读取更早记录'}</button>}</section>}</details>}
           </details>}
           {!activeSummarySnapshot && activeInteractionId && <details className="run-details" open={!['succeeded', 'failed', 'cancelled'].includes(String(state))}><summary>运行详情 · {stateLabel(state)}</summary><div className="run-card" aria-label="当前请求状态"><div><span>当前请求</span><strong>{detailStale && ['pending', 'running', 'cancelling'].includes(String(state || '')) ? '状态暂时无法确认' : stateLabel(state)}</strong>{detailStale && ['pending', 'running', 'cancelling'].includes(String(state || '')) && <span className="stale-status" role="status">上次确认状态：{stateLabel(state)}；正在重新读取。</span>}</div><button type="button" onClick={() => void cancel()} disabled={cancelPending || !['pending', 'running'].includes(state || '')}>{cancelPending ? '正在取消…' : '取消生成'}</button></div></details>}
           {detailError && <p className="error" role="alert">{detailError}</p>}
@@ -1554,7 +1571,8 @@ export function AgentView (): ReactElement {
           {!detail && !detailPending && !historyPending && !historyError && selectedScope && !activeSummarySnapshot && <p className="empty">所选内容还没有生成此类结果。</p>}
           {detail && <article className="result-card" aria-label="会话总结结果">
             <header><div><span>{recipeLabel(detail.recipe_id)}</span><strong>{detailStale && ['pending', 'running', 'cancelling'].includes(String(state || '')) ? '状态暂时无法确认' : stateLabel(detail.state)}</strong></div><small>{utcLabel(detail.terminal_at ? new Date(detail.terminal_at).toISOString() : null)}</small></header>
-            {detail.state === 'failed' && <p className="error" role="alert">{detailErrorLabel(detail.error_code, detail.recipe_id)}</p>}
+            {detail.state === 'failed' && <p className="error" role="alert">{detail.error_code === 'AGENT_OUTPUT_INVALID' ? outputFailureLabel(detail.output_validation || activeSummarySnapshot?.output_validation) : detailErrorLabel(detail.error_code, detail.recipe_id)}</p>}
+            {detail.summary_processing_mode === 'chunked' && <p role="status">本次先核对各段原文，再依据已核对的分块结果归并；最终节点核对分块结果。</p>}
             {detail.state === 'failed' && ['AGENT_PROVIDER_AUTH_FAILED', 'AGENT_REQUEST_INVALID'].includes(detail.error_code) &&
               <button type="button" className="secondary" onClick={openSettings}>{detail.error_code === 'AGENT_PROVIDER_AUTH_FAILED' ? '检查密钥' : '修改连接'}</button>}
             {detail.state === 'failed' && ['AGENT_PROVIDER_RATE_LIMITED', 'AGENT_PROVIDER_UNAVAILABLE', 'AGENT_PROVIDER_TIMEOUT'].includes(detail.error_code) && canRegenerate &&

@@ -1,6 +1,10 @@
 # Agent 分阶段推进计划
 
+2026-10-11 收尾登记：C/D/E 的 9/9、10/10、9/9 项实施记录已同步到 `agent-provider-exchange`、`agent-runtime-ownership`、`agent-operation-facade` 三份主 spec，并按本日归档。三片状态均保持**实现完成·尚未验收**；A 为 9/10、B 为 30/46，继续保留在途任务。归档路径、相同源码指纹的全量证据、J28-FILES 间歇失败与公网/实机范围见 [归档核对记录](validation/agent-refactor-closeout-2026-10-11.md)。以下日期段落保留各实施时点的事实。
+
 2026-09-29：A 的轻量修订已决定，其余切片保持原规划。此文件组织切片与依赖，不定义高于 semantic-contract.md 的要求，不构成实现或验收证据。本轮只写规划，既有在途工作不回滚、不勾选、不改写。
+
+2026-10-09 实施状态：A 为 9/10，B 为 30/46；C 为 9/9，D 为 10/10，E 为 9/9。任务勾选只表示各切片已记录的实施/验证范围，不等于联合验收。C/D/E 均保持**实现完成·尚未验收**；E 已将正式 main/preload/renderer 接入唯一产品操作服务，当前源码全量 Core 1214/1214、Integration 174/174、Evidence 248 项符合预期及 1 项按设计跳过。前两轮既有记忆文件恢复断言失败与未验证实机范围如实保留，见 [E 验证记录](validation/agent-operations-2026-10-09.md)。下文 2026-09-29 的推进顺序、容量与分工约束继续有效，实施起点叙述是当时的规划快照。
 
 ## 推进顺序
 
@@ -8,9 +12,9 @@
 |---|---|---|---|
 | A | [restore-deepseek-session-summary](../openspec/changes/restore-deepseek-session-summary/proposal.md) | 当前架构内修正 JSON/结果校验，以 256,000 token 上下文目标直接总结窗口内完整会话 | 短会话及 173,827 字节规模合成会话生成、保存、重开、取消及下一字幕会话；正式 Electron 和真实 DeepSeek 分别留证，SEM-F33/F38/F40、J25/J29/J30/J12 |
 | B | [fix-session-summary-lifecycle-and-long-input](../openspec/changes/fix-session-summary-lifecycle-and-long-input/tasks.md) 的 P2 | 接通超出单次窗口的完整输入规划、分块归并、覆盖与恢复 | J31-SIZE/COVERAGE/MERGE/BUDGET/RESOURCE/RECOVERY/COMPAT，加适用 J29/J30/J12 |
-| C | [separate-agent-provider-protocol](../openspec/changes/separate-agent-provider-protocol/proposal.md) | 提取厂商协议的一次模型交换，复用 A 的 JSON 适配 | 单次交换统一合同、错误/用量/工具声明；既有总结旅程不退化 |
-| D | [centralize-agent-runtime-loop](../openspec/changes/centralize-agent-runtime-loop/proposal.md) | runtime 统一循环、工具、预算、重试和取消 | 唯一生产循环，全部 recipe 与长输入节点复用，跨 attempt 预算不重置 |
-| E | [consolidate-agent-operations](../openspec/changes/consolidate-agent-operations/proposal.md) | UI 通过稳定操作与权威快照使用 Agent | 正式受理、查询、取消、继续、导出/诊断及跨进程恢复旅程 |
+| C | [separate-agent-provider-protocol](../openspec/changes/archive/2026-10-11-separate-agent-provider-protocol/proposal.md) | 提取厂商协议的一次模型交换，复用 A 的 JSON 适配 | 单次交换统一合同、错误/用量/工具声明；既有总结旅程不退化 |
+| D | [centralize-agent-runtime-loop](../openspec/changes/archive/2026-10-11-centralize-agent-runtime-loop/proposal.md) | runtime 统一循环、工具、预算、重试和取消 | 唯一生产循环，全部 recipe 与长输入节点复用，跨 attempt 预算不重置 |
+| E | [consolidate-agent-operations](../openspec/changes/archive/2026-10-11-consolidate-agent-operations/proposal.md) | UI 通过稳定操作与权威快照使用 Agent | 正式受理、查询、取消、继续、导出/诊断及跨进程恢复旅程 |
 
 优先 A → B，先恢复产品路径，再执行 C → D → E。C 的设计可独立评审；在 B 尚未取得验收证据时，不把架构重构作为推迟当前故障修复的前置条件。三个层是职责分工，不是多 Agent，也不意味着三个进程。
 

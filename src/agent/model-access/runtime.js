@@ -21,7 +21,7 @@ class ModelAccessRuntime {
     this.gateway = options.gateway
     this.vault = options.vault
     this.adapter = options.adapter || new OpenAiCompatibleAdapter()
-    if (!this.adapter || typeof this.adapter.run !== 'function') throw new TypeError('model loop adapter is required')
+    if (!this.adapter || typeof this.adapter.exchange !== 'function') throw new TypeError('model exchange adapter is required')
     this.onChanged = typeof options.onChanged === 'function' ? options.onChanged : () => {}
     this.tail = Promise.resolve()
     this.testControllers = new Map()
@@ -116,20 +116,26 @@ class ModelAccessRuntime {
       const capabilities = { ...model.capabilities, maxOutputTokens: Math.min(model.capabilities.maxOutputTokens, 256) }
       const requestStrategy = model.request_strategy || strategyForModel({ profileId: profile.profile_id, httpsOrigin: profile.https_origin, basePath: profile.base_path, modelId: model.modelId })
       if (!REQUEST_STRATEGIES.includes(requestStrategy)) return finish('invalid_request')
-      await this.vault.borrow(profile.credential_slot_id, profile.credential_persistence, profile.credential_generation,
-        (credential) => this.adapter.run({
+      const probe = await this.vault.borrow(profile.credential_slot_id, profile.credential_persistence, profile.credential_generation,
+        (credential) => this.adapter.exchange({
           connection: { httpsOrigin: profile.https_origin, basePath: profile.base_path },
           credential,
           resolvedModel: { modelId: model.modelId, capabilities },
           requestStrategy,
-          systemPrompt: 'Return a short JSON object confirming that this model endpoint is reachable.',
-          prompt: 'Reply with a JSON object containing only {"ok":true}.',
-          maxTurns: 1,
-          timeoutMs: 30 * 1000,
+          request: { schemaVersion: 1, messages: [
+            { role: 'system', content: 'Return a short JSON object confirming that this model endpoint is reachable.' },
+            { role: 'user', content: 'Reply with a JSON object containing only {"ok":true}.' }
+          ], tools: [], outputContract: { mode: 'json' }, limits: { maxOutputTokens: capabilities.maxOutputTokens,
+            maxRequestBytes: 512 * 1024, maxResponseBytes: 64 * 1024, timeoutMs: 30000,
+            inputByteLimit: null, inputLimitError: 'AGENT_BUDGET_EXCEEDED' } },
           signal: controller.signal,
           testMode: true
         }))
       if (record.state !== 'pending') return finish('cancelled')
+      try {
+        if (probe.finishReason !== 'stop' || probe.message.toolCalls.length !== 0 ||
+            JSON.stringify(JSON.parse(probe.message.content)) !== '{"ok":true}') throw new Error()
+      } catch { return finish('response_invalid') }
       let latest
       try { latest = await this.internal() } catch { return finish(record.state === 'pending' ? 'remote_unavailable' : 'cancelled') }
       if (record.state !== 'pending') return finish('cancelled')
@@ -247,58 +253,48 @@ class ModelAccessRuntime {
     }
   }
 
-  async runWithBinding (binding, request = {}) {
-    if (!binding || typeof binding !== 'object' || Array.isArray(binding) ||
-        typeof binding.profileId !== 'string' || typeof binding.credentialSlotId !== 'string' ||
-        typeof binding.httpsOrigin !== 'string' || typeof binding.basePath !== 'string' ||
-        typeof binding.modelId !== 'string') {
-      const error = new Error('Agent request is invalid')
-      error.code = 'AGENT_REQUEST_INVALID'
-      throw error
-    }
+  // Each outbound independently verifies credential governance and owns only
+  // the bounded single-exchange borrow.
+  async exchangeWithBinding (binding, { request, signal, onProgress } = {}) {
     const internal = await this.internal()
-    const profile = internal.profiles.find((item) => item?.profile_id === binding.profileId)
-    if (!profile) throw this.vault.bindingAuthFailure()
-    const safeRequest = request && typeof request === 'object' && !Array.isArray(request)
-      ? { ...request }
-      : {}
-    delete safeRequest.connection
-    delete safeRequest.credential
-    const requestStrategy = binding.requestStrategy || strategyForModel({ profileId: binding.profileId, httpsOrigin: binding.httpsOrigin, basePath: binding.basePath, modelId: binding.modelId })
+    const requestStrategy = binding.requestStrategy || strategyForModel({ profileId: binding.profileId,
+      httpsOrigin: binding.httpsOrigin, basePath: binding.basePath, modelId: binding.modelId })
     if (!REQUEST_STRATEGIES.includes(requestStrategy)) {
-      const error = new Error('Agent request is invalid')
-      error.code = 'AGENT_REQUEST_INVALID'
-      throw error
+      const error = new Error('Agent request is invalid'); error.code = 'AGENT_REQUEST_INVALID'; throw error
     }
-    const resolvedModel = { ...binding }
+    const resolvedModel = { ...freezeBinding(binding) }
     delete resolvedModel.requestStrategy
-    return this.vault.borrowForBinding(binding, internal.profiles, async (credential) => {
-      try {
-        return await this.adapter.run({
-          ...safeRequest,
+    try {
+      return await this.vault.borrowForBinding(binding, internal.profiles, (credential) =>
+        this.adapter.exchange({
+          request, signal, onProgress,
           connection: { httpsOrigin: binding.httpsOrigin, basePath: binding.basePath },
           credential,
           requestStrategy,
           resolvedModel: Object.freeze(resolvedModel)
-        })
-      } catch (error) {
-        if (error?.code === 'AGENT_PROVIDER_AUTH_FAILED' || error?.code === 'AUTH_REJECTED') {
-          try {
-            await this.invalidateCredential(binding.profileId, {
-              credentialSlotId: binding.credentialSlotId,
-              profileRevision: binding.profileRevision
-            })
-          } catch {}
-        }
-        throw error
+        }))
+    } catch (error) {
+      // The borrow has already settled and cleared before configuration I/O.
+      if (error?.code === 'AGENT_PROVIDER_AUTH_FAILED' || error?.code === 'AUTH_REJECTED') {
+        try {
+          await this.invalidateCredential(binding.profileId, {
+            credentialSlotId: binding.credentialSlotId,
+            profileRevision: binding.profileRevision
+          })
+        } catch {}
       }
-    })
+      throw error
+    }
   }
 
   createLoopAdapter (binding) {
     if (!binding || typeof binding !== 'object' || Array.isArray(binding)) throw new TypeError('binding is required')
     const frozenBinding = freezeBinding(binding)
-    return Object.freeze({ run: (request) => this.runWithBinding(frozenBinding, request) })
+    const requestStrategy = frozenBinding.requestStrategy || strategyForModel({ profileId: frozenBinding.profileId,
+      httpsOrigin: frozenBinding.httpsOrigin, basePath: frozenBinding.basePath, modelId: frozenBinding.modelId })
+    if (!REQUEST_STRATEGIES.includes(requestStrategy)) throw Object.assign(new Error('AGENT_REQUEST_INVALID'), { code: 'AGENT_REQUEST_INVALID' })
+    return Object.freeze({ binding: frozenBinding, requestStrategy,
+      exchange: (request) => this.exchangeWithBinding(frozenBinding, request) })
   }
 
   invalidateCredential (profileId, guard = null) {

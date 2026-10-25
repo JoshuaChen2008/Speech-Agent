@@ -255,9 +255,16 @@ class IntentRouteOrchestrator {
       const resolvedModel = await awaitWithCancellation(() => this.resolveModel(binding), input.signal)
       const loop = this.loopFactory ? await awaitWithCancellation(() => this.loopFactory(binding), input.signal) : this.loop
       if (!loop || typeof loop.agentLoop !== 'function') throw invalid('route loop is unavailable')
+      let requestSequence = 0
       const result = await awaitWithCancellation(() => loop.agentLoop({
         recipeId: 'intent.route', recipeVersion: '1', prompt: input.prompt,
         resolvedModel, signal: input.signal, budget: binding?.budget,
+        beforeRequest: async ({ turn }) => {
+          if (input.signal?.aborted) throw cancelledError()
+          if (typeof this.runs.reserveModelRequest !== 'function') throw Object.assign(new Error('AGENT_RUN_UNAVAILABLE'), { code: 'AGENT_RUN_UNAVAILABLE' })
+          return this.runs.reserveModelRequest({ routeRunId: routeRun.runId, requestSequence: ++requestSequence,
+            operationDigest: sha256Canonical({ recipeId: 'intent.route', recipeVersion: '1', input: input.prompt, turn }) })
+        },
         usageReporting: binding?.capabilities?.usageReporting !== false,
         onProgress: typeof input.onProgress === 'function'
           ? (event) => input.onProgress(Object.freeze({ type: event.type, runId: routeRun.runId }))
@@ -347,7 +354,7 @@ class IntentRouteOrchestrator {
     // New summary and question targets adopt their registered v2 window capacity;
     // other targets keep their frozen v1 interpretation.
     const recipeVersion = recipeId === 'qa.answer' && input.scope.kind === 'session' && input.transcriptVersion === 'raw'
-      ? this.questionRecipeVersion : ['summary.minutes', 'qa.answer'].includes(recipeId) ? '2' : '1'
+      ? this.questionRecipeVersion : recipeId === 'summary.minutes' && input.transcriptVersion === 'raw' ? '3' : ['summary.minutes', 'qa.answer'].includes(recipeId) ? '2' : '1'
     const runRequest = {
       runId, recipeId, recipeVersion, scope: input.scope,
       transcriptVersion: input.transcriptVersion, inputWatermark: input.inputWatermark,
