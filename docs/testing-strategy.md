@@ -57,6 +57,8 @@ J22/J24 另覆盖 queued `intent.route` 的真实 SQLite 请求预留、取消/�
 
 2026-10-24 J30-PROGRESS 修复登记（已决定；SEM-F28/F38/F40、SEM-T04）：扩展既有真实进度旅程，provider 限流产生短等待后再次产生超过 1000ms 的 Retry-After，经宿主→操作服务→SQLite→快照重读，验证等待阶段、短等待元数据清空及诊断次数；长等待中取消阻止下一次外发。保持短等待合同与非法元数据拒绝边界。诊断合同另覆盖无预算轴的 `backoff` 次数及失败模式：事件、阶段、错误类别、单位、上限与次数越界均拒绝。
 
+2026-10-25 J9-CI/J17/J19 西向拉伸前置条件修复登记（已决定；SEM-F20、SEM-T04）：产品壳旅程的西向拉伸手势此前固定加宽，而宽度上限被当前屏幕工作区封顶——保留宽几何（`windowGeometryRevision: 1` 且宽度超过屏幕工作区）在小屏托管 runner 上创建时即被钳到上限，加宽手势被钳制吸收产生零位移并以「manual window first pointer delta」超时失败。该手势从未在该 runner 尺寸下成功运行过，属旅程前置条件缺陷而非产品钳制缺陷。修复把手势方向改为按 `CAP_LIMITS` 与屏幕派生上限的余量自适应：有加宽余量仍走加宽，否则改走收窄；两个方向都无余量时显式失败。`CAP_LIMITS` 同步从 `main.js` 移入 `src/main/window-layout-contract.js` 单一来源。产品钳制语义不变；本机因无边框窗边框膨胀无法复现「恰好贴上限」状态，方向分支以本机假屏（收窄分支）与真屏（加宽分支）旅程验证，runner 端由远端 CI 复核。
+
 J22/J24 的工具失败路径分别覆盖原始参数 JSON 畸形、未授权名称及真实受控工具的参数 Schema 拒绝；均只有一次已预留请求、零后续执行和零部分产物，参数拒绝保留工具调用记录且不启动新 attempt。J24/J31 的恢复区分原生网络读取 TimeoutError 与 Loop 总期限耗尽。
 
 实际证据：完整 `npm test` 取得 core 1213/1213、integration 174/174；evidence 的 MIT 通知扩展名失败修正后，定向合同 19/19，完整 evidence 为 248 项符合预期、1 项按设计跳过、零失败。许可证路径调整未改生产 JavaScript/renderer，复用前述结果；原 `npm test` 退出 1 如实保留。Pi 0.84.1 的 Node/Electron 主进程/utility 资格、全部 21 recipe、长输入、串行审计、取消、失租、预留未知、跨 attempt 恢复、未知 usage 与旧绑定/导出取得确定性证据。命令、修正及实机边界见 [D 验证记录](validation/agent-loop-runtime-2026-10-09.md)。

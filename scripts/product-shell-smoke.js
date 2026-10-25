@@ -1192,6 +1192,18 @@ async function exerciseOverlayWindowInteractions ({ caption, toolbar, cursor }) 
     targetExpression: card,
     pointExpression: cardResizeWest
   })
+  // 西向拉伸默认加宽，但宽度上限被当前屏幕工作区封顶：保留宽几何在小屏上
+  // 已等于上限时加宽会被钳制吸收而零位移，此时改走收窄方向。
+  const westResizeWidth = caption.getBounds().width
+  const westResizeMaxW = Math.min(
+    windowLayoutContract.CAP_LIMITS.maxW,
+    screen.getDisplayMatching(caption.getBounds()).workAreaSize.width
+  )
+  const westWidenRoom = westResizeWidth + 12 <= westResizeMaxW
+  if (!westWidenRoom && westResizeWidth - 12 < windowLayoutContract.CAP_LIMITS.minW) {
+    throw new Error(`west resize gesture has no clamp headroom in either direction (width=${westResizeWidth}, maxW=${westResizeMaxW})`)
+  }
+  const westResizeSign = westWidenRoom ? -1 : 1
   await assertRendererGestureMoves({
     sourceWindow: caption,
     targetWindow: caption,
@@ -1199,8 +1211,8 @@ async function exerciseOverlayWindowInteractions ({ caption, toolbar, cursor }) 
     pointExpression: cardResizeWest,
     pointerId: 107,
     cursor,
-    armDelta: { x: -4, y: 0 },
-    delta: { x: -12, y: 0 },
+    armDelta: { x: 4 * westResizeSign, y: 0 },
+    delta: { x: 12 * westResizeSign, y: 0 },
     endType: 'pointerup'
   })
 

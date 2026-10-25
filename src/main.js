@@ -80,6 +80,7 @@ const { sha256Canonical } = require('./runtime/storage-worker/canonical-json')
 const { createMainEvidenceBridge } = require('./main/services/electron-exit-evidence')
 const { PowerSessionGuard } = require('./main/services/power-session-guard')
 const {
+  CAP_LIMITS,
   ToolbarLayoutState,
   WINDOW_LAYOUT,
   toolbarDockBoundsFor
@@ -181,7 +182,6 @@ const windowLayerController = new WindowLayerController({
 
 const CAP_W = 920
 const CAP_H = 190
-const CAP_LIMITS = Object.freeze({ minW: 480, maxW: 1600, minH: 140, maxH: 420 })
 const TB_W = WINDOW_LAYOUT.toolbarViewportWidth
 const TB_H = WINDOW_LAYOUT.toolbarViewportHeight
 const pendingPointerHitRefreshRoles = new Set()
