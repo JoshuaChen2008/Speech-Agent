@@ -85,6 +85,7 @@ async function main () {
     await until(() => evaluate(`Boolean(document.querySelector('[aria-label="确认记忆文件修改"]'))`), 'review missing')
     await click('确认本次修改')
     await until(async () => (await files({ type: 'list', after: null })).result.items.some(row => row.state === 'ready' && row.entry?.display_text === '外部修订合成正文'), 'confirmation not committed')
+    await until(() => evaluate(`document.querySelector('.memory-file-pane')?.getAttribute('aria-busy') === 'false'`), 'confirmation action pending')
     report.explicitConfirmation = true
     fixtureStage = 'copy-root'
     fs.copyFileSync(path.join(root, file.name), path.join(custom, file.name))

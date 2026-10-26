@@ -50,17 +50,26 @@ async function run () {
       const readingHeight = await evaluate("document.querySelector('.request-panel').getBoundingClientRect().height")
       await evaluate("document.querySelector('[aria-controls=agentHistory]').click()")
       await until(() => evaluate("!document.querySelector('.history-panel').hidden"))
-      const historyMetrics = await evaluate(`(() => {
+      const readHistoryMetrics = () => evaluate(`(() => {
         const panel = document.querySelector('.history-panel').getBoundingClientRect();
         const layout = document.querySelector('.agent-layout').getBoundingClientRect();
         return {
-          rightOverflow: panel.right - innerWidth,
+          rightOverflow: Math.round(panel.right * devicePixelRatio) - Math.round(innerWidth * devicePixelRatio),
+          pageOverflow: document.documentElement.scrollWidth - innerWidth,
           topDifference: panel.top - layout.top,
           readingHeightDifference: document.querySelector('.request-panel').getBoundingClientRect().height - ${readingHeight}
         };
       })()`)
-      assert.ok(historyMetrics.rightOverflow <= 0 && Math.abs(historyMetrics.topDifference) < 1 &&
-        Math.abs(historyMetrics.readingHeightDifference) < 1, `${theme}/${width}/${zoom}: history geometry ${JSON.stringify(historyMetrics)}`)
+      const historyMetrics = await readHistoryMetrics()
+      assert.ok(historyMetrics.rightOverflow <= 0 && historyMetrics.pageOverflow <= 0 &&
+        Math.abs(historyMetrics.topDifference) < 1 && Math.abs(historyMetrics.readingHeightDifference) < 1,
+        `${theme}/${width}/${zoom}: history geometry ${JSON.stringify(historyMetrics)}`)
+      await evaluate("document.querySelector('.history-panel').style.transform = 'translateX(1px)'")
+      try {
+        assert.ok((await readHistoryMetrics()).rightOverflow > 0, 'one CSS pixel of overflow must be detected')
+      } finally {
+        await evaluate("document.querySelector('.history-panel').style.removeProperty('transform')")
+      }
       await evaluate("document.querySelector('[aria-label=\"收起生成记录\"]').click()")
       await until(() => evaluate("document.querySelector('.history-panel').hidden"))
       const metrics = await evaluate(`(() => {
