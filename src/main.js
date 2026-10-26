@@ -71,8 +71,7 @@ const { registerSessionSummaryRunIpc } = require('./main/ipc/session-summary-run
 const agentRunUi = require('./agent/contracts/agent-run-ui')
 const sessionSummaryRunUi = require('./agent/contracts/session-summary-run-ui')
 const agentRunDiagnosticsUi = require('./agent/contracts/agent-run-diagnostics-ui')
-const { AgentRunService } = require('./agent/formal-run/agent-run-service')
-const { SessionSummaryRunService } = require('./agent/formal-run/session-summary-run-service')
+const { AgentOperationService } = require('./agent/formal-run/agent-operation-service')
 const { AgentInteractionSignalService } = require('./agent/formal-run/agent-interaction-signal-service')
 const { AgentInteractionExporter } = require('./agent/formal-run/agent-interaction-exporter')
 const { settleFormalAgentPrompt } = require('./agent/formal-run/settle-agent-prompt')
@@ -81,6 +80,7 @@ const { sha256Canonical } = require('./runtime/storage-worker/canonical-json')
 const { createMainEvidenceBridge } = require('./main/services/electron-exit-evidence')
 const { PowerSessionGuard } = require('./main/services/power-session-guard')
 const {
+  CAP_LIMITS,
   ToolbarLayoutState,
   WINDOW_LAYOUT,
   toolbarDockBoundsFor
@@ -156,8 +156,7 @@ let captionLockShortcutController = null
 let personalMemoryFileRuntime = null
 let embeddingAccessRuntime = null
 /** @type {null | import('./agent/model-access/remote-catalog-controller').RemoteModelCatalogPullController} */ let remoteModelCatalogController = null
-/** @type {null | AgentRunService} */ let formalAgentService = null
-/** @type {null | SessionSummaryRunService} */ let sessionSummaryRunService = null
+/** @type {null | AgentOperationService} */ let agentOperations = null
 /** @type {null | AgentInteractionSignalService} */ let formalAgentSignalService = null
 /** @type {null | { start: Function, stop: Function, wake: Function, cancel: Function }} */ let formalAgentScheduler = null
 /** @type {null | { submit: Function }} */ let formalRouteOrchestrator = null
@@ -183,7 +182,6 @@ const windowLayerController = new WindowLayerController({
 
 const CAP_W = 920
 const CAP_H = 190
-const CAP_LIMITS = Object.freeze({ minW: 480, maxW: 1600, minH: 140, maxH: 420 })
 const TB_W = WINDOW_LAYOUT.toolbarViewportWidth
 const TB_H = WINDOW_LAYOUT.toolbarViewportHeight
 const pendingPointerHitRefreshRoles = new Set()
@@ -469,12 +467,12 @@ registerAgentRunIpc({
   ipcMain,
   authorize: requireSender,
   service: {
-    async getScopes (request, context) { return formalAgentService ? formalAgentService.getScopes(request, context) : unavailableAgentScopes() },
-    async getEligibility (request, context) { return formalAgentService ? formalAgentService.getEligibility(request, context) : { contract_id: agentRunUi.CONTRACT_ID, contract_version: agentRunUi.CONTRACT_VERSION, ok: true, error: null, snapshot: { scope: request.scope, eligibility: 'provider_not_configured', next_action: null, revision: 0 } } },
-    async submit (request, context) { return formalAgentService ? formalAgentService.submit(request, context) : unavailableAgentCommand() },
+    async getScopes (request, context) { return agentOperations ? agentOperations.getScopes(request, context) : unavailableAgentScopes() },
+    async getEligibility (request, context) { return agentOperations ? agentOperations.getEligibility(request, context) : { contract_id: agentRunUi.CONTRACT_ID, contract_version: agentRunUi.CONTRACT_VERSION, ok: true, error: null, snapshot: { scope: request.scope, eligibility: 'provider_not_configured', next_action: null, revision: 0 } } },
+    async submit (request, context) { return agentOperations ? agentOperations.submit(request, context) : unavailableAgentCommand() },
     async cancel (request, context) {
-      if (!formalAgentService) return unavailableAgentCommand()
-      const response = await formalAgentService.cancel(request, context)
+      if (!agentOperations) return unavailableAgentCommand()
+      const response = await agentOperations.cancelInteraction(request, context)
       if (response?.ok && response.result?.state === 'cancelled' && formalAgentSignalService) {
         await formalAgentSignalService.recordPromptSignal({ interactionId: request.interaction_id })
       }
@@ -487,9 +485,9 @@ registerAgentRunIpc({
       }
       return response
     },
-    async getHistory (request, context) { return formalAgentService ? formalAgentService.getHistory(request, context) : { contract_id: agentRunUi.CONTRACT_ID, contract_version: agentRunUi.CONTRACT_VERSION, ok: true, error: null, result: { items: [], has_more: false, next_cursor: null } } },
-    async getInteraction (request, context) { return formalAgentService ? formalAgentService.getInteraction(request, context) : unavailableAgentCommand() },
-    async exportInteraction (request, context) { return formalAgentService ? formalAgentService.exportInteraction(request, context) : unavailableAgentCommand() },
+    async getHistory (request, context) { return agentOperations ? agentOperations.getHistory(request, context) : { contract_id: agentRunUi.CONTRACT_ID, contract_version: agentRunUi.CONTRACT_VERSION, ok: true, error: null, result: { items: [], has_more: false, next_cursor: null } } },
+    async getInteraction (request, context) { return agentOperations ? agentOperations.getInteraction(request, context) : unavailableAgentCommand() },
+    async exportInteraction (request, context) { return agentOperations ? agentOperations.exportInteraction(request, context) : unavailableAgentCommand() },
     async recordSignal (request, context) { return formalAgentSignalService ? formalAgentSignalService.recordSignal(request, context) : unavailableAgentCommand() }
   }
 })
@@ -518,13 +516,13 @@ registerSessionSummaryRunIpc({
   ipcMain,
   authorize: requireSender,
   service: {
-    async accept (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.accept(request, context) : unavailableSessionSummaryRunResponse() },
-    async get (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.get(request, context) : unavailableSessionSummaryRunResponse() },
-    async cancel (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.cancel(request, context) : unavailableSessionSummaryRunResponse() },
-    async resume (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.resume(request, context) : unavailableSessionSummaryRunResponse() },
-    async listRecoverable (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.listRecoverable(request, context) : unavailableSessionSummaryRunResponse() },
-    async getDiagnostics (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.getDiagnostics(request, context) : unavailableAgentRunDiagnosticsResponse() },
-    async exportDiagnostics (request, context) { return sessionSummaryRunService ? sessionSummaryRunService.exportDiagnostics(request, context) : unavailableAgentRunDiagnosticsResponse() }
+    async accept (request, context) { return agentOperations ? agentOperations.submit(request, context) : unavailableSessionSummaryRunResponse() },
+    async get (request, context) { return agentOperations ? agentOperations.getSnapshot(request, context) : unavailableSessionSummaryRunResponse() },
+    async cancel (request, context) { return agentOperations ? agentOperations.cancel(request, context) : unavailableSessionSummaryRunResponse() },
+    async resume (request, context) { return agentOperations ? agentOperations.resume(request, context) : unavailableSessionSummaryRunResponse() },
+    async listRecoverable (request, context) { return agentOperations ? agentOperations.listRecoverable(request, context) : unavailableSessionSummaryRunResponse() },
+    async getDiagnostics (request, context) { return agentOperations ? agentOperations.getDiagnostics(request, context) : unavailableAgentRunDiagnosticsResponse() },
+    async exportDiagnostics (request, context) { return agentOperations ? agentOperations.exportDiagnostics(request, context) : unavailableAgentRunDiagnosticsResponse() }
   }
 })
 
@@ -1505,7 +1503,7 @@ async function bootstrapApplication () {
     directory: path.join(userDataDir, 'logs', 'agent-run-diagnostics'),
     appVersion: app.getVersion(),
     onAvailabilityChanged: (status) => {
-      if (sessionSummaryRunService) void sessionSummaryRunService.setDiagnosticsAvailability(status.available)
+      if (agentOperations) void agentOperations.setDiagnosticsAvailability(status.available)
     }
   })
   recognitionSettings = new RecognitionSettings({ directory: path.join(userDataDir, 'recognition'), safeStorage,
@@ -1643,7 +1641,8 @@ async function bootstrapApplication () {
       runs: {
         create: (request) => gateway.createAgentRun(request),
         cancel: (request) => gateway.cancelAgentRun(request),
-        getInteraction: (request) => gateway.getAgentInteraction(request)
+        getInteraction: (request) => gateway.getAgentInteraction(request),
+        reserveModelRequest: (request) => gateway.reserveFormalAgentModelRequest(request)
       },
       modelAccess: modelAccessRuntime,
       interactions: {
@@ -1684,7 +1683,7 @@ async function bootstrapApplication () {
       personalContext: executionAdapter,
       modelAccess: modelAccessRuntime,
       promptProvider: (runId) => formalAgentPrompts.get(runId) || null,
-      onProgress: (event, signal) => sessionSummaryRunService?.recordProgress(event, signal),
+      onProgress: (event, signal) => agentOperations?.recordProgress(event, signal),
       onSettled: (runId, terminalReason, interactionId) => settleFormalAgentPrompt({
         promptStore: formalAgentPrompts,
         signalService: formalAgentSignalService,
@@ -1693,8 +1692,7 @@ async function bootstrapApplication () {
         interactionId
       }),
       onChanged: (event) => {
-        formalAgentService?.emitChanged()
-        if (event?.requestId) void sessionSummaryRunService?.notifyRunChanged(event)
+        void agentOperations?.notifyRunChanged(event)
       },
       interactions: {
         terminalize: (request, signal) => applicationRuntime.gateway.terminalizeAgentInteraction(request, signal),
@@ -1713,7 +1711,7 @@ async function bootstrapApplication () {
     console.error(`[agent.run] ${error instanceof Error ? error.message : 'AGENT_RUN_UNAVAILABLE'}`)
   }
   try {
-    formalAgentService = new AgentRunService({
+    agentOperations = new AgentOperationService({
       questionRecipeVersion: '5',
       storage: applicationRuntime.gateway,
       modelAccess: modelAccessRuntime,
@@ -1727,24 +1725,6 @@ async function bootstrapApplication () {
           ? dialog.showSaveDialog(ownerWindow, options)
           : dialog.showSaveDialog(options)
       }),
-      getOwnerWindow: (sender) => {
-        try { return sender ? BrowserWindow.fromWebContents(sender) : null } catch { return null }
-      },
-      onChanged: broadcastAgentRunChanged
-    })
-  } catch (error) {
-    formalAgentService = null
-    console.error(`[agent.run] ${error instanceof Error ? error.message : 'AGENT_RUN_UNAVAILABLE'}`)
-  }
-  try {
-    if (!formalAgentService) throw new Error('formal Agent service is unavailable')
-    sessionSummaryRunService = new SessionSummaryRunService({
-      storage: applicationRuntime.gateway,
-      runService: formalAgentService,
-      routeOrchestrator: formalRouteOrchestrator,
-      scheduler: formalAgentScheduler,
-      getConfig: () => config.get(),
-      promptStore: formalAgentPrompts,
       diagnostics: agentRunDiagnostics,
       showDiagnosticSaveDialog: (ownerWindow, options) => ownerWindow
         ? dialog.showSaveDialog(ownerWindow, options)
@@ -1752,14 +1732,15 @@ async function bootstrapApplication () {
       getOwnerWindow: (sender) => {
         try { return sender ? BrowserWindow.fromWebContents(sender) : null } catch { return null }
       },
-      onChanged: broadcastSessionSummaryRunChanged
+      onChanged: broadcastAgentRunChanged,
+      onRequestChanged: broadcastSessionSummaryRunChanged
     })
-    await sessionSummaryRunService.setDiagnosticsAvailability(agentRunDiagnostics.getStatus().available)
-    await sessionSummaryRunService.recoverAfterRestart()
+    await agentOperations.setDiagnosticsAvailability(agentRunDiagnostics.getStatus().available)
+    await agentOperations.recoverAfterRestart()
     formalAgentScheduler?.start()
   } catch {
-    sessionSummaryRunService = null
-    console.error('[agent.summary] AGENT_RUN_UNAVAILABLE')
+    agentOperations = null
+    console.error('[agent.operations] AGENT_RUN_UNAVAILABLE')
   }
   powerSessionGuard = new PowerSessionGuard({
     powerMonitor,
@@ -1825,7 +1806,7 @@ function beginQuitBarrier (event) {
       remoteModelCatalogController = null
     }
     formalRouteOrchestrator = null
-    formalAgentService = null
+    agentOperations = null
     if (modelAccessVault && !modelAccessClosed) {
       try { modelAccessVault.close() } catch {}
       modelAccessVault = null

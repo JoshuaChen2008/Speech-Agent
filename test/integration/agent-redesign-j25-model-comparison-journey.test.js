@@ -1,4 +1,6 @@
 'use strict'
+const { createRecipeNetworkAdapter, providerResponse, toolRequest } = require('./provider-network-fixture')
+const { getRecipe } = require('../../src/agent/contracts/recipes')
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
@@ -116,33 +118,20 @@ test('SEM-F31/SEM-F33/J25: Agent Bar model switch creates immutable sibling bind
   const modelAccess = new ModelAccessRuntime({
     gateway,
     vault,
-    adapter: {
-      async run ({ resolvedModel, beforeRequest, onRequestUsage }) {
-        if (beforeRequest) await beforeRequest({ turn: 1 })
-        providerCalls.push({ profileId: resolvedModel.profileId, modelId: resolvedModel.modelId })
-        const isFirst = resolvedModel.modelId === 'model-a'
-        providerClock += isFirst ? 40 : 20
-        const usage = {
-          inputTokens: isFirst ? 100 : 80,
-          outputTokens: isFirst ? 20 : 10,
-          usageSource: 'provider',
-          cacheHitInputTokens: isFirst ? 40 : null,
-          cacheMissInputTokens: isFirst ? 60 : null
-        }
-        if (onRequestUsage) await onRequestUsage(usage)
-        return {
-          text: JSON.stringify({
-            schemaVersion: 2,
-            answer: `受控模型 ${resolvedModel.modelId} 的回答`,
-            claims: [{ text: `受控模型 ${resolvedModel.modelId} 的回答`, sourceRefs: [sourceRef], memoryRefs: [] }], coverage: null,
-            sourceRefs: [sourceRef],
-            memoryRefs: [],
-            unresolved: []
-          }),
-          usage
-        }
-      }
-    }
+    adapter: createRecipeNetworkAdapter(runId => {
+      const row = service.requireStore().database.prepare('SELECT recipe_id,recipe_version FROM formal_agent_runs WHERE run_id=?').get(runId)
+      return getRecipe(row.recipe_id, row.recipe_version)
+    }, async ({ resolvedModel }) => {
+      providerCalls.push({ profileId: resolvedModel.profileId, modelId: resolvedModel.modelId })
+      const isFirst = resolvedModel.modelId === 'model-a'
+      providerClock += isFirst ? 40 : 20
+      return providerResponse({
+        schemaVersion: 2, answer: `受控模型 ${resolvedModel.modelId} 的回答`,
+        claims: [{ text: `受控模型 ${resolvedModel.modelId} 的回答`, sourceRefs: [sourceRef], memoryRefs: [] }],
+        coverage: null, sourceRefs: [sourceRef], memoryRefs: [], unresolved: []
+      }, [], { prompt_tokens: isFirst ? 100 : 80, completion_tokens: isFirst ? 20 : 10,
+        ...(isFirst ? { prompt_cache_hit_tokens: 40, prompt_cache_miss_tokens: 60 } : {}) })
+    })
   })
   await modelAccess.initialize()
   await configure(modelAccess, { type: 'addModel', profileId: 'deepseek', modelId: 'model-a', capabilities: CAPABILITIES })

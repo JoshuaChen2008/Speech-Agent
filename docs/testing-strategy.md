@@ -1,5 +1,194 @@
 # 联合测试与 CI 策略
 
+## 2026-10-26 两项助手布局旅程的 CI 暂停（已决定）
+
+| 既有旅程 | 暂停范围与运行方式 | 证据边界 |
+|---|---|---|
+| J18/J22/J9-CI（SEM-F23、SEM-T03），系统设备缩放场景 | 用户决定暂时取消自动 CI 执行；`GITHUB_ACTIONS=true` 时显式 `skip` 并输出原因。本地仍由既有 `test:focus` 或 Integration 入口执行原场景。 | CI run `40303338698` 的1 CSS像素越界负例实际位移为0，原因未定位；跳过不计作该场景符合预期。 |
+| J18/J22/J9-CI（SEM-F23、SEM-T03），1.25设备缩放场景 | 同上；不增加重试或放宽原尺寸/排版断言。 | 同一run的520×420目标读回523×421 DIP，原尺寸等待超时；跳过不证明系统DPI或DWM行为。 |
+
+CI仍逐条运行Core/Integration/Evidence及其余Windows资格链，只有其余检查均符合要求时才生成并严格核验最终索引。自动结果和索引的验收范围排除这两个已登记暂停场景；字幕布局资格、产品壳与退出证据继续执行。恢复方式为移除该测试文件的GitHub Actions `skip`条件后重跑原旅程。暂停实现的验证结果见[布局观测与暂停记录](validation/ci-layout-observation-2026-10-26.md)。
+
+## 2026-10-26 布局旅程阶段观测登记（已决定）
+
+| 既有旅程 | 必须覆盖的故障与可观察结果 | 证据边界 |
+|---|---|---|
+| J18/J22/J9-CI（SEM-F14/F23、SEM-T03/T04） | 原期限内未取得窗口或尺寸回执时报告具体阶段及最后数值观测；负例报告注入前后实际边界、视口、缩放及滚动宽度，用同一真实 renderer 定位坐标变化。 | CI run `40288942420`（`a91ece0`）Integration 197/199：系统设备缩放负例未注入到位，1.25设备缩放通用就绪超时；本机原旅程2/2，尚未复现这两项原错误。不以其它缩放造成的工具条启动故障冒充原错误，无重试或判定放宽。 |
+
+诊断修订的定向检查为9/9；人工最大尺寸约束下仍严格拒绝，并输出具体阶段与最后几何。实际命令、用户截图边界及未定位范围见[布局失败观测记录](validation/ci-layout-observation-2026-10-26.md)。
+
+## 2026-10-26 打包态退出与运行时补丁登记（已决定）
+
+| 既有旅程 | 必须覆盖的故障与可观察结果 | 证据边界 |
+|---|---|---|
+| J19/J9-CI/B5（SEM-F12/F14/F18/F24、SEM-T03/T04/T12） | Electron `43.5.0` 固定运行时下，默认、`legacy-risk`、`current-risk` 三种几何均执行真实 ASAR 首启与同 userData 离线复启，产品报告、两次 exact-child 自然退出和同轮载荷绑定全部成立。原有 supervisor 异常退出负例继续拒绝。 | CI run `40275946577` 已观察 `legacy-risk` 内部 `pass` 后 main breakpoint；本地打包及最小 fetch/GC 探针未复现该异常，不冒充红绿证明。上游补丁纳入不等于本次 native stack 根因证明；无重试、休眠或退出容错。 |
+
+运行时依赖变更执行当前版本 renderer 检查、完整三条 lane、package layout 和上述打包双启动；新 revision 的远端 ASAR/NSIS 与最终索引仍由 Windows CI 验收，实机范围仍按 I2/I3/I4。实际失败、补丁依据、命令及未验收边界见[本轮退出记录](validation/ci-electron-exit-2026-10-26.md)。
+
+2026-10-26远端证据补充：CI run `40296045613`（PR head `02473ad`，merge checkout `c13bb82`）的三个几何档案各有产品壳、ASAR首启及同userData离线复启，九次exact-child退出均为 `clean-exit`、0 incident、breakpoint=false；实际Electron为43.5.0。既有严格读取器核对产品载荷、run身份、四份报告摘要及release/NSIS绑定；启动恢复与异常退出拒绝的定向检查为36/36、零失败。原生调用栈和唯一根因仍未知。Core为1220项符合预期及7项按设计跳过，Integration为196/199；两项布局细节按用户要求搁置，另一项J24-QA-LONG为终态等待超时，尚无崩溃证据。Evidence未执行且最终索引不存在，状态保持实现完成·尚未验收，不以九次正常退出替代完整J9-CI资格。
+
+## 2026-10-26 CI 布局负例与取消反馈登记（已决定）
+
+| 既有旅程 | 必须覆盖的故障与可观察结果 | 证据边界 |
+|---|---|---|
+| J18/J22（SEM-F23、SEM-T03/T04） | 真实 renderer 的1 CSS像素越界负例从当前几何推导并验证注入到位；设备缩放与窗口边距不能让负例留在视口内。 | 原有深浅主题、尺寸、缩放矩阵及像素栅格/滚动宽度断言不放宽。 |
+| J30-CANCEL/J30-ELECTRON（SEM-F38/F40、SEM-T04） | SQLite取消落库拒绝后，自动快照校准和手动刷新读回非终态仍显示取消尚未确认；恢复写入后单次重发同一取消，权威终态收束提示，迟到结果拒绝。旧请求/代次的取消回执不得改写当前反馈。 | 正式 renderer/preload/main、执行宿主、存储worker与SQLite真实；只在既有隔离数据库故障边界拒绝写入，provider继续受控，不以重试或延时替代状态断言。 |
+| J21/J25（SEM-F41、SEM-T04） | 暂停记忆后重新开启前，同时核对开关已暂停且解除禁用，再执行单次真实点击。 | 保留生产设置状态及现有动作回执，不加重试或固定延时。 |
+
+CI run `40269246011`（`005410e`）的Core为1227/1227，Integration为196/198：布局负例未检出注入越界，正式设置旅程的取消未确认提示等待超时；产品壳、ASAR与NSIS机械旅程均符合预期。本轮为实现完成·尚未验收：原错误反馈、75/75定向回归、最终Core 1227/1227、Integration 199/199、Evidence 248项符合预期及1项按设计跳过已有记录，当前载荷I3重新生成并严格校验；新修订的远端资格仍待验收。见[布局与取消反馈修复记录](validation/ci-layout-cancellation-2026-10-26.md)。
+
+## 2026-10-26 当前 CI 阻塞与证据刷新登记（已决定）
+
+| 既有旅程 | 必须覆盖的故障与可观察结果 | 证据边界 |
+|---|---|---|
+| J9-CI/I3（SEM-F14、SEM-T03/T04） | 当前产品载荷与旧 I3 报告不一致时严格拒绝；生产 renderer 构建后，独立 UTC child 按3600段、100段批次重跑原生成器，取得实际指标、完整导出摘要和当前载荷身份，再执行受影响检查及当前 revision 的完整 Windows CI。 | 保留旧失败和新运行结果，不手改摘要、不放宽校验、不添加重试。I3 仍为非音频确定性预资格 `pass/partial`。 |
+| J18/J22（SEM-F23、SEM-T03/T04） | 两种主题与既有窗口尺寸/缩放矩阵内，水平边界先投影至同一设备像素栅格，页面滚动宽度仍不超过视口；同一 renderer 注入1px越界时必须检出，恢复后继续真实旅程。 | 修复前本机全量及定向均在125%缩放以0.000045776px浮点差异拒绝；不改变产品 CSS、不提高超时、不增加重试。 |
+| J22-QUALITY/J24-RETRIEVAL/J9-CI（SEM-F14/F42、SEM-T03） | 既有100条合成查询、固定fixture/policy与质量断言保持不变；每次运行耗时及质量指标写入`.artifacts/`，运行前后受跟踪历史报告字节一致。 | 修复前完整Integration两次均改写历史报告耗时；CI索引的干净工作树要求继续fail closed。 |
+
+CI run `40206893559` attempt 1 的 J28-FILES Electron 旅程在 `choose-root` 以 `FIXTURE_FAILED` 退出；attempt 2 同代码 Integration 为198/198，当前两项失败为 I3 的 `productPayloadSha256` 漂移。相邻 GPU 日志只构成环境相关性，不能证明 `choose-root` 根因。定向诊断在真实文件 Worker 的外部文件清理边界延迟下3/3复现同一错误，SQLite已经提交而renderer仍为`aria-busy=true`，选择按钮存在且禁用、目录对话框零次；等待现有动作回执后3/3符合预期。该机制与原错误一致，原远端异常细节已丢失，不能唯一归因该次事件。实施前本机 I3 定向检查为1项符合预期、2项因同一载荷漂移失败。
+
+| 既有旅程 | 必须覆盖的故障与可观察结果 | 证据边界 |
+|---|---|---|
+| J21/J28-FILES/DB7（SEM-F41、SEM-T03/T04） | 确认已提交而文件清理/renderer刷新未返回时，不点击仍禁用的目录选择；等待现有`aria-busy=false`后单次点击，验证选择、自选目录、治理携带、内容导出、MCP、表征模型配置及重启确认。 | 仅延迟外部文件系统清理，内部生产模块保持真实；不加测试重试，不用固定休眠代替就绪等待，不增加GPU规避。 |
+
+实现完成·尚未验收：原错误确定性红绿、当前I3重新生成、最终本地Core 1227/1227、Integration 198/198、Evidence 248项符合预期及1项按设计跳过均有记录；新修订Windows CI资格链仍待验收。实际命令、同类位置核查及未验收边界见[本轮修复记录](validation/ci-regression-2026-10-26.md)。
+
+## 2026-10-21 CI 与个人记忆文件恢复回归（已决定）
+
+| 既有旅程 | 必须覆盖的故障与可观察结果 | 证据边界 |
+|---|---|---|
+| J17/J19/J9-CI（SEM-F22、SEM-T03/T04） | 工具条 reload 后在既有期限内恢复当前代次轮廓；绘制调度停滞、重复调度、旧代次及窗口关闭不得遗留上报任务；默认与既有风险几何仍满足严格产品壳及退出绑定。 | 真实生产 renderer/preload/main；仅绘制/系统窗口调度边界受控，不能只提高超时或跳过断言。 |
+| J28-FILES/DB7（SEM-F41/F14、SEM-T04） | 已确认个人记忆存在时，尚未写入的新阶段操作中断并重开；恢复持有独占读句柄期间并行扫描仍使用实际字节，收束后保留原确认与索引；外部修订、撤销及迟到写入不恢复未授权内容。 | 真实临时文件、文件 Worker、SQLite 与治理实现；不放宽确认、来源或迁移 checksum。 |
+
+修复前后分别保留实际命令、结果与根因；阶段联合验收执行当前源码完整 core/integration/evidence，PR 再核对当前 revision 的 Windows 资格链。历史局部结果不替代本轮门禁。
+
+## 2026-10-11 会话总结容量与内容质量旅程登记（已决定）
+
+| 旅程 | 新增要求（SEM-F28/F33/F38/F39/F40、SEM-T04/T08） | 状态 |
+|---|---|---|
+| J31-SIZE/BUDGET/QUALITY/MERGE/COMPAT | 真实 planner/Loop/Model Access/SQLite 的三阶段、整场优先、候选额度冻结、连续归并、共享预算与唯一提交；字节减一/等于/加一、中文转义、较大 thinking、工具回传增长、未知 usage、后段失败/撤销/迟到输出零部分提交；v32→v33 幂等与旧解释。 | 联合验收完成，范围见同日记录 |
+| J29 | 新话题纪要与旧结果展示、当前选择不变、V4.1 Flash 建议确认、生成→保存→重读→导出；真实内部模块，只替代外部 provider/网络/系统边界。 | 联合验收完成，范围见同日记录 |
+| J30 | 十分钟阶段与协议期限、取消/重启明确继续、真实阶段恢复、尺寸实际值及上限、JSON/Schema/来源/协议/传输/超时分类、无思考持久化。 | 联合验收完成，范围见同日记录 |
+
+先 renderer 与定向旅程，再一次完整 core/integration/evidence。真实当前模型重跑失败会话及两组合成会话，核对话题回归、数字/日期、否定/撤销和待办归属；关键事实/修订/否定全部正确且无编造决定/负责人/期限。报告只留指标与摘要哈希；新预设未选择时真实云端思考为未验证，不提升实机验收状态。
+
+同日证据：[会话总结容量与内容质量验收记录](validation/session-summary-quality-2026-10-11.md)。当前代码完整三条 lane：core 1,223、integration 195、evidence 248，零失败及 1 项既有跳过；当前 DeepSeek 的原失败会话与两组合成会话已核查。新预设真实云端思考仍未验证。
+
+## 2026-10-11 C/D/E 主 spec 同步与归档核对（实现完成·尚未验收）
+
+关联 SEM-F14/F28/F31/F33/F38/F39/F40、SEM-T05/T15 与 J22/J24/J25/J29/J30/J31/J12。三个 change 的规划文件均为 done，任务分别为 9/9、10/10、9/9；同步主 spec、保留 delta 和实现/失败记录后归档，不新增旅程或提升验收状态。
+
+本次核对的 provider、凭据、模型测试、接口、唯一循环约束及真实 J25 旅程定向结果为 56/56、零失败。721 个源码与测试文件的指纹与 2026-10-09 E 全量记录一致，因此按 §2.1 复用其 Core 1214/1214、Integration 174/174、Evidence 248 项符合预期及 1 项按设计跳过的证据，纯文档同步不重复产品测试。实际命令、主 spec/归档校验与链接核对见 [归档核对记录](validation/agent-refactor-closeout-2026-10-11.md)。A/B 与完整 J31 保持原任务状态，J28-FILES 间歇失败及公网/实机范围继续保留。
+
+## 2026-10-09 Agent 产品操作收敛旅程登记（实现完成·尚未验收）
+
+`consolidate-agent-operations` 关联 SEM-F31/F33/F38/F40、SEM-F14，J22/J25/J29/J30/J12。实施前登记：真实 main/preload/renderer 组合唯一操作服务，保留现有版本化 IPC 与导出。
+
+| 旅程 | 必须覆盖的增量 |
+|---|---|
+| J22/J25/J29/J30-ACCEPT | 共用资格、冻结来源/记忆政策、持久受理与调度；同键重放、丢失回执及身份冲突；模型外发前持久身份成立。 |
+| J30-STATE/CANCEL/RECOVERY | 旧 generation 取消零副作用；合法取消信号先于落库，未知回执显示未确认；通知丢失/旧事件/窗口重开读取权威快照；重启后预设总结明确继续、自由问题重新输入，继续前零外发。 |
+| J12/J30-INDEPENDENCE/DIAG/J26 | Agent 缺席、非合作网络等待、取消及诊断写失败时，真实字幕会话/SQLite/历史和文本导出独立；诊断隐私负扫描及旧交互导出编码不变。 |
+
+内部操作服务、路由、接入层、Pi、调度、工具和 SQLite 使用真实实现，替身仅在网络、声卡、系统权限或受控 IPC 故障边界；当前源码的完整三条 lane 与实机范围分别记录。
+
+当前正式 main 只构造 `AgentOperationService`。J30 直接组合该服务并核验同键重放不重读资格/来源、旧 generation 取消零信号副作用；正式 Electron 两条旅程另覆盖提交回执丢失后同键重放、取消落库未知、窗口重开与请求状态卡片恢复、重启后同一总结运行明确继续以及自由问题重输。UI 回归覆盖旧 generation/revision 通知拒绝及快照轮询。J12/J30 的新增独立性证据从字幕提交边界开始，使用真实 recorder/gateway/SQLite/history；它不证明物理采集或 ASR。实际命令、全量失败记录与范围限制见 [E 验证记录](validation/agent-operations-2026-10-09.md)。
+
+## 2026-10-09 Agent Loop 所有权旅程登记（实现完成·尚未验收）
+
+`centralize-agent-runtime-loop` 关联 SEM-F28/F31/F33/F39/F40、SEM-T15。先以真实 Pi 0.84.1 验证 streamFn 请求前、工具 execute 前、shouldStopAfterTurn 轮次结束与 AbortSignal 取消映射，以及 Electron ESM 载入、串行工具和零隐式重试，然后切换生产入口。
+
+| 旅程 | 必须覆盖的增量 |
+|---|---|
+| J22/J24 | 全部 recipe 静态轮次/授权；同一真实 Pi 循环与 C exchange；串行工具顺序及 SQLite 审计；畸形/越权调用、两工具间取消、迟到成功和未知 usage。 |
+| J30-CANCEL/RECOVERY/PROGRESS | 持久预留未知时零外发；取消/失租/旧代次阻止新请求、工具及提交；agent-retry@2 的 Retry-After、抖动、可取消等待及总期限；旧 agent-retry@1/无标识恢复保持原解释；局部耗尽不由新 attempt 重放。 |
+| J31-BUDGET/MERGE/RECOVERY/COMPAT | 真实 scheduler/runner/模型接入/工具/SQLite 下所有已接线长输入节点共享冻结模型及累计账本；跨 attempt 耗尽、后段失败零部分纪要、用量未知、旧绑定/导出不变。 |
+
+阶段联合验收使用当前源码一次完整三条 lane；真实公网 provider、Win11 系统凭据、物理音源及适用实机边界另验。
+
+J22/J24 另覆盖 queued `intent.route` 的真实 SQLite 请求预留、取消/旧代次零外发；J30-PROGRESS 覆盖长 Retry-After 的阶段投影与短等待元数据清除。两者复用既有存储表，不改迁移 checksum。
+
+2026-10-24 J30-PROGRESS 修复登记（已决定；SEM-F28/F38/F40、SEM-T04）：扩展既有真实进度旅程，provider 限流产生短等待后再次产生超过 1000ms 的 Retry-After，经宿主→操作服务→SQLite→快照重读，验证等待阶段、短等待元数据清空及诊断次数；长等待中取消阻止下一次外发。保持短等待合同与非法元数据拒绝边界。诊断合同另覆盖无预算轴的 `backoff` 次数及失败模式：事件、阶段、错误类别、单位、上限与次数越界均拒绝。
+
+2026-10-25 J9-CI/J17/J19 西向拉伸前置条件修复登记（已决定；SEM-F20、SEM-T04）：产品壳旅程的西向拉伸手势此前固定加宽，而宽度上限被当前屏幕工作区封顶——保留宽几何（`windowGeometryRevision: 1` 且宽度超过屏幕工作区）在小屏托管 runner 上创建时即被钳到上限，加宽手势被钳制吸收产生零位移并以「manual window first pointer delta」超时失败。该手势从未在该 runner 尺寸下成功运行过，属旅程前置条件缺陷而非产品钳制缺陷。修复把手势方向改为按 `CAP_LIMITS` 与屏幕派生上限的余量自适应：有加宽余量仍走加宽，否则改走收窄；两个方向都无余量时显式失败。`CAP_LIMITS` 同步从 `main.js` 移入 `src/main/window-layout-contract.js` 单一来源。产品钳制语义不变；本机因无边框窗边框膨胀无法复现「恰好贴上限」状态，方向分支以本机假屏（收窄分支）与真屏（加宽分支）旅程验证，runner 端由远端 CI 复核。
+
+J22/J24 的工具失败路径分别覆盖原始参数 JSON 畸形、未授权名称及真实受控工具的参数 Schema 拒绝；均只有一次已预留请求、零后续执行和零部分产物，参数拒绝保留工具调用记录且不启动新 attempt。J24/J31 的恢复区分原生网络读取 TimeoutError 与 Loop 总期限耗尽。
+
+实际证据：完整 `npm test` 取得 core 1213/1213、integration 174/174；evidence 的 MIT 通知扩展名失败修正后，定向合同 19/19，完整 evidence 为 248 项符合预期、1 项按设计跳过、零失败。许可证路径调整未改生产 JavaScript/renderer，复用前述结果；原 `npm test` 退出 1 如实保留。Pi 0.84.1 的 Node/Electron 主进程/utility 资格、全部 21 recipe、长输入、串行审计、取消、失租、预留未知、跨 attempt 恢复、未知 usage 与旧绑定/导出取得确定性证据。命令、修正及实机边界见 [D 验证记录](validation/agent-loop-runtime-2026-10-09.md)。
+
+## 2026-10-09 Agent 模型 provider 单次交换旅程登记（实现完成·尚未验收）
+
+对应 SEM-F14/F28/F31/F33/F40 与 `separate-agent-provider-protocol`；保持既有 J 编号，不以合同单测代替产品旅程。A/B 仍为实现完成·尚未验收，C 实施前的受影响基线命令 `npm run test:focus -- test/main/model-access-vault-runtime.test.js test/main/model-test-runtime.test.js test/integration/model-access-s2-core-journey.test.js test/integration/session-summary-budget-recovery-journey.test.js` 结果为 50/50，外部 provider/网络与系统凭据受控，不证明公网或实机。
+
+J25 协议 fixture 保留厂商可空 `tool_calls` 的既有无工具解释，拒绝其它非数组值；J22/J24 的真实问答工具旅程在 ToolHost 创建工具调用记录前观察借用副本已清零。
+
+J24-QA-LONG 的跨 attempt 恢复通过网络读取边界原生 TimeoutError 驱动，禁止由网络替身直接指定产品错误码/重试标记；真实接入层、Loop、宿主及 SQLite 保留已知累计值和原绑定。真实请求期限另由 J25/J30 非合作网络计时回归覆盖。
+
+| 旅程 | 新增边界与失败路径 | 本次证据 |
+|---|---|---|
+| J25 | 真实接入层/vault/adapter：一次 exchange 最多一次外发、零工具执行/内部重试；工具 ID/顺序、结束原因、未知用量、旧策略字节；不支持严格 Schema 或能力不足零外发。 | 实现完成·尚未验收；版本化协议 fixture 和真实配置 IPC→SQLite 绑定→exchange→撤销旅程取得局部证据。 |
+| J25/J30 | 响应实际分块读取限额，缺失/虚假长度头、成功/错误响应超限；异常、非合作取消/期限、迟到返回均释放凭据；工具/退避期间借用已清零，两次交换之间撤销阻止下一外发。 | 实现完成·尚未验收；成功/限流/网络异常/取消/期限及鉴权配置清理前副本清零；真实 ToolHost 调用记录前与重试等待期间观察清零。 |
+| J29/J30/J31 | 既有总结、取消/恢复与长输入真实 SQLite 旅程复用新 exchange，保持完整覆盖、共享请求/用量账本、失败零部分产物、旧绑定解释和字幕独立性。 | 实现完成·尚未验收；完整 integration 166/166，包含正式 Electron 设置、Agent Bar 总结取消/诊断、应用重启后显式继续、J29 保存重读和 J31 分块归并。 |
+
+实际命令与结果：
+
+- `npm run verify:renderer` 返回 0；生产 renderer 类型检查与构建取得局部证据。
+- `npm run test:focus -- test/main/provider-exchange.test.js test/integration/model-access-s2-core-journey.test.js test/integration/session-question-window-journey.test.js` 为 28/28。
+- 修正后的 `npm test` 在同一生产源码下取得 core 1207/1207、integration 166/166；evidence 初次为 246 项、2 项失败、1 项按设计跳过，失败均是旧 I3 报告的 productPayloadSha256 漂移。此前发现的 Electron 虚拟响应 origin 与问答读取异常替身问题均已修正；鉴权清理前副本清零的新断言先出现 1/2，再由实现修正取得证据。
+- PowerShell `$env:TZ = 'UTC'; node scripts/i3-nonaudio-soak.js --report docs/validation/i3-nonaudio-results.json` 返回 0；3600 段/4000 事件，严格保留 gateStatus=partial。第一次未设 UTC 的生成导致固定导出摘要不匹配，按既有旅程条件重新生成；`node scripts/verify-i3-nonaudio-report.js docs/validation/i3-nonaudio-results.json` 返回 0。
+- 复用已验证构建，仅重跑受影响 evidence：`node --test --experimental-test-isolation=none 'test/gate-0b/**/*.test.js' 'test/gate-0c/**/*.test.js' 'test/validation/**/*.test.js'` 返回 0，248 项、1 项按设计跳过、零失败。报告修正未改变生产源码，复用前述 core/integration 结果；不将原 `npm test` 退出 1 改写为退出 0。
+- `openspec validate separate-agent-provider-protocol --strict --json` 与 `git diff --check` 返回 0。完整测试另刷新了个人记忆合成检索报告的四项计时值；自动审批拒绝还原该文件，理由是改动归属未被证明，故保留该差异。
+
+未验证范围：公网 DeepSeek/Qwen/generic 模型、真实 Win11 safeStorage、声卡/DWM、B5/I4、完整长输入资源/恢复实机矩阵。替身仅在 provider 网络和系统权限边界；I3 仍是虚拟非音频预资格。本次不提升 A/B、完整 J31 或 Agent Bar 产品链路的联合验收状态。
+
+
+## 2026-10-06 会话问答的字段与个人记忆引用说明旅程（实现完成·尚未验收）
+
+| 旅程 | 验证范围 |
+|---|---|
+| J22/J29/J30-DIAG，SEM-F31/F38/F40/T04 | 隔离合成会话的真实问答复现 `AGENT_OUTPUT_INVALID`，只记录拒绝原因与字段计数；输出说明展示全部必填根字段、`coverage:null`、完整的有依据逐结论结构和空个人记忆引用数组。省略字段、根及逐结论的 null/占位引用继续拒绝，来源身份校验及失败零部分保存不变；真实生成、保存和重读保留主题段落及来源。 |
+
+2026-10-06 定向证据：完整逐结论示例回归初次为0/1；说明调整后，contracts/输出诊断/正文组件/AgentView/样式守卫的focus为83/83，四条受影响integration文件为40/40。真实模型复核另发现一次根字段遗漏，进一步列出全部必填字段；最终contract复核10/10，renderer构建返回0。非法引用、缺少字段和失败零部分保存继续拒绝。详见[阅读呈现验证记录](validation/agent-reading-2026-10-05.md)。
+
+## 2026-10-06 阅读呈现的真实模型与窗口核对（实现完成·尚未验收）
+
+| 旅程 | 验证范围 |
+|---|---|
+| J29/J22/J30/J18，SEM-F31/F38/F40/T04 | 隔离 userData 中只创建合成会话，使用当前已配置的模型服务商；生产 main/preload/renderer、模型接入层、Loop、storage worker 与 SQLite 处理总结和问答。核对真实生成的结构、正文段落、来源、较晚修订与失败收束，并经 Computer Use 查看实际窗口。既有用户会话与个人记忆不进入样本，既有配置及数据库只读，凭据只在既有受信任连接内借用，报告只写指标与哈希。该范围不替代完整真实会话、B5/I4或发布验收。 |
+
+实际取得两类证据：确定性旅程覆盖生产renderer/preload与真实内部服务；真实网络探针覆盖正式请求服务、模型接入层、Loop、utility storage worker及SQLite，但没有从生产UI提交。最终说明的两轮真实DeepSeek生成均使用91段、18,127 bytes的同一合成会话，总结概要分别3/4段，问答分别6/7段且均含5个小标题；两项结果每轮保存后重读一致，并保留较晚日期修订。隔离数据已清理。新的Electron窗口访问授权两次超时，未取得Computer Use实机交互或视觉结论。新版目录按生产配置生成，351个运行时源文件逐字节一致，未执行完整三条lane、B5/I4或发布验收。
+
+## 2026-10-05 会话总结与会话问答阅读呈现旅程（实现完成·尚未验收）
+
+| 旅程 | 验证范围 |
+|---|---|
+| J29/J22，SEM-F31/F38/T04 | 真实模型接入层与请求服务生成、SQLite 保存并重读正文，生产 AgentView 呈现短段落、小标题、重点强调、行内代码、清单和独立来源；已有未分段长正文按完整句子分段，可见文字顺序不变，查看零模型调用。 |
+| J30/J18，SEM-F31/F38/T04 | 短文本和长句不强制切开，中文/英文/Unicode 内容与非 1 起始序号保留；模型 HTML、链接、图片只作文本。深浅主题、窄窗口、长词换行遵循共享 token 和 renderer 样式守卫；无内容栏目及来源入口保持既有行为。 |
+
+2026-10-05 定向证据：`npm run test:focus -- test/contracts/agent-recipes-contract.test.js test/ui/agent-result-text.test.js test/ui/agent-ui.test.js test/ui/renderer-style-guard.test.js` 为79/79；`npm run test:focus -- test/integration/personal-memory-question-journey.test.js test/integration/session-summary-j29-memory-journey.test.js test/integration/session-summary-budget-recovery-journey.test.js test/integration/session-question-window-journey.test.js` 为40/40。`npm run verify:renderer` 返回0。浏览器读取当时正文组件及共享样式的合成预览：14.85px字号、26.73px行高、14.85px段间距；1280px浅色及520px深浅主题均无横向溢出。当日独立程序按生产配置生成，351个运行时源文件与当时工作区逐字节一致，包括25个renderer文件，入口保持`src/main.js`。截至该轮未运行真实provider、新程序实机交互、完整三条lane或B5/I4；10月6日新增证据见上文。不提升联合验收或实机验收状态；详见[阅读呈现验证记录](validation/agent-reading-2026-10-05.md)。
+
+2026-10-05 实机诊断补充（SEM-F31/F38/F39/F40、J22/J29/J30-DIAG/J31）：Computer Use 的固定 JSON 模型连接测试取得真实响应；只读既有 SQLite 确认 173,466 bytes 事件序列曾经 3 叶块 / 4 节点生成并保存总结，近期 11,078 bytes 原始文本总结以及 171/799 bytes 原始文本问答在模型返回后均为 `AGENT_OUTPUT_INVALID`。两套既有程序包的正文 LF 校验均确定拒绝，当前修正源码接受；新修复未进入既有程序。详见[实机诊断记录](validation/session-ai-diagnosis-2026-10-05.md)。实际会话复现的外发授权尚待答复，此项不提升联合验收或实机验收状态。
+
+## 2026-10-05 会话总结与会话问答正文排版旅程（实现完成·尚未验收）
+
+| 旅程 | 验证范围 |
+|---|---|
+| J29/J31-COVERAGE/J31-MERGE，SEM-F38/F39 | 173,827 字节冻结会话经真实 storage worker、SQLite、Model Access、Loop、planner 及归并生成带段落的纪要；重读与导出保留正文，只有一个最终结果。中段失败、非法控制字符、结果超界继续零部分提交。 |
+| J22-QA-LONG/J30-DIAG，SEM-F31/F40/T04 | 超单请求窗口的问答分块/归并接受正文 LF/CR/TAB；正常排版不得记作 output_rejected；来源身份中的换行、NUL/其它控制字符、字段超长、无效 JSON、非法来源与截断响应仍失败并记录无正文原因。 |
+| J29/J22，SEM-F31/F38 | 生产 AgentView 按概要、结论、待办、风险及回答/待核对呈现段落、有序/无序清单，保留来源入口及负责人/期限提示；HTML 字符串仅作为文本，查看零模型调用。样式遵循共享 token 与 renderer 守卫。 |
+
+2026-10-05 局部证据：同一 60,000 字节合成输入的短正文被接受，带正常换行的正文在 summary plan 与 question evidence 两条执行路径均被拒绝为 `AGENT_OUTPUT_INVALID/control_character`；最小复现只需一个 LF。新增四条回归初次为 0/4。正文校验修复后，`npm run test:focus -- test/contracts/agent-recipes-contract.test.js test/contracts/agent-output-diagnostics.test.js test/contracts/agent-run-diagnostics-contract.test.js test/ui/agent-ui.test.js test/ui/renderer-style-guard.test.js test/runtime/summary-input-plan.test.js test/integration/session-summary-budget-recovery-journey.test.js test/integration/session-question-window-journey.test.js` 为 111/111；原 60,000 字节对照的四种组合均被接受。`npm run test:core` 为 1194/1194。其后段落 CSS 顺序修正及正式展示旅程由 `npm run test:focus -- test/integration/personal-memory-question-journey.test.js test/integration/session-summary-j29-memory-journey.test.js test/ui/agent-ui.test.js test/ui/renderer-style-guard.test.js` 验证为 82/82，覆盖真实 renderer/preload/main 服务、SQLite 的日期范围问答段落与清单、来源入口，以及实际组件 CSS 的段落间距。最终 `npm run verify:renderer` 返回 0，`git diff --check` 返回 0。
+
+本机既有诊断只确认历史输入拒绝的实际值 173,827 bytes、上限 15,000/111,808 bytes，以及近期 `AGENT_OUTPUT_INVALID`；旧记录无字段原因，不能把本次合成换行复现直接认定为所有真实模型失败的唯一原因。当前源码既有分块政策的 4 MiB 原始文本、8 MiB 事件序列、50,000 段与不可变模型绑定继续执法；173,827 字节真实内部模块旅程已验证带段落纪要的分块、归并、保存、重读与导出。未执行完整 integration/evidence lane、新安装包或真实 provider 实测，不宣称联合验收完成或实机验收完成。
+
+## 2026-10-04 模型结果校验诊断（已决定）
+
+| 旅程 | 验证范围 |
+|---|---|
+| J30-DIAG/J29/J31，SEM-F40/F38/F31/F14/T04 | 网络边界提供带非法控制字符、超长字段、无效 JSON、非法来源与协议终止的结果；真实 validator/执行宿主/请求服务/诊断文件保留闭集原因及计数，结果仍失败且无部分提交。正常排版字符按 2026-10-05 增量接受。查询与导出仅含允许字段，未知字段/原始错误拒绝，旧记录兼容；写入失败保持运行错误。定向验证不代替真实模型失败复现。 |
+
+2026-10-04 诊断增量为**实现完成·尚未验收**。`node --test test/contracts/agent-output-diagnostics.test.js` 首次为0/1，确认原错误未携带原因。实现后 `npm run test:focus -- test/contracts/agent-output-diagnostics.test.js test/contracts/agent-recipes-contract.test.js test/contracts/agent-run-diagnostics-contract.test.js test/main/agent-run-diagnostics.test.js test/runtime/formal-agent-run-runner.test.js test/main/model-access-vault-runtime.test.js test/runtime/session-summary-run-progress.test.js test/integration/session-summary-budget-recovery-journey.test.js test/ui/agent-ui.test.js` 为156/156；查询导出扩展初次断言错误地选择相同请求摘要的最早运行，改为核对最新拒绝记录后成立。补充来源越界/响应协议拒绝后，`npm run test:focus -- test/integration/session-summary-budget-recovery-journey.test.js` 为3/3。`npm run verify:renderer` 返回0；`npm run test:core` 为1192/1192。独立诊断程序目录由生产配置 `electron-builder --win dir --x64 --publish never` 生成，核对9个相关ASAR模块与工作区逐字节一致，生产入口保持 `src/main.js`；未替换用户运行中的旧程序。尚未取得诊断版真实模型失败记录，未执行完整Integration/Evidence、完整B5或I4，不宣称已经定位原先失败字段或修复模型结果。
+
 ## 2026-10-04 main 同步回归（实现完成·尚未验收）
 
 SEM-T03/T04、J9-CI/I3/J25/J28-FILES：规范检出的产品修订 `bc854c7` 完整 Core 为1188/1188；完整 Integration 为164/166，两项失败中正式 Electron 旅程隔离复测成立，个人记忆文件恢复断言重复失败；补跑完整 Evidence 为248项成立、1项明确跳过、0失败。I3 报告由原生成器重新绑定 LF 产品载荷，严格 verifier 返回0。实际命令、初次非零结果、检出字节变化与未验证范围见[同步回归记录](validation/main-sync-2026-10-04.md)。宣传素材未提交；本轮不提升产品联合验收或实机状态。
@@ -704,6 +893,10 @@ SEM-F12/F14/F21/F25：真实 provider/router/worker/coordinator/SQLite 旅程覆
 |---|---|---|
 | J18/J29/J30 | 正式 Agent renderer 默认隐藏生成记录，右侧展开/关闭/Esc 焦点返回；窄宽窗口、125% 缩放保持两栏完整高度。生成记录空列表/读取失败仍可关闭；已有会话范围隔离与分页继续验证。 | 已决定 |
 | J18 | 共享滚动条覆盖所有 renderer，生产布局旅程核对深浅主题计算样式及高对比回落；实机滚动条拖动、DPI 与可读性另验。 | 已决定 |
+
+2026-10-24 J18/J22 布局失败定位登记（已决定；SEM-F23/F28/F38、SEM-T04）：保留深浅主题、窄宽窗口及125%缩放矩阵，补充重复尺寸切换与有界几何失败信息；区分视口提交前的暂态与提交后的布局违例，固定延时不作为尺寸提交证据。倒置日期禁用、关闭区域、生成记录不压缩阅读高度及页面无溢出断言继续保留。相邻 J18/J25 设置输入控件的 100%/125%/150%/200% renderer 缩放循环及复位，须用既有有界等待核对 `innerWidth/innerHeight` 与内容尺寸/目标缩放一致，再执行原控件几何断言；同次 DOM 相对几何不能单独证明目标缩放已实际覆盖。
+
+2026-10-24 修复验证（SEM-F23/F28/F38/F40、SEM-T03/T04；J18/J22/J25/J30-PROGRESS/DIAG、I3）：状态为**实现完成·尚未验收**。Haiku 执行 `env -u ELECTRON_RUN_AS_NODE TZ=UTC npm test` 退出0，renderer类型检查及生产构建均执行；core1227/1227、integration198/198、evidence248项成功/1项跳过/0失败，共1674项，总墙钟270.562秒。唯一跳过为未请求的显式NLS native资格。该完整运行覆盖长Retry-After、backoff次数及布局等待修复；随后仅补J25相邻缩放等待，`env -u ELECTRON_RUN_AS_NODE TZ=UTC node --test --experimental-test-isolation=none test/integration/agent-redesign-j25-formal-settings-journey.test.js` 为2/2、退出0、27.966秒，未再次执行完整三条lane。长等待定向合同/服务/真实旅程为15/15；Agent布局原旅程修复后连续3次各1/1。I3按3600段/100批量刷新并严格校验退出0，保持 `pass/partial`，构建后产品载荷与11个源码来源摘要一致。没有真实公网provider、现场音频、系统DPI/DWM人工观察或两小时实机稳定性证据；结果不能分别冒充六个拆分候选树的验证。
 
 2026-10-04 定向验证（SEM-F23/F31/F38、SEM-T04、J18/J29/J30）：状态为**实现完成·尚未验收**。`npm run test:focus -- test/ui/agent-ui.test.js test/ui/renderer-style-guard.test.js` 为64/64，覆盖默认收起、展开、Esc/按钮收起、焦点返回、读取失败仍可收起及既有会话范围隔离。`npm run verify:renderer` 返回0。`npm run test:focus -- test/integration/agent-layout-journey.test.js` 在受限环境因Electron GPU子进程退出码-1073741515中止，不计产品断言结果；沙箱外同一隔离旅程为1/1，使用生产main/preload/renderer，验证深浅主题、520/720/1100宽度、125%缩放、右侧展开不压缩阅读高度及模拟高对比下滚动条回落。`git diff --check` 返回0。未运行完整三条lane、真实DPI/鼠标拖动及人工可读性验收，不提升J18/J29/J30整体状态。
 

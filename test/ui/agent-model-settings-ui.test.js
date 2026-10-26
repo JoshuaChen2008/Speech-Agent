@@ -222,6 +222,25 @@ test('SEM-F33/J25: 服务保存逐条回执，revision 冲突保留输入', asyn
   assert.match(document.querySelector('.agent-model-editor [role="alert"]').textContent, /连接未保存/)
 })
 
+test('SEM-F33/F39/J25/J31-COMPAT: 新增 Flash 预设独立标识版本且不自动切换当前模型', async t => {
+  const presets = assertGetPresetsResponse({ contractId: 'agent-model-presets-ui', contractVersion: '1.0.0', presets: publicPresetCatalog() })
+  const harness = await createHarness({ catalogResponses: [fixture(1)], presets })
+  t.after(() => harness.dispose())
+  const manage = document.querySelector('.agent-model-profiles')
+  await act(async () => click(manage.querySelector('summary')))
+  await act(async () => click(findButton(manage, '新增服务')))
+  const select = document.querySelector('#agent-preset')
+  assert.ok([...select.options].some(option => option.value === 'deepseek-openai@1'))
+  assert.ok([...select.options].some(option => option.value === 'deepseek-openai@2'))
+  await act(async () => { select.value = 'deepseek-openai@2'; select.dispatchEvent(new window.Event('change', { bubbles: true })) })
+  assert.equal(document.querySelector('#agent-model').value, 'deepseek-flash')
+  assert.match(document.body.textContent, /2026-10-11/)
+  assert.match(document.body.textContent, /思考 high/)
+  assert.equal(harness.configureCalls.length, 0)
+  await act(async () => click(findButton(document.querySelector('.agent-model-editor'), '取消')))
+  assert.match(document.querySelector('.agent-model-default-summary').textContent, /deepseek-v4-flash/)
+})
+
 test('SEM-F23/J18: 不可用时只显示读取资料错误与重试', async (t) => {
   const unavailable = { contractId: 'agent-model-ui', contractVersion: '1.0.0', ok: false,
     snapshot: null, error: { code: 'MODEL_ACCESS_UNAVAILABLE' } }

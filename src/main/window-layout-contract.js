@@ -8,6 +8,8 @@ const WINDOW_LAYOUT = Object.freeze({
   toolbarViewportHeight: 72
 })
 
+const CAP_LIMITS = Object.freeze({ minW: 480, maxW: 1600, minH: 140, maxH: 420 })
+
 const FALLBACK_OVERLAP_RECT = Object.freeze({
   top: 0,
   right: 0,
@@ -187,6 +189,7 @@ class ToolbarLayoutState {
 }
 
 module.exports = {
+  CAP_LIMITS,
   FALLBACK_OVERLAP_RECT,
   ToolbarLayoutState,
   WINDOW_LAYOUT,

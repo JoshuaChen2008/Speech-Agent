@@ -2,12 +2,13 @@
 
 const sessionSummary = require('./session-summary-run-ui')
 const { BUDGET_AXES } = require('./budget-axes')
+const { assertOutputValidation } = require('./output-validation')
 
 const DIAGNOSTIC_SCHEMA_VERSION = 1
 const DIAGNOSTIC_EVENTS = Object.freeze([
   'accepted', 'planning', 'planned', 'model_request_started', 'model_request_ended',
   'tool_started', 'tool_ended', 'backoff', 'cancel_requested', 'cancelled',
-  'budget_rejected', 'terminal', 'recovery'
+  'budget_rejected', 'terminal', 'recovery', 'output_rejected'
 ])
 const METRIC_UNITS = Object.freeze(['bytes', 'count', 'duration_ms'])
 const UNIT_BY_BUDGET_AXIS = Object.freeze({
@@ -67,7 +68,12 @@ function assertDiagnosticMetrics (metrics) {
 }
 
 function assertDiagnosticRecord (record) {
-  exactObject(record, RECORD_KEYS, 'diagnostic')
+  exactObject(record, Object.hasOwn(record, 'outputValidation') ? [...RECORD_KEYS, 'outputValidation'] : RECORD_KEYS, 'diagnostic')
+  if (Object.hasOwn(record, 'outputValidation')) {
+    assertOutputValidation(record.outputValidation)
+    if (record.event !== 'output_rejected' || record.errorCode !== 'AGENT_OUTPUT_INVALID') fail('diagnostic.outputValidation', 'requires output rejection')
+  }
+  if (record.event === 'output_rejected' && !Object.hasOwn(record, 'outputValidation')) fail('diagnostic.outputValidation', 'is required')
   if (record.schemaVersion !== DIAGNOSTIC_SCHEMA_VERSION) fail('diagnostic.schemaVersion', 'is unsupported')
   if (typeof record.appVersion !== 'string' || !APP_VERSION.test(record.appVersion)) fail('diagnostic.appVersion', 'is invalid')
   nullableDigest(record.requestDigest, 'diagnostic.requestDigest')
@@ -85,10 +91,16 @@ function assertDiagnosticRecord (record) {
     if (record.budgetAxis !== null && record.metrics.unit !== UNIT_BY_BUDGET_AXIS[record.budgetAxis]) {
       fail('diagnostic.metrics.unit', 'does not match the registered budget axis')
     }
-    if (record.budgetAxis === null && (record.event !== 'budget_rejected' ||
-        !['AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED', 'AGENT_QA_INPUT_LIMIT_EXCEEDED'].includes(record.errorCode) ||
-        !(record.metrics.unit === 'bytes' || (record.errorCode === 'AGENT_QA_INPUT_LIMIT_EXCEEDED' && record.metrics.unit === 'count')))) {
-      fail('diagnostic.budgetAxis', 'known metrics without an axis require a registered input-capacity preflight')
+    if (record.budgetAxis === null) {
+      const capacityPreflight = record.event === 'budget_rejected' &&
+        ['AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED', 'AGENT_QA_INPUT_LIMIT_EXCEEDED'].includes(record.errorCode) &&
+        (record.metrics.unit === 'bytes' || (record.errorCode === 'AGENT_QA_INPUT_LIMIT_EXCEEDED' && record.metrics.unit === 'count'))
+      const retryCount = record.event === 'backoff' && record.phase === 'retry_wait' &&
+        ['AGENT_PROVIDER_RATE_LIMITED', 'AGENT_PROVIDER_UNAVAILABLE', 'AGENT_PROVIDER_TIMEOUT'].includes(record.errorCode) &&
+        record.metrics.unit === 'count' && record.metrics.limit === 5 && record.metrics.actual >= 2 && record.metrics.actual <= 5
+      if (!capacityPreflight && !retryCount) {
+        fail('diagnostic.budgetAxis', 'known metrics without an axis require a registered input-capacity preflight or retry count')
+      }
     }
   }
   nullableDigest(record.modelBindingDigest, 'diagnostic.modelBindingDigest')

@@ -333,8 +333,9 @@ function buildExportSnapshot (detail, requestedInteractionId = null) {
     snapshot.memory_reference_count = summaryMemoryReferenceCount
   }
   if (detail.summaryInputPolicy !== undefined) {
-    if (detail.summaryInputPolicy !== 'summary-long-input@1' || item.recipeId !== 'summary.minutes' || item.recipeVersion !== '2') fail('invalid summary policy')
-    snapshot.schema_version = 3
+    const quality = detail.summaryInputPolicy === 'summary-quality@1'
+    if (detail.summaryInputPolicy !== (quality ? 'summary-quality@1' : 'summary-long-input@1') || item.recipeId !== 'summary.minutes' || item.recipeVersion !== (quality ? '3' : '2')) fail('invalid summary policy')
+    snapshot.schema_version = quality ? 7 : 3
     snapshot.summary_input_policy = detail.summaryInputPolicy
     snapshot.summary_input_plan = null
     if (detail.summaryPlan !== null) {
@@ -348,6 +349,37 @@ function buildExportSnapshot (detail, requestedInteractionId = null) {
       }
       snapshot.summary_input_plan = cloneCanonical(plan, 'summary plan')
     } else if (terminalReason === 'succeeded') fail('successful long summary has no plan')
+    if (quality) {
+      if (!require('../contracts/provider-exchange').REQUEST_STRATEGIES.includes(detail.binding.requestStrategy)) fail('invalid summary request strategy')
+      snapshot.model.request_strategy = detail.binding.requestStrategy
+      const q = detail.summaryQuality
+      if (q !== null) {
+        if (!q || Object.keys(q).sort().join(',') !== 'finalBytes,intermediateBytes,loopLimit,mode,policyVersion,requestLimit,requestLimitCount,stageOutputTokens' ||
+            q.policyVersion !== 'summary-quality@1' || !['whole', 'chunked'].includes(q.mode) ||
+            !require('../contracts/summary-quality').CANDIDATES.some(([i, f]) => i === q.intermediateBytes && f === q.finalBytes) ||
+            q.loopLimit !== detail.summaryPlan?.node_count * 3 || q.requestLimitCount !== detail.summaryPlan?.node_count * 9 ||
+            !Number.isSafeInteger(q.requestLimit) || q.requestLimit < 1 || q.requestLimit > 917504) fail('invalid frozen summary quality')
+        if (Object.keys(q.stageOutputTokens || {}).sort().join(',') !== 'drafting_minutes,organizing_topics,verifying_sources') fail('invalid summary stages')
+        for (const [stage, value] of Object.entries(q.stageOutputTokens)) if (!Number.isSafeInteger(value) || value < 1 || value > (stage === 'organizing_topics' ? 16384 : 65536)) fail('invalid summary quota')
+      } else if (terminalReason === 'succeeded') fail('successful summary has no frozen quota')
+      snapshot.summary_quality = cloneCanonical(q, 'summary quality')
+      const execution = detail.summaryExecution
+      snapshot.summary_execution = null
+      if (execution !== null && execution !== undefined) {
+        if (!q || !detail.summaryPlan) fail('summary execution has no frozen quota or plan')
+        if (Object.keys(execution).sort().join(',') !== 'loop_count,node_index,node_role,request_count,summary_stage,total_loop_count') fail('invalid summary execution fields')
+        for (const [key, max] of Object.entries({ loop_count: q.loopLimit, total_loop_count: 1152, request_count: q.requestLimitCount, node_index: detail.summaryPlan.node_count })) boundedInteger(execution[key], key, max)
+        if (execution.loop_count === 0 ? execution.summary_stage !== null || execution.node_role !== null || execution.node_index !== 0
+          : !require('../contracts/summary-quality').STAGES.includes(execution.summary_stage) || !['whole', 'leaf', 'merge'].includes(execution.node_role)) fail('invalid summary execution stage')
+        if (execution.total_loop_count < execution.loop_count || terminalReason === 'succeeded' &&
+          (execution.summary_stage !== 'verifying_sources' || execution.loop_count !== q.loopLimit)) fail('incomplete summary execution')
+        snapshot.summary_execution = cloneCanonical(execution, 'summary execution')
+      } else if (terminalReason === 'succeeded') fail('successful summary has no execution facts')
+      if (detail.outputValidation !== undefined) {
+        try { require('../contracts/output-validation').assertOutputValidation(detail.outputValidation) } catch { fail('invalid output validation') }
+        snapshot.output_validation = cloneCanonical(detail.outputValidation, 'output validation')
+      }
+    }
   }
   if (item.recipeId === 'qa.answer' && ['3', '4', '5'].includes(item.recipeVersion) && detail.questionInputPolicy === undefined) fail('question policy is missing')
   if (detail.questionInputPolicy !== undefined) {

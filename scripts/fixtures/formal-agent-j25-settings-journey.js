@@ -21,9 +21,10 @@ const inputProbe = { pending: false, rejected: false, failureCode: null, invalid
 const submitReceipts = []
 const runControlProbe = {
   cancelElapsedMs: null, cancelState: null, diagnosticsExportStatus: null, summaryAcceptResults: [],
-  summaryCancelCommandCount: 0,
+  summaryCancelCommandCount: 0, summarySnapshotReadCount: 0,
   dropChangedRequestId: null, droppedChangedCount: 0,
-  capacityRequestNotificationLossObserved: false
+  capacityRequestNotificationLossObserved: false,
+  dropNextAcceptance: false, droppedAcceptance: null, cancellationErrors: []
 }
 const originalIpcHandle = ipcMain.handle.bind(ipcMain)
 ipcMain.handle = (channel, handler) => originalIpcHandle(channel, async (...args) => {
@@ -61,6 +62,7 @@ ipcMain.handle = (channel, handler) => originalIpcHandle(channel, async (...args
     })
   }
   if (channel === 'session-summary-run:cancel') runControlProbe.summaryCancelCommandCount += 1
+  if (channel === 'session-summary-run:get') runControlProbe.summarySnapshotReadCount += 1
   if (channel === 'session-summary-run:accept' && response?.ok === true && response.result?.accepted === true) {
     const snapshot = response.result.snapshot
     if (snapshot.action === 'summary') runControlProbe.dropChangedRequestId = snapshot.request_id
@@ -73,9 +75,15 @@ ipcMain.handle = (channel, handler) => originalIpcHandle(channel, async (...args
   if (startedAt !== null) {
     runControlProbe.cancelElapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6
     runControlProbe.cancelState = response?.result?.snapshot?.state || null
+    if (response?.ok === false) runControlProbe.cancellationErrors.push(response.error?.next_action || null)
   }
   if (channel === 'session-summary-run:diagnostics-export') {
     runControlProbe.diagnosticsExportStatus = response?.ok === true ? response.result?.status || null : null
+  }
+  if (channel === 'session-summary-run:accept' && response?.ok === true && runControlProbe.dropNextAcceptance) {
+    runControlProbe.dropNextAcceptance = false
+    runControlProbe.droppedAcceptance = { requestId: response.result.snapshot.request_id }
+    throw new Error('synthetic IPC receipt loss after durable acceptance')
   }
   return response
 })
@@ -210,7 +218,7 @@ function providerServer () {
   let markSummaryRequested
   const state = {
     requestCount: 0, modelIds: [], requestShapes: [], credentialObserved: false, credentialExact: false,
-    holdNextSummary: false,
+    holdNextSummary: false, holdNextQuestion: false,
     heldSummarySockets: [],
     heldSummaryResponders: [],
     closeHeldSummary: () => {
@@ -245,6 +253,7 @@ function providerServer () {
         : null
       const isSummaryRequest = isRouteRequest && typeof userMessage === 'string' && userMessage.includes('生成会话总结')
       const summaryModelRequest = Array.isArray(body?.tools) && body.tools.length === 1 && typeof userMessage === 'string' && userMessage.includes('请基于这场已结束的会话生成会话总结')
+      const summaryStage = summaryModelRequest ? JSON.parse(userMessage).summaryPlan?.stage : null
       state.requestShapes.push({
         toolCount: Array.isArray(body?.tools) ? body.tools.length : null,
         messageCount: Array.isArray(body?.messages) ? body.messages.length : null,
@@ -252,7 +261,9 @@ function providerServer () {
         authorizationPresent: typeof request.headers.authorization === 'string' && request.headers.authorization.length > 0,
         authorizationExact: request.headers.authorization === 'Bearer j25-local-provider-secret'
       })
+      const holdQuestionResponse = !isRouteRequest && !summaryModelRequest && state.holdNextQuestion
       const holdSummaryResponse = summaryModelRequest && state.holdNextSummary
+      if (holdQuestionResponse) state.holdNextQuestion = false
       if (summaryModelRequest) {
         markSummaryRequested()
         if (holdSummaryResponse) state.holdNextSummary = false
@@ -260,7 +271,8 @@ function providerServer () {
       const content = isRouteRequest
         ? JSON.stringify({ recipeId: isSummaryRequest ? 'summary.minutes' : 'qa.answer', confidence: 0.9 })
         : summaryModelRequest
-          ? JSON.stringify({ schemaVersion: 1, overview: '受控恢复旅程结果。', conclusions: [], todos: [], risks: [] })
+          ? JSON.stringify(summaryStage === 'organizing_topics' ? { schemaVersion: 1, topics: [] }
+            : { schemaVersion: 2, overview: '受控恢复旅程结果。', topics: [], conclusions: [], todos: [], risks: [] })
         : JSON.stringify({
             schemaVersion: 2,
             answer: '受控 provider 返回的正式 Agent 结果。',
@@ -284,7 +296,7 @@ function providerServer () {
         response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(encoded) })
         response.end(encoded)
       }
-      if (holdSummaryResponse) {
+      if (holdSummaryResponse || holdQuestionResponse) {
         state.heldSummarySockets.push(request.socket)
         state.heldSummaryResponders.push(respond)
         return
@@ -299,6 +311,13 @@ function providerServer () {
 async function inspectInputAppearance (settings) {
   const wc = settings.webContents
   const evaluate = (source) => wc.executeJavaScript(source)
+  const setZoomAndWait = async (zoom) => {
+    wc.setZoomFactor(zoom)
+    await waitFor(() => {
+      const [width, height] = settings.getContentSize()
+      return evaluate(`Math.abs(innerWidth - ${width / zoom}) <= 1 && Math.abs(innerHeight - ${height / zoom}) <= 1`)
+    }, `input viewport at zoom ${zoom}`)
+  }
   wc.debugger.attach('1.3')
   try {
     await evaluate(`document.querySelector('.nav-item[data-pane="agentModel"]').click()`)
@@ -368,7 +387,7 @@ async function inspectInputAppearance (settings) {
     await wc.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] })
     let fits = true
     for (const zoom of [1, 1.25, 1.5, 2]) {
-      wc.setZoomFactor(zoom)
+      await setZoomAndWait(zoom)
       fits = fits && await evaluate(`(() => {
         const e = document.querySelector('${selector}')
         const value = e.value; e.value = 'long-model-'.repeat(80)
@@ -378,7 +397,7 @@ async function inspectInputAppearance (settings) {
         return fits
       })()`)
     }
-    wc.setZoomFactor(1)
+    await setZoomAndWait(1)
     await evaluate(`document.querySelector('.nav-item[data-pane="display"]').click()`)
     await evaluate(`(() => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
@@ -639,7 +658,10 @@ async function configureThroughSettings (settings, port) {
     processingToggle.click()
     const suspendDialog = await waitFor(() => contextSection()?.querySelector('[role="alertdialog"]'), 'suspend confirmation')
     clickText(suspendDialog, '确认')
-    await waitFor(() => document.querySelector('input[aria-label="添加和使用记忆"]')?.checked === false, 'memory processing suspended')
+    await waitFor(() => {
+      const toggle = document.querySelector('input[aria-label="添加和使用记忆"]')
+      return toggle?.checked === false && !toggle.disabled
+    }, 'memory processing suspended')
     const processingSuspended = document.querySelector('input[aria-label="添加和使用记忆"]')?.checked === false &&
       contextSection()?.textContent.includes('已暂停')
     document.querySelector('input[aria-label="添加和使用记忆"]')?.click()
@@ -1001,6 +1023,9 @@ async function runAgentBar (toolbar, providerState) {
   await toolbar.webContents.executeJavaScript('window.shell.openAgent(); true')
   agent = await waitFor(() => windowFor('/agent/index.html'), 'reopened Agent Bar window')
   await waitFor(async () => agent.webContents.executeJavaScript("document.readyState === 'complete'"), 'reopened Agent Bar renderer')
+  const reopenedProgressVisible = await waitFor(async () => agent.webContents.executeJavaScript(
+    "Boolean(document.querySelector('[aria-label=\"当前会话总结请求状态\"]')) && document.querySelector('[data-action=minutes]').disabled"
+  ), 'reopened running request progress and duplicate-submit guard')
   const windowCloseSnapshot = await agent.webContents.executeJavaScript(`(async () => {
     const response = await window.agentApi.getSessionSummaryRun({
       contract_id: 'speech-agent.session-summary-run.ui',
@@ -1105,7 +1130,7 @@ async function runAgentBar (toolbar, providerState) {
     ...feedback,
     ...ui,
     summaryCancelledWithinDeadline,
-    summaryWindowCloseDidNotCancel: windowCloseDidNotSendCancellation && windowCloseRequestStayedActive,
+    summaryWindowCloseDidNotCancel: windowCloseDidNotSendCancellation && windowCloseRequestStayedActive && reopenedProgressVisible,
     summaryWindowCloseRequestSucceeded: windowCloseTerminalSnapshot.state === 'succeeded',
     summaryHeldNoFalseProgress: heldSummaryNoFalseProgress,
     summaryTerminalNotificationDropped: runControlProbe.capacityRequestNotificationLossObserved,
@@ -1128,6 +1153,114 @@ async function runAgentBar (toolbar, providerState) {
     manualEligibilityRefresh: eligibilityProbe.count > readsBeforeManualRefresh,
     submitDisabledDuringEligibilityRefresh,
     eligibilityReadCount: eligibilityProbe.count
+  }
+}
+
+async function verifyOperationControls (agent, providerState) {
+  await selectSessionFunction(agent, '会话总结')
+  await agent.webContents.executeJavaScript(`(async () => {
+    const response = await window.agentApi.getScopes({
+      contract_id: 'speech-agent.agent-run.ui', contract_version: '1.0.0', limit: 50, cursor: null
+    })
+    const index = response.scopes.findIndex(item => item.scope.reference === 'session.j25.formal')
+    document.querySelectorAll('.scope-card')[index].click()
+    return true
+  })()`)
+  await waitFor(async () => agent.webContents.executeJavaScript(
+    "Boolean(document.querySelector('[data-action=minutes]') && !document.querySelector('[data-action=minutes]').disabled)"
+  ), 'operation summary eligibility')
+  const receiptsBefore = submitReceipts.length
+  const requestsBefore = providerState.requestShapes.length
+  providerState.holdNextSummary = true
+  runControlProbe.dropNextAcceptance = true
+  await agent.webContents.executeJavaScript("document.querySelector('[data-action=minutes]').click(); true")
+  await waitFor(() => runControlProbe.droppedAcceptance, 'durable receipt lost at IPC')
+  const unknownReceiptVisible = await waitFor(async () => agent.webContents.executeJavaScript(
+    "Boolean(document.querySelector('[aria-label=\"受理状态未确认\"]'))"
+  ), 'unknown acceptance renderer state')
+  await agent.webContents.executeJavaScript(`(() => {
+    const button = [...document.querySelectorAll('button')].find(item => item.textContent === '重试原请求')
+    if (!button) throw new Error('original-request retry action missing')
+    button.click()
+    return true
+  })()`)
+  await waitFor(() => submitReceipts.length >= receiptsBefore + 2, 'same-key replay receipt')
+  const receipts = submitReceipts.slice(receiptsBefore)
+  const sameRequestReplayed = receipts.length === 2 && receipts[0].requestId === receipts[1].requestId &&
+    receipts[0].generation === receipts[1].generation &&
+    receipts[0].requestId === runControlProbe.droppedAcceptance.requestId
+  await waitFor(() => providerState.requestShapes.slice(requestsBefore).some(item => item.summaryModelRequest),
+    'one held provider request after replay')
+  const singleModelRequest = providerState.requestShapes.slice(requestsBefore).filter(item => item.summaryModelRequest).length === 1
+  await waitFor(async () => agent.webContents.executeJavaScript(
+    "document.querySelector('.run-card button')?.textContent === '取消生成'"
+  ), 'operation cancellation action')
+
+  // A temporary SQLite constraint fails cancellation writes in the isolated
+  // database. Storage, its worker and IPC still execute their real paths.
+  const { DatabaseSync } = require('node:sqlite')
+  const blocker = new DatabaseSync(path.join(process.env.J25_FORMAL_USER_DATA, 'data', 'speech-agent.sqlite3'))
+  blocker.exec(`CREATE TRIGGER test_cancel_write_failure BEFORE UPDATE ON formal_agent_requests
+    WHEN NEW.state='cancelled' OR NEW.cancel_requested=1
+    BEGIN SELECT RAISE(ABORT, 'SYNTHETIC_CANCEL_WRITE_FAILED'); END`)
+  let unconfirmedCancellationVisible = false
+  let unconfirmedCancellationRetained = false
+  const cancelErrorsBefore = runControlProbe.cancellationErrors.length
+  try {
+    await agent.webContents.executeJavaScript("document.querySelector('.run-card button').click(); true")
+    await waitFor(() => runControlProbe.cancellationErrors.length > cancelErrorsBefore, 'SQLite cancellation write failure')
+    unconfirmedCancellationVisible = await waitFor(async () => agent.webContents.executeJavaScript(
+      "document.body.textContent.includes('取消状态尚未确认')"
+    ), 'unconfirmed cancellation renderer state')
+    if (runControlProbe.cancellationErrors.at(-1) !== 'verify_state') throw new Error('unknown cancellation did not request verification')
+    const snapshotReadsBefore = runControlProbe.summarySnapshotReadCount
+    await waitFor(() => runControlProbe.summarySnapshotReadCount > snapshotReadsBefore, 'automatic nonterminal cancellation refresh')
+    const eligibilityReadsBefore = eligibilityProbe.count
+    const manualSnapshotReadsBefore = runControlProbe.summarySnapshotReadCount
+    await waitFor(async () => agent.webContents.executeJavaScript(
+      "!document.querySelector('.scope-panel .panel-heading button').disabled"
+    ), 'manual cancellation refresh action')
+    await agent.webContents.executeJavaScript("document.querySelector('.scope-panel .panel-heading button').click(); true")
+    await waitFor(() => eligibilityProbe.count > eligibilityReadsBefore && runControlProbe.summarySnapshotReadCount > manualSnapshotReadsBefore,
+      'manual refresh after cancellation write failure')
+    await waitFor(async () => agent.webContents.executeJavaScript(
+      "!document.querySelector('.scope-panel .panel-heading button').disabled && document.querySelector('.eligibility')?.classList.contains('ready')"
+    ), 'nonterminal cancellation refresh receipt')
+    unconfirmedCancellationRetained = await agent.webContents.executeJavaScript(`(async () => {
+      const response = await window.agentApi.operations.getSnapshot({
+        contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+        request_id: ${JSON.stringify(receipts[0].requestId)}
+      })
+      return response?.ok === true && !['succeeded', 'failed', 'cancelled'].includes(response.result.snapshot.state) &&
+        response.result.snapshot.cancel_requested === false &&
+        document.querySelector('[aria-label="当前会话总结请求状态"]').textContent.includes('取消状态尚未确认')
+    })()`)
+    if (!unconfirmedCancellationRetained) throw new Error('nonterminal refresh cleared unconfirmed cancellation')
+  } finally {
+    blocker.exec('DROP TRIGGER test_cancel_write_failure')
+    blocker.close()
+  }
+  await waitFor(async () => agent.webContents.executeJavaScript(
+    "document.querySelector('.run-card button')?.textContent === '取消生成' && !document.querySelector('.run-card button').disabled"
+  ), 'cancellation retry after SQLite recovery')
+  await agent.webContents.executeJavaScript("document.querySelector('.run-card button').click(); true")
+  await waitFor(() => runControlProbe.cancelState === 'cancelled', 'confirmed cancellation after SQLite recovery')
+  const cancellationFeedbackCleared = await waitFor(async () => agent.webContents.executeJavaScript(`(() => {
+    const card = document.querySelector('[aria-label="当前会话总结请求状态"]')
+    return card?.querySelector('strong')?.textContent === '已取消' &&
+      !document.body.textContent.includes('取消状态尚未确认')
+  })()`), 'confirmed cancellation renderer state')
+  providerState.releaseHeldSummary()
+  const lateResultRejected = await agent.webContents.executeJavaScript(`(async () => {
+    const response = await window.agentApi.operations.getSnapshot({
+      contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+      request_id: ${JSON.stringify(receipts[0].requestId)}
+    })
+    return response?.ok === true && response.result.snapshot.state === 'cancelled'
+  })()`)
+  return {
+    unknownReceiptVisible, sameRequestReplayed, singleModelRequest,
+    unconfirmedCancellationVisible, unconfirmedCancellationRetained, cancellationFeedbackCleared, lateResultRejected
   }
 }
 
@@ -1165,7 +1298,23 @@ async function prepareRestartRecovery (toolbar, providerState) {
   const requestStayedActive = snapshot?.request_id === receipt.requestId &&
     !['succeeded', 'failed', 'cancelled'].includes(snapshot.state) && typeof snapshot.target_run_id === 'string'
   if (!requestStayedActive) throw new Error('restart preparation request was not durably active')
-  process.stdout.write(`${JSON.stringify({ schemaVersion: 1, phase: 'restart-pending', result: true, requestStayedActive, attempt: snapshot.attempt })}\n`)
+  providerState.holdNextQuestion = true
+  const question = await agent.webContents.executeJavaScript(`window.agentApi.operations.submit({
+    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+    scope: { kind: 'session', reference: 'session.j25.formal' }, action: 'question',
+    client_request_key: 'j30.restart.question-original', prompt: 'J30-ORIGINAL-QUESTION-NOT-PERSISTED'
+  })`)
+  if (question?.ok !== true) throw new Error('restart question was not accepted')
+  const questionStayedActive = await waitFor(async () => agent.webContents.executeJavaScript(`(async () => {
+    const response = await window.agentApi.operations.getSnapshot({
+      contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+      request_id: ${JSON.stringify(question.result.snapshot.request_id)}
+    })
+    const state = response?.result?.snapshot
+    return response?.ok === true && typeof state.target_run_id === 'string' &&
+      !['succeeded', 'failed', 'cancelled'].includes(state.state)
+  })()`), 'restart preparation question target')
+  process.stdout.write(`${JSON.stringify({ schemaVersion: 1, phase: 'restart-pending', result: true, requestStayedActive, questionStayedActive, attempt: snapshot.attempt })}\n`)
   providerState.closeHeldSummary()
 }
 
@@ -1248,6 +1397,7 @@ async function continueRestartRecovery (toolbar, providerState) {
   if (!recovered || recovered.state !== 'retry_wait' || recovered.resumeRequired !== true ||
       typeof recovered.targetRunId !== 'string') throw new Error('restarted summary was not held for explicit continuation')
   const providerRequestsBeforeContinue = providerState.requestShapes.filter((shape) => shape.summaryModelRequest).length
+  const requestsBeforeAnyUserAction = providerState.requestCount
   const explicitActionVisible = await agent.webContents.executeJavaScript(`(() => {
     const item = [...document.querySelectorAll('.recoverable-runs li')]
       .find((node) => node.textContent.includes('会话总结已暂停'))
@@ -1276,9 +1426,64 @@ async function continueRestartRecovery (toolbar, providerState) {
           attempt: snapshot.attempt, generation: snapshot.generation }
       : null
   })()`), 'restarted summary terminal state', 45000)
+  const lostQuestion = await agent.webContents.executeJavaScript(`(async () => {
+    const response = await window.agentApi.operations.listRecoverable({
+      contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0'
+    })
+    const question = response?.result?.requests?.find(item => item.snapshot.action === 'question')
+    return question ? {
+      requestId: question.snapshot.request_id, generation: question.snapshot.generation,
+      revision: question.snapshot.revision, state: question.snapshot.state,
+      resumeRequired: question.snapshot.resume_required
+    } : null
+  })()`)
+  if (!lostQuestion || lostQuestion.state !== 'failed' || !lostQuestion.resumeRequired) {
+    throw new Error('lost question did not require new input')
+  }
+  const rejectedQuestionResume = await agent.webContents.executeJavaScript(`window.agentApi.operations.resume({
+    contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+    request_id: ${JSON.stringify(lostQuestion.requestId)}, generation: ${lostQuestion.generation},
+    expected_revision: ${lostQuestion.revision}
+  })`)
+  const questionResumeRejected = rejectedQuestionResume?.ok === false
+  const questionInputPolicyVisible = await agent.webContents.executeJavaScript(`(() => {
+    const item = [...document.querySelectorAll('.recoverable-runs li')].find(node => node.textContent.includes('问题内容未保留'))
+    const button = item && [...item.querySelectorAll('button')].find(node => node.textContent === '重新输入问题')
+    if (!button) return false
+    button.click()
+    return !document.body.textContent.includes('J30-ORIGINAL-QUESTION-NOT-PERSISTED')
+  })()`)
+  await waitFor(async () => agent.webContents.executeJavaScript(
+    "Boolean(document.querySelector('#agentPrompt') && !document.querySelector('#agentPrompt').disabled)"
+  ), 'new question input after restart')
+  const newQuestionReceiptsBefore = submitReceipts.length
+  await agent.webContents.executeJavaScript(`(() => {
+    const field = document.querySelector('#agentPrompt')
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(field, '重新输入的问题：这场会的重要决定是什么？')
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    return true
+  })()`)
+  await waitFor(async () => agent.webContents.executeJavaScript(
+    "!document.querySelector('[data-action=qa]').disabled"
+  ), 'resubmitted question action')
+  await agent.webContents.executeJavaScript("document.querySelector('[data-action=qa]').click(); true")
+  const newQuestionReceipt = await waitFor(
+    () => submitReceipts.slice(newQuestionReceiptsBefore).find(item => item.recipeId === 'qa.answer'), 'new question durable receipt'
+  )
+  const questionResubmitted = await waitFor(async () => agent.webContents.executeJavaScript(`(async () => {
+    const response = await window.agentApi.operations.getSnapshot({
+      contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+      request_id: ${JSON.stringify(newQuestionReceipt.requestId)}
+    })
+    return response?.result?.snapshot?.state === 'succeeded' &&
+      response.result.snapshot.request_id !== ${JSON.stringify(lostQuestion.requestId)}
+  })()`), 'resubmitted question result')
   const result = {
     result: resumed.state === 'succeeded' && resumed.requestId === recovered.requestId &&
-      resumed.targetRunId === recovered.targetRunId && resumed.attempt > 1,
+      resumed.targetRunId === recovered.targetRunId && resumed.attempt > 1 && requestsBeforeAnyUserAction === 0 &&
+      questionResumeRejected && questionInputPolicyVisible && questionResubmitted,
+    noQuestionRequestBeforeUserAction: requestsBeforeAnyUserAction === 0,
+    questionResumeRejected, questionInputPolicyVisible, questionResubmitted,
     requestStayedRecoverableUntilUserAction: recovered.state === 'retry_wait' && recovered.resumeRequired,
     explicitContinuationVisible: explicitActionVisible,
     noProviderRequestBeforeContinue: providerRequestsBeforeContinue === 0,
@@ -1337,7 +1542,12 @@ async function main () {
     const rawUrl = typeof input === 'string' ? input : input?.url
     if (typeof rawUrl === 'string' && rawUrl.startsWith(localOrigin)) {
       const rewritten = rawUrl.replace(localOrigin, `http://127.0.0.1:${port}`)
-      return originalFetch(rewritten, init)
+      return originalFetch(rewritten, init).then(response => {
+        // The loopback HTTP server substitutes the trusted HTTPS origin at the
+        // network boundary. Keep its virtual response origin consistent too.
+        Object.defineProperty(response, 'url', { value: rawUrl })
+        return response
+      })
     }
     return originalFetch(input, init)
   }
@@ -1364,9 +1574,10 @@ async function main () {
     const nativePicker = await inspectNativePicker(settings)
     const inputAppearance = await inspectInputAppearance(settings)
     const runResult = await runAgentBar(toolbar, provider.state)
+    const operationControls = await verifyOperationControls(windowFor('/agent/index.html'), provider.state)
     const report = {
       schemaVersion: 1,
-      result: Object.values(inputAppearance).every(Boolean) && Object.values(settingsResult.inputsStyled).every(Boolean) && settingsResult.inputFailureRecovered &&
+      result: Object.values(operationControls).every(Boolean) && Object.values(inputAppearance).every(Boolean) && Object.values(settingsResult.inputsStyled).every(Boolean) && settingsResult.inputFailureRecovered &&
         settingsResult.uncredentialedFailureObserved &&
         settingsResult.failedRevisionUnchanged && settingsResult.failedChangedNotBroadcast &&
         nativePicker.opened && nativePicker.cancelValuePreserved && nativePicker.noChangeAfterCancel &&
@@ -1387,6 +1598,7 @@ async function main () {
         runResult.promptAbsent && runResult.credentialAbsent && runResult.providerRequestCount > 0 &&
         runResult.providerCredentialObserved && runResult.providerCredentialExact && runResult.providerModelIds.length > 0 && runResult.providerModelIds.every((modelId) => modelId === 'j25-local-model'),
       settingsPath: 'formal-settings-renderer-preload',
+      operationControls,
       inputAppearance,
       nativePicker,
       inputsStyled: settingsResult.inputsStyled,

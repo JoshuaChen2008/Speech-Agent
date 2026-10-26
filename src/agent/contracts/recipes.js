@@ -1,6 +1,7 @@
 'use strict'
 
 const { canonicalize, sha256Canonical } = require('../../runtime/storage-worker/canonical-json')
+const { outputInvalid } = require('./output-validation')
 
 const INVALID = 'AGENT_OUTPUT_INVALID'
 const REQUEST_INVALID = 'AGENT_REQUEST_INVALID'
@@ -37,6 +38,7 @@ const RECIPE_DEFINITIONS = [
   ['extract.items', ['selection', 'session'], 'information_extraction', 3, ['search_context'], 'ExtractItemsV1', 'interaction', null],
   ['summary.minutes', ['session'], 'summary', 3, ['search_context'], 'SummaryMinutesV1', 'artifact', 'meeting-minutes'],
   ['summary.minutes', ['session'], 'summary', 3, ['search_context'], 'SummaryMinutesV1', 'artifact', 'meeting-minutes', '2'],
+  ['summary.minutes', ['session'], 'summary', 3, ['search_context'], 'SummaryMinutesV2', 'artifact', 'meeting-minutes', '3'],
   ['report.analysis', ['selection', 'session', 'date_range', 'project'], 'analysis_planning', 6, ['search_context', 'read_sources'], 'ReportAnalysisV1', 'artifact', 'analysis-report'],
   ['plan.proposal', ['selection', 'session', 'date_range', 'project'], 'analysis_planning', 6, ['search_context', 'read_sources'], 'PlanProposalV1', 'artifact', 'planning-proposal'],
   ['text.enhance', ['session'], 'summary', 3, ['search_context'], 'TextEnhanceV1', 'artifact', 'enhanced-transcript'],
@@ -68,7 +70,11 @@ function codedError (code, message) {
   return error
 }
 
-function fail (message) { throw codedError(INVALID, message) }
+function fail (message) {
+  const error = codedError(INVALID, message)
+  error.outputValidation = outputInvalid('schema').outputValidation
+  throw error
+}
 function requestFail (message) { throw codedError(REQUEST_INVALID, message) }
 
 function plainObject (value, label = 'value') {
@@ -92,11 +98,18 @@ function exactRequest (value, keys, label = 'request') {
   }
 }
 
-function stringValue (value, maximum, label) {
-  if (typeof value !== 'string' || value.length === 0 || Array.from(value).length > maximum || /[\u0000-\u001f\u007f]/u.test(value)) {
-    fail(`${label} exceeds its bound`)
-  }
+function stringValue (value, maximum, label, allowLayout = false) {
+  if (typeof value !== 'string') throw outputInvalid('type', label)
+  if (value.length === 0) throw outputInvalid('empty', label)
+  const length = Array.from(value).length
+  if (length > maximum) throw outputInvalid('length', label, length, maximum)
+  const controls = allowLayout ? /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u : /[\u0000-\u001f\u007f]/u
+  if (controls.test(value)) throw outputInvalid('control_character', label)
   return value
+}
+
+function bodyText (value, maximum, label) {
+  return stringValue(value, maximum, label, true)
 }
 
 function nullableString (value, maximum, label) {
@@ -257,10 +270,10 @@ function assertIngestV2 (value, sourceKind) {
 
 function assertQaAnswer (value) {
   root(value, ['answer', 'sourceRefs', 'memoryRefs', 'unresolved'])
-  stringValue(value.answer, 4000, 'answer')
+  bodyText(value.answer, 4000, 'answer')
   refs(value.sourceRefs, 16, 'sourceRefs', assertSourceRef)
   refs(value.memoryRefs, 16, 'memoryRefs', assertMemoryRef)
-  boundedArray(value.unresolved, 5, 'unresolved').forEach((item) => stringValue(item, 300, 'unresolved item'))
+  boundedArray(value.unresolved, 5, 'unresolved').forEach((item) => bodyText(item, 300, 'unresolved item'))
   return checkCanonicalBytes(value, 'qa answer')
 }
 
@@ -289,7 +302,7 @@ function assertQaAnswerV2 (value) {
   assertQaAnswer({ schemaVersion: 1, answer: value.answer, sourceRefs: value.sourceRefs, memoryRefs: value.memoryRefs, unresolved: value.unresolved })
   boundedArray(value.claims, 30, 'claims').forEach(claim => {
     exact(claim, ['text', 'sourceRefs', 'memoryRefs'], 'claim')
-    stringValue(claim.text, 600, 'claim.text')
+    bodyText(claim.text, 600, 'claim.text')
     refs(claim.sourceRefs, 4, 'claim.sourceRefs', assertSourceRef)
     refs(claim.memoryRefs, 4, 'claim.memoryRefs', assertMemoryRef)
     if (claim.sourceRefs.length + claim.memoryRefs.length === 0) fail('claims require evidence')
@@ -326,25 +339,69 @@ function assertExtractItems (value) {
 
 function assertSummaryMinutes (value) {
   root(value, ['overview', 'conclusions', 'todos', 'risks'])
-  stringValue(value.overview, 2000, 'overview')
+  bodyText(value.overview, 2000, 'overview')
   boundedArray(value.conclusions, 30, 'conclusions').forEach((item) => {
     exact(item, ['text', 'sourceRefs'], 'conclusion')
-    stringValue(item.text, 300, 'conclusion.text')
+    bodyText(item.text, 300, 'conclusion.text')
     refs(item.sourceRefs, 4, 'conclusion.sourceRefs', assertSourceRef)
   })
   boundedArray(value.todos, 50, 'todos').forEach((item) => {
     exact(item, ['text', 'ownerHint', 'dueHint', 'sourceRefs'], 'todo')
-    stringValue(item.text, 300, 'todo.text')
+    bodyText(item.text, 300, 'todo.text')
     nullableString(item.ownerHint, 64, 'todo.ownerHint')
     nullableString(item.dueHint, 64, 'todo.dueHint')
     refs(item.sourceRefs, 4, 'todo.sourceRefs', assertSourceRef)
   })
   boundedArray(value.risks, 30, 'risks').forEach((item) => {
     exact(item, ['text', 'sourceRefs'], 'risk')
-    stringValue(item.text, 300, 'risk.text')
+    bodyText(item.text, 300, 'risk.text')
     refs(item.sourceRefs, 4, 'risk.sourceRefs', assertSourceRef)
   })
   return checkCanonicalBytes(value, 'minutes output')
+}
+
+function assertSummaryTopicIndex (value) {
+  root(value, ['topics'])
+  boundedArray(value.topics, 64, 'topics').forEach(topic => {
+    exact(topic, ['topicId', 'title', 'sourceRefs'], 'topic')
+    stringValue(topic.topicId, 64, 'topicId')
+    stringValue(topic.title, 120, 'topic.title')
+    refs(topic.sourceRefs, 8, 'sourceRefs', assertSourceRef)
+  })
+  noDuplicate(value.topics.map(topic => topic.topicId), 'topicId')
+  const size = Buffer.byteLength(canonicalize(value), 'utf8')
+  if (size > 128 * 1024) throw outputInvalid('output_size', 'output', size, 128 * 1024)
+  return value
+}
+
+function assertSummaryMinutesV2 (value) {
+  exact(value, ['schemaVersion', 'overview', 'topics', 'conclusions', 'todos', 'risks'])
+  if (value.schemaVersion !== 2) fail('schemaVersion is invalid')
+  bodyText(value.overview, 4000, 'overview')
+  boundedArray(value.topics, 64, 'topics').forEach(topic => {
+    exact(topic, ['topicId', 'title', 'text', 'sourceRefs'], 'topic')
+    stringValue(topic.topicId, 64, 'topicId')
+    stringValue(topic.title, 120, 'topic.title')
+    bodyText(topic.text, 6000, 'topic.text')
+    refs(topic.sourceRefs, 8, 'sourceRefs', assertSourceRef)
+  })
+  const identities = value.topics.map(topic => topic.topicId)
+  noDuplicate(identities, 'topicId')
+  for (const [field, maximum, itemName] of [['conclusions', 128, 'conclusion'], ['todos', 256, 'todo'], ['risks', 128, 'risk']]) {
+    boundedArray(value[field], maximum, field).forEach(item => {
+      exact(item, ['text', 'topicId', 'sourceRefs', ...(field === 'todos' ? ['ownerHint', 'dueHint'] : [])], itemName)
+      bodyText(item.text, 1200, `${itemName}.text`)
+      if (item.topicId !== null && !identities.includes(item.topicId)) fail('dangling topicId')
+      refs(item.sourceRefs, 8, 'sourceRefs', assertSourceRef)
+      if (field === 'todos') {
+        nullableString(item.ownerHint, 128, 'todo.ownerHint')
+        nullableString(item.dueHint, 128, 'todo.dueHint')
+      }
+    })
+  }
+  const size = Buffer.byteLength(canonicalize(value), 'utf8')
+  if (size > 256 * 1024) throw outputInvalid('output_size', 'output', size, 256 * 1024)
+  return value
 }
 
 function assertReportAnalysis (value) {
@@ -471,6 +528,7 @@ const OUTPUT_VALIDATORS = Object.freeze({
   QaAnswerV2: assertQaAnswerV2,
   ExtractItemsV1: assertExtractItems,
   SummaryMinutesV1: assertSummaryMinutes,
+  SummaryMinutesV2: assertSummaryMinutesV2,
   ReportAnalysisV1: assertReportAnalysis,
   PlanProposalV1: assertPlanProposal,
   TextEnhanceV1: assertTextEnhance,
@@ -522,6 +580,7 @@ module.exports = Object.freeze({
   assertMemoryRef,
   assertRecipeRequest,
   assertSourceRef,
+  assertSummaryTopicIndex,
   comparisonGroupId,
   getRecipe,
   validateRecipeOutput

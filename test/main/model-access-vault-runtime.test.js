@@ -9,7 +9,7 @@ const path = require('node:path')
 const { CredentialVault } = require('../../src/agent/model-access/credential-vault')
 const { ModelAccessRuntime } = require('../../src/agent/model-access/runtime')
 const { RemoteModelCatalogPullController } = require('../../src/agent/model-access/remote-catalog-controller')
-const { OpenAiCompatibleAdapter } = require('../../src/agent/model-access/openai-compatible-adapter')
+const { createNetworkAdapter, runAdapterLoop, runBoundLoop } = require('../integration/provider-network-fixture')
 const { deriveRecipeBudget, deriveSummaryMinutesV2RequestCapacity } = require('../../src/agent/contracts/budget-axes')
 const { sanitizedEnvironment } = require('../../src/agent/model-access/environment')
 
@@ -82,7 +82,7 @@ test('SEM-F33/J25: remote pull is transient, rejects redirect, and invalidates o
   const controller = new RemoteModelCatalogPullController({
     runtime: { configure: async () => ({ ok: true, revision: 5, error: null }) },
     gateway: { modelAccessCatalog: async () => internal }, vault: instance,
-    adapter: { listModels: async ({ credential }) => { copy = credential; return [{ modelId: 'deepseek-v4-flash', capabilitySuggestion: null }] } }
+    adapter: { exchange: async () => {}, listModels: async ({ credential }) => { copy = credential; return [{ modelId: 'deepseek-v4-flash', capabilitySuggestion: null }] } }
   })
   const result = await controller.pull({ profileId: 'deepseek', expectedRevision: 4 })
   assert.equal(result.status, 'success')
@@ -91,7 +91,7 @@ test('SEM-F33/J25: remote pull is transient, rejects redirect, and invalidates o
   const redirect = new RemoteModelCatalogPullController({
     runtime: { configure: async () => ({ ok: true, revision: 5, error: null }) },
     gateway: { modelAccessCatalog: async () => internal }, vault: instance,
-    adapter: { listModels: async () => { const error = new Error(); error.code = 'REDIRECT_REJECTED'; throw error } }
+    adapter: { exchange: async () => {}, listModels: async () => { const error = new Error(); error.code = 'REDIRECT_REJECTED'; throw error } }
   })
   assert.deepEqual(await redirect.pull({ profileId: 'deepseek', expectedRevision: 4 }), { status: 'redirect_rejected', suggestions: [] })
   let invalidated = null
@@ -99,7 +99,7 @@ test('SEM-F33/J25: remote pull is transient, rejects redirect, and invalidates o
     runtime: { invalidateCredential: async (profileId, guard) => { invalidated = { profileId, guard }; return true } },
     gateway: { modelAccessCatalog: async () => internal },
     vault: instance,
-    adapter: { listModels: async () => { const error = new Error(); error.code = 'AUTH_REJECTED'; throw error } }
+    adapter: { exchange: async () => {}, listModels: async () => { const error = new Error(); error.code = 'AUTH_REJECTED'; throw error } }
   })
   assert.equal((await auth.pull({ profileId: 'deepseek', expectedRevision: 4 })).status, 'credential_unavailable')
   assert.deepEqual(invalidated, { profileId: 'deepseek', guard: { credentialSlotId: slot, profileRevision: 1 } })
@@ -107,7 +107,7 @@ test('SEM-F33/J25: remote pull is transient, rejects redirect, and invalidates o
 
 test('SEM-F33/J25: OpenAI-compatible catalog uses the fixed safe-joined endpoint and rejects every redirect', async () => {
   const requests = []
-  const adapter = new OpenAiCompatibleAdapter({
+  const adapter = createNetworkAdapter({
     fetch: async (url, options) => {
       requests.push({ url, options })
       return { ok: true, status: 200, json: async () => ({ data: [{ id: 'model.one' }] }) }
@@ -122,7 +122,7 @@ test('SEM-F33/J25: OpenAI-compatible catalog uses the fixed safe-joined endpoint
   assert.equal(requests[0].options.headers.authorization, '')
 
   for (const status of [301, 302, 307, 308]) {
-    const redirect = new OpenAiCompatibleAdapter({ fetch: async () => ({ ok: false, status }) })
+    const redirect = createNetworkAdapter({ fetch: async () => ({ ok: false, status }) })
     await assert.rejects(redirect.listModels({
       connection: { httpsOrigin: 'https://example.test', basePath: '/' }, credential: Buffer.from('secret')
     }), (error) => error.code === 'REDIRECT_REJECTED')
@@ -134,7 +134,7 @@ test('SEM-F33/J25: remote catalog rejects declared and decoded responses above i
     connection: { httpsOrigin: 'https://example.test', basePath: '/' },
     credential: Buffer.from('secret')
   }
-  const declared = new OpenAiCompatibleAdapter({
+  const declared = createNetworkAdapter({
     fetch: async () => ({
       ok: true,
       status: 200,
@@ -144,7 +144,7 @@ test('SEM-F33/J25: remote catalog rejects declared and decoded responses above i
   })
   await assert.rejects(declared.listModels(request), /remote unavailable/)
 
-  const decoded = new OpenAiCompatibleAdapter({
+  const decoded = createNetworkAdapter({
     fetch: async () => ({
       ok: true,
       status: 200,
@@ -170,7 +170,7 @@ test('SEM-F33/J25: production loop adapter uses the frozen endpoint, normalizes 
       usage: { prompt_tokens: 21, completion_tokens: 5 }
     }
   ]
-  const adapter = new OpenAiCompatibleAdapter({
+  const adapter = createNetworkAdapter({
     fetch: async (url, options) => {
       requests.push({ url, options, authorization: options.headers.authorization, body: JSON.parse(options.body) })
       const payload = responses.shift()
@@ -179,7 +179,7 @@ test('SEM-F33/J25: production loop adapter uses the frozen endpoint, normalizes 
   })
   const calls = []
   const progress = []
-  const result = await adapter.run({
+  const result = await runAdapterLoop(adapter, {
     connection: { httpsOrigin: 'https://example.test:8443', basePath: '/v1' },
     credential: Buffer.from('bounded-secret'),
     resolvedModel: { modelId: 'model.one', capabilities: {
@@ -220,7 +220,7 @@ test('SEM-F33/J25: production loop adapter uses the frozen endpoint, normalizes 
 
 test('SEM-F39/J31-SIZE/J31-COMPAT: transport accepts only versioned summary prompts above 16 KiB', async () => {
   let sent = 0
-  const adapter = new OpenAiCompatibleAdapter({
+  const adapter = createNetworkAdapter({
     fetch: async () => {
       sent += 1
       return { ok: true, status: 200, headers: { get: () => null },
@@ -235,11 +235,11 @@ test('SEM-F39/J31-SIZE/J31-COMPAT: transport accepts only versioned summary prom
     } },
     prompt: '中'.repeat(6000)
   }
-  await assert.rejects(adapter.run({ ...request, recipe: { recipeId: 'summary.minutes', recipeVersion: '1' } }),
+  await assert.rejects(runAdapterLoop(adapter, { ...request, recipe: { recipeId: 'summary.minutes', recipeVersion: '1' } }),
     (error) => error.code === 'AGENT_REQUEST_INVALID')
   const v2Capabilities = { maxInputTokens: 64000, maxOutputTokens: 1024, supportsToolCalling: true, supportsStructuredOutput: true, usageReporting: false }
   const v2Budget = deriveRecipeBudget(v2Capabilities, 'summary.minutes', '2', 'user')
-  await adapter.run({
+  await runAdapterLoop(adapter, {
     ...request,
     recipe: { recipeId: 'summary.minutes', recipeVersion: '2' },
     resolvedModel: { modelId: 'model.one', capabilities: v2Capabilities, budget: v2Budget },
@@ -263,39 +263,42 @@ test('SEM-F33/J25: production loop adapter maps redirects, provider failures, ma
     [408, 'AGENT_PROVIDER_TIMEOUT'], [409, 'AGENT_PROVIDER_UNAVAILABLE'],
     [425, 'AGENT_PROVIDER_UNAVAILABLE'], [429, 'AGENT_PROVIDER_RATE_LIMITED'],
     [503, 'AGENT_PROVIDER_UNAVAILABLE'], [504, 'AGENT_PROVIDER_TIMEOUT']]) {
-    const adapter = new OpenAiCompatibleAdapter({ fetch: async () => ({ ok: false, status }) })
-    await assert.rejects(adapter.run(request), (error) => error.code === code)
+    const adapter = createNetworkAdapter({ fetch: async () => ({ ok: false, status }) })
+    await assert.rejects(runAdapterLoop(adapter, request), (error) => error.code === code)
   }
-  const malformed = new OpenAiCompatibleAdapter({
+  const malformed = createNetworkAdapter({
     fetch: async () => ({ ok: true, status: 200, text: async () => '{"choices":[{"finish_reason":"stop","message":{"content":null}}]}' })
   })
-  await assert.rejects(malformed.run(request), (error) => error.code === 'AGENT_OUTPUT_INVALID')
-  const bounded = new OpenAiCompatibleAdapter({
+  await assert.rejects(runAdapterLoop(malformed, request), (error) => error.code === 'AGENT_OUTPUT_INVALID')
+  const bounded = createNetworkAdapter({
     fetch: async () => ({ ok: true, status: 200, headers: { get: () => String(512 * 1024 + 1) }, text: async () => '{}' })
   })
-  await assert.rejects(bounded.run(request), (error) => error.code === 'AGENT_OUTPUT_INVALID')
+  await assert.rejects(runAdapterLoop(bounded, request), (error) => error.code === 'AGENT_OUTPUT_INVALID')
   const controller = new AbortController()
   controller.abort()
-  const cancelled = new OpenAiCompatibleAdapter({ fetch: async () => { throw new Error('must not fetch') } })
-  await assert.rejects(cancelled.run({ ...request, signal: controller.signal }), (error) => error.code === 'AGENT_CANCELLED')
+  const cancelled = createNetworkAdapter({ fetch: async () => { throw new Error('must not fetch') } })
+  await assert.rejects(runAdapterLoop(cancelled, { ...request, signal: controller.signal }), (error) => error.code === 'AGENT_CANCELLED')
 
-  const neverSettles = new OpenAiCompatibleAdapter({ fetch: async () => new Promise(() => {}) })
-  await assert.rejects(neverSettles.run({ ...request, timeoutMs: 20 }), (error) => error.code === 'AGENT_PROVIDER_TIMEOUT')
+  const neverSettles = createNetworkAdapter({ fetch: async () => new Promise(() => {}) })
+  await assert.rejects(runAdapterLoop(neverSettles, { ...request, timeoutMs: 20 }), (error) => error.code === 'AGENT_PROVIDER_TIMEOUT')
 
   const lateController = new AbortController()
   let rejectLateFetch
-  const lateReject = new OpenAiCompatibleAdapter({
-    fetch: async () => new Promise((resolve, reject) => { rejectLateFetch = reject })
+  let lateEntered
+  const enteredLateFetch = new Promise(resolve => { lateEntered = resolve })
+  const lateReject = createNetworkAdapter({
+    fetch: async () => new Promise((resolve, reject) => { rejectLateFetch = reject; lateEntered() })
   })
-  const latePending = lateReject.run({ ...request, signal: lateController.signal, timeoutMs: 1000 })
+  const latePending = runAdapterLoop(lateReject, { ...request, signal: lateController.signal, timeoutMs: 1000 })
+  await enteredLateFetch
   lateController.abort()
   await assert.rejects(latePending, (error) => error.code === 'AGENT_CANCELLED')
   rejectLateFetch(new Error('late fetch rejection'))
   await new Promise((resolve) => setImmediate(resolve))
 
   const failedProgress = []
-  const unavailable = new OpenAiCompatibleAdapter({ fetch: async () => { throw new Error('offline') } })
-  await assert.rejects(unavailable.run({ ...request, onProgress: (event) => failedProgress.push(event) }),
+  const unavailable = createNetworkAdapter({ fetch: async () => { throw new Error('offline') } })
+  await assert.rejects(runAdapterLoop(unavailable, { ...request, onProgress: (event) => failedProgress.push(event) }),
     (error) => error.code === 'AGENT_PROVIDER_UNAVAILABLE')
   assert.deepEqual(failedProgress, [
     { type: 'request_started', turn: 1 },
@@ -314,11 +317,11 @@ test('SEM-F38/J30-RECOVERY: one model operation retries transient responses at m
   let calls = 0
   const attempts = []
   const progress = []
-  const adapter = new OpenAiCompatibleAdapter({ fetch: async () => {
+  const adapter = createNetworkAdapter({ fetch: async () => {
     calls += 1
     return { status: 503, ok: false }
   } })
-  await assert.rejects(adapter.run({ ...request, beforeRequest: ({ requestAttempt }) => attempts.push(requestAttempt),
+  await assert.rejects(runAdapterLoop(adapter, { ...request, beforeRequest: ({ requestAttempt }) => { attempts.push(requestAttempt); return { reserved: true } },
     onProgress: (event) => progress.push(event) }),
     (error) => error.code === 'AGENT_PROVIDER_UNAVAILABLE' && error.retryExhausted === true)
   assert.equal(calls, 5)
@@ -330,19 +333,19 @@ test('SEM-F38/J30-RECOVERY: one model operation retries transient responses at m
   ])
 
   calls = 0
-  const invalid = new OpenAiCompatibleAdapter({ fetch: async () => { calls += 1; return { status: 400, ok: false } } })
-  await assert.rejects(invalid.run({ ...request, beforeRequest: () => {} }),
+  const invalid = createNetworkAdapter({ fetch: async () => { calls += 1; return { status: 400, ok: false } } })
+  await assert.rejects(runAdapterLoop(invalid, { ...request, beforeRequest: () => ({ reserved: true }) }),
     (error) => error.code === 'AGENT_REQUEST_INVALID' && error.retryable === false)
   assert.equal(calls, 1)
 
   calls = 0
-  const offline = new OpenAiCompatibleAdapter({ fetch: () => {
+  const offline = createNetworkAdapter({ fetch: () => {
     calls += 1
     const error = new Error('offline')
     error.code = 'ECONNRESET'
     throw error
   } })
-  await assert.rejects(offline.run({ ...request, beforeRequest: () => {} }),
+  await assert.rejects(runAdapterLoop(offline, { ...request, beforeRequest: () => ({ reserved: true }) }),
     (error) => error.code === 'AGENT_PROVIDER_UNAVAILABLE' && error.retryExhausted === true)
   assert.equal(calls, 5)
 })
@@ -356,20 +359,20 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: a durable request reservation gates provider
       maxOutputTokens: 1024, supportsToolCalling: false, supportsStructuredOutput: false, usageReporting: true
     } },
     prompt: 'prompt',
-    beforeRequest: async ({ turn }) => { order.push(`reserved:${turn}`) }
+    beforeRequest: async ({ turn }) => { order.push(`reserved:${turn}`); return { reserved: true } }
   }
-  const adapter = new OpenAiCompatibleAdapter({
+  const adapter = createNetworkAdapter({
     fetch: async () => {
       order.push('provider-egress')
       return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'ok' } }] }) }
     }
   })
-  await adapter.run(request)
+  await runAdapterLoop(adapter, request)
   assert.deepEqual(order, ['reserved:1', 'provider-egress'])
 
   let fetchCount = 0
-  const blocked = new OpenAiCompatibleAdapter({ fetch: async () => { fetchCount += 1 } })
-  await assert.rejects(blocked.run({
+  const blocked = createNetworkAdapter({ fetch: async () => { fetchCount += 1 } })
+  await assert.rejects(runAdapterLoop(blocked, {
     ...request,
     beforeRequest: async () => { throw Object.assign(new Error('reservation unavailable'), { code: 'AGENT_RUN_UNAVAILABLE' }) }
   }), (error) => error.code === 'AGENT_RUN_UNAVAILABLE')
@@ -391,10 +394,10 @@ test('SEM-F33/J25: formal auth rejection invalidates only the bound profile cred
       modelAccessCatalog: async () => internal,
       modelAccessConfigure: async ({ command }) => { configureCalls.push(command); return { revision: 7 } }
     },
-    adapter: { run: async () => { const error = new Error('rejected'); error.code = 'AGENT_PROVIDER_AUTH_FAILED'; throw error } }
+    adapter: { exchange: async () => { const error = new Error('rejected'); error.code = 'AGENT_PROVIDER_AUTH_FAILED'; throw error } }
   })
   await runtime.initialize()
-  await assert.rejects(runtime.runWithBinding({
+  await assert.rejects(runtime.exchangeWithBinding({
     runId: 'run.one', profileId: 'profile.one', credentialSlotId: slot,
     profileRevision: 1,
     httpsOrigin: 'https://example.test', basePath: '/v1', modelId: 'model.one'
@@ -419,10 +422,10 @@ test('SEM-F33/J25: delayed formal auth rejection does not clear a newer profile 
       modelAccessCatalog: async () => internal,
       modelAccessConfigure: async ({ command }) => { configureCalls.push(command); return { revision: 8 } }
     },
-    adapter: { run: async () => { const error = new Error('rejected'); error.code = 'AGENT_PROVIDER_AUTH_FAILED'; throw error } }
+    adapter: { exchange: async () => { const error = new Error('rejected'); error.code = 'AGENT_PROVIDER_AUTH_FAILED'; throw error } }
   })
   await runtime.initialize()
-  await assert.rejects(runtime.runWithBinding({
+  await assert.rejects(runtime.exchangeWithBinding({
     runId: 'run.one', profileId: 'profile.one', credentialSlotId: slot,
     profileRevision: 1, httpsOrigin: 'https://example.test', basePath: '/v1', modelId: 'model.one'
   }, { prompt: 'probe' }), (error) => error.code === 'AGENT_PROVIDER_AUTH_FAILED')
@@ -432,7 +435,7 @@ test('SEM-F33/J25: delayed formal auth rejection does not clear a newer profile 
 
 test('SEM-F36/J25: test and preset strategies add only their fixed provider fields', async () => {
   const bodies = []
-  const adapter = new OpenAiCompatibleAdapter({
+  const adapter = createNetworkAdapter({
     fetch: async (_url, options) => {
       bodies.push(JSON.parse(options.body))
       return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{"ok":true}' } }] }) }
@@ -444,23 +447,23 @@ test('SEM-F36/J25: test and preset strategies add only their fixed provider fiel
     resolvedModel: { modelId: 'model.one', capabilities: { maxOutputTokens: 256, supportsToolCalling: false, supportsStructuredOutput: false, usageReporting: true } },
     prompt: 'probe'
   }
-  await adapter.run({ ...base, requestStrategy: 'deepseek-openai@1', testMode: true })
-  await adapter.run({ ...base, requestStrategy: 'qwen-beijing@1', testMode: true })
-  await adapter.run({ ...base, requestStrategy: 'openai-compatible@1', testMode: true })
-  await assert.rejects(adapter.run({ ...base, requestStrategy: 'unknown-provider@1', testMode: true }), (error) => error.code === 'AGENT_REQUEST_INVALID')
+  await runAdapterLoop(adapter, { ...base, requestStrategy: 'deepseek-openai@1', testMode: true })
+  await runAdapterLoop(adapter, { ...base, requestStrategy: 'qwen-beijing@1', testMode: true })
+  await runAdapterLoop(adapter, { ...base, requestStrategy: 'openai-compatible@1', testMode: true })
+  await assert.rejects(runAdapterLoop(adapter, { ...base, requestStrategy: 'unknown-provider@1', testMode: true }), (error) => error.code === 'AGENT_REQUEST_INVALID')
   assert.deepEqual(bodies.map((body) => ({ thinking: body.thinking, enable_thinking: body.enable_thinking })), [
     { thinking: { type: 'disabled' }, enable_thinking: undefined },
     { thinking: undefined, enable_thinking: false },
     { thinking: undefined, enable_thinking: undefined }
   ])
-  const malformedTest = new OpenAiCompatibleAdapter({
+  const malformedTest = createNetworkAdapter({
     fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{"ok":false}' } }] }) })
   })
-  await assert.rejects(malformedTest.run({ ...base, testMode: true }), (error) => error.code === 'AGENT_OUTPUT_INVALID')
-  const extra = new OpenAiCompatibleAdapter({
+  await assert.rejects(runAdapterLoop(malformedTest, { ...base, testMode: true }), (error) => error.code === 'AGENT_OUTPUT_INVALID')
+  const extra = createNetworkAdapter({
     fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{"ok":true,"extra":1}' } }] }) })
   })
-  await assert.rejects(extra.run({ ...base, testMode: true }), (error) => error.code === 'AGENT_OUTPUT_INVALID')
+  await assert.rejects(runAdapterLoop(extra, { ...base, testMode: true }), (error) => error.code === 'AGENT_OUTPUT_INVALID')
 })
 
 test('SEM-F34/J24: production loop adapter bounds tool execution and propagates cancellation without waiting for a hanging tool', async () => {
@@ -483,22 +486,22 @@ test('SEM-F34/J24: production loop adapter bounds tool execution and propagates 
     prompt: 'prompt', tools: [{ name: 'search_context', execute: async () => new Promise(() => {}) }],
     maxTurns: 2, timeoutMs: 100
   }
-  const timeoutAdapter = new OpenAiCompatibleAdapter({ fetch: async () => toolResponse() })
+  const timeoutAdapter = createNetworkAdapter({ fetch: async () => toolResponse() })
   const toolTimeoutProgress = []
-  await assert.rejects(timeoutAdapter.run({ ...base, onProgress: (event) => toolTimeoutProgress.push(event) }),
+  await assert.rejects(runAdapterLoop(timeoutAdapter, { ...base, onProgress: (event) => toolTimeoutProgress.push(event) }),
     (error) => error.code === 'TOOL_TIMEOUT')
   assert.deepEqual(toolTimeoutProgress, [
     { type: 'request_started', turn: 1 },
     { type: 'response_received', turn: 1 }
   ])
   const controller = new AbortController()
-  const cancelAdapter = new OpenAiCompatibleAdapter({ fetch: async () => toolResponse() })
-  const pending = cancelAdapter.run({ ...base, signal: controller.signal })
+  const cancelAdapter = createNetworkAdapter({ fetch: async () => toolResponse() })
+  const pending = runAdapterLoop(cancelAdapter, { ...base, signal: controller.signal })
   setTimeout(() => controller.abort(), 10)
   await assert.rejects(pending, (error) => error.code === 'AGENT_CANCELLED')
 })
 
-test('SEM-F33/J25: model access owns loop execution and borrows only the binding credential slot', async (t) => {
+test('SEM-F33/J25: model access uses the frozen binding and releases credentials after each exchange', async (t) => {
   const { instance } = vault(t, true)
   const slot = 'slot.0123456789abcdef0123456789abcdef'
   const state = instance.set(slot, 'loop-secret')
@@ -509,15 +512,17 @@ test('SEM-F33/J25: model access owns loop execution and borrows only the binding
   let observed = null
   let borrowed = null
   let credentialText = null
+  const adapter = createNetworkAdapter({ fetch: async (url, options) => {
+    observed = { url, body: JSON.parse(options.body) }
+    credentialText = options.headers.authorization
+    return new Response('{"choices":[{"finish_reason":"stop","message":{"content":"{}"}}]}')
+  } })
+  const originalExchange = adapter.exchange.bind(adapter)
+  adapter.exchange = input => { borrowed = input.credential; return originalExchange(input) }
   const runtime = new ModelAccessRuntime({
     vault: instance,
     gateway: { modelAccessCatalog: async () => internal, modelAccessBind: async () => ({}) },
-    adapter: { run: async (request) => {
-      observed = request
-      borrowed = request.credential
-      credentialText = request.credential.toString()
-      return { text: '{}', usage: null }
-    } }
+    adapter
   })
   await runtime.initialize()
   const loop = runtime.createLoopAdapter({
@@ -525,14 +530,12 @@ test('SEM-F33/J25: model access owns loop execution and borrows only the binding
     httpsOrigin: 'https://frozen.example', basePath: '/v1', modelId: 'model.one',
     capabilities: { maxOutputTokens: 1024 }, budget: { toolTimeoutMs: 5000 }
   })
-  await loop.run({ prompt: 'bounded', connection: { httpsOrigin: 'https://attacker.example', basePath: '/' } })
-  assert.equal(observed.resolvedModel.modelId, 'model.one')
-  assert.equal(Object.isFrozen(observed.resolvedModel), true)
-  assert.equal(Object.isFrozen(observed.resolvedModel.capabilities), true)
-  assert.deepEqual(observed.connection, { httpsOrigin: 'https://frozen.example', basePath: '/v1' })
-  assert.equal(credentialText, 'loop-secret')
+  await runBoundLoop(runtime, loop.binding, { prompt: 'bounded', connection: { httpsOrigin: 'https://attacker.example', basePath: '/' } })
+  assert.equal(observed.body.model, 'model.one')
+  assert.equal(observed.url, 'https://frozen.example/v1/chat/completions')
+  assert.equal(credentialText, 'Bearer loop-secret')
   assert.equal(borrowed.every((byte) => byte === 0), true)
-  await assert.rejects(runtime.runWithBinding({
+  await assert.rejects(runtime.exchangeWithBinding({
     runId: 'run.one', profileId: 'profile.one', credentialSlotId: 'slot.abcdef0123456789abcdef0123456789',
     httpsOrigin: 'https://frozen.example', basePath: '/v1', modelId: 'model.one'
   }, {}), (error) => error.code === 'AGENT_PROVIDER_AUTH_FAILED')
@@ -941,14 +944,16 @@ test('SEM-F31/F33/J22-QA-WINDOW/J24-QA-BUDGET: real Agent Loop and adapter accep
   const { AgentLoopExecutor } = require('../../src/agent/execution-host/agent-loop')
   const scenario = qaScenario()
   const bodies = []
-  const adapter = new OpenAiCompatibleAdapter({
-    fetch: async (_url, options) => { bodies.push(JSON.parse(options.body)); return stopResponse('{"schemaVersion":1}') }
+  const adapter = createNetworkAdapter({
+    fetch: async (_url, options) => { bodies.push(JSON.parse(options.body)); return stopResponse('{"schemaVersion":1,"answer":"bounded","sourceRefs":[],"memoryRefs":[],"unresolved":[]}') }
   })
-  const loop = new AgentLoopExecutor({ adapter: { run: (request) => adapter.run({
-    ...request, connection: { httpsOrigin: 'https://example.test', basePath: '/v1' }, credential: Buffer.from('synthetic-qa-secret')
+  const binding = { modelId: 'qa-model', capabilities: scenario.capabilities, budget: scenario.budget }
+  const loop = new AgentLoopExecutor({ adapter: { exchange: (request) => adapter.exchange({
+    ...request, resolvedModel: binding, connection: { httpsOrigin: 'https://example.test', basePath: '/v1' }, credential: Buffer.from('synthetic-qa-secret')
   }) } })
   const prompt = '中'.repeat(6000) + 'a'.repeat(17000)
   await loop.agentLoop({ ...scenario.recipe, requestCapacity: scenario.requestCapacity,
+    beforeRequest: async () => ({ reserved: true }),
     resolvedModel: { modelId: 'qa-model', capabilities: scenario.capabilities, budget: scenario.budget },
     prompt, budget: scenario.budget, tools: [] })
   assert.equal(bodies.length, 1)
@@ -959,17 +964,17 @@ test('SEM-F31/F33/J22-QA-WINDOW/J24-QA-BUDGET: real Agent Loop and adapter accep
 test('SEM-F31/F33/J22-QA-SIZE: exact prompt capacity accepts its edge and rejects overflow, missing or forged capacity before fetch', async () => {
   const scenario = qaScenario({ maxInputTokens: 12000, maxOutputTokens: 4096 })
   let fetches = 0
-  const adapter = new OpenAiCompatibleAdapter({ fetch: async () => { fetches++; return stopResponse('{"schemaVersion":1}') } })
-  for (const bytes of [3807, 3808]) await adapter.run(v2Request(scenario, { prompt: 'a'.repeat(bytes) }))
+  const adapter = createNetworkAdapter({ fetch: async () => { fetches++; return stopResponse('{"schemaVersion":1}') } })
+  for (const bytes of [3807, 3808]) await runAdapterLoop(adapter, v2Request(scenario, { prompt: 'a'.repeat(bytes) }))
   assert.equal(fetches, 2)
-  await assert.rejects(adapter.run(v2Request(scenario, { prompt: 'a'.repeat(3809) })),
+  await assert.rejects(runAdapterLoop(adapter, v2Request(scenario, { prompt: 'a'.repeat(3809) })),
     (error) => {
       assert.equal(error.code, 'AGENT_QA_INPUT_LIMIT_EXCEEDED')
       assert.deepEqual(error.diagnosticMetrics, { actual: 3809, limit: 3808, unit: 'bytes' })
       return true
     })
-  await assert.rejects(adapter.run(v2Request(scenario, { requestCapacity: undefined })), { code: 'AGENT_REQUEST_INVALID' })
-  await assert.rejects(adapter.run(v2Request(scenario, { requestCapacity: { promptByteLimit: 64000, requestOutputTokens: 4096 } })),
+  await assert.rejects(runAdapterLoop(adapter, v2Request(scenario, { requestCapacity: undefined })), { code: 'AGENT_REQUEST_INVALID' })
+  await assert.rejects(runAdapterLoop(adapter, v2Request(scenario, { requestCapacity: { promptByteLimit: 64000, requestOutputTokens: 4096 } })),
     { code: 'AGENT_REQUEST_INVALID' })
   assert.equal(fetches, 2)
 })
@@ -977,11 +982,11 @@ test('SEM-F31/F33/J22-QA-SIZE: exact prompt capacity accepts its edge and reject
 test('SEM-F31/F33/J22-QA-SIZE/J24-QA-BUDGET: serialized escaping rejects before fetch and post-tool growth uses the budget error', async () => {
   const scenario = qaScenario({ maxInputTokens: 12000, maxOutputTokens: 4096 })
   let fetches = 0
-  const adapter = new OpenAiCompatibleAdapter({ fetch: async () => { fetches++; return toolCallsResponse() } })
-  await assert.rejects(adapter.run(v2Request(scenario, { prompt: '\\'.repeat(3808), systemPrompt: 'a'.repeat(6000) })),
+  const adapter = createNetworkAdapter({ fetch: async () => { fetches++; return toolCallsResponse() } })
+  await assert.rejects(runAdapterLoop(adapter, v2Request(scenario, { prompt: '\\'.repeat(3808), systemPrompt: 'a'.repeat(6000) })),
     (error) => error.code === 'AGENT_QA_INPUT_LIMIT_EXCEEDED' && error.diagnosticMetrics.actual > 12000)
   assert.equal(fetches, 0)
-  await assert.rejects(adapter.run(v2Request(scenario, { prompt: 'a'.repeat(3808),
+  await assert.rejects(runAdapterLoop(adapter, v2Request(scenario, { prompt: 'a'.repeat(3808),
     tools: [searchTool({ schemaVersion: 1, matches: [], text: '中'.repeat(10000) })] })), { code: 'AGENT_BUDGET_EXCEEDED' })
   assert.equal(fetches, 1)
 })
@@ -994,13 +999,13 @@ test('SEM-F33/J24-QA-BUDGET: provider usage narrows QA output, unknown usage sta
   ]) {
     const bodies = []
     const scenario = qaScenario()
-    const adapter = new OpenAiCompatibleAdapter({
+    const adapter = createNetworkAdapter({
       fetch: async (_url, options) => {
         bodies.push(JSON.parse(options.body))
         return bodies.length === 1 ? toolCallsResponse(usage) : stopResponse('{"schemaVersion":1}', usage)
       }
     })
-    const pending = adapter.run(v2Request(scenario, { tools: [searchTool()] }))
+    const pending = runAdapterLoop(adapter, v2Request(scenario, { tools: [searchTool()] }))
     if (exhausted) {
       await assert.rejects(pending, { code: 'AGENT_BUDGET_EXCEEDED' })
       assert.equal(bodies.length, 1)
@@ -1016,11 +1021,11 @@ test('SEM-F33/J24-QA-BUDGET: provider usage narrows QA output, unknown usage sta
 test('SEM-F38/J24-QA-BUDGET: QA retries preserve the derived request quota and body', async () => {
   const bodies = []
   const scenario = qaScenario()
-  const adapter = new OpenAiCompatibleAdapter({ fetch: async (_url, options) => {
+  const adapter = createNetworkAdapter({ fetch: async (_url, options) => {
     bodies.push(options.body)
     return bodies.length === 1 ? { ok: false, status: 503, headers: { get: () => null } } : stopResponse('{"schemaVersion":1}')
   } })
-  await adapter.run(v2Request(scenario, { beforeRequest: async () => {} }))
+  await runAdapterLoop(adapter, v2Request(scenario, { beforeRequest: async () => ({ reserved: true }) }))
   assert.equal(bodies.length, 2)
   assert.equal(bodies[0], bodies[1])
   assert.equal(JSON.parse(bodies[1]).max_tokens, 8000)
@@ -1029,18 +1034,18 @@ test('SEM-F38/J24-QA-BUDGET: QA retries preserve the derived request quota and b
 test('SEM-F39/J31-SIZE: v2 outbound max_tokens comes from the derived quota instead of the raw capability', async () => {
   const bodies = []
   const scenario = v2Scenario({ maxInputTokens: 128000, maxOutputTokens: 81920 })
-  const roomy = new OpenAiCompatibleAdapter({
+  const roomy = createNetworkAdapter({
     fetch: async (_url, options) => { bodies.push(JSON.parse(options.body)); return stopResponse('{"schemaVersion":1}') }
   })
-  await roomy.run(v2Request(scenario))
+  await runAdapterLoop(roomy, v2Request(scenario))
   assert.equal(bodies[0].max_tokens, 8192, 'an 81920 output capability still requests the registered 8192 target')
 
   bodies.length = 0
   const bounded = v2Scenario({ maxInputTokens: 128000, maxOutputTokens: 4096 })
-  const small = new OpenAiCompatibleAdapter({
+  const small = createNetworkAdapter({
     fetch: async (_url, options) => { bodies.push(JSON.parse(options.body)); return stopResponse('{"schemaVersion":1}') }
   })
-  await small.run(v2Request(bounded))
+  await runAdapterLoop(small, v2Request(bounded))
   assert.equal(bodies[0].max_tokens, 4096, 'a 4096 output capability requests 4096')
 })
 
@@ -1051,27 +1056,27 @@ test('SEM-F39/J31-SIZE: known provider usage narrows the next outbound quota and
     toolCallsResponse({ prompt_tokens: 100, completion_tokens: 996000 }),
     stopResponse('{"schemaVersion":1}')
   ]
-  const bounded = new OpenAiCompatibleAdapter({
+  const bounded = createNetworkAdapter({
     fetch: async (_url, options) => { bodies.push(JSON.parse(options.body)); return responses.shift() }
   })
-  const result = await bounded.run(v2Request(scenario, { tools: [searchTool()] }))
+  const result = await runAdapterLoop(bounded, v2Request(scenario, { tools: [searchTool()] }))
   assert.equal(bodies[0].max_tokens, 8192)
   assert.equal(bodies[1].max_tokens, 4000, 'a known remaining balance of 4000 requests exactly 4000')
   assert.equal(typeof result.text, 'string')
 
   bodies.length = 0
   const unknownResponses = [toolCallsResponse(null), stopResponse('{"schemaVersion":1}')]
-  const unknown = new OpenAiCompatibleAdapter({
+  const unknown = createNetworkAdapter({
     fetch: async (_url, options) => { bodies.push(JSON.parse(options.body)); return unknownResponses.shift() }
   })
-  await unknown.run(v2Request(scenario, { tools: [searchTool()] }))
+  await runAdapterLoop(unknown, v2Request(scenario, { tools: [searchTool()] }))
   assert.equal(bodies[1].max_tokens, 8192, 'missing provider usage keeps the quota at the target instead of assuming zero')
 })
 
 test('SEM-F39/F40/J31-SIZE: retry after missing request usage keeps the whole result usage unknown', async () => {
   for (const failure of ['network', 'http']) {
     let requests = 0
-    const adapter = new OpenAiCompatibleAdapter({
+    const adapter = createNetworkAdapter({
       fetch: async () => {
         requests += 1
         if (requests === 1) {
@@ -1081,7 +1086,7 @@ test('SEM-F39/F40/J31-SIZE: retry after missing request usage keeps the whole re
         return stopResponse('{"schemaVersion":1}', { prompt_tokens: 100, completion_tokens: 10 })
       }
     })
-    const result = await adapter.run(v2Request(v2Scenario(), { beforeRequest: async () => {} }))
+    const result = await runAdapterLoop(adapter, v2Request(v2Scenario(), { beforeRequest: async () => ({ reserved: true }) }))
     assert.equal(requests, 2)
     assert.equal(result.usage, null, `${failure}: later known usage cannot account for the failed request`)
   }
@@ -1090,10 +1095,10 @@ test('SEM-F39/F40/J31-SIZE: retry after missing request usage keeps the whole re
 test('SEM-F39/J31-SIZE: an exhausted output balance rejects before any further egress', async () => {
   let egress = 0
   const scenario = v2Scenario({ maxInputTokens: 128000, maxOutputTokens: 81920 })
-  const adapter = new OpenAiCompatibleAdapter({
+  const adapter = createNetworkAdapter({
     fetch: async () => { egress += 1; return toolCallsResponse({ prompt_tokens: 100, completion_tokens: 1000000 }) }
   })
-  await assert.rejects(adapter.run(v2Request(scenario, { tools: [searchTool()] })),
+  await assert.rejects(runAdapterLoop(adapter, v2Request(scenario, { tools: [searchTool()] })),
     (error) => error.code === 'AGENT_BUDGET_EXCEEDED')
   assert.equal(egress, 1, 'zero remaining output balance means zero additional outbound requests')
 })
@@ -1101,15 +1106,15 @@ test('SEM-F39/J31-SIZE: an exhausted output balance rejects before any further e
 test('SEM-F39/J31-SIZE/J31-COMPAT: v2 fails closed without the host quota and legacy bindings keep their request bytes', async () => {
   let egress = 0
   const scenario = v2Scenario()
-  const adapter = new OpenAiCompatibleAdapter({
+  const adapter = createNetworkAdapter({
     fetch: async () => { egress += 1; return stopResponse('{"schemaVersion":1}') }
   })
   const { requestCapacity, ...withoutCapacity } = v2Request(scenario)
-  await assert.rejects(adapter.run(withoutCapacity), (error) => error.code === 'AGENT_REQUEST_INVALID')
-  await assert.rejects(adapter.run({ ...v2Request(scenario), requestCapacity: { requestOutputTokens: 8192 } }),
+  await assert.rejects(runAdapterLoop(adapter, withoutCapacity), (error) => error.code === 'AGENT_REQUEST_INVALID')
+  await assert.rejects(runAdapterLoop(adapter, { ...v2Request(scenario), requestCapacity: { requestOutputTokens: 8192 } }),
     (error) => error.code === 'AGENT_REQUEST_INVALID')
   assert.equal(egress, 0)
-  await assert.rejects(adapter.run({
+  await assert.rejects(runAdapterLoop(adapter, {
     connection: { httpsOrigin: 'https://example.test', basePath: '/v1' },
     credential: Buffer.from('secret'),
     resolvedModel: { modelId: 'model.one', capabilities: {
@@ -1122,10 +1127,10 @@ test('SEM-F39/J31-SIZE/J31-COMPAT: v2 fails closed without the host quota and le
   assert.equal(egress, 0)
 
   const bodies = []
-  const legacy = new OpenAiCompatibleAdapter({
+  const legacy = createNetworkAdapter({
     fetch: async (_url, options) => { bodies.push(JSON.parse(options.body)); return stopResponse('{"schemaVersion":1,"answer":"bounded"}') }
   })
-  await legacy.run({
+  await runAdapterLoop(legacy, {
     connection: { httpsOrigin: 'https://example.test', basePath: '/v1' },
     credential: Buffer.from('secret'),
     resolvedModel: { modelId: 'model.one', capabilities: {
@@ -1150,14 +1155,14 @@ test('SEM-F28/SEM-T04/J31-SIZE: the transport enforces the closed finish_reason 
   for (const [finishReason, message] of rejections) {
     let toolRan = false
     let egress = 0
-    const adapter = new OpenAiCompatibleAdapter({
+    const adapter = createNetworkAdapter({
       fetch: async () => {
         egress += 1
         const choice = finishReason === undefined ? { message } : { finish_reason: finishReason, message }
         return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ choices: [choice] }) }
       }
     })
-    await assert.rejects(adapter.run({
+    await assert.rejects(runAdapterLoop(adapter, {
       connection: { httpsOrigin: 'https://example.test', basePath: '/' },
       credential: Buffer.from('secret'),
       resolvedModel: { modelId: 'model.one', capabilities: {
@@ -1173,8 +1178,8 @@ test('SEM-F28/SEM-T04/J31-SIZE: the transport enforces the closed finish_reason 
     assert.equal(egress, 1, `a rejected result must not trigger another egress for ${finishReason ?? 'a missing'} finish_reason`)
   }
 
-  const whitespace = new OpenAiCompatibleAdapter({ fetch: async () => stopResponse('   \n  ') })
-  await assert.rejects(whitespace.run({
+  const whitespace = createNetworkAdapter({ fetch: async () => stopResponse('   \n  ') })
+  await assert.rejects(runAdapterLoop(whitespace, {
     connection: { httpsOrigin: 'https://example.test', basePath: '/' },
     credential: Buffer.from('secret'),
     resolvedModel: { modelId: 'model.one', capabilities: {
@@ -1185,8 +1190,8 @@ test('SEM-F28/SEM-T04/J31-SIZE: the transport enforces the closed finish_reason 
   }), (error) => error.code === 'AGENT_OUTPUT_INVALID')
 
   const responses = [toolCallsResponse(null), stopResponse('{"schemaVersion":1}')]
-  const cooperative = new OpenAiCompatibleAdapter({ fetch: async () => responses.shift() })
-  const result = await cooperative.run({
+  const cooperative = createNetworkAdapter({ fetch: async () => responses.shift() })
+  const result = await runAdapterLoop(cooperative, {
     connection: { httpsOrigin: 'https://example.test', basePath: '/' },
     credential: Buffer.from('secret'),
     resolvedModel: { modelId: 'model.one', capabilities: {
@@ -1205,10 +1210,10 @@ test('SEM-F39/J31-SIZE: tool message growth beyond the v2 input window rejects b
   let egress = 0
   const scenario = v2Scenario({ maxInputTokens: 20000, maxOutputTokens: 8192 })
   const responses = [toolCallsResponse(null), stopResponse('{"schemaVersion":1}')]
-  const adapter = new OpenAiCompatibleAdapter({
+  const adapter = createNetworkAdapter({
     fetch: async () => { egress += 1; return responses.shift() }
   })
-  await assert.rejects(adapter.run(v2Request(scenario, {
+  await assert.rejects(runAdapterLoop(adapter, v2Request(scenario, {
     tools: [searchTool({ schemaVersion: 1, matches: [{ text: 'x'.repeat(60000) }] })]
   })), (error) => error.code === 'AGENT_BUDGET_EXCEEDED')
   assert.equal(egress, 1, 'the growth check must fire before the second outbound request')

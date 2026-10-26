@@ -413,7 +413,7 @@ test('SEM-F31/SEM-F32/J22: replayed route recovery blocks target creation when c
   assert.equal(calls.some(([name]) => name === 'loop'), false)
 })
 
-test('SEM-F39/SEM-F31/J22-QA-RETRIEVAL: new raw-session QA freezes version 4 while summary and routing retain their versions', async () => {
+test('SEM-F39/SEM-F31/J22-QA-RETRIEVAL/J31: raw-session QA freezes version 4 and summary version 3 while routing remains version 1', async () => {
   const { orchestrator, calls } = harness()
   await orchestrator.submitFixedTarget({
     ...base,
@@ -422,10 +422,10 @@ test('SEM-F39/SEM-F31/J22-QA-RETRIEVAL: new raw-session QA freezes version 4 whi
     summaryUseMemory: false
   })
   const target = calls.find(([name, request]) => name === 'run.create' && request.recipeId === 'summary.minutes')
-  assert.equal(target[1].recipeVersion, '2')
+  assert.equal(target[1].recipeVersion, '3')
   const summaryBinds = calls.filter(([name, request]) => name === 'bind' && request.recipeId === 'summary.minutes')
   assert.equal(summaryBinds.length, 1)
-  assert.equal(summaryBinds[0][1].recipeVersion, '2')
+  assert.equal(summaryBinds[0][1].recipeVersion, '3')
 
   const routed = harness()
   await routed.orchestrator.submit(base)

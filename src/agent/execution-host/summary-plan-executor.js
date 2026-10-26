@@ -3,13 +3,14 @@
 const { canonicalize } = require('../../runtime/storage-worker/canonical-json')
 const { validateRecipeOutput } = require('../contracts/recipes')
 const { INTERMEDIATE_LIMIT } = require('./summary-input-plan')
+const { outputInvalid } = require('../contracts/output-validation')
 
 function fail (code) { const error = new Error(code); error.code = code; throw error }
 function checkReferences (value, input, from, through) {
   if (!value || typeof value !== 'object') return
   if (Object.hasOwn(value, 'fromEventOrder')) {
     if (value.sessionId !== input.sessionId || value.transcriptVersion !== 'raw' ||
-        value.fromEventOrder < from || value.throughEventOrder > through) fail('AGENT_OUTPUT_INVALID')
+        value.fromEventOrder < from || value.throughEventOrder > through) throw outputInvalid('source_reference', 'sourceRefs')
   }
   for (const child of Object.values(value)) checkReferences(child, input, from, through)
 }
@@ -25,10 +26,11 @@ async function executeInputPlan ({ input, plan, invoke, signal, onProgress, vali
     const result = await invoke(prompt)
     if (signal?.aborted) fail('AGENT_CANCELLED')
     let output
-    try { output = JSON.parse(result.text); validateRecipeOutput(question ? 'qa.answer' : 'summary.minutes', question ? '3' : '2', output) } catch { fail('AGENT_OUTPUT_INVALID') }
+    try { output = JSON.parse(result.text) } catch { throw outputInvalid('json') }
+    validateRecipeOutput(question ? 'qa.answer' : 'summary.minutes', question ? '3' : '2', output)
     checkReferences(output, input, from, through)
     if (typeof validateReferences === 'function') validateReferences(output)
-    if (intermediate && Buffer.byteLength(canonicalize(output), 'utf8') > INTERMEDIATE_LIMIT) fail('AGENT_OUTPUT_INVALID')
+    if (intermediate && Buffer.byteLength(canonicalize(output), 'utf8') > INTERMEDIATE_LIMIT) throw outputInvalid('output_size', 'output', Buffer.byteLength(canonicalize(output), 'utf8'), INTERMEDIATE_LIMIT)
     return { fromEventOrder: from, throughEventOrder: through, output }
   }
   try {

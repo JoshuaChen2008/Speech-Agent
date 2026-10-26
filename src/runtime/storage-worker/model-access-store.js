@@ -31,6 +31,7 @@ class ModelAccessStore {
   constructor (options = {}) {
     if (!options.subtitleStore?.database) throw new TypeError('subtitleStore is required')
     this.database = options.subtitleStore.database
+    this.hasRequestPolicies = !!this.database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_model_request_policies'").get()
     this.now = typeof options.now === 'function' ? options.now : () => Date.now()
   }
 
@@ -43,7 +44,12 @@ class ModelAccessStore {
   internalCatalog () {
     const profiles = this.database.prepare('SELECT * FROM agent_model_profiles ORDER BY profile_id').all().map((profile) => ({
       ...profile,
-      models: this.database.prepare('SELECT model_id, capability_json, preset_identity, request_strategy, strategy_version FROM agent_model_profile_models WHERE profile_id = ? ORDER BY model_id').all(profile.profile_id).map((model) => ({
+      models: this.database.prepare(this.hasRequestPolicies ? `SELECT m.model_id, m.capability_json,
+        COALESCE(p.preset_identity,m.preset_identity) AS preset_identity,
+        COALESCE(p.request_strategy,m.request_strategy) AS request_strategy,
+        COALESCE(p.strategy_version,m.strategy_version) AS strategy_version
+        FROM agent_model_profile_models m LEFT JOIN agent_model_request_policies p USING(profile_id,model_id)
+        WHERE m.profile_id = ? ORDER BY m.model_id` : 'SELECT model_id,capability_json,preset_identity,request_strategy,strategy_version FROM agent_model_profile_models WHERE profile_id=? ORDER BY model_id').all(profile.profile_id).map((model) => ({
         modelId: model.model_id,
         capabilities: JSON.parse(model.capability_json),
         preset_identity: model.preset_identity,
@@ -94,6 +100,7 @@ class ModelAccessStore {
           profile_revision=profile_revision+1, updated_at=? WHERE profile_id=?`)
           .run(command.label, connection.httpsOrigin, connection.basePath, now, command.profileId)
         if (profile.https_origin !== connection.httpsOrigin || profile.base_path !== connection.basePath) {
+          if (this.hasRequestPolicies) this.database.prepare('DELETE FROM agent_model_request_policies WHERE profile_id=?').run(command.profileId)
           this.database.prepare(`UPDATE agent_model_profile_models SET preset_identity=NULL,
             request_strategy=?, strategy_version=1, updated_at=? WHERE profile_id=?`)
             .run(DEFAULT_REQUEST_STRATEGY, now, command.profileId)
@@ -119,7 +126,11 @@ class ModelAccessStore {
           const requestStrategy = preset?.strategy ?? DEFAULT_REQUEST_STRATEGY
           this.database.prepare(`INSERT INTO agent_model_profile_models(
             profile_id,model_id,capability_json,preset_identity,request_strategy,strategy_version,created_at,updated_at
-          ) VALUES(?,?,?,?,?,?,?,?)`).run(command.profileId, command.modelId, encoded, presetIdentity, requestStrategy, 1, now, now)
+          ) VALUES(?,?,?,?,?,?,?,?)`).run(command.profileId, command.modelId, encoded,
+            preset?.version === 2 ? null : presetIdentity, preset?.version === 2 ? DEFAULT_REQUEST_STRATEGY : requestStrategy, 1, now, now)
+          if (preset?.version === 2) this.database.prepare(`INSERT INTO agent_model_request_policies
+            (profile_id,model_id,preset_identity,request_strategy,strategy_version) VALUES(?,?,?,?,2)`)
+            .run(command.profileId, command.modelId, presetIdentity, requestStrategy)
         }
         else this.database.prepare('UPDATE agent_model_profile_models SET capability_json=?,updated_at=? WHERE profile_id=? AND model_id=?').run(encoded, now, command.profileId, command.modelId)
         this.database.prepare('UPDATE agent_model_profiles SET profile_revision=profile_revision+1,catalog_revision=catalog_revision+1,updated_at=? WHERE profile_id=?').run(now, command.profileId)
@@ -170,7 +181,8 @@ class ModelAccessStore {
     const profile = this.database.prepare('SELECT * FROM agent_model_profiles WHERE profile_id=?').get(selected.profile_id)
     const model = this.database.prepare('SELECT * FROM agent_model_profile_models WHERE profile_id=? AND model_id=?').get(selected.profile_id, selected.model_id)
     if (!profile || !model) return { assignmentMode: 'unconfigured', purpose, profile: null, model: null }
-    return { assignmentMode: direct.profile_id ? 'direct' : 'fallback_default', purpose, profile, model }
+    const policy = this.hasRequestPolicies ? this.database.prepare('SELECT * FROM agent_model_request_policies WHERE profile_id=? AND model_id=?').get(selected.profile_id, selected.model_id) : null
+    return { assignmentMode: direct.profile_id ? 'direct' : 'fallback_default', purpose, profile, model: policy ? { ...model, ...policy } : model }
   }
 
   bind (request, availableSlotIds = []) {
@@ -205,8 +217,9 @@ class ModelAccessStore {
         resolved.profile.api_style, resolved.profile.https_origin, resolved.profile.base_path,
         resolved.model.model_id, resolved.model.capability_json, canonicalize(budget),
         providerKindForOrigin(resolved.profile.https_origin), resolved.profile.credential_slot_id,
-        resolved.model.request_strategy || DEFAULT_REQUEST_STRATEGY, now
+        resolved.model.request_strategy === 'deepseek-openai@2' ? DEFAULT_REQUEST_STRATEGY : resolved.model.request_strategy || DEFAULT_REQUEST_STRATEGY, now
       )
+      if (resolved.model.request_strategy === 'deepseek-openai@2') this.database.prepare('INSERT INTO agent_model_run_request_policies(run_id,request_strategy) VALUES(?,?)').run(request.runId, resolved.model.request_strategy)
       const row = this.database.prepare('SELECT * FROM agent_model_run_bindings WHERE run_id=?').get(request.runId)
       this.database.exec('COMMIT')
       return this.bindingProjection(row)
@@ -224,7 +237,7 @@ class ModelAccessStore {
       profileRevision: Number(row.profile_revision), adapterId: row.adapter_id,
       apiStyle: row.api_style, httpsOrigin: row.https_origin, basePath: row.base_path,
       modelId: row.model_id, capabilities: JSON.parse(row.capability_json),
-      requestStrategy: row.request_strategy || DEFAULT_REQUEST_STRATEGY,
+      requestStrategy: (this.hasRequestPolicies ? this.database.prepare('SELECT request_strategy FROM agent_model_run_request_policies WHERE run_id=?').get(row.run_id)?.request_strategy : null) || row.request_strategy || DEFAULT_REQUEST_STRATEGY,
       budget: JSON.parse(row.budget_json), providerKind: row.provider_kind,
       credentialSlotId: row.credential_slot_id, createdAt: Number(row.created_at)
     })

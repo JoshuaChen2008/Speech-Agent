@@ -94,6 +94,11 @@ test('SEM-F23/SEM-T04/SEM-F26/SEM-F30/SEM-F31/SEM-F32/SEM-F33/SEM-F34/SEM-F38/SE
     const report = JSON.parse(reportLine)
     assert.equal(report.result, true, JSON.stringify(report))
     assert.equal(report.settingsPath, 'formal-settings-renderer-preload')
+    assert.deepEqual(report.operationControls, {
+      unknownReceiptVisible: true, sameRequestReplayed: true, singleModelRequest: true,
+      unconfirmedCancellationVisible: true, unconfirmedCancellationRetained: true,
+      cancellationFeedbackCleared: true, lateResultRejected: true
+    })
     assert.deepEqual(report.inputAppearance, {
       keyboardFocus: true, stableGeometry: true, themeReadable: true, controlledStates: true,
       systemPreferences: true, fits: true, specialized: true, wizardInputs: true
@@ -178,6 +183,7 @@ test('SEM-F38/SEM-F40/SEM-T01/SEM-T02/SEM-T04/J30-RECOVERY/J30-ELECTRON: a resta
     const preparation = JSON.parse(preparationLine)
     assert.equal(preparation.result, true)
     assert.equal(preparation.requestStayedActive, true)
+    assert.equal(preparation.questionStayedActive, true)
     assert.equal(Number.isSafeInteger(preparation.attempt), true)
     preparing = null
 
@@ -191,6 +197,10 @@ test('SEM-F38/SEM-F40/SEM-T01/SEM-T02/SEM-T04/J30-RECOVERY/J30-ELECTRON: a resta
     assert.equal(report.requestStayedRecoverableUntilUserAction, true)
     assert.equal(report.explicitContinuationVisible, true)
     assert.equal(report.noProviderRequestBeforeContinue, true)
+    assert.equal(report.noQuestionRequestBeforeUserAction, true)
+    assert.equal(report.questionResumeRejected, true)
+    assert.equal(report.questionInputPolicyVisible, true)
+    assert.equal(report.questionResubmitted, true)
     assert.equal(report.sameRequestAndRunResumed, true)
     assert.equal(report.attemptAfterRestart > preparation.attempt, true)
     assert.equal(report.terminalState, 'succeeded')

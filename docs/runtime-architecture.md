@@ -1,5 +1,15 @@
 # Live Subtitle + Agent · 运行后端与契约
 
+> 2026-10-11 归档登记（实现完成·尚未验收；SEM-F14/F28/F31/F33/F38/F39/F40、SEM-T15，J22/J24/J25/J29/J30/J31/J12）：C/D/E 实施 change 已同步主 spec 并归档。当前职责分别见 [单次 exchange](../openspec/specs/agent-provider-exchange/spec.md)、[唯一循环](../openspec/specs/agent-runtime-ownership/spec.md)、[产品操作](../openspec/specs/agent-operation-facade/spec.md)；证据与未验证边界见 [归档核对记录](validation/agent-refactor-closeout-2026-10-11.md)。下列 2026-10-09 段落保留实施时点。
+
+> 2026-10-09 Agent 产品操作收敛（实现完成·尚未验收；SEM-F31/F33/F38/F40、SEM-F14，J22/J25/J29/J30/J12）：正式 main 只构造 `AgentOperationService`，会话总结与会话问答经 preload `operations.submit/getSnapshot/cancel/resume` 进入同一操作实现。它组织资格、冻结来源与记忆政策、持久受理、调度、取消和快照通知；`AgentInteractionReader` 承担范围、资格及历史的只读投影，模型配置、个人上下文、诊断和正式 Agent 交互导出保留既有模块边界。旧 service 模块只保留有调用者的兼容导出，不持有第二份操作逻辑；IPC 合同、access policy、schema migration SQL/checksum 不变。
+>
+> 同键重放先读取持久受理并复用原冻结身份；请求回执先于目标调度。取消先核验 request/generation，再发出信号与登记持久取消，无法确认时返回 `verify_state`。窗口重开恢复运行快照及轮询，旧 generation/revision 通知不能覆盖当前身份，关闭窗口不取消。重启后的预设总结只在明确继续时沿用同一运行、模型绑定与剩余预算创建新 attempt；自由问题必须重新输入。结果与成功状态仍由 SQLite 同事务提交，诊断失败不改变终态；字幕提交、停止、历史与文本导出不等待 Agent。调用者清单见 [E 设计](../openspec/changes/archive/2026-10-11-consolidate-agent-operations/design.md)。
+
+> 2026-10-09 Agent Loop 所有权（实现完成·尚未验收；SEM-F28/F31/F33/F39/F40、SEM-T15，J22/J24/J30/J31）：执行宿主 `pi-loop-runtime.js` 精确使用 `@earendil-works/pi-agent-core@0.84.1` 低层 `agentLoop`，同族 pi-ai/pi-telemetry 固定 0.84.1。`AgentLoopExecutor` 为全部固定 recipe 与已接线输入计划节点提供唯一入口；显式 streamFn 通过 C 单次 exchange 外发，逐请求核对冻结身份及持久预留，工具并发固定为 1。Pi 不接管模型选择、凭据、恢复或隐式重试。模型接入层只提供绑定后的 exchange，已删除 adapter.run 与 runWithBinding；模型测试保持单次 exchange。新 run 冻结 agent-retry@2，旧 @1/无标识运行保持原解释，不改迁移 checksum。取消、租约与代次在请求、工具、提交边界执法，SQLite 保留终态竞争权威。钩子、调用者清单及 E 交接见 [D 设计](../openspec/changes/archive/2026-10-11-centralize-agent-runtime-loop/design.md)。
+
+> 2026-10-09 Agent 模型 provider 单次交换（C 历史切片；实现完成·尚未验收；SEM-F14/F28/F31/F33/F40，J25/J29/J30/J31）：内部 exchange v1 合同位于 `src/agent/contracts/provider-exchange.js`，单次 HTTP、响应实际字节执法、协议投影与取消位于 `src/agent/model-access/provider-exchange.js`。冻结模型运行绑定在接入层封装连接和凭据；每次外发重新核对同一槽并独立借用，所有退出路径先清零副本，鉴权配置清理、工具执行和退避不持有借用。C 切片的旧 `OpenAiCompatibleAdapter.run` 当时仍暂时承接循环/工具/有限重试，后续 D 已迁移至上段的唯一宿主。三个冻结 @1 策略不改写旧绑定，JSON 仍由宿主校验业务 Schema。确定性命令与未验证范围见 [测试记录](testing-strategy.md)；不提升 A/B 或完整 Agent Bar 产品链路的联合验收状态。
+
 > 2026-10-02 个人记忆文件增量（实现完成·尚未验收）：SEM-F41/F42、ADR0025。新建问答为 `qa.answer@5`，通过 resolve@2 冻结同一范围的关键词与向量召回；旧工具/recipe绑定保留。个人上下文模块统一编排文件核验、确认、来源及混合检索；独立文件Worker持有Win32句柄直至FlushFileBuffers与SQLite提交，SQLite仍由storage worker独占。表征请求独立配置/披露、在模型接入层借用专属凭据，派生索引工作不成为固定recipe第二条执行路径。Agent缺失、目录失联、原生模块或云端故障时字幕仍沿独立链路运行。管理与恢复说明见[指南](personal-memory-guide.md)，实际验证见[交付记录](validation/personal-memory-files-2026-10-02.md)。
 
 > **2026-10-02 总结检索优先增量（历史切片；实现完成·尚未验收）**：此切片登记时终态会话摄取为 `context.ingest.session@3`，问答为 `qa.answer@4`；当前新建问答版本见上段。既有 @1/@2/@3/@4 问答运行继续原解释。依据 SEM-F28/F30/F31/F33/F39/F40、J21/J22/J24/J29/J30/J31 与 [ADR0024](adr/0024-summary-first-session-question.md)。

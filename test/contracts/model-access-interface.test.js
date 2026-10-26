@@ -22,7 +22,7 @@ test('SEM-F33/J25: formal model-access facade exposes catalog configure bind and
       recover: () => calls.push('recover'),
       state: () => ({ present: false, scope: 'absent' })
     },
-    adapter: { run: async () => ({ text: '{}', usage: null }) }
+    adapter: { exchange: async () => { throw new Error('unused provider boundary') } }
   })
   assert.deepEqual(Object.keys(facade).sort(), ['bind', 'catalog', 'configure', 'createLoopAdapter'])
   assert.deepEqual(await facade.catalog(), {

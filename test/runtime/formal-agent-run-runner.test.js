@@ -7,6 +7,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const { AgentLoopExecutor } = require('../../src/agent/execution-host/agent-loop')
+const { createNetworkAdapter, providerResponse, toolRequest } = require('../integration/provider-network-fixture')
 const { FormalAgentRunRunner, promptForInput } = require('../../src/agent/execution-host/formal-agent-run-runner')
 const { deriveRecipeBudget, deriveSummaryMinutesV2RequestCapacity, deriveRecipeRequestCapacity } = require('../../src/agent/contracts/budget-axes')
 const { canonicalize } = require('../../src/runtime/storage-worker/canonical-json')
@@ -25,6 +26,22 @@ const capabilities = {
   supportsStreaming: true,
   usageReporting: true
 }
+
+test('SEM-F40/J30-PROGRESS: long Retry-After clears prior short-wait metadata without changing snapshot bounds', async () => {
+  const progress = []
+  const { runner } = harness()
+  runner.onProgress = value => progress.push(value)
+  const input = { attemptIdentity: { runId: 'run.progress.retry', attempt: 1, owner: 'owner.progress' },
+    sessionSummaryRequest: { requestId: 'request.progress.retry', generation: 1 } }
+  for (const waitMs of [100, 2000]) {
+    await runner.reportProgress(input, { type: 'retry_wait', phase: 'retry_wait', nextAttempt: 2,
+      reason: 'AGENT_PROVIDER_RATE_LIMITED', waitMs })
+  }
+  assert.deepEqual(progress[0].retry, { requestAttempt: 2, waitMs: 100, reason: 'AGENT_PROVIDER_RATE_LIMITED' })
+  assert.equal(progress[1].retry, null)
+  assert.equal(progress[1].phase, 'retry_wait')
+  assert.deepEqual(progress[1].metrics, { actual: 2, limit: 5, unit: 'count' })
+})
 
 test('SEM-F31/F33/J22-QA-SIZE: qa.answer@2 checks exact UTF-8 bytes without dropping frozen events', () => {
   const caps = { maxInputTokens: 12000, maxOutputTokens: 4096 }
@@ -117,7 +134,7 @@ function syntheticSessionInput (targetPromptBytes) {
   }
 }
 
-function harness ({ adapterRun, failResult = { state: 'retry_wait' }, recipeId = 'qa.answer', toolContext = null, readSessionInput = null, readToolContext = null } = {}) {
+function harness ({ providerOutput, toolAlias, failResult = { state: 'retry_wait' }, recipeId = 'qa.answer', toolContext = null, readSessionInput = null, readToolContext = null } = {}) {
   const sourceRef = { sessionId: 'session.runner', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 2 }
   const binding = {
     runId: 'run.user.runner', modelId: 'model.runner', profileId: 'profile.runner',
@@ -130,36 +147,32 @@ function harness ({ adapterRun, failResult = { state: 'retry_wait' }, recipeId =
     async finishToolCall (request) { calls.push(['tool.finish', request]); return request },
     async terminalize (request) { calls.push(['terminalize', request]); return request }
   }
-  const loop = new AgentLoopExecutor({
-    adapter: { run: adapterRun || (async ({ recipe, tools }) => {
-      const result = await tools[0].execute({ schemaVersion: 1, aliasKeys: ['none'] })
-      assert.deepEqual(result, { schemaVersion: 1, matches: [], unmatchedAliasKeys: ['none'] })
-      if (recipe?.recipeId === 'summary.minutes') {
-        return {
-          text: JSON.stringify({
-            schemaVersion: 1,
-            overview: '已整理会话重点。',
-            conclusions: [{ text: '形成一个结论。', sourceRefs: [sourceRef] }],
-            todos: [{ text: '跟进一个事项。', ownerHint: null, dueHint: null, sourceRefs: [sourceRef] }],
-            risks: []
-          }),
-          usage: null
-        }
+  const adapter = createNetworkAdapter({ fetch: async (_url, options) => {
+    const body = JSON.parse(options.body)
+    const observation = body.messages.at(-1).role === 'tool' ? JSON.parse(body.messages.at(-1).content) : null
+    if (observation === null && (!providerOutput || toolAlias)) return toolRequest('search_context', { schemaVersion: 1, aliasKeys: [toolAlias || 'none'] })
+    try {
+      const result = providerOutput ? await providerOutput({ prompt: body.messages.find(message => message.role === 'user').content,
+        observation, body }) : {
+        text: JSON.stringify(recipeId === 'summary.minutes' ? {
+          schemaVersion: 1, overview: '已整理会话重点。', conclusions: [{ text: '形成一个结论。', sourceRefs: [sourceRef] }],
+          todos: [{ text: '跟进一个事项。', ownerHint: null, dueHint: null, sourceRefs: [sourceRef] }], risks: []
+        } : { schemaVersion: 1, answer: '已读取冻结会话。', sourceRefs: [sourceRef], memoryRefs: [], unresolved: [] })
       }
-      return {
-        text: JSON.stringify({
-          schemaVersion: 1,
-          answer: '已读取冻结会话。',
-          sourceRefs: [sourceRef],
-          memoryRefs: [],
-          unresolved: []
-        }),
-        usage: null
+      return providerResponse(result.text)
+    } catch (error) {
+      if (error.code === 'AGENT_PROVIDER_AUTH_FAILED') return { ok: false, status: 401 }
+      if (['AGENT_PROVIDER_TIMEOUT', 'AGENT_PROVIDER_UNAVAILABLE'].includes(error.code)) {
+        return { ok: true, status: 200, body: new ReadableStream({ pull: () => { throw new DOMException('controlled read timeout', 'TimeoutError') } }) }
       }
-    }) }
-  })
+      throw error
+    }
+  } })
+  const loop = new AgentLoopExecutor({ adapter: { exchange: input => adapter.exchange({ ...input, resolvedModel: binding,
+    connection: { httpsOrigin: binding.httpsOrigin, basePath: binding.basePath }, credential: Buffer.from('synthetic-secret') }) } })
   const runner = new FormalAgentRunRunner({
     storage: {
+      async reserveFormalAgentModelRequest (request) { calls.push(['reserved', request]); return { reserved: true } },
       async failFormalAgentRun (request) {
         calls.push(['fail', request])
         const result = Array.isArray(failResult)
@@ -227,7 +240,7 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F34/SEM-F38/J22/J29: user target runner uses b
 test('SEM-F28/SEM-T04/J22/J24: provider retry keeps the same attempt claim without terminalizing a partial result', async () => {
   const progress = []
   const { runner, calls } = harness({
-    adapterRun: async () => { const error = new Error('timeout'); error.code = 'AGENT_PROVIDER_TIMEOUT'; throw error }
+    providerOutput: async () => { const error = new Error('timeout'); error.code = 'AGENT_PROVIDER_TIMEOUT'; throw error }
   })
   runner.onProgress = (event) => progress.push(event)
   const result = await runner.run(job({ sessionSummaryRequest: { requestId: 'request.runner.retry', generation: 1 } }))
@@ -241,7 +254,7 @@ test('SEM-F28/SEM-T04/J22/J24: provider retry keeps the same attempt claim witho
 test('SEM-F28/SEM-T04/J22/J24: cancellation terminalizes without accepting a late provider result', async () => {
   const controller = new AbortController()
   const { runner, calls } = harness({
-    adapterRun: async () => { controller.abort(); const error = new Error('cancelled'); error.code = 'AGENT_CANCELLED'; throw error }
+    providerOutput: async () => { controller.abort(); const error = new Error('cancelled'); error.code = 'AGENT_CANCELLED'; throw error }
   })
   await runner.run(job({ signal: controller.signal }))
   const terminal = calls.find(([kind]) => kind === 'terminalize')[1]
@@ -374,11 +387,9 @@ test('SEM-F38/J30-PROGRESS: runner reports actual provider and memory events wit
   const progress = []
   const { runner, sourceRef } = harness({
     recipeId: 'summary.minutes',
-    adapterRun: async ({ tools, onProgress }) => {
-      await onProgress({ type: 'request_started', turn: 1 })
-      const lookup = await tools[0].execute({ schemaVersion: 1, aliasKeys: ['none'] })
-      assert.equal(lookup.matches.length, 0)
-      await onProgress({ type: 'response_received', turn: 1 })
+    toolAlias: 'none',
+    providerOutput: async ({ observation }) => {
+      assert.equal(observation.matches.length, 0)
       return {
         text: JSON.stringify({
           schemaVersion: 1,
@@ -401,15 +412,17 @@ test('SEM-F38/J30-PROGRESS: runner reports actual provider and memory events wit
     { phase: 'preparing', activity: false, memoryState: undefined },
     { phase: 'reading_context', activity: false, memoryState: undefined },
     { phase: 'waiting_model', activity: true, memoryState: undefined },
+    { phase: 'waiting_model', activity: true, memoryState: undefined },
     { phase: 'reading_context', activity: true, memoryState: undefined },
     { phase: 'reading_context', activity: true, memoryState: 'empty' },
+    { phase: 'waiting_model', activity: true, memoryState: undefined },
     { phase: 'waiting_model', activity: true, memoryState: undefined },
     { phase: 'validating', activity: false, memoryState: undefined },
     { phase: 'validating', activity: false, memoryState: undefined }
   ])
   assert.ok(progress.every((event) => event.runId === 'run.user.runner' && event.attempt === 1))
   assert.deepEqual(progress.map((event) => event.diagnosticEvent).filter(Boolean), [
-    'planning', 'model_request_started', 'tool_started', 'tool_ended', 'model_request_ended'
+    'planning', 'model_request_started', 'model_request_ended', 'tool_started', 'tool_ended', 'model_request_started', 'model_request_ended'
   ])
   assert.equal(JSON.stringify(progress).includes('只依据本次会话'), false)
   assert.equal(JSON.stringify(progress).includes('none'), false)
@@ -446,10 +459,10 @@ test('SEM-F38/J29: summary.minutes with memory reference disabled never resolves
   const seen = []
   const { runner, calls, sourceRef } = harness({
     recipeId: 'summary.minutes',
-    adapterRun: async ({ prompt, tools }) => {
-      seen.push({ prompt, toolCount: tools.length })
-      const lookup = await tools[0].execute({ schemaVersion: 1, aliasKeys: ['memory-canary'] })
-      assert.deepEqual(lookup, { schemaVersion: 1, matches: [], unmatchedAliasKeys: ['memory-canary'] })
+    toolAlias: 'memory-canary',
+    providerOutput: async ({ prompt, body, observation }) => {
+      seen.push({ prompt, toolCount: body.tools.length })
+      assert.deepEqual(observation, { schemaVersion: 1, matches: [], unmatchedAliasKeys: ['memory-canary'] })
       return {
         text: JSON.stringify({
           schemaVersion: 1,
@@ -476,7 +489,7 @@ test('SEM-F38/SEM-T04/J29: summary memory read failure is explicit and produces 
   let providerCalls = 0
   const { runner, calls } = harness({
     recipeId: 'summary.minutes',
-    adapterRun: async () => { providerCalls += 1; throw new Error('provider must not run') }
+    providerOutput: async () => { providerCalls += 1; throw new Error('provider must not run') }
   })
   runner.personalContext.readToolContext = async () => {
     const error = new Error('changed')
@@ -496,7 +509,7 @@ test('SEM-F38/SEM-T04/J29: bounded memory read failures use the same explicit re
     let providerCalls = 0
     const { runner, calls } = harness({
       recipeId: 'summary.minutes',
-      adapterRun: async () => { providerCalls += 1; throw new Error('provider must not run') }
+      providerOutput: async () => { providerCalls += 1; throw new Error('provider must not run') }
     })
     runner.personalContext.readToolContext = async () => {
       const error = new Error(code)
@@ -514,7 +527,7 @@ test('SEM-F38/SEM-T04/J29: bounded memory read failures use the same explicit re
 
 test('SEM-F28/SEM-F34/J22/J24: invalid output Schema terminalizes without a partial result', async () => {
   const { runner, calls } = harness({
-    adapterRun: async () => ({ text: JSON.stringify({ schemaVersion: 1, answer: '缺少引用字段' }) })
+    providerOutput: async () => ({ text: JSON.stringify({ schemaVersion: 1, answer: '缺少引用字段' }) })
   })
   const result = await runner.run(job())
   assert.equal(result, null)
@@ -554,10 +567,8 @@ test('SEM-F28/SEM-F34/J22/J24: budget exhaustion terminalizes with the task erro
       entries,
       sources: []
     },
-    adapterRun: async ({ tools, shouldStopAfterTurn }) => {
-      assert.equal(shouldStopAfterTurn({ turn: 1, toolCalls: 12 }), true)
-      await tools[0].execute({ schemaVersion: 1, aliasKeys: ['budget'] })
-    }
+    toolAlias: 'budget',
+    providerOutput: async () => { throw new Error('tool budget must prevent the next request') }
   })
   const result = await runner.run(job())
   assert.equal(result, null)
@@ -569,7 +580,7 @@ test('SEM-F28/SEM-F34/J22/J24: budget exhaustion terminalizes with the task erro
 test('SEM-F28/SEM-F34/J22/J24: provider timeout relies on atomic storage settlement after retry exhaustion', async () => {
   const { runner, calls } = harness({
     failResult: [{ state: 'retry_wait' }, { state: 'failed' }],
-    adapterRun: async () => { const error = new Error('timeout'); error.code = 'AGENT_PROVIDER_TIMEOUT'; throw error }
+    providerOutput: async () => { const error = new Error('timeout'); error.code = 'AGENT_PROVIDER_TIMEOUT'; throw error }
   })
   assert.equal(await runner.run(job()), null)
   assert.equal(calls.filter(([kind]) => kind === 'terminalize').length, 0)
@@ -583,7 +594,7 @@ test('SEM-F28/SEM-F34/J22/J24: provider timeout relies on atomic storage settlem
 
 test('SEM-F38/SEM-T04/J30-STATE: credential rejection keeps its stable error and does not retry', async () => {
   const { runner, calls } = harness({
-    adapterRun: async () => { const error = new Error('synthetic credential failure'); error.code = 'AGENT_PROVIDER_AUTH_FAILED'; throw error }
+    providerOutput: async () => { const error = new Error('synthetic credential failure'); error.code = 'AGENT_PROVIDER_AUTH_FAILED'; throw error }
   })
   assert.equal(await runner.run(job()), null)
   assert.equal(calls.filter(([kind]) => kind === 'fail').length, 0)
@@ -593,7 +604,7 @@ test('SEM-F38/SEM-T04/J30-STATE: credential rejection keeps its stable error and
 test('SEM-F38/SEM-T04/J30-STATE: failed durable settlement is surfaced to scheduler diagnostics', async () => {
   const { runner, calls } = harness({
     failResult: () => { throw Object.assign(new Error('synthetic storage failure'), { code: 'STORAGE_COMMAND_FAILED' }) },
-    adapterRun: async () => { throw Object.assign(new Error('synthetic provider failure'), { code: 'AGENT_PROVIDER_UNAVAILABLE' }) }
+    providerOutput: async () => { throw Object.assign(new Error('synthetic provider failure'), { code: 'AGENT_PROVIDER_UNAVAILABLE' }) }
   })
   await assert.rejects(runner.run(job()), (error) => error.code === 'AGENT_RUN_UNAVAILABLE')
   assert.equal(calls.filter(([kind]) => kind === 'terminalize').length, 0)
@@ -604,7 +615,7 @@ test('SEM-F39/F40/J31-SIZE: zero capacity and oversized input reject before prov
     let providerCalls = 0
     const { runner, calls, binding } = harness({ recipeId: 'summary.minutes',
       readSessionInput: () => syntheticSessionInput(bytes),
-      adapterRun: async () => { providerCalls++; throw new Error('unexpected provider egress') } })
+      providerOutput: async () => { providerCalls++; throw new Error('unexpected provider egress') } })
     binding.capabilities = { ...capabilities, maxInputTokens }
     binding.budget = deriveRecipeBudget(binding.capabilities, 'summary.minutes', '2', 'user')
     await runner.run(job({ recipeId: 'summary.minutes', recipeVersion: '2' }))
@@ -626,7 +637,9 @@ test('SEM-F39/J31-SIZE/J31-COMPAT: the runner hands the frozen request capacity 
   binding.capabilities = { ...capabilities }
   binding.budget = deriveRecipeBudget(binding.capabilities, 'summary.minutes', '2', 'user')
   runner.loopFactory = () => {
-    const inner = new AgentLoopExecutor({ adapter: { run: minutesResult } })
+    const adapter = createNetworkAdapter({ fetch: async () => providerResponse(minutesResult().text) })
+    const inner = new AgentLoopExecutor({ adapter: { exchange: request => adapter.exchange({ ...request, resolvedModel: binding,
+      connection: { httpsOrigin: binding.httpsOrigin, basePath: binding.basePath }, credential: Buffer.from('synthetic-secret') }) } })
     return { agentLoop: async (input) => { seen.push(input); return inner.agentLoop(input) } }
   }
   const result = await runner.run(job({ recipeId: 'summary.minutes', recipeVersion: '2' }))
@@ -652,7 +665,7 @@ test('SEM-F38/SEM-F39/J29/J31: transcript references outside the frozen input ra
   for (const [label, ref] of cases) {
     const { runner, calls } = harness({
       recipeId: 'summary.minutes',
-      adapterRun: async () => ({
+      providerOutput: async () => ({
         text: JSON.stringify({
           schemaVersion: 1, overview: '越界来源验证。',
           conclusions: [{ text: '结论。', sourceRefs: [ref] }],
@@ -686,7 +699,7 @@ test('SEM-F28/SEM-F39/J31: structurally invalid minutes results fail closed with
   for (const [label, output] of cases) {
     const { runner, calls } = harness({
       recipeId: 'summary.minutes',
-      adapterRun: async () => ({ text: JSON.stringify(output), usage: null })
+      providerOutput: async () => ({ text: JSON.stringify(output), usage: null })
     })
     const result = await runner.run(job({ recipeId: 'summary.minutes' }))
     assert.equal(result, null, label)

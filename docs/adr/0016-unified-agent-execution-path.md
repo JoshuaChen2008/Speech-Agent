@@ -1,5 +1,7 @@
 # ADR 0016：取消单轮与 Agent Loop 的二分，Agent 系统只保留一条执行路径
 
+> 2026-10-11 版本增量：[ADR0021](0021-summary-lifecycle-and-long-input.md) 为 `summary.minutes@3` 登记组织话题、撰写纪要、核对来源的同一 Agent Loop 三阶段，以及十分钟阶段时限、冻结容量与共享运行计数；旧版本继续原解释。新预设的思考块使用 Pi 已支持的协议，只在有界内存完整回传，结束或取消释放。证据见[本次范围联合验收记录](../validation/session-summary-quality-2026-10-11.md)，新预设真实云端思考未验证。
+
 > 2026-09-27：[ADR 0021](0021-summary-lifecycle-and-long-input.md) 为 `summary.minutes@2` 明确确定性输入计划中的多个 Loop 调用、预算作用域和时限策略，局部修订本ADR第5/9项。统一Agent Loop与每次Loop静态轮次/工具不变，旧版本绑定继续按原策略解释；此增量为已决定，尚无实现证据。
 
 - 状态：已决定

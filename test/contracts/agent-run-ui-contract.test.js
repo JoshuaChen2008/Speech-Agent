@@ -66,10 +66,10 @@ test('SEM-F31/F35/J24-QA-COMPAT: export receipts accept registered versions and 
   const response = { ...h, ok: true, error: null, result: {
     bytes_sha256: 'a'.repeat(64), interaction_id: 'interaction.export', schema_version: 1, snapshot: {}
   } }
-  for (const schema_version of [1, 2, 3, 4, 5, 6]) {
+  for (const schema_version of [1, 2, 3, 4, 5, 6, 7]) {
     assert.doesNotThrow(() => c.assertExportResponse({ ...response, result: { ...response.result, schema_version } }))
   }
-  assert.throws(() => c.assertExportResponse({ ...response, result: { ...response.result, schema_version: 7 } }), /unsupported export schema/)
+  assert.throws(() => c.assertExportResponse({ ...response, result: { ...response.result, schema_version: 8 } }), /unsupported export schema/)
 })
 
 test('SEM-F31/SEM-F33/J25: history keeps frozen model identity and comparison group without prompt fields', () => {
