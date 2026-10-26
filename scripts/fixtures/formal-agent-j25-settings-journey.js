@@ -21,7 +21,7 @@ const inputProbe = { pending: false, rejected: false, failureCode: null, invalid
 const submitReceipts = []
 const runControlProbe = {
   cancelElapsedMs: null, cancelState: null, diagnosticsExportStatus: null, summaryAcceptResults: [],
-  summaryCancelCommandCount: 0,
+  summaryCancelCommandCount: 0, summarySnapshotReadCount: 0,
   dropChangedRequestId: null, droppedChangedCount: 0,
   capacityRequestNotificationLossObserved: false,
   dropNextAcceptance: false, droppedAcceptance: null, cancellationErrors: []
@@ -62,6 +62,7 @@ ipcMain.handle = (channel, handler) => originalIpcHandle(channel, async (...args
     })
   }
   if (channel === 'session-summary-run:cancel') runControlProbe.summaryCancelCommandCount += 1
+  if (channel === 'session-summary-run:get') runControlProbe.summarySnapshotReadCount += 1
   if (channel === 'session-summary-run:accept' && response?.ok === true && response.result?.accepted === true) {
     const snapshot = response.result.snapshot
     if (snapshot.action === 'summary') runControlProbe.dropChangedRequestId = snapshot.request_id
@@ -657,7 +658,10 @@ async function configureThroughSettings (settings, port) {
     processingToggle.click()
     const suspendDialog = await waitFor(() => contextSection()?.querySelector('[role="alertdialog"]'), 'suspend confirmation')
     clickText(suspendDialog, '确认')
-    await waitFor(() => document.querySelector('input[aria-label="添加和使用记忆"]')?.checked === false, 'memory processing suspended')
+    await waitFor(() => {
+      const toggle = document.querySelector('input[aria-label="添加和使用记忆"]')
+      return toggle?.checked === false && !toggle.disabled
+    }, 'memory processing suspended')
     const processingSuspended = document.querySelector('input[aria-label="添加和使用记忆"]')?.checked === false &&
       contextSection()?.textContent.includes('已暂停')
     document.querySelector('input[aria-label="添加和使用记忆"]')?.click()
@@ -1200,6 +1204,7 @@ async function verifyOperationControls (agent, providerState) {
     WHEN NEW.state='cancelled' OR NEW.cancel_requested=1
     BEGIN SELECT RAISE(ABORT, 'SYNTHETIC_CANCEL_WRITE_FAILED'); END`)
   let unconfirmedCancellationVisible = false
+  let unconfirmedCancellationRetained = false
   const cancelErrorsBefore = runControlProbe.cancellationErrors.length
   try {
     await agent.webContents.executeJavaScript("document.querySelector('.run-card button').click(); true")
@@ -1208,6 +1213,29 @@ async function verifyOperationControls (agent, providerState) {
       "document.body.textContent.includes('取消状态尚未确认')"
     ), 'unconfirmed cancellation renderer state')
     if (runControlProbe.cancellationErrors.at(-1) !== 'verify_state') throw new Error('unknown cancellation did not request verification')
+    const snapshotReadsBefore = runControlProbe.summarySnapshotReadCount
+    await waitFor(() => runControlProbe.summarySnapshotReadCount > snapshotReadsBefore, 'automatic nonterminal cancellation refresh')
+    const eligibilityReadsBefore = eligibilityProbe.count
+    const manualSnapshotReadsBefore = runControlProbe.summarySnapshotReadCount
+    await waitFor(async () => agent.webContents.executeJavaScript(
+      "!document.querySelector('.scope-panel .panel-heading button').disabled"
+    ), 'manual cancellation refresh action')
+    await agent.webContents.executeJavaScript("document.querySelector('.scope-panel .panel-heading button').click(); true")
+    await waitFor(() => eligibilityProbe.count > eligibilityReadsBefore && runControlProbe.summarySnapshotReadCount > manualSnapshotReadsBefore,
+      'manual refresh after cancellation write failure')
+    await waitFor(async () => agent.webContents.executeJavaScript(
+      "!document.querySelector('.scope-panel .panel-heading button').disabled && document.querySelector('.eligibility')?.classList.contains('ready')"
+    ), 'nonterminal cancellation refresh receipt')
+    unconfirmedCancellationRetained = await agent.webContents.executeJavaScript(`(async () => {
+      const response = await window.agentApi.operations.getSnapshot({
+        contract_id: 'speech-agent.session-summary-run.ui', contract_version: '1.0.0',
+        request_id: ${JSON.stringify(receipts[0].requestId)}
+      })
+      return response?.ok === true && !['succeeded', 'failed', 'cancelled'].includes(response.result.snapshot.state) &&
+        response.result.snapshot.cancel_requested === false &&
+        document.querySelector('[aria-label="当前会话总结请求状态"]').textContent.includes('取消状态尚未确认')
+    })()`)
+    if (!unconfirmedCancellationRetained) throw new Error('nonterminal refresh cleared unconfirmed cancellation')
   } finally {
     blocker.exec('DROP TRIGGER test_cancel_write_failure')
     blocker.close()
@@ -1217,6 +1245,11 @@ async function verifyOperationControls (agent, providerState) {
   ), 'cancellation retry after SQLite recovery')
   await agent.webContents.executeJavaScript("document.querySelector('.run-card button').click(); true")
   await waitFor(() => runControlProbe.cancelState === 'cancelled', 'confirmed cancellation after SQLite recovery')
+  const cancellationFeedbackCleared = await waitFor(async () => agent.webContents.executeJavaScript(`(() => {
+    const card = document.querySelector('[aria-label="当前会话总结请求状态"]')
+    return card?.querySelector('strong')?.textContent === '已取消' &&
+      !document.body.textContent.includes('取消状态尚未确认')
+  })()`), 'confirmed cancellation renderer state')
   providerState.releaseHeldSummary()
   const lateResultRejected = await agent.webContents.executeJavaScript(`(async () => {
     const response = await window.agentApi.operations.getSnapshot({
@@ -1225,7 +1258,10 @@ async function verifyOperationControls (agent, providerState) {
     })
     return response?.ok === true && response.result.snapshot.state === 'cancelled'
   })()`)
-  return { unknownReceiptVisible, sameRequestReplayed, singleModelRequest, unconfirmedCancellationVisible, lateResultRejected }
+  return {
+    unknownReceiptVisible, sameRequestReplayed, singleModelRequest,
+    unconfirmedCancellationVisible, unconfirmedCancellationRetained, cancellationFeedbackCleared, lateResultRejected
+  }
 }
 
 async function prepareRestartRecovery (toolbar, providerState) {

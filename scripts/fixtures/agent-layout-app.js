@@ -64,8 +64,14 @@ async function run () {
       assert.ok(historyMetrics.rightOverflow <= 0 && historyMetrics.pageOverflow <= 0 &&
         Math.abs(historyMetrics.topDifference) < 1 && Math.abs(historyMetrics.readingHeightDifference) < 1,
         `${theme}/${width}/${zoom}: history geometry ${JSON.stringify(historyMetrics)}`)
-      await evaluate("document.querySelector('.history-panel').style.transform = 'translateX(1px)'")
+      // innerWidth is integer-rounded; start the negative control at its measured boundary.
+      const injectedOverflow = await evaluate(`(() => {
+        const panel = document.querySelector('.history-panel');
+        panel.style.transform = 'translateX(' + (innerWidth + 1 - panel.getBoundingClientRect().right) + 'px)';
+        return panel.getBoundingClientRect().right - innerWidth;
+      })()`)
       try {
+        assert.ok(Math.abs(injectedOverflow - 1) < 0.001, 'negative control must inject one CSS pixel of overflow')
         assert.ok((await readHistoryMetrics()).rightOverflow > 0, 'one CSS pixel of overflow must be detected')
       } finally {
         await evaluate("document.querySelector('.history-panel').style.removeProperty('transform')")

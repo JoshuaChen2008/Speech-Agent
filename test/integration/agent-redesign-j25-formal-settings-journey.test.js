@@ -96,7 +96,8 @@ test('SEM-F23/SEM-T04/SEM-F26/SEM-F30/SEM-F31/SEM-F32/SEM-F33/SEM-F34/SEM-F38/SE
     assert.equal(report.settingsPath, 'formal-settings-renderer-preload')
     assert.deepEqual(report.operationControls, {
       unknownReceiptVisible: true, sameRequestReplayed: true, singleModelRequest: true,
-      unconfirmedCancellationVisible: true, lateResultRejected: true
+      unconfirmedCancellationVisible: true, unconfirmedCancellationRetained: true,
+      cancellationFeedbackCleared: true, lateResultRejected: true
     })
     assert.deepEqual(report.inputAppearance, {
       keyboardFocus: true, stableGeometry: true, themeReadable: true, controlledStates: true,
