@@ -39,3 +39,13 @@
 - 1.25设备缩放的 `dark/520x420/1: viewport commit`：outer为523×421、content为522×421、viewport为522×422，DPR为1.25、zoom为1；visible/enabled为true、loading为false。outer宽度与目标相差3 DIP，未满足既有2 DIP条件；该失败发生在520宽场景，不能归因为1100宽请求超过屏幕。
 
 用户明确将布局细节搁置，当前重点为崩溃修复。本轮不继续布局修正，既有矩阵、期限及严格断言保持原解释。该run另有一项J24-QA-LONG终态等待超时，Integration合计196/199；Evidence未执行且最终资格索引不存在，完整J9-CI未验收。相同run三档案共九次产品壳/ASAR首启/离线复启退出均为 `clean-exit`，核验范围见[退出记录](ci-electron-exit-2026-10-26.md)。真实系统DPI/DWM与其它实机边界不得以这些确定性结果提升状态。
+
+## 用户决定的临时 CI 暂停（2026-10-26）
+
+[CI run 40303338698](https://github.com/JoshuaChen2008/Speech-Agent/actions/runs/40303338698/job/121506291176) 对应PR head `03dbeb92de87d249c3d14f9db2e541f4baea4422`、merge checkout `64e8baa35593ce353e3ed11d7fde7ae0993070d5`。Core为1220项符合预期及7项按设计跳过，Integration为197/199，仅上述两项布局场景失败；会话问答终态等待超时本轮未复现。三个几何档案的产品壳、ASAR首启及离线复启共九次受监督退出均为 `clean-exit`，0 incident、breakpoint=false，报告身份与绑定核验符合预期。Evidence未执行，最终索引不存在。
+
+用户随后明确要求暂时取消这两个场景的自动CI执行。先在[语义合同](../semantic-contract.md)和[旅程矩阵](../testing-strategy.md)登记，再在[原测试入口](../../test/integration/agent-layout-journey.test.js)增加 `GITHUB_ACTIONS=true` 时的显式 `skip`，每项输出暂停原因。本地条件为false时仍执行原真实夹具；原矩阵、断言和期限保持原解释。恢复时移除此条件并重跑原旅程。此项调整为实现完成·尚未验收，不作为布局故障修正或两项场景联合验收的证据。
+
+实际命令：`env -u ELECTRON_RUN_AS_NODE GITHUB_ACTIONS=true npm run test:focus -- test/integration/agent-layout-journey.test.js test/validation/test-runner.test.js test/validation/test-lanes-contract.test.js test/validation/ci-qualification-index-contract.test.js test/validation/i3-nonaudio-soak.test.js test/validation/electron-exit-evidence-report.test.js`。结果为33项中31项符合预期、2项明确跳过、零失败，退出0；两项跳过恰为上述布局场景。验证包含runner正常/失败/空选择、三条lane分层、索引严格绑定/拒绝、I3非音频复跑及退出证据拒绝边界。
+
+本轮只改暂停条件及对应登记/记录，产品源码、CI workflow、runner、索引writer/verifier没有变化。没有重跑本地Electron布局场景或完整三条lane，新修订远端结果仍待CI；后续索引如生成，仅表示本次登记范围内的确定性资格，两项暂停场景继续排除。主代理复核全部新增/修改行；净行数为产品0、测试+4、语义/旅程登记+15，本记录另计。

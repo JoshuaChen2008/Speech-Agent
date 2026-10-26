@@ -5,7 +5,11 @@ const path = require('node:path')
 const test = require('node:test')
 
 for (const deviceScaleFactor of [null, 1.25]) {
-  test(`SEM-F23/J18/J22: production Agent date and question layouts remain aligned across themes and sizes (device scale ${deviceScaleFactor ?? 'system'})`, { timeout: 45000 }, async () => {
+  test(`SEM-F23/J18/J22: production Agent date and question layouts remain aligned across themes and sizes (device scale ${deviceScaleFactor ?? 'system'})`, {
+    // User-requested CI pause, 2026-10-26; retain local coverage and the original assertions.
+    skip: process.env.GITHUB_ACTIONS === 'true' ? 'Temporarily paused in CI by user decision; J18/J22 layout remains unaccepted' : false,
+    timeout: 45000
+  }, async () => {
     const env = { ...process.env }
     delete env.ELECTRON_RUN_AS_NODE
     delete env.AGENT_LAYOUT_INTERACTIVE
