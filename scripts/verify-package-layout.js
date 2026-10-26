@@ -86,7 +86,7 @@ const SMOKE_SCRIPTS = Object.freeze([
   '/scripts/model-ui-fixture-support.js',
   '/scripts/packaged-native-load-probe.js'
 ])
-const SUPPORTED_ELECTRON_VERSIONS = new Set(['43.2.0', '43.3.0'])
+const SUPPORTED_ELECTRON_VERSIONS = new Set(['43.2.0', '43.3.0', '43.5.0'])
 
 function parseArguments (argv) {
   const values = {

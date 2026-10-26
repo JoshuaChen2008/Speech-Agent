@@ -1,5 +1,13 @@
 # 联合测试与 CI 策略
 
+## 2026-10-26 打包态退出与运行时补丁登记（已决定）
+
+| 既有旅程 | 必须覆盖的故障与可观察结果 | 证据边界 |
+|---|---|---|
+| J19/J9-CI/B5（SEM-F12/F14/F18/F24、SEM-T03/T04/T12） | Electron `43.5.0` 固定运行时下，默认、`legacy-risk`、`current-risk` 三种几何均执行真实 ASAR 首启与同 userData 离线复启，产品报告、两次 exact-child 自然退出和同轮载荷绑定全部成立。原有 supervisor 异常退出负例继续拒绝。 | CI run `40275946577` 已观察 `legacy-risk` 内部 `pass` 后 main breakpoint；本地打包及最小 fetch/GC 探针未复现该异常，不冒充红绿证明。上游补丁纳入不等于本次 native stack 根因证明；无重试、休眠或退出容错。 |
+
+运行时依赖变更执行当前版本 renderer 检查、完整三条 lane、package layout 和上述打包双启动；新 revision 的远端 ASAR/NSIS 与最终索引仍由 Windows CI 验收，实机范围仍按 I2/I3/I4。实际失败、补丁依据、命令及未验收边界见[本轮退出记录](validation/ci-electron-exit-2026-10-26.md)。
+
 ## 2026-10-26 CI 布局负例与取消反馈登记（已决定）
 
 | 既有旅程 | 必须覆盖的故障与可观察结果 | 证据边界 |
