@@ -16,6 +16,8 @@
 
 运行时依赖变更执行当前版本 renderer 检查、完整三条 lane、package layout 和上述打包双启动；新 revision 的远端 ASAR/NSIS 与最终索引仍由 Windows CI 验收，实机范围仍按 I2/I3/I4。实际失败、补丁依据、命令及未验收边界见[本轮退出记录](validation/ci-electron-exit-2026-10-26.md)。
 
+2026-10-26远端证据补充：CI run `40296045613`（PR head `02473ad`，merge checkout `c13bb82`）的三个几何档案各有产品壳、ASAR首启及同userData离线复启，九次exact-child退出均为 `clean-exit`、0 incident、breakpoint=false；实际Electron为43.5.0。既有严格读取器核对产品载荷、run身份、四份报告摘要及release/NSIS绑定；启动恢复与异常退出拒绝的定向检查为36/36、零失败。原生调用栈和唯一根因仍未知。Core为1220项符合预期及7项按设计跳过，Integration为196/199；两项布局细节按用户要求搁置，另一项J24-QA-LONG为终态等待超时，尚无崩溃证据。Evidence未执行且最终索引不存在，状态保持实现完成·尚未验收，不以九次正常退出替代完整J9-CI资格。
+
 ## 2026-10-26 CI 布局负例与取消反馈登记（已决定）
 
 | 既有旅程 | 必须覆盖的故障与可观察结果 | 证据边界 |

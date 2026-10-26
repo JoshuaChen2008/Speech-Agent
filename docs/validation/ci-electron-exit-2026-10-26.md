@@ -54,6 +54,26 @@
 
 精确读取旧报告是既有证据解释职责，此轮只增加一个已登记版本，不新增兼容分支或任意版本通配。没有重试、固定休眠、强制成功退出、关闭 GC 或错误忽略。主代理逐行复核全部7份修改：两个依赖文件、布局读取器、B5场景、两份登记的增量和本记录；未声称审阅两份大型登记文档的全部历史。净行数为依赖0、布局读取器0、测试+5、语义/旅程登记+12，本记录另计；增长用于版本接纳的负例和可追溯验证事实，没有新增产品抽象、配置或调用方输入。临时下载、退出探针和批量运行脚本在提交前移除，原失败报告保留在忽略目录。
 
+## 当前远端退出核验（2026-10-26）
+
+用户将本轮重点限定为崩溃修复，布局细节搁置；既有断言与资格要求保持原解释。[CI run 40296045613](https://github.com/JoshuaChen2008/Speech-Agent/actions/runs/40296045613/job/121482240649) 的 PR head 为 `02473adee04ae9b9e2f0f76ffe00b839b2a1620d`，实际 merge checkout 为 `c13bb82b45e913512a9c547cd4bb356253dbfc16`；已核对 checkout 的两个 parent 分别为 main `d06d139f66da67fda8ac280666bedc6f9b6ead9b` 与该 PR head。以下结果只绑定该次运行，不表示后续文档修订已有完整远端验收。
+
+下载的 `qualification-evidence-c13bb82b45e913512a9c547cd4bb356253dbfc16-40296045613-1` artifact ID 为 `12639255444`，GitHub 记录大小为65698字节、digest为 `sha256:9e70be26b9c084ac554e5e9de76d19d7d59fd96c70748da6540a8cd54bd15bbf`。隔离下载后用仓库既有严格读取器核验产品壳、ASAR首启、离线复启、退出证据、运行绑定、package layout及NSIS报告，并重新计算绑定中四份报告文件的SHA-256；未执行下载内容。
+
+| 几何档案 | 产品壳 / ASAR首启 / 离线复启 | 外部退出观测 | 启动与字幕行为 |
+|---|---|---|---|
+| `default` | 各自报告为 `pass`，绑定核验符合预期 | 3次 `clean-exit`，main状态为 `zero`，0 incident，breakpoint=false | 产品壳与ASAR首启的监听启停成立；复启字幕呈现及会话持久化成立 |
+| `legacy-risk` | 各自报告为 `pass`，绑定核验符合预期 | 3次 `clean-exit`，main状态为 `zero`，0 incident，breakpoint=false | 同上 |
+| `current-risk` | 各自报告为 `pass`，绑定核验符合预期 | 3次 `clean-exit`，main状态为 `zero`，0 incident，breakpoint=false | 同上 |
+
+九次退出均为 Electron `43.5.0`，对应产品壳/ASAR首启的 `crashEventCount=0`；三组 run ID、首启/复启引用及报告摘要闭合。359个产品载荷文件与本机当前身份一致，SHA-256为 `7d54feb762067b591541624ca4314e8866a5344ff8e39d67268e85675b94e97f`。smoke、release与NSIS报告间的身份也已交叉核对：smoke executable摘要为 `632660bf7933e065a3249658c3dfc9f707cb64f7db2c8d615d9f47812783d5e3`，release installer摘要为 `3a73ea3dd4d66047120897314756ce417179e47dcf7617aed0148a71a1b84608`。artifact不含受测二进制，本次没有在本机独立重算远端exe/ASAR/installer摘要；NSIS报告的 `applicationLaunched=false`，只证明安装/卸载机械流程。
+
+实际定向命令：`env -u ELECTRON_RUN_AS_NODE npm run test:focus -- test/main/overlay-startup-controller.test.js test/main/electron-exit-evidence.test.js test/validation/electron-exit-evidence-report.test.js test/validation/b5-packaged-restart-contract.test.js`。结果为36/36、零失败、零跳过、退出0，覆盖启动恢复及异常退出拒绝；它不是36次真实产品启动。既有生产路径报告使用受控音频/模型/网络边界，不证明真实声卡或模型性能。
+
+原退出异常对应的上游补丁已进入本次构建，当前九次样本没有观察到同一异常。所有退出报告仍为 `nativeStackCaptured=false`、`rootCauseIdentified=false`；不能据此宣称本次异常唯一根因已定位或永久排除。本轮没有新增产品修正、测试重试或退出容错。
+
 ## 未验收边界
 
-新 revision 的完整 Windows ASAR/NSIS 及最终资格索引仍待远端 CI。真实声卡、DWM、模型性能、两小时音频与干净机 I4 不在本轮确定性验证结论内；本次 CI 的具体竞态发送者仍未定位。
+当前远端Core为1220项符合预期、7项按设计跳过、零失败；Integration为196/199，失败为两项布局旅程及一项J24-QA-LONG终态等待超时。后者目前只证明等待超时，没有进程崩溃证据；布局细节按用户要求搁置，实际观测见[布局失败观测记录](ci-layout-observation-2026-10-26.md)。Evidence lane未执行，最终资格索引不存在，完整J9-CI仍未验收。
+
+用户截图中的 `overlay-startup-geometry-failed` 来自强制设备缩放探测期间的生产启动几何恢复流程，不是原生崩溃证据；当前没有普通启动配置下的同类阻断复现。真实声卡、DWM/系统DPI、模型性能、两小时音频与干净机I4不在本轮确定性验证结论内；本次历史退出异常的具体竞态发送者仍未定位。
