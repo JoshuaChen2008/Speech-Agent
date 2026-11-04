@@ -13,7 +13,7 @@ const http = require('node:http')
 const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
-const { app, BrowserWindow, dialog, ipcMain } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, net } = require('electron')
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
 const eligibilityProbe = { count: 0, nextHold: null }
@@ -218,6 +218,7 @@ function providerServer () {
   let markSummaryRequested
   const state = {
     requestCount: 0, modelIds: [], requestShapes: [], credentialObserved: false, credentialExact: false,
+    networkStatus: 200, redirectTargetRequests: 0,
     holdNextSummary: false, holdNextQuestion: false,
     heldSummarySockets: [],
     heldSummaryResponders: [],
@@ -234,6 +235,17 @@ function providerServer () {
     const chunks = []
     request.on('data', (chunk) => chunks.push(chunk))
     request.on('end', () => {
+      if (request.url === '/redirect-target') state.redirectTargetRequests += 1
+      if (state.networkStatus !== 200) {
+        response.writeHead(state.networkStatus, { location: '/redirect-target' })
+        response.end('{}')
+        return
+      }
+      if (request.url === '/models' && request.method === 'GET') {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ data: [{ id: 'j25-local-model' }] }))
+        return
+      }
       if (!['/chat/completions', '/v1/chat/completions'].includes(request.url) || request.method !== 'POST') {
         response.writeHead(404)
         response.end()
@@ -268,7 +280,8 @@ function providerServer () {
         markSummaryRequested()
         if (holdSummaryResponse) state.holdNextSummary = false
       }
-      const content = isRouteRequest
+      const isModelTest = userMessage === 'Reply with a JSON object containing only {"ok":true}.'
+      const content = isModelTest ? '{"ok":true}' : isRouteRequest
         ? JSON.stringify({ recipeId: isSummaryRequest ? 'summary.minutes' : 'qa.answer', confidence: 0.9 })
         : summaryModelRequest
           ? JSON.stringify(summaryStage === 'organizing_topics' ? { schemaVersion: 1, topics: [] }
@@ -1537,19 +1550,31 @@ async function main () {
   const port = provider.server.address().port
   if (phase !== 'restart-resume') fs.writeFileSync(providerPortFile, String(port), { mode: 0o600 })
   const originalFetch = globalThis.fetch
+  const originalSystemFetch = net.fetch
+  let nodeProviderRequests = 0
+  let systemProviderRequests = 0
   const localOrigin = `https://127.0.0.1:${port}`
   globalThis.fetch = (input, init) => {
     const rawUrl = typeof input === 'string' ? input : input?.url
     if (typeof rawUrl === 'string' && rawUrl.startsWith(localOrigin)) {
+      nodeProviderRequests += 1
+      return Promise.reject(new TypeError('fetch failed', { cause: Object.assign(new Error('untrusted diagnostic certificate'), { code: 'SELF_SIGNED_CERT_IN_CHAIN' }) }))
+    }
+    return originalFetch(input, init)
+  }
+  net.fetch = (input, init) => {
+    const rawUrl = typeof input === 'string' ? input : input?.url
+    if (typeof rawUrl === 'string' && rawUrl.startsWith(localOrigin)) {
+      systemProviderRequests += 1
       const rewritten = rawUrl.replace(localOrigin, `http://127.0.0.1:${port}`)
-      return originalFetch(rewritten, init).then(response => {
+      return originalSystemFetch.call(net, rewritten, init).then(response => {
         // The loopback HTTP server substitutes the trusted HTTPS origin at the
         // network boundary. Keep its virtual response origin consistent too.
         Object.defineProperty(response, 'url', { value: rawUrl })
         return response
       })
     }
-    return originalFetch(input, init)
+    return originalSystemFetch.call(net, input, init)
   }
 
   require(path.join(PROJECT_ROOT, 'src', 'main.js'))
@@ -1571,12 +1596,29 @@ async function main () {
       return
     }
     const settingsResult = await configureThroughSettings(settings, port)
+    const probeSystemNetwork = testId => settings.webContents.executeJavaScript(`(async () => {
+      const headers = { contractId: 'agent-model-ui', contractVersion: '1.0.0' }
+      const catalog = await window.shell.getAgentModelCatalog(headers)
+      const profile = catalog.snapshot.profiles.find(item => item.profileId === 'deepseek')
+      const pulled = await window.shell.pullAgentModelCatalog({ ...headers, profileId: profile.profileId, expectedRevision: catalog.snapshot.revision })
+      const tested = await window.shell.testSavedAgentModel({ contractId: 'agent-model-test-ui', contractVersion: '1.0.0', profileId: profile.profileId,
+        modelId: 'j25-local-model', expectedRevision: catalog.snapshot.revision, testId: ${JSON.stringify(testId)} })
+      return { catalog: pulled.status === 'success' && pulled.suggestions.some(item => item.modelId === 'j25-local-model'), test: tested.status === 'success',
+        catalogStatus: pulled.status, testStatus: tested.status }
+    })()`)
+    const systemNetwork = await probeSystemNetwork('j25-system-network')
+    provider.state.networkStatus = 302
+    const rejected = await probeSystemNetwork('j25-system-network-redirect')
+    provider.state.networkStatus = 200
+    systemNetwork.redirectsRejected = rejected.catalogStatus === 'redirect_rejected' && rejected.testStatus === 'redirect_rejected' && provider.state.redirectTargetRequests === 0
+    if (!systemNetwork.catalog || !systemNetwork.test || !systemNetwork.redirectsRejected || nodeProviderRequests !== 0) throw new Error('model settings bypassed the system network transport')
     const nativePicker = await inspectNativePicker(settings)
     const inputAppearance = await inspectInputAppearance(settings)
     const runResult = await runAgentBar(toolbar, provider.state)
     const operationControls = await verifyOperationControls(windowFor('/agent/index.html'), provider.state)
     const report = {
       schemaVersion: 1,
+      systemNetwork: { ...systemNetwork, nodeProviderRequests, systemProviderRequests },
       result: Object.values(operationControls).every(Boolean) && Object.values(inputAppearance).every(Boolean) && Object.values(settingsResult.inputsStyled).every(Boolean) && settingsResult.inputFailureRecovered &&
         settingsResult.uncredentialedFailureObserved &&
         settingsResult.failedRevisionUnchanged && settingsResult.failedChangedNotBroadcast &&
@@ -1654,6 +1696,7 @@ async function main () {
     process.stdout.write(`${JSON.stringify(report)}\n`)
   } finally {
     globalThis.fetch = originalFetch
+    net.fetch = originalSystemFetch
     await new Promise((resolve) => provider.server.close(resolve))
     app.quit()
   }

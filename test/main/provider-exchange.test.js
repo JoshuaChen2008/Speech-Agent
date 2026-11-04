@@ -29,6 +29,16 @@ function response (finishReason = 'stop', message = { content: '{"ok":true}' }, 
   return new Response(JSON.stringify({ choices: [{ finish_reason: finishReason, message }], usage }))
 }
 
+test('SEM-F33/J25/J30: system transport redirect rejection is deterministic and never retryable', async () => {
+  const adapter = new OpenAiCompatibleAdapter({ fetch: async () => {
+    throw Object.assign(new Error('REDIRECT_REJECTED'), { code: 'REDIRECT_REJECTED' })
+  } })
+  for (const testMode of [false, true]) {
+    await assert.rejects(adapter.exchange(input({ testMode })), error =>
+      error.code === (testMode ? 'REDIRECT_REJECTED' : 'AGENT_REQUEST_INVALID') && error.retryable !== true)
+  }
+})
+
 test('SEM-F28/F33/J25: one exchange preserves ordered tool calls and nullable usage without executing tools', async () => {
   const requests = []
   const adapter = new OpenAiCompatibleAdapter({ fetch: async (url, options) => {

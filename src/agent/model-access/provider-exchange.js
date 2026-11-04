@@ -101,8 +101,9 @@ async function exchange ({ fetch, connection, credential, resolvedModel, request
         })
       } finally { notify(onProgress, 'request_started') }
       response = await pending
-    } catch {
+    } catch (error) {
       if (controller.signal.aborted) throw exchangeError('AGENT_CANCELLED')
+      if (error?.code === 'REDIRECT_REJECTED') throw exchangeError(testMode ? 'REDIRECT_REJECTED' : 'AGENT_REQUEST_INVALID')
       throw exchangeError('AGENT_PROVIDER_UNAVAILABLE', true)
     }
     if (controller.signal.aborted || settled) {

@@ -8,6 +8,7 @@ const {
   globalShortcut,
   ipcMain,
   nativeTheme,
+  net,
   powerMonitor,
   safeStorage,
   screen,
@@ -1541,21 +1542,26 @@ async function bootstrapApplication () {
     const { CredentialVault } = require('./agent/model-access/credential-vault')
     const { createModelAccess } = require('./agent/model-access')
     const { OpenAiCompatibleAdapter } = require('./agent/model-access/openai-compatible-adapter')
+    const { createSystemModelFetch } = require('./main/services/system-model-fetch')
     const { RemoteModelCatalogPullController } = require('./agent/model-access/remote-catalog-controller')
     modelAccessVault = new CredentialVault({
       directory: path.join(userDataDir, 'agent-model-credentials'),
       safeStorage
     })
+    // Desktop requests use Chromium's system proxy and certificate trust.
+    // The adapter still owns exact HTTPS origins, manual redirects and limits.
+    const modelAdapter = new OpenAiCompatibleAdapter({ fetch: createSystemModelFetch(net) })
     modelAccessRuntime = await createModelAccess({
       gateway: applicationRuntime.gateway,
       vault: modelAccessVault,
+      adapter: modelAdapter,
       onChanged: broadcastAgentModelChanged
     })
     remoteModelCatalogController = new RemoteModelCatalogPullController({
       runtime: modelAccessRuntime,
       gateway: applicationRuntime.gateway,
       vault: modelAccessVault,
-      adapter: new OpenAiCompatibleAdapter()
+      adapter: modelAdapter
     })
   } catch {
     try { modelAccessVault?.close() } catch {}

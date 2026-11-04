@@ -94,6 +94,11 @@ test('SEM-F23/SEM-T04/SEM-F26/SEM-F30/SEM-F31/SEM-F32/SEM-F33/SEM-F34/SEM-F38/SE
     const report = JSON.parse(reportLine)
     assert.equal(report.result, true, JSON.stringify(report))
     assert.equal(report.settingsPath, 'formal-settings-renderer-preload')
+    assert.equal(report.systemNetwork.catalog, true)
+    assert.equal(report.systemNetwork.test, true)
+    assert.equal(report.systemNetwork.redirectsRejected, true)
+    assert.equal(report.systemNetwork.nodeProviderRequests, 0)
+    assert.equal(report.systemNetwork.systemProviderRequests >= 3, true)
     assert.deepEqual(report.operationControls, {
       unknownReceiptVisible: true, sameRequestReplayed: true, singleModelRequest: true,
       unconfirmedCancellationVisible: true, unconfirmedCancellationRetained: true,
