@@ -59,7 +59,7 @@ PLAN 或 README 落后于语义合同时，以语义合同为准，并把差异�
 | **会话状态 / 暂停恢复 / 崩溃恢复** | SEM-F06/F12；`runtime-architecture.md` §4 §8 | `session-coordinator.js`、`subtitle-application-runtime.js`、`power-session-guard.js` | 存储 schema、UI 文档 |
 | **音频采集 / 实时 ASR / 精修** | SEM-F01/F12/F14；`runtime-architecture.md` §5 §9 | `src/runtime/audio-host/*`、`realtime-worker/*`、`refine-worker/*` | 历史导出、打包文档 |
 | **模型资源 / 下载 / 就绪判定** | SEM-F17/T11；testing-strategy 的 J14 行 | `model-manager.js`、`model-manifest.js`、`model-resolver.js`、`model-runtime.js`、`src/settings/*` | 字幕排版、存储 |
-| **窗口几何 / 拖动 / 拉伸 / 穿透** | `subtitle-window.md` §3 §4 §5；SEM-F20 | `src/main.js` 的 `CAP_LIMITS` / `dock` / `dragTick` / `resizeTick` | 存储、模型、契约 |
+| **窗口几何 / 拖动 / 拉伸 / 穿透** | `subtitle-window.md` §3 §4 §5；SEM-F20 | `src/main.js` 的 `dock` / `dragTick` / `resizeTick`，`src/main/window-layout-contract.js` 的 `CAP_LIMITS` | 存储、模型、契约 |
 | **打包 / 安装器** | SEM-F18/F19/T12 | `electron-builder*.cjs`、`scripts/verify-package-layout.js`、`qualify-nsis-lifecycle.js` | 字幕与存储实现细节 |
 | **CI / 测试分层** | testing-strategy §2 执行分层表；SEM-T03 | `.github/workflows/ci.yml`、`test/validation/test-lanes-contract.test.js`、`package.json` 的 scripts | 全部产品设计文档 |
 | **纯文案 / 颜色 / 图标** | `docs/ui-design-brief.md` §2.3 token 分层 + §2.6 视觉不变量与禁止项 | `src/ui/shared/tokens.css`（语义层）、对应 `.css` / `.html`；改完跑 `node --test test/ui/renderer-style-guard.test.js` | 其余全部 |

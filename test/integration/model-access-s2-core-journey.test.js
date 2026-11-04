@@ -8,6 +8,7 @@ const path = require('node:path')
 
 const { CredentialVault } = require('../../src/agent/model-access/credential-vault')
 const { ModelAccessRuntime } = require('../../src/agent/model-access/runtime')
+const { OpenAiCompatibleAdapter } = require('../../src/agent/model-access/openai-compatible-adapter')
 const { RemoteModelCatalogPullController } = require('../../src/agent/model-access/remote-catalog-controller')
 const { StorageGateway } = require('../../src/main/services/storage-gateway')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
@@ -63,7 +64,23 @@ test('SEM-F00/SEM-F33/J25: S2 Core configures two profiles, resolves fallback, b
   } })
   t.after(async () => { vault.close(); await gateway.shutdown().catch(() => gateway.terminate()); fs.rmSync(root, { recursive: true, force: true }) })
   const changes = []
-  const runtime = new ModelAccessRuntime({ gateway, vault, onChanged: ({ revision }) => changes.push(revision) })
+  const sent = []; const borrowed = []; const authReleaseObservations = []
+  let observeAuthRelease = false
+  let networkReply = () => new Response(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: {
+    content: null, reasoning_content: 'private-reasoning', tool_calls: [
+      { id: 'call.second', type: 'function', function: { name: 'second', arguments: '{"value":2}' } },
+      { id: 'call.first', type: 'function', function: { name: 'first', arguments: '{"value":1}' } }
+    ]
+  } }] }))
+  const adapter = new OpenAiCompatibleAdapter({ fetch: async (url, options) => {
+    sent.push({ url, options }); return networkReply()
+  } })
+  const originalExchange = adapter.exchange.bind(adapter)
+  adapter.exchange = input => { borrowed.push(input.credential); return originalExchange(input) }
+  const runtime = new ModelAccessRuntime({ gateway, vault, adapter, onChanged: ({ revision }) => {
+    changes.push(revision)
+    if (observeAuthRelease) authReleaseObservations.push(borrowed.every(buffer => buffer.every(byte => byte === 0)))
+  } })
   await runtime.initialize()
   const pullController = new RemoteModelCatalogPullController({ runtime, gateway, vault, adapter: fauxProvider() })
   const handlers = new Map()
@@ -95,13 +112,16 @@ test('SEM-F00/SEM-F33/J25: S2 Core configures two profiles, resolves fallback, b
   assert.deepEqual(changes, [1, 2, 3, 4, 5])
 
   const runId = 'run.s2.binding'
-  subtitleStore.database.prepare(`INSERT INTO formal_agent_runs(
+  const bindRun = async (id) => {
+    subtitleStore.database.prepare(`INSERT INTO formal_agent_runs(
     run_id,dedupe_key,request_digest,recipe_id,recipe_version,scope_json,scope_digest,
     transcript_version,input_watermark_json,input_digest,requested_by,state,attempt_count,
     max_attempts,next_attempt_at,created_at,updated_at
   ) VALUES(?,?,?,'context.ingest.session','1',?,?, 'raw',?,?, 'automatic','queued',0,3,0,1000,1000)`)
-    .run(runId, sha256Canonical({ runId }), sha256Canonical({ request: runId }), canonicalize({ kind: 'session' }), sha256Canonical({ scope: runId }), canonicalize({ throughEventOrder: 1 }), sha256Canonical({ input: runId }))
-  const binding = await runtime.bind({ runId, recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'agent_loop' })
+      .run(id, sha256Canonical({ runId: id }), sha256Canonical({ request: id }), canonicalize({ kind: 'session' }), sha256Canonical({ scope: id }), canonicalize({ throughEventOrder: 1 }), sha256Canonical({ input: id }))
+    return runtime.bind({ runId: id, recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'agent_loop' })
+  }
+  const binding = await bindRun(runId)
   await configure({ type: 'updateModel', profileId: 'deepseek', modelId: 'deepseek-v4-flash', capabilities: { ...capabilities, maxOutputTokens: 2048 } })
   assert.deepEqual(await runtime.bind({ runId, recipeId: 'context.ingest.session', recipeVersion: '1', executionForm: 'agent_loop' }), binding)
 
@@ -131,6 +151,71 @@ test('SEM-F00/SEM-F33/J25: S2 Core configures two profiles, resolves fallback, b
   assert.equal(subtitleStore.database.prepare('SELECT COUNT(*) AS count FROM formal_agent_interactions').get().count, 0)
   assert.equal(JSON.stringify(snapshot).includes('credentialSlotId'), false)
   assert.equal(/price|cost|currency|pricing/i.test(JSON.stringify(binding)), false)
+
+  // The settings IPC, frozen SQLite binding, real adapter and vault all take
+  // part. Only the provider network and system encryption are controlled.
+  const request = {
+    schemaVersion: 1, messages: [{ role: 'user', content: 'Return ordered tool calls.' }],
+    tools: ['first', 'second'].map(name => ({ name, parameters: { type: 'object' } })),
+    outputContract: { mode: 'json' },
+    limits: { maxOutputTokens: 128, maxRequestBytes: 512 * 1024, maxResponseBytes: 512 * 1024,
+      timeoutMs: 1000, inputByteLimit: null, inputLimitError: 'AGENT_BUDGET_EXCEEDED' }
+  }
+  await assert.rejects(runtime.exchangeWithBinding(binding, { request }), { code: 'AGENT_PROVIDER_AUTH_FAILED' })
+  assert.equal(sent.length, 0, 'revoked credentials reject before network egress')
+  await configure({ type: 'setCredential', profileId: 'deepseek', credential: 'synthetic-secret' })
+  // Reconfiguration assigns a new slot; it must not resurrect the old binding.
+  await assert.rejects(runtime.exchangeWithBinding(binding, { request }), { code: 'AGENT_PROVIDER_AUTH_FAILED' })
+  const exchangeBinding = await bindRun('run.s2.exchange')
+  const factsBefore = subtitleStore.database.prepare('SELECT total_changes() AS count').get().count
+  const result = await runtime.exchangeWithBinding(exchangeBinding, { request })
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0].url, 'https://api.deepseek.com/chat/completions')
+  assert.equal(JSON.parse(sent[0].options.body).model, binding.modelId)
+  assert.equal(sent[0].options.headers.authorization, '')
+  assert.deepEqual(result.message.toolCalls.map(call => [call.id, call.name, call.arguments.value]), [
+    ['call.second', 'second', 2], ['call.first', 'first', 1]
+  ])
+  assert.equal(result.usage, null)
+  assert.equal(JSON.stringify(result).includes('private-reasoning'), false)
+  assert.equal(borrowed.at(-1).every(byte => byte === 0), true)
+  assert.equal(subtitleStore.database.prepare('SELECT total_changes() AS count').get().count, factsBefore)
+
+  networkReply = () => new Response('private-provider-error', { status: 429 })
+  await assert.rejects(runtime.exchangeWithBinding(exchangeBinding, { request }), { code: 'AGENT_PROVIDER_RATE_LIMITED' })
+  assert.equal(sent.length, 2, 'exchange does not retry provider failures')
+  assert.equal(borrowed.at(-1).every(byte => byte === 0), true)
+
+  networkReply = () => { throw new Error('private-network-exception') }
+  await assert.rejects(runtime.exchangeWithBinding(exchangeBinding, { request }), error =>
+    error.code === 'AGENT_PROVIDER_UNAVAILABLE' && !error.message.includes('private-network-exception'))
+  assert.equal(sent.length, 3)
+  assert.equal(borrowed.at(-1).every(byte => byte === 0), true)
+
+  let resolveLate; let enterFetch
+  const entered = new Promise(resolve => { enterFetch = resolve })
+  networkReply = () => new Promise(resolve => { resolveLate = resolve; enterFetch() })
+  const controller = new AbortController(); const events = []
+  const pending = runtime.exchangeWithBinding(exchangeBinding, { request, signal: controller.signal, onProgress: event => events.push(event.type) })
+  await entered; controller.abort()
+  await assert.rejects(pending, { code: 'AGENT_CANCELLED' })
+  assert.equal(borrowed.at(-1).every(byte => byte === 0), true)
+  resolveLate(new Response('{}'))
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(events, ['request_started'])
+
+  networkReply = () => new Promise(() => {})
+  await assert.rejects(runtime.exchangeWithBinding(exchangeBinding, {
+    request: { ...request, limits: { ...request.limits, timeoutMs: 20 } }
+  }), { code: 'AGENT_PROVIDER_TIMEOUT' })
+  assert.equal(borrowed.at(-1).every(byte => byte === 0), true)
+  networkReply = () => new Response('private-auth-error', { status: 401 })
+  observeAuthRelease = true
+  await assert.rejects(runtime.exchangeWithBinding(exchangeBinding, { request }), { code: 'AGENT_PROVIDER_AUTH_FAILED' })
+  assert.deepEqual(authReleaseObservations, [true], 'borrowed credentials clear before real SQLite auth invalidation publishes')
+  await assert.rejects(runtime.exchangeWithBinding(exchangeBinding, { request }), { code: 'AGENT_PROVIDER_AUTH_FAILED' })
+  assert.equal(sent.length, 6, 'revocation between exchanges prevents the next outbound')
+  assert.equal(borrowed.every(buffer => buffer.every(byte => byte === 0)), true)
 })
 
 test('SEM-F33/J25: faux provider freezes provider usage, unknown usage, cache and bounded credential protocol without inference', async (t) => {

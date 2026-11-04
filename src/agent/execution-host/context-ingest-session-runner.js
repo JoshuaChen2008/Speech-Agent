@@ -248,7 +248,7 @@ class ContextIngestSessionRunner {
 
   async runS3 (job) {
     exactObject(job, ['recipeId', 'source', 'attemptIdentity'], ['recipeVersion', 'interactionId', 'requestedBy', 'signal', 'runId',
-      'getRemainingWallClockMs', 'getWallClockElapsedMs', 'remainingWallClockMs', 'requestCount', 'requestLimit'])
+      'getRemainingWallClockMs', 'getWallClockElapsedMs', 'remainingWallClockMs', 'requestCount', 'requestLimit', 'retryPolicyVersion'])
     if (!['context.ingest.session', 'context.ingest.interaction', 'context.synthesize'].includes(job.recipeId)) throw codedError('AGENT_REQUEST_INVALID')
     if (job.recipeVersion !== undefined && !['1', '2', '3'].includes(job.recipeVersion)) throw codedError('AGENT_REQUEST_INVALID')
     if (job.requestedBy !== undefined && job.requestedBy !== 'automatic') throw codedError('AGENT_REQUEST_INVALID')
@@ -309,6 +309,9 @@ class ContextIngestSessionRunner {
         const loop = await this.loopFactory(binding)
         assertSchedulerActive(job.signal)
         if (!loop || typeof loop.agentLoop !== 'function') throw codedError('AGENT_INTERNAL_FAILURE')
+        let requestSequence = Number.isSafeInteger(job.requestCount) ? job.requestCount : 0
+        const remaining = () => typeof job.getRemainingWallClockMs === 'function' ? job.getRemainingWallClockMs()
+          : Math.max(0, (job.remainingWallClockMs ?? binding.budget.maxWallClockMs) - elapsed())
         result = await loop.agentLoop({
           recipeId: recipe.recipeId,
           recipeVersion: recipe.recipeVersion,
@@ -316,6 +319,16 @@ class ContextIngestSessionRunner {
           resolvedModel,
           signal: job.signal,
           budget: binding?.budget,
+          timeoutMs: Math.max(1, remaining()),
+          retryPolicyVersion: job.retryPolicyVersion,
+          beforeRequest: async ({ turn }) => {
+            assertSchedulerActive(job.signal)
+            if (remaining() <= 0) throw codedError('AGENT_BUDGET_EXCEEDED')
+            if (typeof this.storage.reserveFormalAgentModelRequest !== 'function') throw codedError('AGENT_RUN_UNAVAILABLE')
+            return this.storage.reserveFormalAgentModelRequest({ attemptIdentity,
+              requestSequence: ++requestSequence,
+              operationDigest: sha256Canonical({ recipeId: recipe.recipeId, recipeVersion: recipe.recipeVersion, input: prompt, turn }) }, job.signal)
+          },
           ...(tools === undefined ? {} : { tools }),
           usageReporting: binding?.capabilities?.usageReporting !== false
         })
@@ -368,7 +381,7 @@ class ContextIngestSessionRunner {
         }
         return null
       }
-      if (TERMINAL_ERRORS.has(code)) {
+      if (TERMINAL_ERRORS.has(code) || error?.retryExhausted === true) {
         if (interactionCreated) {
           await this.terminalizeFailure(interactionId, attemptIdentity, code, durationMs, job.signal,
             job.recipeId === 'context.ingest.session' && job.recipeVersion === '3' ? elapsed() : undefined)

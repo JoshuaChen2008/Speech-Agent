@@ -5,10 +5,11 @@ const { StorageError } = require('./protocol')
 const { usesLongInputBudget } = require('../../agent/contracts/budget-axes')
 
 function isLongInputRun (run) {
-  return (run?.recipe_id === 'qa.answer' && ['3', '4', '5'].includes(run.recipe_version)) ||
+  return (run?.recipe_id === 'summary.minutes' && run.recipe_version === '3') ||
+    (run?.recipe_id === 'qa.answer' && ['3', '4', '5'].includes(run.recipe_version)) ||
     (run?.recipe_id === 'context.ingest.session' && run.recipe_version === '3')
 }
-function isLongBudgetPolicy (policy) { return ['summary.minutes@2', 'qa.answer@3', 'qa.answer@4', 'qa.answer@5', 'context.ingest.session@3'].includes(policy) }
+function isLongBudgetPolicy (policy) { return ['summary.minutes@2', 'summary.minutes@3', 'qa.answer@3', 'qa.answer@4', 'qa.answer@5', 'context.ingest.session@3'].includes(policy) }
 
 function fail (code) {
   throw new StorageError(code)
@@ -53,7 +54,7 @@ function createRunBudgetAccount (database, { run, budget, now }) {
     ) VALUES(?,?,?,?,?,0,0,0,1,?,?)
   `).run(run.run_id, policyVersion, budgetDigest,
     longBudget ? 120 * 60 * 1000 : frozenBudget.maxWallClockMs,
-    longBudget ? 512 : frozenBudget.maxTurns, now, now)
+    run.recipe_id === 'summary.minutes' && run.recipe_version === '3' ? 3456 : longBudget ? 512 : frozenBudget.maxTurns, now, now)
   account = database.prepare('SELECT * FROM formal_agent_run_budget_state WHERE run_id=?').get(run.run_id)
   if (!account || (budget && canonicalize(frozenBudget) !== canonicalize(budget))) fail('AGENT_RUN_UNAVAILABLE')
   return account
@@ -136,15 +137,21 @@ function reserveModelRequest (database, { attemptIdentity, requestSequence, oper
   `).get(attemptIdentity.runId, attemptIdentity.attempt)
   if (!attempt || attempt.state !== 'active' || attempt.owner !== attemptIdentity.owner) fail('AGENT_CONTEXT_OPERATION_FAILED')
   const existing = database.prepare(`
-    SELECT reservation_id,owner FROM formal_agent_model_request_reservations
+    SELECT reservation_id,owner,operation_digest FROM formal_agent_model_request_reservations
     WHERE run_id=? AND attempt=? AND request_sequence=?
   `).get(attemptIdentity.runId, attemptIdentity.attempt, requestSequence)
   if (existing) {
-    if (existing.owner !== attemptIdentity.owner) fail('AGENT_CONTEXT_OPERATION_FAILED')
+    if (existing.owner !== attemptIdentity.owner || existing.operation_digest !== operationDigest) fail('AGENT_CONTEXT_OPERATION_FAILED')
     return { reservationId: existing.reservation_id, reserved: true, replayed: true }
   }
   if (Number(attempt.request_count) + 1 !== requestSequence) fail('AGENT_CONTEXT_OPERATION_FAILED')
   if (requestSequence > Number(attempt.request_limit)) fail('AGENT_BUDGET_EXCEEDED')
+  const account = database.prepare('SELECT policy_version,request_count FROM formal_agent_run_budget_state WHERE run_id=?').get(attemptIdentity.runId)
+  if (account?.policy_version === 'summary.minutes@3') {
+    const quality = database.prepare('SELECT frozen_json FROM formal_agent_summary_quality WHERE run_id=?').get(attemptIdentity.runId)
+    if (!quality) fail('AGENT_RUN_UNAVAILABLE')
+    if (Number(account.request_count) >= Math.min(3456, JSON.parse(quality.frozen_json).requestLimitCount)) fail('AGENT_BUDGET_EXCEEDED')
+  }
   if (operationDigest !== null) {
     const used = database.prepare(`SELECT COUNT(*) AS count FROM formal_agent_model_request_reservations
       WHERE run_id=? AND operation_digest=?`).get(attemptIdentity.runId, operationDigest)

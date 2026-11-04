@@ -267,6 +267,37 @@ CREATE TABLE personal_context_overview_jobs (
 ) STRICT;
 `
 const { PERSONAL_MEMORY_FILE_SQL, PERSONAL_MEMORY_INDEX_SQL, PERSONAL_MEMORY_PORTABILITY_SQL, PERSONAL_MEMORY_CLEANUP_SQL } = require('./personal-memory-file-schema')
+// SEM-F38/F39/F40, DB1: append only; old policies and checksums are untouched.
+const SUMMARY_QUALITY_SQL = `
+ALTER TABLE formal_agent_runs ADD COLUMN summary_quality_policy TEXT
+  CHECK (summary_quality_policy IS NULL OR summary_quality_policy='summary-quality@1');
+ALTER TABLE formal_agent_requests ADD COLUMN output_validation_json TEXT
+  CHECK (output_validation_json IS NULL OR (json_valid(output_validation_json) AND length(CAST(output_validation_json AS BLOB))<=256));
+CREATE TABLE formal_agent_summary_quality (
+  run_id TEXT PRIMARY KEY NOT NULL REFERENCES formal_agent_runs(run_id) ON DELETE CASCADE,
+  policy_version TEXT NOT NULL CHECK (policy_version='summary-quality@1'),
+  frozen_json TEXT NOT NULL CHECK (json_valid(frozen_json) AND length(CAST(frozen_json AS BLOB))<=2048),
+  summary_stage TEXT CHECK (summary_stage IS NULL OR summary_stage IN ('organizing_topics','drafting_minutes','verifying_sources')),
+  node_role TEXT CHECK (node_role IS NULL OR node_role IN ('whole','leaf','merge')),
+  attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt>=0),
+  node_index INTEGER NOT NULL DEFAULT 0 CHECK (node_index BETWEEN 0 AND 384),
+  loop_count INTEGER NOT NULL DEFAULT 0 CHECK (loop_count BETWEEN 0 AND 1152),
+  total_loop_count INTEGER NOT NULL DEFAULT 0 CHECK (total_loop_count BETWEEN 0 AND 1152)
+) STRICT;
+CREATE TABLE agent_model_request_policies (
+  profile_id TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  preset_identity TEXT NOT NULL CHECK (preset_identity='deepseek-openai@2'),
+  request_strategy TEXT NOT NULL CHECK (request_strategy='deepseek-openai@2'),
+  strategy_version INTEGER NOT NULL CHECK (strategy_version=2),
+  PRIMARY KEY(profile_id,model_id),
+  FOREIGN KEY(profile_id,model_id) REFERENCES agent_model_profile_models(profile_id,model_id) ON DELETE CASCADE
+) STRICT;
+CREATE TABLE agent_model_run_request_policies (
+  run_id TEXT PRIMARY KEY NOT NULL REFERENCES agent_model_run_bindings(run_id) ON DELETE CASCADE,
+  request_strategy TEXT NOT NULL CHECK (request_strategy='deepseek-openai@2')
+) STRICT;
+`
 const FORMAL_AGENT_MIGRATIONS = Object.freeze([
   ...history.FORMAL_AGENT_MIGRATIONS,
   Object.freeze({ version: 10, sql: RETIREMENT_SQL, checksum: history.checksum(RETIREMENT_SQL) }),
@@ -291,7 +322,8 @@ const FORMAL_AGENT_MIGRATIONS = Object.freeze([
   Object.freeze({ version: 29, sql: PERSONAL_MEMORY_FILE_SQL, checksum: history.checksum(PERSONAL_MEMORY_FILE_SQL) }),
   Object.freeze({ version: 30, sql: PERSONAL_MEMORY_INDEX_SQL, checksum: history.checksum(PERSONAL_MEMORY_INDEX_SQL) }),
   Object.freeze({ version: 31, sql: PERSONAL_MEMORY_PORTABILITY_SQL, checksum: history.checksum(PERSONAL_MEMORY_PORTABILITY_SQL) }),
-  Object.freeze({ version: 32, sql: PERSONAL_MEMORY_CLEANUP_SQL, checksum: history.checksum(PERSONAL_MEMORY_CLEANUP_SQL) })
+  Object.freeze({ version: 32, sql: PERSONAL_MEMORY_CLEANUP_SQL, checksum: history.checksum(PERSONAL_MEMORY_CLEANUP_SQL) }),
+  Object.freeze({ version: 33, sql: SUMMARY_QUALITY_SQL, checksum: history.checksum(SUMMARY_QUALITY_SQL) })
 ])
 module.exports = {
   ...history,
@@ -305,5 +337,5 @@ module.exports = {
   SESSION_SUMMARY_INPUT_PLAN_SQL,
   AGENT_RETRY_POLICY_SQL,
   FORMAL_AGENT_MIGRATIONS,
-  FORMAL_AGENT_SCHEMA_VERSION: 32
+  FORMAL_AGENT_SCHEMA_VERSION: 33
 }

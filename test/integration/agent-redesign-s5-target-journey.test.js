@@ -1,4 +1,6 @@
 'use strict'
+const { createRecipeNetworkAdapter, providerResponse, toolRequest, summaryStageContent } = require('./provider-network-fixture')
+const { getRecipe } = require('../../src/agent/contracts/recipes')
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
@@ -117,20 +119,23 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
   const modelAccess = new ModelAccessRuntime({
     gateway,
     vault,
-    adapter: {
-      async run ({ recipe, tools, prompt }) {
+    adapter: createRecipeNetworkAdapter(runId => {
+      const row = service.requireStore().database.prepare('SELECT recipe_id,recipe_version FROM formal_agent_runs WHERE run_id=?').get(runId)
+      return getRecipe(row.recipe_id, row.recipe_version)
+    }, async ({ recipe, prompt, observation }) => {
+        if (observation === null) return toolRequest('search_context', { schemaVersion: 1, aliasKeys: ['missing'] })
+        const context = observation
         providerCalls += 1
-        const context = await tools[0].execute({ schemaVersion: 1, aliasKeys: ['missing'] })
         assert.deepEqual(context.unmatchedAliasKeys, ['missing'])
         if (typeof prompt === 'string' && prompt.includes('迟到取消')) {
           lateProviderStarted = true
           await new Promise((resolve) => { releaseLateProvider = resolve })
         }
         if (typeof prompt === 'string' && prompt.includes('失败字幕独立')) {
-          return { text: JSON.stringify({ schemaVersion: 1 }) }
+          return providerResponse({ schemaVersion: 1 })
         }
         if (recipe.recipeId === 'summary.minutes') {
-          return { text: JSON.stringify({
+          return providerResponse(summaryStageContent(prompt, {
             schemaVersion: 1,
             overview: '这是一次受控的会后结构化纪要。',
             conclusions: [{
@@ -142,18 +147,17 @@ test('SEM-F15/SEM-F16/SEM-F28/SEM-F33/SEM-F34: S5 local evidence reaches one use
               sourceRefs: [{ sessionId: 'session.s5.target', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }]
             }],
             risks: []
-          }) }
+          }))
         }
         assert.equal(recipe.recipeId, 'qa.answer')
-        return { text: JSON.stringify({
+        return providerResponse({
           schemaVersion: 2,
           answer: '这是一次受控的会话回答。',
           claims: [{ text: '这是一次受控的会话回答。', sourceRefs: [{ sessionId: 'session.s5.target', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }], memoryRefs: [] }], coverage: null,
           sourceRefs: [{ sessionId: 'session.s5.target', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }],
           memoryRefs: [], unresolved: []
-        }) }
-      }
-    }
+        })
+    })
   })
   await modelAccess.initialize()
   await configureModel(modelAccess)

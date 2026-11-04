@@ -417,9 +417,14 @@ test('layout report validator separates the release installer from the test pack
   const current = {
     ...base,
     schemaVersion: 3,
+    artifact: { ...base.artifact, electronVersion: '43.5.0' },
     native: { ...base.native, captionInputAddonUnpacked: true }
   }
   assert.equal(validatePackageLayoutReport(current, 'smoke'), current)
+  assert.throws(() => validatePackageLayoutReport({
+    ...current,
+    artifact: { ...current.artifact, electronVersion: '43.5.1' }
+  }, 'smoke'), /invalid packaged layout qualification report/)
   assert.throws(() => validatePackageLayoutReport({
     ...current,
     native: { ...base.native }

@@ -3,7 +3,7 @@
 const { BUDGET_AXES } = require('./budget-axes')
 
 const CONTRACT_ID = 'speech-agent.session-summary-run.ui'
-const CONTRACT_VERSION = '1.0.0'
+const CONTRACT_VERSION = '1.1.0'
 const ACTIONS = Object.freeze(['summary', 'question'])
 const STATES = Object.freeze([
   'accepted', 'preparing', 'routing', 'queued', 'running', 'retry_wait', 'cancelling',
@@ -55,7 +55,7 @@ function exact (value, required, path, optional = []) {
 }
 
 function header (value) {
-  if (value.contract_id !== CONTRACT_ID || value.contract_version !== CONTRACT_VERSION) {
+  if (value.contract_id !== CONTRACT_ID || !['1.0.0', CONTRACT_VERSION].includes(value.contract_version)) {
     fail('request', 'unsupported contract version')
   }
 }
@@ -139,7 +139,11 @@ function assertRequestSnapshot (snapshot) {
     'elapsed_ms', 'last_activity_age_ms', 'validated_chunk_count', 'total_chunk_count',
     'memory_state', 'error_code', 'budget', 'freshness', 'cancel_requested', 'resume_required',
     'diagnostics_available', 'route_run_id', 'target_run_id', 'interaction_id', 'recipe_id', 'routing_mode'
-  ], 'snapshot', ['retry'])
+  ], 'snapshot', ['retry', 'summary_stage', 'node_role', 'summary_processing_mode', 'output_validation'])
+  if (snapshot.summary_stage !== undefined && snapshot.summary_stage !== null && !['organizing_topics', 'drafting_minutes', 'verifying_sources'].includes(snapshot.summary_stage)) fail('snapshot.summary_stage', 'is not registered')
+  if (snapshot.node_role !== undefined && snapshot.node_role !== null && !['whole', 'leaf', 'merge'].includes(snapshot.node_role)) fail('snapshot.node_role', 'is not registered')
+  if (snapshot.summary_processing_mode !== undefined && !['whole', 'chunked'].includes(snapshot.summary_processing_mode)) fail('snapshot.summary_processing_mode', 'is not registered')
+  if (snapshot.output_validation !== undefined) require('./output-validation').assertOutputValidation(snapshot.output_validation)
   id(snapshot.request_id, 'snapshot.request_id')
   integer(snapshot.generation, 'snapshot.generation', 1)
   integer(snapshot.revision, 'snapshot.revision')
@@ -200,7 +204,7 @@ function assertPublicError (error) {
 
 function assertEnvelope (response, resultValidator) {
   exact(response, ['contract_id', 'contract_version', 'ok', 'error', 'result'], 'response')
-  if (response.contract_id !== CONTRACT_ID || response.contract_version !== CONTRACT_VERSION) fail('response', 'unsupported contract version')
+  if (response.contract_id !== CONTRACT_ID || !['1.0.0', CONTRACT_VERSION].includes(response.contract_version)) fail('response', 'unsupported contract version')
   if (typeof response.ok !== 'boolean') fail('response.ok', 'must be boolean')
   if (response.ok) {
     if (response.error !== null) fail('response.error', 'must be null')

@@ -67,7 +67,12 @@ let agentOpenCommandRevision = 0
 let toolbarLayoutGeneration = 0
 let toolbarLayoutObserver: ResizeObserver | null = null
 let toolbarLayoutMutationObserver: MutationObserver | null = null
-let toolbarLayoutQueued = false
+let toolbarLayoutPending: {
+  force: boolean,
+  frame: number | null,
+  timer: ReturnType<typeof setTimeout> | null
+} | null = null
+let toolbarLayoutDisposed = false
 let lastToolbarLayoutKey = ''
 let toolbarLayoutRetryTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -84,16 +89,33 @@ grip.innerHTML = iconMarkup('grip')
 // 工具条实际轮廓：只上报现有 #toolbar.toolbar 的外接矩形。
 // generation 由主进程签发；reload 前后的 renderer 不能复用旧矩形。
 // ---------------------------------------------------------------------------
+function cancelToolbarLayoutReport () {
+  const pending = toolbarLayoutPending
+  toolbarLayoutPending = null
+  if (!pending) return
+  if (pending.timer !== null) clearTimeout(pending.timer)
+  if (pending.frame !== null) cancelAnimationFrame(pending.frame)
+}
+
 function queueToolbarLayoutReport (force = false) {
-  if (toolbarLayoutQueued || toolbarLayoutGeneration <= 0) {
-    noteToolbarLayout(toolbarLayoutQueued ? 'queue-pending' : 'queue-no-generation')
+  if (toolbarLayoutDisposed) return
+  if (toolbarLayoutGeneration <= 0) {
+    noteToolbarLayout('queue-no-generation')
     return
   }
-  toolbarLayoutQueued = true
+  if (toolbarLayoutPending) {
+    toolbarLayoutPending.force ||= force
+    noteToolbarLayout('queue-pending')
+    return
+  }
+  const pending = { force, frame: null as number | null, timer: null as ReturnType<typeof setTimeout> | null }
+  toolbarLayoutPending = pending
   noteToolbarLayout('queued')
-  requestAnimationFrame(() => {
-    toolbarLayoutQueued = false
-    noteToolbarLayout('raf-ran')
+  const reportCurrentContour = (fromFrame: boolean) => {
+    // Identity is checked before cancellation: a late callback cannot settle a newer queue.
+    if (toolbarLayoutPending !== pending) return
+    cancelToolbarLayoutReport()
+    if (fromFrame) noteToolbarLayout('raf-ran')
     const rect = toolbar.getBoundingClientRect()
     const report = {
       generation: toolbarLayoutGeneration,
@@ -105,13 +127,17 @@ function queueToolbarLayoutReport (force = false) {
       }
     }
     const key = JSON.stringify(report)
-    if (!force && key === lastToolbarLayoutKey) {
+    if (!pending.force && key === lastToolbarLayoutKey) {
       noteToolbarLayout('deduplicated')
       return
     }
     lastToolbarLayoutKey = key
     bridge.reportToolbarLayout(report)
-  })
+  }
+  // Chromium can stop delivering frames after reload while timers and IPC still run.
+  // Each coalesced report gets one bounded timer independent of its animation frame.
+  pending.timer = setTimeout(() => reportCurrentContour(false), 100)
+  pending.frame = requestAnimationFrame(() => reportCurrentContour(true))
 }
 
 async function initToolbarLayout () {
@@ -123,6 +149,7 @@ async function initToolbarLayout () {
   try {
     noteToolbarLayout('context-requested')
     const context = await bridge.getToolbarLayoutContext()
+    if (toolbarLayoutDisposed) return
     if (!context || !Number.isSafeInteger(context.generation) || context.generation <= 0) {
       noteToolbarLayout('context-invalid')
       return
@@ -144,6 +171,8 @@ async function initToolbarLayout () {
 
 window.addEventListener('beforeunload', () => {
   noteToolbarLayout('unload')
+  toolbarLayoutDisposed = true
+  cancelToolbarLayoutReport()
   if (toolbarLayoutObserver) toolbarLayoutObserver.disconnect()
   if (toolbarLayoutMutationObserver) toolbarLayoutMutationObserver.disconnect()
   if (toolbarLayoutRetryTimer) clearTimeout(toolbarLayoutRetryTimer)

@@ -1,235 +1,101 @@
 'use strict'
 
-// @ts-check
-
-const { getRecipe } = require('../contracts/recipes')
-const { outputDirectiveFor } = require('../contracts/recipe-output-directives')
+const { canonicalize } = require('../../runtime/storage-worker/canonical-json')
+const { getRecipe, validateRecipeOutput, assertSummaryTopicIndex } = require('../contracts/recipes')
+const { outputDirectiveFor, summaryStageDirective } = require('../contracts/recipe-output-directives')
+const { outputInvalid } = require('../contracts/output-validation')
 const { deriveRecipeRequestCapacity, usesModelWindowCapacity } = require('../contracts/budget-axes')
+const { runLoopExchange, checkSignal } = require('./pi-loop-runtime')
 
-const TOOL_ERROR_CODES = new Set([
-  'TOOL_ARGS_INVALID', 'TOOL_SCOPE_DENIED', 'TOOL_NOT_AVAILABLE_FOR_RECIPE',
-  'TOOL_BUDGET_EXCEEDED', 'TOOL_TIMEOUT', 'TOOL_CANCELLED', 'TOOL_INTERNAL_FAILURE'
-])
-
-function executionError (code) {
-  const error = new Error(code)
-  error.code = code
-  return error
-}
-
-async function runAdapterBounded (adapter, request, parentSignal, timeoutMs) {
-  const controller = typeof AbortController === 'function' ? new AbortController() : null
-  let timeoutHandle = null
-  let removeAbortListener = null
-  let rejectControl
-  let controlSettled = false
-  const control = new Promise((resolve, reject) => { rejectControl = reject })
-  const settleControl = (error) => {
-    if (controlSettled) return
-    controlSettled = true
-    rejectControl(error)
-  }
-  const cancel = () => {
-    const reasonCode = parentSignal?.reason?.code === 'AGENT_BUDGET_EXCEEDED'
-      ? 'AGENT_BUDGET_EXCEEDED'
-      : 'AGENT_CANCELLED'
-    settleControl(executionError(reasonCode))
-    try { controller?.abort() } catch {}
-  }
-  if (parentSignal?.aborted) cancel()
-  else if (parentSignal) {
-    parentSignal.addEventListener('abort', cancel, { once: true })
-    removeAbortListener = () => parentSignal.removeEventListener('abort', cancel)
-  }
-  if (Number.isSafeInteger(timeoutMs) && timeoutMs > 0) {
-    timeoutHandle = setTimeout(() => {
-      settleControl(executionError('AGENT_PROVIDER_TIMEOUT'))
-      try { controller?.abort() } catch {}
-    }, timeoutMs)
-  }
-
-  const provider = Promise.resolve().then(() => adapter.run({
-    ...request,
-    signal: controller?.signal || parentSignal
-  }))
-  // A provider may reject after cancellation or its host deadline. Keep that
-  // late rejection handled even though its result is no longer observable.
-  provider.catch(() => {})
-  try {
-    return await Promise.race([provider, control])
-  } finally {
-    if (timeoutHandle !== null) clearTimeout(timeoutHandle)
-    try { removeAbortListener?.() } catch {}
-  }
-}
+function executionError (code) { return Object.assign(new Error(code), { code }) }
 
 function shouldStopAfterTurn ({ maxTurns, turn, toolCalls = 0, maxToolCalls = Number.MAX_SAFE_INTEGER, budgetExceeded = false } = {}) {
-  return budgetExceeded === true ||
-    (Number.isSafeInteger(maxToolCalls) && toolCalls >= maxToolCalls) ||
-    (Number.isSafeInteger(maxTurns) && Number.isSafeInteger(turn) && turn >= maxTurns)
+  return budgetExceeded === true || toolCalls >= maxToolCalls || turn >= maxTurns
 }
 
-function assertPrompt (value, recipe, requestCapacity) {
-  const windowedInput = usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)
-  if (typeof value !== 'string' || value.length < 1 ||
-      (windowedInput ? Buffer.byteLength(value, 'utf8') > 256 * 1024 : value.length > 16000) ||
-      /[\u0000-\u001f\u007f]/u.test(value)) {
-    throw executionError('AGENT_REQUEST_INVALID')
-  }
-  if (recipe.recipeId === 'qa.answer' && usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)) {
-    const actual = Buffer.byteLength(value, 'utf8')
-    if (actual > requestCapacity.promptByteLimit) {
-      const error = executionError('AGENT_QA_INPUT_LIMIT_EXCEEDED')
-      error.diagnosticMetrics = { actual, limit: requestCapacity.promptByteLimit, unit: 'bytes' }
-      throw error
-    }
-  }
-  return value
-}
-
-// The windowed direct-summary request capacity is a host-internal parameter
-// derived once by the runner from the frozen binding (2026-09-29 light plan).
-// Only registered windowed summary and QA versions may carry it; other versions keep their frozen
-// version capacity interpretation, and a malformed value fails closed before
-// any adapter execution.
-function validatedRequestCapacity (recipe, value, resolvedModel) {
-  const windowedQuestion = recipe.recipeId === 'qa.answer' && usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)
+function validatedRequestCapacity (recipe, value, resolvedModel, summaryStage) {
+  const windowed = usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)
   if (value === undefined) {
-    if (windowedQuestion) throw executionError('AGENT_REQUEST_INVALID')
+    if (windowed) throw executionError('AGENT_REQUEST_INVALID')
     return undefined
   }
-  if (!usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)) {
-    throw executionError('AGENT_REQUEST_INVALID')
-  }
-  if (windowedQuestion) {
-    const expected = deriveRecipeRequestCapacity({ recipeId: recipe.recipeId, recipeVersion: recipe.recipeVersion,
-      capabilities: resolvedModel?.capabilities, budget: resolvedModel?.budget })
-    if (expected.promptByteLimit !== value.promptByteLimit ||
-        expected.requestOutputTokens !== value.requestOutputTokens) throw executionError('AGENT_REQUEST_INVALID')
-  }
-  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+  if (!windowed || !value || typeof value !== 'object' || Array.isArray(value) ||
       Object.keys(value).sort().join(',') !== 'promptByteLimit,requestOutputTokens' ||
       !Number.isSafeInteger(value.requestOutputTokens) || value.requestOutputTokens < 1 ||
-      !Number.isSafeInteger(value.promptByteLimit) || value.promptByteLimit < 0) {
-    throw executionError('AGENT_REQUEST_INVALID')
+      !Number.isSafeInteger(value.promptByteLimit) || value.promptByteLimit < 0) throw executionError('AGENT_REQUEST_INVALID')
+  if (recipe.recipeId === 'qa.answer' || recipe.recipeId === 'summary.minutes' && recipe.recipeVersion === '3') {
+    const expected = deriveRecipeRequestCapacity({ ...recipe, capabilities: resolvedModel?.capabilities, budget: resolvedModel?.budget, binding: resolvedModel, summaryStage })
+    if (canonicalize(expected) !== canonicalize(value)) throw executionError('AGENT_REQUEST_INVALID')
   }
   return value
 }
 
 class AgentLoopExecutor {
   constructor (options = {}) {
-    if (!options.adapter || typeof options.adapter.run !== 'function') {
-      throw new TypeError('agent loop adapter is required')
-    }
+    if (!options.adapter || typeof options.adapter.exchange !== 'function') throw new TypeError('agent loop exchange is required')
     this.adapter = options.adapter
     this.onToolCall = typeof options.onToolCall === 'function' ? options.onToolCall : () => {}
   }
 
-  async resolveAdapter () {
-    return this.adapter
-  }
-
   async agentLoop (input) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw executionError('AGENT_REQUEST_INVALID')
-    const allowedKeys = new Set(['recipeId', 'recipeVersion', 'prompt', 'resolvedModel', 'tools', 'signal', 'timeoutMs', 'budget', 'usageReporting', 'onProgress', 'beforeRequest', 'requestCapacity', 'getRunUsage', 'onRequestUsage'])
-    if (Object.keys(input).some((key) => !allowedKeys.has(key))) throw executionError('AGENT_REQUEST_INVALID')
+    const allowed = new Set(['recipeId', 'recipeVersion', 'prompt', 'resolvedModel', 'tools', 'signal', 'timeoutMs', 'budget',
+      'usageReporting', 'onProgress', 'beforeRequest', 'requestCapacity', 'getRunUsage', 'onRequestUsage', 'retryPolicyVersion', 'summaryStage'])
+    if (Object.keys(input).some(key => !allowed.has(key))) throw executionError('AGENT_REQUEST_INVALID')
     let recipe
     try { recipe = getRecipe(input.recipeId, input.recipeVersion) } catch { throw executionError('AGENT_REQUEST_INVALID') }
-    const requestCapacity = validatedRequestCapacity(recipe, input.requestCapacity, input.resolvedModel)
-    assertPrompt(input.prompt, recipe, requestCapacity)
-    if (!input.resolvedModel || typeof input.resolvedModel !== 'object' || Array.isArray(input.resolvedModel)) {
-      throw executionError('AGENT_REQUEST_INVALID')
+    const binding = input.resolvedModel
+    if (!binding || typeof binding !== 'object' || Array.isArray(binding) ||
+        (this.adapter.binding && canonicalize(binding) !== canonicalize(this.adapter.binding)) ||
+        (binding.recipeId && (binding.recipeId !== recipe.recipeId || binding.recipeVersion !== recipe.recipeVersion))) throw executionError('AGENT_REQUEST_INVALID')
+    const resolvedModel = JSON.parse(canonicalize(binding))
+    const quality = recipe.recipeId === 'summary.minutes' && recipe.recipeVersion === '3'
+    if (quality ? !['organizing_topics', 'drafting_minutes', 'verifying_sources'].includes(input.summaryStage) : input.summaryStage !== undefined) throw executionError('AGENT_REQUEST_INVALID')
+    const requestCapacity = validatedRequestCapacity(recipe, input.requestCapacity, resolvedModel, input.summaryStage)
+    if (typeof input.prompt !== 'string' || !input.prompt || /[\u0000-\u001f\u007f]/u.test(input.prompt) ||
+        (usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)
+          ? Buffer.byteLength(input.prompt, 'utf8') > (quality ? 917504 : 256 * 1024) : input.prompt.length > 16000)) throw executionError('AGENT_REQUEST_INVALID')
+    const tools = input.tools || []
+    if (!Array.isArray(tools) || tools.some(tool => !tool || typeof tool.name !== 'string' || typeof tool.execute !== 'function') ||
+        new Set(tools.map(tool => tool.name)).size !== tools.length) throw executionError('AGENT_REQUEST_INVALID')
+    if (tools.some(tool => !recipe.toolGrants.includes(tool.name))) throw executionError('TOOL_NOT_AVAILABLE_FOR_RECIPE')
+    for (const name of ['beforeRequest', 'getRunUsage', 'onRequestUsage']) {
+      if (input[name] !== undefined && typeof input[name] !== 'function') throw executionError('AGENT_REQUEST_INVALID')
     }
-    const tools = input.tools === undefined ? [] : input.tools
-    if (!Array.isArray(tools) || tools.some((tool) => !tool || typeof tool !== 'object' ||
-      typeof tool.name !== 'string' || typeof tool.execute !== 'function')) {
-      throw executionError('AGENT_REQUEST_INVALID')
-    }
-    const toolNames = new Set()
-    const wrappedTools = tools.map((tool) => {
-      if (toolNames.has(tool.name)) throw executionError('AGENT_REQUEST_INVALID')
-      toolNames.add(tool.name)
-      if (!recipe.toolGrants.includes(tool.name)) throw executionError('TOOL_NOT_AVAILABLE_FOR_RECIPE')
-      return {
-        ...tool,
-        execute: async (...args) => {
-          if (input.signal?.aborted) throw executionError('AGENT_CANCELLED')
-          let result
-          try { result = await tool.execute(...args) } catch (error) {
-            if (error?.code && TOOL_ERROR_CODES.has(error.code)) throw error
-            throw error
-          }
-          try { this.onToolCall(Object.freeze({ toolName: tool.name })) } catch { /* observer isolation */ }
-          return result
-        }
+    if (typeof input.beforeRequest !== 'function') throw executionError('AGENT_RUN_UNAVAILABLE')
+    const budget = input.budget || resolvedModel.budget || {}
+    if (resolvedModel.budget && canonicalize(budget) !== canonicalize(resolvedModel.budget)) throw executionError('AGENT_REQUEST_INVALID')
+    const result = await runLoopExchange({
+      exchange: this.adapter.exchange.bind(this.adapter), resolvedModel, recipe,
+      requestStrategy: this.adapter.requestStrategy || 'openai-compatible@1',
+      systemPrompt: (quality ? summaryStageDirective(input.summaryStage) : outputDirectiveFor(recipe)).systemPrompt, prompt: input.prompt,
+      summaryStage: input.summaryStage,
+      requestCapacity, tools: tools.map(tool => ({ ...tool, execute: async (...args) => {
+        checkSignal(input.signal)
+        const result = await tool.execute(...args)
+        try { this.onToolCall(Object.freeze({ toolName: tool.name })) } catch {}
+        return result
+      } })),
+      maxTurns: recipe.maxTurns, timeoutMs: input.timeoutMs || budget.maxWallClockMs,
+      signal: input.signal, beforeRequest: input.beforeRequest, getRunUsage: input.getRunUsage,
+      onRequestUsage: input.onRequestUsage, retryPolicyVersion: input.retryPolicyVersion,
+      shouldStopAfterTurn: ({ turn, toolCalls }) => shouldStopAfterTurn({ maxTurns: recipe.maxTurns,
+        turn, toolCalls, maxToolCalls: budget.maxToolCalls ?? Number.MAX_SAFE_INTEGER }),
+      onProgress: event => {
+        if (!['request_started', 'response_received', 'request_failed', 'retry_wait'].includes(event.type)) return
+        const progress = event.type === 'retry_wait' ? { type: event.type, turn: event.turn, phase: 'retry_wait',
+          requestAttempt: event.requestAttempt, nextAttempt: event.nextAttempt, reason: event.reason, waitMs: event.waitMs }
+          : { type: event.type, turn: event.turn }
+        try { Promise.resolve(input.onProgress?.(Object.freeze(progress))).catch(() => {}) } catch {}
       }
     })
-    if (recipe.toolGrants.length === 0 && wrappedTools.length !== 0) throw executionError('TOOL_NOT_AVAILABLE_FOR_RECIPE')
-    if (input.signal?.aborted) throw executionError('AGENT_CANCELLED')
-    const budget = input.budget && typeof input.budget === 'object' ? input.budget : {}
-    const adapter = await this.resolveAdapter()
-    const onProgress = typeof input.onProgress === 'function' ? input.onProgress : null
-    if (input.beforeRequest !== undefined && typeof input.beforeRequest !== 'function') throw executionError('AGENT_REQUEST_INVALID')
-    const timeoutMs = Number.isSafeInteger(input.timeoutMs) && input.timeoutMs > 0
-      ? input.timeoutMs
-      : Number.isSafeInteger(budget.maxWallClockMs) && budget.maxWallClockMs > 0
-        ? budget.maxWallClockMs
-        : null
-    let result
-    try {
-      result = await runAdapterBounded(adapter, {
-        resolvedModel: input.resolvedModel,
-        recipe,
-        systemPrompt: outputDirectiveFor(recipe).systemPrompt,
-        prompt: input.prompt,
-        ...(requestCapacity === undefined ? {} : { requestCapacity }),
-        tools: wrappedTools,
-        maxTurns: recipe.maxTurns,
-        timeoutMs,
-        onProgress: onProgress
-          ? (event) => {
-              if (!event || typeof event !== 'object' || Array.isArray(event) ||
-                  !['request_started', 'response_received', 'request_failed', 'retry_wait'].includes(event.type) ||
-                  !Number.isSafeInteger(event.turn) || event.turn < 1) return
-              const progress = event.type === 'retry_wait'
-                ? { type: 'retry_wait', turn: event.turn, phase: 'retry_wait',
-                    requestAttempt: event.requestAttempt, nextAttempt: event.nextAttempt,
-                    reason: event.reason, waitMs: event.waitMs }
-                : { type: event.type, turn: event.turn }
-              try { return onProgress(Object.freeze(progress)) } catch { /* progress observers do not change model work */ }
-            }
-          : undefined,
-        beforeRequest: input.beforeRequest,
-        getRunUsage: input.getRunUsage,
-        onRequestUsage: input.onRequestUsage,
-        shouldStopAfterTurn: ({ turn, toolCalls = 0, budgetExceeded = false } = {}) => shouldStopAfterTurn({
-          maxTurns: recipe.maxTurns,
-          turn,
-          toolCalls,
-          maxToolCalls: Number.isSafeInteger(budget.maxToolCalls) ? budget.maxToolCalls : Number.MAX_SAFE_INTEGER,
-          budgetExceeded
-        })
-      }, input.signal, timeoutMs)
-    } catch (error) {
-      if (input.signal?.aborted && error?.code !== input.signal?.reason?.code) {
-        throw executionError(input.signal?.reason?.code === 'AGENT_BUDGET_EXCEEDED' ? 'AGENT_BUDGET_EXCEEDED' : 'AGENT_CANCELLED')
-      }
-      throw error
-    }
-    // The provider may resolve after the caller has cancelled its bounded run.
-    // Do not let that late result reach schema validation or persistence.
-    if (input.signal?.aborted) throw executionError('AGENT_CANCELLED')
-    if (!result || typeof result !== 'object' || Array.isArray(result) || typeof result.text !== 'string') {
-      throw executionError('AGENT_OUTPUT_INVALID')
-    }
-    return {
-      recipeId: recipe.recipeId,
-      recipeVersion: recipe.recipeVersion,
-      maxTurns: recipe.maxTurns,
-      toolGrants: [...recipe.toolGrants],
-      text: result.text,
-      usage: result.usage === undefined ? null : result.usage
-    }
+    checkSignal(input.signal)
+    let output
+    try { output = JSON.parse(result.text) } catch { throw outputInvalid('json', 'output') }
+    if (quality && input.summaryStage === 'organizing_topics') assertSummaryTopicIndex(output)
+    else validateRecipeOutput(recipe.recipeId, recipe.recipeVersion, output)
+    return { recipeId: recipe.recipeId, recipeVersion: recipe.recipeVersion, maxTurns: recipe.maxTurns,
+      toolGrants: [...recipe.toolGrants], text: result.text, usage: result.usage }
   }
 }
 

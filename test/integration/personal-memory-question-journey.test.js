@@ -1,4 +1,6 @@
 'use strict'
+const { createRecipeNetworkAdapter, providerResponse, toolRequest, summaryStageContent } = require('./provider-network-fixture')
+const { getRecipe } = require('../../src/agent/contracts/recipes')
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
@@ -89,42 +91,45 @@ async function fixture (t, options = {}) {
     isEncryptionAvailable: () => true, encryptString: (v) => Buffer.from(v).reverse(), decryptString: (v) => Buffer.from(v).reverse().toString()
   } })
   const providerInputs = []
-  const modelAccess = new ModelAccessRuntime({ gateway, vault, adapter: { async run (request) {
-    const { recipe, prompt, tools } = request
+  const modelAccess = new ModelAccessRuntime({ gateway, vault, adapter: createRecipeNetworkAdapter(runId => {
+    const row = service.requireStore().database.prepare('SELECT recipe_id,recipe_version FROM formal_agent_runs WHERE run_id=?').get(runId)
+    return getRecipe(row.recipe_id, row.recipe_version)
+  }, async request => {
+    const { recipe, prompt, observation } = request
     providerInputs.push({ recipe, prompt })
     if (recipe.recipeId === 'context.synthesize') {
       const input = JSON.parse(prompt)
       const output = { schemaVersion: 1, sections: input.memories.slice(0, 8).map((item) => ({ category: item.origin === 'explicit' ? 'facts' : 'candidates', title: '个人信息', text: item.displayText, memoryRefs: [item.memoryRef], episodeRefs: [] })) }
       if (options.overviewOutput) await options.overviewOutput(output, input)
-      return { text: JSON.stringify(output) }
+      return providerResponse(output)
     }
     if (recipe.recipeId === 'qa.answer') {
       if (recipe.recipeVersion === '4') {
-        await request.beforeRequest({ turn: 1 })
-        await request.onRequestUsage(null)
+
+
         const input = JSON.parse(prompt)
         const source = input.questionEvidence?.sources[0]?.sourceRef || input.questionMerge?.parts[0]?.sourceRefs[0]
-        return { text: JSON.stringify(prompt.includes('回答失败') ? { schemaVersion: 1 } : {
-          schemaVersion: 2, answer: '已回答本次问题。', claims: source ? [{ text: '本次会话包含接口讨论。', sourceRefs: [source], memoryRefs: [] }] : [],
+        return providerResponse(prompt.includes('回答失败') ? { schemaVersion: 1 } : {
+          schemaVersion: 2, answer: options.questionAnswer || '已回答本次问题。', claims: source ? [{ text: '本次会话包含接口讨论。', sourceRefs: [source], memoryRefs: [] }] : [],
           sourceRefs: source ? [source] : [], memoryRefs: [], unresolved: source ? [] : ['证据不足。'], coverage: null
-        }) }
+        })
       }
-      return { text: JSON.stringify(prompt.includes('回答失败') ? { schemaVersion: 1 } : { schemaVersion: 1, answer: '已回答本次问题。', sourceRefs: [], memoryRefs: [], unresolved: [] }) }
+      return providerResponse(prompt.includes('回答失败') ? { schemaVersion: 1 } : { schemaVersion: 1, answer: '已回答本次问题。', sourceRefs: [], memoryRefs: [], unresolved: [] })
     }
     if (recipe.recipeId === 'summary.minutes') {
-      await tools[0].execute({ schemaVersion: 1, aliasKeys: ['负责项目x的客户端'] })
-      return { text: JSON.stringify({ schemaVersion: 1, overview: '本次讨论接口变更。', conclusions: [], todos: [], risks: [] }) }
+      if (observation === null) return toolRequest('search_context', { schemaVersion: 1, aliasKeys: ['负责项目x的客户端'] })
+      return providerResponse(summaryStageContent(prompt, { schemaVersion: 1, overview: '本次讨论接口变更。', conclusions: [], todos: [], risks: [] }))
     }
     if (recipe.recipeId === 'context.ingest.session') {
       const payload = JSON.parse(prompt)
       const input = recipe.recipeVersion === '3' ? { ...payload.experienceRange.source, confirmedMemories: payload.experienceRange.confirmedMemories, events: payload.experienceRange.parts } : payload
-      if (recipe.recipeVersion === '3') { await request.beforeRequest({ turn: 1 }); await request.onRequestUsage(null) }
+
       const memory = input.confirmedMemories.find((item) => item.entityKeys.includes('项目x'))
       const output = { schemaVersion: 2, questionSummary: null, experiences: [{ kind: 'topic', text: '讨论项目接口背景', confidence: 'high',
         evidence: { sessionId: input.sessionId, transcriptVersion: input.transcriptVersion, fromEventOrder: input.events[0].eventOrder, throughEventOrder: input.events.at(-1).eventOrder } }], memoryCandidates: [], associations: [] }
       if (memory && input.events[0].text === '项目X接口变更') output.associations.push({ memoryRef: memory.memoryRef, matchKeys: ['项目X'], relation: '用户负责的项目出现接口变更的相关背景', evidence: output.experiences[0].evidence })
       if (options.sessionOutput) options.sessionOutput(output, input)
-      return { text: JSON.stringify(recipe.recipeVersion === '3' ? { schemaVersion: 3, stage: 'range', content: output } : output) }
+      return providerResponse(recipe.recipeVersion === '3' ? { schemaVersion: 3, stage: 'range', content: output } : output)
     }
     assert.equal(recipe.recipeId, 'context.ingest.interaction')
     assert.equal(recipe.recipeVersion, '2')
@@ -133,14 +138,14 @@ async function fixture (t, options = {}) {
     const text = input.userText
     const pattern = text.includes('请给一个例子') && !text.includes('以后')
     const self = text.includes('我负责')
-    return { text: JSON.stringify({ schemaVersion: 2, questionSummary: '提问中包含项目或技术表达要求。', experiences: [], associations: [], memoryCandidates: [{
+    return providerResponse({ schemaVersion: 2, questionSummary: '提问中包含项目或技术表达要求。', experiences: [], associations: [], memoryCandidates: [{
       scopeKind: self ? 'project' : 'global', scopeKeyProposal: self ? '项目X' : null, kind: self ? 'project_fact' : 'preference',
       content: self ? '负责项目X的客户端' : '技术解释先给例子', confidence: 'high', salience: 'high',
       evidence: { interactionId: input.interactionId, signalKind: input.signalKind },
       attribution: pattern ? 'repeated_pattern' : self ? 'self_statement' : 'long_term_requirement',
       entityKeys: self ? ['项目X'] : [], userEvidence: { fromCodePoint: 0, throughCodePoint: Array.from(text).length }
-    }] }) }
-  } } })
+    }] })
+  }) })
   await modelAccess.initialize()
   const command = async (value) => {
     const catalog = await modelAccess.catalog()
@@ -331,7 +336,8 @@ test('SEM-F37/F30/J28: background synthesis keeps exact sources, two bounded pro
 })
 
 test('SEM-F31/F39/J22-QA-SCOPE: date and project controls submit through real renderer, preload, main and scheduler', async t => {
-  const f = await fixture(t, { ingestRecipeVersion: '3' })
+  const questionAnswer = '**已回答本次问题。**\n\n### 依据与说明\n本次讨论的要点如下。\n- 核对较晚修订。\n- 保留来源与 `2.0` 版本。'
+  const f = await fixture(t, { ingestRecipeVersion: '3', questionAnswer })
   await f.question('我负责项目X的客户端')
   let page = await f.view(); const candidate = page.result.items[0]
   await f.memory.controller.manage({ ...HEADER, request_id: 'confirm.scope.ui', command: { type: 'update', expected_revision: page.revision,
@@ -349,9 +355,18 @@ test('SEM-F31/F39/J22-QA-SCOPE: date and project controls submit through real re
   await input(agent.querySelector('#agentPrompt'), '全部会话总体讨论什么？')
   await click(button('提交问题'))
   await wait(() => agent.querySelector('.result-card')?.textContent.includes('已回答本次问题。'))
+  const answerBody = agent.querySelector('.result-content > section .result-prose')
+  assert.deepEqual([...answerBody.querySelectorAll(':scope > p')].map(p => p.textContent), ['已回答本次问题。', '本次讨论的要点如下。'])
+  assert.deepEqual([...answerBody.querySelectorAll(':scope > ul > li')].map(li => li.textContent), ['核对较晚修订。', '保留来源与 2.0 版本。'])
+  assert.equal(answerBody.querySelector('h3').textContent, '依据与说明')
+  assert.equal(answerBody.querySelector('strong').textContent, '已回答本次问题。')
+  assert.equal(answerBody.querySelector('code').textContent, '2.0')
+  assert.ok(agent.querySelector('.result-sources button'))
   const db = f.service.requireStore().database
   const dateRun = db.prepare("SELECT run_id,input_digest FROM formal_agent_runs WHERE json_extract(scope_json,'$.kind')='date_range' AND state='succeeded'").get()
   assert.ok(dateRun)
+  const savedAnswer = db.prepare('SELECT result_json FROM formal_agent_interactions WHERE run_id=?').get(dateRun.run_id)
+  assert.equal(JSON.parse(savedAnswer.result_json).answer, questionAnswer, 'display formatting does not rewrite the stored answer')
   assert.ok(db.prepare('SELECT source_count FROM formal_agent_question_scopes WHERE input_digest=?').get(dateRun.input_digest).source_count >= 2)
   await click(button('显示项目'))
   let projectCard = [...agent.querySelectorAll('.scope-card')].find(item => item.textContent.includes(candidate.scope.reference))
@@ -430,7 +445,7 @@ test('SEM-F26/F30/F38/J28/J29: summary expands only actual memory inputs and thi
     await new Promise((resolve) => setImmediate(resolve))
   }
   assert.equal(detail.result?.state, 'succeeded')
-  assert.deepEqual(Object.keys(detail.result.result).sort(), ['conclusions', 'overview', 'risks', 'schemaVersion', 'todos'])
+  assert.deepEqual(Object.keys(detail.result.result).sort(), ['conclusions', 'overview', 'risks', 'schemaVersion', 'todos', 'topics'])
   assert.equal(detail.result.memory_inputs.length, 1)
   assert.equal(detail.result.memory_inputs[0].availability, 'accessible')
   assert.equal(detail.result.memory_inputs[0].associations.length, 1)

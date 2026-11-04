@@ -235,6 +235,8 @@ test('S5-2/J22: submit delegates model-first convergence while keeping prompt an
     signal: null
   })
   assert.equal(prompts.get('run.target.route-service'), h.prompt)
+  assert.deepEqual(wakes, [], 'durable receipt returns before scheduling model work')
+  await new Promise((resolve) => setImmediate(resolve))
   assert.deepEqual(wakes, ['submit'])
 })
 
@@ -357,7 +359,7 @@ test('SEM-F38/J30-CANCEL: a terminal cancelled interaction is returned without a
   assert.deepEqual(events, [])
 })
 
-test('SEM-F38/J30-CANCEL: failed terminal-race readback stays unavailable and emits no change', async () => {
+test('SEM-F38/J30-CANCEL: cancellation signals before persistence and failed readback emits no confirmed change', async () => {
   let reads = 0
   let schedulerCancels = 0
   const events = []
@@ -375,6 +377,7 @@ test('SEM-F38/J30-CANCEL: failed terminal-race readback stays unavailable and em
     }
   }
   storage.cancelAgentRun = async () => {
+    assert.equal(schedulerCancels, 1, 'stop the active execution before requesting persistent cancellation')
     const error = new Error('AGENT_INTERACTION_STATE_CONFLICT')
     error.code = 'AGENT_INTERACTION_STATE_CONFLICT'
     throw error
@@ -390,11 +393,11 @@ test('SEM-F38/J30-CANCEL: failed terminal-race readback stays unavailable and em
   assert.equal(response.ok, false)
   assert.equal(response.error.next_action, 'retry')
   assert.equal(reads, 2)
-  assert.equal(schedulerCancels, 0)
+  assert.equal(schedulerCancels, 1)
   assert.deepEqual(events, [])
 })
 
-test('SEM-F39/J31-SIZE: the preset submit path freezes summary.minutes recipeVersion 2 and binds the same version', async () => {
+test('SEM-F39/J31-SIZE: the preset submit path freezes summary.minutes recipeVersion 3 and binds the same version', async () => {
   const h = header({ scope: { kind: 'session', reference: 'session.preset-v2' }, prompt: '请生成这场会话的总结', client_idempotency_key: 'client.preset-v2' })
   const created = []
   const binds = []
@@ -424,7 +427,7 @@ test('SEM-F39/J31-SIZE: the preset submit path freezes summary.minutes recipeVer
   assert.equal(result.ok, true)
   assert.equal(created.length, 1)
   assert.equal(created[0].recipeId, 'summary.minutes')
-  assert.equal(created[0].recipeVersion, '2')
+  assert.equal(created[0].recipeVersion, '3')
   assert.equal(binds.length, 1)
-  assert.equal(binds[0].recipeVersion, '2')
+  assert.equal(binds[0].recipeVersion, '3')
 })

@@ -6,7 +6,7 @@ import { acceptsRevision, capabilityFormToCapabilities, capabilitySummary, deriv
 
 type Dict = Record<string, any>
 type Draft = { profileId: string, label: string, url: string, credential: string, modelId: string,
-  capabilities: CapabilityForm, presetId: string, makeDefault: boolean, advanced: boolean, error: string }
+  capabilities: CapabilityForm, presetId: string, presetVersion?: number, makeDefault: boolean, advanced: boolean, error: string }
 type Test = { pending: boolean, result: Dict | null, revision: number }
 const HEADER = { contractId: 'agent-model-ui', contractVersion: '1.0.0' }
 const TEST_HEADER = { contractId: 'agent-model-test-ui', contractVersion: '1.0.0' }
@@ -238,14 +238,15 @@ export function AgentModelPane ({ shell }: { shell: Dict }): ReactElement {
     {draft ? <section className="group agent-model-editor" aria-label={draft.profileId ? draft.modelId ? '编辑模型服务' : '添加模型' : '新增模型服务'}>
       <h2>{draft.profileId ? draft.modelId ? '编辑模型服务' : '添加模型' : '新增模型服务'}</h2>
       {!draft.profileId && <div className="row"><label className="label" htmlFor="agent-preset">服务商</label>
-        <select id="agent-preset" value={draft.presetId} disabled={busy} onChange={(event) => {
-          const preset = presets.find((item) => item.presetId === event.currentTarget.value)
+        <select id="agent-preset" value={draft.presetId ? `${draft.presetId}@${draft.presetVersion || 1}` : ''} disabled={busy} onChange={(event) => {
+          const preset = presets.find((item) => `${item.presetId}@${item.version}` === event.currentTarget.value)
           if (!preset) { update({ presetId: '', label: '', url: '', modelId: '', capabilities: emptyCapabilityForm() }); return }
           const existing = snapshot.profiles.find((item) => item.profileId === `preset.${preset.presetId}`)
           if (existing) { edit(existing, opener.current ?? event.currentTarget, preset.modelId); return }
-          update({ presetId: preset.presetId, label: preset.providerLabel, url: preset.httpsOrigin + preset.basePath,
+          update({ presetId: preset.presetId, presetVersion: preset.version, label: preset.providerLabel, url: preset.httpsOrigin + preset.basePath,
             modelId: preset.modelId, capabilities: capabilityDraft(preset) })
-        }}><option value="">自定义</option>{presets.map((item) => <option key={item.presetId} value={item.presetId}>{item.providerLabel}</option>)}</select></div>}
+        }}><option value="">自定义</option>{presets.map((item) => <option key={`${item.presetId}@${item.version}`} value={`${item.presetId}@${item.version}`}>{item.presetId === 'deepseek-openai' && item.version === 2 ? 'DeepSeek V4.1 Flash（思考 high）' : item.providerLabel}</option>)}</select></div>}
+      {draft.presetId === 'deepseek-openai' && draft.presetVersion === 2 && <p className="hint">模型 ID：deepseek-flash。能力建议依据 DeepSeek 官方模型资料（2026-10-11）；思考 high 消耗也计入输出用量。请核对并确认能力，保存不会自动替换当前模型用途。</p>}
       {draft.profileId && <p className="hint">服务商：{draft.label}</p>}
       <div className="row"><label className="label" htmlFor="agent-url">API 地址</label><input id="agent-url" type="url" value={draft.url} disabled={busy} placeholder="https://api.example.com/v1" onChange={(event) => update({ url: event.currentTarget.value })} /></div>
       <div className="row"><div><label className="label" htmlFor="agent-key">API 密钥</label>{editedProfile?.credential.present && <div className="hint">{CREDENTIAL_LABELS[editedProfile.credential.scope]}；输入新值才更换。</div>}</div>

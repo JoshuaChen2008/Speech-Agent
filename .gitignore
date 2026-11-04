@@ -22,5 +22,9 @@ models/
 docs/current-framework.html
 docs/current-framework.visual-check.*
 
+# 本地架构图派生产物与独立宣传工程；维护图源仍在 docs/。
+/.archify/
+/media/
+
 # 本地成品软件交付目录
 /成品软件/

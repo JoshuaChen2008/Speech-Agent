@@ -104,6 +104,7 @@ function createHarness ({ deferFrames = false, toolbarRect = null, openAgent = n
   let triggerToolbarMutation = () => {}
   const frames = []
   const timers = new Map()
+  const windowListeners = new Map()
   let timerId = 0
   const shell = {
     ...(openAgent ? { openAgent } : {}),
@@ -187,7 +188,10 @@ function createHarness ({ deferFrames = false, toolbarRect = null, openAgent = n
         return dragController
       }
     },
-    addEventListener () {}
+    addEventListener (name, callback) {
+      if (!windowListeners.has(name)) windowListeners.set(name, [])
+      windowListeners.get(name).push(callback)
+    }
   }
   vm.runInNewContext(transpileRenderer(path.join(root, 'src', 'toolbar', 'toolbar.ts')), {
     console,
@@ -199,6 +203,8 @@ function createHarness ({ deferFrames = false, toolbarRect = null, openAgent = n
       frames.push(callback)
       return frames.length
     },
+    // Keep cancelled callbacks runnable so the regression also checks late delivery.
+    cancelAnimationFrame () {},
     ResizeObserver: class {
       constructor (callback) { this.callback = callback; triggerToolbarResize = callback }
       observe (target) { observedLayoutTargets.push(target) }
@@ -213,6 +219,7 @@ function createHarness ({ deferFrames = false, toolbarRect = null, openAgent = n
   })
   return {
     actions,
+    unload () { for (const callback of windowListeners.get('beforeunload') || []) callback() },
     runTimers (delay) { for (const [id, timer] of [...timers]) { if (timer.delay === delay) { timers.delete(id); timer.callback() } } },
     callbacks,
     document,
@@ -221,6 +228,7 @@ function createHarness ({ deferFrames = false, toolbarRect = null, openAgent = n
     elements,
     layoutReports,
     observedLayoutTargets,
+    runNextFrame: () => frames.shift()?.(),
     runFrames: () => { while (frames.length > 0) frames.shift()() },
     triggerToolbarMutation,
     triggerToolbarResize,
@@ -296,6 +304,40 @@ test('SEM-F22/J17: toolbar reports its existing contour with the main-issued gen
     generation: 7,
     rect: { x: 184, y: 16, width: 400, height: 40 }
   }])
+})
+
+test('SEM-F22/SEM-T04/J17: a pending frame cannot block the bounded toolbar contour recovery', async () => {
+  const { layoutReports, runFrames, runNextFrame, runTimers } = createHarness({ deferFrames: true })
+  await flush()
+  assert.equal(layoutReports.length, 0)
+  runTimers(100)
+  assert.equal(layoutReports.length, 1, 'the timer must report without an animation frame')
+  assert.equal(layoutReports[0].generation, 7)
+  runNextFrame()
+  assert.equal(layoutReports.length, 1, 'an old frame cannot settle the newer forced retry queue')
+  runTimers(100)
+  const reportsAfterTimers = layoutReports.length
+  runFrames()
+  assert.equal(layoutReports.length, reportsAfterTimers, 'late frames cannot duplicate an already settled queue')
+})
+
+test('SEM-F22/SEM-T04/J17: a forced retry survives an already queued identical toolbar contour', async () => {
+  const { layoutReports, runFrames, runTimers, triggerToolbarResize } = createHarness({ deferFrames: true })
+  await flush()
+  runFrames()
+  assert.equal(layoutReports.length, 1)
+  triggerToolbarResize()
+  runTimers(100)
+  assert.equal(layoutReports.length, 2, 'forced recovery cannot be lost to pending work or contour deduplication')
+})
+
+test('SEM-F22/SEM-T04/J17: unloading cancels queued toolbar contour work before late frame delivery', async () => {
+  const { layoutReports, runFrames, runTimers, unload } = createHarness({ deferFrames: true })
+  await flush()
+  unload()
+  runTimers(100)
+  runFrames()
+  assert.equal(layoutReports.length, 0, 'an obsolete renderer must not report after unload')
 })
 
 /* 穿透状态一翻转，光标就换主人：穿透时由下面那个应用画，实心时才是本窗的箭头。

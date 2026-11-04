@@ -30,7 +30,7 @@ test('SEM-F33/DB7/J25: formal v5 upgrades by appending byte-stable migrations v6
   const tables = v6.database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'agent_model_%' ORDER BY name").all().map(({ name }) => name)
   assert.deepEqual(tables, [
     'agent_model_profile_models', 'agent_model_profiles',
-    'agent_model_purpose_assignments', 'agent_model_run_bindings'
+    'agent_model_purpose_assignments', 'agent_model_request_policies', 'agent_model_run_bindings', 'agent_model_run_request_policies'
   ])
   assert.deepEqual(v6.database.prepare('PRAGMA table_info(agent_model_profile_models)').all().map((row) => row.name), [
     'profile_id', 'model_id', 'capability_json', 'created_at', 'updated_at',

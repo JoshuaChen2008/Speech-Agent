@@ -47,6 +47,8 @@ function metrics (results, labels) {
 }
 
 test('SEM-F42/J22-QUALITY: 100 fixed labeled queries compare keyword, vector and RRF using real storage and bounded ranking', { skip: process.platform !== 'win32', timeout: 30000 }, async t => {
+  const trackedReportPath = path.join(__dirname, '../../docs/validation/personal-memory-synthetic-retrieval-2026-10-02.json')
+  const trackedReportBytes = fs.readFileSync(trackedReportPath)
   let providerRequests = 0
   const f = await fixture(t, { fetchImpl: async (_url, options) => {
     providerRequests++
@@ -85,6 +87,9 @@ test('SEM-F42/J22-QUALITY: 100 fixed labeled queries compare keyword, vector and
     buildDurationMs: buildMs, queryDurationMs: { p50: sorted[49], p95: sorted[94], max: sorted.at(-1) }, comparisons }
   // Evidence is deliberately only metrics, enums, booleans and hashes.
   assert.equal(/SQLite|mic|[A-Z]:[\\/]|synthetic-independent-key/.test(JSON.stringify(report)), false)
-  fs.writeFileSync(path.join(__dirname, '../../docs/validation/personal-memory-synthetic-retrieval-2026-10-02.json'), JSON.stringify(report, null, 2) + '\n')
+  const reportPath = path.join(__dirname, '../../.artifacts/personal-memory-synthetic-retrieval.json')
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true })
+  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n')
+  assert.ok(fs.readFileSync(trackedReportPath).equals(trackedReportBytes), 'quality journey must not rewrite tracked evidence')
   t.diagnostic(JSON.stringify(comparisons))
 })

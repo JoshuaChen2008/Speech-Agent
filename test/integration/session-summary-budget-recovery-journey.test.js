@@ -10,7 +10,7 @@ const { AgentRunService } = require('../../src/agent/formal-run/agent-run-servic
 const { SessionSummaryRunService } = require('../../src/agent/formal-run/session-summary-run-service')
 const { CredentialVault } = require('../../src/agent/model-access/credential-vault')
 const { ModelAccessRuntime } = require('../../src/agent/model-access/runtime')
-const { OpenAiCompatibleAdapter } = require('../../src/agent/model-access/openai-compatible-adapter')
+const { createNetworkAdapter } = require('./provider-network-fixture')
 const { createPersonalContextExecutionAdapter } = require('../../src/agent/personal-context')
 const {
   AgentLoopExecutor,
@@ -26,6 +26,7 @@ const { StorageWorkerService } = require('../../src/runtime/storage-worker/worke
 const { CONTROL_MESSAGES, OPERATIONS, PROTOCOL_VERSION, StorageError, makeCaptionEventId, makeCloseSessionKey, makeOpenSessionKey } = require('../../src/runtime/storage-worker/protocol')
 const summaryContract = require('../../src/agent/contracts/session-summary-run-ui')
 const { assertDiagnosticRecord, assertDiagnosticExportSnapshot } = require('../../src/agent/contracts/agent-run-diagnostics')
+const { sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
 
 const CAPABILITIES = Object.freeze({
   maxInputTokens: 64000,
@@ -260,6 +261,8 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   let providerAttempt = 0
   let rejectWithPrivacyMarkers = false
   let providerFailureCode = null
+  let retryResponses = null
+  let releaseLongRetryResponse
   let exhaustNextRun = false
   let resolvePrivacyFailureEgress
   const privacyFailureEgress = new Promise((resolve) => { resolvePrivacyFailureEgress = resolve })
@@ -267,9 +270,10 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   const firstEgress = new Promise((resolve) => { resolveFirstEgress = resolve })
   let resolveSecondEgress
   const secondEgress = new Promise((resolve) => { resolveSecondEgress = resolve })
-  const output = { schemaVersion: 1, overview: '合成会话总结', conclusions: [], todos: [], risks: [] }
-  const adapter = new OpenAiCompatibleAdapter({
+  const output = { schemaVersion: 2, overview: '合成会话总结', topics: [], conclusions: [], todos: [], risks: [] }
+  const adapter = createNetworkAdapter({
     fetch: async (_url, options) => {
+      const summaryStage = JSON.parse(JSON.parse(options.body).messages[1].content).summaryPlan.stage
       const database = service.requireStore().database
       const reservation = database.prepare(`
         SELECT reservation_id FROM formal_agent_model_request_reservations
@@ -277,6 +281,10 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
       `).get(runBeingExecuted.runId, providerAttempt)
       assert.ok(reservation, 'model request reservation is durable before provider egress')
       egress.push({ attempt: providerAttempt, reservationPresent: true })
+      if (retryResponses) {
+        assert.ok(retryResponses.length > 0, 'cancelled retry wait must prevent another provider request')
+        return retryResponses.shift()()
+      }
       if (providerFailureCode) {
         return { ok: false, status: providerFailureCode === 'AGENT_PROVIDER_AUTH_FAILED' ? 401 : 503 }
       }
@@ -293,10 +301,13 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
         ok: true,
         status: 200,
         headers: { get: () => null },
-        text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(output) } }] })
+        text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(summaryStage === 'organizing_topics' ? { schemaVersion: 1, topics: [] } : output) } }] })
       }
     }
   })
+  const borrowedCredentials = []
+  const originalExchange = adapter.exchange.bind(adapter)
+  adapter.exchange = input => { borrowedCredentials.push(input.credential); return originalExchange(input) }
   const configureModel = async (modelAccess) => {
     const commands = [
       { type: 'createProfile', profileId: 'summary-provider', label: 'Summary Test Provider', httpsOrigin: 'https://provider.test', basePath: '/v1' },
@@ -389,6 +400,8 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
 
   await system.scheduler.stop()
   await system.getFirstJobSettled()
+  assert.equal(borrowedCredentials.every(buffer => buffer.every(byte => byte === 0)), true,
+    'non-cooperative outbound releases borrowed credentials before restart')
   await diagnosticStore.drain()
   const beforeRestartDiagnostics = await readDiagnosticRecords(diagnosticDirectory)
   assert.equal(beforeRestartDiagnostics.some((record) => record.event === 'accepted'), true)
@@ -453,12 +466,14 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   const finalDatabase = service.requireStore().database
   const finalRun = finalDatabase.prepare('SELECT state,attempt_count FROM formal_agent_runs WHERE run_id=?').get(runId)
   assert.deepEqual({ ...finalRun }, { state: 'succeeded', attempt_count: 2 })
+  const quality = finalDatabase.prepare('SELECT loop_count,total_loop_count FROM formal_agent_summary_quality WHERE run_id=?').get(runId)
+  assert.deepEqual({ ...quality }, { loop_count: 3, total_loop_count: 4 })
   const attempts = finalDatabase.prepare(`
     SELECT attempt,state,request_count FROM formal_agent_run_attempt_budgets WHERE run_id=? ORDER BY attempt
   `).all(runId)
   assert.deepEqual(attempts.map((row) => ({ attempt: row.attempt, state: row.state, requestCount: row.request_count })), [
     { attempt: 1, state: 'interrupted', requestCount: 1 },
-    { attempt: 2, state: 'settled', requestCount: 1 }
+    { attempt: 2, state: 'settled', requestCount: 3 }
   ])
   const resumedBinding = finalDatabase.prepare(`
     SELECT profile_id,profile_revision,model_id,capability_json,budget_json FROM agent_model_run_bindings WHERE run_id=?
@@ -466,6 +481,8 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   assert.deepEqual({ ...resumedBinding }, { ...firstBinding })
   assert.deepEqual(egress, [
     { attempt: 1, reservationPresent: true },
+    { attempt: 2, reservationPresent: true },
+    { attempt: 2, reservationPresent: true },
     { attempt: 2, reservationPresent: true }
   ])
   const currentBudget = finalDatabase.prepare(`
@@ -524,6 +541,13 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
 
   rejectWithPrivacyMarkers = false
   providerFailureCode = 'AGENT_PROVIDER_UNAVAILABLE'
+  // J30-PROGRESS gap: a long Retry-After must reach the durable snapshot,
+  // rather than being dropped after the host emits retry:null.
+  retryResponses = [
+    () => ({ ok: false, status: 429, headers: { get: name => name === 'retry-after' ? '1' : null } }),
+    () => new Promise(resolve => { releaseLongRetryResponse = () => resolve({ ok: false, status: 429,
+      headers: { get: name => name === 'retry-after' ? '2' : null } }) })
+  ]
   const retryableAccepted = await system.summaryRuns.accept({
     contract_id: summaryContract.CONTRACT_ID,
     contract_version: summaryContract.CONTRACT_VERSION,
@@ -536,7 +560,33 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   await waitFor(async () => {
     const request = await gateway.getSessionSummaryRequest({ requestId: retryableRequestId })
     return request.state === 'running' && request.phase === 'retry_wait' && request.retry?.requestAttempt >= 2
-  }, 'provider retry wait')
+  }, 'provider short retry wait')
+  const shortWait = await gateway.getSessionSummaryRequest({ requestId: retryableRequestId })
+  assert.equal(shortWait.retry.requestAttempt, 2)
+  assert.equal(shortWait.retry.waitMs, 1000)
+  await waitFor(() => typeof releaseLongRetryResponse === 'function', 'second provider response boundary')
+  releaseLongRetryResponse()
+  await waitFor(async () => {
+    const request = await gateway.getSessionSummaryRequest({ requestId: retryableRequestId })
+    return request.state === 'running' && request.phase === 'retry_wait' && request.retry === null
+  }, 'long Retry-After durable wait phase with cleared short metadata')
+  const reloadedWait = await system.summaryRuns.get({
+    contract_id: summaryContract.CONTRACT_ID, contract_version: summaryContract.CONTRACT_VERSION,
+    request_id: retryableRequestId
+  })
+  assert.equal(reloadedWait.ok, true)
+  assert.equal(reloadedWait.result.snapshot.phase, 'retry_wait')
+  assert.equal(reloadedWait.result.snapshot.retry, undefined)
+  await diagnosticStore.drain()
+  const waitRow = await gateway.getSessionSummaryRequest({ requestId: retryableRequestId })
+  const backoffs = (await diagnosticStore.recordsForRequestDigest(waitRow.requestDigest)).records
+    .filter(record => record.event === 'backoff' && record.metrics.actual !== null)
+  assert.deepEqual(backoffs.map(record => record.metrics), [
+    { actual: 2, limit: 5, unit: 'count' }, { actual: 3, limit: 5, unit: 'count' }
+  ])
+  const egressBeforeRetryCancel = egress.length
+  assert.equal(borrowedCredentials.every(buffer => buffer.every(byte => byte === 0)), true,
+    'credentials are released throughout the real host retry wait')
   const retryableBeforeCancel = await gateway.getSessionSummaryRequest({ requestId: retryableRequestId })
   assert.equal(retryableBeforeCancel.errorCode, null)
   const retryableRunId = retryableBeforeCancel.targetRunId
@@ -550,6 +600,9 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: scheduler, reservation, SQLite restart, and 
   const retryableRun = service.requireStore().database.prepare('SELECT state,lease_owner FROM formal_agent_runs WHERE run_id=?').get(retryableRunId)
   assert.equal(retryableRun.state, 'cancelled')
   assert.equal(retryableRun.lease_owner, null)
+  await waitFor(() => system.scheduler.activeRunId === null, 'cancelled long retry shutdown')
+  assert.equal(egress.length, egressBeforeRetryCancel)
+  retryResponses = null
 
   exhaustNextRun = true
   const exhaustedAccepted = await system.summaryRuns.accept({
@@ -640,25 +693,27 @@ test('SEM-F38/SEM-F39/J30-CANCEL/J31-SIZE: the production chain commits exactly 
 
   const sourceRef = { sessionId: 'session.summary.minutes', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 1 }
   const minutes = {
-    schemaVersion: 1,
+    schemaVersion: 2, topics: [],
     overview: '真实链路生成的受控纪要。',
-    conclusions: [{ text: '形成一个受控结论。', sourceRefs: [sourceRef] }],
+    conclusions: [{ text: '形成一个受控结论。', topicId: null, sourceRefs: [sourceRef] }],
     todos: [], risks: []
   }
+  const diagnosticStore = new AgentRunDiagnostics({ directory: path.join(root, 'diagnostics'), appVersion: '0.1.0' })
+  await diagnosticStore.initialization
   const captured = []
   let holdEgress = null
   let releaseEgress = null
-  let respondWith = () => ({
+  let respondWith = (body) => ({
     ok: true,
     status: 200,
     headers: { get: () => null },
-    text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(minutes) } }] })
+    text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(JSON.parse(body.messages[1].content).summaryPlan.stage === 'organizing_topics' ? { schemaVersion: 1, topics: [] } : minutes) } }] })
   })
-  const adapter = new OpenAiCompatibleAdapter({
+  const adapter = createNetworkAdapter({
     fetch: async (_url, options) => {
       captured.push(JSON.parse(options.body))
       if (holdEgress) await holdEgress
-      return respondWith()
+      return respondWith(JSON.parse(options.body))
     }
   })
   await gateway.start()
@@ -714,21 +769,21 @@ test('SEM-F38/SEM-F39/J30-CANCEL/J31-SIZE: the production chain commits exactly 
   `).all(runId)
 
   system = createExecutionSystem({
-    gateway, modelAccess, config, promptStore: new Map(), owner: 'owner.j30.minutes'
+    gateway, modelAccess, config, promptStore: new Map(), owner: 'owner.j30.minutes', diagnosticStore
   })
 
-  // A successful v2 summary request sends the JSON output directive as the
+  // A successful v3 summary request sends the staged JSON directives as the
   // system prompt, the derived output quota, and the full frozen input, and
   // commits exactly one minutes row.
   const success = await acceptSummary('j30-minutes-success')
   system.scheduler.start()
   await waitFor(async () => (await gateway.getSessionSummaryRequest({ requestId: success.requestId })).state === 'succeeded', 'success settlement')
-  assert.equal(captured.length, 1)
+  assert.equal(captured.length, 3)
   assert.equal(captured[0].messages[0].role, 'system')
   assert.equal(captured[0].messages[0].content.includes('只输出一个 JSON 对象'), true)
   assert.equal(captured[0].messages[0].content.includes('schemaVersion'), true)
   assert.equal(captured[0].messages[0].content.includes('不得编造'), true)
-  assert.equal(captured[0].max_tokens, 4096, 'the 4096 output capability caps the derived 8192 target')
+  assert.equal(captured[0].max_tokens, 4096, 'the confirmed output capability caps each stage target')
   assert.equal(captured[0].messages[1].role, 'user')
   assert.equal(captured[0].messages[1].content.includes('session.summary.minutes'), true)
   assert.equal(captured[0].messages[1].content.includes('"inputDigest"'), true)
@@ -753,7 +808,7 @@ test('SEM-F38/SEM-F39/J30-CANCEL/J31-SIZE: the production chain commits exactly 
   // any minutes.
   holdEgress = new Promise((resolve) => { releaseEgress = resolve })
   const cancelled = await acceptSummary('j30-minutes-cancelled')
-  await waitFor(() => captured.length === 2, 'cancelled scenario egress')
+  await waitFor(() => captured.length === 4, 'cancelled scenario egress')
   const cancelOutcome = await system.summaryRuns.cancel({
     contract_id: summaryContract.CONTRACT_ID,
     contract_version: summaryContract.CONTRACT_VERSION,
@@ -773,6 +828,37 @@ test('SEM-F38/SEM-F39/J30-CANCEL/J31-SIZE: the production chain commits exactly 
   assert.equal(cancelledRows.every((row) => row.result_json === null), true)
   const cancelledRun = service.requireStore().database.prepare('SELECT state FROM formal_agent_runs WHERE run_id=?').get(cancelled.runId)
   assert.equal(cancelledRun.state, 'cancelled')
+
+  holdEgress = null
+  for (const [key, content, expected, finishReason = 'stop'] of [
+    ['control', JSON.stringify({ ...minutes, overview: 'PRIVATE_OUTPUT_MARKER\u0000second line' }), { reason: 'control_character', field: 'overview', actual: null, limit: null }],
+    ['length', JSON.stringify({ ...minutes, overview: 'x'.repeat(4001) }), { reason: 'length', field: 'overview', actual: 4001, limit: 4000 }],
+    ['json', 'PRIVATE_INVALID_JSON', { reason: 'json', field: 'output', actual: null, limit: null }],
+    ['source', JSON.stringify({ ...minutes, conclusions: [{ text: 'Synthetic.', topicId: null, sourceRefs: [{ ...sourceRef, throughEventOrder: 999 }] }] }), { reason: 'source_reference', field: 'sourceRefs', actual: null, limit: null }],
+    ['protocol', JSON.stringify(minutes), { reason: 'response_protocol', field: 'response', actual: null, limit: null }, 'length']
+  ]) {
+    respondWith = body => ({ ok: true, status: 200, headers: { get: () => null },
+      text: async () => JSON.stringify({ choices: [{ finish_reason: finishReason, message: { content: JSON.parse(body.messages[1].content).summaryPlan.stage === 'organizing_topics' ? JSON.stringify({ schemaVersion: 1, topics: [] }) : content } }] }) })
+    const failure = await acceptSummary('j30-output-' + key)
+    await waitFor(async () => (await gateway.getSessionSummaryRequest({ requestId: failure.requestId })).state === 'failed', 'output rejection')
+    assert.equal(interactionRowsFor(failure.runId)[0].result_json, null)
+    assert.equal(interactionRowsFor(failure.runId)[0].error_code, 'AGENT_OUTPUT_INVALID')
+    await diagnosticStore.drain()
+    const records = await readDiagnosticRecords(path.join(root, 'diagnostics'))
+    const rejection = records.filter(record => record.event === 'output_rejected').at(-1)
+    assert.deepEqual(rejection?.outputValidation, expected)
+    assertDiagnosticRecord(rejection)
+    const page = await diagnosticStore.queryRequest({ requestDigest: rejection.requestDigest })
+    assert.equal(page.records.some(record => record.event === 'output_rejected'), true)
+    const destination = path.join(root, 'diagnostic-export.json')
+    await diagnosticStore.exportRequest({ requestDigest: rejection.requestDigest, showSaveDialog: async () => ({ canceled: false, filePath: destination }) })
+    const exported = assertDiagnosticExportSnapshot(JSON.parse(fs.readFileSync(destination, 'utf8')))
+    assert.deepEqual(exported.records.findLast(record => record.event === 'output_rejected').outputValidation, expected)
+    assert.equal(JSON.stringify(exported).includes('PRIVATE_'), false)
+    assert.equal(JSON.stringify(records).includes('PRIVATE_OUTPUT_MARKER'), false)
+    assert.equal(JSON.stringify(records).includes('PRIVATE_INVALID_JSON'), false)
+  }
+  await diagnosticStore.drain()
 
   // The subtitle session stays independent and the model request never widens
   // beyond the frozen binding capability.
@@ -800,8 +886,8 @@ test('SEM-F39/J31-COVERAGE/MERGE/BUDGET: long input traverses real storage, plan
   })
   let mode = 'success'
   const sent = []
-  const minutes = { schemaVersion: 1, overview: '合成纪要', conclusions: [], todos: [], risks: [] }
-  const adapter = new OpenAiCompatibleAdapter({ fetch: async (_url, options) => {
+  const minutes = { schemaVersion: 1, overview: '合成纪要第一段。\n\n较晚修订见第二段。', conclusions: [], todos: [], risks: [] }
+  const adapter = createNetworkAdapter({ fetch: async (_url, options) => {
     const body = JSON.parse(options.body)
     const node = JSON.parse(body.messages[1].content).summaryPlan
     sent.push(node)
@@ -835,17 +921,29 @@ test('SEM-F39/J31-COVERAGE/MERGE/BUDGET: long input traverses real storage, plan
       revision: 1, kind: 'final', t0: index * 140000, t1: index * 140000 + 100, text, translation: null })
   }
   await recorder.closeSession({ sessionId, sourceId: 'mic', state: 'closed' })
-  system = createExecutionSystem({ gateway, modelAccess, config, promptStore: new Map(), owner: 'owner.j31.long' })
+  const legacyPromptStore = new Map()
+  system = createExecutionSystem({ gateway, modelAccess, config, promptStore: legacyPromptStore, owner: 'owner.j31.long' })
   const run = async (key, legacy = false) => {
-    const accepted = await system.summaryRuns.accept({ contract_id: summaryContract.CONTRACT_ID, contract_version: summaryContract.CONTRACT_VERSION,
-      action: 'summary', scope: { kind: 'session', reference: sessionId }, client_request_key: key })
-    assert.equal(accepted.ok, true)
-    const requestId = accepted.result.snapshot.request_id
+    // Seed historical @2 facts through real storage commands. New product
+    // submissions use @3; this journey retains the old policy interpretation.
+    const source = await gateway.derivePersonalContextSessionSource({ sessionId, transcriptVersion: 'raw' })
+    const requestId = `request.${key}`; const runId = `run.${key}`; const interactionId = `interaction.${key}`
+    const inputWatermark = { throughEventOrder: source.inputWatermark }
+    await gateway.acceptSessionSummaryRequest({ requestId, sessionId, clientKeyDigest: sha256Canonical(key), requestDigest: sha256Canonical({ key }),
+      scopeDigest: sha256Canonical({ kind: 'session', reference: sessionId }), promptDigest: sha256Canonical('会话总结'), action: 'summary', summaryUseMemory: false,
+      transcriptVersion: 'raw', inputWatermark, inputDigest: source.inputDigest })
+    await gateway.createAgentRun({ runId, recipeId: 'summary.minutes', recipeVersion: '2', scope: { kind: 'session', reference: sessionId },
+      transcriptVersion: 'raw', inputWatermark, inputDigest: source.inputDigest, requestedBy: 'user', clientIdempotencyKey: key,
+      requestId, requestGeneration: 1, summaryUseMemory: false })
+    await modelAccess.bind({ runId, recipeId: 'summary.minutes', recipeVersion: '2', executionForm: 'agent_loop' })
+    await gateway.createAgentInteraction({ runId, interactionId, routingMode: 'preset', promptDigest: sha256Canonical('会话总结') })
+    legacyPromptStore.set(runId, '会话总结')
     if (legacy) {
       await waitFor(async () => (await gateway.getSessionSummaryRequest({ requestId })).targetRunId !== null, 'legacy run prepared')
       assert.equal(service.requireStore().database.prepare("UPDATE formal_agent_runs SET summary_input_policy=NULL,max_attempts=5 WHERE session_summary_request_id=?").run(requestId).changes, 1)
     }
     system.scheduler.start()
+    system.scheduler.wake('legacy-fixture')
     await waitFor(async () => ['succeeded', 'failed'].includes((await gateway.getSessionSummaryRequest({ requestId })).state), 'long summary terminal')
     const request = await gateway.getSessionSummaryRequest({ requestId })
     const db = service.requireStore().database
@@ -876,6 +974,8 @@ test('SEM-F39/J31-COVERAGE/MERGE/BUDGET: long input traverses real storage, plan
   assert.equal(exported.schema_version, 3)
   assert.equal(exported.summary_input_plan.plan_digest, plan.plan_digest)
   assert.equal(exported.summary_input_policy, 'summary-long-input@1')
+  assert.deepEqual(detail.interaction.result, minutes)
+  assert.deepEqual(exported.result, minutes)
   mode = 'unknown'; sent.length = 0
   const unknown = await run('j31-long-unknown')
   assert.equal(unknown.request.state, 'succeeded')

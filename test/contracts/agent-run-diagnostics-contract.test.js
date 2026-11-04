@@ -40,6 +40,16 @@ test('SEM-F40/J30-DIAG: diagnostic record accepts only exact no-body metadata', 
   assert.throws(() => assertDiagnosticRecord(record({ elapsedMs: Number.POSITIVE_INFINITY })), /safe integer/)
 })
 
+test('SEM-F40/J30-DIAG: output rejection metadata is closed and old records remain valid', () => {
+  const outputValidation = { reason: 'control_character', field: 'overview', actual: null, limit: null }
+  const value = record({ event: 'output_rejected', errorCode: 'AGENT_OUTPUT_INVALID', outputValidation })
+  assert.equal(assertDiagnosticRecord(value), value)
+  assert.equal(assertDiagnosticRecord(record()).outputValidation, undefined)
+  assert.throws(() => assertDiagnosticRecord(record({ outputValidation })))
+  assert.throws(() => assertDiagnosticRecord(record({ event: 'output_rejected', errorCode: 'AGENT_OUTPUT_INVALID' })))
+  assert.throws(() => assertDiagnosticRecord({ ...value, outputValidation: { ...outputValidation, field: 'private model text' } }))
+})
+
 test('SEM-F40/J30-DIAG: budget diagnostics preserve only registered axis and finite actual/limit metrics', () => {
   const value = record({
     event: 'budget_rejected',
@@ -80,6 +90,21 @@ test('SEM-F40/J30-DIAG: budget diagnostics preserve only registered axis and fin
   assert.throws(() => assertDiagnosticRecord(record({
     metrics: { actual: 2, limit: 1, unit: null }
   })), /required when actual and limit are known/)
+})
+
+test('SEM-F28/F40/J30-PROGRESS/DIAG: backoff counts accept only registered retry metadata', () => {
+  // Failure modes: wrong event/phase/error, non-count units, wrong limit,
+  // and attempts outside the request retry range must not bypass axis checks.
+  const backoff = record({ event: 'backoff', phase: 'retry_wait', errorCode: 'AGENT_PROVIDER_RATE_LIMITED',
+    metrics: { actual: 2, limit: 5, unit: 'count' } })
+  for (const actual of [2, 5]) {
+    assert.equal(assertDiagnosticRecord({ ...backoff, metrics: { actual, limit: 5, unit: 'count' } }).metrics.actual, actual)
+  }
+  for (const overrides of [
+    { event: 'model_request_ended' }, { phase: 'waiting_model' }, { errorCode: 'AGENT_PROVIDER_AUTH_FAILED' },
+    ...[{ actual: 1, limit: 5, unit: 'count' }, { actual: 6, limit: 5, unit: 'count' },
+      { actual: 2, limit: 6, unit: 'count' }, { actual: 2, limit: 5, unit: 'bytes' }].map(metrics => ({ metrics }))
+  ]) assert.throws(() => assertDiagnosticRecord({ ...backoff, ...overrides }), /known metrics without an axis/)
 })
 
 test('SEM-F40/J30-DIAG: query and export schemas are exact, bounded, and contain only validated records', () => {

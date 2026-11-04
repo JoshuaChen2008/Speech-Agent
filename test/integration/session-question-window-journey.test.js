@@ -9,7 +9,7 @@ const { AgentRunService } = require('../../src/agent/formal-run/agent-run-servic
 const { SessionSummaryRunService } = require('../../src/agent/formal-run/session-summary-run-service')
 const { CredentialVault } = require('../../src/agent/model-access/credential-vault')
 const { ModelAccessRuntime } = require('../../src/agent/model-access/runtime')
-const { OpenAiCompatibleAdapter } = require('../../src/agent/model-access/openai-compatible-adapter')
+const { createNetworkAdapter } = require('./provider-network-fixture')
 const { createPersonalContextExecutionAdapter } = require('../../src/agent/personal-context')
 const { AgentLoopExecutor, FormalAgentJobScheduler, FormalAgentRunRunner, IntentRouteOrchestrator } = require('../../src/agent/execution-host')
 const { ConfigStore } = require('../../src/main/services/config-store')
@@ -21,7 +21,7 @@ const { CONTROL_MESSAGES, OPERATIONS, PROTOCOL_VERSION, StorageError, makeCaptio
 const contract = require('../../src/agent/contracts/session-summary-run-ui')
 const { buildExportSnapshot } = require('../../src/agent/formal-run/agent-interaction-exporter')
 
-function serviceBackedHost (service, databasePath, onRenew) {
+function serviceBackedHost (service, databasePath, onRenew, onToolCall) {
   let sequence = 0
   const call = async (operation, payload, idempotencyKey) => {
     const response = await service.handle({
@@ -68,7 +68,7 @@ function serviceBackedHost (service, databasePath, onRenew) {
     async cancelAgentRun (request) { return call(OPERATIONS.AGENT_CANCEL_RUN, { request }) },
     async createAgentInteraction (request) { return call(OPERATIONS.AGENT_CREATE_INTERACTION, { request }) },
     async terminalizeAgentInteraction (request) { return call(OPERATIONS.AGENT_TERMINALIZE_INTERACTION, { request }) },
-    async startAgentToolCall (request) { return call(OPERATIONS.AGENT_START_TOOL_CALL, { request }) },
+    async startAgentToolCall (request) { onToolCall?.(); return call(OPERATIONS.AGENT_START_TOOL_CALL, { request }) },
     async finishAgentToolCall (request) { return call(OPERATIONS.AGENT_FINISH_TOOL_CALL, { request }) },
     async getAgentInteraction (request) { return call(OPERATIONS.AGENT_GET_INTERACTION, { request }) },
     async modelAccessCatalog () { return call(OPERATIONS.MODEL_ACCESS_CATALOG, {}) },
@@ -101,7 +101,9 @@ async function fixture (t, { maxInputTokens = 64000, text = '问'.repeat(1000), 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'session-question-window-'))
   const databasePath = path.join(root, 'speech-agent.sqlite3')
   const service = new StorageWorkerService()
-  const gateway = new StorageGateway({ databasePath, hostFactory: () => serviceBackedHost(service, databasePath), maxRestarts: 0 })
+  const borrowed = []; const toolBorrowState = []
+  const gateway = new StorageGateway({ databasePath, hostFactory: () => serviceBackedHost(service, databasePath, undefined,
+    () => toolBorrowState.push(borrowed.length > 0 && borrowed.every(buffer => buffer.every(byte => byte === 0)))), maxRestarts: 0 })
   const config = new ConfigStore(path.join(root, 'config.json'), { now: () => 1770000000000 })
   config.load()
   config.updateAgentSettings({ expectedRevision: config.get().agentSettingsRevision,
@@ -117,7 +119,7 @@ async function fixture (t, { maxInputTokens = 64000, text = '问'.repeat(1000), 
   const calls = { route: 0, target: 0, fullInput: false, leaves: [], merges: [], prompts: [] }
   const texts = Array.from({ length: segments }, (_, index) => typeof text === 'function' ? text(index) : text)
   const answer = { schemaVersion: 1, answer: '合成会话中的结论。', sourceRefs: [], memoryRefs: [], unresolved: [] }
-  const adapter = new OpenAiCompatibleAdapter({
+  const adapter = createNetworkAdapter({
     fetch: async (_url, options) => {
       const body = JSON.parse(options.body)
       const routing = body.messages[0].content.includes('路由字段')
@@ -163,6 +165,8 @@ async function fixture (t, { maxInputTokens = 64000, text = '问'.repeat(1000), 
           ...(usage ? { usage: routing ? { prompt_tokens: 1, completion_tokens: 1 } : usage } : {}) }) }
     }
   })
+  const originalExchange = adapter.exchange.bind(adapter)
+  adapter.exchange = input => { borrowed.push(input.credential); return originalExchange(input) }
   await gateway.start()
   const modelAccess = new ModelAccessRuntime({ gateway, vault, adapter })
   await modelAccess.initialize()
@@ -208,6 +212,7 @@ async function fixture (t, { maxInputTokens = 64000, text = '问'.repeat(1000), 
     const routeOrchestrator = new IntentRouteOrchestrator({
       questionRecipeVersion: '3',
       runs: { create: (request) => gateway.createAgentRun(request), cancel: (request) => gateway.cancelAgentRun(request),
+        reserveModelRequest: (request) => gateway.reserveFormalAgentModelRequest(request),
         getInteraction: (request) => gateway.getAgentInteraction(request) },
       modelAccess,
       interactions: { create: (request) => gateway.createAgentInteraction(request),
@@ -227,7 +232,7 @@ async function fixture (t, { maxInputTokens = 64000, text = '问'.repeat(1000), 
     await gateway.shutdown().catch(() => gateway.terminate())
     fs.rmSync(root, { recursive: true, force: true })
   })
-  return { service, gateway, calls, answer, root, diagnostics, questionRuns, scheduler, texts, config, modelAccess, vault, adapter, runtimeFactory }
+  return { service, gateway, calls, answer, root, diagnostics, questionRuns, scheduler, texts, config, modelAccess, vault, adapter, runtimeFactory, toolBorrowState }
 }
 
 async function ask (system, overrides = {}) {
@@ -360,7 +365,8 @@ test('SEM-F28/F31/J24-QA-BUDGET: cancelling QA rejects a late provider answer wi
 })
 
 test('SEM-F28/F31/F39/J22-QA-LONG/J31: a question beyond one model window executes all chunks before committing an answer', async (t) => {
-  const system = await fixture(t, { segments: 60 })
+  const formatted = { schemaVersion: 1, answer: '会话结论第一段。\n\n- 事项一\n- 事项二', sourceRefs: [], memoryRefs: [], unresolved: [] }
+  const system = await fixture(t, { segments: 60, targetOutput: output => ({ ...output, answer: formatted.answer }) })
   const request = await ask(system)
   assert.equal(request.state, 'succeeded', `long question rejected: ${request.errorCode}`)
   assert.ok(system.calls.target > 1)
@@ -374,6 +380,8 @@ test('SEM-F28/F31/F39/J22-QA-LONG/J31: a question beyond one model window execut
   assert.equal(system.calls.fullInput, true)
   assert.equal(system.calls.target, exported.question_input_plan.node_count)
   assert.equal(detail.interaction.usage, null)
+  assert.deepEqual(detail.interaction.result, { ...formatted, sourceRefs: [{ sessionId: 'session.qa.window', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 60 }] })
+  assert.deepEqual(exported.result, detail.interaction.result)
 })
 
 test('SEM-F31/F39/F40/J22-QA-LONG/J31: four-hour input preserves Unicode, late corrections and ordered multi-level answers', async (t) => {
@@ -509,11 +517,15 @@ test('SEM-F31/F39/J24-QA-LONG: a retried attempt reuses plan and binding without
   let failed = false
   const system = await fixture(t, { segments: 60, usage: { prompt_tokens: 100, completion_tokens: 10 },
     targetResponse: (output) => {
+      if (!failed && system.calls.target === 2) {
+        failed = true
+        // Native network timeout classification is projected by the real
+        // exchange. The fixture carries no product code or retry flags.
+        return new Response(new ReadableStream({ pull (controller) {
+          controller.error(new DOMException('synthetic response deadline', 'TimeoutError'))
+        } }, { highWaterMark: 0 }))
+      }
       return { ok: true, status: 200, headers: { get: () => null }, text: async () => {
-        if (!failed && system.calls.target === 2) {
-          failed = true
-          throw Object.assign(new Error('synthetic response deadline'), { code: 'AGENT_PROVIDER_TIMEOUT', retryable: false })
-        }
         return JSON.stringify({ usage: { prompt_tokens: 100, completion_tokens: 10 }, choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(output) } }] })
       } }
     }
@@ -581,6 +593,7 @@ test('SEM-F31/F39/J22-QA-LONG: memory references obtained through real tools sur
   assert.deepEqual(detail.interaction.result.memoryRefs, [{ memoryId: memory.memory_id, revisionId: memory.current_revision_id }])
   assert.equal(detail.toolCalls.length, 1)
   assert.equal(detail.toolCalls.every((call) => call.status === 'succeeded'), true)
+  assert.deepEqual(system.toolBorrowState, [true], 'borrowed credentials are cleared before the real ToolHost executes')
 })
 
 test('SEM-F28/F31/J24-QA-LONG: withdrawing memory during merge rejects the late answer', async (t) => {

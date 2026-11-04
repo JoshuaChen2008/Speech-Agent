@@ -1,0 +1,1118 @@
+'use strict'
+
+const { performance } = require('node:perf_hooks')
+const { canonicalize, sha256Canonical } = require('../../runtime/storage-worker/canonical-json')
+const runUi = require('../contracts/agent-run-ui')
+const { deterministicRoute } = require('../execution-host/intent-router')
+const { AgentInteractionReader, publicFailure, invalid, projectSubmit, freezeSourceFromTranscript,
+  isSupportedExecutionScope, terminalInteractionState, publicState } = require('./agent-interaction-reader')
+function runHeader () { return { contract_id: runUi.CONTRACT_ID, contract_version: runUi.CONTRACT_VERSION } }
+const c = require('../contracts/session-summary-run-ui')
+const diagnosticsContract = require('../contracts/agent-run-diagnostics')
+const diagnosticsUI = require('../contracts/agent-run-diagnostics-ui')
+const { assertDiagnosticMetrics } = diagnosticsContract
+const { assertOutputValidation } = require('../contracts/output-validation')
+const { BUDGET_AXES } = require('../contracts/budget-axes')
+
+const SUMMARY_PROMPT = '请基于这场已结束的会话生成会话总结，包含主要内容、决定、待办和需要注意。'
+const SUMMARY_PROMPTS_BY_DIGEST = new Map([[sha256Canonical(SUMMARY_PROMPT), SUMMARY_PROMPT]])
+const REQUEST_TARGETS = Object.freeze(['qa.answer'])
+const TERMINAL_STATES = new Set(['succeeded', 'failed', 'cancelled'])
+
+function header () {
+  return { contract_id: c.CONTRACT_ID, contract_version: c.CONTRACT_VERSION }
+}
+
+function errorResponse (code, nextAction = 'retry') {
+  const safeCode = c.ERROR_CODES.includes(code) ? code : 'AGENT_RUN_UNAVAILABLE'
+  return {
+    ...header(), ok: false, error: { code: safeCode, next_action: nextAction }, result: null
+  }
+}
+
+function diagnosticsHeader () {
+  return { contract_id: diagnosticsUI.CONTRACT_ID, contract_version: diagnosticsUI.CONTRACT_VERSION }
+}
+
+function diagnosticsErrorResponse (code) {
+  const safeCode = diagnosticsUI.ERROR_CODES.includes(code) ? code : 'AGENT_RUN_UNAVAILABLE'
+  return {
+    ...diagnosticsHeader(), ok: false,
+    error: { code: safeCode, next_action: 'retry' }, result: null
+  }
+}
+
+function publicSnapshot (row, elapsedMs = row.elapsedMs, diagnosticsAvailable = row.diagnosticsAvailable) {
+  const activityAge = row.lastActivityElapsedMs > 0 && elapsedMs >= row.lastActivityElapsedMs
+    ? elapsedMs - row.lastActivityElapsedMs
+    : null
+  return c.assertRequestSnapshot({
+    request_id: row.requestId,
+    generation: row.generation,
+    revision: row.revision,
+    action: row.action,
+    state: row.state,
+    phase: row.phase,
+    ...(row.summaryStage !== undefined ? { summary_stage: row.summaryStage, node_role: row.nodeRole, summary_processing_mode: row.summaryProcessingMode } : {}),
+    ...(row.outputValidation !== undefined ? { output_validation: row.outputValidation } : {}),
+    attempt: row.attempt,
+    ...(row.state === 'running' && row.phase === 'retry_wait' && row.retry
+      ? { retry: { request_attempt: row.retry.requestAttempt, wait_ms: row.retry.waitMs, reason: row.retry.reason } }
+      : {}),
+    elapsed_ms: elapsedMs,
+    last_activity_age_ms: activityAge,
+    validated_chunk_count: row.validatedChunkCount,
+    total_chunk_count: row.totalChunkCount,
+    memory_state: row.memoryState,
+    error_code: row.errorCode,
+    budget: row.budget,
+    freshness: 'fresh',
+    cancel_requested: row.cancelRequested,
+    resume_required: row.resumeRequired,
+    diagnostics_available: diagnosticsAvailable,
+    route_run_id: row.routeRunId,
+    target_run_id: row.targetRunId,
+    interaction_id: row.targetInteractionId || null,
+    recipe_id: row.targetRecipeId || null,
+    routing_mode: row.targetRoutingMode || null
+  })
+}
+
+function requestIdentity (request) {
+  const clientKeyDigest = sha256Canonical(request.client_request_key)
+  const requestId = `request.summary.${sha256Canonical({ clientKeyDigest }).slice(0, 48)}`
+  const scopeDigest = sha256Canonical(request.scope)
+  const prompt = request.action === 'summary' ? SUMMARY_PROMPT : request.prompt
+  return {
+    clientKeyDigest,
+    requestId,
+    scopeDigest,
+    prompt,
+    promptDigest: sha256Canonical(prompt)
+  }
+}
+
+function requestDigestFor (request, identity, summaryUseMemory, frozen) {
+  return sha256Canonical({
+    action: request.action,
+    scopeDigest: identity.scopeDigest,
+    promptDigest: identity.promptDigest,
+    summaryUseMemory,
+    transcriptVersion: frozen.transcriptVersion,
+    inputWatermark: frozen.inputWatermark,
+    inputDigest: frozen.inputDigest,
+    ...(request.resubmits_request_id ? { resubmitsRequestId: request.resubmits_request_id } : {})
+  })
+}
+
+function frozenInput (row) {
+  if (row?.transcriptVersion === null || row?.inputWatermark === null || row?.inputDigest === null) return null
+  return {
+    transcriptVersion: row.transcriptVersion,
+    inputWatermark: row.inputWatermark,
+    inputDigest: row.inputDigest
+  }
+}
+
+function identityConflict () {
+  const error = new Error('request identity conflicts with persisted acceptance')
+  error.code = 'AGENT_REQUEST_IDENTITY_CONFLICT'
+  return error
+}
+
+function stableErrorCode (error) {
+  if (c.ERROR_CODES.includes(error?.code)) return error.code
+  if (error?.code === 'AGENT_REQUEST_INVALID' || error?.code === 'AGENT_REQUEST_IDENTITY_CONFLICT') return 'AGENT_RUN_INVALID'
+  if (error?.code === 'AGENT_CANCELLED') return 'AGENT_CANCELLED'
+  return 'AGENT_RUN_UNAVAILABLE'
+}
+
+function diagnosticUnitForAxis (axis) {
+  if (!axis) return null
+  if (axis.includes('Bytes')) return 'bytes'
+  if (axis.includes('WallClock') || axis === 'toolTimeoutMs') return 'duration_ms'
+  return 'count'
+}
+
+function diagnosticEventForProgress (event) {
+  if (diagnosticsContract.DIAGNOSTIC_EVENTS.includes(event.diagnosticEvent)) return event.diagnosticEvent
+  if (event.phase === 'retry_wait') return 'backoff'
+  if (event.phase === 'preparing') return 'planning'
+  return null
+}
+
+class AgentOperationService extends AgentInteractionReader {
+  constructor (options = {}) {
+    super(options)
+    this.routeOrchestrator = options.routeOrchestrator || null
+    this.scheduler = options.scheduler || null
+    this.getConfig = typeof options.getConfig === 'function' ? options.getConfig : null
+    this.promptStore = options.promptStore instanceof Map ? options.promptStore : null
+    this.questionRecipeVersion = options.questionRecipeVersion || '4'
+    if (!['3', '4', '5'].includes(this.questionRecipeVersion)) throw new TypeError('unsupported question recipe version')
+    this.diagnostics = options.diagnostics && typeof options.diagnostics.record === 'function' ? options.diagnostics : null
+    this.showDiagnosticSaveDialog = typeof options.showDiagnosticSaveDialog === 'function' ? options.showDiagnosticSaveDialog : null
+    this.getOwnerWindow = typeof options.getOwnerWindow === 'function' ? options.getOwnerWindow : () => null
+    this.defer = typeof options.defer === 'function' ? options.defer : (callback) => setImmediate(callback)
+    this.onRequestChanged = typeof options.onRequestChanged === 'function' ? options.onRequestChanged : () => {}
+    this.monotonicNow = typeof options.monotonicNow === 'function' ? options.monotonicNow : () => performance.now()
+    this.requestListeners = new Set()
+    this.controllers = new Map()
+    this.dispatches = new Map()
+    this.runRequests = new Map()
+    this.progressClocks = new Map()
+    this.progressQueues = new Map()
+    this.diagnosticRequests = new Map()
+    this.terminalDiagnosticKeys = new Map()
+  }
+  summaryMemoryPolicy (choice) {
+    const settings = this.getConfig?.()
+    return choice !== false && (!settings || settings.agentEnabled === true &&
+      settings.memoryEnabled === true && settings.summaryUseMemory !== false)
+  }
+
+  async freezeInput (scope, transcriptVersion = 'raw') {
+    let frozen
+    if (scope.kind !== 'session') {
+      frozen = await this.storage.personalContextQuestionEvidence({ action: 'freeze', scope })
+    } else if (typeof this.storage.derivePersonalContextSessionSource === 'function') {
+      frozen = await this.storage.derivePersonalContextSessionSource({ sessionId: scope.reference, transcriptVersion })
+    } else {
+      frozen = freezeSourceFromTranscript(scope.reference, await this.storage.getSessionTranscript(scope.reference))
+    }
+    const inputWatermark = Number.isSafeInteger(frozen.inputWatermark)
+      ? { throughEventOrder: frozen.inputWatermark } : frozen.inputWatermark
+    if (!inputWatermark || !Number.isSafeInteger(inputWatermark.throughEventOrder) ||
+        typeof frozen.inputDigest !== 'string' || !/^[a-f0-9]{64}$/.test(frozen.inputDigest)) {
+      throw Object.assign(new Error('frozen input identity is invalid'), { code: 'AGENT_REQUEST_INVALID' })
+    }
+    return { transcriptVersion: frozen.transcriptVersion || 'raw', inputWatermark, inputDigest: frozen.inputDigest }
+  }
+
+  scheduleRun (runId, prompt, reason = 'submit') {
+    if (this.promptStore && typeof prompt === 'string') this.promptStore.set(runId, prompt)
+    if (typeof this.scheduler?.wake === 'function') this.defer(() => this.scheduler.wake(reason))
+  }
+
+  signalRunCancellation (runId) {
+    if (typeof this.scheduler?.cancel === 'function') this.scheduler.cancel(runId)
+  }
+
+  // Both registered IPC versions enter the same operation implementation.
+  accept (request) { return this.submitRequest(request) }
+  get (request) { return this.getSnapshot(request) }
+  submit (request) {
+    return request?.contract_id === c.CONTRACT_ID ? this.submitRequest(request) : this.submitInteraction(request)
+  }
+  cancel (request) {
+    return request?.contract_id === c.CONTRACT_ID ? this.cancelRequest(request) : this.cancelInteraction(request)
+  }
+  emitChanged (row) { return row ? this.emitRequestChanged(row) : this.emitHistoryChanged() }
+  subscribeChanged (listener) { return this.subscribeHistoryChanged(listener) }
+
+  async submitInteraction (request) {
+    try {
+      runUi.assertSubmitRequest(request)
+      if (!isSupportedExecutionScope(request.scope)) return publicFailure(runUi.ERROR_CODES.unavailable, 'choose_supported_scope')
+      const eligibility = await this.getEligibility({ ...runHeader(), scope: request.scope })
+      if (!eligibility.ok || eligibility.snapshot?.eligibility !== 'ready') {
+        return publicFailure(runUi.ERROR_CODES.unavailable, eligibility.error?.next_action || 'retry')
+      }
+      const route = request.scope.kind === 'session' ? deterministicRoute({ scope: request.scope, prompt: request.prompt })
+        : { recipeId: 'qa.answer', routingMode: 'preset' }
+      if (!['summary.minutes', 'qa.answer'].includes(route.recipeId)) {
+        return publicFailure(runUi.ERROR_CODES.unavailable, 'choose_supported_recipe')
+      }
+      const summaryUseMemory = route.recipeId === 'summary.minutes'
+        ? this.summaryMemoryPolicy(request.summary_use_memory) : false
+      const frozen = await this.freezeInput(request.scope)
+      const inputWatermark = frozen.inputWatermark
+      const requestKeyDigest = sha256Canonical(request.client_idempotency_key)
+      const runId = `run.user.${requestKeyDigest.slice(0, 48)}`
+      const interactionId = `interaction.user.${requestKeyDigest.slice(0, 44)}`
+      if (request.scope.kind === 'session' && this.routeOrchestrator && typeof this.routeOrchestrator.submit === 'function') {
+        let routed
+        try {
+          const routeRequest = {
+            scope: request.scope,
+            prompt: request.prompt,
+            transcriptVersion: frozen.transcriptVersion,
+            inputWatermark,
+            inputDigest: frozen.inputDigest,
+            clientIdempotencyKey: request.client_idempotency_key,
+            signal: null
+          }
+          if (route.recipeId === 'summary.minutes' && this.getConfig) routeRequest.summaryUseMemory = summaryUseMemory
+          routed = await this.routeOrchestrator.submit(routeRequest)
+        } catch (error) {
+          if (error?.code === 'AGENT_CANCELLED') return publicFailure(runUi.ERROR_CODES.unavailable, 'retry')
+          if (error?.code === 'AGENT_REQUEST_INVALID') return invalid()
+          return publicFailure(runUi.ERROR_CODES.unavailable, 'retry')
+        }
+        if (routed?.unsupported === true) return publicFailure(runUi.ERROR_CODES.unavailable, 'choose_supported_recipe')
+        if (routed?.eligibility !== 'ready' || typeof routed?.runId !== 'string' || typeof routed?.interactionId !== 'string') {
+          return publicFailure(runUi.ERROR_CODES.unavailable, 'retry')
+        }
+        if (this.promptStore && routed.state !== 'succeeded' && routed.state !== 'failed' && routed.state !== 'cancelled') {
+          this.scheduleRun(routed.runId, request.prompt)
+        }
+        if (!this.promptStore) this.scheduleRun(routed.runId, null)
+        if (routed.replayed !== true) this.emitHistoryChanged()
+        return projectSubmit(routed, routed.interactionId, routed.recipeId, routed.routingMode, this.revision)
+      }
+      // New summary and question targets adopt their registered v2 window capacity;
+      // other targets keep their frozen v1 interpretation.
+      const recipeVersion = route.recipeId === 'qa.answer' && frozen.transcriptVersion === 'raw'
+        ? (request.scope.kind === 'session' ? this.questionRecipeVersion : this.questionRecipeVersion === '5' ? '5' : '4') : route.recipeId === 'summary.minutes' && frozen.transcriptVersion === 'raw' ? '3' : ['summary.minutes', 'qa.answer'].includes(route.recipeId) ? '2' : '1'
+      const runRequest = {
+        runId,
+        recipeId: route.recipeId,
+        recipeVersion,
+        scope: request.scope,
+        transcriptVersion: frozen.transcriptVersion,
+        inputWatermark,
+        inputDigest: frozen.inputDigest,
+        requestedBy: 'user',
+        clientIdempotencyKey: request.client_idempotency_key
+      }
+      if (route.recipeId === 'summary.minutes' && this.getConfig) runRequest.summaryUseMemory = summaryUseMemory
+      const run = await this.storage.createAgentRun(runRequest)
+      const promptDigest = sha256Canonical(request.prompt)
+      if (run?.replayed && typeof this.storage.getAgentInteraction === 'function') {
+        const existing = await this.storage.getAgentInteraction({ interactionId }).catch(() => null)
+        const existingDigest = existing?.interaction?.promptDigest || existing?.interaction?.prompt_digest
+        if (existingDigest && existingDigest !== promptDigest) {
+          return { ...publicFailure(runUi.ERROR_CODES.invalid, 'correct_input'), error: { category: 'invalid', code: runUi.ERROR_CODES.invalid, next_action: 'correct_input' } }
+        }
+      }
+      if (!this.modelAccess || typeof this.modelAccess.bind !== 'function') {
+        await this.storage.cancelAgentRun({ runId: run.runId }).catch(() => {})
+        return publicFailure(runUi.ERROR_CODES.unavailable, 'settings')
+      }
+      try {
+        await this.modelAccess.bind({ runId: run.runId, recipeId: route.recipeId, recipeVersion, executionForm: 'agent_loop' })
+        await this.storage.createAgentInteraction({
+          runId: run.runId,
+          interactionId,
+          routingMode: route.routingMode,
+          promptDigest
+        })
+      } catch (error) {
+        await this.storage.cancelAgentRun({ runId: run.runId }).catch(() => {})
+        return publicFailure(runUi.ERROR_CODES.unavailable, error?.code === 'AGENT_PROVIDER_AUTH_FAILED' ? 'settings' : 'retry')
+      }
+      this.scheduleRun(run.runId, request.prompt)
+      if (run?.replayed !== true) this.emitHistoryChanged()
+      return projectSubmit(run, interactionId, route.recipeId, route.routingMode, this.revision)
+    } catch (error) {
+      if (error?.code === 'AGENT_REQUEST_INVALID') return { ...publicFailure(runUi.ERROR_CODES.invalid, 'correct_input'), error: { category: 'invalid', code: runUi.ERROR_CODES.invalid, next_action: 'correct_input' } }
+      if (error?.code === 'SESSION_ACTIVE') return publicFailure(runUi.ERROR_CODES.unavailable, 'wait_for_terminal')
+      if (error?.code === 'AGENT_INPUT_EMPTY') return publicFailure(runUi.ERROR_CODES.unavailable, 'choose_committed_session')
+      return publicFailure()
+    }
+  }
+
+  async cancelInteraction (request) {
+    try {
+      runUi.assertCancelRequest(request)
+      if (!this.storage.getAgentInteraction || !this.storage.cancelAgentRun) return publicFailure()
+      const detail = await this.storage.getAgentInteraction({ interactionId: request.interaction_id })
+      const runId = detail?.interaction?.runId || detail?.interaction?.run_id || detail?.runId
+      if (typeof runId !== 'string') return publicFailure()
+      const settledState = terminalInteractionState(detail)
+      if (settledState) {
+        return runUi.assertCancelResponse({ ...runHeader(), ok: true, error: null, result: {
+          interaction_id: request.interaction_id,
+          revision: this.revision,
+          state: settledState
+        } })
+      }
+      this.signalRunCancellation(runId)
+      let run
+      try {
+        run = await this.storage.cancelAgentRun({ runId })
+      } catch (error) {
+        if (error?.code !== 'AGENT_INTERACTION_STATE_CONFLICT') throw error
+        const latest = await this.storage.getAgentInteraction({ interactionId: request.interaction_id })
+        const latestState = terminalInteractionState(latest)
+        if (!latestState) throw error
+        this.emitHistoryChanged()
+        return runUi.assertCancelResponse({ ...runHeader(), ok: true, error: null, result: {
+          interaction_id: request.interaction_id,
+          revision: this.revision,
+          state: latestState
+        } })
+      }
+      if (run?.replayed !== true) this.emitHistoryChanged()
+      return runUi.assertCancelResponse({ ...runHeader(), ok: true, error: null, result: {
+        interaction_id: request.interaction_id,
+        revision: this.revision,
+        state: publicState(run?.state, run?.state === 'cancelled' ? 'cancelled' : null, run?.cancelRequested)
+      } })
+    } catch (error) {
+      if (error?.code === 'AGENT_REQUEST_INVALID') return { ...publicFailure(runUi.ERROR_CODES.invalid, 'correct_input'), error: { category: 'invalid', code: runUi.ERROR_CODES.invalid, next_action: 'correct_input' } }
+      return publicFailure()
+    }
+  }
+
+  rememberDiagnosticRequest (row) {
+    if (!row || typeof row.requestId !== 'string') return
+    this.diagnosticRequests.delete(row.requestId)
+    this.diagnosticRequests.set(row.requestId, {
+      requestDigest: /^[a-f0-9]{64}$/.test(row.requestDigest || '') ? row.requestDigest : null,
+      generation: row.generation
+    })
+    while (this.diagnosticRequests.size > 256) this.diagnosticRequests.delete(this.diagnosticRequests.keys().next().value)
+  }
+
+  recordDiagnostic (row, event, options = {}) {
+    if (!this.diagnostics || !row || typeof row.requestId !== 'string') return false
+    const metadata = this.diagnosticRequests.get(row.requestId)
+    const budget = options.budget || row.budget || null
+    const elapsedMs = Number.isSafeInteger(options.elapsedMs)
+      ? options.elapsedMs
+      : this.elapsedFor(row)
+    const lastActivityAgeMs = row.lastActivityElapsedMs > 0 && elapsedMs >= row.lastActivityElapsedMs
+      ? elapsedMs - row.lastActivityElapsedMs
+      : null
+    const actual = Number.isSafeInteger(budget?.actual) && budget.actual >= 0 ? budget.actual : null
+    const limit = Number.isSafeInteger(budget?.limit) && budget.limit >= 0 ? budget.limit : null
+    const axis = budget && BUDGET_AXES.includes(budget.axis)
+      ? budget.axis
+      : null
+    const metrics = actual !== null && limit !== null
+      ? { actual, limit, unit: diagnosticUnitForAxis(axis) }
+      : { actual: null, limit: null, unit: null }
+    return this.diagnostics.record({
+      requestId: row.requestId,
+      requestDigest: metadata?.requestDigest || ( /^[a-f0-9]{64}$/.test(row.requestDigest || '') ? row.requestDigest : null),
+      runId: options.runId !== undefined ? options.runId : row.targetRunId || row.routeRunId || null,
+      attempt: Number.isSafeInteger(options.attempt) ? options.attempt : row.attempt,
+      phase: options.phase || row.phase,
+      event,
+      elapsedMs: elapsedMs ?? null,
+      lastActivityAgeMs,
+      errorCode: options.errorCode !== undefined ? options.errorCode : row.errorCode || null,
+      budgetAxis: options.budgetAxis !== undefined ? options.budgetAxis : axis,
+      metrics: options.metrics || metrics,
+      modelBindingDigest: options.modelBindingDigest || null,
+      planDigest: options.planDigest || null
+    })
+  }
+
+  async setDiagnosticsAvailability (available) {
+    if (typeof available !== 'boolean') return 0
+    let rows
+    try { rows = await this.storage.listRecoverableSessionSummaryRequests() } catch { return 0 }
+    let updatedCount = 0
+    const changedIds = new Set()
+    for (const row of rows) {
+      if (row.diagnosticsAvailable === available) continue
+      try {
+        const updated = await this.updateDiagnosticsAvailabilityForRow(row, available)
+        if (updated === row) continue
+        this.emitRequestChanged(updated)
+        changedIds.add(row.requestId)
+        updatedCount += 1
+      } catch { /* terminal/cancelled or concurrently changed requests remain authoritative */ }
+    }
+    for (const [requestId, metadata] of this.diagnosticRequests) {
+      if (changedIds.has(requestId)) continue
+      try {
+        const row = await this.readRow(requestId)
+        if (row.generation === metadata.generation) this.emitRequestChanged(row)
+      } catch { /* deleted requests have no visible diagnostic status */ }
+    }
+    return updatedCount
+  }
+
+  async updateDiagnosticsAvailabilityForRow (row, available) {
+    if (!row || row.diagnosticsAvailable === available || TERMINAL_STATES.has(row.state)) return row
+    try {
+      return await this.storage.updateSessionSummaryRequest({
+        requestId: row.requestId,
+        generation: row.generation,
+        expectedRevision: row.revision,
+        diagnosticsAvailable: available
+      })
+    } catch { return row }
+  }
+
+  recordTerminalDiagnostic (row) {
+    if (!row || !TERMINAL_STATES.has(row.state)) return false
+    const key = `${row.requestId}:${row.generation}:${row.revision}`
+    if (this.terminalDiagnosticKeys.has(key)) return false
+    this.terminalDiagnosticKeys.set(key, true)
+    while (this.terminalDiagnosticKeys.size > 256) this.terminalDiagnosticKeys.delete(this.terminalDiagnosticKeys.keys().next().value)
+    return this.recordDiagnostic(row, row.state === 'cancelled' ? 'cancelled' : 'terminal', {
+      phase: 'terminal',
+      errorCode: row.errorCode || null
+    })
+  }
+
+  recordProgressDiagnostic (event) {
+    if (!this.diagnostics) return false
+    const diagnosticEvent = diagnosticEventForProgress(event)
+    if (!diagnosticEvent) return false
+    const metadata = this.diagnosticRequests.get(event.requestId)
+    if (metadata && metadata.generation !== event.generation) return false
+    const elapsedMs = this.elapsedForRequest(event.requestId, event.generation)
+    const metrics = event.metrics || { actual: null, limit: null, unit: null }
+    try { assertDiagnosticMetrics(metrics) } catch { return false }
+    const errorCode = event.errorCode || null
+    const budgetAxis = event.budgetAxis || null
+    if (errorCode !== null && !c.ERROR_CODES.includes(errorCode) || budgetAxis !== null && !BUDGET_AXES.includes(budgetAxis)) return false
+    if (event.diagnosticEvent === 'budget_rejected' && errorCode === null) return false
+    return this.diagnostics.record({
+      requestId: event.requestId,
+      requestDigest: metadata?.requestDigest || null,
+      runId: event.runId,
+      attempt: event.attempt,
+      phase: event.phase,
+      event: diagnosticEvent,
+      elapsedMs,
+      lastActivityAgeMs: event.activity === true ? 0 : null,
+      errorCode,
+      budgetAxis,
+      metrics,
+      modelBindingDigest: event.modelBindingDigest || null,
+      planDigest: null,
+      ...(event.outputValidation !== undefined ? { outputValidation: event.outputValidation } : {})
+    })
+  }
+
+  subscribeRequestChanged (listener) {
+    if (typeof listener !== 'function') throw new TypeError('listener must be a function')
+    this.requestListeners.add(listener)
+    return () => this.requestListeners.delete(listener)
+  }
+
+  emitRequestChanged (row) {
+    if (!row) return null
+    const event = c.assertChangedEvent({
+      ...header(), request_id: row.requestId, generation: row.generation, revision: row.revision
+    })
+    try { this.onRequestChanged(event) } catch { /* observers do not change persisted state */ }
+    for (const listener of [...this.requestListeners]) {
+      try { listener(event) } catch { /* observers do not change persisted state */ }
+    }
+    return event
+  }
+
+  async readRow (requestId) {
+    return this.storage.getSessionSummaryRequest({ requestId })
+  }
+
+  async getDiagnostics (input) {
+    try {
+      diagnosticsUI.assertQueryRequest(input)
+      const row = await this.readRow(input.request_id)
+      if (!row || row.requestId !== input.request_id) return diagnosticsUI.assertQueryResponse(diagnosticsErrorResponse('AGENT_REQUEST_INVALID'))
+      if (!this.diagnostics || typeof this.diagnostics.queryRequest !== 'function') {
+        return diagnosticsUI.assertQueryResponse(diagnosticsErrorResponse('AGENT_DIAGNOSTICS_UNAVAILABLE'))
+      }
+      const page = await this.diagnostics.queryRequest({
+        requestDigest: row.requestDigest,
+        beforeSequence: input.before_sequence,
+        limit: input.limit
+      })
+      return diagnosticsUI.assertQueryResponse({
+        ...diagnosticsHeader(), ok: true, error: null,
+        result: {
+          available: page.available,
+          records: page.records,
+          next_before_sequence: page.nextBeforeSequence
+        }
+      })
+    } catch (error) {
+      return diagnosticsUI.assertQueryResponse(diagnosticsErrorResponse(error?.code || 'AGENT_RUN_UNAVAILABLE'))
+    }
+  }
+
+  async exportDiagnostics (input, context = {}) {
+    try {
+      diagnosticsUI.assertExportRequest(input)
+      const row = await this.readRow(input.request_id)
+      if (!row || row.requestId !== input.request_id) return diagnosticsUI.assertExportResponse(diagnosticsErrorResponse('AGENT_REQUEST_INVALID'))
+      if (!this.diagnostics || typeof this.diagnostics.exportRequest !== 'function' || !this.showDiagnosticSaveDialog) {
+        return diagnosticsUI.assertExportResponse(diagnosticsErrorResponse('AGENT_DIAGNOSTICS_UNAVAILABLE'))
+      }
+      const result = await this.diagnostics.exportRequest({
+        requestDigest: row.requestDigest,
+        ownerWindow: this.getOwnerWindow(context.sender),
+        showSaveDialog: this.showDiagnosticSaveDialog
+      })
+      return diagnosticsUI.assertExportResponse({
+        ...diagnosticsHeader(), ok: true, error: null,
+        result: { status: result.status, record_count: result.recordCount, available: result.available }
+      })
+    } catch (error) {
+      return diagnosticsUI.assertExportResponse(diagnosticsErrorResponse(error?.code || 'AGENT_DIAGNOSTIC_EXPORT_FAILED'))
+    }
+  }
+
+  async readAndEmit (requestId) {
+    const row = await this.readRow(requestId)
+    this.emitRequestChanged(row)
+    return row
+  }
+
+  async recoverAfterRestart () {
+    const rows = await this.storage.recoverSessionSummaryRequests()
+    for (const row of rows) {
+      this.rememberDiagnosticRequest(row)
+      this.recordDiagnostic(row, 'recovery', { phase: row.phase })
+      if (row.action === 'summary' && row.resumeRequired && !SUMMARY_PROMPTS_BY_DIGEST.has(row.promptDigest)) {
+        const failed = await this.storage.failUnrecoverableSessionSummaryRequest({
+          requestId: row.requestId,
+          generation: row.generation,
+          expectedRevision: row.revision
+        })
+        this.recordTerminalDiagnostic(failed)
+        this.emitRequestChanged(failed)
+        continue
+      }
+      if (row.action === 'summary' && row.resumeRequired && row.targetRunId && this.promptStore) {
+        const prompt = SUMMARY_PROMPTS_BY_DIGEST.get(row.promptDigest)
+        if (prompt) this.promptStore.set(row.targetRunId, prompt)
+      }
+      this.emitRequestChanged(row)
+    }
+    return rows.length
+  }
+
+  async listRecoverable (request) {
+    try {
+      c.assertListRecoverableRequest(request)
+      const rows = await this.storage.listRecoverableSessionSummaryRequests()
+      return c.assertListRecoverableResponse({
+        ...header(), ok: true, error: null,
+        result: {
+          requests: rows.map((row) => ({
+            scope: row.scope,
+            snapshot: this.snapshotFor(row)
+          }))
+        }
+      })
+    } catch (error) {
+      return c.assertListRecoverableResponse(errorResponse(stableErrorCode(error), 'retry'))
+    }
+  }
+
+  async resume (request) {
+    try {
+      c.assertResumeRequest(request)
+      const row = await this.readRow(request.request_id)
+      if (row.generation !== request.generation || row.revision !== request.expected_revision ||
+          row.state !== 'retry_wait' || !row.resumeRequired || row.cancelRequested) {
+        const conflict = new Error('request is no longer waiting for explicit continuation')
+        conflict.code = 'AGENT_CONTEXT_REVISION_CONFLICT'
+        throw conflict
+      }
+      if (row.action !== 'summary') throw Object.assign(new Error('question prompt is not recoverable'), { code: 'AGENT_REQUEST_INVALID' })
+      const prompt = SUMMARY_PROMPTS_BY_DIGEST.get(row.promptDigest)
+      if (!prompt) throw Object.assign(new Error('fixed prompt version is not recoverable'), { code: 'AGENT_REQUEST_INVALID' })
+      if (row.targetRunId && !this.promptStore) {
+        throw Object.assign(new Error('fixed prompt store is unavailable'), { code: 'AGENT_RUN_UNAVAILABLE' })
+      }
+      const frozen = frozenInput(row)
+      if (!frozen) throw Object.assign(new Error('frozen source identity is unavailable'), { code: 'AGENT_REQUEST_INVALID' })
+      const current = await this.freezeInput(row.scope, frozen.transcriptVersion)
+      if (current.transcriptVersion !== frozen.transcriptVersion ||
+          canonicalize(current.inputWatermark) !== canonicalize(frozen.inputWatermark) || current.inputDigest !== frozen.inputDigest) {
+        throw Object.assign(new Error('frozen source changed before continuation'), { code: 'AGENT_REQUEST_INVALID' })
+      }
+      if (row.targetRunId && this.promptStore) this.promptStore.set(row.targetRunId, prompt)
+      const resumed = await this.storage.resumeSessionSummaryRequest({
+        requestId: row.requestId,
+        generation: row.generation,
+        expectedRevision: row.revision
+      })
+      this.rememberDiagnosticRequest(resumed)
+      this.recordDiagnostic(resumed, 'recovery', { phase: resumed.phase })
+      this.startClock(resumed)
+      if (resumed.targetRunId) {
+        this.runRequests.set(resumed.targetRunId, { requestId: resumed.requestId, generation: resumed.generation })
+        this.scheduleRun(resumed.targetRunId, prompt, 'resume')
+      } else {
+        this.scheduleDispatch({
+          requestId: resumed.requestId,
+          generation: resumed.generation,
+          action: resumed.action,
+          summaryUseMemory: resumed.summaryUseMemory,
+          scope: row.scope,
+          ...frozen,
+          clientIdempotencyKey: `${resumed.requestId}.generation.${resumed.generation}`,
+          prompt
+        })
+      }
+      this.emitRequestChanged(resumed)
+      return c.assertResumeResponse({
+        ...header(), ok: true, error: null,
+        result: { snapshot: this.snapshotFor(resumed) }
+      })
+    } catch (error) {
+      const nextAction = error?.code === 'AGENT_CONTEXT_REVISION_CONFLICT' ? 'refresh_status' :
+        error?.code === 'AGENT_REQUEST_INVALID' ? 'resubmit' : 'retry'
+      return c.assertResumeResponse(errorResponse(stableErrorCode(error), nextAction))
+    }
+  }
+
+  startClock (row) {
+    if (!row || TERMINAL_STATES.has(row.state)) return
+    const current = this.progressClocks.get(row.requestId)
+    if (current?.generation === row.generation) return
+    this.progressClocks.set(row.requestId, {
+      generation: row.generation,
+      baseElapsedMs: row.elapsedMs,
+      monotonicAt: this.monotonicNow()
+    })
+  }
+
+  elapsedFor (row) {
+    if (!row || TERMINAL_STATES.has(row.state) || row.state === 'cancelling') return row?.elapsedMs ?? 0
+    const clock = this.progressClocks.get(row.requestId)
+    if (!clock || clock.generation !== row.generation) return row.elapsedMs
+    return Math.max(row.elapsedMs, clock.baseElapsedMs + Math.max(0, Math.floor(this.monotonicNow() - clock.monotonicAt)))
+  }
+
+  elapsedForRequest (requestId, generation) {
+    const clock = this.progressClocks.get(requestId)
+    if (!clock || clock.generation !== generation) return null
+    return Math.max(clock.baseElapsedMs, clock.baseElapsedMs + Math.max(0, Math.floor(this.monotonicNow() - clock.monotonicAt)))
+  }
+
+  snapshotFor (row) {
+    const diagnosticsStatus = this.diagnostics?.getStatus?.()
+    const diagnosticsAvailable = typeof diagnosticsStatus?.available === 'boolean'
+      ? diagnosticsStatus.available
+      : row.diagnosticsAvailable
+    return publicSnapshot(row, this.elapsedFor(row), diagnosticsAvailable)
+  }
+
+  recordProgress (event, signal) {
+    if (!event || typeof event !== 'object' || Array.isArray(event)) return Promise.resolve(null)
+    const allowed = new Set([
+      'requestId', 'generation', 'runId', 'attemptIdentity', 'attempt', 'phase', 'state', 'activity', 'memoryState',
+      'diagnosticEvent', 'modelBindingDigest', 'errorCode', 'budgetAxis', 'metrics', 'retry', 'validatedChunkCount', 'totalChunkCount', 'outputValidation'
+    ])
+    const actual = Object.keys(event)
+    if (actual.some((key) => !allowed.has(key)) ||
+        typeof event.requestId !== 'string' || !Number.isSafeInteger(event.generation) || event.generation < 1 ||
+        !(event.runId === null || typeof event.runId === 'string') ||
+        !Number.isSafeInteger(event.attempt) || event.attempt < 0 ||
+        !c.PHASES.includes(event.phase) ||
+        event.state !== undefined && !c.STATES.includes(event.state) ||
+        event.activity !== undefined && typeof event.activity !== 'boolean' ||
+        event.memoryState !== undefined && !c.MEMORY_STATES.includes(event.memoryState) ||
+        event.diagnosticEvent !== undefined && !diagnosticsContract.DIAGNOSTIC_EVENTS.includes(event.diagnosticEvent) ||
+        event.modelBindingDigest !== undefined && !/^[a-f0-9]{64}$/.test(event.modelBindingDigest) ||
+        event.errorCode !== undefined && !c.ERROR_CODES.includes(event.errorCode) ||
+        event.budgetAxis !== undefined && event.budgetAxis !== null && !BUDGET_AXES.includes(event.budgetAxis)) return Promise.resolve(null)
+    if (event.metrics !== undefined) {
+      try { assertDiagnosticMetrics(event.metrics) } catch { return Promise.resolve(null) }
+    }
+    if (event.outputValidation !== undefined) {
+      try { assertOutputValidation(event.outputValidation) } catch { return Promise.resolve(null) }
+      if (event.diagnosticEvent !== 'output_rejected' || event.errorCode !== 'AGENT_OUTPUT_INVALID') return Promise.resolve(null)
+    }
+    if (event.retry !== undefined && (event.phase !== 'retry_wait' || event.retry !== null && (!event.retry ||
+        !Number.isSafeInteger(event.retry.requestAttempt) || event.retry.requestAttempt < 2 || event.retry.requestAttempt > 5 ||
+        !Number.isSafeInteger(event.retry.waitMs) || event.retry.waitMs < 0 || event.retry.waitMs > 1000 ||
+        !['AGENT_PROVIDER_RATE_LIMITED', 'AGENT_PROVIDER_UNAVAILABLE', 'AGENT_PROVIDER_TIMEOUT'].includes(event.retry.reason)))) {
+      return Promise.resolve(null)
+    }
+    if (event.diagnosticEvent === 'budget_rejected' && (event.errorCode === undefined || event.metrics === undefined)) {
+      return Promise.resolve(null)
+    }
+    if (event.runId !== null && event.attempt > 0) {
+      const identity = event.attemptIdentity
+      if (!identity || Object.keys(identity).sort().join(',') !== 'attempt,leaseExpiresAt,owner,runId' ||
+          identity.runId !== event.runId || identity.attempt !== event.attempt ||
+          typeof identity.owner !== 'string' || !Number.isSafeInteger(identity.leaseExpiresAt) || identity.leaseExpiresAt < 0) return Promise.resolve(null)
+    } else if (event.attemptIdentity !== undefined) return Promise.resolve(null)
+    const prior = this.progressQueues.get(event.requestId) || Promise.resolve()
+    const task = prior.catch(() => null).then(() => {
+      if (signal?.aborted) return null
+      return this.persistProgress(event, signal).then((updated) => {
+        if (updated) this.recordProgressDiagnostic(event)
+        return updated
+      })
+    })
+    this.progressQueues.set(event.requestId, task)
+    return task.finally(() => {
+      if (this.progressQueues.get(event.requestId) === task) this.progressQueues.delete(event.requestId)
+    })
+  }
+
+  async persistProgress (event, signal) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (signal?.aborted) return null
+      let row
+      try { row = await this.readRow(event.requestId) } catch { return null }
+      if (signal?.aborted) return null
+      if (row.generation !== event.generation || row.cancelRequested || TERMINAL_STATES.has(row.state)) return null
+      if (event.runId !== null && event.runId !== row.routeRunId && event.runId !== row.targetRunId) return null
+      if (event.attempt < row.attempt) return null
+      this.startClock(row)
+      let elapsedMs = this.elapsedFor(row)
+      const newAttempt = event.attempt > row.attempt
+      let memoryState = event.memoryState
+      if (memoryState === undefined) {
+        memoryState = newAttempt
+          ? row.summaryUseMemory === false ? 'not_used' : 'not_read'
+          : row.memoryState
+      }
+      let lastActivityElapsedMs = row.lastActivityElapsedMs
+      if (event.activity === true) {
+        lastActivityElapsedMs = Math.max(1, elapsedMs)
+        elapsedMs = Math.max(elapsedMs, lastActivityElapsedMs)
+      }
+      const update = {
+        requestId: event.requestId,
+        generation: event.generation,
+        expectedRevision: row.revision,
+        phase: event.phase,
+        attempt: event.attempt,
+        elapsedMs,
+        lastActivityElapsedMs,
+        memoryState
+      }
+      if (event.state !== undefined) update.state = event.state
+      if (event.retry !== undefined) update.retry = event.retry === null ? null : { ...event.retry }
+      if (event.outputValidation !== undefined) update.outputValidation = { ...event.outputValidation }
+      if (event.attemptIdentity !== undefined) update.attemptIdentity = { ...event.attemptIdentity }
+      if (newAttempt) {
+        update.validatedChunkCount = null
+        update.totalChunkCount = null
+      }
+      if (Number.isSafeInteger(event.validatedChunkCount) && Number.isSafeInteger(event.totalChunkCount) &&
+          event.validatedChunkCount >= 0 && event.validatedChunkCount <= event.totalChunkCount && event.totalChunkCount <= 256) {
+        update.validatedChunkCount = event.validatedChunkCount
+        update.totalChunkCount = event.totalChunkCount
+      }
+      try {
+        const updated = await this.storage.updateSessionSummaryRequest(update, signal)
+        this.emitRequestChanged(updated)
+        return updated
+      } catch (error) {
+        if (error?.code !== 'AGENT_CONTEXT_REVISION_CONFLICT') return null
+      }
+    }
+    return null
+  }
+
+  async notifyRunChanged (event) {
+    this.emitHistoryChanged()
+    if (!event || typeof event.requestId !== 'string' || !Number.isSafeInteger(event.generation) ||
+        typeof event.runId !== 'string') return null
+    try {
+      const row = await this.readRow(event.requestId)
+      if (row.generation !== event.generation || (row.targetRunId !== event.runId && row.routeRunId !== event.runId)) return null
+      this.rememberDiagnosticRequest(row)
+      this.recordTerminalDiagnostic(row)
+      this.emitRequestChanged(row)
+      return row
+    } catch { return null }
+  }
+
+  async submitRequest (request) {
+    try {
+      c.assertAcceptRequest(request)
+      const identity = requestIdentity(request)
+      let previous = null
+      try { previous = await this.readRow(identity.requestId) } catch (error) {
+        if (error?.code !== 'AGENT_RUN_NOT_FOUND') throw error
+      }
+
+      if (previous) {
+        if (previous.clientKeyDigest !== identity.clientKeyDigest || previous.scopeDigest !== identity.scopeDigest ||
+            previous.promptDigest !== identity.promptDigest || previous.action !== request.action) throw identityConflict()
+        const frozen = frozenInput(previous)
+        const summaryUseMemory = request.action === 'summary'
+          ? previous.summaryUseMemory
+          : null
+        if (request.action === 'summary' && typeof summaryUseMemory !== 'boolean') throw identityConflict()
+        if (frozen) {
+          const digest = requestDigestFor(request, identity, summaryUseMemory, frozen)
+          if (previous.requestDigest !== digest) throw identityConflict()
+          await this.storage.acceptSessionSummaryRequest({
+            requestId: identity.requestId,
+            sessionId: request.scope.reference,
+            clientKeyDigest: identity.clientKeyDigest,
+            requestDigest: digest,
+            scopeDigest: identity.scopeDigest,
+            promptDigest: identity.promptDigest,
+            action: request.action,
+            summaryUseMemory,
+            ...(request.resubmits_request_id ? { resubmitsRequestId: request.resubmits_request_id } : {}),
+            ...frozen
+          })
+        }
+        const row = await this.readRow(identity.requestId)
+        this.rememberDiagnosticRequest(row)
+        if (frozen && !row.cancelRequested && !row.resumeRequired && !TERMINAL_STATES.has(row.state)) {
+          this.startClock(row)
+          this.scheduleDispatch({
+            requestId: row.requestId,
+            generation: row.generation,
+            action: row.action,
+            summaryUseMemory: row.summaryUseMemory,
+            scope: request.scope,
+            ...frozen,
+            clientIdempotencyKey: `${row.requestId}.generation.${row.generation}`,
+            prompt: identity.prompt
+          })
+        }
+        this.emitRequestChanged(row)
+        return c.assertAcceptResponse({
+          ...header(), ok: true, error: null,
+          result: { accepted: true, replayed: true, snapshot: this.snapshotFor(row) }
+        })
+      }
+
+      const eligibility = await this.getEligibility({
+        contract_id: runUi.CONTRACT_ID,
+        contract_version: runUi.CONTRACT_VERSION,
+        scope: request.scope
+      })
+      if (!eligibility?.ok || eligibility.snapshot?.eligibility !== 'ready') {
+        return c.assertAcceptResponse(errorResponse('AGENT_RUN_UNAVAILABLE', eligibility?.error?.next_action || 'settings'))
+      }
+
+      const frozenIdentity = await this.freezeInput(request.scope)
+      const summaryUseMemory = request.action === 'summary' ? this.summaryMemoryPolicy() : null
+      const requestDigest = requestDigestFor(request, identity, summaryUseMemory, frozenIdentity)
+      const accepted = await this.storage.acceptSessionSummaryRequest({
+        requestId: identity.requestId,
+        sessionId: request.scope.reference,
+        clientKeyDigest: identity.clientKeyDigest,
+        requestDigest,
+        scopeDigest: identity.scopeDigest,
+        promptDigest: identity.promptDigest,
+        action: request.action,
+        summaryUseMemory,
+        ...(request.resubmits_request_id ? { resubmitsRequestId: request.resubmits_request_id } : {}),
+        ...frozenIdentity
+      })
+      let row = await this.readRow(identity.requestId)
+      const diagnosticsStatus = this.diagnostics?.getStatus?.()
+      if (typeof diagnosticsStatus?.available === 'boolean') {
+        row = await this.updateDiagnosticsAvailabilityForRow(row, diagnosticsStatus.available)
+      }
+      this.rememberDiagnosticRequest(row)
+      if (accepted.replayed !== true) this.recordDiagnostic(row, 'accepted', { phase: 'accepted' })
+      if (!row.cancelRequested && !TERMINAL_STATES.has(row.state)) this.startClock(row)
+      const response = c.assertAcceptResponse({
+        ...header(), ok: true, error: null,
+        result: { accepted: true, replayed: accepted.replayed === true, snapshot: this.snapshotFor(row) }
+      })
+      if (!row.cancelRequested && !TERMINAL_STATES.has(row.state)) {
+        this.scheduleDispatch({
+          requestId: row.requestId,
+          generation: row.generation,
+          action: row.action,
+          summaryUseMemory: row.summaryUseMemory,
+          scope: request.scope,
+          ...frozenIdentity,
+          clientIdempotencyKey: `${row.requestId}.generation.${row.generation}`,
+          prompt: identity.prompt
+        })
+      }
+      this.emitRequestChanged(row)
+      return response
+    } catch (error) {
+      return c.assertAcceptResponse(errorResponse(stableErrorCode(error), error?.code === 'AGENT_REQUEST_INVALID' ? 'correct_input' : 'retry'))
+    }
+  }
+
+  scheduleDispatch (input) {
+    const dispatchKey = `${input.requestId}:${input.generation}`
+    if (this.dispatches.has(dispatchKey)) return this.dispatches.get(dispatchKey)
+    const task = new Promise((resolve) => {
+      this.defer(() => resolve(this.dispatchAccepted(input)))
+    })
+    this.dispatches.set(dispatchKey, task)
+    void task.finally(() => {
+      if (this.dispatches.get(dispatchKey) === task) this.dispatches.delete(dispatchKey)
+    })
+    return task
+  }
+
+  async dispatchAccepted (input) {
+    const controller = new AbortController()
+    try {
+      const current = await this.readRow(input.requestId)
+      if (current.generation !== input.generation || current.cancelRequested || current.resumeRequired || TERMINAL_STATES.has(current.state)) return
+      this.controllers.set(input.requestId, controller)
+      await this.recordProgress({
+        requestId: input.requestId,
+        generation: input.generation,
+        runId: null,
+        attempt: 0,
+        phase: 'preparing',
+        state: input.action === 'question' ? 'routing' : 'preparing',
+        activity: false,
+        diagnosticEvent: 'planning'
+      })
+      if (!this.routeOrchestrator) throw Object.assign(new Error('route unavailable'), { code: 'AGENT_RUN_UNAVAILABLE' })
+      const routeInput = {
+        scope: input.scope,
+        prompt: input.prompt,
+        transcriptVersion: input.transcriptVersion,
+        inputWatermark: input.inputWatermark,
+        inputDigest: input.inputDigest,
+        clientIdempotencyKey: input.clientIdempotencyKey,
+        signal: controller.signal,
+        requestId: input.requestId,
+        requestGeneration: input.generation,
+        ...(input.action === 'question' ? { onProgress: (event) => this.recordProgress({
+          requestId: input.requestId,
+          generation: input.generation,
+          runId: event?.runId ?? null,
+          attempt: 0,
+          phase: 'waiting_model',
+          activity: true
+        }, controller.signal) } : {})
+      }
+      const routed = input.action === 'summary'
+        ? await this.routeOrchestrator.submitFixedTarget({ ...routeInput, summaryUseMemory: input.summaryUseMemory })
+        : await this.routeOrchestrator.submit({ ...routeInput, permittedTargetRecipes: [...REQUEST_TARGETS] })
+      if (routed?.unsupported === true || routed?.eligibility !== 'ready' || typeof routed?.runId !== 'string' || typeof routed?.interactionId !== 'string') {
+        throw Object.assign(new Error('target route unavailable'), { code: 'AGENT_RUN_UNAVAILABLE' })
+      }
+      const latest = await this.readRow(input.requestId)
+      if (latest.generation !== input.generation || latest.cancelRequested || latest.resumeRequired || TERMINAL_STATES.has(latest.state)) {
+        this.signalRunCancellation(routed.runId)
+        return
+      }
+      this.runRequests.set(routed.runId, { requestId: input.requestId, generation: input.generation })
+      this.scheduleRun(routed.runId, input.prompt)
+      await this.readAndEmit(input.requestId)
+    } catch (error) {
+      await this.recordDispatchFailure(input, error)
+    } finally {
+      if (this.controllers.get(input.requestId) === controller) this.controllers.delete(input.requestId)
+    }
+  }
+
+  async recordDispatchFailure (input, error) {
+    try {
+      const row = await this.readRow(input.requestId)
+      if (row.generation !== input.generation || row.cancelRequested || row.resumeRequired || TERMINAL_STATES.has(row.state)) return
+      this.rememberDiagnosticRequest(row)
+      const failureCode = stableErrorCode(error)
+      if (['AGENT_BUDGET_EXCEEDED', 'AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED', 'AGENT_QA_INPUT_LIMIT_EXCEEDED'].includes(failureCode)) {
+        const suppliedBudget = error?.budget && typeof error.budget === 'object' ? error.budget : null
+        const suppliedAxis = BUDGET_AXES.includes(error?.budgetAxis) ? error.budgetAxis :
+          suppliedBudget && BUDGET_AXES.includes(suppliedBudget.axis) ? suppliedBudget.axis : null
+        const actual = Number.isSafeInteger(error?.actual) && error.actual >= 0 ? error.actual :
+          Number.isSafeInteger(suppliedBudget?.actual) && suppliedBudget.actual >= 0 ? suppliedBudget.actual : null
+        const limit = Number.isSafeInteger(error?.limit) && error.limit >= 0 ? error.limit :
+          Number.isSafeInteger(suppliedBudget?.limit) && suppliedBudget.limit >= 0 ? suppliedBudget.limit : null
+        const unit = diagnosticUnitForAxis(suppliedAxis) ||
+          (['AGENT_SUMMARY_INPUT_LIMIT_EXCEEDED', 'AGENT_QA_INPUT_LIMIT_EXCEEDED'].includes(failureCode) && actual !== null && limit !== null ? 'bytes' : null)
+        this.recordDiagnostic(row, 'budget_rejected', {
+          errorCode: failureCode,
+          budgetAxis: suppliedAxis,
+          metrics: actual !== null && limit !== null
+            ? { actual, limit, unit }
+            : { actual: null, limit: null, unit: null }
+        })
+      }
+      if (error?.code === 'AGENT_CANCELLED' && !row.cancelRequested) {
+        this.emitRequestChanged(row)
+        return
+      }
+      if (row.routeRunId || row.targetRunId) {
+        this.emitRequestChanged(row)
+        return
+      }
+      await this.recordProgress({
+        requestId: input.requestId,
+        generation: input.generation,
+        runId: null,
+        attempt: row.attempt,
+        phase: c.PHASES.includes(row.phase) ? row.phase : 'preparing',
+        activity: false
+      })
+      const latest = await this.readRow(input.requestId)
+      if (latest.generation !== input.generation || latest.cancelRequested || latest.resumeRequired || TERMINAL_STATES.has(latest.state)) return
+      await this.storage.updateSessionSummaryRequest({
+        requestId: input.requestId,
+        generation: input.generation,
+        expectedRevision: latest.revision,
+        state: 'failed',
+        phase: 'terminal',
+        errorCode: failureCode
+      })
+      const failed = await this.readRow(input.requestId)
+      this.recordTerminalDiagnostic(failed)
+      this.emitRequestChanged(failed)
+    } catch { /* cancellation, deletion, or a concurrent terminal write remains authoritative */ }
+  }
+
+  async getSnapshot (request) {
+    try {
+      c.assertControlRequest(request)
+      const row = await this.readRow(request.request_id)
+      return c.assertGetResponse({
+        ...header(), ok: true, error: null,
+        result: { snapshot: this.snapshotFor(row) }
+      })
+    } catch (error) {
+      return c.assertGetResponse(errorResponse(stableErrorCode(error), 'retry'))
+    }
+  }
+
+  async cancelRequest (request) {
+    try {
+      c.assertCancelRequest(request)
+      const current = await this.readRow(request.request_id)
+      if (current.generation !== request.generation) {
+        throw Object.assign(new Error('control generation conflicts with persisted request'), { code: 'AGENT_CONTEXT_REVISION_CONFLICT' })
+      }
+      const elapsedMs = this.elapsedForRequest(request.request_id, request.generation)
+      this.controllers.get(request.request_id)?.abort()
+      const signalledRuns = this.cancelScheduledRuns(request.request_id, request.generation, current.targetRunId || current.routeRunId)
+      const cancelRequest = {
+        requestId: request.request_id,
+        generation: request.generation
+      }
+      if (elapsedMs !== null) cancelRequest.elapsedMs = elapsedMs
+      const row = await this.storage.cancelSessionSummaryRequest(cancelRequest)
+      const linkedRunId = row.targetRunId || row.routeRunId
+      if (linkedRunId && !signalledRuns.has(linkedRunId)) this.signalRunCancellation(linkedRunId)
+      const latest = await this.readRow(request.request_id)
+      if (latest.state === 'cancelled' && linkedRunId) this.promptStore?.delete(linkedRunId)
+      this.rememberDiagnosticRequest(latest)
+      this.recordDiagnostic(latest, 'cancel_requested', { phase: 'cancelling' })
+      this.recordTerminalDiagnostic(latest)
+      this.emitRequestChanged(latest)
+      return c.assertCancelResponse({
+        ...header(), ok: true, error: null,
+        result: { snapshot: this.snapshotFor(latest) }
+      })
+    } catch (error) {
+      const nextAction = error?.code === 'AGENT_CONTEXT_REVISION_CONFLICT' ? 'refresh_status' : 'verify_state'
+      return c.assertCancelResponse(errorResponse(stableErrorCode(error), nextAction))
+    }
+  }
+
+  cancelScheduledRuns (requestId, generation, activeRunId) {
+    const runIds = new Set()
+    if (activeRunId) runIds.add(activeRunId)
+    for (const [runId, identity] of this.runRequests) {
+      if (identity.requestId !== requestId || identity.generation !== generation) continue
+      runIds.add(runId)
+    }
+    for (const runId of runIds) this.signalRunCancellation(runId)
+    return runIds
+  }
+
+  requestForRun (runId) {
+    return this.runRequests.get(runId) || null
+  }
+}
+
+module.exports = { AgentOperationService, REQUEST_TARGETS, SUMMARY_PROMPT, publicSnapshot, requestIdentity }

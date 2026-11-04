@@ -2,276 +2,196 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
-
 const { AgentLoopExecutor, shouldStopAfterTurn } = require('../../src/agent/execution-host/agent-loop')
-const { RECIPE_CATALOG } = require('../../src/agent/contracts/recipes')
-const {
-  deriveRecipeBudget,
-  deriveRecipeRequestCapacity,
-  usesModelWindowCapacity,
-  deriveSummaryMinutesV2RequestCapacity
-} = require('../../src/agent/contracts/budget-axes')
+const { RECIPE_CATALOG, getRecipe } = require('../../src/agent/contracts/recipes')
+const { outputDirectiveFor, summaryStageDirective } = require('../../src/agent/contracts/recipe-output-directives')
+const { deriveRecipeBudget, deriveRecipeRequestCapacity, usesModelWindowCapacity } = require('../../src/agent/contracts/budget-axes')
+const { createNetworkAdapter, providerResponse } = require('../integration/provider-network-fixture')
 
-test('SEM-F28/SEM-F29/J22/J27: the formal Agent Loop requires an execution-host adapter', () => {
-  assert.throws(() => new AgentLoopExecutor(), /agent loop adapter is required/)
+function harness (recipeId = 'qa.answer', recipeVersion = '1', fetch, onToolCall) {
+  const recipe = getRecipe(recipeId, recipeVersion)
+  const capabilities = { maxInputTokens: 128000, maxOutputTokens: 4096, supportsToolCalling: true,
+    supportsStructuredOutput: true, supportsStreaming: false, usageReporting: true }
+  const budget = deriveRecipeBudget(capabilities, recipeId, recipeVersion, 'user')
+  const binding = { modelId: 'controlled-model', capabilities, budget }
+  const summaryStage = recipeId === 'summary.minutes' && recipeVersion === '3' ? 'verifying_sources' : undefined
+  const directive = summaryStage ? summaryStageDirective(summaryStage) : outputDirectiveFor(recipe)
+  const requests = []
+  const adapter = createNetworkAdapter({ fetch: async (url, options) => {
+    requests.push(JSON.parse(options.body))
+    return fetch ? fetch(url, options) : providerResponse(outputDirectiveFor(recipe).example)
+  } })
+  const executor = new AgentLoopExecutor({ onToolCall, adapter: { binding, exchange: request => adapter.exchange({
+    ...request, resolvedModel: binding, connection: { httpsOrigin: 'https://example.test', basePath: '/' },
+    credential: Buffer.from('synthetic-secret') }) } })
+  return { executor, requests, input: { recipeId, recipeVersion, prompt: 'bounded prompt', resolvedModel: binding,
+    beforeRequest: async () => ({ reserved: true }),
+    budget, ...(summaryStage ? { summaryStage } : {}), ...(usesModelWindowCapacity(recipeId, recipeVersion)
+      ? { requestCapacity: deriveRecipeRequestCapacity({ ...recipe, capabilities, budget, binding, summaryStage }) } : {}) } }
+}
+
+function call (id, name = 'search_context', args = { schemaVersion: 1, aliasKeys: ['none'] }) {
+  return { id, type: 'function', function: { name, arguments: JSON.stringify(args) } }
+}
+
+test('SEM-F28/F33/J22: the Agent Loop requires a single exchange boundary', () => {
+  assert.throws(() => new AgentLoopExecutor(), /agent loop exchange is required/)
+  assert.throws(() => new AgentLoopExecutor({ adapter: { run: () => {} } }), /agent loop exchange is required/)
 })
 
-test('SEM-F16/SEM-F28/J22/J24: every registered recipe enters one agentLoop with static turns and grants', async () => {
-  const calls = []
-  const executor = new AgentLoopExecutor({
-    adapter: {
-      run: async (request) => {
-        calls.push(request)
-        assert.equal(typeof request.shouldStopAfterTurn, 'function')
-        assert.equal(request.maxTurns, request.recipe.maxTurns)
-        return { text: '{}' }
-      }
-    }
-  })
+test('SEM-F28/F33/J22/J24/J31-COMPAT: registered recipe identities use real Pi and their versioned output directives', async () => {
   for (const recipe of RECIPE_CATALOG) {
-    const capabilities = { maxInputTokens: 64000, maxOutputTokens: 4096 }
-    const budget = deriveRecipeBudget(capabilities, recipe.recipeId, recipe.recipeVersion, 'user')
-    const result = await executor.agentLoop({
-      recipeId: recipe.recipeId,
-      recipeVersion: recipe.recipeVersion,
-      prompt: 'bounded prompt',
-      resolvedModel: { model: 'test', streamFn: async function * () {}, capabilities, budget },
-      ...(usesModelWindowCapacity(recipe.recipeId, recipe.recipeVersion)
-        ? { requestCapacity: deriveRecipeRequestCapacity({ ...recipe, capabilities, budget }) }
-        : {})
-    })
-    assert.equal(result.recipeId, recipe.recipeId)
+    const { executor, requests, input } = harness(recipe.recipeId, recipe.recipeVersion)
+    const result = await executor.agentLoop(input)
     assert.equal(result.maxTurns, recipe.maxTurns)
     assert.deepEqual(result.toolGrants, recipe.toolGrants)
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0].model, input.resolvedModel.modelId)
+    const directive = input.summaryStage ? summaryStageDirective(input.summaryStage) : outputDirectiveFor(recipe)
+    assert.equal(requests[0].messages[0].content, directive.systemPrompt)
+    assert.deepEqual(JSON.parse(result.text), outputDirectiveFor(recipe).example)
+    assert.equal(result.usage, null)
   }
-  assert.equal(calls.length, RECIPE_CATALOG.length)
 })
 
-test('SEM-F39/J31-SIZE/J31-COMPAT: v2 summary alone accepts a prompt above the legacy Loop limit', async () => {
-  let calls = 0
-  const executor = new AgentLoopExecutor({
-    adapter: { run: async () => { calls += 1; return { text: '{}' } } }
-  })
-  const prompt = '中'.repeat(17000)
-  const input = { prompt, resolvedModel: { modelId: 'controlled-model' } }
-  await assert.rejects(executor.agentLoop({ ...input, recipeId: 'summary.minutes', recipeVersion: '1' }),
-    (error) => error.code === 'AGENT_REQUEST_INVALID')
-  await executor.agentLoop({ ...input, recipeId: 'summary.minutes', recipeVersion: '2' })
-  assert.equal(calls, 1)
+test('SEM-F39/J31-SIZE/J31-COMPAT: window capacity permits the v2 summary prompt above the legacy limit', async () => {
+  const short = harness('summary.minutes', '1')
+  await assert.rejects(short.executor.agentLoop({ ...short.input, prompt: '中'.repeat(17000) }),
+    error => error.code === 'AGENT_REQUEST_INVALID')
+  assert.equal(short.requests.length, 0)
+  const long = harness('summary.minutes', '2')
+  await long.executor.agentLoop({ ...long.input, prompt: '中'.repeat(17000) })
+  assert.equal(long.requests.length, 1)
+  await assert.rejects(long.executor.agentLoop({ ...long.input, requestCapacity: undefined }),
+    error => error.code === 'AGENT_REQUEST_INVALID')
 })
 
-test('SEM-F16/SEM-T10/J22: one-turn recipe stops deterministically and never creates a second turn', async () => {
-  let turns = 0
-  const executor = new AgentLoopExecutor({
-    adapter: {
-      run: async ({ shouldStopAfterTurn }) => {
-        let turn = 0
-        while (!shouldStopAfterTurn({ turn: ++turn, toolCalls: 0 })) {}
-        turns = turn
-        return { text: '{}' }
-      }
-    }
-  })
-  await executor.agentLoop({
-    recipeId: 'text.rewrite', recipeVersion: '1', prompt: 'rewrite',
-    resolvedModel: { model: 'test', streamFn: async function * () {} }
-  })
-  assert.equal(turns, 1)
-  assert.equal(shouldStopAfterTurn({ maxTurns: 1, turn: 1, toolCalls: 0, maxToolCalls: 12 }), true)
-  assert.equal(shouldStopAfterTurn({ maxTurns: 3, turn: 1, toolCalls: 0, maxToolCalls: 12 }), false)
+test('SEM-F28/F31/J22/J24: static grants and turn limits reject before tool effects', async () => {
+  let effects = 0
+  const one = harness('intent.route', '1', async () => providerResponse(null, [call('call.1')]))
+  await assert.rejects(one.executor.agentLoop(one.input), error => error.code === 'AGENT_BUDGET_EXCEEDED')
+  const denied = harness()
+  await assert.rejects(denied.executor.agentLoop({ ...denied.input,
+    tools: [{ name: 'read_sources', execute: async () => { effects++ } }] }),
+  error => error.code === 'TOOL_NOT_AVAILABLE_FOR_RECIPE')
+  assert.equal(denied.requests.length, 0)
+  const exhausted = harness('qa.answer', '1', async () => providerResponse(null, [call('call.1')]))
+  await assert.rejects(exhausted.executor.agentLoop({ ...exhausted.input,
+    tools: [{ name: 'search_context', execute: async () => { effects++; return {} } }] }),
+  error => error.code === 'AGENT_BUDGET_EXCEEDED')
+  assert.equal(exhausted.requests.length, 3)
+  assert.equal(effects, 2)
+  assert.equal(shouldStopAfterTurn({ maxTurns: 1, turn: 1 }), true)
+  assert.equal(shouldStopAfterTurn({ maxTurns: 3, turn: 1, toolCalls: 12, maxToolCalls: 12 }), true)
 })
 
-test('SEM-F16/SEM-F34/J22: tools outside a recipe grant are refused before adapter execution', async () => {
-  let adapterCalls = 0
-  const executor = new AgentLoopExecutor({
-    adapter: { run: async () => { adapterCalls += 1; return { text: '{}' } } }
-  })
-  await assert.rejects(executor.agentLoop({
-    recipeId: 'qa.answer', recipeVersion: '1', prompt: 'answer',
-    resolvedModel: { model: 'test', streamFn: async function * () {} },
-    tools: [{ name: 'read_sources', execute: async () => {} }]
-  }), (error) => error.code === 'TOOL_NOT_AVAILABLE_FOR_RECIPE')
-  assert.equal(adapterCalls, 0)
-})
-
-test('SEM-F40/J30-DIAG/J12: tool bodies and raw provider progress are reduced to safe loop metadata', async () => {
-  const markers = {
-    prompt: 'J30_PRIVACY_LOOP_PROMPT_4_4',
-    toolArguments: 'J30_PRIVACY_LOOP_TOOL_ARGUMENTS_4_4',
-    toolResult: 'J30_PRIVACY_LOOP_TOOL_RESULT_4_4',
-    providerEvent: 'J30_PRIVACY_LOOP_PROVIDER_EVENT_4_4'
-  }
-  const progress = []
-  const toolCalls = []
-  let observedArguments = null
-  const executor = new AgentLoopExecutor({
-    adapter: {
-      run: async ({ tools, onProgress }) => {
-        await onProgress({
-          type: 'request_started',
-          turn: 1,
-          providerEvent: markers.providerEvent,
-          prompt: markers.prompt,
-          toolArguments: markers.toolArguments,
-          toolResult: markers.toolResult
-        })
-        const result = await tools[0].execute({ query: markers.toolArguments })
-        assert.equal(result.matches[0].text, markers.toolResult)
-        await onProgress({ type: 'response_received', turn: 1, rawProviderEvent: markers.providerEvent })
-        return { text: 'safe response', usage: null }
-      }
-    },
-    onToolCall: (event) => toolCalls.push(event)
-  })
-  const result = await executor.agentLoop({
-    recipeId: 'qa.answer',
-    recipeVersion: '1',
-    prompt: markers.prompt,
-    resolvedModel: { modelId: 'controlled-provider' },
-    tools: [{
-      name: 'search_context',
-      execute: async (input) => {
-        observedArguments = input
-        return { matches: [{ text: markers.toolResult }] }
-      }
-    }],
-    onProgress: (event) => progress.push(event)
-  })
-
-  assert.deepEqual(observedArguments, { query: markers.toolArguments })
-  assert.deepEqual(progress, [
-    { type: 'request_started', turn: 1 },
-    { type: 'response_received', turn: 1 }
-  ])
-  assert.deepEqual(toolCalls, [{ toolName: 'search_context' }])
-  assert.equal(JSON.stringify({ result, progress, toolCalls }).includes('J30_PRIVACY_LOOP_'), false)
-})
-
-test('SEM-F28/SEM-T10/J22: cancellation is propagated and no continuation API is exposed', async () => {
+test('SEM-F31/F40/J22/J30-CANCEL: real Pi executes tools in provider order and stops between tools', async () => {
+  const order = []; let active = 0; let peak = 0; let turn = 0
+  const h = harness('qa.answer', '1', async () => ++turn === 1
+    ? providerResponse(null, [call('call.1'), call('call.2')])
+    : providerResponse(outputDirectiveFor(getRecipe('qa.answer', '1')).example))
+  await h.executor.agentLoop({ ...h.input, tools: [{ name: 'search_context', execute: async () => {
+    active++; peak = Math.max(peak, active); order.push(order.length + 1)
+    await new Promise(resolve => setImmediate(resolve)); active--; return {}
+  } }] })
+  assert.deepEqual(order, [1, 2]); assert.equal(peak, 1); assert.equal(h.requests.length, 2)
   const controller = new AbortController()
-  let seenSignal
-  const executor = new AgentLoopExecutor({
-    adapter: {
-      run: async ({ signal }) => {
-        seenSignal = signal
-        controller.abort()
-        throw Object.assign(new Error('cancelled'), { code: 'AGENT_CANCELLED' })
-      }
-    }
-  })
-  await assert.rejects(executor.agentLoop({
-    recipeId: 'intent.route', recipeVersion: '1', prompt: 'route', signal: controller.signal,
-    resolvedModel: { model: 'test', streamFn: async function * () {} }
-  }), (error) => error.code === 'AGENT_CANCELLED')
-  assert.notEqual(seenSignal, controller.signal)
-  assert.equal(seenSignal.aborted, true)
-  assert.equal(Object.hasOwn(executor, 'agentLoopContinue'), false)
+  let count = 0
+  const cancelled = harness('qa.answer', '1', async () => providerResponse(null, [call('call.1'), call('call.2')]))
+  await assert.rejects(cancelled.executor.agentLoop({ ...cancelled.input, signal: controller.signal,
+    tools: [{ name: 'search_context', execute: async () => { count++; controller.abort(); return {} } }] }),
+  error => error.code === 'AGENT_CANCELLED')
+  assert.equal(count, 1); assert.equal(cancelled.requests.length, 1)
 })
 
-test('SEM-F38/J30-CANCEL: host deadline releases a provider that never settles and consumes its late rejection', async () => {
-  let rejectProvider
-  let providerSignal
-  const executor = new AgentLoopExecutor({
-    adapter: {
-      run: async ({ signal }) => {
-        providerSignal = signal
-        return new Promise((resolve, reject) => { rejectProvider = reject })
-      }
-    }
+test('SEM-F40/J30-DIAG: intermediate tool content stays out of progress and result metadata', async () => {
+  const marker = 'J30_PRIVACY_LOOP_TOOL_MARKER'
+  const progress = []; const observed = []; let turn = 0
+  const h = harness('qa.answer', '1', async () => ++turn === 1
+    ? providerResponse(null, [call('call.1', 'search_context', { query: marker })])
+    : providerResponse(outputDirectiveFor(getRecipe('qa.answer', '1')).example), event => observed.push(event))
+  const result = await h.executor.agentLoop({ ...h.input, onProgress: event => progress.push(event),
+    tools: [{ name: 'search_context', execute: async args => {
+      assert.deepEqual(args, { query: marker }); return { text: marker }
+    } }] })
+  assert.deepEqual(observed, [{ toolName: 'search_context' }])
+  assert.equal(progress.length, 4)
+  assert.equal(JSON.stringify({ progress, observed, result }).includes(marker), false)
+  assert.equal(h.requests[1].messages.at(-1).content.includes(marker), true)
+})
+
+test('SEM-F28/F33/J22/J30-CANCEL: frozen identity and cancellation prohibit continuation and late success', async () => {
+  const h = harness('intent.route')
+  await assert.rejects(h.executor.agentLoop({ ...h.input, resolvedModel: { ...h.input.resolvedModel, modelId: 'changed' } }),
+    error => error.code === 'AGENT_REQUEST_INVALID')
+  assert.equal(h.requests.length, 0)
+  assert.equal(Object.hasOwn(h.executor, 'agentLoopContinue'), false)
+  const controller = new AbortController()
+  let release; let entered
+  const started = new Promise(resolve => { entered = resolve })
+  const pendingResponse = new Promise(resolve => { release = resolve })
+  const late = harness('intent.route', '1', async () => { entered(); return pendingResponse })
+  const pending = late.executor.agentLoop({ ...late.input, signal: controller.signal })
+  await started; controller.abort()
+  await assert.rejects(pending, error => error.code === 'AGENT_CANCELLED')
+  release(providerResponse(outputDirectiveFor(getRecipe('intent.route', '1')).example))
+})
+
+test('SEM-F38/J30-CANCEL: host deadline bounds a noncooperative network and consumes late rejection', async () => {
+  let reject; let entered; let providerSignal
+  const started = new Promise(resolve => { entered = resolve })
+  const h = harness('qa.answer', '1', async (_url, options) => {
+    providerSignal = options.signal; entered(); return new Promise((resolve, fail) => { reject = fail })
   })
-  const startedAt = Date.now()
-  const pending = executor.agentLoop({
-    recipeId: 'qa.answer', recipeVersion: '1', prompt: 'answer', timeoutMs: 20,
-    resolvedModel: { model: 'test', streamFn: async function * () {} }
-  })
-  await assert.rejects(pending, (error) => error.code === 'AGENT_PROVIDER_TIMEOUT')
-  assert.ok(Date.now() - startedAt < 1000)
+  const pending = h.executor.agentLoop({ ...h.input, timeoutMs: 60 })
+  await started
+  await assert.rejects(pending, error => error.code === 'AGENT_PROVIDER_TIMEOUT')
   assert.equal(providerSignal.aborted, true)
-
-  rejectProvider(Object.assign(new Error('late provider rejection'), { code: 'AGENT_PROVIDER_UNAVAILABLE' }))
-  await new Promise((resolve) => setImmediate(resolve))
+  reject(new Error('late network failure'))
+  await new Promise(resolve => setImmediate(resolve))
 })
 
-test('SEM-F38/J30-CANCEL: cancellation releases a never-settling provider before it responds to abort', async () => {
-  const controller = new AbortController()
-  let providerSignal
-  const executor = new AgentLoopExecutor({
-    adapter: { run: async ({ signal }) => { providerSignal = signal; return new Promise(() => {}) } }
-  })
-  const pending = executor.agentLoop({
-    recipeId: 'qa.answer', recipeVersion: '1', prompt: 'answer', signal: controller.signal,
-    resolvedModel: { model: 'test', streamFn: async function * () {} }
-  })
-  setTimeout(() => controller.abort(), 10)
-  await assert.rejects(pending, (error) => error.code === 'AGENT_CANCELLED')
-  assert.equal(providerSignal.aborted, true)
-})
-
-test('SEM-F28/SEM-T04/J22/J24: a provider success arriving after cancellation is rejected before interaction settlement', async () => {
-  const controller = new AbortController()
-  let release
-  const entered = new Promise((resolve) => { release = resolve })
-  const executor = new AgentLoopExecutor({
-    adapter: {
-      run: async () => {
-        await entered
-        return { text: JSON.stringify({ recipeId: 'qa.answer', confidence: 0.5 }) }
-      }
-    }
-  })
-  const pending = executor.agentLoop({
-    recipeId: 'intent.route', recipeVersion: '1', prompt: 'route', signal: controller.signal,
-    resolvedModel: { model: 'test', streamFn: async function * () {} }
-  })
-  controller.abort()
-  release()
-  await assert.rejects(pending, (error) => error.code === 'AGENT_CANCELLED')
-})
-
-test('SEM-F39/J31-SIZE: the loop carries the recipe output directive as the system prompt', async () => {
-  const seen = []
-  const executor = new AgentLoopExecutor({
-    adapter: { run: async (request) => { seen.push(request); return { text: '{}' } } }
-  })
-  await executor.agentLoop({
-    recipeId: 'summary.minutes', recipeVersion: '2', prompt: '总结',
-    resolvedModel: { modelId: 'controlled-model' }
-  })
-  await executor.agentLoop({
-    recipeId: 'intent.route', recipeVersion: '1', prompt: 'route',
-    resolvedModel: { modelId: 'controlled-model' }
-  })
-  assert.equal(seen.length, 2)
-  assert.equal(seen[0].systemPrompt.includes('只输出一个 JSON 对象'), true)
-  assert.equal(seen[0].systemPrompt.includes('todos'), true)
-  assert.equal(seen[1].systemPrompt.includes('recipeId'), true)
-  assert.equal(seen[1].systemPrompt.includes('todos'), false)
-})
-
-test('SEM-F39/J31-SIZE/J31-COMPAT: only summary.minutes@2 may carry the host request capacity', async () => {
-  const seen = []
-  const executor = new AgentLoopExecutor({
-    adapter: { run: async (request) => { seen.push(request); return { text: '{}' } } }
-  })
-  const capacity = deriveSummaryMinutesV2RequestCapacity({
-    capabilities: { maxInputTokens: 64000, maxOutputTokens: 4096 },
-    budget: deriveRecipeBudget({ maxInputTokens: 64000, maxOutputTokens: 4096 }, 'summary.minutes', '2', 'user')
-  })
-  await executor.agentLoop({
-    recipeId: 'summary.minutes', recipeVersion: '2', prompt: '总结',
-    resolvedModel: { modelId: 'controlled-model' }, requestCapacity: capacity
-  })
-  assert.equal(seen[0].requestCapacity, capacity)
-  for (const [recipeId, recipeVersion] of [['summary.minutes', '1'], ['qa.answer', '1']]) {
-    await assert.rejects(executor.agentLoop({
-      recipeId, recipeVersion, prompt: 'prompt',
-      resolvedModel: { modelId: 'controlled-model' }, requestCapacity: capacity
-    }), (error) => error.code === 'AGENT_REQUEST_INVALID')
+test('SEM-F28/F31/J22/J24: business Schema validation belongs to the host and forbids partial output', async () => {
+  for (const content of ['invalid json', { schemaVersion: 1, answer: 'missing refs' }]) {
+    const h = harness('qa.answer', '1', async () => providerResponse(content))
+    await assert.rejects(h.executor.agentLoop(h.input), error => error.code === 'AGENT_OUTPUT_INVALID')
+    assert.equal(h.requests.length, 1)
   }
-  await assert.rejects(executor.agentLoop({
-    recipeId: 'summary.minutes', recipeVersion: '2', prompt: '总结',
-    resolvedModel: { modelId: 'controlled-model' },
-    requestCapacity: { requestOutputTokens: 8192, promptByteLimit: -1 }
-  }), (error) => error.code === 'AGENT_REQUEST_INVALID')
-  assert.equal(seen.length, 1)
+})
+
+test('SEM-F28/F40/J30-RECOVERY: unknown and replayed durable reservations prohibit any network effect', async () => {
+  for (const receipt of [undefined, { reserved: false }, { reserved: true, replayed: true }]) {
+    const h = harness()
+    await assert.rejects(h.executor.agentLoop({ ...h.input, beforeRequest: async () => receipt }),
+      error => error.code === 'AGENT_RUN_UNAVAILABLE')
+    assert.equal(h.requests.length, 0)
+  }
+})
+
+test('SEM-F28/F40/J30-RECOVERY: Retry-After gates retries and failed exchange usage remains unknown', async () => {
+  const times = []; const waits = []; let reservations = 0
+  const h = harness('qa.answer', '1', async () => {
+    times.push(performance.now())
+    return times.length === 1 ? { status: 429, ok: false, headers: { get: name => name === 'retry-after' ? '0.05' : null } }
+      : providerResponse(outputDirectiveFor(getRecipe('qa.answer', '1')).example, [], { prompt_tokens: 3, completion_tokens: 2 })
+  })
+  const result = await h.executor.agentLoop({ ...h.input, retryPolicyVersion: 'agent-retry@2',
+    beforeRequest: async () => { reservations++; return { reserved: true, retryPolicyVersion: 'agent-retry@2' } },
+    onProgress: event => { if (event.type === 'retry_wait') waits.push(event.waitMs) } })
+  assert.deepEqual(waits, [50]); assert.equal(reservations, 2)
+  assert.ok(times[1] - times[0] >= 49)
+  assert.equal(result.usage, null)
+})
+
+test('SEM-F28/F40/J30-CANCEL/RECOVERY: retry waits cancel promptly and cannot exceed the total deadline', async () => {
+  const controller = new AbortController()
+  const rateLimited = () => ({ status: 503, ok: false, headers: { get: name => name === 'retry-after' ? '2' : null } })
+  const h = harness('qa.answer', '1', async () => rateLimited())
+  await assert.rejects(h.executor.agentLoop({ ...h.input, retryPolicyVersion: 'agent-retry@2', signal: controller.signal,
+    onProgress: event => { if (event.type === 'retry_wait') controller.abort() } }), error => error.code === 'AGENT_CANCELLED')
+  assert.equal(h.requests.length, 1)
+  const deadline = harness('qa.answer', '1', async () => rateLimited())
+  await assert.rejects(deadline.executor.agentLoop({ ...deadline.input, retryPolicyVersion: 'agent-retry@2', timeoutMs: 200 }),
+    error => error.code === 'AGENT_PROVIDER_UNAVAILABLE' && error.retryExhausted === true)
+  assert.equal(deadline.requests.length, 1)
 })

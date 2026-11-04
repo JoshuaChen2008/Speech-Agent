@@ -1,4 +1,6 @@
 'use strict'
+const { createRecipeNetworkAdapter, providerResponse, toolRequest } = require('./provider-network-fixture')
+const { getRecipe } = require('../../src/agent/contracts/recipes')
 
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
@@ -7,8 +9,7 @@ const path = require('node:path')
 const test = require('node:test')
 const vm = require('node:vm')
 
-const { AgentRunService } = require('../../src/agent/formal-run/agent-run-service')
-const { SessionSummaryRunService, SUMMARY_PROMPT } = require('../../src/agent/formal-run/session-summary-run-service')
+const { AgentOperationService, SUMMARY_PROMPT } = require('../../src/agent/formal-run/agent-operation-service')
 const { AgentRunDiagnostics } = require('../../src/main/services/agent-run-diagnostics')
 const { assertDiagnosticRecord } = require('../../src/agent/contracts/agent-run-diagnostics')
 const { AgentLoopExecutor, IntentRouteOrchestrator } = require('../../src/agent/execution-host')
@@ -19,9 +20,6 @@ const { HistoryService } = require('../../src/main/services/history-service')
 const { SqliteSessionRecorder } = require('../../src/main/services/sqlite-session-recorder')
 const { StorageGateway } = require('../../src/main/services/storage-gateway')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
-const { FakeRuntimeAdapter } = require('../../src/main/session/fake-runtime-adapter')
-const { SessionCoordinator } = require('../../src/main/session/session-coordinator')
-const { resolveRuntimeOptions, DEV_MODEL_VALUE } = require('../../src/main/runtime-options')
 const { OPERATIONS, PROTOCOL_VERSION, StorageError, makeCaptionEventId, makeCloseSessionKey, makeOpenSessionKey } = require('../../src/runtime/storage-worker/protocol')
 const contract = require('../../src/agent/contracts/session-summary-run-ui')
 const diagnosticsUI = require('../../src/agent/contracts/agent-run-diagnostics-ui')
@@ -145,6 +143,7 @@ function serviceBackedHost (service, databasePath) {
     async listSessions (value) { return call(OPERATIONS.LIST_SESSIONS, value) },
     async derivePersonalContextSessionSource (request) { return call(OPERATIONS.PERSONAL_CONTEXT_DERIVE_SESSION_SOURCE, { request }) },
     async claimNextFormalAgentRun (request) { return call(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request }) },
+    async reserveFormalAgentModelRequest (request) { return call(OPERATIONS.FORMAL_AGENT_RESERVE_MODEL_REQUEST, { request }) },
     async createAgentRun (request) { return call(OPERATIONS.AGENT_CREATE_RUN, { request }) },
     async cancelAgentRun (request) { return call(OPERATIONS.AGENT_CANCEL_RUN, { request }) },
     async createAgentInteraction (request) { return call(OPERATIONS.AGENT_CREATE_INTERACTION, { request }) },
@@ -180,9 +179,10 @@ function createVault (directory) {
 function tick () { return new Promise((resolve) => setImmediate(resolve)) }
 
 async function waitFor (predicate, description) {
-  for (let attempt = 0; attempt < 150; attempt += 1) {
+  const deadline = Date.now() + 5000
+  while (Date.now() < deadline) {
     if (await predicate()) return
-    await tick()
+    await new Promise(resolve => setTimeout(resolve, 5))
   }
   throw new Error(`timed out waiting for ${description}`)
 }
@@ -208,7 +208,6 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   let cancelDiagnosticSave = false
   let diagnosticSaveDialogCalls = 0
   let summaryRun = null
-  let independentCoordinator = null
   let releaseLateRouteProvider = null
   let lateRouteProviderSettled = false
   const diagnosticFsApi = new Proxy(fs.promises, {
@@ -249,45 +248,25 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   const modelAccess = new ModelAccessRuntime({
     gateway,
     vault,
-    adapter: {
-      async run ({ recipe, signal, onProgress }) {
-        if (recipe.recipeId !== 'intent.route') throw new Error('unexpected target execution in acceptance journey')
-        routeCalls += 1
-        await onProgress?.({
-          type: 'request_started',
-          turn: 1,
-          providerEvent: PRIVACY_MARKERS.providerEvent,
-          toolArguments: PRIVACY_MARKERS.toolArguments,
-          toolResult: PRIVACY_MARKERS.toolResult,
-          exceptionMessage: PRIVACY_MARKERS.exceptionMessage
-        })
-        if (routeBehavior === 'wait') {
-          return new Promise((resolve, reject) => {
-            const abort = () => {
-              const error = new Error('AGENT_CANCELLED')
-              error.code = 'AGENT_CANCELLED'
-              reject(error)
-            }
-            if (signal?.aborted) return abort()
-            signal?.addEventListener('abort', abort, { once: true })
-          })
+    adapter: createRecipeNetworkAdapter(runId => {
+      const row = storageService.requireStore().database.prepare('SELECT recipe_id,recipe_version FROM formal_agent_runs WHERE run_id=?').get(runId)
+      return getRecipe(row.recipe_id, row.recipe_version)
+    }, async ({ recipe, signal }) => {
+      if (recipe.recipeId !== 'intent.route') throw new Error('unexpected target execution')
+      routeCalls++
+      if (routeBehavior === 'wait') return new Promise((resolve, reject) => {
+        const abort = () => reject(new DOMException('cancelled request', 'AbortError'))
+        if (signal.aborted) abort()
+        else signal.addEventListener('abort', abort, { once: true })
+      })
+      if (routeBehavior === 'ignore-abort') return new Promise((resolve, reject) => {
+        releaseLateRouteProvider = {
+          resolve: value => { lateRouteProviderSettled = true; resolve(providerResponse(value.text)) },
+          reject: error => { lateRouteProviderSettled = true; reject(error) }
         }
-        if (routeBehavior === 'ignore-abort') {
-          return new Promise((resolve, reject) => {
-            releaseLateRouteProvider = {
-              resolve: (value) => { lateRouteProviderSettled = true; resolve(value) },
-              reject: (error) => { lateRouteProviderSettled = true; reject(error) }
-            }
-          })
-        }
-        await onProgress?.({ type: 'response_received', turn: 1, providerResponse: PRIVACY_MARKERS.providerResponse })
-        return {
-          text: JSON.stringify({ recipeId: 'qa.answer', confidence: 0.95 }),
-          usage: null,
-          providerResponse: PRIVACY_MARKERS.providerResponse
-        }
-      }
-    }
+      })
+      return providerResponse({ recipeId: 'qa.answer', confidence: 0.95 })
+    })
   })
   await modelAccess.initialize()
   for (const command of [
@@ -318,11 +297,33 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   })
   await recorder.closeSession({ sessionId: SCOPE.reference, sourceId: 'mic', state: 'closed' })
 
+  // Enter at the committed-caption boundary: the recorder, FIFO, SQLite and
+  // history are real, with no replacement for an internal product module.
+  const assertSubtitlePersistence = async (stage) => {
+    const sessionId = `session.j30.independence.${stage}`
+    const started = performance.now()
+    await recorder.openSession({ sessionId, sourceId: 'mic', refinementEnabled: false })
+    await recorder.acceptCaption({ schemaVersion: 1, sessionId, sourceId: 'mic',
+      segmentId: `segment.j30.independence.${stage}`, sequence: 1, revision: 1,
+      kind: 'final', t0: 0, t1: 10, text: PRIVACY_MARKERS.transcript, translation: null })
+    await recorder.closeSession({ sessionId, sourceId: 'mic', state: 'closed' })
+    const history = new HistoryService({ gateway, showSaveDialog: async () => ({ canceled: true }) })
+    const sessions = await history.listSessions({ limit: 100, cursor: null })
+    assert.equal(sessions.items.some(item => item.sessionId === sessionId), true)
+    const page = await history.getSessionPage({ sessionId, limit: 50, cursor: null })
+    assert.equal(page.items.length, 1)
+    assert.equal(page.items[0].text, PRIVACY_MARKERS.transcript)
+    assert.ok(performance.now() - started < 2000, 'subtitle persistence does not await Agent model work')
+    return sessionId
+  }
+  await assertSubtitlePersistence('agent_absent')
+
   const routeOrchestrator = new IntentRouteOrchestrator({
     runs: {
       create: (input) => gateway.createAgentRun(input),
       cancel: (input) => gateway.cancelAgentRun(input),
-      getInteraction: (input) => gateway.getAgentInteraction(input)
+      getInteraction: (input) => gateway.getAgentInteraction(input),
+      reserveModelRequest: request => gateway.reserveFormalAgentModelRequest(request)
     },
     modelAccess,
     interactions: {
@@ -332,7 +333,6 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     loopFactory: (binding) => new AgentLoopExecutor({ adapter: modelAccess.createLoopAdapter(binding) }),
     allowedTargetRecipes: ['summary.minutes', 'qa.answer']
   })
-  const runService = new AgentRunService({ storage: gateway, modelAccess, getConfig: () => config.get() })
   const dispatchQueue = []
   let loseNextAcceptanceReply = false
   let failFrozenSourceRead = false
@@ -372,17 +372,19 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
       return typeof value === 'function' ? value.bind(target) : value
     }
   })
-  const requestRunService = {
-    async getEligibility (input) {
-      eligibilityCheckCount += 1
-      if (failEligibility) return { ok: false, error: { next_action: 'settings' } }
-      return runService.getEligibility(input)
-    }
-  }
   let preloadBridge = null
-  summaryRun = new SessionSummaryRunService({
+  const countEligibility = (operation) => {
+    const getEligibility = operation.getEligibility.bind(operation)
+    operation.getEligibility = (input) => {
+      eligibilityCheckCount += 1
+      assert.equal(failEligibility, false, 'same-key replay must not re-check model readiness')
+      return getEligibility(input)
+    }
+    return operation
+  }
+  summaryRun = countEligibility(new AgentOperationService({
     storage: requestStorage,
-    runService: requestRunService,
+    modelAccess,
     routeOrchestrator,
     getConfig: () => config.get(),
     defer: (callback) => dispatchQueue.push(callback),
@@ -394,8 +396,8 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
       return { canceled: false, filePath: diagnosticExportPath }
     },
     getOwnerWindow: (sender) => sender,
-    onChanged: (event) => preloadBridge?.emit(CHANNELS.SESSION_SUMMARY_RUN_CHANGED, event)
-  })
+    onRequestChanged: (event) => preloadBridge?.emit(CHANNELS.SESSION_SUMMARY_RUN_CHANGED, event)
+  }))
   const handlers = new Map()
   registerSessionSummaryRunIpc({
     ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
@@ -407,8 +409,8 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
       }
     },
     service: {
-      accept: (...args) => summaryRun.accept(...args),
-      get: (...args) => summaryRun.get(...args),
+      accept: (...args) => summaryRun.submit(...args),
+      get: (...args) => summaryRun.getSnapshot(...args),
       cancel: (...args) => summaryRun.cancel(...args),
       resume: (...args) => summaryRun.resume(...args),
       listRecoverable: (...args) => summaryRun.listRecoverable(...args),
@@ -419,16 +421,15 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   const ipcEvent = { sender: { id: 101 }, role: 'agent' }
   preloadBridge = createAgentPreloadApi(handlers, ipcEvent)
   const summaryApi = {
-    accept: (request) => preloadBridge.api.acceptSessionSummaryRun(request),
-    get: (request) => preloadBridge.api.getSessionSummaryRun(request),
-    cancel: (request) => preloadBridge.api.cancelSessionSummaryRun(request),
-    resume: (request) => preloadBridge.api.resumeSessionSummaryRun(request),
-    listRecoverable: (request) => preloadBridge.api.listRecoverableSessionSummaryRuns(request),
-    getDiagnostics: (request) => preloadBridge.api.getSessionSummaryRunDiagnostics(request),
-    exportDiagnostics: (request) => preloadBridge.api.exportSessionSummaryRunDiagnostics(request)
+    accept: (request) => preloadBridge.api.operations.submit(request),
+    get: (request) => preloadBridge.api.operations.getSnapshot(request),
+    cancel: (request) => preloadBridge.api.operations.cancel(request),
+    resume: (request) => preloadBridge.api.operations.resume(request),
+    listRecoverable: (request) => preloadBridge.api.operations.listRecoverable(request),
+    getDiagnostics: (request) => preloadBridge.api.operations.getDiagnostics(request),
+    exportDiagnostics: (request) => preloadBridge.api.operations.exportDiagnostics(request)
   }
   t.after(async () => {
-    await independentCoordinator?.dispose().catch(() => {})
     vault.close()
     await gateway.shutdown().catch(() => gateway.terminate())
     fs.rmSync(root, { recursive: true, force: true })
@@ -436,7 +437,7 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
 
   const summaryRequest = request('summary', 'j30.summary.key')
   const changedEvents = []
-  const unsubscribeSummaryChanges = preloadBridge.api.onSessionSummaryRunChanged((event) => changedEvents.push(event))
+  const unsubscribeSummaryChanges = preloadBridge.api.operations.onChanged((event) => changedEvents.push(event))
   loseNextAcceptanceReply = true
   const unknownReceipt = await summaryApi.accept(summaryRequest)
   assert.equal(unknownReceipt.ok, false)
@@ -495,7 +496,8 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     request_id: questionAccepted.result.snapshot.request_id
   })
   assert.equal(questionSnapshot.result.snapshot.recipe_id, 'qa.answer')
-  assert.equal(questionSnapshot.result.snapshot.routing_mode, 'model')
+  assert.equal(questionSnapshot.result.snapshot.routing_mode, 'model', JSON.stringify({ routeCalls,
+    routes: storageService.requireStore().database.prepare("SELECT state,error_code FROM formal_agent_runs WHERE recipe_id='intent.route'").all() }))
   assert.equal(routeCalls, 1)
   const questionReplay = await summaryApi.accept(questionRequest)
   assert.equal(questionReplay.ok, true)
@@ -521,6 +523,18 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   assert.equal(waitingRoute.result.snapshot.phase, 'waiting_model')
   assert.equal(waitingRoute.result.snapshot.memory_state, 'not_read')
   assert.equal(waitingRoute.result.snapshot.last_activity_age_ms !== null, true)
+  // SEM-F38/F40/J30-CANCEL: an obsolete control identity must not signal
+  // the live generation before SQLite rejects the cancellation.
+  const activeRouteController = summaryRun.controllers.get(uncertainCancelAccepted.result.snapshot.request_id)
+  const rejectedGeneration = await summaryApi.cancel({
+    contract_id: contract.CONTRACT_ID,
+    contract_version: contract.CONTRACT_VERSION,
+    request_id: uncertainCancelAccepted.result.snapshot.request_id,
+    generation: uncertainCancelAccepted.result.snapshot.generation + 1
+  })
+  assert.equal(rejectedGeneration.ok, false)
+  assert.equal(activeRouteController.signal.aborted, false)
+  assert.equal(summaryRun.dispatches.size, 1)
   failNextCancelWrite = true
   const cancelNotConfirmed = await summaryApi.cancel({
     contract_id: contract.CONTRACT_ID,
@@ -587,9 +601,9 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   assert.equal(dispatchQueue.length, 1)
   const wakeReasons = []
   const restartedPromptStore = new Map()
-  summaryRun = new SessionSummaryRunService({
+  summaryRun = countEligibility(new AgentOperationService({
     storage: requestStorage,
-    runService: requestRunService,
+    modelAccess,
     routeOrchestrator,
     scheduler: { wake: (reason) => wakeReasons.push(reason) },
     getConfig: () => config.get(),
@@ -603,8 +617,8 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     },
     getOwnerWindow: (sender) => sender,
     defer: (callback) => dispatchQueue.push(callback),
-    onChanged: (event) => preloadBridge?.emit(CHANNELS.SESSION_SUMMARY_RUN_CHANGED, event)
-  })
+    onRequestChanged: (event) => preloadBridge?.emit(CHANNELS.SESSION_SUMMARY_RUN_CHANGED, event)
+  }))
   const reconciled = await summaryRun.recoverAfterRestart()
   assert.equal(reconciled > 0, true)
   const restartSnapshot = await summaryApi.get({
@@ -638,6 +652,8 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   assert.equal(resumed.ok, true)
   assert.equal(resumed.result.snapshot.generation, recoverableTarget.snapshot.generation + 1)
   assert.equal(resumed.result.snapshot.target_run_id, targetRunId)
+  assert.deepEqual(wakeReasons, [], 'resumption receipt precedes execution scheduling')
+  dispatchQueue.shift()()
   assert.deepEqual(wakeReasons, ['resume'])
   const preparedRun = database.prepare('SELECT run_id,state,attempt_count,resume_required FROM formal_agent_runs WHERE run_id=?').get(targetRunId)
   assert.deepEqual({ ...preparedRun }, {
@@ -658,9 +674,9 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   const lostQuestionAccepted = await summaryApi.accept(request('question', 'j30.question.lost-before-resubmit', '原问题正文不应持久化'))
   assert.equal(lostQuestionAccepted.ok, true)
   const lostQuestionId = lostQuestionAccepted.result.snapshot.request_id
-  summaryRun = new SessionSummaryRunService({
+  summaryRun = countEligibility(new AgentOperationService({
     storage: requestStorage,
-    runService: requestRunService,
+    modelAccess,
     routeOrchestrator,
     scheduler: { wake: () => {} },
     getConfig: () => config.get(),
@@ -674,8 +690,8 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
     },
     getOwnerWindow: (sender) => sender,
     defer: (callback) => dispatchQueue.push(callback),
-    onChanged: (event) => preloadBridge?.emit(CHANNELS.SESSION_SUMMARY_RUN_CHANGED, event)
-  })
+    onRequestChanged: (event) => preloadBridge?.emit(CHANNELS.SESSION_SUMMARY_RUN_CHANGED, event)
+  }))
   await summaryRun.recoverAfterRestart()
   const lostQuestion = await summaryApi.get({
     contract_id: contract.CONTRACT_ID,
@@ -811,6 +827,7 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   })
   assert.equal(diagnosticsFailureSnapshot.result.snapshot.diagnostics_available, false)
   assert.equal(diagnosticsFailureSnapshot.result.snapshot.state, 'accepted')
+  await assertSubtitlePersistence('diagnostics_failed')
   assert.ok(changedEvents.slice(eventCountBeforeDiagnosticFailure).some((event) =>
     event.request_id === diagnosticsFailureAccepted.result.snapshot.request_id &&
     event.revision > diagnosticsFailureAccepted.result.snapshot.revision
@@ -840,6 +857,7 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   dispatchQueue.shift()()
   await waitFor(() => routeCalls === routeCallsBeforeNonCooperativeProvider + 1, 'non-cooperative provider request')
   assert.equal(typeof releaseLateRouteProvider?.reject, 'function')
+  await assertSubtitlePersistence('agent_waiting')
   const nonCooperativeCancelled = await summaryApi.cancel({
     contract_id: contract.CONTRACT_ID,
     contract_version: contract.CONTRACT_VERSION,
@@ -863,37 +881,7 @@ test('SEM-F38/SEM-T04/J30-ACCEPT: request identity persists before routing, summ
   assert.equal(diagnosticsUI.assertQueryResponse(unavailableDiagnostics).result.available, false)
   assert.deepEqual(unavailableDiagnostics.result.records, [])
 
-  const independentSessionId = 'session.summary.diagnostics.failure.independent'
-  const subtitleAdapter = new FakeRuntimeAdapter({ autoEmit: false })
-  independentCoordinator = new SessionCoordinator({
-    adapter: subtitleAdapter,
-    persistenceSink: recorder,
-    runtimeOptions: resolveRuntimeOptions({ LIVE_SUBTITLE_DEV_MODEL: DEV_MODEL_VALUE }),
-    configuration: {
-      onboardingCompleted: true,
-      onboardingPreset: 'dictation',
-      mic: true,
-      loopback: false,
-      refinementEnabled: false
-    },
-    idFactory: () => independentSessionId
-  })
-  assert.equal((await independentCoordinator.command('start')).ok, true)
-  assert.equal(independentCoordinator.getSnapshot().sessionId, independentSessionId)
-  subtitleAdapter.emitCaption({
-    schemaVersion: 1,
-    sessionId: independentSessionId,
-    sourceId: 'mic',
-    segmentId: 'segment.summary.diagnostics.failure.independent',
-    sequence: 1,
-    revision: 1,
-    kind: 'final',
-    t0: 0,
-    t1: 10,
-    text: PRIVACY_MARKERS.transcript,
-    translation: null
-  })
-  assert.equal((await independentCoordinator.command('stop')).ok, true)
+  const independentSessionId = await assertSubtitlePersistence('agent_cancelled')
   const historyExportPath = path.join(root, 'selected-transcript.txt')
   const historyDialogOwners = []
   const history = new HistoryService({

@@ -2,6 +2,7 @@
 
 const { canonicalize } = require('../../runtime/storage-worker/canonical-json')
 const { validateRecipeOutput } = require('../contracts/recipes')
+const { outputInvalid } = require('../contracts/output-validation')
 const fail = code => { const error = new Error(code); error.code = code; throw error }
 
 function nodeCount (leaves) {
@@ -18,12 +19,12 @@ async function executeQuestionEvidence ({ evidence, invoke, signal, promptByteLi
     if (Buffer.byteLength(JSON.stringify(prompt)) > promptByteLimit) fail('AGENT_BUDGET_EXCEEDED')
     const result = await invoke(prompt)
     let output
-    try { output = typeof result.text === 'string' ? JSON.parse(result.text) : result.output
-      validateRecipeOutput('qa.answer', '4', output)
-    } catch { fail('AGENT_OUTPUT_INVALID') }
-    if (output.coverage !== null || output.sourceRefs.some(ref => !allowedRefs.some(allowed => canonicalize(ref) === canonicalize(allowed)))) fail('AGENT_OUTPUT_INVALID')
+    try { output = typeof result.text === 'string' ? JSON.parse(result.text) : result.output } catch { throw outputInvalid('json') }
+    validateRecipeOutput('qa.answer', '4', output)
+    if (output.coverage !== null) throw outputInvalid('coverage', 'coverage')
+    if (output.sourceRefs.some(ref => !allowedRefs.some(allowed => canonicalize(ref) === canonicalize(allowed)))) throw outputInvalid('source_reference', 'sourceRefs')
     validateMemoryRefs(output)
-    if (intermediate && Buffer.byteLength(canonicalize(output)) > 8192) fail('AGENT_OUTPUT_INVALID')
+    if (intermediate && Buffer.byteLength(canonicalize(output)) > 8192) throw outputInvalid('output_size', 'output', Buffer.byteLength(canonicalize(output)), 8192)
     return output
   }
   try {

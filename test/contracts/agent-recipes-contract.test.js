@@ -33,7 +33,7 @@ const expectedIds = [
 
 test('SEM-F16/J22/J24: twelve recipe ids map to a frozen versioned registry', () => {
   assert.deepEqual(RECIPE_IDS, expectedIds)
-  assert.equal(RECIPE_CATALOG.length, 21)
+  assert.equal(RECIPE_CATALOG.length, 22)
   assert.equal(Object.isFrozen(RECIPE_CATALOG), true)
   assert.deepEqual([...new Set(RECIPE_CATALOG.map((recipe) => recipe.recipeId))], expectedIds)
   for (const recipe of RECIPE_CATALOG) {
@@ -42,7 +42,7 @@ test('SEM-F16/J22/J24: twelve recipe ids map to a frozen versioned registry', ()
       'outputSchemaId', 'persistence', 'recipeId', 'recipeVersion', 'toolGrants'
     ])
     assert.ok(['1', ...(['summary.minutes', 'qa.answer', 'context.ingest.session', 'context.ingest.interaction', 'context.synthesize'].includes(recipe.recipeId) ? ['2'] : []),
-      ...(['qa.answer', 'context.ingest.session'].includes(recipe.recipeId) ? ['3'] : []),
+      ...(['qa.answer', 'summary.minutes', 'context.ingest.session'].includes(recipe.recipeId) ? ['3'] : []),
       ...(recipe.recipeId === 'qa.answer' ? ['4', '5'] : [])].includes(recipe.recipeVersion))
     assert.equal(Object.isFrozen(recipe), true)
     assert.equal(getRecipe(recipe.recipeId, recipe.recipeVersion), recipe)
@@ -87,6 +87,27 @@ test('SEM-F16/J22/J24: shared refs, output validation, and comparison identity a
 
 const source = { sessionId: 'session.1', transcriptVersion: 'raw', fromEventOrder: 1, throughEventOrder: 2 }
 const memory = { memoryId: 'memory.1', revisionId: 'revision.1' }
+
+test('SEM-F31/F38/J29/J22: summary and question bodies accept paragraphs while reference identities remain strict', () => {
+  const body = 'First paragraph.\r\n\r\nSecond paragraph.\n- First item\n\tContinuation.'
+  const minutes = { schemaVersion: 1, overview: body, conclusions: [{ text: body, sourceRefs: [source] }],
+    todos: [{ text: body, ownerHint: null, dueHint: null, sourceRefs: [source] }], risks: [{ text: body, sourceRefs: [source] }] }
+  for (const version of ['1', '2']) assert.equal(validateRecipeOutput('summary.minutes', version, minutes), minutes)
+  const answer = { schemaVersion: 1, answer: body, sourceRefs: [source], memoryRefs: [], unresolved: [body] }
+  for (const version of ['1', '2', '3']) assert.equal(validateRecipeOutput('qa.answer', version, answer), answer)
+  const sourced = { ...answer, schemaVersion: 2, claims: [{ text: body, sourceRefs: [source], memoryRefs: [] }], coverage: null }
+  for (const version of ['4', '5']) assert.equal(validateRecipeOutput('qa.answer', version, sourced), sourced)
+  for (const control of ['\u0000', '\u000b', '\u001b', '\u007f']) {
+    assert.throws(() => validateRecipeOutput('summary.minutes', '2', { ...minutes, overview: 'A' + control + 'B' }), error =>
+      error.code === 'AGENT_OUTPUT_INVALID' && error.outputValidation.reason === 'control_character')
+    assert.throws(() => validateRecipeOutput('qa.answer', '5', { ...sourced, answer: 'A' + control + 'B' }), /AGENT_OUTPUT_INVALID/)
+  }
+  assert.throws(() => validateRecipeOutput('summary.minutes', '2', { ...minutes, overview: 'x'.repeat(2001) }), /AGENT_OUTPUT_INVALID/)
+  assert.throws(() => validateRecipeOutput('qa.answer', '5', { ...sourced, answer: 'x'.repeat(4001) }), /AGENT_OUTPUT_INVALID/)
+  assert.throws(() => validateRecipeOutput('qa.answer', '5', { ...sourced, sourceRefs: [{ ...source, sessionId: 'session\n1' }] }), /AGENT_OUTPUT_INVALID/)
+  assert.throws(() => validateRecipeOutput('summary.minutes', '2', { ...minutes, todos: [{ text: body, ownerHint: 'A\nB', dueHint: null, sourceRefs: [] }] }), /AGENT_OUTPUT_INVALID/)
+  assert.throws(() => validateRecipeOutput('text.rewrite', '1', { schemaVersion: 1, style: 'formal', text: body, sourceRefs: [] }), /AGENT_OUTPUT_INVALID/)
+})
 
 test('SEM-F16/J22/J24: every registered output schema has an exact minimal valid shape', () => {
   const outputs = {
@@ -152,7 +173,7 @@ test('SEM-F39/SEM-F28/J31-SIZE: every registered recipe identity carries a singl
     assert.equal(directive.systemPrompt.includes(JSON.stringify(directive.example)), true)
     assert.doesNotThrow(() => validateRecipeOutput(recipe.recipeId, recipe.recipeVersion, directive.example))
   }
-  assert.throws(() => outputDirectiveFor({ recipeId: 'summary.minutes', recipeVersion: '3' }), /AGENT_REQUEST_INVALID/)
+  assert.throws(() => outputDirectiveFor({ recipeId: 'summary.minutes', recipeVersion: '4' }), /AGENT_REQUEST_INVALID/)
 })
 
 test('SEM-F39/J31-SIZE: the summary directive pins the minutes structure without inventing source identity', () => {
@@ -168,6 +189,44 @@ test('SEM-F39/J31-SIZE: the summary directive pins the minutes structure without
   }
   const v1Directive = outputDirectiveFor(getRecipe('summary.minutes', '1'))
   assert.equal(v1Directive.systemPrompt, directive.systemPrompt)
+  assert.ok(directive.example.overview.includes('\n\n'), 'the summary example demonstrates separate paragraphs')
+})
+
+test('SEM-F31/F38/F40/J22/J30-DIAG: question examples require complete fields, evidenced claims and empty memory references', () => {
+  for (const version of ['4', '5']) {
+    const example = outputDirectiveFor(getRecipe('qa.answer', version)).example
+    assert.ok(example.claims.length > 0, 'an evidenced example must show the full claim structure')
+    assert.deepEqual(example.memoryRefs, [])
+    for (const claim of example.claims) {
+      assert.deepEqual(claim.memoryRefs, [])
+      assert.ok(claim.sourceRefs.length > 0)
+    }
+    assert.doesNotThrow(() => validateRecipeOutput('qa.answer', version, structuredClone(example)))
+    for (const field of Object.keys(example)) {
+      const missingField = structuredClone(example); delete missingField[field]
+      assert.throws(() => validateRecipeOutput('qa.answer', version, missingField), error => error.code === 'AGENT_OUTPUT_INVALID')
+    }
+    for (const invalidRefs of [[null], ['none'], null]) {
+      const rootInvalid = structuredClone(example); rootInvalid.memoryRefs = invalidRefs
+      assert.throws(() => validateRecipeOutput('qa.answer', version, rootInvalid), error => error.code === 'AGENT_OUTPUT_INVALID')
+      const claimInvalid = structuredClone(example); claimInvalid.claims[0].memoryRefs = invalidRefs
+      assert.throws(() => validateRecipeOutput('qa.answer', version, claimInvalid), error => error.code === 'AGENT_OUTPUT_INVALID')
+    }
+  }
+})
+
+test('SEM-F31/F38/J29/J22: summary and answer examples demonstrate readable body layout inside valid exact JSON', () => {
+  for (const recipe of RECIPE_CATALOG.filter(recipe => ['summary.minutes', 'qa.answer'].includes(recipe.recipeId))) {
+    const directive = outputDirectiveFor(recipe)
+    const body = directive.example.overview ?? directive.example.answer
+    const serialized = JSON.stringify(directive.example)
+    assert.ok(body.includes('\n\n'), `${recipe.recipeId}@${recipe.recipeVersion} demonstrates paragraph separation`)
+    assert.ok(serialized.includes('\\n\\n'), 'paragraphs are escaped inside JSON strings')
+    assert.ok(directive.systemPrompt.includes('一段只讲一个主题'))
+    assert.ok(directive.systemPrompt.includes('不为凑段落编造信息'))
+    if (recipe.recipeId === 'qa.answer') assert.ok(directive.systemPrompt.includes('直接回答问题'))
+    assert.doesNotThrow(() => validateRecipeOutput(recipe.recipeId, recipe.recipeVersion, JSON.parse(serialized)))
+  }
 })
 
 test('SEM-F39/SEM-F28/J31-SIZE: routing, ingest, and remaining recipes keep their own output structures', () => {

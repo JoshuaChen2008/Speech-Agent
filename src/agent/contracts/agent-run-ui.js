@@ -3,7 +3,7 @@
 const { assertToolCallRecord, assertToolCallSequence } = require('./controlled-tools')
 
 const CONTRACT_ID = 'speech-agent.agent-run.ui'
-const CONTRACT_VERSION = '1.1.0'
+const CONTRACT_VERSION = '1.2.0'
 const ALLOWED_ROLES = Object.freeze(['agent', 'history'])
 const IPC_CHANNELS = Object.freeze({
   getScopes: 'agent-run:get-scopes',
@@ -44,7 +44,7 @@ function id (v, p) { if (typeof v !== 'string' || !ID.test(v)) fail(p, 'must be 
 function integer (v, p) { if (!Number.isSafeInteger(v) || v < 0) fail(p, 'must be a non-negative safe integer'); return v }
 function enumValue (v, allowed, p) { if (!allowed.includes(v)) fail(p, 'is not registered'); return v }
 function normalizeField (key) { return key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase() }
-function header (v, p) { if (v.contract_id !== CONTRACT_ID || !['1.0.0', CONTRACT_VERSION].includes(v.contract_version)) fail(p, 'unsupported contract version') }
+function header (v, p) { if (v.contract_id !== CONTRACT_ID || !['1.0.0', '1.1.0', CONTRACT_VERSION].includes(v.contract_version)) fail(p, 'unsupported contract version') }
 function scope (v, p = 'scope') { exact(v, ['kind', 'reference'], p); enumValue(v.kind, SCOPE_KINDS, `${p}.kind`); id(v.reference, `${p}.reference`); return v }
 function assertTimestamp (v, p) { if (v !== null && (typeof v !== 'string' || !RFC3339_UTC.test(v) || !Number.isFinite(Date.parse(v)))) fail(p, 'must be null or an RFC 3339 UTC timestamp'); return v }
 function assertBoundedText (v, p, max = 256) { if (typeof v !== 'string' || v.length === 0 || v.length > max) fail(p, 'must be a non-empty bounded string'); return v }
@@ -61,7 +61,7 @@ function assertScopeItem (v, p = 'scope') {
   return v
 }
 function assertGetEligibilityRequest (v) { exact(v, ['contract_id', 'contract_version', 'scope'], 'request'); header(v, 'request'); scope(v.scope); return v }
-function assertGetScopesRequest (v) { exact(v, ['contract_id', 'contract_version', 'cursor', 'limit'], 'request', v.contract_version === CONTRACT_VERSION ? ['kind'] : []); header(v, 'request'); integer(v.limit, 'request.limit'); if (v.limit < 1 || v.limit > 50) fail('request.limit', 'out of range'); assertOpaqueCursor(v.cursor, 'request.cursor'); if (v.kind !== undefined) enumValue(v.kind, ['session', 'project'], 'request.kind'); return v }
+function assertGetScopesRequest (v) { exact(v, ['contract_id', 'contract_version', 'cursor', 'limit'], 'request', v.contract_version !== '1.0.0' ? ['kind'] : []); header(v, 'request'); integer(v.limit, 'request.limit'); if (v.limit < 1 || v.limit > 50) fail('request.limit', 'out of range'); assertOpaqueCursor(v.cursor, 'request.cursor'); if (v.kind !== undefined) enumValue(v.kind, ['session', 'project'], 'request.kind'); return v }
 function assertSubmitRequest (v) { exact(v, ['client_idempotency_key', 'contract_id', 'contract_version', 'prompt', 'scope'], 'request', ['summary_use_memory']); header(v, 'request'); scope(v.scope); if (typeof v.prompt !== 'string' || v.prompt.length === 0 || v.prompt.length > 4096) fail('request.prompt', 'invalid'); id(v.client_idempotency_key, 'request.client_idempotency_key'); if (Object.hasOwn(v, 'summary_use_memory') && typeof v.summary_use_memory !== 'boolean') fail('request.summary_use_memory', 'must be boolean'); return v }
 function assertCancelRequest (v) { exact(v, ['contract_id', 'contract_version', 'interaction_id'], 'request'); header(v, 'request'); id(v.interaction_id, 'request.interaction_id'); return v }
 function assertHistoryRequest (v) {
@@ -254,7 +254,9 @@ function assertInteractionResult (v, p = 'response.result') {
     'model', 'recipe_id', 'recipe_version', 'result', 'result_digest',
     'routing_mode', 'run_id', 'source_refs', 'state', 'terminal_at',
     'terminal_reason', 'tool_calls', 'usage', 'usage_state'
-  ], p, ['summary_use_memory', 'memory_reference_count', 'memory_inputs', 'memory_inputs_error', 'source_positions'])
+  ], p, ['summary_use_memory', 'memory_reference_count', 'memory_inputs', 'memory_inputs_error', 'source_positions', 'summary_processing_mode', 'output_validation'])
+  if (v.summary_processing_mode !== undefined) enumValue(v.summary_processing_mode, ['whole', 'chunked'], p)
+  if (v.output_validation !== undefined) require('./output-validation').assertOutputValidation(v.output_validation)
   if (v.source_positions !== undefined) {
     if (!Array.isArray(v.source_positions) || v.source_positions.length > 16) fail(p, 'source positions exceed bound')
     for (const position of v.source_positions) {
@@ -335,7 +337,7 @@ function assertInteractionResult (v, p = 'response.result') {
 function assertExportResult (v, p = 'response.result') {
   exact(v, ['bytes_sha256', 'interaction_id', 'schema_version', 'snapshot'], p)
   id(v.interaction_id, `${p}.interaction_id`)
-  if (![1, 2, 3, 4, 5, 6].includes(v.schema_version)) fail(`${p}.schema_version`, 'unsupported export schema')
+  if (![1, 2, 3, 4, 5, 6, 7].includes(v.schema_version)) fail(`${p}.schema_version`, 'unsupported export schema')
   if (typeof v.bytes_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(v.bytes_sha256)) fail(`${p}.bytes_sha256`, 'must be a SHA-256 digest')
   if (!v.snapshot || typeof v.snapshot !== 'object' || Array.isArray(v.snapshot)) fail(`${p}.snapshot`, 'must be an object')
   assertFixturePrivacy(v.snapshot, `${p}.snapshot`)
@@ -370,6 +372,6 @@ function assertFixturePrivacy (v, p = 'fixture') {
   }
   return v
 }
-function isSupportedContract (idValue, version) { return idValue === CONTRACT_ID && ['1.0.0', CONTRACT_VERSION].includes(version) }
+function isSupportedContract (idValue, version) { return idValue === CONTRACT_ID && ['1.0.0', '1.1.0', CONTRACT_VERSION].includes(version) }
 
 module.exports = { CONTRACT_ID, CONTRACT_VERSION, ALLOWED_ROLES, IPC_CHANNELS, TERMINAL_STATES, ROUTING_MODES, USAGE_STATES, ELIGIBILITY_STATES, SCOPE_KINDS, SIGNAL_KINDS, ERROR_CODES, RUN_ERROR_CODES, assertGetScopesRequest, assertGetScopesResponse, assertGetEligibilityRequest, assertGetEligibilityResponse, assertSubmitRequest, assertCancelRequest, assertHistoryRequest, assertInteractionRequest, assertExportRequest, assertRecordSignalRequest, assertCommandResponse, assertSubmitResponse, assertCancelResponse, assertHistoryResponse, assertInteractionResponse, assertExportResponse, assertRecordSignalResponse, assertChangedEvent, assertFixturePrivacy, scope, assertSnapshot, assertScopeItem, isSupportedContract }

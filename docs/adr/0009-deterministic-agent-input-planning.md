@@ -1,5 +1,7 @@
 # ADR 0009：长会话由宿主确定性规划完整 Agent 输入
 
+> 2026-10-11 版本增量：新建原文 `summary.minutes@3` / `summary-quality@1` 的完整输入优先、三阶段与冻结容量候选由 [ADR0021](0021-summary-lifecycle-and-long-input.md) 同日增量修订。旧 recipe、策略与冻结绑定保持原解释，中间正文仍只在有界内存。[本次范围联合验收记录](../validation/session-summary-quality-2026-10-11.md)包含 J29/J30/J31 与限定真实模型样本；新预设真实云端思考未验证。
+
 状态：已决定
 
 补充：[ADR 0013](0013-agent-deep-modules-and-execution-host.md) 第 9 项修订本 ADR 两点——宿主名称从 `AgentPluginHost` 改为 Agent 执行宿主；单次请求输入预算不再由 provider 配置表的 `maxChunkInputBytes` 给出，而由模型运行绑定十轴预算的第 2 轴给出（由 capability 的 `maxInputTokens` 推导，见 [ADR 0014](0014-multi-profile-model-access-layer.md) 第 4 项）。规划语义本身不变。

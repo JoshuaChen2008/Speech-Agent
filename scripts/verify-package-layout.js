@@ -86,7 +86,7 @@ const SMOKE_SCRIPTS = Object.freeze([
   '/scripts/model-ui-fixture-support.js',
   '/scripts/packaged-native-load-probe.js'
 ])
-const SUPPORTED_ELECTRON_VERSIONS = new Set(['43.2.0', '43.3.0'])
+const SUPPORTED_ELECTRON_VERSIONS = new Set(['43.2.0', '43.3.0', '43.5.0'])
 
 function parseArguments (argv) {
   const values = {
@@ -184,7 +184,7 @@ function isTopLevelForbidden (entry, variant) {
   const normalized = entry.replace(/\\/g, '/')
   if (/^\/(?:models|model|test|docs|\.artifacts)(?:\/|$)/i.test(normalized)) return true
   if (/^\/src\/(?:agent-core|agent-mvp|agent-provider|agent-runtime)(?:\/|$)/i.test(normalized)) return true
-  if (/^\/node_modules\/@earendil-works\/(?:pi-agent-core|pi-ai)(?:\/|$)/i.test(normalized)) return true
+  if (/^\/node_modules\/@earendil-works\/pi-coding-agent(?:\/|$)/i.test(normalized)) return true
   if (variant === 'release' && /^\/scripts(?:\/|$)/i.test(normalized)) return true
   if (variant === 'smoke' && /^\/scripts\//i.test(normalized) && !SMOKE_SCRIPTS.includes(normalized)) return true
   return false

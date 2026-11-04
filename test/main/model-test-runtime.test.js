@@ -42,7 +42,7 @@ test('SEM-F14/SEM-F36/J25: saved model test uses the frozen strategy and never w
       modelAccessConfigure: async () => { throw new Error('must not configure') },
       modelAccessBind: async () => { throw new Error('must not bind') }
     },
-    adapter: { run: async (request) => { calls.push(request); return { text: '{"ok":true}', usage: null } } }
+    adapter: { exchange: async (request) => { calls.push(request); return { schemaVersion: 1, message: { role: 'assistant', content: '{"ok":true}', toolCalls: [] }, finishReason: 'stop', usage: null } } }
   })
   const result = await runtime.testSavedModel({ profileId: 'deepseek-openai', modelId: 'deepseek-v4-flash', expectedRevision: 4, testId: 'test.success' })
   assert.deepEqual(result, { ok: true, status: 'success', nextAction: 'none' })
@@ -63,7 +63,7 @@ test('SEM-F36/J25: cancellation wins a pending test and clears its controller', 
   const runtime = new ModelAccessRuntime({
     vault,
     gateway: { modelAccessCatalog: async () => internal },
-    adapter: { run: async ({ signal }) => { entered(); await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true })); const error = new Error(); error.code = 'AGENT_CANCELLED'; throw error } }
+    adapter: { exchange: async ({ signal }) => { entered(); await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true })); const error = new Error(); error.code = 'AGENT_CANCELLED'; throw error } }
   })
   const pending = runtime.testSavedModel({ profileId: 'deepseek-openai', modelId: 'deepseek-v4-flash', expectedRevision: 1, testId: 'test.cancel' })
   await enteredPromise
@@ -82,7 +82,7 @@ test('SEM-F36/J25: revision change after provider response discards stale succes
   const runtime = new ModelAccessRuntime({
     vault,
     gateway: { modelAccessCatalog: async () => (++reads === 1 ? first : second) },
-    adapter: { run: async () => ({ text: '{"ok":true}', usage: null }) }
+    adapter: { exchange: async () => ({ schemaVersion: 1, message: { role: 'assistant', content: '{"ok":true}', toolCalls: [] }, finishReason: 'stop', usage: null }) }
   })
   assert.deepEqual(await runtime.testSavedModel({ profileId: 'deepseek-openai', modelId: 'deepseek-v4-flash', expectedRevision: 2, testId: 'test.stale' }), { ok: false, status: 'revision_conflict', nextAction: 'reload' })
 })
@@ -99,7 +99,7 @@ test('SEM-F36/J25: cancellation registered before the first read and wins the se
   const runtime = new ModelAccessRuntime({
     vault,
     gateway: { modelAccessCatalog: async () => { reads += 1; if (reads === 1) await firstRead; return internal } },
-    adapter: { run: async () => { calls += 1; return { text: '{"ok":true}', usage: null } } }
+    adapter: { exchange: async () => { calls += 1; return { schemaVersion: 1, message: { role: 'assistant', content: '{"ok":true}', toolCalls: [] }, finishReason: 'stop', usage: null } } }
   })
   const early = runtime.testSavedModel({ profileId: 'deepseek-openai', modelId: 'deepseek-v4-flash', expectedRevision: 1, testId: 'test.early-cancel' })
   assert.deepEqual(await runtime.cancelSavedModel('test.early-cancel'), { ok: false, status: 'cancelled', nextAction: 'none' })
@@ -114,7 +114,7 @@ test('SEM-F36/J25: cancellation registered before the first read and wins the se
   const raceRuntime = new ModelAccessRuntime({
     vault,
     gateway: { modelAccessCatalog: async () => { reads += 1; if (reads === 2) await secondRead; return reads === 1 ? internal : changed } },
-    adapter: { run: async () => ({ text: '{"ok":true}', usage: null }) }
+    adapter: { exchange: async () => ({ schemaVersion: 1, message: { role: 'assistant', content: '{"ok":true}', toolCalls: [] }, finishReason: 'stop', usage: null }) }
   })
   const late = raceRuntime.testSavedModel({ profileId: 'deepseek-openai', modelId: 'deepseek-v4-flash', expectedRevision: 1, testId: 'test.second-cancel' })
   while (reads < 2) await new Promise((resolve) => setImmediate(resolve))
@@ -130,7 +130,7 @@ test('SEM-F36/J25: cancellation wins a rejected catalog read', async (t) => {
   const runtime = new ModelAccessRuntime({
     vault,
     gateway: { modelAccessCatalog: async () => read },
-    adapter: { run: async () => { throw new Error('must not call provider') } }
+    adapter: { exchange: async () => { throw new Error('must not call provider') } }
   })
   const pending = runtime.testSavedModel({ profileId: 'deepseek-openai', modelId: 'deepseek-v4-flash', expectedRevision: 1, testId: 'test.rejected-read' })
   assert.deepEqual(await runtime.cancelSavedModel('test.rejected-read'), { ok: false, status: 'cancelled', nextAction: 'none' })

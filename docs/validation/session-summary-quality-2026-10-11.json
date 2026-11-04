@@ -1,0 +1,463 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-11",
+  "status": "联合验收完成",
+  "gates": [
+    "SEM-F28",
+    "SEM-F38",
+    "SEM-F39",
+    "SEM-F40",
+    "J29",
+    "J30",
+    "J31"
+  ],
+  "recipe": "summary.minutes@3",
+  "policy": "summary-quality@1",
+  "commands": [
+    {
+      "command": "npm run verify:renderer",
+      "exitCode": 0
+    },
+    {
+      "command": "node scripts/i3-nonaudio-soak.js --segments 3600 --batch-size 100 --report docs/validation/i3-nonaudio-results.json",
+      "timezone": "UTC",
+      "exitCode": 0,
+      "gateStatus": "partial"
+    },
+    {
+      "command": "node scripts/run-test-lanes.js all",
+      "exitCode": 0
+    },
+    {
+      "command": "node scripts/run-supervised-electron.js",
+      "entry": "scripts/qualify-session-summary-cloud.js",
+      "privateArgumentsRedacted": true,
+      "exitCode": 0
+    }
+  ],
+  "lanes": [
+    {
+      "lane": "core",
+      "tests": 1223,
+      "passed": 1223,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 58143.7319
+    },
+    {
+      "lane": "integration",
+      "tests": 195,
+      "passed": 195,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 108603.7354
+    },
+    {
+      "lane": "evidence",
+      "tests": 249,
+      "passed": 248,
+      "failed": 0,
+      "skipped": 1,
+      "durationMs": 20310.4696
+    }
+  ],
+  "baselineFailure": {
+    "intermediateLimitBytes": 8192,
+    "observedOutputBytes": [
+      8520,
+      13183
+    ],
+    "partialResultsCommitted": 0,
+    "providerTokenLimitObserved": false
+  },
+  "live": {
+    "schemaVersion": 1,
+    "gates": [
+      "SEM-F28",
+      "SEM-F38",
+      "SEM-F39",
+      "SEM-F40",
+      "J29",
+      "J30",
+      "J31"
+    ],
+    "result": true,
+    "cases": [
+      {
+        "case": "original_failed_session",
+        "result": true,
+        "state": "succeeded",
+        "errorCode": null,
+        "outputValidation": null,
+        "inputDigest": "39fc3b19b8266a1bfd980cc046aed5458bd741342fca25f5bef40a1ad9efe14e",
+        "resultDigest": "c775c22148128ca62f17b386344e2e09c7bc6d5a0d987002a8bce225b325ebb4",
+        "resultBytes": 24152,
+        "topicCount": 16,
+        "sourceCount": 789,
+        "quality": {
+          "finalBytes": 131072,
+          "intermediateBytes": 65536,
+          "loopLimit": 3,
+          "mode": "whole",
+          "policyVersion": "summary-quality@1",
+          "requestLimit": 507904,
+          "requestLimitCount": 9,
+          "stageOutputTokens": {
+            "drafting_minutes": 65536,
+            "organizing_topics": 16384,
+            "verifying_sources": 65536
+          }
+        },
+        "execution": {
+          "loop_count": 3,
+          "node_index": 1,
+          "node_role": "whole",
+          "request_count": 3,
+          "summary_stage": "verifying_sources",
+          "total_loop_count": 3
+        },
+        "usage": {
+          "cacheHitInputTokens": 0,
+          "cacheMissInputTokens": 117086,
+          "inputTokens": 117086,
+          "outputTokens": 12649,
+          "usageSource": "provider"
+        },
+        "modelId": "deepseek-v4-flash",
+        "requestStrategy": "deepseek-openai@1",
+        "elapsedMs": 52472,
+        "facts": null
+      },
+      {
+        "case": "synthetic_1",
+        "result": true,
+        "state": "succeeded",
+        "errorCode": null,
+        "outputValidation": null,
+        "inputDigest": "87949da87df11d0b43fc98b506b329a80cba3bd628d9f4ef7838eea62328cae2",
+        "resultDigest": "564b751267a0ab4b335287ec35990ae7434f7af97671bfb7c582eff55bc55144",
+        "resultBytes": 4514,
+        "topicCount": 3,
+        "sourceCount": 5,
+        "quality": {
+          "finalBytes": 131072,
+          "intermediateBytes": 65536,
+          "loopLimit": 3,
+          "mode": "whole",
+          "policyVersion": "summary-quality@1",
+          "requestLimit": 507904,
+          "requestLimitCount": 9,
+          "stageOutputTokens": {
+            "drafting_minutes": 65536,
+            "organizing_topics": 16384,
+            "verifying_sources": 65536
+          }
+        },
+        "execution": {
+          "loop_count": 3,
+          "node_index": 1,
+          "node_role": "whole",
+          "request_count": 3,
+          "summary_stage": "verifying_sources",
+          "total_loop_count": 3
+        },
+        "usage": {
+          "cacheHitInputTokens": 1792,
+          "cacheMissInputTokens": 3845,
+          "inputTokens": 5637,
+          "outputTokens": 2786,
+          "usageSource": "provider"
+        },
+        "modelId": "deepseek-v4-flash",
+        "requestStrategy": "deepseek-openai@1",
+        "elapsedMs": 10111,
+        "facts": {
+          "revisedBudget": true,
+          "revisedConcurrency": true,
+          "releaseNotApproved": true,
+          "conditionsPreserved": true,
+          "pressureOwnerAndDeadline": true,
+          "verificationOwnership": true,
+          "noInventedOwnerOrDeadline": true,
+          "noRevokedCurrentDecision": true,
+          "revisitedTopicsLinked": true
+        }
+      },
+      {
+        "case": "synthetic_2",
+        "result": true,
+        "state": "succeeded",
+        "errorCode": null,
+        "outputValidation": null,
+        "inputDigest": "a1197dfa1c844f2bc80c4a1085ac46dcf40e2a805f1f0a50ac6111cad7a37ea1",
+        "resultDigest": "89327bde308c0e289af432e264caa1c91843728353ed39aa62625106dcde2606",
+        "resultBytes": 6458,
+        "topicCount": 2,
+        "sourceCount": 5,
+        "quality": {
+          "finalBytes": 131072,
+          "intermediateBytes": 65536,
+          "loopLimit": 3,
+          "mode": "whole",
+          "policyVersion": "summary-quality@1",
+          "requestLimit": 507904,
+          "requestLimitCount": 9,
+          "stageOutputTokens": {
+            "drafting_minutes": 65536,
+            "organizing_topics": 16384,
+            "verifying_sources": 65536
+          }
+        },
+        "execution": {
+          "loop_count": 3,
+          "node_index": 1,
+          "node_role": "whole",
+          "request_count": 3,
+          "summary_stage": "verifying_sources",
+          "total_loop_count": 3
+        },
+        "usage": {
+          "cacheHitInputTokens": 1792,
+          "cacheMissInputTokens": 4611,
+          "inputTokens": 6403,
+          "outputTokens": 4138,
+          "usageSource": "provider"
+        },
+        "modelId": "deepseek-v4-flash",
+        "requestStrategy": "deepseek-openai@1",
+        "elapsedMs": 14168,
+        "facts": {
+          "revisedPrice": true,
+          "noDowntime": true,
+          "migrationNotApproved": true,
+          "purchaseNotApproved": true,
+          "deliveryUnknown": true,
+          "quoteOwnerAndDeadline": true,
+          "rehearsalUnassigned": true,
+          "noInventedOwnerOrDeadline": true,
+          "noRevokedCurrentDecision": true
+        }
+      }
+    ],
+    "exchanges": [
+      {
+        "stage": "organizing_topics",
+        "schemaValid": true,
+        "resultBytes": 3895,
+        "resultDigest": "65e667af96da3956b94b89df616bf191606965ea182e3d32b73e178f7aeb2996",
+        "schemaVersionValid": true,
+        "unknownRootFields": 0,
+        "topicsArray": true,
+        "topicCount": 16,
+        "unknownTopicFields": 0,
+        "sourceRefShapeValid": true,
+        "sourceRefIdentityValid": true,
+        "sourceRefRangeValid": true,
+        "usage": {
+          "inputTokens": 36562,
+          "outputTokens": 1187,
+          "usageSource": "provider",
+          "cacheHitInputTokens": 0,
+          "cacheMissInputTokens": 36562
+        }
+      },
+      {
+        "stage": "drafting_minutes",
+        "schemaValid": true,
+        "resultBytes": 23865,
+        "resultDigest": "2f3d1c982b6766dba03184b63c752b260909f24b070bb3d52814fa026403644a",
+        "schemaVersionValid": true,
+        "unknownRootFields": 0,
+        "topicsArray": true,
+        "topicCount": 16,
+        "unknownTopicFields": 0,
+        "sourceRefShapeValid": true,
+        "sourceRefIdentityValid": true,
+        "sourceRefRangeValid": true,
+        "usage": {
+          "inputTokens": 37986,
+          "outputTokens": 5703,
+          "usageSource": "provider",
+          "cacheHitInputTokens": 0,
+          "cacheMissInputTokens": 37986
+        }
+      },
+      {
+        "stage": "verifying_sources",
+        "schemaValid": true,
+        "resultBytes": 24152,
+        "resultDigest": "3660bcbf1c2fe1e5847bdf79cf9f80a9b48398886eb81a4bfb1807763f1841be",
+        "schemaVersionValid": true,
+        "unknownRootFields": 0,
+        "topicsArray": true,
+        "topicCount": 16,
+        "unknownTopicFields": 0,
+        "sourceRefShapeValid": true,
+        "sourceRefIdentityValid": true,
+        "sourceRefRangeValid": true,
+        "usage": {
+          "inputTokens": 42538,
+          "outputTokens": 5759,
+          "usageSource": "provider",
+          "cacheHitInputTokens": 0,
+          "cacheMissInputTokens": 42538
+        }
+      },
+      {
+        "stage": "organizing_topics",
+        "schemaValid": true,
+        "resultBytes": 768,
+        "resultDigest": "bd4faca9b325319605fccafed2eded7f6d210e8cb027596be1742444af0976a3",
+        "schemaVersionValid": true,
+        "unknownRootFields": 0,
+        "topicsArray": true,
+        "topicCount": 3,
+        "unknownTopicFields": 0,
+        "sourceRefShapeValid": true,
+        "sourceRefIdentityValid": true,
+        "sourceRefRangeValid": true,
+        "usage": {
+          "inputTokens": 1218,
+          "outputTokens": 241,
+          "usageSource": "provider",
+          "cacheHitInputTokens": 512,
+          "cacheMissInputTokens": 706
+        }
+      },
+      {
+        "stage": "drafting_minutes",
+        "schemaValid": true,
+        "resultBytes": 4498,
+        "resultDigest": "45d029d72869e20ca98c8d97c2051965a88ffa78237199639caf896882e24251",
+        "schemaVersionValid": true,
+        "unknownRootFields": 0,
+        "topicsArray": true,
+        "topicCount": 3,
+        "unknownTopicFields": 0,
+        "sourceRefShapeValid": true,
+        "sourceRefIdentityValid": true,
+        "sourceRefRangeValid": true,
+        "usage": {
+          "inputTokens": 1683,
+          "outputTokens": 1270,
+          "usageSource": "provider",
+          "cacheHitInputTokens": 640,
+          "cacheMissInputTokens": 1043
+        }
+      },
+      {
+        "stage": "verifying_sources",
+        "schemaValid": true,
+        "resultBytes": 4514,
+        "resultDigest": "240eb945cef6f7c792e169494b181ba488bee71f3f560c8a55e3953d8a20322a",
+        "schemaVersionValid": true,
+        "unknownRootFields": 0,
+        "topicsArray": true,
+        "topicCount": 3,
+        "unknownTopicFields": 0,
+        "sourceRefShapeValid": true,
+        "sourceRefIdentityValid": true,
+        "sourceRefRangeValid": true,
+        "usage": {
+          "inputTokens": 2736,
+          "outputTokens": 1275,
+          "usageSource": "provider",
+          "cacheHitInputTokens": 640,
+          "cacheMissInputTokens": 2096
+        }
+      },
+      {
+        "stage": "organizing_topics",
+        "schemaValid": true,
+        "resultBytes": 1376,
+        "resultDigest": "f37edb5d77456359edc9a5bd107c2669b9365f734f3bd54c0460981d5f353e4c",
+        "schemaVersionValid": true,
+        "unknownRootFields": 0,
+        "topicsArray": true,
+        "topicCount": 2,
+        "unknownTopicFields": 0,
+        "sourceRefShapeValid": true,
+        "sourceRefIdentityValid": true,
+        "sourceRefRangeValid": true,
+        "usage": {
+          "inputTokens": 1223,
+          "outputTokens": 453,
+          "usageSource": "provider",
+          "cacheHitInputTokens": 512,
+          "cacheMissInputTokens": 711
+        }
+      },
+      {
+        "stage": "drafting_minutes",
+        "schemaValid": true,
+        "resultBytes": 6109,
+        "resultDigest": "b6134c780bfdec7aac3125a4b9592516ff56432f436bc9b67c52462c4a095a5c",
+        "schemaVersionValid": true,
+        "unknownRootFields": 0,
+        "topicsArray": true,
+        "topicCount": 2,
+        "unknownTopicFields": 0,
+        "sourceRefShapeValid": true,
+        "sourceRefIdentityValid": true,
+        "sourceRefRangeValid": true,
+        "usage": {
+          "inputTokens": 1904,
+          "outputTokens": 1796,
+          "usageSource": "provider",
+          "cacheHitInputTokens": 640,
+          "cacheMissInputTokens": 1264
+        }
+      },
+      {
+        "stage": "verifying_sources",
+        "schemaValid": true,
+        "resultBytes": 6458,
+        "resultDigest": "b246d15fea9de3b1006fcea134d5cf11714fc477bdcd94667cfa9eac3a088453",
+        "schemaVersionValid": true,
+        "unknownRootFields": 0,
+        "topicsArray": true,
+        "topicCount": 2,
+        "unknownTopicFields": 0,
+        "sourceRefShapeValid": true,
+        "sourceRefIdentityValid": true,
+        "sourceRefRangeValid": true,
+        "usage": {
+          "inputTokens": 3276,
+          "outputTokens": 1889,
+          "usageSource": "provider",
+          "cacheHitInputTokens": 640,
+          "cacheMissInputTokens": 2636
+        }
+      }
+    ],
+    "elapsedMs": 77013,
+    "newThinkingPresetCloudVerified": false,
+    "modelSelectionUnchanged": true,
+    "configUnchanged": true
+  },
+  "migration": {
+    "version": 33,
+    "previousVersionsUnchanged": 32,
+    "foreignKeyViolationCount": 0
+  },
+  "developmentTrials": {
+    "bindingPreflightCancelled": 1,
+    "schemaRejected": 1,
+    "sourceRejected": 1,
+    "priorCloudRequests": 2,
+    "partialResultsCommitted": 0
+  },
+  "unverified": [
+    "new_preset_real_cloud_thinking",
+    "physical_audio_soak",
+    "interactive_installation",
+    "release"
+  ],
+  "privacy": {
+    "transcriptTextPresent": false,
+    "intermediateTextPresent": false,
+    "thinkingTextPresent": false,
+    "absolutePathsPresent": false,
+    "audioPersisted": false
+  }
+}

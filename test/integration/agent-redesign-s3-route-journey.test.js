@@ -7,6 +7,7 @@ const os = require('node:os')
 const path = require('node:path')
 
 const { AgentLoopExecutor } = require('../../src/agent/execution-host/agent-loop')
+const { createNetworkAdapter, providerResponse } = require('./provider-network-fixture')
 const { createControlledToolRuntime } = require('../../src/agent/execution-host/controlled-tool-runtime')
 const { IntentRouteOrchestrator } = require('../../src/agent/execution-host/intent-route-orchestrator')
 const { createToolAuditRuntime } = require('../../src/agent/execution-host/tool-audit-runtime')
@@ -47,6 +48,7 @@ function serviceBackedHost (service, databasePath) {
     async createAgentRun (request) { return call(OPERATIONS.AGENT_CREATE_RUN, { request }) },
     async cancelAgentRun (request) { return call(OPERATIONS.AGENT_CANCEL_RUN, { request }) },
     async claimNextFormalAgentRun (request) { return call(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request }) },
+    async reserveFormalAgentModelRequest (request) { return call(OPERATIONS.FORMAL_AGENT_RESERVE_MODEL_REQUEST, { request }) },
     async createAgentInteraction (request) { return call(OPERATIONS.AGENT_CREATE_INTERACTION, { request }) },
     async terminalizeAgentInteraction (request) { return call(OPERATIONS.AGENT_TERMINALIZE_INTERACTION, { request }) },
     async startAgentToolCall (request) { return call(OPERATIONS.AGENT_START_TOOL_CALL, { request }) },
@@ -87,7 +89,11 @@ test('SEM-F16/SEM-F28/SEM-F33/SEM-F34/SEM-T10/J22/J24: model route persists its 
     fs.rmSync(root, { recursive: true, force: true })
   })
 
-  const modelAccess = new ModelAccessRuntime({ gateway, vault })
+  let adapterCalls = 0
+  const modelAccess = new ModelAccessRuntime({ gateway, vault, adapter: createNetworkAdapter({ fetch: async () => {
+    adapterCalls++
+    return providerResponse({ recipeId: 'summary.minutes', confidence: 0.8 })
+  } }) })
   await modelAccess.initialize()
   const configure = async (command) => {
     const revision = (await modelAccess.catalog()).snapshot.revision
@@ -99,29 +105,19 @@ test('SEM-F16/SEM-F28/SEM-F33/SEM-F34/SEM-T10/J22/J24: model route persists its 
   await configure({ type: 'assignPurpose', purpose: 'default', target: { profileId: 'deepseek', modelId: 'deepseek-v4-flash' } })
   await configure({ type: 'assignPurpose', purpose: 'summary', target: { profileId: 'deepseek', modelId: 'deepseek-v4-flash' } })
 
-  let adapterCalls = 0
-  const loop = new AgentLoopExecutor({
-    adapter: {
-      run: async ({ recipe }) => {
-        adapterCalls += 1
-        assert.equal(recipe.recipeId, 'intent.route')
-        return { text: JSON.stringify({ recipeId: 'summary.minutes', confidence: 0.8 }), usage: null }
-      }
-    }
-  })
   let sequence = 0
   const orchestrator = new IntentRouteOrchestrator({
     runs: {
       create: (request) => gateway.createAgentRun(request),
-      cancel: (request) => gateway.cancelAgentRun(request)
+      cancel: (request) => gateway.cancelAgentRun(request),
+      reserveModelRequest: request => gateway.reserveFormalAgentModelRequest(request)
     },
     modelAccess,
     interactions: {
       create: (request) => gateway.createAgentInteraction(request),
       terminalize: (request) => gateway.terminalizeAgentInteraction(request)
     },
-    loop,
-    resolveModel: async () => ({ provider: 'test-only-provider' }),
+    loopFactory: binding => new AgentLoopExecutor({ adapter: modelAccess.createLoopAdapter(binding) }),
     idFactory: () => `s3.route.${++sequence}`
   })
 

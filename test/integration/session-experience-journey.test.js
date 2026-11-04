@@ -1,4 +1,6 @@
 'use strict'
+const { createRecipeNetworkAdapter, providerResponse, toolRequest } = require('./provider-network-fixture')
+const { getRecipe } = require('../../src/agent/contracts/recipes')
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
@@ -43,9 +45,12 @@ async function fixture (t, options = {}) {
   t.after(async () => { vault.close(); await gateway.shutdown(); fs.rmSync(root, { recursive: true, force: true }) })
   const calls = []
   const questionCalls = []
-  const modelAccess = new ModelAccessRuntime({ gateway, vault, adapter: { async run (request) {
+  const modelAccess = new ModelAccessRuntime({ gateway, vault, adapter: createRecipeNetworkAdapter(runId => {
+    const row = service.requireStore().database.prepare('SELECT recipe_id,recipe_version FROM formal_agent_runs WHERE run_id=?').get(runId)
+    return getRecipe(row.recipe_id, row.recipe_version)
+  }, async request => {
     const { recipe, prompt } = request
-    await request.beforeRequest({ turn: 1 })
+
     if (recipe.recipeId === 'qa.answer') {
       const payload = JSON.parse(prompt)
       questionCalls.push(payload)
@@ -55,8 +60,8 @@ async function fixture (t, options = {}) {
         const sourceRefs = [{ sessionId: plan.source.sessionId, transcriptVersion: 'raw',
           fromEventOrder: plan.parts[0].eventOrder || plan.parts[0].fromEventOrder,
           throughEventOrder: plan.parts.at(-1).eventOrder || plan.parts.at(-1).throughEventOrder }]
-        await request.onRequestUsage(null)
-        return { text: JSON.stringify({ schemaVersion: 1, answer: '受控来源片段分析。', sourceRefs, memoryRefs: [], unresolved: [] }) }
+
+        return providerResponse({ schemaVersion: 1, answer: '受控来源片段分析。', sourceRefs, memoryRefs: [], unresolved: [] })
       }
       const input = payload.questionEvidence || { sources: payload.questionMerge.parts.flatMap(part => part.sourceRefs.map(sourceRef => ({ sourceRef, text: part.answer }))) }
       const source = input.sources.find(source => source.text.includes('32768')) || input.sources.at(-1)
@@ -68,22 +73,26 @@ async function fixture (t, options = {}) {
         claims: source ? [{ text: '当前证据包含讨论片段', sourceRefs: [source.sourceRef], memoryRefs: [] }] : [],
         sourceRefs: source ? [source.sourceRef] : [], memoryRefs: [], unresolved: source ? [] : ['没有足够原文证据。'], coverage: null }
       if (options.qaOutput) options.qaOutput(output, input)
-      await request.onRequestUsage(null)
-      return { text: JSON.stringify(output) }
+
+      return providerResponse(output)
     }
     assert.equal(recipe.recipeVersion, '3')
     const range = JSON.parse(prompt).experienceRange
     calls.push(range.parts.map(({ text, ...part }) => part))
-    if (options.provider) await options.provider(range, calls.length)
+    if (options.provider) {
+      try { await options.provider(range, calls.length) } catch (error) {
+        return { ok: true, status: 200, body: new ReadableStream({ pull: () => { throw error } }) }
+      }
+    }
     const evidence = { sessionId: range.source.sessionId, transcriptVersion: 'raw',
       fromEventOrder: range.parts[0].eventOrder, throughEventOrder: range.parts.at(-1).eventOrder }
-    await request.onRequestUsage(null)
+
     const output = { schemaVersion: 3, stage: 'range', content: { schemaVersion: 2, questionSummary: null,
       experiences: [{ kind: 'decision', text: '项目范围讨论保留决定与修订', evidence, confidence: 'high' }],
       memoryCandidates: [], associations: [] } }
     if (options.rangeOutput) options.rangeOutput(output, range, calls.length)
-    return { text: JSON.stringify(output) }
-  } } })
+    return providerResponse(output)
+  }) })
   await modelAccess.initialize()
   const configure = async command => {
     const catalog = await modelAccess.catalog()
@@ -445,7 +454,7 @@ test('SEM-F28/F39/SEM-T04/J21-EXPERIENCE: transient failure resumes after the co
   let failProvider = true
   const f = await fixture(t, { provider: async (_range, count) => {
     if (count > 1 && failProvider) {
-      const error = new Error('AGENT_PROVIDER_UNAVAILABLE'); error.code = 'AGENT_PROVIDER_UNAVAILABLE'; throw error
+      throw new DOMException('controlled response timeout', 'TimeoutError')
     }
   } })
   await f.runner.run(await f.claim())

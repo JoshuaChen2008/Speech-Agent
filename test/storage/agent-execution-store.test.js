@@ -442,12 +442,12 @@ test('SEM-F38/SEM-T04/J30-RECOVERY: request reservations and remaining wall budg
   now = first.attemptIdentity.leaseExpiresAt + 1
   const reservation = personalContext.reserveFormalAgentModelRequest({
     attemptIdentity: first.attemptIdentity,
-    requestSequence: 1
+    requestSequence: 1, operationDigest: 'd'.repeat(64)
   })
   assert.equal(reservation.reserved, true, 'a queued request may reserve against its lease token after renewal while the new lease is active')
   assert.equal(personalContext.reserveFormalAgentModelRequest({
     attemptIdentity: first.attemptIdentity,
-    requestSequence: 1
+    requestSequence: 1, operationDigest: 'd'.repeat(64)
   }).replayed, true)
   assert.equal(subtitleStore.database.prepare(`
     SELECT COUNT(*) AS count FROM formal_agent_model_request_reservations WHERE run_id=? AND attempt=1
@@ -761,12 +761,12 @@ test('SEM-F28/SEM-F34/J22: tool calls enforce grants, exact state/error binding,
   assert.equal(subtitleStore.database.prepare("SELECT COUNT(*) AS count FROM formal_agent_tool_calls WHERE interaction_id='interaction.tools'").get().count, 4)
 })
 
-test('SEM-F38/J30-RECOVERY: new policy reserves at most five executions for the same model or tool operation', (t) => {
+for (const retryPolicyVersion of [null, 'agent-retry@1', 'agent-retry@2']) test(`SEM-F38/J30-RECOVERY: ${retryPolicyVersion || 'legacy'} caps the same model or tool operation across attempts`, (t) => {
   const { subtitleStore, store } = fixture(t)
   const personal = new PersonalContextStore({ subtitleStore, now: () => 2000 })
   const runId = 'run.operation.cap'
   insertRun(subtitleStore.database, { runId })
-  subtitleStore.database.prepare("UPDATE formal_agent_runs SET retry_policy_version='agent-retry@1',max_attempts=5 WHERE run_id=?").run(runId)
+  subtitleStore.database.prepare('UPDATE formal_agent_runs SET retry_policy_version=?,max_attempts=5 WHERE run_id=?').run(retryPolicyVersion, runId)
   const identity = attemptIdentity(runId)
   const operationDigest = sha256Canonical({ turn: 1, input: 'synthetic' })
   for (let sequence = 1; sequence <= 3; sequence++) {

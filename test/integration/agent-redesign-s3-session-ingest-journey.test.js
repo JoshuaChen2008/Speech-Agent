@@ -9,9 +9,15 @@ const path = require('node:path')
 const { PersonalContextRuntime } = require('../../src/agent/personal-context/runtime')
 const { StorageGateway } = require('../../src/main/services/storage-gateway')
 const { StorageWorkerService } = require('../../src/runtime/storage-worker/worker-service')
-const { OPERATIONS, PROTOCOL_VERSION, makeCaptionEventId, makeCloseSessionKey, makeOpenSessionKey, StorageError } = require('../../src/runtime/storage-worker/protocol')
+const { OPERATIONS, PROTOCOL_VERSION, StorageError } = require('../../src/runtime/storage-worker/protocol')
 const { SqliteSessionRecorder } = require('../../src/main/services/sqlite-session-recorder')
 const { ConfigStore } = require('../../src/main/services/config-store')
+const { ModelAccessRuntime } = require('../../src/agent/model-access/runtime')
+const { CredentialVault } = require('../../src/agent/model-access/credential-vault')
+const { AgentLoopExecutor } = require('../../src/agent/execution-host')
+const { evaluateAutomaticEligibility } = require('../../src/agent/personal-context/automatic-eligibility')
+const { transport } = require('./helpers/context-storage-transport')
+const { createNetworkAdapter, providerResponse } = require('./provider-network-fixture')
 
 function hostFactory (service, databasePath) {
   let sequence = 0
@@ -27,25 +33,9 @@ function hostFactory (service, databasePath) {
     return response.result
   }
   return {
-    state: 'stopped',
-    async start () { call(OPERATIONS.INITIALIZE, { databasePath }); this.state = 'ready' },
-    async openSession (v) { return call(OPERATIONS.OPEN_SESSION, v, makeOpenSessionKey(v.sessionId)) },
-    async appendCaption (v) { return call(OPERATIONS.APPEND_CAPTION, { event: v }, makeCaptionEventId(v)) },
-    async closeSession (v) { return call(OPERATIONS.CLOSE_SESSION, v, makeCloseSessionKey(v.sessionId)) },
+    ...transport(service, databasePath),
     async personalContextIngest (v) { return call(OPERATIONS.PERSONAL_CONTEXT_INGEST, { source: v }) },
-    async personalContextResolve (v) { return call(OPERATIONS.PERSONAL_CONTEXT_RESOLVE, { request: v }) },
-    async personalContextManage (v) { return call(OPERATIONS.PERSONAL_CONTEXT_MANAGE, { command: v }) },
-    async preparePersonalContextSessionIngest (v) { return call(OPERATIONS.PERSONAL_CONTEXT_PREPARE_SESSION_INGEST, { request: v }) },
-    async applyPersonalContextAutomaticPolicy (v) { return call(OPERATIONS.PERSONAL_CONTEXT_APPLY_AUTOMATIC_POLICY, { request: v }) },
-    async cancelPersonalContextSessionIngest (v) { return call(OPERATIONS.PERSONAL_CONTEXT_CANCEL_SESSION_INGEST, { request: v }) },
-    async readPersonalContextSessionInput (v) { return call(OPERATIONS.PERSONAL_CONTEXT_READ_SESSION_INPUT, { source: v }) },
-    async readPersonalContextToolContext (v) { return call(OPERATIONS.PERSONAL_CONTEXT_READ_TOOL_CONTEXT, { request: v }) },
-    async commitPersonalContextSessionIngest (v) { return call(OPERATIONS.PERSONAL_CONTEXT_COMMIT_SESSION_INGEST, { request: v }) },
-    async claimNextFormalAgentRun (v) { return call(OPERATIONS.FORMAL_AGENT_CLAIM_RUN, { request: v }) },
     async nextFormalAgentRunAt (v = {}) { return call(OPERATIONS.FORMAL_AGENT_NEXT_RUN_AT, v) },
-    async failFormalAgentRun (v) { return call(OPERATIONS.FORMAL_AGENT_FAIL_RUN, { request: v }) },
-    async shutdown () { if (!service.shuttingDown) call(OPERATIONS.SHUTDOWN, {}); this.state = 'closed' },
-    async terminateAndWait () { await this.shutdown(); return 0 }
   }
 }
 
@@ -61,34 +51,55 @@ test('SEM-F28/SEM-F30/SEM-T10/SEM-T15/J21/J22/J24: terminal session ingest uses 
   const config = new ConfigStore(path.join(root, 'config.json'), { now: () => 1000 })
   config.load()
   config.updateAgentSettings({
-    expectedRevision: 0, agentEnabled: true, memoryEnabled: true, cloudDisclosureAccepted: false
+    expectedRevision: 0, agentEnabled: true, memoryEnabled: true, cloudDisclosureAccepted: true
   })
   const calls = []
+  const vault = new CredentialVault({ directory: path.join(root, 'vault'), safeStorage: { isEncryptionAvailable: () => false } })
+  const modelAccess = new ModelAccessRuntime({ gateway, vault, adapter: createNetworkAdapter({ fetch: async () => {
+    calls.push(['exchange'])
+    return providerResponse({ schemaVersion: 1, experiences: [], memoryCandidates: [] })
+  } }) })
+  await modelAccess.initialize()
+  for (const command of [
+    { type: 'addModel', profileId: 'deepseek', modelId: 'ingest-synthetic', capabilities: {
+      maxInputTokens: 64000, maxOutputTokens: 4096, supportsToolCalling: true,
+      supportsStructuredOutput: true, supportsStreaming: false, usageReporting: false } },
+    { type: 'setCredential', profileId: 'deepseek', credential: 'synthetic-secret' },
+    { type: 'assignPurpose', purpose: 'default', target: { profileId: 'deepseek', modelId: 'ingest-synthetic' } }
+  ]) {
+    const catalog = await modelAccess.catalog()
+    assert.equal((await modelAccess.configure({ ...command, expectedRevision: catalog.snapshot.revision })).ok, true)
+  }
   const runtime = new PersonalContextRuntime({
     gateway,
     ingestRecipeVersion: '1',
     config: { get: () => config.get(), updateAgentSettings: (request) => config.updateAgentSettings(request) },
-    modelAccess: { bind: async (request) => { calls.push(['bind', request]); return { capabilities: { usageReporting: false } } } },
-    loop: { agentLoop: async () => { calls.push(['loop']); return { text: JSON.stringify({ schemaVersion: 1, experiences: [], memoryCandidates: [] }) } } },
-    interactions: {
-      create: async (request) => { calls.push(['interaction:create', request]); return request },
-      terminalize: async (request) => { calls.push(['interaction:terminalize', request]); return request }
-    },
-    getAutomaticEligibility: async () => 'ready'
+    modelAccess,
+    loopFactory: binding => new AgentLoopExecutor({ adapter: modelAccess.createLoopAdapter(binding) }),
+    getAutomaticEligibility: async ({ sessionId }) => {
+      const detail = await gateway.getSessionTranscript(sessionId)
+      return evaluateAutomaticEligibility({ session: detail.session, segmentCount: detail.segments.length,
+        settings: config.get(), catalog: await modelAccess.catalog() })
+    }
   })
   runtime.start(recorder)
-  t.after(async () => { await runtime.stop(); await gateway.shutdown().catch(() => gateway.terminate()); fs.rmSync(root, { recursive: true, force: true }) })
+  t.after(async () => { await runtime.stop(); vault.close(); await gateway.shutdown().catch(() => gateway.terminate()); fs.rmSync(root, { recursive: true, force: true }) })
 
   await recorder.openSession({ sessionId: 'session.s3.journey', sourceId: 'mic', refinementEnabled: false })
   await recorder.acceptCaption({ schemaVersion: 1, sessionId: 'session.s3.journey', sourceId: 'mic', segmentId: 'segment.1', sequence: 1, revision: 1, kind: 'final', t0: 0, t1: 1, text: 'decision', translation: null })
   await recorder.closeSession({ sessionId: 'session.s3.journey', sourceId: 'mic', state: 'closed' })
   recorder.notifyTerminalCommitted('session.s3.journey')
-  for (let i = 0; i < 200 && !calls.some(([name]) => name === 'loop'); i++) await tick()
-  const runState = service.requireStore().database.prepare('SELECT state,error_code FROM formal_agent_runs LIMIT 1').get()
-  assert.equal(calls.some(([name]) => name === 'bind'), true,
-    `expected model bind; observed calls=${JSON.stringify(calls.map(([name]) => name))} run=${JSON.stringify(runState || null)}`)
-  assert.equal(calls.some(([name]) => name === 'loop'), true)
+  let runState
+  for (let i = 0; i < 500; i++) {
+    runState = service.requireStore().database.prepare('SELECT state,error_code FROM formal_agent_runs LIMIT 1').get()
+    if (runState?.state === 'succeeded' || runState?.state === 'failed') break
+    await tick()
+  }
+  assert.equal(runState?.state, 'succeeded', JSON.stringify(runState))
+  assert.equal(calls.filter(([name]) => name === 'exchange').length, 1)
   const database = service.requireStore().database
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM agent_model_run_bindings').get().count, 1)
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM formal_agent_model_operation_attempts').get().count, 1)
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM formal_agent_runs').get().count, 1)
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM personal_context_episodes').get().count, 1)
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM personal_context_items').get().count, 0)

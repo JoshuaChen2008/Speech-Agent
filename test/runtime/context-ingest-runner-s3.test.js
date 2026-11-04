@@ -5,6 +5,14 @@ const assert = require('node:assert/strict')
 
 const { ContextIngestSessionRunner } = require('../../src/agent/execution-host')
 const { sha256Canonical } = require('../../src/runtime/storage-worker/canonical-json')
+const { deriveRecipeBudget } = require('../../src/agent/contracts/budget-axes')
+
+function bindingFor (request) {
+  const capabilities = { maxInputTokens: 64000, maxOutputTokens: 4096, supportsToolCalling: true,
+    supportsStructuredOutput: true, supportsStreaming: false, usageReporting: false }
+  return { ...request, modelId: 'fixture-model', capabilities,
+    budget: deriveRecipeBudget(capabilities, request.recipeId, request.recipeVersion, 'automatic') }
+}
 
 const source = Object.freeze({
   sourceKind: 'session', sessionId: 'session.runner', transcriptVersion: 'raw',
@@ -32,7 +40,7 @@ function seams (overrides = {}) {
     storage: {
       failFormalAgentRun: async (value) => { calls.push(['fail', value]); return { state: 'retry_wait' } }
     },
-    modelAccess: { bind: async (value) => { calls.push(['bind', value]); return { capabilities: { usageReporting: false } } } },
+    modelAccess: { bind: async (value) => { calls.push(['bind', value]); return bindingFor(value) } },
     interactions: {
       create: async (value) => { calls.push(['interaction:create', value]); return value },
       terminalize: async (value) => { calls.push(['interaction:terminalize', value]); return value }
@@ -189,7 +197,7 @@ test('SEM-F15/SEM-F28/SEM-F34/J21/J22/J24: background context ingestion is tool-
       readSessionInput: async () => ({ ...source, events: [{ eventOrder: 1, segmentId: 'segment.1', text: 'boundary' }] }),
       commitSessionIngest: async (value) => { calls.push(['commit', value]); return { state: 'committed' } }
     },
-    modelAccess: { bind: async (value) => ({ ...value, capabilities: { usageReporting: false } }) },
+    modelAccess: { bind: async (value) => bindingFor(value) },
     interactions: {
       create: async (value) => { calls.push(['interaction:create', value]); return value },
       terminalize: async (value) => { calls.push(['interaction:terminalize', value]); return value },

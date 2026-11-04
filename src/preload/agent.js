@@ -56,8 +56,19 @@ function invoke (channel, validator, responseValidator, value) {
   validator(value)
   return ipcRenderer.invoke(channel, value).then((response) => responseValidator(response))
 }
+const operations = Object.freeze({
+  submit: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_ACCEPT, summaryRun.assertAcceptRequest, summaryRun.assertAcceptResponse, request),
+  getSnapshot: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_GET, summaryRun.assertControlRequest, summaryRun.assertGetResponse, request),
+  cancel: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_CANCEL, summaryRun.assertCancelRequest, summaryRun.assertCancelResponse, request),
+  resume: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_RESUME, summaryRun.assertResumeRequest, summaryRun.assertResumeResponse, request),
+  listRecoverable: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_LIST_RECOVERABLE, summaryRun.assertListRecoverableRequest, summaryRun.assertListRecoverableResponse, request),
+  getDiagnostics: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_DIAGNOSTICS_QUERY, summaryDiagnostics.assertQueryRequest, summaryDiagnostics.assertQueryResponse, request),
+  exportDiagnostics: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_DIAGNOSTICS_EXPORT, summaryDiagnostics.assertExportRequest, summaryDiagnostics.assertExportResponse, request),
+  onChanged: onSessionSummaryRunChanged
+})
 contextBridge.exposeInMainWorld('agentApi', {
   ...contextSource,
+  operations,
   dragStart: interaction.dragStart,
   dragEnd: interaction.dragEnd,
   onInteractionSync: interaction.onInteractionSync,
@@ -88,12 +99,12 @@ contextBridge.exposeInMainWorld('agentApi', {
   getInteraction: (request) => invoke(CHANNELS.AGENT_RUN_GET_INTERACTION, c.assertInteractionRequest, c.assertInteractionResponse, request),
   exportInteraction: (request) => invoke(CHANNELS.AGENT_RUN_EXPORT_INTERACTION, c.assertExportRequest, c.assertExportResponse, request),
   recordSignal: (request) => invoke(CHANNELS.AGENT_RUN_RECORD_SIGNAL, c.assertRecordSignalRequest, c.assertRecordSignalResponse, request),
-  acceptSessionSummaryRun: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_ACCEPT, summaryRun.assertAcceptRequest, summaryRun.assertAcceptResponse, request),
-  getSessionSummaryRun: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_GET, summaryRun.assertControlRequest, summaryRun.assertGetResponse, request),
-  cancelSessionSummaryRun: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_CANCEL, summaryRun.assertCancelRequest, summaryRun.assertCancelResponse, request),
-  resumeSessionSummaryRun: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_RESUME, summaryRun.assertResumeRequest, summaryRun.assertResumeResponse, request),
-  listRecoverableSessionSummaryRuns: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_LIST_RECOVERABLE, summaryRun.assertListRecoverableRequest, summaryRun.assertListRecoverableResponse, request),
-  getSessionSummaryRunDiagnostics: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_DIAGNOSTICS_QUERY, summaryDiagnostics.assertQueryRequest, summaryDiagnostics.assertQueryResponse, request),
-  exportSessionSummaryRunDiagnostics: (request) => invoke(CHANNELS.SESSION_SUMMARY_RUN_DIAGNOSTICS_EXPORT, summaryDiagnostics.assertExportRequest, summaryDiagnostics.assertExportResponse, request),
-  onSessionSummaryRunChanged
+  acceptSessionSummaryRun: operations.submit,
+  getSessionSummaryRun: operations.getSnapshot,
+  cancelSessionSummaryRun: operations.cancel,
+  resumeSessionSummaryRun: operations.resume,
+  listRecoverableSessionSummaryRuns: operations.listRecoverable,
+  getSessionSummaryRunDiagnostics: operations.getDiagnostics,
+  exportSessionSummaryRunDiagnostics: operations.exportDiagnostics,
+  onSessionSummaryRunChanged: operations.onChanged
 })

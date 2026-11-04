@@ -1,4 +1,6 @@
 'use strict'
+const { createRecipeNetworkAdapter, providerResponse, toolRequest, summaryStageContent } = require('./provider-network-fixture')
+const { getRecipe } = require('../../src/agent/contracts/recipes')
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const path = require('node:path')
@@ -21,19 +23,24 @@ test('SEM-F42/J22/J24-RETRIEVAL: qa.answer@5 freezes relevant MD tool references
   await f.gateway.applyPersonalContextAutomaticPolicy({ agentEnabled: true, memoryEnabled: true, automaticProcessingSince: settings.get().automaticProcessingSince, memoryProcessingSince: settings.get().memoryProcessingSince })
   const vault = new CredentialVault({ directory: path.join(f.directory, 'llm-credentials'), safeStorage: { isEncryptionAvailable: () => false } })
   let reads = 0
-  const modelAccess = await new ModelAccessRuntime({ gateway: f.gateway, vault, adapter: { async run (request) {
+  const modelAccess = await new ModelAccessRuntime({ gateway: f.gateway, vault, adapter: createRecipeNetworkAdapter(runId => {
+    const row = f.service.requireStore().database.prepare('SELECT recipe_id,recipe_version FROM formal_agent_runs WHERE run_id=?').get(runId)
+    return getRecipe(row.recipe_id, row.recipe_version)
+  }, async request => {
     if (request.recipe.recipeId === 'summary.minutes') {
-      const result = await request.tools[0].execute({ schemaVersion: 1, aliasKeys: [target.semanticKey] })
+      if (request.observation === null) return toolRequest('search_context', { schemaVersion: 1, aliasKeys: [target.semanticKey] })
+      const result = request.observation
       assert.equal(result.matches.length, 0)
-      return { text: JSON.stringify({ schemaVersion: 1, overview: '本次总结只使用会话。', conclusions: [], todos: [], risks: [] }) }
+      return providerResponse(summaryStageContent(request.prompt, { schemaVersion: 1, overview: '本次总结只使用会话。', conclusions: [], todos: [], risks: [] }))
     }
     assert.equal(request.recipe.recipeVersion, '5')
-    await request.beforeRequest({ turn: 1 }); await request.onRequestUsage(null)
-    const result = await request.tools[0].execute({ schemaVersion: 1, aliasKeys: [target.semanticKey] })
+
+    if (request.observation === null) return toolRequest('search_context', { schemaVersion: 1, aliasKeys: [target.semanticKey] })
+    const result = request.observation
     const ref = result.matches[0].entries[0].memoryRef
     assert.equal(ref.memoryId, target.memory_id); reads++
-    return { text: JSON.stringify({ schemaVersion: 2, answer: '迁移工具采用 SQLite 事务。', claims: [{ text: '迁移工具采用 SQLite 事务。', sourceRefs: [], memoryRefs: [ref] }], sourceRefs: [], memoryRefs: [ref], unresolved: [], coverage: null }) }
-  } } }).initialize()
+    return providerResponse({ schemaVersion: 2, answer: '迁移工具采用 SQLite 事务。', claims: [{ text: '迁移工具采用 SQLite 事务。', sourceRefs: [], memoryRefs: [ref] }], sourceRefs: [], memoryRefs: [ref], unresolved: [], coverage: null })
+  }) }).initialize()
   modelAccess.embeddingAccess = f.embeddingAccess; f.runtime.modelAccess = modelAccess
   const configure = async command => { const catalog = await modelAccess.catalog(); const response = await modelAccess.configure({ ...command, expectedRevision: catalog.snapshot.revision }); assert.equal(response.ok, true) }
   await configure({ type: 'addModel', profileId: 'deepseek', modelId: 'synthetic-qa', capabilities: { maxInputTokens: 64000, maxOutputTokens: 4096, supportsToolCalling: true, supportsStructuredOutput: true, supportsStreaming: true, usageReporting: false } })

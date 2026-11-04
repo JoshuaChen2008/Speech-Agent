@@ -22,6 +22,12 @@ const PRESETS = [
     modelId: 'qwen-plus', httpsOrigin: 'https://dashscope.aliyuncs.com', basePath: '/compatible-mode/v1',
     sourceSnapshotDate: '2026-09-13', helpId: 'qwen-beijing-api-key', strategy: 'qwen-beijing@1', strategyVersion: 1,
     capabilities: { maxInputTokens: 128000, maxOutputTokens: 8192, supportsToolCalling: true, supportsStructuredOutput: true, supportsStreaming: true, usageReporting: true }
+  },
+  {
+    presetId: 'deepseek-openai', version: 2, providerLabel: 'DeepSeek', region: 'unspecified',
+    modelId: 'deepseek-flash', httpsOrigin: 'https://api.deepseek.com', basePath: '/',
+    sourceSnapshotDate: '2026-10-11', helpId: 'deepseek-api-key', strategy: 'deepseek-openai@2', strategyVersion: 2,
+    capabilities: { maxInputTokens: 1048576, maxOutputTokens: 393216, supportsToolCalling: true, supportsStructuredOutput: true, supportsStreaming: true, usageReporting: true }
   }
 ].map((entry) => Object.freeze({
   ...entry,
@@ -38,7 +44,7 @@ const HELP_URLS = Object.freeze({
   'qwen-beijing-api-key': 'https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key'
 })
 const DEFAULT_REQUEST_STRATEGY = 'openai-compatible@1'
-const REQUEST_STRATEGIES = Object.freeze(['openai-compatible@1', 'deepseek-openai@1', 'qwen-beijing@1'])
+const REQUEST_STRATEGIES = Object.freeze(['openai-compatible@1', 'deepseek-openai@1', 'qwen-beijing@1', 'deepseek-openai@2'])
 
 function publicPreset (entry) {
   return Object.freeze({
@@ -71,7 +77,7 @@ function profileIdForPreset (presetId) {
 
 function presetForProfileId (profileId) {
   if (typeof profileId !== 'string') return null
-  return MODEL_PRESETS.find((entry) => profileIdForPreset(entry.presetId) === profileId) || null
+  return MODEL_PRESETS.find((entry) => entry.version === 1 && profileIdForPreset(entry.presetId) === profileId) || null
 }
 
 function presetSource (input = {}) {
@@ -84,22 +90,15 @@ function presetSource (input = {}) {
 }
 
 function strategyForModel (input = {}) {
-  const source = presetSource(input)
-  if (!source) return DEFAULT_REQUEST_STRATEGY
-  let connection
-  try { connection = canonicalizeConnection(input.httpsOrigin, input.basePath) } catch { return DEFAULT_REQUEST_STRATEGY }
-  const match = source.httpsOrigin === connection.httpsOrigin &&
-    source.basePath === connection.basePath && source.modelId === input.modelId
-  return match ? source.strategy : DEFAULT_REQUEST_STRATEGY
+  return presetForModel(input)?.strategy || DEFAULT_REQUEST_STRATEGY
 }
 
 function presetForModel (input = {}) {
-  const source = presetSource(input)
-  if (!source) return null
   let connection
   try { connection = canonicalizeConnection(input.httpsOrigin, input.basePath) } catch { return null }
-  return source.httpsOrigin === connection.httpsOrigin &&
-    source.basePath === connection.basePath && source.modelId === input.modelId ? source : null
+  return MODEL_PRESETS.find(source =>
+    (input.profileId ? profileIdForPreset(source.presetId) === input.profileId : source.presetId === input.presetId && source.version === (input.version || 1)) &&
+    source.httpsOrigin === connection.httpsOrigin && source.basePath === connection.basePath && source.modelId === input.modelId) || null
 }
 
 module.exports = Object.freeze({

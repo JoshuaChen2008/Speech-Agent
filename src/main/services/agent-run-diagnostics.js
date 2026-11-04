@@ -43,10 +43,12 @@ function exactObject (value, keys) {
 }
 
 function validInput (input) {
-  return exactObject(input, [
+  const keys = [
     'requestId', 'requestDigest', 'runId', 'attempt', 'phase', 'event', 'elapsedMs',
     'lastActivityAgeMs', 'errorCode', 'budgetAxis', 'metrics', 'modelBindingDigest', 'planDigest'
-  ]) && typeof input.requestId === 'string' && input.requestId.length > 0 && input.requestId.length <= 512 &&
+  ]
+  if (input && Object.hasOwn(input, 'outputValidation')) keys.push('outputValidation')
+  return exactObject(input, keys) && typeof input.requestId === 'string' && input.requestId.length > 0 && input.requestId.length <= 512 &&
     (input.requestDigest === null || isDigest(input.requestDigest)) &&
     (input.runId === null || typeof input.runId === 'string' && input.runId.length > 0 && input.runId.length <= 512) &&
     Number.isSafeInteger(input.attempt) && input.attempt >= 0 && sessionSummary.PHASES.includes(input.phase) &&
@@ -79,7 +81,8 @@ function buildRecord (input, appVersion, sequence) {
     budgetAxis: input.budgetAxis,
     metrics: { ...input.metrics },
     modelBindingDigest: input.modelBindingDigest,
-    planDigest: input.planDigest
+    planDigest: input.planDigest,
+    ...(Object.hasOwn(input, 'outputValidation') ? { outputValidation: { ...input.outputValidation } } : {})
   }
   try { assertDiagnosticRecord(record) } catch { return null }
   return record

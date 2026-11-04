@@ -23,7 +23,12 @@ async function healthy () {
   if (!stat.isDirectory() || `${stat.dev}:${stat.ino}` !== rootStamp || await fs.realpath(root) !== root) fault('MEMORY_FILE_ROOT_UNAVAILABLE')
 }
 async function stable (relative) {
-  const target = locate(relative); const before = await fs.lstat(target)
+  const target = locate(relative)
+  // Own Win32 handles exclude fs.readFile too. Read their current bytes rather
+  // than interpreting our recovery/save lock as an invalid external file.
+  const record = [...held.values()].find(value => value.relative === relative)
+  if (record) return parseFile(addon().read(record.handle))
+  const before = await fs.lstat(target)
   if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1) fault()
   if (before.size > 65536) fault('MEMORY_FILE_TOO_LARGE')
   if (await fs.realpath(target) !== target) fault()
@@ -88,7 +93,7 @@ async function execute (input) {
     try {
       const bytes = addon().read(handle)
       let parsed; try { parsed = parseFile(bytes) } catch { parsed = { id: null, entry: null, error: 'MEMORY_FILE_INVALID' } }
-      held.set(input.operationId, { handle, confirmOnly: true })
+      held.set(input.operationId, { handle, relative: input.relative, confirmOnly: true })
       return { ...parsed, byteHash: hash(bytes) }
     } catch (e) { addon().close(handle); throw e }
   }
@@ -117,7 +122,7 @@ async function execute (input) {
         await stage(`${input.operationId}.old`, old)
         await stage(`${input.operationId}.new`, next)
       }
-      held.set(input.operationId, { handle, next, created, confirmOnly: Boolean(input.confirmOnly) })
+      held.set(input.operationId, { handle, relative: input.relative, next, created, confirmOnly: Boolean(input.confirmOnly) })
       return { byteHash: hash(next), oldHash: hash(old), contentHash: parsed.contentHash, entry: parsed.entry }
     } catch (error) {
       if (created) { try { api.remove(handle) } catch {} }

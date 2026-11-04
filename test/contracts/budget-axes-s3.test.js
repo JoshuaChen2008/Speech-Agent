@@ -105,7 +105,8 @@ test('SEM-F39/J31-COMPAT: summary.minutes@2 has a frozen ten-axis scope and vers
   }), /maxCumulativeOutputTokens diverges from policy/)
   assert.throws(() => assertRecipeBudgetSnapshot('summary.minutes', '2', ['search_context'], v1), /diverges from policy/)
   assert.throws(() => assertRecipeBudgetSnapshot('summary.minutes', '1', ['search_context'], v2), /diverges from policy/)
-  assert.throws(() => getBudgetPolicy('summary.minutes', '3'), /AGENT_REQUEST_INVALID/)
+  assert.equal(getBudgetPolicy('summary.minutes', '3').maxRequestInputTokens, 917504)
+  assert.throws(() => getBudgetPolicy('summary.minutes', '4'), /AGENT_REQUEST_INVALID/)
 })
 
 test('SEM-F39/J31-SIZE: summary.minutes@2 request capacity derives the registered window and output quota', () => {

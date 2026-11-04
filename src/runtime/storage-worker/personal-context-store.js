@@ -16,6 +16,7 @@ const {
 } = require('./session-summary-budget')
 const { FORMAL_AGENT_TASK_ERROR_CODES } = require('../../agent/contracts/personal-context-core')
 const { validateRecipeOutput } = require('../../agent/contracts/recipes')
+const { retryPolicy } = require('../../agent/contracts/retry-policy')
 const { questionSource, allowsQuestionCandidate } = require('../../agent/personal-context/question-memory-source')
 const { fileCache, memoryContent, memoryReadable } = require('./personal-memory-file-content')
 
@@ -1136,7 +1137,7 @@ class PersonalContextStore {
             lease_owner, lease_expires_at, lease_renewed_from_expires_at, cancel_requested_at,
             error_code, result_digest, result_summary_json, created_at, updated_at, retry_policy_version
           ) VALUES (?, ?, NULL, ?, 'context.ingest.interaction', ?, ?, ?, ?, ?, ?, ?,
-            'automatic', 'queued', 0, 5, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 'agent-retry@1')
+            'automatic', 'queued', 0, 5, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 'agent-retry@2')
         `).run(
           runId, dedupeKey, requestDigest, recipeVersion,
           canonicalize({ kind: 'interaction', reference: normalized.interactionId }),
@@ -1281,7 +1282,7 @@ class PersonalContextStore {
             lease_owner, lease_expires_at, lease_renewed_from_expires_at, cancel_requested_at,
             error_code, result_digest, result_summary_json, created_at, updated_at, retry_policy_version
           ) VALUES (?, ?, NULL, ?, 'context.ingest.session', ?, ?, ?, ?, ?, ?, ?,
-            'automatic', 'queued', 0, 5, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 'agent-retry@1')
+            'automatic', 'queued', 0, 5, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 'agent-retry@2')
         `).run(
           runId, dedupeKey, requestDigest, recipeVersion, canonicalize({ kind: 'session', reference: snapshot.sessionId }),
           sha256Canonical({ kind: 'session', reference: snapshot.sessionId }), snapshot.transcriptVersion,
@@ -1723,7 +1724,7 @@ class PersonalContextStore {
           lease_owner, lease_expires_at, lease_renewed_from_expires_at, cancel_requested_at,
           error_code, result_digest, result_summary_json, created_at, updated_at, retry_policy_version
         ) VALUES (?, ?, NULL, ?, 'context.ingest.session', '1', ?, ?, ?, ?, ?, ?,
-          'automatic', 'succeeded', 1, 5, 0, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, 'agent-retry@1')
+          'automatic', 'succeeded', 1, 5, 0, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, 'agent-retry@2')
       `).run(
         runId, dedupeKey, requestDigest,
         canonicalize({ kind: 'session', reference: snapshot.sessionId }),
@@ -2618,6 +2619,7 @@ class PersonalContextStore {
       `).get(row.run_id)
       if (row.recipe_id === 'context.synthesize') return {
         runId: row.run_id, recipeId: row.recipe_id, recipeVersion: row.recipe_version,
+        retryPolicyVersion: retryPolicy(row.retry_policy_version),
         interactionId: interaction?.interaction_id || null, requestedBy: 'automatic',
         source: { sourceKind: 'context', runId: row.run_id },
         attemptIdentity: { runId: row.run_id, attempt: Number(row.attempt_count), owner: receipt.lease_owner, leaseExpiresAt: Number(receipt.lease_expires_at) }
@@ -2637,6 +2639,7 @@ class PersonalContextStore {
           recipeId: row.recipe_id,
           recipeVersion: row.recipe_version,
           interactionId: interaction?.interaction_id || null,
+          retryPolicyVersion: retryPolicy(row.retry_policy_version),
           requestedBy: row.requested_by,
           source: {
             sourceKind: 'interaction',
@@ -2669,6 +2672,7 @@ class PersonalContextStore {
         recipeId: row.recipe_id,
         recipeVersion: row.recipe_version,
         interactionId: interaction?.interaction_id || null,
+        retryPolicyVersion: retryPolicy(row.retry_policy_version),
         requestedBy: row.requested_by,
         source: {
           sourceKind: scope.kind,
@@ -2720,6 +2724,7 @@ class PersonalContextStore {
         }
       }
       if (row.summary_input_policy) result.summaryInputPolicy = row.summary_input_policy
+      if (row.summary_quality_policy) result.summaryInputPolicy = row.summary_quality_policy
       if (row.recipe_id === 'summary.minutes') {
         result.summaryUseMemory = row.summary_use_memory === undefined || row.summary_use_memory === null
           ? true
@@ -2965,30 +2970,43 @@ class PersonalContextStore {
   }
 
   reserveFormalAgentModelRequest (request) {
-    assertExactKeys(request, ['attemptIdentity', 'requestSequence', 'operationDigest'], 'AGENT_REQUEST_INVALID')
-    const attempt = this.assertAttempt(request.attemptIdentity)
+    const route = Object.hasOwn(request || {}, 'routeRunId')
+    assertExactKeys(request, [route ? 'routeRunId' : 'attemptIdentity', 'requestSequence', 'operationDigest'], 'AGENT_REQUEST_INVALID')
+    const attempt = route ? { runId: identifier(request.routeRunId), attempt: 1, owner: 'intent.route' } : this.assertAttempt(request.attemptIdentity)
     safeInteger(request.requestSequence, 1)
     const database = this.database
     database.exec('BEGIN IMMEDIATE')
     try {
       const now = this.nowValue()
       const run = database.prepare('SELECT * FROM formal_agent_runs WHERE run_id=?').get(attempt.runId)
-      this.assertActiveFormalAttempt(run, attempt, now, { allowPreviouslyRenewedLease: true })
-      if (run.retry_policy_version === 'agent-retry@1' &&
-          (typeof request.operationDigest !== 'string' || !/^[0-9a-f]{64}$/.test(request.operationDigest))) fail('AGENT_REQUEST_INVALID')
+      if (route) {
+        if (!run || run.recipe_id !== 'intent.route' || run.state !== 'queued' || run.cancel_requested_at !== null || Number(run.attempt_count) !== 0) fail('AGENT_CONTEXT_OPERATION_FAILED')
+        const binding = database.prepare('SELECT execution_form,purpose FROM agent_model_run_bindings WHERE run_id=?').get(run.run_id)
+        if (!binding || binding.execution_form !== 'agent_loop' || binding.purpose !== 'default') fail('AGENT_RUN_UNAVAILABLE')
+      } else this.assertActiveFormalAttempt(run, attempt, now, { allowPreviouslyRenewedLease: true })
+      const scope = JSON.parse(run.scope_json)
+      if (scope.kind === 'session' && database.prepare('SELECT 1 FROM session_deletion_tombstones WHERE session_id=?').get(scope.reference)) fail('AGENT_SESSION_DELETED')
+      if (typeof run.session_summary_request_id === 'string') {
+        const current = database.prepare('SELECT * FROM formal_agent_requests WHERE request_id=?').get(run.session_summary_request_id)
+        if (!current || current.cancel_requested !== 0 || current.resume_required !== 0 ||
+            ['succeeded', 'failed', 'cancelled'].includes(current.state) ||
+            ![current.route_run_id, current.target_run_id].includes(run.run_id)) fail('AGENT_CONTEXT_OPERATION_FAILED')
+      }
+      const policy = retryPolicy(run.retry_policy_version)
+      if (typeof request.operationDigest !== 'string' || !/^[0-9a-f]{64}$/.test(request.operationDigest)) fail('AGENT_REQUEST_INVALID')
       let result
-      if (typeof run.session_summary_request_id === 'string' || run.summary_input_policy === 'summary-long-input@1' || isLongInputRun(run)) {
+      if (!route && (typeof run.session_summary_request_id === 'string' || run.summary_input_policy === 'summary-long-input@1' || isLongInputRun(run))) {
         result = reserveModelRequest(database, {
           attemptIdentity: attempt,
           requestSequence: request.requestSequence,
-          operationDigest: run.retry_policy_version === 'agent-retry@1' ? request.operationDigest : null,
+          operationDigest: request.operationDigest,
           now
         })
-      } else if (run.retry_policy_version === 'agent-retry@1') {
-        const existing = database.prepare(`SELECT owner FROM formal_agent_model_operation_attempts
+      } else {
+        const existing = database.prepare(`SELECT owner,operation_digest FROM formal_agent_model_operation_attempts
           WHERE run_id=? AND attempt=? AND request_sequence=?`).get(attempt.runId, attempt.attempt, request.requestSequence)
         if (existing) {
-          if (existing.owner !== attempt.owner) fail('AGENT_CONTEXT_OPERATION_FAILED')
+          if (existing.owner !== attempt.owner || existing.operation_digest !== request.operationDigest) fail('AGENT_CONTEXT_OPERATION_FAILED')
           result = { reserved: true, replayed: true }
         } else {
           const sequence = database.prepare(`SELECT COUNT(*) AS count FROM formal_agent_model_operation_attempts
@@ -3002,9 +3020,9 @@ class PersonalContextStore {
             .run(attempt.runId, attempt.attempt, request.requestSequence, attempt.owner, request.operationDigest, now)
           result = { reserved: true, replayed: false }
         }
-      } else fail('AGENT_REQUEST_INVALID')
+      }
       database.exec('COMMIT')
-      return result
+      return { ...result, retryPolicyVersion: policy }
     } catch (error) {
       rollbackQuietly(database)
       throw error

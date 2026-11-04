@@ -112,6 +112,65 @@ async function stagedUpdate (f, id, text, operationId) {
   return { staged, meta }
 }
 
+test('SEM-F41/SEM-T04/DB7/J28-FILES: a read overlapping recovery of unwritten bytes preserves the confirmed memory', { skip: process.platform !== 'win32', timeout: 10000 }, async t => {
+  const f = await fixture(t)
+  const id = (await f.remember('仍需保留的已确认内容')).item.memory_id
+  const operationId = 'fileop.66666666666666666666666666666666'
+  await stagedUpdate(f, id, '尚未写入的目标内容', operationId)
+  await f.runtime.client.close()
+  f.runtime.watcher?.close(); clearTimeout(f.runtime.timer)
+  let held; let scanned; let releaseRecovery; let releaseScan
+  const holdObserved = new Promise(resolve => { held = resolve })
+  const scanObserved = new Promise(resolve => { scanned = resolve })
+  const recoveryReleased = new Promise(resolve => { releaseRecovery = resolve })
+  const scanReleased = new Promise(resolve => { releaseScan = resolve })
+  const call = f.runtime.client.call.bind(f.runtime.client)
+  // Delay only delivery of real file Worker responses to pin the lock/scan order.
+  f.runtime.client.call = async request => {
+    const result = await call(request)
+    if (request.type === 'hold_read' && request.operationId === operationId) { held(); await recoveryReleased }
+    if (request.type === 'scan') { scanned(); await scanReleased }
+    return result
+  }
+  const recovering = f.runtime.recover()
+  await holdObserved
+  const resolving = f.resolve('已确认')
+  await scanObserved
+  releaseRecovery(); await recovering
+  releaseScan()
+  const result = await resolving
+  f.runtime.client.call = call
+  assert.equal(result.personalMemories.length, 1)
+  assert.equal(result.personalMemories[0].memoryId, id)
+  assert.equal(result.personalMemories[0].displayText, '仍需保留的已确认内容')
+  assert.equal((await f.gateway.personalMemoryFiles({ type: 'manifest' })).operations.length, 0)
+})
+
+test('SEM-F41/SEM-T04/DB7/J28-FILES: scans of an owned save handle read actual bytes and recheck external revisions after release', { skip: process.platform !== 'win32' }, async t => {
+  const f = await fixture(t)
+  const id = (await f.remember('文件当前的已确认内容')).item.memory_id
+  const operationId = 'fileop.77777777777777777777777777777777'
+  const { staged, meta } = await stagedUpdate(f, id, '已明确保存的新内容', operationId)
+  const file = path.join(f.runtime.root.rootPath, meta.relative_name)
+  try {
+    const before = (await f.runtime.client.call({ type: 'scan' })).files.find(row => row.id === id)
+    assert.equal(before.byteHash, staged.oldHash)
+    assert.equal(before.entry.display_text, '文件当前的已确认内容')
+    assert.throws(() => fs.writeFileSync(file, '外部竞争写入'), error => ['EBUSY', 'EACCES', 'EPERM'].includes(error.code))
+    await f.runtime.client.call({ type: 'write', operationId })
+    const after = (await f.runtime.client.call({ type: 'scan' })).files.find(row => row.id === id)
+    assert.equal(after.byteHash, staged.byteHash)
+    assert.equal(after.contentHash, staged.contentHash)
+    assert.equal(after.entry.display_text, '已明确保存的新内容')
+    await f.gateway.personalMemoryFiles({ type: 'commit', operationId, file: after })
+  } finally { await f.runtime.client.call({ type: 'release', operationId, clean: true }) }
+  assert.equal((await f.resolve('新内容')).personalMemories.length, 1)
+  const saved = parseFile(fs.readFileSync(file))
+  fs.writeFileSync(file, renderFile(id, { ...saved.entry, display_text: '外部待确认修订' }, saved))
+  assert.equal((await f.resolve('修订')).personalMemories.length, 0)
+  assert.equal((await f.runtime.list()).items.find(row => row.memoryId === id).state, 'pending')
+})
+
 test('SEM-F41/SEM-T04/DB7/J28-FILES: crash recovery recognizes target, old and partial bytes without database body fallback', { skip: process.platform !== 'win32' }, async t => {
   const f = await fixture(t); const id = (await f.remember('恢复前的明确内容')).item.memory_id
   const op = 'fileop.11111111111111111111111111111111'
@@ -121,7 +180,18 @@ test('SEM-F41/SEM-T04/DB7/J28-FILES: crash recovery recognizes target, old and p
   assert.equal((await f.resolve('恢复后')).personalMemories[0].displayText, '恢复后的明确内容')
   const oldOp = 'fileop.22222222222222222222222222222222'
   await stagedUpdate(f, id, '尚未写入的内容', oldOp); await f.runtime.client.close(); await f.runtime.recover()
-  assert.equal((await f.resolve('恢复后')).personalMemories.length, 1)
+  const restored = await f.resolve('恢复后')
+  if (restored.personalMemories.length !== 1) {
+    const { fileCache } = require('../../src/runtime/storage-worker/personal-memory-file-content')
+    const cache = fileCache(f.service.store.database)
+    const manifest = await f.gateway.personalMemoryFiles({ type: 'manifest' })
+    assert.equal(restored.personalMemories.length, 1, JSON.stringify({
+      fileState: manifest.files.find(row => row.memory_id === id)?.state || null,
+      operationPhase: manifest.operations.find(row => row.operation_id === oldOp)?.phase || null,
+      healthy: cache.healthy, snapshotPresent: cache.snapshots.has(id),
+      indexed: f.service.store.database.prepare('SELECT count(*) n FROM personal_memory_index_documents WHERE memory_id=?').get(id).n
+    }))
+  }
   const partialOp = 'fileop.33333333333333333333333333333333'
   const { meta } = await stagedUpdate(f, id, '等待核对的目标内容', partialOp); await f.runtime.client.close()
   fs.writeFileSync(path.join(f.runtime.root.rootPath, meta.relative_name), '---\nid: memory.')
